@@ -296,10 +296,18 @@ EOF
   # The workspace lives at demo/workspace/; the mock server at
   # demo/server/server.py; both are checked into the repo.
   #
+  # `./run.sh demo` (contributor/iteration path) points mnml directly
+  # at $REPO/demo/workspace/ via $MNML_DEMO_WORKSPACE. That skips the
+  # cache-copy that consumer `mnml --demo` uses (see
+  # `resolve_demo_workspace` in main.rs) — trade-off is a `./run.sh
+  # restart` from another shell can find the running instance's IPC
+  # dir at a stable path; the consumer path bakes the workspace into
+  # a per-user cache we can't predict from the marker.
+  #
   # Sets HEADLESS off and passes --demo through to mnml. Falls into
   # the main build+relaunch-on-exit-75 loop below (so demo mode also
   # picks up `app.restart` for iteration).
-  demo) shift; DEMO=1 ;;
+  demo) shift; DEMO=1; export MNML_DEMO_WORKSPACE="$REPO/demo/workspace" ;;
   # ── Misc ────────────────────────────────────────────────────────
   -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
   # ── Implicit default ────────────────────────────────────────────
@@ -330,9 +338,11 @@ fi
 # first non-flag arg overrides it. Either way, make sure mnml gets a workspace arg
 # so it doesn't fall back to the repo (its cwd is the repo when we exec it).
 #
-# `demo` mode skips this: mnml --demo overrides the workspace to
-# demo/workspace/ internally, and we want the marker + IPC to sit in
-# that workspace so ./run.sh restart works from a normal shell.
+# `demo` mode: MNML_DEMO_WORKSPACE (set above) tells mnml to boot
+# directly against the tracked source tree at $REPO/demo/workspace/
+# (bypassing the cache-copy consumer path uses). We mirror the same
+# path in ws_dir so the marker + IPC end up where `./run.sh restart`
+# from another shell can find them.
 if [ "${DEMO:-0}" = "1" ]; then
   ws_dir="$REPO/demo/workspace"
   ARGS=()

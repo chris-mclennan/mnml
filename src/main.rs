@@ -315,37 +315,107 @@ fn resolve_demo_workspace() -> Result<PathBuf, String> {
     // mode + XDG). demo-workspace lives beside integrations/ + glyphs/.
     let cache_root = mnml::data_root::data_root().join("demo-workspace");
     let stamp = cache_root.join(".mnml-demo-stamp");
-    let source_stamp = src.join(".mnml/integrations/jira.override.toml");
-    let src_mtime = std::fs::metadata(&source_stamp)
-        .and_then(|m| m.modified())
-        .ok();
+    // Freshness: the newest mtime anywhere under `demo/workspace/` beats
+    // the stamp → refresh. Watching a single sentinel file misses every
+    // edit that doesn't touch that file (README, .http, src/*.ts,
+    // findings, the other override.toml). Walking the tree is cheap for
+    // this size (~30 files) and gets us the honest answer.
+    let src_mtime = max_mtime_recursive(&src).ok();
     let cache_mtime = std::fs::metadata(&stamp).and_then(|m| m.modified()).ok();
     let refresh = match (src_mtime, cache_mtime) {
         (Some(s), Some(c)) => s > c,
         _ => true,
     };
     if refresh {
-        // Wipe stale content — new files may have been removed on the
-        // source side and we don't want to leave zombies in the cache.
-        let _ = std::fs::remove_dir_all(&cache_root);
-        std::fs::create_dir_all(&cache_root)
-            .map_err(|e| format!("create {}: {e}", cache_root.display()))?;
-        copy_dir_recursive(&src, &cache_root).map_err(|e| format!("seed demo workspace: {e}"))?;
+        // Atomic-swap: build into a sibling dir, then rename over the
+        // live cache. Prevents a second concurrent `--demo` launch
+        // from copying into a directory a first instance is reading
+        // (torn files, remove_dir_all pulling files from under it).
+        // rename() over an existing dir works on Unix; on Windows we
+        // fall back to remove+rename which loses atomicity but the
+        // window is small.
+        let staging = cache_root.with_extension("staging");
+        let _ = std::fs::remove_dir_all(&staging);
+        std::fs::create_dir_all(&staging)
+            .map_err(|e| format!("create staging {}: {e}", staging.display()))?;
+        copy_dir_recursive(&src, &staging).map_err(|e| format!("seed demo workspace: {e}"))?;
         // Seed the fictional git history from the shipped tarball.
         // See `demo/workspace-git.tar.gz`. Failure isn't fatal — the
-        // workspace still boots, git panels just show "not a repo".
+        // workspace still boots, git panels just show "not a repo" —
+        // but we surface it via eprintln! (silent-forever would leave
+        // the user confused about missing history) and skip stamping
+        // so the next launch retries.
         let tarball = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/workspace-git.tar.gz");
+        let mut tar_ok = true;
         if tarball.is_file() {
-            let _ = std::process::Command::new("tar")
+            match std::process::Command::new("tar")
                 .arg("xzf")
                 .arg(&tarball)
                 .arg("-C")
-                .arg(&cache_root)
-                .status();
+                .arg(&staging)
+                .status()
+            {
+                Ok(s) if s.success() => {}
+                Ok(s) => {
+                    eprintln!(
+                        "mnml --demo: `tar xzf {}` exited {} — git history \
+                         won't seed. Install tar (macOS/Linux ship it; Windows: \
+                         WSL / Git Bash).",
+                        tarball.display(),
+                        s
+                    );
+                    tar_ok = false;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "mnml --demo: could not run `tar`: {e}. Git history \
+                         won't seed."
+                    );
+                    tar_ok = false;
+                }
+            }
         }
-        let _ = std::fs::write(&stamp, "");
+        // Atomic swap. On Unix, rename() replaces cache_root
+        // atomically if it exists. On Windows we have to remove first.
+        #[cfg(unix)]
+        {
+            std::fs::rename(&staging, &cache_root).map_err(|e| format!("swap demo cache: {e}"))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = std::fs::remove_dir_all(&cache_root);
+            std::fs::rename(&staging, &cache_root).map_err(|e| format!("swap demo cache: {e}"))?;
+        }
+        // Only stamp on full success — a broken tar shouldn't cache
+        // as "done" and prevent the next launch from retrying.
+        if tar_ok {
+            let _ = std::fs::write(&stamp, "");
+        }
     }
     Ok(cache_root)
+}
+
+/// Walk `root` recursively and return the newest mtime found. Skips
+/// entries we can't stat (permissions, races). Cheap for the demo
+/// workspace (~30 files); don't call on a huge tree.
+fn max_mtime_recursive(root: &Path) -> std::io::Result<std::time::SystemTime> {
+    let mut best = std::fs::metadata(root)?.modified()?;
+    for entry in std::fs::read_dir(root)? {
+        let Ok(entry) = entry else { continue };
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            if let Ok(m) = max_mtime_recursive(&entry.path())
+                && m > best
+            {
+                best = m;
+            }
+        } else if let Ok(m) = entry.metadata().and_then(|m| m.modified())
+            && m > best
+        {
+            best = m;
+        }
+    }
+    Ok(best)
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
@@ -359,6 +429,13 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
             copy_dir_recursive(&from, &to)?;
         } else if ft.is_file() {
             std::fs::copy(&from, &to)?;
+        } else {
+            // Symlink or other special entry — signal skip so a future
+            // addition to demo/workspace/ doesn't silently vanish.
+            eprintln!(
+                "mnml --demo: skipping non-regular file {} (only files + dirs are copied)",
+                from.display()
+            );
         }
     }
     Ok(())

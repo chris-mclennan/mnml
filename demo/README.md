@@ -16,6 +16,24 @@ Populated workspace + mock API server for screenshots, videos, and
 All data uses the fictitious product **Loop** (by Bloom Labs).
 Never any real ticket / PR / customer data.
 
+## Regenerating `workspace-git.tar.gz`
+
+The tarball ships as an opaque binary (unreviewable in a PR diff by
+content). When it changes, list its contents in the PR body so
+review can verify no unexpected additions (e.g. non-`.sample` git
+hooks that would execute during demo git operations):
+
+```sh
+tar tzf demo/workspace-git.tar.gz | sort
+```
+
+To regenerate after editing `demo/workspace/` history in place:
+
+```sh
+git -C demo/workspace gc --quiet && git -C demo/workspace repack -Ad --quiet
+tar czf demo/workspace-git.tar.gz -C demo/workspace .git
+```
+
 ## Boot
 
 ```sh
