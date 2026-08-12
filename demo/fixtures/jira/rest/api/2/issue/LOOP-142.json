@@ -1,0 +1,13 @@
+{
+  "key": "LOOP-142",
+  "fields": {
+    "summary": "Server: middleware pipeline for POST /notes",
+    "status": {"name": "In Progress"},
+    "assignee": {"displayName": "Ava Chen", "emailAddress": "ava@bloomlabs.dev"},
+    "priority": {"name": "High"},
+    "created": "2026-07-15T10:30:00.000+0000",
+    "updated": "2026-08-10T14:22:00.000+0000",
+    "description": "Route pipeline needs: JSON body parse → auth → rate-limit → 64KB body cap (LOOP-215) → store write. Currently jumps straight to store.",
+    "labels": ["server", "middleware"]
+  }
+}

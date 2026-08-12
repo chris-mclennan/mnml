@@ -1,5 +1,9 @@
 /target
 .mnml/
+# The demo workspace's .mnml/ carries the demo-scope integration
+# overrides + sample findings — those SHIP with mnml. Only the
+# runtime scratch (session.json, ipc/) is filtered, via demo/.gitignore.
+!demo/workspace/.mnml/
 .claude/settings.local.json
 .claude/cache/
 .DS_Store
@@ -23,3 +27,7 @@
 # Anything written to either path stays local.
 findings/
 .findings/
+# Demo-workspace fictitious findings ship with mnml (they seed the
+# `.mnml/findings/*.md` viewer in demo mode). Everything else under
+# `findings/` remains local.
+!demo/workspace/.mnml/findings/

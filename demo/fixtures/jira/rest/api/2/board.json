@@ -1,0 +1,6 @@
+{
+  "values": [
+    {"id": 42, "name": "LOOP — main", "type": "kanban", "projectId": 10001},
+    {"id": 43, "name": "LOOP — release train", "type": "scrum", "projectId": 10001}
+  ]
+}

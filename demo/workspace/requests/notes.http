@@ -1,0 +1,16 @@
+### List notes
+GET http://localhost:7070/notes
+Accept: application/json
+
+### Create a note
+POST http://localhost:7070/notes
+Content-Type: application/json
+
+{
+  "title": "kickoff",
+  "body": "loop v0 planning"
+}
+
+### Search
+GET http://localhost:7070/notes/search?q={{query}}
+Accept: application/json

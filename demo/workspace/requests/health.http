@@ -1,0 +1,2 @@
+### Health check
+GET http://localhost:7070/health

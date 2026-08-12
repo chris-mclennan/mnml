@@ -278,6 +278,36 @@ fn test_subcommand(argv: Vec<String>) -> ExitCode {
     }
 }
 
+// ───────────────────────── Demo mock server ───────────────────────
+
+/// TCP-probe `localhost:7071` — the mock server's port. Cheap check
+/// before we try to spawn a duplicate.
+fn mock_server_reachable() -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+    let addr: SocketAddr = "127.0.0.1:7071".parse().unwrap();
+    TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
+}
+
+/// Spawn `demo/server/server.py` in the background. Silent success —
+/// mnml keeps running whether the server came up or not. On failure
+/// integration panes just say "connection refused" and the user sees
+/// what's wrong.
+fn spawn_mock_server_background() {
+    let script = std::env::var_os("MNML_DEMO_SERVER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/server/server.py"));
+    if !script.is_file() {
+        eprintln!("mnml --demo: mock server not found at {}", script.display());
+        return;
+    }
+    let _ = std::process::Command::new("python3")
+        .arg(&script)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 // ───────────────────────── TUI / headless ─────────────────────────
 
 struct TuiArgs {
@@ -298,6 +328,14 @@ struct TuiArgs {
     /// lands the user on the Integrations panel. Skipped if the
     /// command id doesn't resolve.
     show_panel: Option<String>,
+    /// Demo mode: point mnml at the bundled `demo/workspace/`
+    /// (populated Loop / Bloom Labs sample repo with fixtures for
+    /// jira / bitbucket / github). If a mock API server isn't
+    /// already running on `localhost:7071`, spawn `demo/server/server.py`
+    /// in the background so the integration panes render populated
+    /// data. Used for screenshots + demo videos; real config is
+    /// never touched.
+    demo: bool,
 }
 
 fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
@@ -310,6 +348,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut no_workspace = false;
     let mut sandbox = false;
     let mut show_panel: Option<String> = None;
+    let mut demo = false;
 
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
@@ -330,6 +369,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
             "--startup-picker" => startup_picker = true,
             "--no-workspace" => no_workspace = true,
             "--sandbox" => sandbox = true,
+            "--demo" => demo = true,
             "--show" => {
                 show_panel = Some(
                     it.next()
@@ -340,7 +380,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace] [--sandbox] [--show PANEL]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace] [--sandbox] [--demo] [--show PANEL]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n\n\
                      flags:\n  \
                        --startup-picker      show a JetBrains-style chooser overlay on launch\n                                         (also enabled by MNML_STARTUP_PICKER=1)\n  \
@@ -358,6 +398,26 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 workspace = Some(PathBuf::from(s));
             }
         }
+    }
+
+    // `--demo` overrides workspace resolution — always boots against
+    // the bundled `demo/workspace/`. Any user-supplied workspace is
+    // ignored (they can bypass by running without `--demo`). The
+    // workspace is located via `$MNML_DEMO_WORKSPACE` env override,
+    // else compile-time `CARGO_MANIFEST_DIR/demo/workspace/`. Released
+    // binaries without either resolution path will error out clearly.
+    if demo {
+        let demo_ws = std::env::var_os("MNML_DEMO_WORKSPACE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/workspace"));
+        if !demo_ws.is_dir() {
+            return Err(format!(
+                "--demo: workspace not found at {}. Set $MNML_DEMO_WORKSPACE to point at a mnml \
+                 checkout's demo/workspace/ directory, or run from the source tree.",
+                demo_ws.display()
+            ));
+        }
+        workspace = Some(demo_ws);
     }
 
     // Workspace resolution order:
@@ -403,6 +463,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         startup_picker,
         sandbox,
         show_panel,
+        demo,
     })
 }
 
@@ -554,6 +615,23 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         // toast rather than silently no-oping. Doesn't kick until after
         // the tick loop starts; harmless if the id doesn't resolve.
         mnml::command::run(&cmd_id, &mut app);
+    }
+    // Demo mode banner + mock-server autospawn. Real integrations
+    // never see demo data outside this workspace (per-workspace
+    // manifest overrides in demo/workspace/.mnml/integrations/*.override.toml
+    // point at localhost:7071; without --demo those files aren't in
+    // the resolution path). Spawning here (not at App::new) so the
+    // test suite + headless E2E don't accidentally launch a listener.
+    if args.demo {
+        app.toast_persistent(
+            "demo-mode",
+            "DEMO MODE — Loop (Bloom Labs) sample workspace. Integrations \
+             hit localhost:7071 (mock). Real config safe.",
+            mnml::app::ToastLevel::Info,
+        );
+        if !mock_server_reachable() {
+            spawn_mock_server_background();
+        }
     }
     // Background GitHub-releases probe. Skipped in headless (no
     // toast surface). Notification-only — no in-app installer.

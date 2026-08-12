@@ -1,0 +1,15 @@
+# Demo-mode override — points jira at the local mock server so
+# `mnml --demo` renders populated tickets without hitting real
+# Atlassian. Zero effect outside `demo/workspace/` (per-workspace
+# manifests are demo-scope only).
+id = "jira"
+
+[chip]
+enabled = true
+in_palette_bar = false
+
+[env]
+JIRA_BASE_URL = "http://localhost:7071/jira"
+JIRA_EMAIL = "ava@bloomlabs.dev"
+JIRA_API_TOKEN = "demo-token-loop"
+JIRA_PROJECT = "LOOP"

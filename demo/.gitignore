@@ -1,0 +1,11 @@
+# Demo workspace ships as a live git repo (10 fictional commits +
+# 2 feature branches). We check in the files but not workspace/.git
+# — mnml's own repo history shouldn't shadow the demo repo's history.
+# On first `mnml --demo` launch, if workspace/.git is missing, it
+# gets seeded from workspace-history.sh (see main.rs demo mode).
+workspace/.git/
+
+# Scratch data mnml writes into the demo workspace at runtime.
+workspace/.mnml/session.json
+workspace/.mnml/last-session.json
+workspace/.mnml/ipc/
