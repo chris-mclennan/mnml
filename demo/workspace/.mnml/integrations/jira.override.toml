@@ -9,6 +9,7 @@ enabled = true
 in_palette_bar = false
 
 [env]
+JIRA_SITE_URL = "http://localhost:7071/jira"
 JIRA_BASE_URL = "http://localhost:7071/jira"
 JIRA_EMAIL = "ava@bloomlabs.dev"
 JIRA_API_TOKEN = "demo-token-notely"

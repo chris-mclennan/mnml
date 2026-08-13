@@ -171,6 +171,26 @@ pub struct IntegrationManifest {
     // ── Source tracking ────────────────────────
     #[serde(skip)]
     pub source_path: PathBuf,
+
+    /// Extra env vars this integration's Pty spawns should inject,
+    /// merged from `.override.toml`'s `[env]` block after base
+    /// manifest load. Task #933 — lets a workspace override (e.g.
+    /// demo mode's `demo/workspace/.mnml/integrations/jira.override.toml`)
+    /// declare per-integration env vars in the manifest layer instead
+    /// of via process-global `unsafe std::env::set_var` at startup.
+    /// Consumed by `open_pty_dir` alongside the existing
+    /// `integration_auth_env` cross-share.
+    #[serde(skip)]
+    pub override_env: std::collections::HashMap<String, String>,
+
+    /// Values to overlay on top of the disk `[auth_values]` table
+    /// (see `AuthField`), merged from `.override.toml`'s
+    /// `[auth_values]` block. Task #933 — override WINS on
+    /// per-key conflict so a workspace override can shadow a
+    /// user's saved value without touching their user-config file.
+    /// Consumed by `App::integration_auth_env`.
+    #[serde(skip)]
+    pub override_auth_values: std::collections::HashMap<String, String>,
 }
 
 /// One field the user needs to configure before the integration
@@ -444,6 +464,27 @@ pub struct IntegrationManifestOverride {
     pub description: Option<String>,
     #[serde(default)]
     pub chip: Option<ChipOverride>,
+    /// `[env]` — extra env vars this integration's Pty spawns should
+    /// inject. Task #933 (2026-08-12). Arbitrary keys; not tied to
+    /// the `[[auth]]` schema. Copied into
+    /// `IntegrationManifest::override_env` by `apply_to`, then
+    /// consumed at spawn time by `open_pty_dir` alongside
+    /// `integration_auth_env` (which itself cross-shares across
+    /// installed integrations — so setting `$BITBUCKET_ACCESS_TOKEN`
+    /// on `bitbucket.override.toml` flows to jira's Fix Versions
+    /// view for free, same as the disk `[auth_values]` path).
+    #[serde(default)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+    /// `[auth_values]` — values to overlay on top of the disk
+    /// `[auth_values]` for this integration. Task #933
+    /// (2026-08-12). Keys should match a base-manifest
+    /// `[[auth]].key`; values follow the same shape (secret
+    /// strings, URLs, etc.). OVERRIDE WINS on per-key conflict
+    /// with the disk value — so a workspace override can shadow
+    /// a user's saved token for the current workspace without
+    /// touching the user-config file.
+    #[serde(default)]
+    pub auth_values: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Chip-level overrides. Every field optional; only set ones win.
@@ -496,6 +537,18 @@ impl IntegrationManifestOverride {
             if let Some(v) = o.in_palette_bar {
                 chip.in_palette_bar = v;
             }
+        }
+        // Task #933 — layer the two new tables onto the base
+        // manifest's runtime-only override_* fields. Multiple
+        // .override.toml layers (user-config + workspace) would
+        // both call apply_to sequentially — later calls
+        // overwrite earlier ones per-key, matching the general
+        // "workspace wins over user-config" precedence.
+        if let Some(env) = self.env {
+            base.override_env.extend(env);
+        }
+        if let Some(av) = self.auth_values {
+            base.override_auth_values.extend(av);
         }
     }
 }
@@ -781,6 +834,8 @@ color = "nonsense-neon"
             docs: None,
             repository: None,
             author: None,
+            override_env: std::collections::HashMap::new(),
+            override_auth_values: std::collections::HashMap::new(),
         };
         assert!(m.is_ready());
 
@@ -838,6 +893,59 @@ in_palette_bar = true
         assert_eq!(m.description.as_deref(), Some("Interactive process viewer"));
         assert_eq!(m.chip.as_ref().unwrap().glyph, "H");
         assert!(m.chip.as_ref().unwrap().enabled);
+    }
+
+    #[test]
+    fn override_toml_env_and_auth_values_land_on_manifest() {
+        // Task #933 — verify the two new tables round-trip through
+        // scan_dir + apply_to and end up on the base manifest's
+        // runtime `override_env` / `override_auth_values`.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("jira.toml"),
+            r#"id = "jira"
+label = "Jira"
+[chip]
+glyph = "J"
+fallback = "J"
+color = "cyan"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("jira.override.toml"),
+            r#"id = "jira"
+
+[env]
+JIRA_BASE_URL = "http://localhost:7071/jira"
+JIRA_PROJECT = "NTL"
+
+[auth_values]
+api_token = "demo-token"
+email = "ava@bloomlabs.dev"
+"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        scan_dir(dir.path(), &mut out);
+        assert_eq!(out.len(), 1);
+        let m = &out[0];
+        assert_eq!(
+            m.override_env.get("JIRA_BASE_URL").map(String::as_str),
+            Some("http://localhost:7071/jira")
+        );
+        assert_eq!(
+            m.override_env.get("JIRA_PROJECT").map(String::as_str),
+            Some("NTL")
+        );
+        assert_eq!(
+            m.override_auth_values.get("api_token").map(String::as_str),
+            Some("demo-token")
+        );
+        assert_eq!(
+            m.override_auth_values.get("email").map(String::as_str),
+            Some("ava@bloomlabs.dev")
+        );
     }
 
     #[test]

@@ -136,6 +136,30 @@ impl App {
         // integration owns a given env var.
         let mut env_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
+        // Helper: resolve the effective (key → value) auth-values
+        // map for one manifest. Reads disk `[auth_values]`, then
+        // overlays `manifest.override_auth_values` (task #933) —
+        // override wins per-key so a workspace `.override.toml`
+        // shadows a user-config saved token for the workspace
+        // without touching user config.
+        let effective_auth_values = |m: &crate::integration_manifest::IntegrationManifest| {
+            let mut stored: std::collections::HashMap<String, String> =
+                std::fs::read_to_string(&m.source_path)
+                    .ok()
+                    .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+                    .and_then(|v| v.get("auth_values").cloned())
+                    .and_then(|v| v.as_table().cloned())
+                    .map(|t| {
+                        t.into_iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            for (k, v) in &m.override_auth_values {
+                stored.insert(k.clone(), v.clone());
+            }
+            stored
+        };
         // Pass 1 — every OTHER integration's auth-values, lowest
         // priority. Skipped for integrations with no [[auth]].
         for manifest in self
@@ -143,23 +167,18 @@ impl App {
             .iter()
             .filter(|m| m.id != integration_id && !m.auth.is_empty())
         {
-            let stored: toml::value::Table = std::fs::read_to_string(&manifest.source_path)
-                .ok()
-                .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
-                .and_then(|v| v.get("auth_values").cloned())
-                .and_then(|v| v.as_table().cloned())
-                .unwrap_or_default();
+            let stored = effective_auth_values(manifest);
             for field in &manifest.auth {
                 let Some(env_name) = field.env_fallback.as_ref() else {
                     continue;
                 };
-                let Some(stored_val) = stored.get(&field.key).and_then(|x| x.as_str()) else {
+                let Some(stored_val) = stored.get(&field.key) else {
                     continue;
                 };
                 if !stored_val.is_empty() {
                     env_map
                         .entry(env_name.clone())
-                        .or_insert_with(|| stored_val.to_string());
+                        .or_insert_with(|| stored_val.clone());
                 }
             }
         }
@@ -171,22 +190,50 @@ impl App {
             .find(|m| m.id == integration_id)
             && !manifest.auth.is_empty()
         {
-            let stored: toml::value::Table = std::fs::read_to_string(&manifest.source_path)
-                .ok()
-                .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
-                .and_then(|v| v.get("auth_values").cloned())
-                .and_then(|v| v.as_table().cloned())
-                .unwrap_or_default();
+            let stored = effective_auth_values(manifest);
             for field in &manifest.auth {
                 let Some(env_name) = field.env_fallback.as_ref() else {
                     continue;
                 };
-                let Some(stored_val) = stored.get(&field.key).and_then(|x| x.as_str()) else {
+                let Some(stored_val) = stored.get(&field.key) else {
                     continue;
                 };
                 if !stored_val.is_empty() {
-                    env_map.insert(env_name.clone(), stored_val.to_string());
+                    env_map.insert(env_name.clone(), stored_val.clone());
                 }
+            }
+        }
+        env_map.into_iter().collect()
+    }
+
+    /// Task #933 — collect the raw `[env]` overrides across every
+    /// installed integration. Same precedence shape as
+    /// `integration_auth_env`: pass 1 layers every OTHER
+    /// integration's `override_env` at lowest priority, pass 2
+    /// lets the CURRENT firing integration's `override_env` win
+    /// on any key collision. Merged into `BinaryProfile.env` by
+    /// `open_pty_dir`. Independent of the `[[auth]]` schema —
+    /// arbitrary key = value pairs. Empty override_env maps are
+    /// no-ops.
+    pub fn integration_override_env(&self, integration_id: &str) -> Vec<(String, String)> {
+        let mut env_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for manifest in self
+            .integration_manifests
+            .iter()
+            .filter(|m| m.id != integration_id && !m.override_env.is_empty())
+        {
+            for (k, v) in &manifest.override_env {
+                env_map.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+        if let Some(manifest) = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == integration_id)
+        {
+            for (k, v) in &manifest.override_env {
+                env_map.insert(k.clone(), v.clone());
             }
         }
         env_map.into_iter().collect()

@@ -9251,6 +9251,18 @@ impl App {
                     profile.env.push((k, v));
                 }
             }
+            // Task #933 — layer any `.override.toml [env]` blocks
+            // on top. Same cross-integration share as auth_env
+            // (setting an env var on ANY installed integration's
+            // override flows to every spawn — demo mode uses this
+            // to seed jira/bitbucket/github vars without process-
+            // global `unsafe std::env::set_var`).
+            let override_env = self.integration_override_env(&integ_id);
+            for (k, v) in override_env {
+                if !profile.env.iter().any(|(pk, _)| pk == &k) {
+                    profile.env.push((k, v));
+                }
+            }
         }
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.

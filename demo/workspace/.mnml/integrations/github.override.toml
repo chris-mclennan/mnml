@@ -1,0 +1,13 @@
+# Demo-mode override — see jira.override.toml note. Points at the
+# local mock server.
+id = "github"
+
+[chip]
+enabled = true
+in_palette_bar = false
+
+[env]
+GITHUB_BASE_URL = "http://localhost:7071/github"
+GITHUB_TOKEN = "demo-token-notely"
+GITHUB_OWNER = "bloomlabs"
+GITHUB_REPO = "notely"

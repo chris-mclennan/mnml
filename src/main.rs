@@ -453,43 +453,6 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
     Ok(())
 }
 
-/// Set the demo-mode sibling env vars on the current process. Child
-/// Pty spawns inherit these by default, so jira / bitbucket / github
-/// panes see mock URLs + demo tokens without a manifest-override
-/// extension (the current `IntegrationManifestOverride` shape doesn't
-/// support `[env]` / `[auth_values]` diffs).
-///
-/// Called from `run_tui` BEFORE `App::new` — which triggers
-/// `maybe_refresh_marketplace_on_startup` and other background threads
-/// that call `reqwest`, which reads proxy env vars concurrently.
-/// Setting env vars while those threads exist is UB. Doing the writes
-/// here — single-threaded, no snapshots taken yet — sidesteps the
-/// safety hazard.
-///
-/// SAFETY: `std::env::set_var` is unsafe iff another thread might be
-/// reading env vars concurrently. `main.rs` guarantees single-threaded
-/// state up to this call site (all background threads spawn from
-/// `App::new` and later).
-fn inject_demo_env() {
-    unsafe {
-        std::env::set_var("JIRA_SITE_URL", "http://localhost:7071/jira");
-        std::env::set_var("JIRA_BASE_URL", "http://localhost:7071/jira");
-        std::env::set_var("JIRA_EMAIL", "ava@bloomlabs.dev");
-        std::env::set_var("JIRA_API_TOKEN", "demo-token-notely");
-        std::env::set_var("JIRA_PROJECT", "NTL");
-        std::env::set_var("BITBUCKET_BASE_URL", "http://localhost:7071/bitbucket");
-        std::env::set_var("BITBUCKET_USER", "avachen");
-        std::env::set_var("BITBUCKET_ACCESS_TOKEN", "demo-token-notely");
-        std::env::set_var("BITBUCKET_WORKSPACE", "bloomlabs");
-        std::env::set_var("BITBUCKET_REPO", "notely");
-        std::env::set_var("BITBUCKET_APP_PASSWORD", "demo-token-notely");
-        std::env::set_var("GITHUB_BASE_URL", "http://localhost:7071/github");
-        std::env::set_var("GITHUB_TOKEN", "demo-token-notely");
-        std::env::set_var("GITHUB_OWNER", "bloomlabs");
-        std::env::set_var("GITHUB_REPO", "notely");
-    }
-}
-
 /// TCP-probe `localhost:7071` — the mock server's port. Cheap check
 /// before we try to spawn a duplicate. Doesn't distinguish "our
 /// server" from "someone else on 7071" — best-effort; a wrong
@@ -724,7 +687,12 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // process. Same rationale for `[[bitbucket.repos]]` and any other
     // config that would surface real work.
     if args.demo && !args.headless {
-        inject_demo_env();
+        // Task #933 — demo env vars now flow through each
+        // `demo/workspace/.mnml/integrations/<id>.override.toml`'s
+        // `[env]` block (see `IntegrationManifestOverride`) instead
+        // of a process-global `unsafe std::env::set_var` here.
+        // Workspace init runs single-threaded so the config-workspace
+        // wipe still stays here — that's not env-var-set territory.
         config.workspaces.clear();
     }
 
