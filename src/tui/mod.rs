@@ -1981,6 +1981,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.rects.tab_drop_target = None;
         return;
     }
+    // Same idiom for the hover-help drag-resize handle. If the terminal
+    // ever fails to deliver the mouse-up (focus loss mid-drag, SGR glitch,
+    // mouse leaves the window), the drag stays armed and would silently
+    // intercept the next unrelated left-drag anywhere. Esc gives the user
+    // a bailout.
+    if key.code == KeyCode::Esc && app.hover_help_drag.is_some() {
+        app.hover_help_drag = None;
+        return;
+    }
     // AI ghost-text: while a suggestion is showing, bare `Tab` accepts
     // all of it, `Ctrl+Right` accepts the next word, `Ctrl+Down` the
     // next line (both leave the remainder as a ghost); any other key

@@ -446,9 +446,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // R10 api-workflow SEV-2 — hover-help info box used to live
         // only inside `tree_view::draw`, so switching from Explorer
         // to Http / Git / Integrations / Agents / anything else made
-        // the info panel vanish. Reserve `INFO_BOX_HEIGHT` here
-        // (regardless of section), pass the reduced `panel_area` to
-        // every section-draw, then paint the info box below at the
+        // the info panel vanish. Reserve `app.hover_help_height` here
+        // (user-tunable via drag-resize, seeded from `[ui] hover_help_height`
+        // whose default is `DEFAULT_INFO_BOX_HEIGHT`, regardless of
+        // section), pass the reduced `panel_area` to every
+        // section-draw, then paint the info box below at the
         // consistent bottom position. `tree_view` no longer
         // reserves internally.
         let (panel_area, hover_help_area): (Rect, Option<Rect>) =
@@ -469,6 +471,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 (body, Some(boxed))
             } else {
                 app.rects.hover_help_strip = None;
+                // If a drag was in flight when the panel became too
+                // small to render (window shrink mid-drag), abort it
+                // — the drag target no longer exists, and leaving
+                // `hover_help_drag = Some` would silently intercept
+                // the next unrelated left-drag anywhere in the UI.
+                app.hover_help_drag = None;
                 (content_area, None)
             };
         let content_area = panel_area;
