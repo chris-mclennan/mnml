@@ -1712,5 +1712,13 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click to dismiss · right-click for menu · hover pauses TTL".into()),
             ))
         }
+        // Task #929 — dropdown-row tooltips are suppressed to avoid
+        // painting a floating popup on top of the open menu (same
+        // rationale as `MenuBarWord` while a menu is open, see the
+        // `menu_open.is_some()` guard above). The info-panel path
+        // still fires — `HoverChip::MenuBarItem` routes through
+        // `info_view_copy::resolve_menu_bar_item_copy` and lands in
+        // the bottom-left panel.
+        HoverChip::MenuBarItem { .. } => None,
     }
 }

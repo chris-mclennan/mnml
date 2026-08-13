@@ -24,14 +24,80 @@ use crate::ui::info_view::{InfoViewCopy, InfoViewTarget, PaletteLink, ShortcutHi
 /// Look up the curated copy for `target`. Returns `None` when nothing
 /// matches — caller falls through to the auto-derived placeholder
 /// (Phase 1.5) or empty-state copy.
-pub fn lookup(_app: &App, target: &InfoViewTarget) -> Option<InfoViewCopy> {
+pub fn lookup(app: &App, target: &InfoViewTarget) -> Option<InfoViewCopy> {
     match target {
+        // Task #929 — a `MenuBarItem` chip resolves its (menu_idx,
+        // item_idx) to real labels via `menu_bar::bar(app)`, then
+        // delegates to the curated `menu_item_copy` map. If no
+        // curated entry exists, fall back to a generic per-item
+        // placeholder so hovering an uncurated menu row still
+        // describes what it is (not "no help — falls through to
+        // pane"). Handled before the generic `Chip` arm so it
+        // wins over `chip_copy`.
+        InfoViewTarget::Chip(crate::HoverChip::MenuBarItem { menu_idx, item_idx }) => {
+            resolve_menu_bar_item_copy(app, *menu_idx, *item_idx)
+        }
         InfoViewTarget::Chip(chip) => chip_copy(*chip),
         InfoViewTarget::TreeRow { label, is_dir } => tree_row_copy(label, *is_dir),
         InfoViewTarget::MenuItem { menu, item } => menu_item_copy(menu, item),
         InfoViewTarget::EditorSymbol { .. } => None,
         InfoViewTarget::None => None,
     }
+}
+
+/// Decode `(menu_idx, item_idx)` — with the encoded submenu shape
+/// used in `ui/menu_bar.rs` (`1000 + parent*100 + sub` for submenu
+/// rows) — into `(menu_label, item_label)` pulled from
+/// `menu_bar::bar(app)`, then hand off to `menu_item_copy`. If no
+/// curated entry exists, return a generic per-item placeholder so
+/// the info panel still describes the hovered row.
+fn resolve_menu_bar_item_copy(app: &App, menu_idx: usize, encoded: usize) -> Option<InfoViewCopy> {
+    use crate::menu_bar::MenuItem;
+    let menus = crate::menu_bar::bar(app);
+    let menu = menus.get(menu_idx)?;
+    let menu_label = menu.label.trim().to_string();
+    let (parent_label, item_label) = if encoded >= 1000 {
+        // Submenu row: `1000 + parent*100 + sub`.
+        let parent = (encoded - 1000) / 100;
+        let sub = (encoded - 1000) % 100;
+        let parent_item = menu.items.get(parent)?;
+        let (parent_lbl, sub_items) = match parent_item {
+            MenuItem::Submenu { label, items } => (Some(label.clone()), items),
+            _ => return None,
+        };
+        let sub_item = sub_items.get(sub)?;
+        let sub_lbl = match sub_item {
+            MenuItem::Action { label, .. } | MenuItem::Submenu { label, .. } => label.clone(),
+            MenuItem::Separator => return None,
+        };
+        (parent_lbl, sub_lbl)
+    } else {
+        let item = menu.items.get(encoded)?;
+        let item_lbl = match item {
+            MenuItem::Action { label, .. } | MenuItem::Submenu { label, .. } => label.clone(),
+            MenuItem::Separator => return None,
+        };
+        (None, item_lbl)
+    };
+    // Curated lookup keys on the top-level menu label — that's
+    // what `menu_item_copy`'s match arms use today.
+    if let Some(curated) = menu_item_copy(&menu_label, &item_label) {
+        return Some(curated);
+    }
+    // Fallback: friendly title + "click or Enter to fire". For
+    // submenu rows include the parent-item label in the title
+    // (e.g. "View → Zoom → Zoom in") so context isn't lost.
+    let clean_item = item_label.trim();
+    let title = match &parent_label {
+        Some(p) => format!("{menu_label} → {} → {clean_item}", p.trim()),
+        None => format!("{menu_label} → {clean_item}"),
+    };
+    Some(InfoViewCopy {
+        title,
+        body: "Menu item. Click or press Enter to fire its command.".into(),
+        shortcuts: vec![ShortcutHint::new("Enter", "Fire")],
+        ..Default::default()
+    })
 }
 
 // ── Chrome chips ────────────────────────────────────────────────────
@@ -1098,6 +1164,11 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
+        // Task #929 — `MenuBarItem` is resolved via
+        // `resolve_menu_bar_item_copy` in `lookup()` before it can
+        // reach here; this arm just satisfies the exhaustiveness
+        // checker so `chip_copy` stays exhaustive over `HoverChip`.
+        MenuBarItem { .. } => None,
     }
 }
 

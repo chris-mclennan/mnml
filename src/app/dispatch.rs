@@ -626,6 +626,27 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::MenuBarWord(idx));
     }
+    // Task #929 (2026-08-12) — when a menu-bar dropdown is open,
+    // hover a row inside it to route hover-help through
+    // `InfoViewTarget::MenuItem`. `menu_bar_items` is only
+    // populated while `app.menu_open` is `Some`, but we gate on
+    // both for defence in depth. `item_idx` uses the encoded
+    // format from `ui/menu_bar.rs`: raw index (< 1000) for
+    // top-level rows, `1000 + parent*100 + sub` for submenu rows.
+    // The MenuBarItem resolver in `ui/info_view_copy.rs` decodes
+    // the same way.
+    if let Some(open) = app.menu_open.as_ref()
+        && let Some(&(_, item_idx)) = app
+            .rects
+            .menu_bar_items
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::MenuBarItem {
+            menu_idx: open.menu_idx,
+            item_idx,
+        });
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

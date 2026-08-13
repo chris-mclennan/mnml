@@ -523,6 +523,22 @@ pub enum HoverChip {
     /// File / Edit / Selection / …). Tooltip explains the
     /// click behavior + Alt+<letter> accelerator.
     MenuBarWord(usize),
+    /// Task #929 (2026-08-12) — hover on an *open dropdown item*
+    /// inside a menu-bar menu (e.g. `File → New file`). Routes
+    /// through `InfoViewTarget::MenuItem { menu, item }` so the
+    /// curated `menu_item_copy` entries in
+    /// `src/ui/info_view_copy.rs` reach the info-panel — until
+    /// this variant landed, hovered items only surfaced the
+    /// generic `MenuBarWord` (parent) copy.
+    /// `(menu_idx, item_idx)` — indices into `menu_bar::bar(app)`
+    /// and the open menu's items list. Submenu items reuse
+    /// this variant with `item_idx` = parent-item index (the
+    /// submenu's own row hits are recorded separately by the
+    /// dropdown renderer).
+    MenuBarItem {
+        menu_idx: usize,
+        item_idx: usize,
+    },
     /// #polish 2026-07-06 — file-name chip on the statusline
     /// (glyph + display_name + dirty marker). Tooltip shows
     /// full absolute path + dirty state; click reveals in tree.
