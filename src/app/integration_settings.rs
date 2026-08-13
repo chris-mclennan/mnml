@@ -206,37 +206,33 @@ impl App {
         env_map.into_iter().collect()
     }
 
-    /// Task #933 — collect the raw `[env]` overrides across every
-    /// installed integration. Same precedence shape as
-    /// `integration_auth_env`: pass 1 layers every OTHER
-    /// integration's `override_env` at lowest priority, pass 2
-    /// lets the CURRENT firing integration's `override_env` win
-    /// on any key collision. Merged into `BinaryProfile.env` by
+    /// Task #933 — collect the `[env]` overrides for ONE
+    /// integration's spawn. Merged into `BinaryProfile.env` by
     /// `open_pty_dir`. Independent of the `[[auth]]` schema —
-    /// arbitrary key = value pairs. Empty override_env maps are
-    /// no-ops.
+    /// arbitrary key = value pairs.
+    ///
+    /// Deliberately does NOT cross-share across integrations, in
+    /// contrast to `integration_auth_env`. Rationale: auth_env's
+    /// cross-share is gated by `AuthField.env_fallback` — a
+    /// declared, conventional env-var name (`$BITBUCKET_ACCESS_TOKEN`)
+    /// that other siblings are documented to consume. `override_env`
+    /// has no such convention — keys are arbitrary — so cross-sharing
+    /// would leak, say, a jira `[env]` block into every other
+    /// integration's Pty spawn (including external-tool launchers
+    /// like `htop` / `btop`, which route through the same
+    /// `open_pty_dir` path via `run_external_tool`). Empty
+    /// override_env is a no-op.
     pub fn integration_override_env(&self, integration_id: &str) -> Vec<(String, String)> {
-        let mut env_map: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
-        for manifest in self
-            .integration_manifests
-            .iter()
-            .filter(|m| m.id != integration_id && !m.override_env.is_empty())
-        {
-            for (k, v) in &manifest.override_env {
-                env_map.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-        }
-        if let Some(manifest) = self
-            .integration_manifests
+        self.integration_manifests
             .iter()
             .find(|m| m.id == integration_id)
-        {
-            for (k, v) in &manifest.override_env {
-                env_map.insert(k.clone(), v.clone());
-            }
-        }
-        env_map.into_iter().collect()
+            .map(|m| {
+                m.override_env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// True when the integration has at least one `required = true`

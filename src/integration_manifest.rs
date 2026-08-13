@@ -178,8 +178,10 @@ pub struct IntegrationManifest {
     /// demo mode's `demo/workspace/.mnml/integrations/jira.override.toml`)
     /// declare per-integration env vars in the manifest layer instead
     /// of via process-global `unsafe std::env::set_var` at startup.
-    /// Consumed by `open_pty_dir` alongside the existing
-    /// `integration_auth_env` cross-share.
+    /// Consumed by `open_pty_dir` — injected ONLY into this
+    /// integration's own spawns (no cross-share, unlike
+    /// `integration_auth_env`, whose share is gated by known
+    /// `env_fallback` names).
     #[serde(skip)]
     pub override_env: std::collections::HashMap<String, String>,
 
@@ -464,15 +466,18 @@ pub struct IntegrationManifestOverride {
     pub description: Option<String>,
     #[serde(default)]
     pub chip: Option<ChipOverride>,
-    /// `[env]` — extra env vars this integration's Pty spawns should
-    /// inject. Task #933 (2026-08-12). Arbitrary keys; not tied to
-    /// the `[[auth]]` schema. Copied into
+    /// `[env]` — extra env vars this integration's Pty spawns
+    /// should inject. Task #933 (2026-08-12). Arbitrary keys; not
+    /// tied to the `[[auth]]` schema and NOT cross-shared with
+    /// other integrations (contrast: `[auth_values]` propagates
+    /// via `AuthField.env_fallback`; `[env]` has no matching
+    /// convention, so cross-share would leak arbitrary keys into
+    /// unrelated spawns). Copied into
     /// `IntegrationManifest::override_env` by `apply_to`, then
-    /// consumed at spawn time by `open_pty_dir` alongside
-    /// `integration_auth_env` (which itself cross-shares across
-    /// installed integrations — so setting `$BITBUCKET_ACCESS_TOKEN`
-    /// on `bitbucket.override.toml` flows to jira's Fix Versions
-    /// view for free, same as the disk `[auth_values]` path).
+    /// consumed at spawn time by `open_pty_dir` for this
+    /// integration only. Cross-integration secret sharing should
+    /// go through `[auth_values]` (which uses `env_fallback` to
+    /// name the env var the other siblings expect).
     #[serde(default)]
     pub env: Option<std::collections::HashMap<String, String>>,
     /// `[auth_values]` — values to overlay on top of the disk
@@ -539,11 +544,15 @@ impl IntegrationManifestOverride {
             }
         }
         // Task #933 — layer the two new tables onto the base
-        // manifest's runtime-only override_* fields. Multiple
-        // .override.toml layers (user-config + workspace) would
-        // both call apply_to sequentially — later calls
-        // overwrite earlier ones per-key, matching the general
-        // "workspace wins over user-config" precedence.
+        // manifest's runtime-only override_* fields via `extend`
+        // (later inserts win per-key). In practice each base
+        // manifest gets exactly one `.override.toml` applied to
+        // it — `load_all_with_user_base` dedupes whole manifests
+        // by id (workspace replaces user-global entirely, not a
+        // per-key merge across scopes), so the per-key overwrite
+        // only matters if a single override file ever grew a
+        // duplicate key inside one table (toml disallows that at
+        // parse time, so also effectively never).
         if let Some(env) = self.env {
             base.override_env.extend(env);
         }

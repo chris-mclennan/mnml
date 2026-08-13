@@ -9251,12 +9251,16 @@ impl App {
                     profile.env.push((k, v));
                 }
             }
-            // Task #933 — layer any `.override.toml [env]` blocks
-            // on top. Same cross-integration share as auth_env
-            // (setting an env var on ANY installed integration's
-            // override flows to every spawn — demo mode uses this
-            // to seed jira/bitbucket/github vars without process-
-            // global `unsafe std::env::set_var`).
+            // Task #933 — layer any `.override.toml [env]` block
+            // for THIS integration on top. Deliberately NOT
+            // cross-shared across integrations (unlike auth_env,
+            // whose share is gated by AuthField.env_fallback names).
+            // Keeps a workspace override's arbitrary env keys out
+            // of unrelated integrations' spawns (including
+            // external-tool launchers like htop/btop that route
+            // through this same open_pty_dir path via
+            // run_external_tool). Demo mode's per-integration
+            // override files each declare their own [env] block.
             let override_env = self.integration_override_env(&integ_id);
             for (k, v) in override_env {
                 if !profile.env.iter().any(|(pk, _)| pk == &k) {
