@@ -644,25 +644,7 @@ fn friendly_lang(ext: &str) -> String {
 fn describe_active_pane(pane: &crate::pane::Pane) -> Option<(String, Option<String>)> {
     use crate::pane::Pane;
     match pane {
-        Pane::Editor(b) => {
-            let title = pane.title();
-            let lang = b
-                .language_ext
-                .as_deref()
-                .map(|e| e.to_ascii_uppercase())
-                .unwrap_or_else(|| "TEXT".to_string());
-            let lines = b.editor.text().lines().count().max(1);
-            let dirty = if b.dirty { " · unsaved" } else { "" };
-            let primary = format!("{title}  ·  {lang}  ·  {lines} lines{dirty}");
-            let secondary = if b.is_preview {
-                Some("Preview tab — first edit or double-click promotes it.".to_string())
-            } else if b.is_pinned {
-                Some("Pinned — stays at the front of the bufferline.".to_string())
-            } else {
-                None
-            };
-            Some((primary, secondary))
-        }
+        Pane::Editor(b) => Some(describe_editor_pane(pane, b)),
         Pane::Request(_) => Some((
             pane.title(),
             Some("Request pane — Enter to send, Ctrl+S saves as .http/.curl.".into()),
@@ -724,6 +706,135 @@ fn describe_active_pane(pane: &crate::pane::Pane) -> Option<(String, Option<Stri
     }
 }
 
+/// Editor-pane hover-help copy. Priority-based — the first source of
+/// signal that hits wins, since we only get one primary+secondary pair
+/// to render. Ranked:
+///
+///   1. Diagnostic at cursor line (highest signal — user is looking at
+///      an error/warning). Merges LSP + external-linter lists.
+///   2. Word under cursor (LSP-ish symbol name). No hover fetch — just
+///      the identifier + language + the shortcuts to drill into it.
+///   3. Fallback: file title + language + cursor position + line count +
+///      preview/pinned/dirty adornments.
+///
+/// Task #935. R8+ tester rounds asked "how can the hover help be more
+/// helpful when editing code" — this branch used to be dead weight
+/// (just the filename you already see in the tab).
+fn describe_editor_pane(
+    pane: &crate::pane::Pane,
+    b: &crate::buffer::Buffer,
+) -> (String, Option<String>) {
+    use crate::lsp::Severity;
+    let title = pane.title();
+    let (row, col) = b.editor.row_col();
+    let lang = b
+        .language_ext
+        .as_deref()
+        .map(|e| e.to_ascii_uppercase())
+        .unwrap_or_else(|| "TEXT".to_string());
+
+    // Priority 1: diagnostic at cursor line. LSP + linter lists both
+    // count; pick the most severe if multiple hit. Uses inclusive-of-
+    // start / exclusive-of-end range check to match how gutter signs
+    // paint.
+    let cursor_line = row as u32;
+    let sev_rank = |s: Severity| match s {
+        Severity::Error => 4,
+        Severity::Warning => 3,
+        Severity::Info => 2,
+        Severity::Hint => 1,
+    };
+    let mut best: Option<&crate::lsp::Diagnostic> = None;
+    for d in b.diagnostics.iter().chain(b.linter_diagnostics.iter()) {
+        if cursor_line >= d.range.start.line && cursor_line <= d.range.end.line {
+            match best {
+                None => best = Some(d),
+                Some(cur) if sev_rank(d.severity) > sev_rank(cur.severity) => best = Some(d),
+                _ => {}
+            }
+        }
+    }
+    if let Some(d) = best {
+        let sev_label = match d.severity {
+            Severity::Error => "Error",
+            Severity::Warning => "Warning",
+            Severity::Info => "Info",
+            Severity::Hint => "Hint",
+        };
+        let src = d
+            .source
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!(" · {s}"))
+            .unwrap_or_default();
+        let msg = one_line_trunc(&d.message, 160);
+        let primary = format!("{sev_label} at L{}:{}  ·  {title}{src}", row + 1, col + 1);
+        let secondary = Some(format!(
+            "{msg}  ·  [<leader>ca] Code actions · [<leader>d] Diagnostics list",
+        ));
+        return (primary, secondary);
+    }
+
+    // Priority 2: word under cursor (identifier only — word_under_cursor
+    // already returns "" for punctuation / whitespace). Skip when the
+    // buffer is empty or the cursor sits between tokens.
+    let sym = b.editor.word_under_cursor();
+    if !sym.is_empty() && sym.chars().count() <= 48 {
+        let primary = format!("{sym}  ·  {lang}  ·  {title}  ·  L{}:{}", row + 1, col + 1);
+        let secondary =
+            Some("[gd] Definition · [gr] References · [K] Hover · [F2] Rename".to_string());
+        return (primary, secondary);
+    }
+
+    // Priority 3: quiet fallback. Now includes L:C so the panel isn't a
+    // static restatement of the tab title.
+    let lines = b.editor.text().lines().count().max(1);
+    let dirty = if b.dirty { " · unsaved" } else { "" };
+    let primary = format!(
+        "{title}  ·  {lang}  ·  L{}:{}  ·  {lines} lines{dirty}",
+        row + 1,
+        col + 1,
+    );
+    let secondary = if b.is_preview {
+        Some("Preview tab — first edit or double-click promotes it.".to_string())
+    } else if b.is_pinned {
+        Some("Pinned — stays at the front of the bufferline.".to_string())
+    } else {
+        Some(
+            "[gd] Definition · [gr] References · [<leader>ca] Code actions · [Ctrl+P] Files"
+                .to_string(),
+        )
+    };
+    (primary, secondary)
+}
+
+/// Collapse whitespace runs to single spaces and truncate to `max`
+/// chars (adds `…` when truncated). Used to squeeze multi-line LSP
+/// diagnostic messages into a single info-panel line.
+fn one_line_trunc(s: &str, max: usize) -> String {
+    let mut out = String::with_capacity(s.len().min(max + 4));
+    let mut prev_ws = false;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !prev_ws && !out.is_empty() {
+                out.push(' ');
+                prev_ws = true;
+            }
+        } else {
+            out.push(c);
+            prev_ws = false;
+        }
+    }
+    let trimmed = out.trim_end();
+    if trimmed.chars().count() > max {
+        let mut short: String = trimmed.chars().take(max).collect();
+        short.push('…');
+        short
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::wrap_words;
@@ -782,5 +893,28 @@ mod tests {
     #[test]
     fn friendly_lang_unknown_ext_uppercased_fallback() {
         assert_eq!(friendly_lang("xyz"), "XYZ");
+    }
+
+    use super::one_line_trunc;
+
+    #[test]
+    fn one_line_trunc_collapses_whitespace_runs() {
+        assert_eq!(
+            one_line_trunc("expected  u32,\n   found  i64", 40),
+            "expected u32, found i64"
+        );
+    }
+
+    #[test]
+    fn one_line_trunc_truncates_with_ellipsis() {
+        let s = one_line_trunc(&"abcd".repeat(50), 10);
+        assert!(s.ends_with('…'));
+        // 10 chars + 1 ellipsis.
+        assert_eq!(s.chars().count(), 11);
+    }
+
+    #[test]
+    fn one_line_trunc_short_input_unchanged() {
+        assert_eq!(one_line_trunc("short", 40), "short");
     }
 }
