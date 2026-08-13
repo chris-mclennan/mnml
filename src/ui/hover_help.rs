@@ -38,7 +38,8 @@ pub const DEFAULT_INFO_BOX_HEIGHT: u16 = 8;
 
 /// Paint the info box over `area`. Caller reserves the rows only when
 /// `app.config.ui.hover_help` is on AND the left panel is tall enough
-/// to spare `INFO_BOX_HEIGHT`.
+/// to spare `app.hover_help_height` rows (config-seeded from
+/// `DEFAULT_INFO_BOX_HEIGHT`, user-tunable via drag-resize).
 ///
 /// Layout (Info View v0.3 Phase 1.6, matches `docs/design/info-view-v0.3.md`):
 ///
