@@ -4727,6 +4727,16 @@ pub struct App {
     /// over the panel bumps this up/down. Auto-resets when the
     /// committed target changes (fresh copy → back to top).
     pub hover_help_scroll: u16,
+    /// Live height (rows) of the hover-help panel. Initialized from
+    /// `[ui] hover_help_height` on App::new; mutated live during a
+    /// drag on the panel's top border; persisted back to config on
+    /// drag-end. Renderer + layout reservation both read this field,
+    /// NOT the config value — so a mid-drag preview is immediate.
+    pub hover_help_height: u16,
+    /// Drag state for the hover-help panel resize handle:
+    /// `Some((start_mouse_y, start_height))` when the user is
+    /// actively dragging the top border. Cleared on mouse-up.
+    pub hover_help_drag: Option<(u16, u16)>,
     /// Last observed mouse position (col, row) from a `Moved` event.
     /// `None` until the mouse first moves (fresh session or after a
     /// keystroke that reset hover state). Consumed by hover-only
@@ -5333,6 +5343,9 @@ impl App {
         // user's rebrand (default "terminal"; users on ghostty /
         // kitty / wezterm can set their own).
         crate::pty_pane::set_terminal_label(config.ui.terminal_label.clone());
+        // Snapshot values from config that App holds by value (config
+        // itself is moved into the struct below).
+        let hover_help_height_init = config.ui.hover_help_height;
         let workspace = workspace
             .canonicalize()
             .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
@@ -5735,6 +5748,8 @@ impl App {
             hover_help_committed: None,
             hover_help_pending: None,
             hover_help_scroll: 0,
+            hover_help_height: hover_help_height_init,
+            hover_help_drag: None,
             mouse_pos: None,
             hovered_bufferline_tab: None,
             last_tab_close_at: None,

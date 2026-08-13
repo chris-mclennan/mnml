@@ -452,8 +452,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // consistent bottom position. `tree_view` no longer
         // reserves internally.
         let (panel_area, hover_help_area): (Rect, Option<Rect>) =
-            if app.config.ui.hover_help && content_area.height >= hover_help::INFO_BOX_HEIGHT + 8 {
-                let box_h = hover_help::INFO_BOX_HEIGHT;
+            if app.config.ui.hover_help && content_area.height >= app.hover_help_height + 8 {
+                let box_h = app.hover_help_height;
                 let body = Rect {
                     x: content_area.x,
                     y: content_area.y,

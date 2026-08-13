@@ -134,6 +134,43 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             _ => {}
         }
     }
+    // Hover-help drag-to-resize handle: the panel's TOP row (the `─`
+    // divider) doubles as a resize grip. Mouse-down starts a drag,
+    // Drag events adjust the live height, Up commits + persists.
+    // The grip is a 1-cell-tall zone spanning the full panel width.
+    if let Some(rect) = app.rects.hover_help_strip {
+        let is_on_top_row =
+            m.row == rect.y && m.column >= rect.x && m.column < rect.x.saturating_add(rect.width);
+        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) && is_on_top_row {
+            app.hover_help_drag = Some((m.row, app.hover_help_height));
+            return;
+        }
+    }
+    if let Some((start_y, start_h)) = app.hover_help_drag {
+        match m.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // Delta > 0 when the mouse has moved UP from the
+                // start row — user wants to grow the panel. Clamp to
+                // config-load bounds [3, 20] AND to what the current
+                // left-panel height can spare (+8 minimum for the
+                // rest of the panel).
+                let delta_up = start_y.saturating_sub(m.row);
+                let delta_down = m.row.saturating_sub(start_y);
+                let mut new_h = start_h.saturating_add(delta_up).saturating_sub(delta_down);
+                new_h = new_h.clamp(3, 20);
+                app.hover_help_height = new_h;
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let final_h = app.hover_help_height;
+                app.config.ui.hover_help_height = final_h;
+                let _ = crate::app::discovery::persist_ui_int("hover_help_height", final_h as i64);
+                app.hover_help_drag = None;
+                return;
+            }
+            _ => {}
+        }
+    }
 
     // 2026-07-03 — mouse-forwarding to Pty children. When the
     // child inside a Pty pane has enabled terminal-mouse

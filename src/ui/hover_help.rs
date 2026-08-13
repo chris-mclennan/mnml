@@ -75,16 +75,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let copy = debounced_help_copy(app);
 
-    // Row 0 — divider between tree rail and info box.
-    let sep_line = "─".repeat(area.width as usize);
+    // Row 0 — divider + drag-to-resize grip. Center 4 cells switch to
+    // `═` (double horizontal) so users can see the panel is draggable.
+    // Whole row is the hit-target — see `tui/mouse/mod.rs`'s drag
+    // handler on `rects.hover_help_strip`.
+    let w = area.width as usize;
+    let grip_w = 4usize.min(w);
+    let grip_lead = (w.saturating_sub(grip_w)) / 2;
+    let grip_trail = w.saturating_sub(grip_lead + grip_w);
+    let sep_style = Style::default()
+        .fg(t.comment)
+        .bg(body_bg)
+        .add_modifier(Modifier::DIM);
+    let grip_style = Style::default().fg(t.comment).bg(body_bg);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            sep_line,
-            Style::default()
-                .fg(t.comment)
-                .bg(body_bg)
-                .add_modifier(Modifier::DIM),
-        ))),
+        Paragraph::new(Line::from(vec![
+            Span::styled("─".repeat(grip_lead), sep_style),
+            Span::styled("═".repeat(grip_w), grip_style),
+            Span::styled("─".repeat(grip_trail), sep_style),
+        ])),
         Rect {
             x: area.x,
             y: area.y,

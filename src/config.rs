@@ -845,6 +845,15 @@ pub struct UiConfig {
     /// Ex-command: `:set bufferline_diag_style=dot`.
     pub bufferline_diag_style: String,
 
+    /// Rows the hover-help panel occupies at the bottom of the left
+    /// panel. Clamped to `[3, 20]` at load time (below 3 the title +
+    /// body break; above 20 crowds out the tree).
+    ///
+    /// Runtime: dragging the panel's top border via the mouse
+    /// updates a live `App` field; the config value is persisted on
+    /// drag-end. Default 8 matches the pre-resize behavior.
+    pub hover_help_height: u16,
+
     /// Custom label for the generic terminal (bare `:term` with no
     /// binary — shell/zsh/bash/etc). Default `"terminal"` matches
     /// the profile label; set to your terminal-of-choice's name
@@ -1272,6 +1281,7 @@ impl Default for Config {
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
                 bufferline_diag_style: "count".to_string(),
+                hover_help_height: 8,
                 terminal_label: "terminal".to_string(),
                 terminal_glyph_svg: String::new(),
                 top_bar_cluster_mode: "auto".to_string(),
@@ -1660,6 +1670,10 @@ struct RawUi {
     /// See [`UiConfig::bufferline_diag_style`].
     #[serde(default)]
     bufferline_diag_style: Option<String>,
+    /// Height (rows) of the hover-help panel — see
+    /// [`UiConfig::hover_help_height`].
+    #[serde(default)]
+    hover_help_height: Option<u16>,
     /// See [`UiConfig::terminal_label`].
     #[serde(default)]
     terminal_label: Option<String>,
@@ -2182,6 +2196,11 @@ impl Config {
             if matches!(normalized.as_str(), "count" | "dot" | "off") {
                 self.ui.bufferline_diag_style = normalized;
             }
+        }
+        if let Some(h) = raw.ui.hover_help_height {
+            // Clamp to sane bounds — below 3 breaks the title+body
+            // layout, above 20 crowds the tree.
+            self.ui.hover_help_height = h.clamp(3, 20);
         }
         if let Some(s) = raw.ui.terminal_label {
             let trimmed = s.trim();
