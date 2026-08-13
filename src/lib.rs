@@ -530,11 +530,13 @@ pub enum HoverChip {
     /// `src/ui/info_view_copy.rs` reach the info-panel — until
     /// this variant landed, hovered items only surfaced the
     /// generic `MenuBarWord` (parent) copy.
-    /// `(menu_idx, item_idx)` — indices into `menu_bar::bar(app)`
-    /// and the open menu's items list. Submenu items reuse
-    /// this variant with `item_idx` = parent-item index (the
-    /// submenu's own row hits are recorded separately by the
-    /// dropdown renderer).
+    /// `menu_idx` indexes `menu_bar::bar(app)`; `item_idx` uses
+    /// the *encoded* shape produced by `ui/menu_bar.rs`:
+    ///   - top-level row: raw `i` (< 1000),
+    ///   - submenu row:   `1000 + parent_item_idx*100 + sub_i`.
+    /// `resolve_menu_bar_item_copy` in `ui/info_view_copy.rs`
+    /// decodes this on the read side — never hand-decode from
+    /// this comment alone; grep for the producer to stay in sync.
     MenuBarItem {
         menu_idx: usize,
         item_idx: usize,
