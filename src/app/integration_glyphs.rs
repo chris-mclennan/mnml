@@ -867,6 +867,14 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Same ubuntu-CI XDG flake as the sibling test above (see
+        // daa0aa16). `glyph_builder::meta_path()` reaches
+        // `user_config_path()` which consults `$XDG_CONFIG_HOME`
+        // before `$HOME`; a stray XDG value on GH runners routes
+        // `glyph_meta.toml` OUTSIDE the tempdir and any pre-existing
+        // meta content leaks into the assertion, making
+        // `len == 1` fail. Remove XDG for the test's duration.
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let _home = crate::EnvGuard::set("HOME", tmp.path());
         let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
