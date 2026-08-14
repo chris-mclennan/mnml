@@ -62,7 +62,7 @@ fn resolve_menu_bar_item_copy(app: &App, menu_idx: usize, encoded: usize) -> Opt
         let sub = (encoded - 1000) % 100;
         let parent_item = menu.items.get(parent)?;
         let (parent_lbl, sub_items) = match parent_item {
-            MenuItem::Submenu { label, items } => (Some(label.clone()), items),
+            MenuItem::Submenu { label, items, .. } => (Some(label.clone()), items),
             _ => return None,
         };
         let sub_item = sub_items.get(sub)?;

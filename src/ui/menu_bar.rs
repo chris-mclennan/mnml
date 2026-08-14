@@ -114,6 +114,23 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
 
     let highlight_visible = open.keyboard_opened || open.item_idx != usize::MAX;
 
+    // Task #886 — reserve an icon column only when at least one
+    // Action/Submenu in this dropdown has an icon. Purely iconless
+    // menus render flush-left as before (no wasted space). Width is
+    // the char-count of the widest icon + 2-cell gap between icon
+    // and label.
+    let icon_col_w = menu
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            MenuItem::Action { icon, .. } | MenuItem::Submenu { icon, .. } => icon.as_deref(),
+            MenuItem::Separator => None,
+        })
+        .map(|s| s.chars().count() as u16)
+        .max()
+        .map(|max_icon| max_icon + 2)
+        .unwrap_or(0);
+
     for (i, item) in menu.items.iter().enumerate() {
         let row_rect = Rect {
             x: inner.x,
@@ -127,32 +144,51 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         } else {
             crate::ui::design_tokens::row_plain_menu()
         };
+        // Icon column rendered with dim comment fg so it reads as
+        // chrome affordance, not label text. Preserves row bg via
+        // `patch` so highlighted rows keep their fill.
+        let icon_style = row_style.patch(Style::default().fg(t.comment));
+        // Renders `icon` padded to the shared column width; empty
+        // string when the item has no icon so labels still align.
+        let icon_span = |icon: &Option<String>| -> Span<'static> {
+            if icon_col_w == 0 {
+                return Span::styled(String::new(), icon_style);
+            }
+            let s = icon.as_deref().unwrap_or("");
+            let used = s.chars().count() as u16;
+            let pad = icon_col_w.saturating_sub(used) as usize;
+            Span::styled(format!("{s}{}", " ".repeat(pad)), icon_style)
+        };
         let line = match item {
-            MenuItem::Action { label, .. } => {
+            MenuItem::Action { icon, label, .. } => {
                 // nvchad-user + vscode-user-keyboard 2026-07-30 —
                 // color-only highlight was invisible in headless
                 // (screen.txt strips ANSI) and in low-color terminals.
                 // Add a leading `▸ ` on the selected row so cursor
                 // position reads in the text grid too.
                 let marker = if is_highlighted { "\u{25B8} " } else { "  " };
-                let pad = inner
-                    .width
-                    .saturating_sub(label.chars().count() as u16 + marker.chars().count() as u16)
-                    as usize;
+                let used =
+                    label.chars().count() as u16 + marker.chars().count() as u16 + icon_col_w;
+                let pad = inner.width.saturating_sub(used) as usize;
                 Line::from(vec![
                     Span::styled(marker, row_style),
+                    icon_span(icon),
                     Span::styled(label.to_string(), row_style),
                     Span::styled(" ".repeat(pad), row_style),
                 ])
             }
-            MenuItem::Submenu { label, .. } => {
+            MenuItem::Submenu { icon, label, .. } => {
                 // Trailing ▸ signals nesting.
                 let marker = if is_highlighted { "\u{25B8} " } else { "  " };
                 let trail = " \u{25B8}";
-                let used = label.chars().count() + marker.chars().count() + trail.chars().count();
-                let pad = inner.width.saturating_sub(used as u16) as usize;
+                let used = label.chars().count() as u16
+                    + marker.chars().count() as u16
+                    + trail.chars().count() as u16
+                    + icon_col_w;
+                let pad = inner.width.saturating_sub(used) as usize;
                 Line::from(vec![
                     Span::styled(marker, row_style),
+                    icon_span(icon),
                     Span::styled(label.to_string(), row_style),
                     Span::styled(" ".repeat(pad), row_style),
                     Span::styled(trail.to_string(), row_style),
@@ -203,6 +239,19 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         let sub_block = crate::ui::design_tokens::popup_menu("");
         let sub_inner = sub_block.inner(sub_area);
         frame.render_widget(sub_block, sub_area);
+        // Same icon-column treatment as the top-level dropdown above
+        // (#886) — reserved only if at least one submenu item has an
+        // icon. Kept in-scope so the closure below can reference it.
+        let sub_icon_col_w = sub_items
+            .iter()
+            .filter_map(|it| match it {
+                MenuItem::Action { icon, .. } | MenuItem::Submenu { icon, .. } => icon.as_deref(),
+                MenuItem::Separator => None,
+            })
+            .map(|s| s.chars().count() as u16)
+            .max()
+            .map(|max_icon| max_icon + 2)
+            .unwrap_or(0);
         for (i, item) in sub_items.iter().enumerate() {
             let row_rect = Rect {
                 x: sub_inner.x,
@@ -216,28 +265,43 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
             } else {
                 crate::ui::design_tokens::row_plain_menu()
             };
+            let icon_style = row_style.patch(Style::default().fg(t.comment));
+            let icon_span = |icon: &Option<String>| -> Span<'static> {
+                if sub_icon_col_w == 0 {
+                    return Span::styled(String::new(), icon_style);
+                }
+                let s = icon.as_deref().unwrap_or("");
+                let used = s.chars().count() as u16;
+                let pad = sub_icon_col_w.saturating_sub(used) as usize;
+                Span::styled(format!("{s}{}", " ".repeat(pad)), icon_style)
+            };
             let line = match item {
-                MenuItem::Action { label, .. } => {
+                MenuItem::Action { icon, label, .. } => {
                     let marker = if is_hl { "\u{25B8} " } else { "  " };
-                    let pad = sub_inner.width.saturating_sub(
-                        label.chars().count() as u16 + marker.chars().count() as u16,
-                    ) as usize;
+                    let used = label.chars().count() as u16
+                        + marker.chars().count() as u16
+                        + sub_icon_col_w;
+                    let pad = sub_inner.width.saturating_sub(used) as usize;
                     Line::from(vec![
                         Span::styled(marker, row_style),
+                        icon_span(icon),
                         Span::styled(label.to_string(), row_style),
                         Span::styled(" ".repeat(pad), row_style),
                     ])
                 }
-                MenuItem::Submenu { label, .. } => {
+                MenuItem::Submenu { icon, label, .. } => {
                     // Nested-nested: render the label + ▸, but the
                     // click / Enter is a no-op (we don't recurse).
                     let marker = if is_hl { "\u{25B8} " } else { "  " };
                     let trail = " \u{25B8}";
-                    let used =
-                        label.chars().count() + marker.chars().count() + trail.chars().count();
-                    let pad = sub_inner.width.saturating_sub(used as u16) as usize;
+                    let used = label.chars().count() as u16
+                        + marker.chars().count() as u16
+                        + trail.chars().count() as u16
+                        + sub_icon_col_w;
+                    let pad = sub_inner.width.saturating_sub(used) as usize;
                     Line::from(vec![
                         Span::styled(marker, row_style),
+                        icon_span(icon),
                         Span::styled(label.to_string(), row_style),
                         Span::styled(" ".repeat(pad), row_style),
                         Span::styled(trail.to_string(), row_style),
