@@ -1148,6 +1148,38 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_clock_context_menu((x, y));
         return;
     }
+    // Task #915 (R5 SEV-2 F3) — `+ dock` chip right-click. Left-click
+    // on this chip fires `dock.new_text_br` (bottom-right text widget);
+    // right-click used to fall through to the pane beneath, exposing
+    // that pane's context menu instead of a dock-scoped one. Now
+    // opens a small dock-add picker so mouse-first users can choose
+    // the widget kind and corner without going through the palette.
+    if let Some(r) = app.rects.dock_empty_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new(
+                "Add text widget (bottom-right)",
+                MenuAction::Command("dock.new_text_br"),
+            ),
+            MenuItem::new(
+                "Add text widget (bottom-left)",
+                MenuAction::Command("dock.new_text"),
+            ),
+            MenuItem::new(
+                "Add text widget (top-right)",
+                MenuAction::Command("dock.new_text_tr"),
+            ),
+            MenuItem::new(
+                "Add text widget (top-left)",
+                MenuAction::Command("dock.new_text_tl"),
+            ),
+            MenuItem::new("Add log tail", MenuAction::Command("dock.new_log_tail")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Dock".to_string()), (x, y), items));
+        return;
+    }
     // Task #915 (R5 SEV-2 F1) — AI Claude chip. Was silent on
     // right-click; menu now surfaces the same ai.* commands the
     // palette can invoke.
