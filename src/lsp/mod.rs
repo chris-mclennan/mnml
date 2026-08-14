@@ -545,6 +545,20 @@ fn builtin_servers() -> Vec<ServerConfig> {
             &["compile_commands.json", ".clangd"],
             "cpp",
         ),
+        // C# / .NET — OmniSharp over stdio (needs the `-lsp` flag; the
+        // default HTTP mode won't talk LSP). Root markers cover both
+        // solution-scoped (`*.sln`) and single-project layouts
+        // (`*.csproj`) plus modern SDK-style workspaces (`global.json`).
+        // Install: `brew install omnisharp` (macOS) or download from
+        // https://github.com/OmniSharp/omnisharp-roslyn/releases.
+        s(
+            "csharp",
+            "omnisharp",
+            &["-lsp"],
+            &["cs", "csx", "cake"],
+            &["*.sln", "*.csproj", "global.json"],
+            "csharp",
+        ),
     ]
 }
 
@@ -1262,6 +1276,10 @@ fn install_hint_for(cmd: &str) -> Option<&'static str> {
         "pyright" | "pyright-langserver" => Some("npm i -g pyright"),
         "gopls" => Some("go install golang.org/x/tools/gopls@latest"),
         "clangd" => Some("brew install llvm  /  apt install clangd"),
+        "omnisharp" | "OmniSharp" => Some(
+            "brew install omnisharp  /  see https://github.com/OmniSharp/omnisharp-roslyn/releases",
+        ),
+        "csharp-ls" => Some("dotnet tool install -g csharp-ls"),
         "lua-language-server" => Some("brew install lua-language-server"),
         "ruby-lsp" => Some("gem install ruby-lsp"),
         "solargraph" => Some("gem install solargraph"),
