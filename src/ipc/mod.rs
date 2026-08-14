@@ -1484,6 +1484,12 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, i) in &app.rects.menu_bar_words {
         push_rect(&mut out, &mut first, &format!("menu_bar:{i}"), *r);
     }
+    // R12 nvchad SEV-3 2026-08-14 — the `»` overflow chip's rect was
+    // never dumped, so headless drivers had to pixel-probe to click
+    // hidden menus in narrow terminals.
+    if let Some((r, _)) = app.rects.menu_bar_overflow {
+        push_rect(&mut out, &mut first, "menu_bar_overflow", r);
+    }
     for (r, label) in &app.rects.tree_icon_buttons {
         push_rect(&mut out, &mut first, &format!("tree_icon:{label}"), *r);
     }

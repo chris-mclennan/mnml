@@ -1,4 +1,5 @@
 /target
+scratchpad/
 .mnml/
 # The demo workspace's .mnml/ carries the demo-scope integration
 # overrides + sample findings — those SHIP with mnml. Only the
