@@ -25,7 +25,11 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use crate::app::{App, PendingUndo, ProgressItem, ProgressStatus, ToastEntry, ToastLevel};
 use crate::ui::theme;
 
-const MAX_WIDTH: u16 = 50;
+// R10 nvchad SEV-3 2026-08-14 — bumped 50 → 64 so the `:q` dirty-
+// buffer toast (`unsaved changes in <name> — use :q! to discard`)
+// fits without silent truncation. Still capped by `area.width` so
+// narrow terminals aren't blown out.
+const MAX_WIDTH: u16 = 64;
 const RIGHT_MARGIN: u16 = 1;
 const BOTTOM_MARGIN: u16 = 2; // 1 statusline + 1 spacer
 const FADE_TAIL: Duration = Duration::from_millis(800);
@@ -140,7 +144,19 @@ fn draw_toast_box(
     area: Rect,
     t: &crate::ui::theme::Theme,
 ) -> bool {
-    let text: String = entry.text.chars().take(MAX_WIDTH as usize - 4).collect();
+    // R10 nvchad SEV-3 2026-08-14 — mark truncation with `…` so the
+    // reader sees the cut instead of assuming the toast just ends
+    // mid-word (previously the last char vanished silently — e.g.
+    // `use :q! to discar` for the dirty-buffer hint).
+    let cap = (MAX_WIDTH as usize).saturating_sub(4);
+    let full_len = entry.text.chars().count();
+    let text: String = if full_len > cap {
+        let mut s: String = entry.text.chars().take(cap.saturating_sub(1)).collect();
+        s.push('…');
+        s
+    } else {
+        entry.text.clone()
+    };
     let inner_w = text.chars().count() as u16 + 2;
     let box_w = (inner_w + 2)
         .min(MAX_WIDTH)
