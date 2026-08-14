@@ -794,18 +794,13 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
         // Previously only bracketed (Cmd+V) paste worked because the
         // Event::Paste path routed to `picker.insert_str`. Users on
         // Linux terminals that don't emit bracketed-paste got no
-        // paste at all. Mirrors the same shape used by every other
-        // overlay filter surface.
+        // paste at all. `Picker::insert_str` already strips control
+        // chars + newlines internally, so no separate sanitize pass
+        // is needed here.
         KeyCode::Char('v' | 'V') if ctrl => {
             let clip = app.clipboard.text();
             if !clip.is_empty() {
-                let clean: String = clip
-                    .chars()
-                    .filter(|c| *c != '\n' && *c != '\r' && (*c as u32) >= 0x20)
-                    .collect();
-                if !clean.is_empty() {
-                    picker.insert_str(&clean);
-                }
+                picker.insert_str(&clip);
             }
         }
         // Ctrl+E on the icon picker: re-tune the currently-highlighted
