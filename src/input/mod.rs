@@ -189,6 +189,14 @@ pub enum AppCommand {
     /// delimited), `false` = word. App resolves from the active
     /// editor and writes back via `InputHandler::cmdline_set`.
     CmdlineInsertCursorWord(bool),
+    /// R7 nvchad-user SEV-2 2026-08-08 — Ctrl+V in the vim `:`
+    /// cmdline used to insert a literal `v` character (the vim
+    /// handler had no Ctrl+V arm and fell through to the plain-
+    /// char insert). App resolves the clipboard and writes back
+    /// via `InputHandler::cmdline_set`, matching the paste path
+    /// the App-owned `no_pane_cmdline` and `Event::Paste` already
+    /// use.
+    CmdlinePasteFromClipboard,
     /// flash/leap-style 2-char jump motion. Handler accumulates the two
     /// chars (`s<a><b>`) and hands them up; App computes every visible
     /// occurrence in the active editor, assigns each a label, paints them,

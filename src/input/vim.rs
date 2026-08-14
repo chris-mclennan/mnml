@@ -643,6 +643,16 @@ impl VimInputHandler {
             self.cmdline = Some(line);
             return InputResult::Consumed;
         }
+        // R7 nvchad-user SEV-2 2026-08-08 — Ctrl+V in cmdline pastes
+        // from the OS clipboard (mnml convention; matches the
+        // App-owned `no_pane_cmdline` Ctrl+V path). Previously fell
+        // through to the literal-char insert at the bottom and
+        // typed a `v`. Vim's `Ctrl+V` (literal-next) doesn't apply
+        // in the ex-cmdline anyway — it's an insert-mode gesture.
+        if matches!(key.code, KeyCode::Char('v' | 'V')) && ctrl {
+            self.cmdline = Some(line);
+            return InputResult::App(AppCommand::CmdlinePasteFromClipboard);
+        }
         match key.code {
             KeyCode::Tab => {
                 // Stash the current line back on the handler so the App can

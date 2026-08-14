@@ -249,6 +249,7 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         CmdlineTabComplete => app.cmdline_tab_complete(),
         CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
         CmdlineInsertCursorWord(big) => app.cmdline_insert_cursor_word(big),
+        CmdlinePasteFromClipboard => app.cmdline_paste_from_clipboard(),
         CmdlineEnter(typed) => {
             // Only substitute the popup-highlighted match when the
             // user explicitly navigated via ↓ / Tab (selected > 0).

@@ -1924,6 +1924,43 @@ impl App {
         b.input.set_cmdline_caret(caret + word.len());
     }
 
+    /// R7 nvchad-user SEV-2 2026-08-08 — Ctrl+V in the vim `:`
+    /// cmdline. Reads the OS clipboard, sanitizes control chars +
+    /// newlines (keeps the ex-line single-line), splices at the
+    /// caret. Mirrors the App-owned `no_pane_cmdline` Ctrl+V and
+    /// the `Event::Paste` bracketed-paste path so all three cmdline
+    /// entry surfaces behave identically.
+    pub fn cmdline_paste_from_clipboard(&mut self) {
+        let raw = self.clipboard.text();
+        if raw.is_empty() {
+            return;
+        }
+        let clean: String = raw
+            .chars()
+            .filter(|c| *c != '\n' && *c != '\r' && (*c as u32) >= 0x20)
+            .collect();
+        if clean.is_empty() {
+            return;
+        }
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let Some(line) = b.input.cmdline_get() else {
+            return;
+        };
+        let caret = b
+            .input
+            .cmdline_caret()
+            .unwrap_or(line.len())
+            .min(line.len());
+        let mut new_line = String::with_capacity(line.len() + clean.len());
+        new_line.push_str(&line[..caret]);
+        new_line.push_str(&clean);
+        new_line.push_str(&line[caret..]);
+        b.input.cmdline_set(Some(new_line));
+        b.input.set_cmdline_caret(caret + clean.len());
+    }
+
     pub fn cmdline_tab_complete(&mut self) {
         let Some(b) = self.active_editor_mut() else {
             self.cmdline_complete_state = None;
