@@ -1462,7 +1462,7 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 app.toast(
-                    "Ctrl+Z suspend isn't supported in mnml — use `:q` to quit or Ctrl+W ; for palette"
+                    "Ctrl+Z suspend isn't supported in mnml — use `:q` to quit or Ctrl+Shift+P for palette"
                         .to_string(),
                 );
             },
