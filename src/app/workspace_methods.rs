@@ -1382,17 +1382,26 @@ impl App {
 }
 
 /// Task #908 — recursive `.md` collector for the Findings panel.
-/// Depth-limited (max 4) so a rogue symlink loop can't wedge
-/// startup, and skips any `README.md` at the root so the shipped
-/// index file doesn't clutter the row list.
+/// Depth-limited (max 4) as an upper bound on nesting; symlinks are
+/// safe by construction — `DirEntry::file_type` is lstat-based, so
+/// symlinks report `is_symlink()`, not `is_dir()`, and the recursion
+/// branch never follows them (cycles unreachable, not just
+/// depth-bounded). Also caps output at 500 rows — a runaway workspace
+/// with thousands of findings shouldn't produce a Vec that dwarfs the
+/// panel viewport. Skips any `README.md` at the root so the shipped
+/// index file doesn't clutter the row list. Matches the size-cap
+/// idiom in the sibling `walk_for_http` / `walk_for_todos` walkers.
 fn walk_findings(dir: &std::path::Path, depth: usize, out: &mut Vec<std::path::PathBuf>) {
-    if depth > 4 {
+    if depth > 4 || out.len() > 500 {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
+        if out.len() > 500 {
+            return;
+        }
         let path = entry.path();
         let Ok(ft) = entry.file_type() else { continue };
         if ft.is_dir() {
