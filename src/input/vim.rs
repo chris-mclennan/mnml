@@ -2632,6 +2632,15 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("editor.file_info".into()))
             }
+            // R7 nvchad SEV-3 2026-08-08 — Ctrl+Z in vim Normal
+            // suspends the process (SIGSTOP). Doesn't apply in a TUI
+            // IDE — silently ignoring reads to a vim user as "key
+            // not received," so route to a toast that explains the
+            // situation + names the actual exit path.
+            KeyCode::Char('z') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("editor.suspend_hint".into()))
+            }
             // vim `Ctrl+]` — jump to definition (vim's tag-follow chord;
             // mnml aliases to LSP `goto_definition`).
             KeyCode::Char(']') if ctrl => {

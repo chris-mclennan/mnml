@@ -1456,6 +1456,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.show_file_info(),
         },
         Command {
+            id: "editor.suspend_hint",
+            title: "Toast: Ctrl+Z suspend not supported — use :q to quit",
+            group: "editor",
+            keys: &[],
+            run: |app| {
+                app.toast(
+                    "Ctrl+Z suspend isn't supported in mnml — use `:q` to quit or Ctrl+W ; for palette"
+                        .to_string(),
+                );
+            },
+        },
+        Command {
             id: "picker.marks",
             title: "Pick a mark to jump to (local + global)",
             group: "go",
