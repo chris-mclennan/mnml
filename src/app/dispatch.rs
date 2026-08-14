@@ -943,8 +943,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
         return Some(crate::HoverChip::BufferlineWindowClose);
     }
     // Task #875 (R5 SEV-3 F6) — tab-page pips + their close badges.
-    // Close-badges take precedence over the pip they overlap (1-cell
-    // right-side of the chip).
+    // The close-badge rect (`bufferline_tab_page_close`) is a 1-cell
+    // rect placed immediately AFTER the pip's rect (adjacent, not
+    // overlapping — see `bufferline::paint_right_cluster`), so the
+    // check order here is really "close-badge first because it's
+    // narrower and more specific," not for overlap-precedence.
     if let Some(&(_, idx)) = app
         .rects
         .bufferline_tab_page_close
