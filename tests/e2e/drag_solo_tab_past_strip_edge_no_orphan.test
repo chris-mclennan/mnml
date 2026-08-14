@@ -1,0 +1,27 @@
+# R4 SEV-1 regression: solo-tab drag past strip-edge orphaned the pane.
+# Repro: single pane in the layout, drag its tab from inside the chip past
+# the strip's right edge into whitespace. Expected: no-op (pane stays
+# visible in the strip); actual (pre-fix): chip vanished, editor showed
+# welcome/logo, pane still in App::panes but no clickable rect.
+# See: findings/mnml-hunt-2026-08-06-vscode-mouse-r4/sev1.md
+write b.txt BBBBBBBB
+command view.toggle_tree
+open b.txt
+
+# One pane, one tab. b.txt visible.
+expect screen contains "BBBBBBBB"
+expect pane "b.txt"
+
+# Drag from inside the chip (col 5, row 1) past strip whitespace to col 100.
+drag 5 1 100 1
+
+# Post-drop: nothing should have changed — b.txt still the only pane,
+# still visible, and its tab chip is still on the strip. The R3 dest_survivor
+# guard in `drop_tab_on_strip` (src/app/tab_drop.rs:153) covers this:
+# when the src tab is the leaf's only tab (dest_survivor.is_none()),
+# bail before touching the layout so src stays visible.
+expect screen contains "BBBBBBBB"
+expect pane "b.txt"
+# The tab chip is still on the strip — 󰈙 is the file glyph rendered
+# before the b.txt label in the per-leaf strip.
+expect screen contains "b.txt"
