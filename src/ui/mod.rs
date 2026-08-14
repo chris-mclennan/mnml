@@ -335,8 +335,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // visibility flags to `false` for THIS DRAW ONLY — persistent
     // `tree_visible` / `right_panel_visible` state is untouched, so
     // widening the window restores whatever the user had toggled.
-    let narrow_auto_hide = app.config.ui.auto_hide_narrow_width > 0
-        && upper.width < app.config.ui.auto_hide_narrow_width;
+    let narrow_auto_hide = app.side_panels_auto_hidden(upper.width);
     let show_right = app.right_panel_visible && !narrow_auto_hide;
     let show_tree = app.tree_visible && !narrow_auto_hide;
     let (right_panel_area, right_panel_edge_area, upper) = if show_right {
@@ -2681,7 +2680,17 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         width: sidebar_w,
         height: 1,
     };
-    let sidebar_fg = if app.tree_visible { t.cyan } else { t.comment };
+    // Task #891 — reflect auto-hide state in the toggle chip. When
+    // the terminal is narrower than `[ui] auto_hide_narrow_width`,
+    // panels vanish for that frame; the chip must match so users
+    // don't see an "active" toggle for a hidden panel. Persistent
+    // `tree_visible` still drives what happens on widen.
+    let panels_hidden = app.side_panels_auto_hidden(area.width);
+    let sidebar_fg = if app.tree_visible && !panels_hidden {
+        t.cyan
+    } else {
+        t.comment
+    };
     frame.render_widget(
         ratatui::widgets::Paragraph::new(sidebar_str)
             .style(Style::default().fg(sidebar_fg).bg(t.bg_dark)),
@@ -2771,7 +2780,8 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         width: right_panel_w,
         height: 1,
     };
-    let right_panel_fg = if app.right_panel_visible {
+    // Same auto-hide check as the sidebar chip above (#891).
+    let right_panel_fg = if app.right_panel_visible && !panels_hidden {
         t.cyan
     } else {
         t.comment

@@ -11,6 +11,20 @@ use crate::app::App;
 use crate::pane::Pane;
 
 impl App {
+    // ─── side-panel auto-hide predicate ────────────────────────────
+    /// Task #891 — true when the terminal is narrower than
+    /// `[ui] auto_hide_narrow_width` and the auto-hide feature is
+    /// enabled (`> 0`). Consumed by `ui/mod.rs::draw` (both the
+    /// split-carve sites AND the palette-bar toggle chips) so all
+    /// three surfaces agree on whether the panels are visible in
+    /// the current frame. Persistent `tree_visible` /
+    /// `right_panel_visible` state is untouched — this is a
+    /// per-frame OVERRIDE, not a mutation.
+    pub fn side_panels_auto_hidden(&self, area_width: u16) -> bool {
+        let threshold = self.config.ui.auto_hide_narrow_width;
+        threshold > 0 && area_width < threshold
+    }
+
     // ─── keymap (vim ⇄ standard) ────────────────────────────────────
     /// Swap every editor buffer's input handler to `style` (`"vim"` | `"standard"`),
     /// remember it as the new default, and toast the result.
