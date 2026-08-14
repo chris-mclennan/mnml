@@ -570,6 +570,21 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         unit: " cols",
         modified: cfg.ui.right_panel_width != d.ui.right_panel_width,
     }));
+    // Task #891 — auto-hide side panels below this width. 0 disables.
+    // Range chosen to match `raw.ui.auto_hide_narrow_width` clamp
+    // (40..=300). Common laptop widths land 80-120; docking to a
+    // 4K monitor pushes past 200. Default 0 = off.
+    out.push(SettingItem::Number(NumberRow {
+        key: "ui.auto_hide_narrow_width",
+        label: "Auto-hide side panels below width",
+        value: cfg.ui.auto_hide_narrow_width as i32,
+        min: 0,
+        max: 300,
+        step: 10,
+        default: d.ui.auto_hide_narrow_width as i32,
+        unit: " cols (0=off)",
+        modified: cfg.ui.auto_hide_narrow_width != d.ui.auto_hide_narrow_width,
+    }));
 
     // 2026-06-20 — Editor.tab_width: 1..=12; step 1.
     out.push(SettingItem::Number(NumberRow {
@@ -951,6 +966,12 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
             cfg.ui.right_panel_width = new;
             changed
         }
+        "ui.auto_hide_narrow_width" => {
+            let new = value.max(0) as u16;
+            let changed = cfg.ui.auto_hide_narrow_width != new;
+            cfg.ui.auto_hide_narrow_width = new;
+            changed
+        }
         "editor.tab_width" => {
             let new = value.max(1) as usize;
             let changed = cfg.editor.tab_width != new;
@@ -1110,6 +1131,11 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             "ui",
             "right_panel_width",
             cfg.ui.right_panel_width.to_string(),
+        )],
+        "ui.auto_hide_narrow_width" => vec![(
+            "ui",
+            "auto_hide_narrow_width",
+            cfg.ui.auto_hide_narrow_width.to_string(),
         )],
         "ui.color_column" => vec![("ui", "color_column", cfg.ui.color_column.to_string())],
         "git_graph.lane_spacing" => vec![(

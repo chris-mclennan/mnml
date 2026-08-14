@@ -329,7 +329,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Right-panel split: carve a fixed-width column off the right
     // edge BEFORE we do the left rail split, so widths stay
     // independent. `upper` shrinks to the remaining middle column.
-    let (right_panel_area, right_panel_edge_area, upper) = if app.right_panel_visible {
+    //
+    // Task #891 — `[ui] auto_hide_narrow_width` (0=disabled). When the
+    // terminal width falls below the threshold, override both panel
+    // visibility flags to `false` for THIS DRAW ONLY — persistent
+    // `tree_visible` / `right_panel_visible` state is untouched, so
+    // widening the window restores whatever the user had toggled.
+    let narrow_auto_hide = app.config.ui.auto_hide_narrow_width > 0
+        && upper.width < app.config.ui.auto_hide_narrow_width;
+    let show_right = app.right_panel_visible && !narrow_auto_hide;
+    let show_tree = app.tree_visible && !narrow_auto_hide;
+    let (right_panel_area, right_panel_edge_area, upper) = if show_right {
         // 2026-07-08 — DEDICATED 1-cell divider column between the
         // upper (editor) area and the right panel, mirroring the
         // tree edge treatment. Editor keeps its scrollbar
@@ -356,7 +366,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (None, None, upper)
     };
 
-    let (tree_area, tree_edge_area, right) = if app.tree_visible {
+    let (tree_area, tree_edge_area, right) = if show_tree {
         // 2026-07-08 — carve a DEDICATED 1-cell resize divider
         // column between the tree body and the editor area, same
         // shape as `layout::split_rects` does for a split. The

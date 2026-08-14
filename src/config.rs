@@ -594,6 +594,15 @@ pub struct UiConfig {
     /// Default width of the right side panel in cells. Drag-resize
     /// at runtime sticks via session.json.
     pub right_panel_width: u16,
+    /// Task #891 — auto-hide the tree rail + right panel when the
+    /// terminal is narrower than this many cells. `0` disables (the
+    /// default; existing users see no behavior change). When active,
+    /// panels stay hidden on narrow terminals regardless of manual
+    /// `tree_visible` / `right_panel_visible` state, then reappear
+    /// automatically once the window is wide enough again. Useful on
+    /// laptops that dock to a wide monitor — panels tuck away when
+    /// undocked, come back when docked.
+    pub auto_hide_narrow_width: u16,
     /// 2026-07-25 — after every split / close, rewrite every
     /// pane's ratio so all leaves render at equal size. Matches
     /// what a Ctrl+W= press would do, applied automatically.
@@ -1145,6 +1154,7 @@ impl Default for Config {
                 tree_width: 30,
                 right_panel_visible: false,
                 right_panel_width: 32,
+                auto_hide_narrow_width: 0,
                 auto_equalize_splits: false,
                 relative_line_numbers: false,
                 line_numbers: true,
@@ -1602,6 +1612,7 @@ struct RawUi {
     tree_width: Option<u16>,
     right_panel_visible: Option<bool>,
     right_panel_width: Option<u16>,
+    auto_hide_narrow_width: Option<u16>,
     auto_equalize_splits: Option<bool>,
     relative_line_numbers: Option<bool>,
     line_numbers: Option<bool>,
@@ -1855,6 +1866,11 @@ impl Config {
         }
         if let Some(v) = raw.ui.right_panel_width {
             self.ui.right_panel_width = v.clamp(10, 80);
+        }
+        if let Some(v) = raw.ui.auto_hide_narrow_width {
+            // 0 disables; otherwise clamp so nonsensical values
+            // (would hide panels at any width) don't slip in.
+            self.ui.auto_hide_narrow_width = if v == 0 { 0 } else { v.clamp(40, 300) };
         }
         if let Some(v) = raw.ui.auto_equalize_splits {
             self.ui.auto_equalize_splits = v;
