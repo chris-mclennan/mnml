@@ -1184,7 +1184,10 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    overlay with per-file breakdown; right-click for refresh / \
                    filter / open-report actions."
                 .into(),
-            try_it: vec![PaletteLink::new("coverage.open", "Open coverage overlay")],
+            try_it: vec![PaletteLink::new(
+                "tattle_coverage.open",
+                "Open coverage overlay",
+            )],
             ..Default::default()
         }),
     }

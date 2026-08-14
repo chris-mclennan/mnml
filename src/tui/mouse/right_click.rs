@@ -1148,6 +1148,29 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_clock_context_menu((x, y));
         return;
     }
+    // Task #915 (R5 SEV-2 F1) — AI Claude chip. Was silent on
+    // right-click; menu now surfaces the same ai.* commands the
+    // palette can invoke.
+    if let Some(r) = app.rects.statusline_ai_claude_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_ai_context_menu((x, y), false);
+        return;
+    }
+    // Task #915 (R5 SEV-2 F2) — AI Codex chip. Same menu.
+    if let Some(r) = app.rects.statusline_ai_codex_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_ai_context_menu((x, y), true);
+        return;
+    }
+    // Task #875 (R5 SEV-3 F8) — coverage chip right-click.
+    if let Some(r) = app.rects.statusline_coverage_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_coverage_context_menu((x, y));
+        return;
+    }
     // qa-6th mouse SEV-3 2026-06-29: mixr chip on the statusline
     // had a left-click action (mixr.show) but no right-click menu
     // and no hover tooltip — felt like a black box. Added a small

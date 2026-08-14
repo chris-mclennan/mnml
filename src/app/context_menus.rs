@@ -81,6 +81,20 @@ impl App {
                 .rects
                 .statusline_clock_chip
                 .map(|rect| (crate::HoverChip::StatuslineClock, above_anchor(rect))),
+            // Task #915 (R5 SEV-2 F1/F2) — AI chip right-click menus.
+            crate::HoverChip::StatuslineAiClaude => self
+                .rects
+                .statusline_ai_claude_chip
+                .map(|rect| (crate::HoverChip::StatuslineAiClaude, above_anchor(rect))),
+            crate::HoverChip::StatuslineAiCodex => self
+                .rects
+                .statusline_ai_codex_chip
+                .map(|rect| (crate::HoverChip::StatuslineAiCodex, above_anchor(rect))),
+            // Task #875 (R5 SEV-3 F8) — coverage chip right-click.
+            crate::HoverChip::StatuslineCoverage => self
+                .rects
+                .statusline_coverage_chip
+                .map(|rect| (crate::HoverChip::StatuslineCoverage, above_anchor(rect))),
             _ => None,
         });
         // Tree: use selected_row + the first tree row rect to derive
@@ -107,6 +121,15 @@ impl App {
                 }
                 crate::HoverChip::StatuslineClock => {
                     self.open_statusline_clock_context_menu(anchor);
+                }
+                crate::HoverChip::StatuslineAiClaude => {
+                    self.open_statusline_ai_context_menu(anchor, false);
+                }
+                crate::HoverChip::StatuslineAiCodex => {
+                    self.open_statusline_ai_context_menu(anchor, true);
+                }
+                crate::HoverChip::StatuslineCoverage => {
+                    self.open_statusline_coverage_context_menu(anchor);
                 }
                 _ => {}
             }
@@ -1575,6 +1598,42 @@ impl App {
             ),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Input style".into()), anchor, items));
+    }
+
+    /// Task #875 (R5 SEV-3 F8) — Right-click on the statusline
+    /// coverage chip. Prior state was silent; now offers refresh +
+    /// open-report.
+    pub fn open_statusline_coverage_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new(
+                "Open coverage overlay",
+                MenuAction::Command("tattle_coverage.open"),
+            ),
+            MenuItem::new(
+                "Refresh coverage",
+                MenuAction::Command("tattle_coverage.refresh"),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Coverage".into()), anchor, items));
+    }
+
+    /// Task #915 (R5 SEV-2 F1) — Right-click on the statusline AI
+    /// Claude/Codex chip. Prior state was silent (no menu rendered),
+    /// which read as a broken chip. Expose the same commands the
+    /// palette can invoke so a mouse-first user has a visible surface.
+    pub fn open_statusline_ai_context_menu(&mut self, anchor: (u16, u16), is_codex: bool) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = if is_codex { "Codex" } else { "Claude" };
+        let items = vec![
+            MenuItem::new("Show usage overlay", MenuAction::Command("ai.usage")),
+            MenuItem::new("Refresh usage now", MenuAction::Command("ai.refresh_usage")),
+            MenuItem::new(
+                "Show last response (debug)",
+                MenuAction::Command("ai.show_last_response"),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
     }
 
     /// Right-click on the statusline clock chip — exposes the local ↔ UTC
