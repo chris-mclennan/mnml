@@ -112,15 +112,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+    // Compute the findings root once so we can render paths relative
+    // to it — nested tester-round dirs (e.g. `2026-07-21-.../foo.md`)
+    // read as `round/foo` instead of losing all context to file_stem.
+    let root = findings_dir(&app.workspace);
     for path in files.iter().take(area.height.saturating_sub(3) as usize) {
         if y >= area.y + area.height {
             break;
         }
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("finding")
-            .to_string();
+        // Relative-to-findings-root name so nested rows keep their
+        // round-dir context. Strip the `.md` extension for compactness.
+        let rel = path.strip_prefix(&root).unwrap_or(path);
+        let name = rel.with_extension("").to_string_lossy().into_owned();
+        let name = if name.is_empty() {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("finding")
+                .to_string()
+        } else {
+            name
+        };
         let icon = if app.config.ui.ascii_icons {
             "◧"
         } else {

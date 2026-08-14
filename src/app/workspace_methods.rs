@@ -1309,18 +1309,16 @@ impl App {
         self.http_panel_recent_cache.clear();
     }
 
-    /// Refresh the Findings panel file cache. Same shape as the
-    /// notes one — reads `.mnml/findings/*.md` sorted by mtime desc.
+    /// Refresh the Findings panel file cache. Walks
+    /// `.mnml/findings/` recursively (depth cap 4) picking up every
+    /// `*.md` — tester agents commonly nest reports under
+    /// per-round subdirectories (`2026-07-21-16-09-design-round-1/*.md`),
+    /// so a flat scan misses everything but the top-level `README.md`.
+    /// Sorted by mtime desc so the freshest finding is first. Task #908.
     pub fn findings_panel_refresh(&mut self) {
         let dir = crate::ui::findings_panel::findings_dir(&self.workspace);
-        let mut out: Vec<std::path::PathBuf> = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md") && p.is_file())
-                .collect(),
-            Err(_) => Vec::new(),
-        };
+        let mut out: Vec<std::path::PathBuf> = Vec::new();
+        walk_findings(&dir, 0, &mut out);
         out.sort_by_key(|p| {
             std::fs::metadata(p)
                 .and_then(|m| m.modified())
@@ -1380,6 +1378,43 @@ impl App {
         }
         self.notes_panel_refresh();
         self.open_path(&path);
+    }
+}
+
+/// Task #908 — recursive `.md` collector for the Findings panel.
+/// Depth-limited (max 4) so a rogue symlink loop can't wedge
+/// startup, and skips any `README.md` at the root so the shipped
+/// index file doesn't clutter the row list.
+fn walk_findings(dir: &std::path::Path, depth: usize, out: &mut Vec<std::path::PathBuf>) {
+    if depth > 4 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            walk_findings(&path, depth + 1, out);
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        // Skip README.md at the root — it's the shipped index/help
+        // page, not a finding. Nested READMEs (a per-round index)
+        // still surface because their parent dir names them
+        // meaningfully.
+        if depth == 0
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("README.md"))
+        {
+            continue;
+        }
+        out.push(path);
     }
 }
 
@@ -1538,5 +1573,58 @@ mod notes_new_note_tests {
         assert!(dir.join("note-1.md").exists());
         assert!(dir.join("note-2.md").exists());
         assert!(dir.join("note-3.md").exists());
+    }
+}
+
+#[cfg(test)]
+mod findings_walk_tests {
+    use super::walk_findings;
+    use std::fs;
+
+    #[test]
+    fn walks_nested_subdirs_and_skips_root_readme() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        fs::write(root.join("README.md"), "# index").unwrap();
+        fs::write(root.join("top.md"), "# top").unwrap();
+        let round = root.join("2026-08-14-round-1");
+        fs::create_dir(&round).unwrap();
+        fs::write(round.join("finding-a.md"), "a").unwrap();
+        fs::write(round.join("finding-b.md"), "b").unwrap();
+        // Non-md siblings are ignored.
+        fs::write(round.join("notes.txt"), "x").unwrap();
+        let mut out = Vec::new();
+        walk_findings(root, 0, &mut out);
+        // 3 md files: top.md + 2 in round. README.md skipped.
+        assert_eq!(out.len(), 3, "walked: {out:?}");
+        assert!(out.iter().any(|p| p.ends_with("top.md")));
+        assert!(out.iter().any(|p| p.ends_with("finding-a.md")));
+        assert!(out.iter().any(|p| p.ends_with("finding-b.md")));
+        assert!(!out.iter().any(|p| p.ends_with("README.md")));
+    }
+
+    #[test]
+    fn depth_cap_prevents_runaway_walk() {
+        let d = tempfile::tempdir().unwrap();
+        let mut path = d.path().to_path_buf();
+        // Create 7 nested dirs, each with a .md file. Depth cap is 4,
+        // so files past depth 4 shouldn't show up.
+        for i in 0..7 {
+            path.push(format!("d{i}"));
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join("f.md"), "x").unwrap();
+        }
+        let mut out = Vec::new();
+        walk_findings(d.path(), 0, &mut out);
+        // Files at depths 1..=4 land (4 files); depths 5,6,7 don't.
+        assert_eq!(out.len(), 4, "walked: {out:?}");
+    }
+
+    #[test]
+    fn missing_dir_returns_empty() {
+        let d = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        walk_findings(&d.path().join("does-not-exist"), 0, &mut out);
+        assert!(out.is_empty());
     }
 }
