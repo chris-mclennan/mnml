@@ -609,16 +609,48 @@ fn server_configs(cfg: &Config) -> Vec<ServerConfig> {
 
 /// Walk up from `file`'s directory looking for any of `markers`; fall back to
 /// the file's directory (or `fallback`) if none found.
+///
+/// A marker is either a literal filename (`Cargo.toml`, `go.mod`) or a
+/// simple glob with `*` at the start (`*.sln`, `*.csproj` — needed for
+/// C# / .NET projects, which have variable-named solution / project
+/// files). Full glob syntax isn't parsed — only leading `*` prefix +
+/// extension suffix, which is what every real root-marker use case
+/// actually needs.
 fn find_root(file: &Path, markers: &[String], fallback: &Path) -> PathBuf {
     let start = file.parent().unwrap_or(fallback);
     let mut cur = Some(start);
     while let Some(dir) = cur {
-        if markers.iter().any(|m| dir.join(m).exists()) {
+        if markers.iter().any(|m| marker_matches(dir, m)) {
             return dir.to_path_buf();
         }
         cur = dir.parent();
     }
     start.to_path_buf()
+}
+
+/// Does `dir` contain a file matching `marker`? Literal name = plain
+/// `.exists()` check; leading `*` = scan the dir for any entry whose
+/// name ends with the rest.
+fn marker_matches(dir: &Path, marker: &str) -> bool {
+    if let Some(suffix) = marker.strip_prefix('*') {
+        // Glob path — scan the directory once and match any entry
+        // whose file_name ends with the suffix (e.g. `*.sln` matches
+        // `Foo.sln`). Short-circuits on the first hit; misses (dir
+        // unreadable) return false, matching the literal path's
+        // "doesn't count" semantic.
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries.flatten().any(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.ends_with(suffix))
+                })
+            })
+            .unwrap_or(false)
+    } else {
+        dir.join(marker).exists()
+    }
 }
 
 pub struct LspManager {
@@ -1388,5 +1420,45 @@ mod tests {
         assert_eq!(derive_lsp_language_id(&p("a.rs"), "rust"), "rust");
         // No extension → fallback.
         assert_eq!(derive_lsp_language_id(&p("Makefile"), "make"), "make");
+    }
+
+    #[test]
+    fn marker_matches_literal_and_glob() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("global.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("Acme.sln"), "").unwrap();
+        std::fs::write(dir.path().join("Nested.csproj"), "").unwrap();
+        // Literal name — existing behavior.
+        assert!(marker_matches(dir.path(), "global.json"));
+        assert!(!marker_matches(dir.path(), "Cargo.toml"));
+        // Glob — the new C# markers.
+        assert!(marker_matches(dir.path(), "*.sln"));
+        assert!(marker_matches(dir.path(), "*.csproj"));
+        assert!(!marker_matches(dir.path(), "*.xyz"));
+    }
+
+    #[test]
+    fn find_root_climbs_to_csproj() {
+        // Nested layout: <root>/Acme.csproj + <root>/src/Foo.cs.
+        // find_root should climb from src/ up to root when asked for
+        // `*.csproj` — the ".sln"/".csproj" case that motivated the
+        // glob-marker support.
+        let root = tempfile::tempdir().unwrap();
+        let src = root.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(root.path().join("Acme.csproj"), "").unwrap();
+        let file = src.join("Foo.cs");
+        std::fs::write(&file, "").unwrap();
+        let found = find_root(
+            &file,
+            &["*.sln".into(), "*.csproj".into(), "global.json".into()],
+            root.path(),
+        );
+        // Compare canonicalized paths — on macOS tempdir may resolve
+        // through /private/…
+        assert_eq!(
+            std::fs::canonicalize(&found).unwrap(),
+            std::fs::canonicalize(root.path()).unwrap(),
+        );
     }
 }
