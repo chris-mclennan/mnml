@@ -942,6 +942,52 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::BufferlineWindowClose);
     }
+    // Task #875 (R5 SEV-3 F6) — tab-page pips + their close badges.
+    // Close-badges take precedence over the pip they overlap (1-cell
+    // right-side of the chip).
+    if let Some(&(_, idx)) = app
+        .rects
+        .bufferline_tab_page_close
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::BufferlineTabPageClose(idx));
+    }
+    if let Some(&(_, idx)) = app
+        .rects
+        .bufferline_tab_page_chips
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::BufferlineTabPage(idx));
+    }
+    // Task #875 (R5 SEV-3 F7) — Integrations panel tab-strip chips.
+    if let Some(r) = app.rects.integrations_tab_installed
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::IntegrationsTabInstalled);
+    }
+    if let Some(r) = app.rects.integrations_tab_marketplace
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::IntegrationsTabMarketplace);
+    }
+    if let Some(r) = app.rects.integrations_tab_refresh
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::IntegrationsTabRefresh);
+    }
+    if let Some(r) = app.rects.integrations_tab_sort
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::IntegrationsTabSort);
+    }
+    // Task #875 (R5 SEV-3 F8) — statusline coverage chip.
+    if let Some(r) = app.rects.statusline_coverage_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineCoverage);
+    }
     if let Some(&(_, _, action)) = app
         .rects
         .diff_toolbar_buttons

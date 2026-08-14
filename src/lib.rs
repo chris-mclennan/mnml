@@ -584,6 +584,27 @@ pub enum HoverChip {
         line_no: usize,
         kind: GutterMarkKind,
     },
+    /// Task #875 (R5 SEV-3 F6) — a numbered bufferline tab-page pip
+    /// (`1`/`2`/…) at the right edge of the bufferline chrome row.
+    /// Click switches tab pages (mnml's Editor Groups equivalent).
+    /// Carries the 0-based page index so the tooltip can name the
+    /// page's active pane.
+    BufferlineTabPage(usize),
+    /// Task #875 — the tiny `×` close-badge inside a tab-page pip.
+    /// Only appears for the non-active page. Click closes the page.
+    BufferlineTabPageClose(usize),
+    /// Task #875 (R5 SEV-3 F7) — Integrations panel tab-strip chips
+    /// (Installed / Marketplace filter tabs, `⟳` refresh, `A-Z ▾`
+    /// sort). Distinct variants so tooltips can name their specific
+    /// action.
+    IntegrationsTabInstalled,
+    IntegrationsTabMarketplace,
+    IntegrationsTabRefresh,
+    IntegrationsTabSort,
+    /// Task #875 (R5 SEV-3 F8) — statusline test-coverage chip
+    /// (`53% ±0.0` etc.). Click opens the coverage overlay;
+    /// right-click is the coverage context menu.
+    StatuslineCoverage,
 }
 
 /// What was painted in the gutter sign column for a given line —

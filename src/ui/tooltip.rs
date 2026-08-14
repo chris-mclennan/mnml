@@ -887,6 +887,85 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             // id; user-facing sublabel reads better.
             Some((rect, "quit mnml".into(), Some("click: quit".into())))
         }
+        // Task #875 (R5 SEV-3 F6) — tab-page pips.
+        HoverChip::BufferlineTabPage(idx) => {
+            let &(rect, _) = app
+                .rects
+                .bufferline_tab_page_chips
+                .iter()
+                .find(|(_, i)| *i == idx)?;
+            let total = app.layouts.len().max(1);
+            let is_active = idx == app.active_layout;
+            let primary = if is_active {
+                format!("Tab page {} of {} (active)", idx + 1, total)
+            } else {
+                format!("Tab page {} of {}", idx + 1, total)
+            };
+            let alt_hint = if idx < 9 {
+                format!(" · Alt+{}", idx + 1)
+            } else {
+                String::new()
+            };
+            Some((
+                rect,
+                primary,
+                Some(format!("click: switch{alt_hint} · right-click: menu")),
+            ))
+        }
+        HoverChip::BufferlineTabPageClose(idx) => {
+            let &(rect, _) = app
+                .rects
+                .bufferline_tab_page_close
+                .iter()
+                .find(|(_, i)| *i == idx)?;
+            Some((
+                rect,
+                format!("close tab page {}", idx + 1),
+                Some("click: close".into()),
+            ))
+        }
+        // Task #875 (R5 SEV-3 F7) — Integrations panel tab-strip chips.
+        HoverChip::IntegrationsTabInstalled => {
+            let rect = app.rects.integrations_tab_installed?;
+            Some((
+                rect,
+                "Installed integrations".into(),
+                Some("click: switch to installed list".into()),
+            ))
+        }
+        HoverChip::IntegrationsTabMarketplace => {
+            let rect = app.rects.integrations_tab_marketplace?;
+            Some((
+                rect,
+                "Marketplace — browse & install".into(),
+                Some("click: switch to marketplace".into()),
+            ))
+        }
+        HoverChip::IntegrationsTabRefresh => {
+            let rect = app.rects.integrations_tab_refresh?;
+            Some((
+                rect,
+                "refresh integrations".into(),
+                Some("click: re-scan .mnml/integrations/ + user config".into()),
+            ))
+        }
+        HoverChip::IntegrationsTabSort => {
+            let rect = app.rects.integrations_tab_sort?;
+            Some((
+                rect,
+                "sort order".into(),
+                Some("click: cycle A-Z / recent / manual".into()),
+            ))
+        }
+        // Task #875 (R5 SEV-3 F8) — statusline coverage chip.
+        HoverChip::StatuslineCoverage => {
+            let rect = app.rects.statusline_coverage_chip?;
+            Some((
+                rect,
+                "test coverage".into(),
+                Some("click: open coverage overlay · right-click: menu".into()),
+            ))
+        }
         HoverChip::SplitStripAiButton => {
             // Anchor on the first AI-button rect (any of them work —
             // the tooltip just needs a position to attach to). The

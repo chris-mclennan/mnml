@@ -1169,6 +1169,24 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // reach here; this arm just satisfies the exhaustiveness
         // checker so `chip_copy` stays exhaustive over `HoverChip`.
         MenuBarItem { .. } => None,
+        // Task #875 (R5 SEV-3) — chrome chips whose tooltips carry
+        // all the useful copy; no separate info-panel entry needed.
+        // These arms exist so `chip_copy` stays exhaustive.
+        BufferlineTabPage(_) => None,
+        BufferlineTabPageClose(_) => None,
+        IntegrationsTabInstalled
+        | IntegrationsTabMarketplace
+        | IntegrationsTabRefresh
+        | IntegrationsTabSort => None,
+        StatuslineCoverage => Some(InfoViewCopy {
+            title: "Test coverage".into(),
+            body: "Line/branch coverage from the latest run. Click to open the \
+                   overlay with per-file breakdown; right-click for refresh / \
+                   filter / open-report actions."
+                .into(),
+            try_it: vec![PaletteLink::new("coverage.open", "Open coverage overlay")],
+            ..Default::default()
+        }),
     }
 }
 
