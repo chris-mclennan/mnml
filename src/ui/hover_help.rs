@@ -502,6 +502,17 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
     match app.focus {
         crate::focus::Focus::Pane => None,
         crate::focus::Focus::Tree => {
+            // R11 nvchad SEV-3 2026-08-14 — the tree-row branch used
+            // to fire for every activity section, so the info panel
+            // said `app.ts — TypeScript source` even while the HTTP /
+            // Integrations / Agents section was drawing in the
+            // sidebar. When a non-Explorer section is active, the
+            // "tree cursor" isn't visible; return a section-level
+            // hint instead so the panel reflects what the user is
+            // actually looking at.
+            if let Some(section_hint) = section_focus_hint(app.active_section) {
+                return Some(section_hint);
+            }
             // At rest on the auto-selected row 0, the panel used to
             // narrate `.cargo/` (or whatever the first workspace child
             // was) — clutter, not signal. Fall through to the Sidebar
@@ -585,6 +596,69 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
             ))
         }
     }
+}
+
+/// R11 nvchad SEV-3 2026-08-14 — return a section-level info-panel
+/// hint for non-Explorer activity sections so the panel matches
+/// what's drawing in the sidebar (HTTP / Integrations / Agents /
+/// …) instead of the underlying tree cursor's file row. Returns
+/// `None` for `Explorer` / `LauncherIcon` — caller falls through to
+/// tree-row logic. Kept short + generic; per-row copy would need
+/// per-section highlighted-row state which we don't expose here.
+fn section_focus_hint(section: crate::app::ActivitySection) -> Option<(String, Option<String>)> {
+    use crate::app::ActivitySection::*;
+    let (title, body) = match section {
+        Explorer | LauncherIcon(_) => return None,
+        Search => (
+            "Search",
+            "Workspace search. `/` filters. Enter jumps to the match.",
+        ),
+        Git => (
+            "Git",
+            "Branch + worktree. Enter checks out. `,` opens the log.",
+        ),
+        Debug => (
+            "Debug",
+            "Debug panel. F5 continues, F10 steps over, F11 steps in.",
+        ),
+        Integrations => (
+            "Integrations",
+            "Installed integrations. Enter fires the command. Right-click for Configure / Uninstall.",
+        ),
+        Sessions => (
+            "Sessions",
+            "Open Pty sessions. Click a tab to focus. `×` closes.",
+        ),
+        Agents => (
+            "Agents",
+            "Claude / Codex dashboard. Space multi-selects, Enter opens, `k` kills.",
+        ),
+        CloudAgents => (
+            "Cloud agents",
+            "ECS runner rows. `r` opens the run in CloudWatch, `p` opens the PR.",
+        ),
+        Http => (
+            "HTTP",
+            "Request workflow — `.http` / `.curl` browser, recent, envs. Enter opens a request.",
+        ),
+        Notes => (
+            "Notes",
+            "Workspace scratch notes under `.mnml/notes/`. Enter opens, `+ New` creates.",
+        ),
+        Todos => (
+            "Todos",
+            "Workspace TODO list. Enter jumps to the anchoring source line.",
+        ),
+        Findings => (
+            "Findings",
+            "`.mnml/findings/*.md` viewer. Enter opens the finding as a preview pane.",
+        ),
+        Mount(_) => (
+            "Integration mount",
+            "External integration pane hosted in the sidebar.",
+        ),
+    };
+    Some((title.to_string(), Some(body.to_string())))
 }
 
 /// Map a lower-case file extension to a friendly language name for
