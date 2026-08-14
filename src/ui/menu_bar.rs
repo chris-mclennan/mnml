@@ -65,8 +65,27 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         });
 
     let t = theme::cur();
-    // Widest label sets the panel width; +4 for padding + borders.
-    // Submenu rows reserve extra space for the trailing `▸`.
+    // Task #886 — icon column width, computed HERE so the panel-width
+    // math below can include it (was previously computed after the
+    // panel was already sized, causing overflow + clip of long
+    // labels + the submenu ▸ trail). 0 when no items have icons.
+    // 2-cell gap between icon and label. `chars().count()` matches
+    // the render-side math; assumes single-cell Nerd Font glyphs
+    // (all our icons live in the `\u{Exxx}` / `\u{Fxxxx}` PUA ranges
+    // which wcwidth reports as 1).
+    let icon_col_w = menu
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            MenuItem::Action { icon, .. } | MenuItem::Submenu { icon, .. } => icon.as_deref(),
+            MenuItem::Separator => None,
+        })
+        .map(|s| s.chars().count() as u16)
+        .max()
+        .map(|max_icon| max_icon + 2)
+        .unwrap_or(0);
+    // Widest label + icon column sets the panel width; +4 for padding
+    // + borders. Submenu rows reserve extra space for the trailing `▸`.
     let max_label = menu
         .items
         .iter()
@@ -77,7 +96,7 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         })
         .max()
         .unwrap_or(10);
-    let w = (max_label as u16 + 4).max(20);
+    let w = (max_label as u16 + icon_col_w + 4).max(20);
     let h = menu.items.len() as u16 + 2; // +2 for borders
     let x = word_rect.x;
     // Drop the panel just below the chrome row.
@@ -113,23 +132,8 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, area);
 
     let highlight_visible = open.keyboard_opened || open.item_idx != usize::MAX;
-
-    // Task #886 — reserve an icon column only when at least one
-    // Action/Submenu in this dropdown has an icon. Purely iconless
-    // menus render flush-left as before (no wasted space). Width is
-    // the char-count of the widest icon + 2-cell gap between icon
-    // and label.
-    let icon_col_w = menu
-        .items
-        .iter()
-        .filter_map(|it| match it {
-            MenuItem::Action { icon, .. } | MenuItem::Submenu { icon, .. } => icon.as_deref(),
-            MenuItem::Separator => None,
-        })
-        .map(|s| s.chars().count() as u16)
-        .max()
-        .map(|max_icon| max_icon + 2)
-        .unwrap_or(0);
+    // `icon_col_w` was computed above alongside `max_label` so the
+    // panel-width math could include it.
 
     for (i, item) in menu.items.iter().enumerate() {
         let row_rect = Rect {
@@ -212,6 +216,21 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         }) = menu.items.get(open.item_idx)
     {
         let parent_row_y = inner.y + open.item_idx as u16;
+        // Same icon-column treatment as the top-level dropdown above
+        // (#886) — hoisted BEFORE the panel-width math so `sub_w`
+        // reserves room for icon + label + trail (was previously
+        // computed after `sub_w`, causing long submenu labels to
+        // overflow + clip).
+        let sub_icon_col_w = sub_items
+            .iter()
+            .filter_map(|it| match it {
+                MenuItem::Action { icon, .. } | MenuItem::Submenu { icon, .. } => icon.as_deref(),
+                MenuItem::Separator => None,
+            })
+            .map(|s| s.chars().count() as u16)
+            .max()
+            .map(|max_icon| max_icon + 2)
+            .unwrap_or(0);
         let sub_max_label = sub_items
             .iter()
             .map(|it| match it {
@@ -221,7 +240,7 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
             })
             .max()
             .unwrap_or(10);
-        let sub_w = (sub_max_label as u16 + 4).max(20);
+        let sub_w = (sub_max_label as u16 + sub_icon_col_w + 4).max(20);
         let sub_h = sub_items.len() as u16 + 2;
         let mut sub_x = area.x + area.width;
         // Flip to the left if we'd overflow the right edge.
@@ -239,19 +258,6 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         let sub_block = crate::ui::design_tokens::popup_menu("");
         let sub_inner = sub_block.inner(sub_area);
         frame.render_widget(sub_block, sub_area);
-        // Same icon-column treatment as the top-level dropdown above
-        // (#886) — reserved only if at least one submenu item has an
-        // icon. Kept in-scope so the closure below can reference it.
-        let sub_icon_col_w = sub_items
-            .iter()
-            .filter_map(|it| match it {
-                MenuItem::Action { icon, .. } | MenuItem::Submenu { icon, .. } => icon.as_deref(),
-                MenuItem::Separator => None,
-            })
-            .map(|s| s.chars().count() as u16)
-            .max()
-            .map(|max_icon| max_icon + 2)
-            .unwrap_or(0);
         for (i, item) in sub_items.iter().enumerate() {
             let row_rect = Rect {
                 x: sub_inner.x,
