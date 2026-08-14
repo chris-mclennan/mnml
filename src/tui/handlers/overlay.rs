@@ -790,6 +790,24 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
             crate::ui::text_input::delete_word_back_in_string(&mut picker.query);
             picker.refilter();
         }
+        // R7 nvchad SEV-3 2026-08-08 — Ctrl+V paste on picker filter.
+        // Previously only bracketed (Cmd+V) paste worked because the
+        // Event::Paste path routed to `picker.insert_str`. Users on
+        // Linux terminals that don't emit bracketed-paste got no
+        // paste at all. Mirrors the same shape used by every other
+        // overlay filter surface.
+        KeyCode::Char('v' | 'V') if ctrl => {
+            let clip = app.clipboard.text();
+            if !clip.is_empty() {
+                let clean: String = clip
+                    .chars()
+                    .filter(|c| *c != '\n' && *c != '\r' && (*c as u32) >= 0x20)
+                    .collect();
+                if !clean.is_empty() {
+                    picker.insert_str(&clean);
+                }
+            }
+        }
         // Ctrl+E on the icon picker: re-tune the currently-highlighted
         // custom glyph via the glyph builder, pre-filled from its
         // stored metadata. No-op when the selected glyph wasn't baked
