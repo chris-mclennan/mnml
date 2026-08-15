@@ -309,31 +309,30 @@ EOF
   # picks up `app.restart` for iteration).
   demo) shift; DEMO=1; export MNML_DEMO_WORKSPACE="$REPO/demo/workspace" ;;
   # ── Demo recording ──────────────────────────────────────────────
-  #   ./run.sh demo-record [TAPE]     Render a VHS tape into a GIF
-  #                                   under site/public/media/. TAPE
-  #                                   defaults to demo/tapes/hero.tape.
-  #                                   Needs VHS (brew install vhs) +
-  #                                   a Nerd Font. Ensures a fresh
-  #                                   `target/release/mnml` build first
-  #                                   because tapes reference the release
-  #                                   binary (crisper text than debug).
+  #   ./run.sh demo-record [OUT.gif]  Render the hero demo GIF for
+  #                                   mnml.sh + the GitHub README.
+  #                                   OUT defaults to
+  #                                   site/public/media/hero.gif and
+  #                                   is also mirrored to assets/demo.gif.
+  #
+  # Pipeline (all under demo/tapes/):
+  #   hero.driver.sh      — background driver that pipes IPC commands
+  #                         into mnml via .mnml/ipc/command
+  #   hero.record.sh      — orchestrator: spawns mnml via python
+  #                         pty.fork() + asciinema rec, runs the
+  #                         driver, then converts the cast via agg
+  #
+  # Prereqs: asciinema + agg + python3 (checked by hero.record.sh).
+  # Install with:    brew install asciinema agg
+  #
+  # NB: this replaces the VHS-based flow that used to live here —
+  # VHS 0.11.0 on macOS 26 (chromium-in-ttyd frame capture) fails
+  # to record mnml's alt-screen paint. asciinema + agg is the
+  # standard TUI-recording stack and works reliably.
   demo-record)
     shift
-    tape="${1:-$REPO/demo/tapes/hero.tape}"
-    if ! command -v vhs >/dev/null 2>&1; then
-      echo "[demo-record] vhs not on PATH — install with: brew install vhs" >&2
-      exit 1
-    fi
-    if [ ! -f "$tape" ]; then
-      echo "[demo-record] tape not found: $tape" >&2
-      exit 1
-    fi
-    echo "[demo-record] building release binary…"
-    cargo build --release --quiet || { echo "[demo-record] build failed" >&2; exit 1; }
-    mkdir -p "$REPO/site/public/media"
-    echo "[demo-record] rendering $tape (this takes a few minutes)…"
-    cd "$REPO" && vhs "$tape"
-    exit $?
+    out="${1:-$REPO/site/public/media/hero.gif}"
+    exec "$REPO/demo/tapes/hero.record.sh" "$out"
     ;;
   # ── Misc ────────────────────────────────────────────────────────
   -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
