@@ -67,6 +67,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.commit_pending_undo();
         return;
     }
+    // First-launch wizard hit rects (2026-08-14 — fixes the
+    // "yes/no rows not clickable" bug). Only registered while the
+    // wizard overlay is up, so no ordinary flow is intercepted.
+    if app.first_launch.is_some()
+        && let Some(&(_, hit)) = app
+            .rects
+            .first_launch_hits
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        match hit {
+            crate::ui::first_launch_overlay::FirstLaunchHit::NerdFontOk(ok) => {
+                app.wizard_set_nerd_font_ok(ok);
+            }
+        }
+        return;
+    }
     // vscode-mouse SEV-2 2026-08-05 — when a menu dropdown is open,
     // handle its clicks BEFORE any body-of-app rect check so a click
     // on a menu item doesn't fall through to the tree/pane rect

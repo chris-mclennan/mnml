@@ -2056,6 +2056,11 @@ pub struct PaneRects {
     /// Click rects inside the NewCloudRunWizard pane (Cloud
     /// Agents version — Managed Agents / QWE).
     pub new_cloud_run_wizard_hits: Vec<(Rect, crate::ui::new_cloud_run_wizard_view::CloudRunHit)>,
+    /// Click rects inside the first-launch wizard overlay (Yes / No
+    /// radios for the Nerd Font section, etc). 2026-08-14 — added
+    /// to fix the "the yes / no rows aren't clickable" bug. Cleared
+    /// per-frame.
+    pub first_launch_hits: Vec<(Rect, crate::ui::first_launch_overlay::FirstLaunchHit)>,
     /// Click rect for the "+ New Cloud Run" button in the Cloud
     /// Agents panel header.
     pub cloud_agents_new_run_button: Option<Rect>,

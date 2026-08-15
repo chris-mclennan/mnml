@@ -17,15 +17,28 @@ use crate::app::App;
 use crate::app::first_launch::WizardSection;
 use crate::ui::theme;
 
+/// Click hits registered per-frame by the wizard renderer, consumed
+/// by the mouse down_left handler. 2026-08-14 — added to fix the
+/// "the yes / no rows aren't clickable" bug on the Nerd Font
+/// section. `NerdFontOk(true)` = "yes, glyphs render as icons",
+/// `NerdFontOk(false)` = "no, they render as boxes". Both route to
+/// `App::wizard_set_nerd_font_ok`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstLaunchHit {
+    NerdFontOk(bool),
+}
+
 /// Fixed inner width — modeled on Settings overlay to feel like family.
 const INNER_W: u16 = 74;
 /// Padding around the content column.
 const PAD_X: u16 = 2;
 
-pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
-    let Some(state) = app.first_launch.as_ref() else {
+pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
+    let Some(state) = app.first_launch.clone() else {
         return;
     };
+    let state = &state;
+    app.rects.first_launch_hits.clear();
     // Stand down if a smaller modal is on top — prompt/picker/context
     // menu take precedence so Esc dismisses the smaller thing first.
     if app.prompt.is_some() || app.picker.is_some() || app.context_menu.is_some() {
@@ -34,6 +47,10 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     let t = theme::cur();
     let lines = render_lines(app, state, &t);
     let total_h = lines.len() as u16 + 2; // + top/bottom border
+    // Collect hit tags before the immutable-borrow-heavy draw loop so
+    // we can register rects mutably after positioning is decided.
+    let hit_tags: Vec<Option<FirstLaunchHit>> = lines.iter().map(|(_, hit)| *hit).collect();
+    let lines: Vec<Line> = lines.into_iter().map(|(l, _)| l).collect();
     let inner_w = INNER_W;
     let outer_w = inner_w + 2;
     let outer_h = total_h.min(screen.height.saturating_sub(2));
@@ -96,15 +113,22 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             },
         );
         // Content
+        let content_rect = Rect {
+            x: x + 1,
+            y: row_y,
+            width: inner_w,
+            height: 1,
+        };
         frame.render_widget(
             Paragraph::new(line_body.clone()).style(panel_bg),
-            Rect {
-                x: x + 1,
-                y: row_y,
-                width: inner_w,
-                height: 1,
-            },
+            content_rect,
         );
+        // Register click hit for this row's tag, if any. Uses the
+        // content rect (excluding borders) so the click target
+        // matches the visible row.
+        if let Some(hit) = hit_tags.get(i).and_then(|h| h.as_ref()) {
+            app.rects.first_launch_hits.push((content_rect, *hit));
+        }
         // Right border
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled("│", border_style))),
@@ -144,15 +168,18 @@ fn center_title(title: &str, width: usize) -> String {
     format!("{left}{title}{right}")
 }
 
-/// Compose the full content — one Line per screen row. The section
-/// currently focused gets a `▸ ` marker + accent color on its title.
+/// Compose the full content — one Line per screen row plus an
+/// optional click-hit tag per row (2026-08-14). The section currently
+/// focused gets a `▸ ` marker + accent color on its title. Tags let
+/// the draw loop register click rects for interactive widgets like
+/// the Nerd Font Yes/No radios.
 fn render_lines<'a>(
     app: &App,
     state: &crate::app::first_launch::FirstLaunchState,
     t: &theme::Theme,
-) -> Vec<Line<'a>> {
-    let mut out: Vec<Line<'a>> = Vec::new();
-    out.push(spacer(t));
+) -> Vec<(Line<'a>, Option<FirstLaunchHit>)> {
+    let mut out: Vec<(Line<'a>, Option<FirstLaunchHit>)> = Vec::new();
+    out.push((spacer(t), None));
 
     for (i, section) in WizardSection::ALL.iter().enumerate() {
         let focused = i == state.focused_section;
@@ -161,23 +188,23 @@ fn render_lines<'a>(
         // sections. The numbers connect with the [1-6] jump hint in
         // the footer.
         if i > 0 {
-            out.push(section_rule(t));
+            out.push((section_rule(t), None));
         }
         // Section header row with a leading number.
-        out.push(section_header(i + 1, *section, focused, t));
+        out.push((section_header(i + 1, *section, focused, t), None));
         // 1-2 wrapped body-description rows.
         for wrapped in wrap_body(section.description(), (INNER_W - PAD_X * 2) as usize) {
-            out.push(body_line(&wrapped, t));
+            out.push((body_line(&wrapped, t), None));
         }
         // Interactive row(s) per section.
         for row in section_widgets(*section, &state.answers, app, t) {
             out.push(row);
         }
-        out.push(spacer(t));
+        out.push((spacer(t), None));
     }
 
     // Footer with actions.
-    out.push(footer(t));
+    out.push((footer(t), None));
     out
 }
 
@@ -240,13 +267,14 @@ fn footer<'a>(t: &theme::Theme) -> Line<'a> {
 }
 
 /// One or more rows of interactive widgets per section, styled to
-/// match the answer state.
+/// match the answer state. Each row can carry an optional hit tag
+/// (2026-08-14) so the draw loop registers click rects.
 fn section_widgets<'a>(
     section: WizardSection,
     answers: &crate::app::first_launch::WizardAnswers,
     app: &App,
     t: &theme::Theme,
-) -> Vec<Line<'a>> {
+) -> Vec<(Line<'a>, Option<FirstLaunchHit>)> {
     match section {
         WizardSection::AiBackend => radio_rows(
             &[
@@ -263,7 +291,10 @@ fn section_widgets<'a>(
             ],
             &answers.ai_backend,
             t,
-        ),
+        )
+        .into_iter()
+        .map(|l| (l, None))
+        .collect(),
         WizardSection::InputStyle => {
             // Tag the row that matches the persisted config with
             // "(current)" so a returning-user vim setting stays visible
@@ -286,34 +317,58 @@ fn section_widgets<'a>(
                 &answers.input_style,
                 t,
             )
+            .into_iter()
+            .map(|l| (l, None))
+            .collect()
         }
         WizardSection::NerdFont => {
+            // R11 2026-08-14 — tag the yes/no radio rows so mouse
+            // clicks can dispatch to `wizard_set_nerd_font_ok`. The
+            // sample-glyph body row and the radios use the same
+            // shape; the tags are attached in the same order the
+            // renderer emits them.
             let sample = "Sample glyphs:   ▸   󰈙   󰅖   ●";
             let choice = match answers.nerd_font_ok {
                 Some(true) => "yes",
                 Some(false) => "no",
                 None => "",
             };
-            let mut lines = vec![body_line(sample, t)];
-            lines.extend(radio_rows(
+            let mut out: Vec<(Line<'a>, Option<FirstLaunchHit>)> =
+                vec![(body_line(sample, t), None)];
+            let radios = radio_rows(
                 &[
                     ("yes", "Render as icons — Nerd Font detected"),
                     ("no", "Render as boxes — no Nerd Font"),
                 ],
                 choice,
                 t,
-            ));
-            lines
+            );
+            let tags = [
+                FirstLaunchHit::NerdFontOk(true),
+                FirstLaunchHit::NerdFontOk(false),
+            ];
+            for (row, tag) in radios.into_iter().zip(tags.iter()) {
+                out.push((row, Some(*tag)));
+            }
+            out
         }
         WizardSection::ClaudeCode => vec![
-            badge_row(
-                "Claude Code CLI (`claude`)",
-                answers.claude_code_installed,
-                t,
+            (
+                badge_row(
+                    "Claude Code CLI (`claude`)",
+                    answers.claude_code_installed,
+                    t,
+                ),
+                None,
             ),
-            badge_row("Codex CLI (`codex`)", answers.codex_installed, t),
+            (
+                badge_row("Codex CLI (`codex`)", answers.codex_installed, t),
+                None,
+            ),
         ],
-        WizardSection::VscodeShim => vec![badge_row("`code` on PATH", answers.vscode_shim_ok, t)],
+        WizardSection::VscodeShim => {
+            vec![(badge_row("`code` on PATH", answers.vscode_shim_ok, t), None)]
+        }
     }
 }
 
