@@ -1176,10 +1176,51 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // These arms exist so `chip_copy` stays exhaustive.
         BufferlineTabPage(_) => None,
         BufferlineTabPageClose(_) => None,
-        IntegrationsTabInstalled
-        | IntegrationsTabMarketplace
-        | IntegrationsTabRefresh
-        | IntegrationsTabSort => None,
+        // R13 audit follow-up 2026-08-15 — Integrations panel tab-
+        // strip chips got a stale `None` fallthrough. Real copy per
+        // chip so the info panel matches the mouse target.
+        IntegrationsTabInstalled => Some(InfoViewCopy {
+            title: "Integrations — Installed".into(),
+            body: "Shows the integrations you've enabled in this workspace. \
+                   Enter fires the chip's command; right-click for Configure \
+                   / Uninstall / Toggle."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "integrations.show_installed",
+                "Open Installed tab",
+            )],
+            ..Default::default()
+        }),
+        IntegrationsTabMarketplace => Some(InfoViewCopy {
+            title: "Integrations — Marketplace".into(),
+            body: "Browse installable integrations from the hosted catalog. \
+                   Enter installs the highlighted row into this workspace."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "integrations.show_marketplace",
+                "Open Marketplace tab",
+            )],
+            ..Default::default()
+        }),
+        IntegrationsTabRefresh => Some(InfoViewCopy {
+            title: "Integrations — refresh".into(),
+            body: "Rescan the integrations directory + the hosted marketplace \
+                   catalog. Picks up freshly-installed siblings and drops \
+                   uninstalled ones."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "integrations.refresh",
+                "Refresh integrations",
+            )],
+            ..Default::default()
+        }),
+        IntegrationsTabSort => Some(InfoViewCopy {
+            title: "Integrations — sort".into(),
+            body: "Cycle the sort order for the current tab (A-Z / recently \
+                   used / installed date). Click to toggle."
+                .into(),
+            ..Default::default()
+        }),
         StatuslineCoverage => Some(InfoViewCopy {
             title: "Test coverage".into(),
             body: "Line/branch coverage from the latest run. Click to open the \
