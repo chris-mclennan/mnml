@@ -1942,6 +1942,268 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("app.restart", "Restart now")],
             ..Default::default()
         }),
+        // ── R13 fill batch (2026-08-15) — Brand / mnml menu ──────────
+        // src: src/menu_bar.rs::brand_menu — label is "❯_  mnml"; match
+        // on a substring since the menu word carries a leading glyph.
+        (menu, i) if menu.contains("mnml") && i.contains("About mnml") => Some(InfoViewCopy {
+            title: "mnml → About mnml…".into(),
+            body: "Shows the running version, build info, and the active \
+                   workspace path. Useful for filing a bug report or \
+                   checking whether an update actually landed."
+                .into(),
+            try_it: vec![PaletteLink::new("view.about", "About mnml")],
+            ..Default::default()
+        }),
+        (menu, i) if menu.contains("mnml") && i.contains("Settings") => Some(InfoViewCopy {
+            title: "mnml → Settings…".into(),
+            body: "Opens the keyboard-driven Settings overlay — sectioned \
+                   discrete-choice rows for UI, editor, and integration \
+                   toggles. Config it doesn't cover stays TOML-edited."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+,", "Open Settings")],
+            try_it: vec![PaletteLink::new("view.settings", "Open Settings")],
+            ..Default::default()
+        }),
+        (menu, i) if menu.contains("mnml") && i.contains("Quit mnml") => Some(InfoViewCopy {
+            title: "mnml → Quit mnml".into(),
+            body: "Closes mnml entirely. If any buffer is dirty, mnml \
+                   prompts before discarding — the same guard as \
+                   File → Quit."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Q", "Quit")],
+            try_it: vec![PaletteLink::new("app.quit", "Quit")],
+            ..Default::default()
+        }),
+        // ── R13 fill batch (2026-08-15) — Selection menu ─────────────
+        // src: src/menu_bar.rs::selection_menu
+        ("Selection", i) if i.contains("Expand selection") => Some(InfoViewCopy {
+            title: "Selection → Expand selection".into(),
+            body: "Grows the selection outward to the next enclosing \
+                   syntax node — word, then expression, then statement, \
+                   then block. Uses the active pane's LSP; a no-op until \
+                   it's warmed up."
+                .into(),
+            try_it: vec![PaletteLink::new("lsp.selection_expand", "Expand")],
+            ..Default::default()
+        }),
+        ("Selection", i) if i.contains("Shrink selection") => Some(InfoViewCopy {
+            title: "Selection → Shrink selection".into(),
+            body: "Shrinks the selection back down to the previous syntax \
+                   node — the reverse of Expand selection. Same LSP \
+                   dependency."
+                .into(),
+            try_it: vec![PaletteLink::new("lsp.selection_shrink", "Shrink")],
+            ..Default::default()
+        }),
+        ("Selection", i) if i.contains("Add cursor above") => Some(InfoViewCopy {
+            title: "Selection → Add cursor above".into(),
+            body: "Adds a second cursor directly above the primary one, \
+                   same column. Repeatable — keep firing to stack more \
+                   cursors up the buffer."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Alt+↑", "Add cursor above")],
+            try_it: vec![PaletteLink::new(
+                "editor.add_cursor_above",
+                "Add cursor above",
+            )],
+            ..Default::default()
+        }),
+        ("Selection", i) if i.contains("Add cursor below") => Some(InfoViewCopy {
+            title: "Selection → Add cursor below".into(),
+            body: "Adds a second cursor directly below the primary one, \
+                   same column. Repeatable — keep firing to stack more \
+                   cursors down the buffer."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Alt+↓", "Add cursor below")],
+            try_it: vec![PaletteLink::new(
+                "editor.add_cursor_below",
+                "Add cursor below",
+            )],
+            ..Default::default()
+        }),
+        ("Selection", i) if i.contains("Add cursor at next match") => Some(InfoViewCopy {
+            title: "Selection → Add cursor at next match".into(),
+            body: "Adds a cursor at the next occurrence of the word under \
+                   the cursor (or the current selection) — VS Code's \
+                   `Ctrl+D` convention. Fire repeatedly to pick up more \
+                   occurrences one at a time."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+D", "Add cursor at next match")],
+            try_it: vec![PaletteLink::new(
+                "editor.add_cursor_at_next_word",
+                "Add cursor at next match",
+            )],
+            ..Default::default()
+        }),
+        ("Selection", i) if i.contains("Select all occurrences") => Some(InfoViewCopy {
+            title: "Selection → Select all occurrences".into(),
+            body: "Selects every occurrence of the word under the cursor \
+                   (or current selection) in one shot, each as its own \
+                   cursor — the select-all version of Add cursor at next \
+                   match."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+L", "Select all occurrences")],
+            try_it: vec![PaletteLink::new(
+                "editor.select_all_occurrences",
+                "Select all occurrences",
+            )],
+            ..Default::default()
+        }),
+        ("Selection", i) if i.contains("Clear extra cursors") => Some(InfoViewCopy {
+            title: "Selection → Clear extra cursors".into(),
+            body: "Drops every cursor except the primary one, collapsing \
+                   back to single-cursor editing."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "editor.clear_extra_cursors",
+                "Clear extra cursors",
+            )],
+            ..Default::default()
+        }),
+        // ── R13 fill batch (2026-08-15) — Run menu (DAP) ─────────────
+        // src: src/menu_bar.rs::run_menu
+        ("Run", i) if i.contains("Start debugging") => Some(InfoViewCopy {
+            title: "Run → Start debugging".into(),
+            body: "Launches a DAP debug session for the active buffer's \
+                   filetype, using whatever adapter mnml has configured \
+                   for it. Breakpoints set beforehand are honored once the \
+                   session connects."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("F5", "Start debugging")],
+            try_it: vec![PaletteLink::new("dap.run", "Start debugging")],
+            ..Default::default()
+        }),
+        ("Run", i) if i.contains("Toggle breakpoint") => Some(InfoViewCopy {
+            title: "Run → Toggle breakpoint".into(),
+            body: "Sets or clears a breakpoint on the cursor's line. Works \
+                   whether or not a session is running yet — breakpoints \
+                   set ahead of time get sent once one connects."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("F9", "Toggle breakpoint")],
+            try_it: vec![PaletteLink::new(
+                "dap.toggle_breakpoint",
+                "Toggle breakpoint",
+            )],
+            ..Default::default()
+        }),
+        ("Run", i) if i.contains("Conditional breakpoint") => Some(InfoViewCopy {
+            title: "Run → Conditional breakpoint…".into(),
+            body: "Same as Toggle breakpoint, but prompts for a condition \
+                   expression first — the debugger only stops when it \
+                   evaluates truthy."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Shift+F9", "Conditional breakpoint")],
+            try_it: vec![PaletteLink::new(
+                "dap.toggle_breakpoint_conditional",
+                "Conditional breakpoint",
+            )],
+            ..Default::default()
+        }),
+        ("Run", i) if i.contains("Step in") => Some(InfoViewCopy {
+            title: "Run → Step in".into(),
+            body: "Steps execution into the function call on the current \
+                   line, pausing at its first statement. Only live while a \
+                   DAP session is paused at a breakpoint."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("F11", "Step in")],
+            try_it: vec![PaletteLink::new("dap.step_in", "Step in")],
+            ..Default::default()
+        }),
+        ("Run", i) if i.contains("Step out") => Some(InfoViewCopy {
+            title: "Run → Step out".into(),
+            body: "Runs until the current function returns, then pauses \
+                   back in the caller. Only live while a DAP session is \
+                   paused."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Shift+F11", "Step out")],
+            try_it: vec![PaletteLink::new("dap.step_out", "Step out")],
+            ..Default::default()
+        }),
+        ("Run", i) if i.contains("Step back") => Some(InfoViewCopy {
+            title: "Run → Step back".into(),
+            body: "Reverses one step of execution. Requires a \
+                   record-replay-capable debug adapter — most adapters \
+                   don't support it, and the command is a no-op there."
+                .into(),
+            try_it: vec![PaletteLink::new("dap.step_back", "Step back")],
+            ..Default::default()
+        }),
+        // ── R13 fill batch (2026-08-15) — Terminal menu ──────────────
+        // src: src/menu_bar.rs::terminal_menu
+        ("Terminal", i) if i.contains("New terminal") => Some(InfoViewCopy {
+            title: "Terminal → New terminal (split below)".into(),
+            body: "Opens a fresh shell in a new Pty pane, split below the \
+                   active one. Each shell pane is independent — its own \
+                   working directory, its own scrollback."
+                .into(),
+            try_it: vec![PaletteLink::new("term.shell", "New terminal")],
+            ..Default::default()
+        }),
+        ("Terminal", i) if i.contains("Toggle scratch terminal") => Some(InfoViewCopy {
+            title: "Terminal → Toggle scratch terminal".into(),
+            body: "Shows / hides a quick scratch shell strip docked at the \
+                   bottom — for one-off commands without committing to a \
+                   full split."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+`", "Toggle scratch terminal")],
+            try_it: vec![PaletteLink::new(
+                "term.scratch_toggle",
+                "Toggle scratch terminal",
+            )],
+            ..Default::default()
+        }),
+        ("Terminal", i) if i.contains("Rename terminal") => Some(InfoViewCopy {
+            title: "Terminal → Rename terminal".into(),
+            body: "Renames the active Pty pane's tab label. Handy once \
+                   several shells are open and the default names all look \
+                   alike in the bufferline."
+                .into(),
+            try_it: vec![PaletteLink::new("term.rename", "Rename terminal")],
+            ..Default::default()
+        }),
+        // ── R13 fill batch (2026-08-15) — Help menu ───────────────────
+        // src: src/menu_bar.rs::help_menu
+        ("Help", i) if i.contains("Welcome") => Some(InfoViewCopy {
+            title: "Help → Welcome".into(),
+            body: "Opens the Welcome overlay — a shortcuts cheatsheet \
+                   covering the highest-value chords across editing, \
+                   navigation, and panels. Good first stop after a fresh \
+                   install."
+                .into(),
+            try_it: vec![PaletteLink::new("view.welcome", "Open Welcome")],
+            ..Default::default()
+        }),
+        ("Help", i) if i.contains("Keybindings") => Some(InfoViewCopy {
+            title: "Help → Keybindings & help".into(),
+            body: "Opens the auto-generated keymap reference — every bound \
+                   chord, grouped by command, always in sync with the live \
+                   keymap rather than a doc that can drift."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("F1", "Keybindings & help")],
+            try_it: vec![PaletteLink::new("view.help", "Open keybindings")],
+            ..Default::default()
+        }),
+        ("Help", i) if i.contains("Commands reference") => Some(InfoViewCopy {
+            title: "Help → Commands reference…".into(),
+            body: "Opens every registered palette command, grouped, in a \
+                   scratch buffer — the full surface the palette searches, \
+                   without needing to type anything into it first."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "view.commands_reference",
+                "Open commands reference",
+            )],
+            ..Default::default()
+        }),
+        ("Help", i) if i.contains("About mnml") => Some(InfoViewCopy {
+            title: "Help → About mnml".into(),
+            body: "Shows the running version, build info, and the active \
+                   workspace path — same overlay as mnml → About mnml, \
+                   reachable from the Help menu too."
+                .into(),
+            try_it: vec![PaletteLink::new("view.about", "About mnml")],
+            ..Default::default()
+        }),
         _ => None,
     }
 }
