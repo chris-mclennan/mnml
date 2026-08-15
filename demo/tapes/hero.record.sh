@@ -25,8 +25,12 @@ DRIVER="$TAPE_DIR/hero.driver.sh"
 
 # Recording dimensions. Wider than a normal terminal to show all
 # activity-bar tooltips + right-panel + statusline chips at once.
-COLS="${MNML_DEMO_COLS:-180}"
-ROWS="${MNML_DEMO_ROWS:-46}"
+# 2026-08-15 — was 180x46, GIF landed at ~2548x921 (2.76:1) which
+# reads as awkwardly wide on both the mnml.sh hero + README. 140x36
+# lands ~1960x820 ≈ 2.4:1 (still wide but not letterbox-flat) and
+# keeps enough room for the split-pane climax to be legible.
+COLS="${MNML_DEMO_COLS:-140}"
+ROWS="${MNML_DEMO_ROWS:-36}"
 
 # Font size for agg. 14px keeps a 1600x900 GIF sane in file size
 # while staying legible for a hero splash.
@@ -204,7 +208,7 @@ echo "[demo-record] cast size (trimmed): $(du -h "$CAST" | cut -f1)"
 echo "[demo-record] rendering GIF → $GIF_OUT"
 agg --cols "$COLS" --rows "$ROWS" \
     --font-size "$FONT_SIZE" \
-    --font-family "Symbols Nerd Font Mono,JetBrains Mono,SF Mono,Menlo,DejaVu Sans Mono" \
+    --font-family "JetBrainsMono Nerd Font Mono,JetBrains Mono" \
     --theme monokai \
     --idle-time-limit 2 \
     --fps-cap 20 \
