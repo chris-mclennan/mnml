@@ -1181,9 +1181,9 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // chip so the info panel matches the mouse target.
         IntegrationsTabInstalled => Some(InfoViewCopy {
             title: "Integrations — Installed".into(),
-            body: "Shows the integrations you've enabled in this workspace. \
-                   Enter fires the chip's command; right-click for Configure \
-                   / Uninstall / Toggle."
+            body: "Tab that lists the integrations enabled in this \
+                   workspace. Click a row to fire its command; each row's \
+                   right-click menu handles Configure / Uninstall / Toggle."
                 .into(),
             try_it: vec![PaletteLink::new(
                 "integrations.show_installed",
@@ -1219,6 +1219,10 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             body: "Cycle the sort order for the current tab (A-Z / recently \
                    used / installed date). Click to toggle."
                 .into(),
+            try_it: vec![PaletteLink::new(
+                "integrations.cycle_sort",
+                "Cycle sort order",
+            )],
             ..Default::default()
         }),
         StatuslineCoverage => Some(InfoViewCopy {
