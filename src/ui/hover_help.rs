@@ -615,11 +615,11 @@ fn section_focus_hint(section: crate::app::ActivitySection) -> Option<(String, O
         ),
         Git => (
             "Git",
-            "Branch + worktree. Enter checks out. `,` opens the log.",
+            "Branch + worktree. Enter checks out. Right-click for stash / log / status.",
         ),
         Debug => (
             "Debug",
-            "Debug panel. F5 continues, F10 steps over, F11 steps in.",
+            "Debug panel. F5 starts, Shift+F5 continues, F10 steps over, F11 steps in.",
         ),
         Integrations => (
             "Integrations",
@@ -635,7 +635,7 @@ fn section_focus_hint(section: crate::app::ActivitySection) -> Option<(String, O
         ),
         CloudAgents => (
             "Cloud agents",
-            "ECS runner rows. `r` opens the run in CloudWatch, `p` opens the PR.",
+            "ECS runner rows. Enter opens the run detail; right-click for CloudWatch / PR / copy runId.",
         ),
         Http => (
             "HTTP",
