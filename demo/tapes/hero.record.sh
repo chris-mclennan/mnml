@@ -19,7 +19,7 @@
 #   is the standard TUI-recording stack and works reliably.
 set -euo pipefail
 
-REPO="/Users/chrismclennan/Projects/mnml"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 TAPE_DIR="$REPO/demo/tapes"
 DRIVER="$TAPE_DIR/hero.driver.sh"
 

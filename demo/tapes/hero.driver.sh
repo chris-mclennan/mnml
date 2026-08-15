@@ -16,7 +16,7 @@
 #   demo/workspace/                  — demo files this drives against
 set -euo pipefail
 
-WS="${MNML_DEMO_WORKSPACE:-/Users/chrismclennan/Projects/mnml/demo/workspace}"
+WS="${MNML_DEMO_WORKSPACE:-$(cd "$(dirname "$0")/../workspace" && pwd)}"
 CMD="$WS/.mnml/ipc/command"
 
 # ── Wait for mnml to boot ──────────────────────────────────────────
