@@ -4934,6 +4934,14 @@ pub struct App {
     /// `(pane_id, file_row, file_col, arrived_at)`.
     /// 2026-06-08 SEV-2 VS-Code-mouse hunt fix.
     pub mouse_hover_at: Option<(PaneId, usize, usize, std::time::Instant)>,
+    /// Screen (col, row) of the pointer at the moment
+    /// `maybe_fire_mouse_hover` decided to send an LSP request.
+    /// Read by the hover-arrival path to anchor the popup at the
+    /// mouse position instead of the caret (2026-08-14 fix — the
+    /// popup was drawing at the last caret position for mouse-
+    /// driven hovers, so it appeared "where the mouse was a moment
+    /// ago"). Cleared when the popup is dismissed or replaced.
+    pub mouse_hover_screen: Option<(u16, u16)>,
     /// `(pane_id, file_row, file_col)` of the most recent fired
     /// hover request — prevents re-firing for the same cell every
     /// tick once the debounce elapses. Cleared whenever
@@ -5808,6 +5816,7 @@ impl App {
             file_clipboard_cut: false,
             hover: None,
             mouse_hover_at: None,
+            mouse_hover_screen: None,
             mouse_hover_fired: None,
             signature: None,
             pending_rename: None,

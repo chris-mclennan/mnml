@@ -12,6 +12,11 @@ pub struct HoverPopup {
     pub lines: Vec<String>,
     /// Top visible line.
     pub scroll: usize,
+    /// 2026-08-14 — where the popup should anchor. `None` = anchor at
+    /// the caret cursor (keyboard `lsp.hover`). `Some((col, row))` =
+    /// anchor at a specific screen cell (mouse-driven hover), so the
+    /// popup lands where the pointer is instead of where the caret is.
+    pub anchor: Option<(u16, u16)>,
 }
 
 impl HoverPopup {
@@ -58,7 +63,11 @@ impl HoverPopup {
                 lines.extend(wrap(line, MAX_WIDTH));
             }
         }
-        Some(HoverPopup { lines, scroll: 0 })
+        Some(HoverPopup {
+            lines,
+            scroll: 0,
+            anchor: None,
+        })
     }
 
     /// Build a popup directly from plain-text lines — no markdown cleanup,
@@ -77,7 +86,11 @@ impl HoverPopup {
                 lines.extend(wrap(&line, MAX_WIDTH));
             }
         }
-        Some(HoverPopup { lines, scroll: 0 })
+        Some(HoverPopup {
+            lines,
+            scroll: 0,
+            anchor: None,
+        })
     }
 
     /// Width of the widest line (capped at [`MAX_WIDTH`]).

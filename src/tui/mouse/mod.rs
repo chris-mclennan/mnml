@@ -902,6 +902,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if body_target != cur_target {
             app.mouse_hover_at = body_target.map(|(p, r, c)| (p, r, c, now));
             app.mouse_hover_fired = None;
+            // Track the screen cell too so the LSP-hover popup can
+            // anchor at the mouse position rather than the caret
+            // (2026-08-14 fix — popup was landing at the caret and
+            // reading as "old mouse location" to users). Cleared with
+            // the target when the pointer leaves.
+            app.mouse_hover_screen = body_target.map(|_| (x, y));
             // Pointer moved off (or to a new cell) → close any popup
             // we put up. Avoids the popup hanging when the mouse has
             // already moved past the symbol.

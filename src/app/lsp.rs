@@ -1093,7 +1093,17 @@ impl App {
                 }
             }
             LspEvent::Hover { text } => match crate::hover::HoverPopup::from_text(&text) {
-                Some(h) => self.hover = Some(h),
+                Some(mut h) => {
+                    // 2026-08-14 — if the last hover request was
+                    // mouse-driven, take the recorded screen cell so
+                    // the popup anchors at the pointer instead of the
+                    // caret. `mouse_hover_screen` is set by the mouse-
+                    // move handler and cleared when the pointer leaves;
+                    // .take() also clears it so a subsequent keyboard
+                    // `lsp.hover` doesn't inherit a stale anchor.
+                    h.anchor = self.mouse_hover_screen.take();
+                    self.hover = Some(h);
+                }
                 None => self.toast("hover: (nothing)"),
             },
             LspEvent::References(locs) => {

@@ -31,8 +31,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
     let hgt = (h.lines.len() as u16 + 2).min(max_h);
     let inner_rows = hgt.saturating_sub(2) as usize;
 
-    // Anchor below the cursor; flip above if it doesn't fit; clamp to the screen.
-    let (cx, cy) = cursor.unwrap_or((screen.x + 2, screen.y + 1));
+    // 2026-08-14 — anchor at the hover's origin cell (mouse position)
+    // when a mouse-driven hover populated it; otherwise fall back to
+    // the caret cursor (keyboard `lsp.hover` / `Ctrl+K Ctrl+I`). The
+    // old behavior always used the caret, so a mouse-hover popup
+    // showed up at the last caret position — reads as "popup at old
+    // mouse location" from the user's POV.
+    let anchor = h.anchor.or(cursor);
+    let (cx, cy) = anchor.unwrap_or((screen.x + 2, screen.y + 1));
     let below_y = cy.saturating_add(1);
     let y = if below_y + hgt <= screen.y + screen.height {
         below_y
