@@ -3799,7 +3799,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         let (name_fg, suffix) = match availability {
             IntegrationAvailability::Available => (t.fg, None),
             IntegrationAvailability::Missing(bin) => {
-                (t.comment, Some(format!("  ({} not installed)", bin)))
+                (t.comment, Some(format!(" ({} not installed)", bin)))
             }
         };
         // 2026-08-06 — disabled (chip-hidden) installed integrations
