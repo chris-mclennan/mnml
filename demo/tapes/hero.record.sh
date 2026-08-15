@@ -21,7 +21,20 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 TAPE_DIR="$REPO/demo/tapes"
-DRIVER="$TAPE_DIR/hero.driver.sh"
+
+# 2026-08-15 — first positional arg picks which driver to run.
+# `hero` (default) drives the full walkthrough; per-integration
+# tapes (`jira`, `bitbucket`, `slack`, etc.) drive a shorter
+# focused walkthrough of one section. Each driver lives at
+# `demo/tapes/<name>.driver.sh` and outputs to
+# `site/public/media/<name>.gif`.
+TAPE_NAME="${1:-hero}"
+DRIVER="$TAPE_DIR/${TAPE_NAME}.driver.sh"
+if [ ! -x "$DRIVER" ]; then
+  echo "[demo-record] driver not found: $DRIVER" >&2
+  echo "  available: $(ls "$TAPE_DIR"/*.driver.sh 2>/dev/null | xargs -n1 basename | sed 's/\.driver\.sh$//' | tr '\n' ' ')" >&2
+  exit 1
+fi
 
 # Recording dimensions. Wider than a normal terminal to show all
 # activity-bar tooltips + right-panel + statusline chips at once.
@@ -36,9 +49,15 @@ ROWS="${MNML_DEMO_ROWS:-36}"
 # while staying legible for a hero splash.
 FONT_SIZE="${MNML_DEMO_FONT_SIZE:-14}"
 
-CAST="$TAPE_DIR/hero.cast"
-GIF_OUT="${1:-$REPO/site/public/media/hero.gif}"
-GIF_MIRROR="$REPO/assets/demo.gif"
+CAST="$TAPE_DIR/${TAPE_NAME}.cast"
+GIF_OUT="$REPO/site/public/media/${TAPE_NAME}.gif"
+# Only the hero mirrors to assets/demo.gif for the README embed.
+# Per-integration tapes stay under site/public/media/.
+if [ "$TAPE_NAME" = "hero" ]; then
+  GIF_MIRROR="$REPO/assets/demo.gif"
+else
+  GIF_MIRROR=""
+fi
 
 # ── Preflight ─────────────────────────────────────────────────
 need() { command -v "$1" >/dev/null 2>&1 || { echo "[demo-record] missing: $1"; exit 1; }; }
@@ -66,7 +85,8 @@ mkdir -p "$REPO/demo/workspace/.mnml/ipc"
 # launch. The driver's `open` command re-opens what we need.
 rm -f "$REPO/demo/workspace/.mnml/session.json"
 
-mkdir -p "$(dirname "$GIF_OUT")" "$(dirname "$GIF_MIRROR")"
+mkdir -p "$(dirname "$GIF_OUT")"
+[ -n "$GIF_MIRROR" ] && mkdir -p "$(dirname "$GIF_MIRROR")"
 
 # ── The inner shell command asciinema runs ───────────────────
 # We use a heredoc so no third script file needs to exist. The
@@ -214,10 +234,14 @@ agg --cols "$COLS" --rows "$ROWS" \
     --fps-cap 20 \
     "$CAST" "$GIF_OUT"
 
-# Mirror to the GitHub README asset location.
-cp "$GIF_OUT" "$GIF_MIRROR"
+# Mirror to the GitHub README asset location (hero only).
+if [ -n "$GIF_MIRROR" ]; then
+  cp "$GIF_OUT" "$GIF_MIRROR"
+fi
 
 echo "[demo-record] done"
-echo "  hero.cast          $CAST ($(du -h "$CAST" | cut -f1))"
-echo "  site/public/media/ $GIF_OUT ($(du -h "$GIF_OUT" | cut -f1))"
-echo "  assets/demo.gif    $GIF_MIRROR ($(du -h "$GIF_MIRROR" | cut -f1))"
+echo "  cast          $CAST ($(du -h "$CAST" | cut -f1))"
+echo "  site GIF      $GIF_OUT ($(du -h "$GIF_OUT" | cut -f1))"
+if [ -n "$GIF_MIRROR" ]; then
+  echo "  README mirror $GIF_MIRROR ($(du -h "$GIF_MIRROR" | cut -f1))"
+fi

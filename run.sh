@@ -309,11 +309,16 @@ EOF
   # picks up `app.restart` for iteration).
   demo) shift; DEMO=1; export MNML_DEMO_WORKSPACE="$REPO/demo/workspace" ;;
   # ── Demo recording ──────────────────────────────────────────────
-  #   ./run.sh demo-record [OUT.gif]  Render the hero demo GIF for
-  #                                   mnml.sh + the GitHub README.
-  #                                   OUT defaults to
-  #                                   site/public/media/hero.gif and
-  #                                   is also mirrored to assets/demo.gif.
+  #   ./run.sh demo-record [NAME]     Render a demo GIF. NAME defaults
+  #                                   to `hero` (the flagship
+  #                                   walkthrough, output at
+  #                                   site/public/media/hero.gif +
+  #                                   mirrored to assets/demo.gif).
+  #                                   Per-integration tapes: `jira`,
+  #                                   `bitbucket`, `slack`, etc. —
+  #                                   look under demo/tapes/ for the
+  #                                   available drivers. Output goes
+  #                                   to site/public/media/<NAME>.gif.
   #
   # Pipeline (all under demo/tapes/):
   #   hero.driver.sh      — background driver that pipes IPC commands
@@ -331,8 +336,8 @@ EOF
   # standard TUI-recording stack and works reliably.
   demo-record)
     shift
-    out="${1:-$REPO/site/public/media/hero.gif}"
-    exec "$REPO/demo/tapes/hero.record.sh" "$out"
+    name="${1:-hero}"
+    exec "$REPO/demo/tapes/hero.record.sh" "$name"
     ;;
   # ── Misc ────────────────────────────────────────────────────────
   -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
