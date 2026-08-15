@@ -861,6 +861,22 @@ pub fn draw_pane(
             cells.push((ch, fg, bg, style_mod));
         }
 
+        // Shared "claimed" bitmap for the four end-of-line overlay passes
+        // (fold marker, inline diagnostic, inlay hints, code lens). Each
+        // pass paints into trailing space cells only. Without this
+        // tracker, an earlier pass's SPACE character (e.g. the space
+        // between two diagnostic words) is indistinguishable from an
+        // unclaimed blank cell — the next pass's guard sees a bare space
+        // and overwrites the diagnostic's whitespace with, say, an inlay
+        // hint letter. Symptoms in the wild (R11+ screenshot): the
+        // TypeScript diagnostic `Parameter 'name' implicitly has an
+        // 'any' type.` rendered as `Parameteri'name'eimplicitly has an
+        // 'any' type.` — inlay-hint chars filled the diagnostic's
+        // spaces. Fix: each pass marks every cell it CONSIDERED writing
+        // (including the ones it wrote a space to), and later passes
+        // skip claimed cells. 2026-08-15.
+        let mut trailing_claimed: Vec<bool> = vec![false; cells.len()];
+
         // Fold marker — painted into the trailing space cells of a fold's
         // start line (`  ⋯ N hidden`). Same "overlay into trailing space"
         // approach as the inline-diagnostic chip below.
@@ -878,8 +894,9 @@ pub fn draw_pane(
                 if vc >= cells.len() {
                     break;
                 }
-                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                if !trailing_claimed[vc] && cells[vc].0 == ' ' && cells[vc].2 == base_bg {
                     cells[vc] = (mc, mcolor, base_bg, ratatui::style::Modifier::empty());
+                    trailing_claimed[vc] = true;
                 }
             }
             // Remember the rect so click-to-unfold can find this fold.
@@ -915,8 +932,11 @@ pub fn draw_pane(
                 }
                 // Only paint where the line's natural content ended (a space
                 // cell with the line bg) — never over selection / find-match.
-                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                // Mark the cell claimed even for space chars so subsequent
+                // overlay passes don't fill our word gaps.
+                if !trailing_claimed[vc] && cells[vc].0 == ' ' && cells[vc].2 == base_bg {
                     cells[vc] = (mc, dcolor, base_bg, ratatui::style::Modifier::empty());
+                    trailing_claimed[vc] = true;
                 }
             }
         }
@@ -1020,8 +1040,9 @@ pub fn draw_pane(
                 if vc >= cells.len() {
                     break;
                 }
-                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                if !trailing_claimed[vc] && cells[vc].0 == ' ' && cells[vc].2 == base_bg {
                     cells[vc] = (mc, hcolor, base_bg, ratatui::style::Modifier::empty());
+                    trailing_claimed[vc] = true;
                 }
             }
         }
@@ -1057,8 +1078,9 @@ pub fn draw_pane(
                     if vc >= cells.len() {
                         break;
                     }
-                    if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                    if !trailing_claimed[vc] && cells[vc].0 == ' ' && cells[vc].2 == base_bg {
                         cells[vc] = (mc, lcolor, base_bg, ratatui::style::Modifier::empty());
+                        trailing_claimed[vc] = true;
                     }
                 }
                 col += 1;
@@ -1084,8 +1106,9 @@ pub fn draw_pane(
                         if vc >= cells.len() {
                             break;
                         }
-                        if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                        if !trailing_claimed[vc] && cells[vc].0 == ' ' && cells[vc].2 == base_bg {
                             cells[vc] = (mc, lcolor, base_bg, ratatui::style::Modifier::empty());
+                            trailing_claimed[vc] = true;
                         }
                     }
                     col += 1;
