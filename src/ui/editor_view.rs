@@ -1626,22 +1626,28 @@ fn semantic_token_modifier(modifiers: &[String]) -> ratatui::style::Modifier {
     m
 }
 
-/// Workspace-relative *parent directory* of the pane's file, suitable for
-/// breadcrumb display. `None` when the pane isn't an editor, the buffer has
-/// no path, or the file sits at the workspace root (no parent dir → no
-/// useful breadcrumb, since the filename is already on the bufferline tab).
+/// Workspace-relative *full path* of the pane's file, joined with `›`
+/// separators (VS Code parity, 2026-08-14). Includes the filename so the
+/// breadcrumb reads as a self-contained locator: `src › ui › editor_view.rs`.
+/// Returns `None` when the pane isn't an editor or the buffer has no path.
+/// A file at the workspace root produces the bare filename.
 fn breadcrumb_label(app: &App, pane_id: PaneId) -> Option<String> {
     let Some(Pane::Editor(b)) = app.panes.get(pane_id) else {
         return None;
     };
     let path = b.path.as_ref()?;
     let rel = path.strip_prefix(&app.workspace).unwrap_or(path);
-    let parent = rel.parent()?;
-    let s = parent.to_string_lossy();
-    if s.is_empty() {
+    let parts: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(os) => Some(os.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if parts.is_empty() {
         return None;
     }
-    Some(format!("{}/", s))
+    Some(parts.join(" › "))
 }
 
 /// One-row breadcrumb header (dim) above the editor body. Caller has

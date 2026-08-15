@@ -495,8 +495,9 @@ pub struct EditorConfig {
     /// (you can tell which pane is which without looking at the bufferline).
     pub breadcrumb: bool,
     /// Typing `(` `[` `{` `"` `'` `` ` `` also inserts the matching close
-    /// char (cursor between). Off by default — surprises users who haven't
-    /// opted in. `[editor] auto_pair = true` to enable.
+    /// char (cursor between). On by default (2026-08-14) — matches every
+    /// modern editor's default and users can turn it off in Settings or
+    /// via `[editor] auto_pair = false`.
     pub auto_pair: bool,
     /// On Enter, carry forward the previous line's leading whitespace. On by
     /// default — most users expect this from a modern editor.
@@ -997,11 +998,11 @@ pub struct UiConfig {
 
     /// Small delayed popup that appears NEAR THE CURSOR after
     /// `HOVER_TOOLTIP_DELAY_MS` — distinct from the bottom-left
-    /// hover-help panel (`hover_help` above). Default ON for
-    /// discoverability; a user annoyed by tooltips can turn this
-    /// off entirely — the hover-help panel still covers the same
-    /// targets in more detail. Toggle via
-    /// `view.toggle_hover_tooltip` or `:set nohovertooltip`.
+    /// hover-help panel (`hover_help` above). Default OFF (2026-08-14)
+    /// since `hover_help` now defaults ON with 49 curated entries —
+    /// two chrome elements describing the same target read as noise.
+    /// Users who prefer the popup enable it in Settings or via
+    /// `view.toggle_hover_tooltip` / `:set hovertooltip`.
     pub hover_tooltip: bool,
 
     /// True once the user has finished the first-launch wizard
@@ -1131,8 +1132,13 @@ impl Default for Config {
                 tab_width: 4,
                 autosave_secs: 0,
                 trim_trailing_ws_on_save: false,
-                breadcrumb: false,
-                auto_pair: false,
+                // 2026-08-14 — flipped `false → true`. The breadcrumb
+                // header shows the full workspace-relative path (VS
+                // Code parity), especially useful with splits.
+                breadcrumb: true,
+                // 2026-08-14 — flipped `false → true`. Matches every
+                // modern editor's default; discoverable via Settings.
+                auto_pair: true,
                 auto_indent: true,
                 format_on_save: false,
                 will_save_wait_until: false,
@@ -1312,7 +1318,13 @@ impl Default for Config {
                 // hidden feature. `view.toggle_hover_help` hides it if
                 // the reader dislikes the extra chrome (persists).
                 hover_help: true,
-                hover_tooltip: true,
+                // 2026-08-14 — flipped `true → false`. The
+                // hover-help panel (above) now defaults ON with 49
+                // curated entries, so the popup near the cursor is
+                // redundant — two chrome elements describing the
+                // same target. Users who prefer the popup enable it
+                // in Settings or via `view.toggle_hover_tooltip`.
+                hover_tooltip: false,
                 first_launch_complete: false,
                 show_workspace_dots: true,
                 md_preview_engine: "builtin".to_string(),
