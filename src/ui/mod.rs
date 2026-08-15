@@ -3810,7 +3810,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Modifier::DIM
         };
-        let disabled_suffix = if icon.enabled { "" } else { "  (hidden)" };
+        let disabled_suffix = if icon.enabled { "" } else { " (hidden)" };
         let row1 = Rect {
             x: area.x,
             y,
