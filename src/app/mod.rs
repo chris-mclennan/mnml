@@ -12223,9 +12223,13 @@ impl App {
             .find(|(_, p)| *p == cur)
             .map(|(r, _)| r.height as usize)
             .unwrap_or(0);
-        // Account for the optional breadcrumb row (1 row at the top of the
-        // editor area when the config flag is on).
-        let body_h = h.saturating_sub(if self.config.editor.breadcrumb { 1 } else { 0 });
+        // 2026-08-15 R13 api-workflow SEV-2 — was subtracting 1 for
+        // the breadcrumb here, but `editor_view.rs::draw_pane` already
+        // records the rect AFTER shrinking for the breadcrumb, so this
+        // second subtract landed the cursor one row above true bottom
+        // once the R13 default flip made `breadcrumb` on for everyone
+        // (previously dead code — the flag was off by default).
+        let body_h = h;
         if body_h == 0 {
             return;
         }
@@ -12251,7 +12255,10 @@ impl App {
             .find(|(_, p)| *p == cur)
             .map(|(r, _)| r.height as usize)
             .unwrap_or(0);
-        let body_h = h.saturating_sub(if self.config.editor.breadcrumb { 1 } else { 0 });
+        // 2026-08-15 R13 api-workflow SEV-2 — see scroll_cursor_in_view
+        // above; `editor_panes` rect is already breadcrumb-shrunk by
+        // draw_pane, so a second subtract here off-by-oned `H`/`M`/`L`.
+        let body_h = h;
         if body_h == 0 {
             return;
         }

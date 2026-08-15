@@ -355,6 +355,14 @@ impl App {
 
     /// `lsp.hover` — ask the server for hover docs at the cursor (`tick` toasts them).
     pub fn lsp_hover(&mut self) {
+        // 2026-08-15 reviewer follow-up — clear any pending
+        // mouse-anchor so this keyboard-triggered hover's reply
+        // doesn't inherit a stale mouse position (`LspEvent::Hover`
+        // arm .take()'s this field). Without the clear, a user
+        // pressing Ctrl+K Ctrl+I while the mouse rests motionless
+        // over a cell would land the popup at the mouse, not the
+        // caret.
+        self.mouse_hover_screen = None;
         self.lsp_request_at_cursor(|lsp, p, l, c| lsp.hover(p, l, c), "hover");
     }
 
