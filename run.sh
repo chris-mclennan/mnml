@@ -308,6 +308,33 @@ EOF
   # the main build+relaunch-on-exit-75 loop below (so demo mode also
   # picks up `app.restart` for iteration).
   demo) shift; DEMO=1; export MNML_DEMO_WORKSPACE="$REPO/demo/workspace" ;;
+  # ── Demo recording ──────────────────────────────────────────────
+  #   ./run.sh demo-record [TAPE]     Render a VHS tape into a GIF
+  #                                   under site/public/media/. TAPE
+  #                                   defaults to demo/tapes/hero.tape.
+  #                                   Needs VHS (brew install vhs) +
+  #                                   a Nerd Font. Ensures a fresh
+  #                                   `target/release/mnml` build first
+  #                                   because tapes reference the release
+  #                                   binary (crisper text than debug).
+  demo-record)
+    shift
+    tape="${1:-$REPO/demo/tapes/hero.tape}"
+    if ! command -v vhs >/dev/null 2>&1; then
+      echo "[demo-record] vhs not on PATH — install with: brew install vhs" >&2
+      exit 1
+    fi
+    if [ ! -f "$tape" ]; then
+      echo "[demo-record] tape not found: $tape" >&2
+      exit 1
+    fi
+    echo "[demo-record] building release binary…"
+    cargo build --release --quiet || { echo "[demo-record] build failed" >&2; exit 1; }
+    mkdir -p "$REPO/site/public/media"
+    echo "[demo-record] rendering $tape (this takes a few minutes)…"
+    cd "$REPO" && vhs "$tape"
+    exit $?
+    ;;
   # ── Misc ────────────────────────────────────────────────────────
   -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
   # ── Implicit default ────────────────────────────────────────────
