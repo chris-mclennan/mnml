@@ -401,7 +401,11 @@ fn builtin_commands() -> Vec<Command> {
             // returns to the file list. Was: only refocused the tree
             // *within* the current activity, so Ctrl+Shift+X stranded
             // the user with no keyboard escape.
-            keys: &["ctrl+shift+e"],
+            // R13 vscode-keyboard SEV-3 K-2 2026-08-15 — `Ctrl+0`
+            // is VS Code's canonical "focus explorer" alias alongside
+            // `Ctrl+Shift+E`. Adding it removes a discoverability gap
+            // for users muscle-memorying Ctrl+0.
+            keys: &["ctrl+shift+e", "ctrl+0"],
             run: |app| {
                 app.tree_visible = true;
                 app.set_activity_section(crate::app::ActivitySection::Explorer);
@@ -2727,14 +2731,18 @@ fn builtin_commands() -> Vec<Command> {
             id: "buffer.next",
             title: "Next buffer (positional)",
             group: "buffer",
-            keys: &["ctrl+pagedown"],
+            // R13 vscode-keyboard SEV-3 K-3 2026-08-15 — `Ctrl+Alt+Right`
+            // is VS Code's second binding for next-editor alongside
+            // `Ctrl+PageDown`.
+            keys: &["ctrl+pagedown", "ctrl+alt+right"],
             run: |app| app.next_buffer(),
         },
         Command {
             id: "buffer.prev",
             title: "Previous buffer (positional)",
             group: "buffer",
-            keys: &["ctrl+pageup"],
+            // R13 vscode-keyboard SEV-3 K-3 2026-08-15 — same as buffer.next.
+            keys: &["ctrl+pageup", "ctrl+alt+left"],
             run: |app| app.prev_buffer(),
         },
         Command {

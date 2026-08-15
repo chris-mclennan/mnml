@@ -1490,6 +1490,31 @@ pub fn rects_dump_json(app: &App) -> String {
     if let Some((r, _)) = app.rects.menu_bar_overflow {
         push_rect(&mut out, &mut first, "menu_bar_overflow", r);
     }
+    // R13 vscode-mouse SEV-3 2026-08-15 — hover-help info panel
+    // (and its resize kebab) needed for headless drivers to locate
+    // the panel + drag its top border.
+    if let Some(r) = app.rects.hover_help_strip {
+        push_rect(&mut out, &mut first, "hover_help_strip", r);
+    }
+    if let Some(r) = app.rects.hover_help_kebab {
+        push_rect(&mut out, &mut first, "hover_help_kebab", r);
+    }
+    // R13 vscode-mouse SEV-3 2026-08-15 — first-launch wizard's
+    // click hits (Nerd Font Yes/No radios today) so headless
+    // drivers can click them deterministically instead of eyeballing
+    // the wizard's centered layout.
+    for (r, hit) in &app.rects.first_launch_hits {
+        let label = match hit {
+            crate::ui::first_launch_overlay::FirstLaunchHit::NerdFontOk(ok) => {
+                if *ok {
+                    "first_launch:nerd_font_yes"
+                } else {
+                    "first_launch:nerd_font_no"
+                }
+            }
+        };
+        push_rect(&mut out, &mut first, label, *r);
+    }
     for (r, label) in &app.rects.tree_icon_buttons {
         push_rect(&mut out, &mut first, &format!("tree_icon:{label}"), *r);
     }

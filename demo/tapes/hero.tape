@@ -27,11 +27,19 @@ Set Framerate 30
 Set PlaybackSpeed 1.0
 Set TypingSpeed 60ms
 
+# ── Setup: cd to the repo root so ./target/release/mnml resolves.
+# `Hide` stops capture so users don't see us plumbing.
+Hide
+Type "cd /Users/chrismclennan/Projects/mnml && clear"
+Enter
+Sleep 300ms
+Show
+
 # ── Boot ───────────────────────────────────────────────────────────
 Type "./target/release/mnml --demo"
 Sleep 400ms
 Enter
-Sleep 2500ms
+Sleep 4000ms
 
 # ── 1. Activity bar sweep — Explorer → HTTP → Integrations → Agents ─
 # Cycle each section, pausing so the info panel copy is readable.
@@ -103,17 +111,26 @@ Sleep 400ms
 Enter
 Sleep 500ms
 
-# ── 4. Split window — H then V, then close ────────────────────────
-Ctrl+Backslash
+# ── 4. Split window — H then V via palette, then close ────────────
+# Ctrl+\ isn't a valid VHS chord; use the palette for splits.
+Ctrl+Shift+P
+Sleep 300ms
+Type "split right"
+Sleep 400ms
+Enter
 Sleep 1000ms
 
-Ctrl+K
-Sleep 200ms
-Type "s"
+Ctrl+Shift+P
+Sleep 300ms
+Type "split down"
+Sleep 400ms
+Enter
 Sleep 1200ms
 
-# Focus back on the left split.
-Ctrl+1
+# Cycle focus.
+Ctrl+W
+Sleep 200ms
+Type "w"
 Sleep 800ms
 
 # Close the extra splits.
@@ -146,8 +163,12 @@ Sleep 1500ms
 Escape
 Sleep 300ms
 
-# ── 7. Settings panel ──────────────────────────────────────────────
-Ctrl+Comma
+# ── 7. Settings panel via palette (Ctrl+, isn't a valid VHS chord).
+Ctrl+Shift+P
+Sleep 400ms
+Type "view.settings"
+Sleep 500ms
+Enter
 Sleep 2000ms
 Escape
 Sleep 300ms

@@ -843,8 +843,12 @@ fn describe_editor_pane(
             .unwrap_or_default();
         let msg = one_line_trunc(&d.message, 160);
         let primary = format!("{sev_label} at L{}:{}  ·  {title}{src}", row + 1, col + 1);
+        // R13 vscode-keyboard SEV-2 F-1 2026-08-15 — was advertising
+        // only the vim-leader shortcut; standard-mode users saw
+        // `<leader>` and had no chord. `Ctrl+.` is bound to
+        // `lsp.code_action` in both input modes.
         let secondary = Some(format!(
-            "{msg}  ·  [<leader>ca] Code actions · [<leader>d] Diagnostics list",
+            "{msg}  ·  [Ctrl+.] Code actions · [<leader>ca] (vim) · [<leader>d] Diagnostics list",
         ));
         return (primary, secondary);
     }
@@ -874,8 +878,10 @@ fn describe_editor_pane(
     } else if b.is_pinned {
         Some("Pinned — stays at the front of the bufferline.".to_string())
     } else {
+        // R13 vscode-keyboard SEV-2 F-1 — also show the standard-
+        // mode Ctrl+. shortcut for code actions.
         Some(
-            "[gd] Definition · [gr] References · [<leader>ca] Code actions · [Ctrl+P] Files"
+            "[gd] Definition · [gr] References · [Ctrl+.] Code actions · [Ctrl+P] Files"
                 .to_string(),
         )
     };
