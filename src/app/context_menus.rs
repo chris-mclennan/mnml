@@ -1607,10 +1607,30 @@ impl App {
     /// (`r` reflex), so only one menu row remains.
     pub fn open_statusline_coverage_context_menu(&mut self, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![MenuItem::new(
-            "Open coverage pane",
-            MenuAction::Command("tattle_coverage_ext.open"),
-        )];
+        // 2026-08-16 — show-mode filter. Current mode determines which
+        // row shows the ✓ check. Each choice dispatches a registered
+        // command that flips `[ui] coverage_chip_mode` in persisted
+        // config and re-triggers a chip render.
+        let mode = &self.config.ui.coverage_chip_mode;
+        let checkmark = |on: bool| if on { "✓ " } else { "  " };
+        let items = vec![
+            MenuItem::new(
+                "Open coverage pane",
+                MenuAction::Command("tattle_coverage_ext.open"),
+            ),
+            MenuItem::new(
+                format!("{}Show both (F + C)", checkmark(mode == "both")),
+                MenuAction::Command("coverage.chip_show_both"),
+            ),
+            MenuItem::new(
+                format!("{}Show Feature only", checkmark(mode == "feature")),
+                MenuAction::Command("coverage.chip_show_feature"),
+            ),
+            MenuItem::new(
+                format!("{}Show Code only", checkmark(mode == "code")),
+                MenuAction::Command("coverage.chip_show_code"),
+            ),
+        ];
         self.context_menu = Some(ContextMenu::new(Some("Coverage".into()), anchor, items));
     }
 

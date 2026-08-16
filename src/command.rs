@@ -5605,6 +5605,36 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "coverage.chip_show_both",
+            title: "Coverage chip: show Feature + Code",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                app.config.ui.coverage_chip_mode = "both".to_string();
+                let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "both");
+            },
+        },
+        Command {
+            id: "coverage.chip_show_feature",
+            title: "Coverage chip: show Feature only",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                app.config.ui.coverage_chip_mode = "feature".to_string();
+                let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "feature");
+            },
+        },
+        Command {
+            id: "coverage.chip_show_code",
+            title: "Coverage chip: show Code (Istanbul) only",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                app.config.ui.coverage_chip_mode = "code".to_string();
+                let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "code");
+            },
+        },
+        Command {
             id: "launcher.add_local",
             title: "Launcher: add a local chip (glyph / label / :term <cmd>)",
             group: "integrations",

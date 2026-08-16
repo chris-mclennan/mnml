@@ -576,19 +576,60 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_coverage_chip = None;
     app.ensure_coverage_loaded();
     let mut coverage_seg_idx: Option<usize> = None;
+    // 2026-08-16 — right-click on the chip picks which halves render.
+    // `both` = F + C; `feature` = F only (backwards-compat); `code` =
+    // Istanbul only. `.filter(|_| show_X)` collapses a disabled half
+    // to None so the existing "hide the C block if code_now.is_none()"
+    // path handles the both→feature transition without extra branches.
+    // The code-only case takes a dedicated render arm below.
+    let mode = app.config.ui.coverage_chip_mode.as_str();
+    let show_f = matches!(mode, "both" | "feature");
+    let show_c = matches!(mode, "both" | "code");
     let feature_now = app
         .coverage_trends
         .as_ref()
-        .and_then(|t| t.overall_current());
-    let feature_prev = app.coverage_trends.as_ref().and_then(|t| t.overall_at(7));
+        .and_then(|t| t.overall_current())
+        .filter(|_| show_f);
+    let feature_prev = app
+        .coverage_trends
+        .as_ref()
+        .and_then(|t| t.overall_at(7))
+        .filter(|_| show_f);
     let code_now = app
         .istanbul_trends
         .as_ref()
-        .and_then(|t| t.overall_current());
+        .and_then(|t| t.overall_current())
+        .filter(|_| show_c);
     // Istanbul updates per-commit rather than daily, so the delta is
     // vs previous commit, not 7-day lookback (see `overall_prev`).
-    let code_prev = app.istanbul_trends.as_ref().and_then(|t| t.overall_prev());
-    if let Some(f_now) = feature_now {
+    let code_prev = app
+        .istanbul_trends
+        .as_ref()
+        .and_then(|t| t.overall_prev())
+        .filter(|_| show_c);
+    // Code-only mode: feature_now is None (either show_f=false or the
+    // file doesn't exist); render a C-only chip if code_now exists.
+    if feature_now.is_none()
+        && let Some(c_now) = code_now
+    {
+        let t = theme::cur();
+        let (arrow, fg) = match code_prev {
+            Some(p) => {
+                let d = c_now - p;
+                if d.abs() < 0.05 {
+                    ("±", t.comment)
+                } else if d > 0.0 {
+                    ("▲", t.green)
+                } else {
+                    ("▼", t.red)
+                }
+            }
+            None => ("", t.comment),
+        };
+        let text = format!(" \u{EB03} C {:.0}%{} ", c_now, arrow);
+        coverage_seg_idx = Some(right.len());
+        right.push(Seg::new(text, fg, t.bg));
+    } else if let Some(f_now) = feature_now {
         let t = theme::cur();
         let (f_delta, fg) = match feature_prev {
             Some(p) => {
