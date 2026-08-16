@@ -274,9 +274,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             t.yellow,
         ),
     ];
-    // Decide how many chips fit: each is 3 cells; keep at least one space
-    // of padding between label and cluster.
-    let chip_w = 3usize;
+    // Decide how many chips fit. Chips render as `" {glyph} "` — 3 chars,
+    // but Nerd Font glyphs (EB37/EA9A/EAA1/EA60/F012C/F062C above) are
+    // 2 display columns wide, so the on-screen span is 4 cells in nerd
+    // mode. Same click-rect misalignment as the workspace-header chips
+    // (see `workspace_header_chips`); reviewer flagged this cluster
+    //2026-08-16 for having the identical unfixed bug.
+    let chip_w = if nerd { 4usize } else { 3usize };
     let min_separation = 1usize;
     let chip_count = {
         let mut n = chips_full.len();
