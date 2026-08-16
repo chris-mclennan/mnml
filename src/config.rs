@@ -1446,23 +1446,61 @@ enum RawMarketplaceSource {
         repo: String,
         path: String,
     },
+    /// Enumerate each sub-directory of `<repo>/<apps_dir>` as a
+    /// Rust integration crate installable via `cargo install --git`.
+    /// Intended for private GitHub-org monorepos (e.g. tattle's
+    /// internal integrations) — employees see them in Marketplace
+    /// once they've added their org's repo to
+    /// `~/.config/mnml/config.toml` as
+    /// `[[marketplace.source]] type = "github_monorepo_apps"`.
+    /// 2026-08-15.
+    GithubMonorepoApps {
+        #[serde(default)]
+        id: Option<String>,
+        repo: String,
+        #[serde(default = "default_apps_dir")]
+        apps_dir: String,
+    },
+}
+
+fn default_apps_dir() -> String {
+    "apps".to_string()
 }
 
 impl RawMarketplaceSource {
-    fn into_source(self) -> crate::marketplace::Source {
+    fn into_source(self) -> Option<crate::marketplace::Source> {
         match self {
             RawMarketplaceSource::CratesKeyword { id, keyword } => {
-                crate::marketplace::Source::CratesKeyword {
+                Some(crate::marketplace::Source::CratesKeyword {
                     id: id.unwrap_or_else(|| format!("crates:{keyword}")),
                     keyword,
-                }
+                })
             }
             RawMarketplaceSource::GithubLauncherFolder { id, repo, path } => {
-                crate::marketplace::Source::GithubLauncherFolder {
+                Some(crate::marketplace::Source::GithubLauncherFolder {
                     id: id.unwrap_or_else(|| repo.clone()),
                     repo,
                     path,
+                })
+            }
+            RawMarketplaceSource::GithubMonorepoApps { id, repo, apps_dir } => {
+                // Security boundary: `repo` and `apps_dir` are user-
+                // configured strings that end up as substrings in the
+                // shell command that runs `cargo install --git … --path
+                // …`. Drop the source silently (matching how the other
+                // bad-entry paths behave) if either is outside the safe
+                // charset — never let a shell-metachar reach the
+                // command line. 2026-08-15.
+                if !crate::marketplace::is_safe_repo_slug(&repo)
+                    || !crate::marketplace::is_safe_repo_subpath(&apps_dir)
+                {
+                    return None;
                 }
+                Some(crate::marketplace::Source::GithubMonorepoApps {
+                    id: id.unwrap_or_else(|| repo.clone()),
+                    repo,
+                    apps_dir,
+                })
             }
         }
     }
@@ -2461,7 +2499,9 @@ impl Config {
             self.marketplace.use_defaults = v;
         }
         for s in raw.marketplace.sources {
-            self.marketplace.sources.push(s.into_source());
+            if let Some(src) = s.into_source() {
+                self.marketplace.sources.push(src);
+            }
         }
         // Cloud Run defaults — empty strings mean "not set yet"
         // (the UI checks .is_empty() to route Enter to the

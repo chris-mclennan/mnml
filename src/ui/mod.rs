@@ -4101,6 +4101,20 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(t.green).bg(bg),
                 ));
             }
+            // 2026-08-15 — `[Private]` chip for CargoGit installs
+            // (github_monorepo_apps source). Tells the user "this
+            // isn't on crates.io — cargo will shell to git; make
+            // sure you have repo access." Distinct from Verified;
+            // the two can coexist on the same row.
+            if matches!(
+                entry.install,
+                crate::marketplace::InstallSpec::CargoGit { .. }
+            ) {
+                name_spans.push(Span::styled(
+                    "  Private".to_string(),
+                    Style::default().fg(t.yellow).bg(bg),
+                ));
+            }
             name_spans.push(Span::styled(
                 format!("  ({})", entry.source_id),
                 Style::default()

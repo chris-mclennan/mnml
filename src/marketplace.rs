@@ -191,12 +191,18 @@ pub fn is_verified(id: &str) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InstallSpec {
-    /// `cargo install <name>` — for crates.io apps. `--git` variant
-    /// is P4b future work when we support git-only apps.
+    /// `cargo install <name>` — for crates.io apps.
     Cargo { name: String },
     /// HTTP URL to the raw launcher TOML. Downloading it + writing
     /// to `~/.config/mnml/integrations/<id>.toml` completes install.
     LauncherToml { url: String },
+    /// `cargo install --git https://github.com/<repo>.git --path <path>`
+    /// — for private-repo apps not on crates.io. `repo` is the
+    /// `owner/name` slug (turned into an HTTPS URL at install time so
+    /// gh CLI auth applies). `path` is the sub-directory of the crate
+    /// inside a monorepo (e.g. `apps/mnml-tattle-coverage`); use `.`
+    /// for a single-crate repo. 2026-08-15.
+    CargoGit { repo: String, path: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -228,6 +234,21 @@ pub enum Source {
         repo: String,
         path: String,
     },
+    /// GitHub monorepo apps — every sub-directory of `<repo>/<apps_dir>`
+    /// is treated as an installable Rust integration crate. Installed
+    /// via `cargo install --git https://github.com/<repo>.git --path
+    /// <apps_dir>/<name>`. gh auth applies to both the enumeration
+    /// (via `Authorization: Bearer`) AND the cargo install (via
+    /// `credential.helper` — cargo shells to git which uses the
+    /// user's git config). Private repos work iff the user has org
+    /// access. Rows render with a yellow `Private` chip (styled to
+    /// match the existing `✓ Verified` / `~ Community` chips on the
+    /// same row). 2026-08-15.
+    GithubMonorepoApps {
+        id: String,
+        repo: String,
+        apps_dir: String,
+    },
 }
 
 impl Source {
@@ -235,6 +256,7 @@ impl Source {
         match self {
             Source::CratesKeyword { id, .. } => id,
             Source::GithubLauncherFolder { id, .. } => id,
+            Source::GithubMonorepoApps { id, .. } => id,
         }
     }
 }
@@ -342,6 +364,71 @@ pub fn parse_github_folder_response(body: &str) -> Result<Vec<(String, String)>,
         .filter_map(|e| e.download_url.map(|url| (e.name, url)))
         .collect();
     Ok(out)
+}
+
+/// Filter a GitHub contents-API response body to just the sub-directory
+/// names. Used by [`Source::GithubMonorepoApps`] where each sub-directory
+/// under `<repo>/<apps_dir>` is an installable Rust crate.
+///
+/// Names starting with `.` or `_` are skipped as convention (build
+/// outputs, hidden dirs). Names that contain anything outside the
+/// crate-safe charset `[A-Za-z0-9._-]` are ALSO skipped — this is a
+/// security boundary, not a stylistic filter. The name flows into a
+/// shell command in `install_marketplace_entry` (twice: once as the
+/// cargo `--path` component and once as the binary invocation).
+/// Unlike crates.io (which enforces the same charset upstream)
+/// GitHub directory names are unconstrained, so a hostile / typo'd
+/// directory called `` `evil` `` or `foo;rm -rf ~` would otherwise
+/// achieve arbitrary shell execution on install-click. 2026-08-15.
+pub fn parse_github_dir_children(body: &str) -> Result<Vec<String>, String> {
+    let entries: Vec<GhFileEntry> =
+        serde_json::from_str(body).map_err(|e| format!("github contents json: {e}"))?;
+    Ok(entries
+        .into_iter()
+        .filter(|e| e.entry_type == "dir")
+        .map(|e| e.name)
+        .filter(|n| !n.starts_with('.') && !n.starts_with('_'))
+        .filter(|n| is_safe_crate_component(n))
+        .collect())
+}
+
+/// Charset guard for path components that flow into a shell command.
+/// Matches crates.io's own crate-name policy (`[A-Za-z0-9_-]`) plus
+/// `.` (some sub-directories contain a dot). Rejects empty strings.
+/// Used at every user-supplied / network-sourced string that reaches
+/// the `cargo install --git … --path …` command line for a private
+/// repo (`Source::GithubMonorepoApps` / `InstallSpec::CargoGit`).
+pub fn is_safe_crate_component(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// Charset guard for a GitHub `owner/name` repo slug. Same allow-list
+/// as [`is_safe_crate_component`] plus exactly one `/`. Rejects empty
+/// / leading-slash / trailing-slash / multi-slash. Used at Source
+/// construction time (see `RawMarketplaceSource::into_source` in
+/// `config.rs`) so an invalid repo slug never reaches the shell.
+pub fn is_safe_repo_slug(s: &str) -> bool {
+    let mut parts = s.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(owner), Some(name), None) => {
+            is_safe_crate_component(owner) && is_safe_crate_component(name)
+        }
+        _ => false,
+    }
+}
+
+/// Charset guard for a repo sub-directory path (`apps_dir` in
+/// `Source::GithubMonorepoApps`). Same allow-list as
+/// [`is_safe_crate_component`] plus `/` for nesting. Rejects empty /
+/// leading-slash / `..` traversal segments.
+pub fn is_safe_repo_subpath(s: &str) -> bool {
+    if s.is_empty() || s.starts_with('/') || s.ends_with('/') {
+        return false;
+    }
+    s.split('/')
+        .all(|seg| !seg.is_empty() && seg != ".." && is_safe_crate_component(seg))
 }
 
 /// Parse a launcher TOML file's raw contents into a marketplace
@@ -709,6 +796,48 @@ pub fn fetch_source(source: &Source) -> Result<Vec<MarketplaceEntry>, String> {
             }
             Ok(entries)
         }
+        Source::GithubMonorepoApps { id, repo, apps_dir } => {
+            let list_url = format!(
+                "https://api.github.com/repos/{}/contents/{}",
+                repo, apps_dir
+            );
+            let mut req = client.get(&list_url);
+            if let Some(tok) = detect_gh_auth_token() {
+                req = req.bearer_auth(tok);
+            }
+            let body = req
+                .send()
+                .and_then(|r| r.error_for_status())
+                .and_then(|r| r.text())
+                .map_err(|e| format!("github contents (monorepo apps): {e}"))?;
+            let dirs = parse_github_dir_children(&body)?;
+            Ok(dirs
+                .into_iter()
+                .map(|name| {
+                    let (glyph, color) = catalog_lookup(&name);
+                    let install_path = format!("{}/{}", apps_dir, name);
+                    MarketplaceEntry {
+                        source_id: id.clone(),
+                        kind: MarketplaceKind::App,
+                        id: name.clone(),
+                        label: name.clone(),
+                        // Description lands after cargo install runs
+                        // the crate's own metadata; the list-time
+                        // response here doesn't carry it.
+                        description: None,
+                        install: InstallSpec::CargoGit {
+                            repo: repo.clone(),
+                            path: install_path,
+                        },
+                        stats: EntryStats::default(),
+                        provenance: provenance_for(id),
+                        glyph,
+                        color,
+                        verified: is_verified(&name),
+                    }
+                })
+                .collect())
+        }
     }
 }
 
@@ -815,6 +944,64 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, "htop.toml");
         assert_eq!(entries[1].0, "iftop.toml");
+    }
+
+    #[test]
+    fn parses_github_dir_children_filters_to_visible_dirs() {
+        let body = r#"[
+            {"name": "mnml-tattle-coverage", "type": "dir", "download_url": null},
+            {"name": "README.md", "type": "file", "download_url": "http://x"},
+            {"name": ".github", "type": "dir", "download_url": null},
+            {"name": "_scratch", "type": "dir", "download_url": null},
+            {"name": "mnml-tattle-launchpad", "type": "dir", "download_url": null}
+        ]"#;
+        let dirs = parse_github_dir_children(body).unwrap();
+        assert_eq!(dirs, vec!["mnml-tattle-coverage", "mnml-tattle-launchpad"]);
+    }
+
+    #[test]
+    fn parses_github_dir_children_drops_shell_injection_names() {
+        // Every one of these names has a valid `dir` type but a
+        // shell-metachar payload. `parse_github_dir_children` must
+        // silently drop them — they'd otherwise be interpolated
+        // unescaped into `cargo install --path <name>` at install
+        // time. 2026-08-15 review-fix.
+        let body = r#"[
+            {"name": "good-crate", "type": "dir", "download_url": null},
+            {"name": "foo;rm -rf ~", "type": "dir", "download_url": null},
+            {"name": "back`tick`", "type": "dir", "download_url": null},
+            {"name": "$evil", "type": "dir", "download_url": null},
+            {"name": "sp ace", "type": "dir", "download_url": null},
+            {"name": "path/traversal", "type": "dir", "download_url": null},
+            {"name": "another-good", "type": "dir", "download_url": null}
+        ]"#;
+        let dirs = parse_github_dir_children(body).unwrap();
+        assert_eq!(dirs, vec!["good-crate", "another-good"]);
+    }
+
+    #[test]
+    fn safe_charset_guards_accept_expected_shapes() {
+        assert!(is_safe_crate_component("mnml-tattle-coverage"));
+        assert!(is_safe_crate_component("foo_bar.baz"));
+        assert!(!is_safe_crate_component(""));
+        assert!(!is_safe_crate_component("foo bar"));
+        assert!(!is_safe_crate_component("foo;bar"));
+        assert!(!is_safe_crate_component("foo/bar"));
+
+        assert!(is_safe_repo_slug("chris-mclennan/mnml-tattle-integrations"));
+        assert!(!is_safe_repo_slug("chris-mclennan"));
+        assert!(!is_safe_repo_slug("chris/mnml/extra"));
+        assert!(!is_safe_repo_slug("/foo/bar"));
+        assert!(!is_safe_repo_slug("chris; rm/-rf"));
+
+        assert!(is_safe_repo_subpath("apps"));
+        assert!(is_safe_repo_subpath("apps/foo"));
+        assert!(is_safe_repo_subpath("crates/mnml-bridge"));
+        assert!(!is_safe_repo_subpath(""));
+        assert!(!is_safe_repo_subpath("/apps"));
+        assert!(!is_safe_repo_subpath("apps/"));
+        assert!(!is_safe_repo_subpath("apps/../etc"));
+        assert!(!is_safe_repo_subpath("apps; rm"));
     }
 
     #[test]

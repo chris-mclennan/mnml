@@ -7596,6 +7596,9 @@ impl App {
             crate::marketplace::InstallSpec::LauncherToml { .. } => {
                 format!("Install launcher `{}`?", entry.id)
             }
+            crate::marketplace::InstallSpec::CargoGit { repo, path } => {
+                format!("Install `{}` from private repo {repo}/{path}?", entry.id)
+            }
         };
         self.pending_marketplace_install_idx = Some(idx);
         let mut p =
@@ -7659,6 +7662,44 @@ impl App {
                 let ipc_cmd = self.workspace.join(".mnml").join("ipc").join("command");
                 self.run_ex_command(&format!(
                     "term cargo install --force {name} && $HOME/.cargo/bin/{name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
+                    ipc = ipc_cmd.display(),
+                ));
+            }
+            crate::marketplace::InstallSpec::CargoGit { repo, path } => {
+                let name = entry.id.clone();
+                // Defense-in-depth: `repo` came in via a validated
+                // `RawMarketplaceSource::GithubMonorepoApps` (both
+                // repo slug + apps_dir sanity-checked at config load
+                // — see `config.rs::into_source`), `name` came from
+                // `parse_github_dir_children` which drops any entry
+                // outside the safe crate charset, and `path` was
+                // built as `apps_dir/name` from those two. Assert
+                // here so a future refactor that adds another entry
+                // path can't silently reach this shell command with
+                // an unchecked string.
+                if !crate::marketplace::is_safe_repo_slug(repo)
+                    || !crate::marketplace::is_safe_repo_subpath(path)
+                    || !crate::marketplace::is_safe_crate_component(&name)
+                {
+                    self.toast(format!(
+                        "install refused: {name}/{repo}/{path} contains an unsafe character"
+                    ));
+                    return;
+                }
+                self.toast(format!("installing {name} from {repo}…"));
+                // Private-repo install: cargo shells to git which
+                // uses the user's git credential.helper — same auth
+                // path that lets them `git clone` the private repo
+                // on the terminal. If they can't clone, cargo can't
+                // fetch. Runs in a Pty pane so the auth prompt (if
+                // any) is visible + interactive.
+                //
+                // --force + explicit ~/.cargo/bin path for the same
+                // reasons the crates.io arm needs them (see comments
+                // above).
+                let ipc_cmd = self.workspace.join(".mnml").join("ipc").join("command");
+                self.run_ex_command(&format!(
+                    "term cargo install --force --git https://github.com/{repo}.git --path {path} && $HOME/.cargo/bin/{name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
                     ipc = ipc_cmd.display(),
                 ));
             }

@@ -95,17 +95,23 @@ impl App {
             .find(|i| i.id == id)
             .and_then(|i| i.repository.clone())
             .filter(|s| !s.trim().is_empty());
-        let is_marketplace_app = self
+        // 2026-08-15 — was `is_marketplace_app: bool`; expanded to
+        // carry the entry's `InstallSpec` so a private-repo (CargoGit)
+        // entry fetches its README from the configured GitHub repo
+        // instead of falling through to the crates.io path (which
+        // 404s for unpublished crates and, for `mnml-*` prefixed ids,
+        // wrongly falls back to the public mnml-integrations repo).
+        let install_hint = self
             .marketplace_entries
             .iter()
             .find(|e| e.id == id)
-            .is_some_and(|e| matches!(e.kind, crate::marketplace::MarketplaceKind::App));
+            .map(|e| e.install.clone());
         let source_id = id.to_string();
         self.readme_cache
             .insert(source_id.clone(), ReadmeState::Loading);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let state = fetch_readme_blocking(&source_id, repo_url.as_deref(), is_marketplace_app);
+            let state = fetch_readme_blocking(&source_id, repo_url.as_deref(), install_hint);
             let _ = tx.send((source_id, state));
         });
         self.readme_pending.push(rx);
@@ -130,8 +136,41 @@ impl App {
 fn fetch_readme_blocking(
     id: &str,
     repo_url: Option<&str>,
-    is_marketplace_app: bool,
+    install_hint: Option<crate::marketplace::InstallSpec>,
 ) -> ReadmeState {
+    use crate::marketplace::InstallSpec;
+    let is_marketplace_app = matches!(
+        install_hint,
+        Some(InstallSpec::Cargo { .. }) | Some(InstallSpec::CargoGit { .. })
+    );
+    // Private-repo (CargoGit) entries: skip the crates.io + public-
+    // repo fallbacks entirely and try the configured repo directly.
+    // If those all 404, return NotFound rather than leaking a query
+    // to a public repo that happens to share a `mnml-` prefix.
+    if let Some(InstallSpec::CargoGit { repo, path }) = &install_hint {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(format!(
+                "mnml/{} (https://github.com/chris-mclennan/mnml)",
+                env!("CARGO_PKG_VERSION")
+            ))
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+            .ok();
+        if let Some(client) = client {
+            for branch in ["main", "master"] {
+                let raw =
+                    format!("https://raw.githubusercontent.com/{repo}/{branch}/{path}/README.md");
+                if let Ok(resp) = client.get(&raw).send()
+                    && resp.status().is_success()
+                    && let Ok(body) = resp.text()
+                    && !body.is_empty()
+                {
+                    return ReadmeState::Text(body);
+                }
+            }
+        }
+        return ReadmeState::NotFound;
+    }
     let client = reqwest::blocking::Client::builder()
         // crates.io rejects generic user-agents with 403. Follows the
         // "App (contact)" convention documented in their crawler policy.
