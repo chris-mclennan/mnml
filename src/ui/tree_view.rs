@@ -2161,12 +2161,31 @@ mod tests {
             ws = ws.file_name().unwrap_or_default().to_string_lossy(),
         );
 
+        // Helper: does (x, y) fall inside ANY registered rect?
+        // Used to distinguish "chip overflow into empty space" (a
+        // real off-by-one bug) from "chip cluster is adjacent so
+        // the next chip's own glyph is at right_x" (fine, it's
+        // that chip's own hit surface). 2026-08-16 — needed after
+        // chip_w bumped to 4 in nerd mode to match the visual
+        // wide-glyph width; ratatui's buffer still allocates only
+        // 1 cell for the (unicode-width narrow) PUA glyph, so the
+        // next chip's glyph appears at prev.right_x in the buffer.
+        let rect_contains = |x: u16, y: u16| -> bool {
+            app.rects
+                .tree_icon_buttons
+                .iter()
+                .any(|(r, _)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+        };
+
         for (rect, label) in &app.rects.tree_icon_buttons {
             // Check the cell IMMEDIATELY left and right of the rect
             // on the same rows. A non-empty adjacent cell means the
-            // chip extends past the registered hit area.
+            // chip extends past the registered hit area — UNLESS
+            // that adjacent cell is itself inside a neighboring
+            // registered rect (chips are painted adjacent, so the
+            // next chip's own glyph is a legitimate neighbor).
             for y in rect.y..rect.y.saturating_add(rect.height) {
-                if rect.x > 0 && is_visible(rect.x - 1, y) {
+                if rect.x > 0 && is_visible(rect.x - 1, y) && !rect_contains(rect.x - 1, y) {
                     panic!(
                         "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({lx},{y}) is OUTSIDE the rect (off-by-one to the left)",
                         x = rect.x,
@@ -2188,7 +2207,7 @@ mod tests {
                     ""
                 };
                 let is_divider = right_glyph == "│" || right_glyph == "┃";
-                if is_visible(right_x, y) && !is_divider {
+                if is_visible(right_x, y) && !is_divider && !rect_contains(right_x, y) {
                     panic!(
                         "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({rx},{y}) is OUTSIDE the rect (off-by-one to the right)",
                         x = rect.x,
