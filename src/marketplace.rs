@@ -394,14 +394,18 @@ pub fn parse_github_dir_children(body: &str) -> Result<Vec<String>, String> {
 
 /// Charset guard for path components that flow into a shell command.
 /// Matches crates.io's own crate-name policy (`[A-Za-z0-9_-]`) plus
-/// `.` (some sub-directories contain a dot). Rejects empty strings.
-/// Used at every user-supplied / network-sourced string that reaches
-/// the `cargo install --git … --path …` command line for a private
-/// repo (`Source::GithubMonorepoApps` / `InstallSpec::CargoGit`).
+/// `.` (some sub-directories contain a dot). Rejects empty strings
+/// and the two traversal sentinels `.` / `..` so any future call
+/// site can rely on this function *alone* — `is_safe_repo_subpath`
+/// duplicates the `..` rejection because a bare `..` would also
+/// fail this check, but a nested `foo/../bar` still needs its own
+/// segment-level guard. 2026-08-15.
 pub fn is_safe_crate_component(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    if s.is_empty() || s == "." || s == ".." {
+        return false;
+    }
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 /// Charset guard for a GitHub `owner/name` repo slug. Same allow-list
@@ -984,6 +988,8 @@ mod tests {
         assert!(is_safe_crate_component("mnml-tattle-coverage"));
         assert!(is_safe_crate_component("foo_bar.baz"));
         assert!(!is_safe_crate_component(""));
+        assert!(!is_safe_crate_component("."));
+        assert!(!is_safe_crate_component(".."));
         assert!(!is_safe_crate_component("foo bar"));
         assert!(!is_safe_crate_component("foo;bar"));
         assert!(!is_safe_crate_component("foo/bar"));
