@@ -242,6 +242,11 @@ pub struct IstanbulApp {
 pub struct IstanbulPoint {
     #[serde(default)]
     pub date: String,
+    /// Number of source files scored at this point — used as the
+    /// weighting factor in `weighted_lines_mean` so bigger repos
+    /// pull more, matching integration's `istanbul_overall()`.
+    #[serde(default)]
+    pub files: u32,
     #[serde(default)]
     pub statements: f64,
     #[serde(default)]
@@ -274,44 +279,52 @@ impl IstanbulTrendsFile {
         )
     }
 
-    /// Overall coverage — mean of each app's latest `lines` %. Lines is
-    /// the closest Istanbul-metric analog to the "one number" summary
-    /// the feature side reports, and it's what tattle's confluence
-    /// rollup highlights.
+    /// Overall coverage — files-weighted mean of each app's latest
+    /// `lines` %. Matches the `mnml-tattle-coverage` integration's
+    /// `istanbul_overall()` math so the statusline chip and full-pane
+    /// view report the same number. Prior version was unweighted mean;
+    /// switched to weighted 2026-08-16 to eliminate that drift.
     pub fn overall_current(&self) -> Option<f64> {
-        let vals: Vec<f64> = self
-            .apps
-            .iter()
-            .filter_map(|a| a.series.last().map(|p| p.lines))
-            .collect();
-        if vals.is_empty() {
-            return None;
-        }
-        Some(vals.iter().sum::<f64>() / vals.len() as f64)
+        weighted_lines_mean(self.apps.iter().filter_map(|a| a.series.last()))
     }
 
-    /// Same as `overall_current`, at the closest series point that is
-    /// `days_ago` days before the latest. `None` if too little history.
-    pub fn overall_at(&self, days_ago: u32) -> Option<f64> {
-        let vals: Vec<f64> = self
-            .apps
-            .iter()
-            .filter_map(|a| {
-                let latest = a.series.last()?;
-                let target = date_offset(&latest.date, -(days_ago as i32))?;
-                a.series
-                    .iter()
-                    .rev()
-                    .find(|p| p.date <= target)
-                    .or_else(|| a.series.first())
-                    .map(|p| p.lines)
-            })
-            .collect();
-        if vals.is_empty() {
-            return None;
-        }
-        Some(vals.iter().sum::<f64>() / vals.len() as f64)
+    /// Overall coverage at the previous COMMIT — mirrors the
+    /// integration's per-merge delta cadence. Istanbul updates
+    /// per-commit rather than daily, so a 7-day lookback (feature-
+    /// coverage cadence) would routinely walk past several merges.
+    /// Returns None if any app has only one point.
+    pub fn overall_prev(&self) -> Option<f64> {
+        // Second-from-last point per app; falls back to first when
+        // that also doesn't exist (single-point series → same as
+        // current, delta reads as flat).
+        weighted_lines_mean(self.apps.iter().filter_map(|a| {
+            if a.series.len() >= 2 {
+                a.series.get(a.series.len() - 2)
+            } else {
+                a.series.first()
+            }
+        }))
     }
+}
+
+/// Shared helper for `IstanbulTrendsFile::overall_*` — accepts a
+/// per-app iterator of "the point to score at" (latest / prev /
+/// N-back) and returns the files-weighted mean of `lines` across
+/// all yielded points. Empty iterator → None.
+fn weighted_lines_mean<'a, I>(points: I) -> Option<f64>
+where
+    I: Iterator<Item = &'a IstanbulPoint>,
+{
+    let mut weighted_sum = 0.0f64;
+    let mut total_files = 0u64;
+    for p in points {
+        weighted_sum += p.lines * (p.files as f64);
+        total_files += p.files as u64;
+    }
+    if total_files == 0 {
+        return None;
+    }
+    Some(weighted_sum / total_files as f64)
 }
 
 /// Render a series of Option<f64> as a braille sparkline. Two dots per

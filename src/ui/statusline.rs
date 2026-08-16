@@ -585,7 +585,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .istanbul_trends
         .as_ref()
         .and_then(|t| t.overall_current());
-    let code_prev = app.istanbul_trends.as_ref().and_then(|t| t.overall_at(7));
+    // Istanbul updates per-commit rather than daily, so the delta is
+    // vs previous commit, not 7-day lookback (see `overall_prev`).
+    let code_prev = app.istanbul_trends.as_ref().and_then(|t| t.overall_prev());
     if let Some(f_now) = feature_now {
         let t = theme::cur();
         let (f_delta, fg) = match feature_prev {

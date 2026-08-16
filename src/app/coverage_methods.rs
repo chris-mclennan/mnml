@@ -25,8 +25,15 @@ impl App {
     /// hides the corresponding number. 2026-08-16.
     pub fn ensure_coverage_loaded(&mut self) {
         let now = unix_secs();
-        if self.coverage_trends.is_some()
-            && now.saturating_sub(self.coverage_trends_last_loaded_at) < RELOAD_INTERVAL_SECS
+        // 2026-08-16 — throttle keys off last-ATTEMPT, not last-success.
+        // Prior condition `is_some() && elapsed < 300s` meant a non-tattle
+        // user (both files absent, trends stay None forever) re-ran two
+        // blocking `fs::read_to_string` + serde parses on EVERY render
+        // frame. Now the timestamp advances unconditionally after each
+        // attempt so the 5-min window applies whether the file existed
+        // or not.
+        if now.saturating_sub(self.coverage_trends_last_loaded_at) < RELOAD_INTERVAL_SECS
+            && self.coverage_trends_last_loaded_at != 0
         {
             return;
         }
