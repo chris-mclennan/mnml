@@ -448,9 +448,11 @@ pub fn parse_cargo_toml_metadata(body: &str) -> Result<(Option<String>, Option<S
     #[derive(Debug, Deserialize)]
     struct Package {
         description: Option<String>,
-        // cargo doesn't have a "label" field; `package.metadata.mnml.
-        // label` is the convention — but for v1 we just fall through
-        // to `name` at the call site.
+        // Cargo's `name` field. The caller uses it as the row label,
+        // falling back to the raw directory name only if this + the
+        // whole [package] table are absent. `package.metadata.mnml.
+        // label` remains reserved for a friendlier display name once
+        // an integration wants to override.
         name: Option<String>,
     }
     let m: CargoManifest = toml::from_str(body).map_err(|e| format!("cargo.toml: {e}"))?;
