@@ -209,6 +209,111 @@ fn days_in_month(y: i32, m: i32) -> i32 {
     }
 }
 
+// ── Istanbul / code coverage (2026-08-16) ─────────────────────
+//
+// Second S3 rollup — statements/branches/functions/lines % per repo,
+// per-commit. Same envelope shape as feature-coverage but the point
+// type diverges.
+//
+// mnml core reads it from the local mirror at
+// `~/.tattle-claude-artifacts/code-coverage/_trends/trends.json`.
+// If the file's absent (no local sync yet), the statusline chip
+// silently omits the Code % — the Feature % keeps rendering.
+// The full per-repo Istanbul view lives in the `mnml-tattle-coverage`
+// integration, which pulls directly from S3.
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IstanbulTrendsFile {
+    #[serde(default)]
+    pub latest_date: String,
+    #[serde(default)]
+    pub apps: Vec<IstanbulApp>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IstanbulApp {
+    pub slug: String,
+    pub name: String,
+    #[serde(default)]
+    pub series: Vec<IstanbulPoint>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IstanbulPoint {
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub statements: f64,
+    #[serde(default)]
+    pub branches: f64,
+    #[serde(default)]
+    pub functions: f64,
+    #[serde(default)]
+    pub lines: f64,
+}
+
+impl IstanbulTrendsFile {
+    pub fn load_default() -> Option<Self> {
+        let path = Self::default_path()?;
+        Self::load_from(&path)
+    }
+
+    pub fn load_from(path: &PathBuf) -> Option<Self> {
+        let text = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    pub fn default_path() -> Option<PathBuf> {
+        let home = std::env::var_os("HOME")?;
+        Some(
+            PathBuf::from(home)
+                .join(".tattle-claude-artifacts")
+                .join("code-coverage")
+                .join("_trends")
+                .join("trends.json"),
+        )
+    }
+
+    /// Overall coverage — mean of each app's latest `lines` %. Lines is
+    /// the closest Istanbul-metric analog to the "one number" summary
+    /// the feature side reports, and it's what tattle's confluence
+    /// rollup highlights.
+    pub fn overall_current(&self) -> Option<f64> {
+        let vals: Vec<f64> = self
+            .apps
+            .iter()
+            .filter_map(|a| a.series.last().map(|p| p.lines))
+            .collect();
+        if vals.is_empty() {
+            return None;
+        }
+        Some(vals.iter().sum::<f64>() / vals.len() as f64)
+    }
+
+    /// Same as `overall_current`, at the closest series point that is
+    /// `days_ago` days before the latest. `None` if too little history.
+    pub fn overall_at(&self, days_ago: u32) -> Option<f64> {
+        let vals: Vec<f64> = self
+            .apps
+            .iter()
+            .filter_map(|a| {
+                let latest = a.series.last()?;
+                let target = date_offset(&latest.date, -(days_ago as i32))?;
+                a.series
+                    .iter()
+                    .rev()
+                    .find(|p| p.date <= target)
+                    .or_else(|| a.series.first())
+                    .map(|p| p.lines)
+            })
+            .collect();
+        if vals.is_empty() {
+            return None;
+        }
+        Some(vals.iter().sum::<f64>() / vals.len() as f64)
+    }
+}
+
 /// Render a series of Option<f64> as a braille sparkline. Two dots per
 /// column (one glyph = 2 x-samples), so 8 points → 4 braille chars.
 /// Missing points render as U+2800 (blank braille) so gaps show.

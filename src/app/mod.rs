@@ -3761,9 +3761,17 @@ pub struct App {
     /// `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`.
     /// None until first load; hidden UI if the file doesn't exist.
     pub coverage_trends: Option<crate::coverage::TrendsFile>,
+    /// Istanbul (code-coverage) trends — read from
+    /// `~/.tattle-claude-artifacts/code-coverage/_trends/trends.json`.
+    /// Rendered on the statusline chip next to the feature %. None until
+    /// first load, and stays None if the file doesn't exist (e.g. no
+    /// local sync yet — the mnml-tattle-coverage integration still shows
+    /// the full Istanbul view by pulling S3 directly). 2026-08-16.
+    pub istanbul_trends: Option<crate::coverage::IstanbulTrendsFile>,
     /// Unix seconds of the last coverage-trends read; 0 = never loaded.
     /// Throttles the per-tick re-read (file is written by an out-of-mnml
-    /// cron, no need to poll faster than ~5 min).
+    /// cron, no need to poll faster than ~5 min). Applies to BOTH feature
+    /// + Istanbul (loaded together in `ensure_coverage_loaded`).
     pub coverage_trends_last_loaded_at: u64,
     /// Unix seconds when the marketplace cache was last successfully
     /// written. 0 means "never fetched this session"; the disk cache
@@ -5509,6 +5517,7 @@ impl App {
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
             coverage_trends: None,
+            istanbul_trends: None,
             coverage_trends_last_loaded_at: 0,
             marketplace_last_fetched: 0,
             search_query: String::new(),

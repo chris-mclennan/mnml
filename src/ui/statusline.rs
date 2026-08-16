@@ -565,44 +565,71 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ai_codex_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     }
-    // Coverage meter — Tattle feature-coverage rollup. Only paints
-    // when trends.json exists at
-    // ~/.tattle-claude-artifacts/feature-coverage/_trends/. Click →
-    // `tattle_coverage_ext.open` (integration Pty pane). Delta arrow
-    // colored green/red by direction vs 7d ago.
+    // Coverage meter — Tattle rollups. Feature % (from
+    // `feature-coverage/_trends/trends.json`) always leads; Code %
+    // (Istanbul, from `code-coverage/_trends/trends.json`) appended
+    // when that file exists too. Either can be absent per user
+    // (chip hides entirely if BOTH are missing). Click →
+    // `tattle_coverage_ext.open` (integration Pty pane). Chip color
+    // = feature delta direction (Code delta shown via arrow only).
+    // 2026-08-16 — Code % added per user ask.
     app.rects.statusline_coverage_chip = None;
     app.ensure_coverage_loaded();
     let mut coverage_seg_idx: Option<usize> = None;
-    if let Some(trends) = app.coverage_trends.as_ref() {
+    let feature_now = app
+        .coverage_trends
+        .as_ref()
+        .and_then(|t| t.overall_current());
+    let feature_prev = app.coverage_trends.as_ref().and_then(|t| t.overall_at(7));
+    let code_now = app
+        .istanbul_trends
+        .as_ref()
+        .and_then(|t| t.overall_current());
+    let code_prev = app.istanbul_trends.as_ref().and_then(|t| t.overall_at(7));
+    if let Some(f_now) = feature_now {
         let t = theme::cur();
-        let now = trends.overall_current();
-        let prev = trends.overall_at(7);
-        if let Some(now) = now {
-            let (delta_str, fg) = match prev {
-                Some(p) => {
-                    let d = now - p;
-                    let arrow = if d.abs() < 0.05 {
-                        "±"
-                    } else if d > 0.0 {
-                        "▲"
-                    } else {
-                        "▼"
-                    };
-                    let color = if d.abs() < 0.05 {
-                        t.comment
-                    } else if d > 0.0 {
-                        t.green
-                    } else {
-                        t.red
-                    };
-                    (format!(" {arrow}{:.1}", d.abs()), color)
-                }
-                None => (String::new(), t.comment),
-            };
-            let text = format!(" \u{EB03} {:.0}%{} ", now, delta_str);
-            coverage_seg_idx = Some(right.len());
-            right.push(Seg::new(text, fg, t.bg));
-        }
+        let (f_delta, fg) = match feature_prev {
+            Some(p) => {
+                let d = f_now - p;
+                let arrow = if d.abs() < 0.05 {
+                    "±"
+                } else if d > 0.0 {
+                    "▲"
+                } else {
+                    "▼"
+                };
+                let color = if d.abs() < 0.05 {
+                    t.comment
+                } else if d > 0.0 {
+                    t.green
+                } else {
+                    t.red
+                };
+                (format!(" {arrow}{:.1}", d.abs()), color)
+            }
+            None => (String::new(), t.comment),
+        };
+        let code_str = code_now
+            .map(|c_now| {
+                let arrow = match code_prev {
+                    Some(p) => {
+                        let d = c_now - p;
+                        if d.abs() < 0.05 {
+                            "±"
+                        } else if d > 0.0 {
+                            "▲"
+                        } else {
+                            "▼"
+                        }
+                    }
+                    None => "",
+                };
+                format!(" · C {:.0}%{}", c_now, arrow)
+            })
+            .unwrap_or_default();
+        let text = format!(" \u{EB03} F {:.0}%{}{} ", f_now, f_delta, code_str);
+        coverage_seg_idx = Some(right.len());
+        right.push(Seg::new(text, fg, t.bg));
     }
     // Now-playing chip — pushed first so it's the leftmost segment of
     // the right cluster (closer to centre). Doubles as the mixr launch

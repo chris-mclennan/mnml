@@ -5,7 +5,7 @@
 //! chip lives in mnml core, and its data path stays here.
 
 use crate::app::App;
-use crate::coverage::TrendsFile;
+use crate::coverage::{IstanbulTrendsFile, TrendsFile};
 
 /// How often we're willing to re-read `trends.json` from disk in a
 /// steady-state loop. Cheap read (small JSON), but the cron only
@@ -13,9 +13,16 @@ use crate::coverage::TrendsFile;
 const RELOAD_INTERVAL_SECS: u64 = 300;
 
 impl App {
-    /// Load the trends JSON if we don't have it yet, or reload if the
+    /// Load both trends JSONs if we don't have them yet, or reload if the
     /// throttle window has elapsed. Called from render + right before
     /// painting the statusline chip.
+    ///
+    /// Feature coverage lives at
+    /// `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`;
+    /// Istanbul coverage at `.../code-coverage/_trends/trends.json`.
+    /// Either can be absent (no local sync yet, or non-tattle user) —
+    /// missing files silently leave `None`, and the statusline chip
+    /// hides the corresponding number. 2026-08-16.
     pub fn ensure_coverage_loaded(&mut self) {
         let now = unix_secs();
         if self.coverage_trends.is_some()
@@ -24,6 +31,7 @@ impl App {
             return;
         }
         self.coverage_trends = TrendsFile::load_default();
+        self.istanbul_trends = IstanbulTrendsFile::load_default();
         self.coverage_trends_last_loaded_at = now;
     }
 }
