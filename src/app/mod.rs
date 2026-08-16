@@ -7837,28 +7837,21 @@ impl App {
     /// flight. Cheap no-op the other 99% of ticks. Called from the
     /// per-tick loop.
     ///
-    /// 2026-08-08 (v2) — when the last fetch produced an HTTP 429
-    /// (rate limit), retry sooner than the normal 5-min cadence.
-    /// Anthropic's 429s usually clear inside a minute; the previous
-    /// fixed 5-min tick left the chip stuck on `—!` for far longer
-    /// than the actual limit.
+    /// 2026-08-16 — was 30s fast-retry on 429, but continuous 30s
+    /// polling BECAME the source of Anthropic's rate limit (2880
+    /// requests/day per mnml instance) — the chip stayed stuck on
+    /// `—!` forever because every retry landed within the moving
+    /// rate-limit window. Now: same 5-min cadence for 429 as normal.
+    /// Anthropic's rate limits clear in minutes-to-hours; polling
+    /// twice per minute is what created the problem the fast-retry
+    /// was meant to solve. See task #943.
     pub fn maybe_refresh_ai_usage(&mut self) {
         const REFRESH_INTERVAL_SECS: u64 = 5 * 60;
-        const RATE_LIMIT_RETRY_SECS: u64 = 30;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let last_error_is_rate_limit = self
-            .ai_usage_claude
-            .as_ref()
-            .and_then(|u| u.last_error.as_deref())
-            .is_some_and(|e| e.contains("429"));
-        let interval = if last_error_is_rate_limit {
-            RATE_LIMIT_RETRY_SECS
-        } else {
-            REFRESH_INTERVAL_SECS
-        };
+        let interval = REFRESH_INTERVAL_SECS;
         if now.saturating_sub(self.ai_usage_last_refresh_at) < interval {
             return;
         }
