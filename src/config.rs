@@ -2209,19 +2209,12 @@ impl Config {
             const DEAD_IDS: &[&str] = &["bitbucket", "linear", "gitlab", "cypress", "slack"];
             merged.retain(|i| !DEAD_IDS.contains(&i.id.as_str()));
             for id in DEAD_IDS {
-                if let Ok(path) = mnml_bridge::integration_manifest_path(id)
-                    && path.exists()
-                {
-                    let _ = std::fs::remove_file(&path);
-                }
-                if let Ok(base) = mnml_bridge::integration_manifest_path(id)
-                    && let Some(dir) = base.parent()
-                {
-                    let override_path = dir.join(format!("{id}.override.toml"));
-                    if override_path.exists() {
-                        let _ = std::fs::remove_file(&override_path);
-                    }
-                }
+                // `uninstall_integration` deletes both the manifest
+                // and any leftover pending-glyph SVG for `id` in one
+                // call, tolerating NotFound. Best-effort — a failure
+                // to delete just means the ghost survives one more
+                // startup, not a fatal error.
+                let _ = mnml_bridge::uninstall_integration(id);
             }
             self.ui.integration_icons = merged;
         }
