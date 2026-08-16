@@ -2121,9 +2121,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // entries) fall back to a plain `cargo install --force <id>`,
         // since Cargo is the majority path.
         let cmd = match install_spec {
-            Some(crate::marketplace::InstallSpec::Cargo { name }) => Some(format!(
-                "term cargo install --force {name} && $HOME/.cargo/bin/{name} --install && echo '✓ {name} updated'",
-            )),
+            // 2026-08-16 (reviewer polish) — symmetry with the CargoGit
+            // branch: guard `name` even though crates.io enforces the
+            // same charset at publish time, so a future non-crates.io
+            // `InstallSpec::Cargo` source can't reach the shell string
+            // with an unchecked value.
+            Some(crate::marketplace::InstallSpec::Cargo { name })
+                if crate::marketplace::is_safe_crate_component(&name) =>
+            {
+                Some(format!(
+                    "term cargo install --force {name} && $HOME/.cargo/bin/{name} --install && echo '✓ {name} updated'",
+                ))
+            }
+            Some(crate::marketplace::InstallSpec::Cargo { .. }) => None,
             Some(crate::marketplace::InstallSpec::CargoGit { repo, .. }) => {
                 if crate::marketplace::is_safe_repo_slug(&repo)
                     && crate::marketplace::is_safe_crate_component(&id)

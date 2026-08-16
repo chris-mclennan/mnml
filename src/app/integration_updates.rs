@@ -269,13 +269,23 @@ fn run_one_sweep(app_updates: &Arc<Mutex<HashMap<String, UpdateCheck>>>) {
         );
     }
     let fetched_at = now_secs();
-    if let Ok(mut guard) = app_updates.lock() {
-        // Full replace — ids that disappeared from crates2.json (user
-        // uninstalled) drop off; ids that failed to fetch also drop
-        // and will be re-checked on the next sweep.
+    // Full replace — ids that disappeared from crates2.json (user
+    // uninstalled) drop off; ids that failed to fetch also drop and
+    // will be re-checked on the next sweep.
+    //
+    // 2026-08-16 (reviewer polish) — clone the map for the disk
+    // write so the UI-thread lock isn't held across
+    // JSON-serialize + `fs::write`. Prior code held the lock for
+    // the whole write; low practical impact on a 6h cadence + small
+    // file, but the render loop reads this map every frame and
+    // shouldn't wait on disk I/O.
+    let snapshot: HashMap<String, UpdateCheck> = if let Ok(mut guard) = app_updates.lock() {
         *guard = results;
-        save_update_cache(&guard, fetched_at);
-    }
+        guard.clone()
+    } else {
+        return;
+    };
+    save_update_cache(&snapshot, fetched_at);
 }
 
 fn fetch_cargo_latest(client: &reqwest::blocking::Client, name: &str) -> Option<String> {
