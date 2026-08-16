@@ -20,6 +20,21 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+/// Integration ids that were removed from mnml (either replaced by
+/// split chips or deprecated entirely). Both the in-memory rail
+/// retain and the on-disk manifest wipe key off this list — so a
+/// stale `<id>.toml` or `[[ui.integration_icon]]` entry left over
+/// from an older mnml release stops appearing after one restart.
+///
+/// Safety: these ids are known-retired. Every current sibling that
+/// might collide (e.g. `mnml-msg-slack` writes `slack_channels` +
+/// `slack_boards`; `mnml-forge-bitbucket` writes
+/// `bitbucket_pipelines` + `bitbucket_prs`) uses DIFFERENT ids, and
+/// the affected siblings themselves treat these as legacy/predecessor
+/// ids they clean up on install. Verified 2026-08-16 against the
+/// sibling install sources.
+const DEAD_INTEGRATION_IDS: &[&str] = &["bitbucket", "linear", "gitlab", "cypress", "slack"];
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub editor: EditorConfig,
@@ -1837,6 +1852,21 @@ impl Config {
                 return;
             }
         };
+        // Ghost-manifest defense — wipe on-disk manifests for retired
+        // integration ids on every config load, not just when the user
+        // has explicit `[[ui.integration_icon]]` entries. Most users
+        // don't declare those, so gating the cleanup on their presence
+        // meant the "retired" retain (line ~2201) filtered them from
+        // the rail while ~/.config/mnml/integrations/<id>.toml quietly
+        // persisted — surfacing as ghost `(hidden)` rows in the
+        // Installed tab. User report 2026-08-16: "S Slack (hidden)"
+        // reappearing. See also `DEAD_IDS` below (same list).
+        //
+        // Best-effort per id: `uninstall_integration` tolerates
+        // NotFound + wipes any leftover pending-glyph SVG in one call.
+        for id in DEAD_INTEGRATION_IDS {
+            let _ = mnml_bridge::uninstall_integration(id);
+        }
         if let Some(v) = raw.editor.input_style {
             self.editor.input_style = v;
         }
@@ -2206,16 +2236,10 @@ impl Config {
             // "S Slack (hidden)" row — user report 2026-08-16. If a
             // future weird write path re-materializes the file, the
             // next startup wipes it. 2026-08-16.
-            const DEAD_IDS: &[&str] = &["bitbucket", "linear", "gitlab", "cypress", "slack"];
-            merged.retain(|i| !DEAD_IDS.contains(&i.id.as_str()));
-            for id in DEAD_IDS {
-                // `uninstall_integration` deletes both the manifest
-                // and any leftover pending-glyph SVG for `id` in one
-                // call, tolerating NotFound. Best-effort — a failure
-                // to delete just means the ghost survives one more
-                // startup, not a fatal error.
-                let _ = mnml_bridge::uninstall_integration(id);
-            }
+            merged.retain(|i| !DEAD_INTEGRATION_IDS.contains(&i.id.as_str()));
+            // fs-side wipe of these same ids runs at the top of
+            // apply_file (unconditional, doesn't need
+            // [[ui.integration_icon]] entries to fire).
             self.ui.integration_icons = merged;
         }
         // #864 — user-persisted rail order. Blanks stripped so a
