@@ -18,7 +18,13 @@
 //! - `try_it` is 0-2 palette commands the reader might fire while
 //!   hovering — actions, not navigation.
 
+use crate::AgentsPanelChipKind;
+use crate::DiffToolbarAction;
+use crate::GitRailHeaderAction;
+use crate::GutterMarkKind;
+use crate::RequestTopBarChip as ReqChip;
 use crate::app::App;
+use crate::ui::TopbarChipKind;
 use crate::ui::info_view::{InfoViewCopy, InfoViewTarget, PaletteLink, ShortcutHint};
 
 /// Look up the curated copy for `target`. Returns `None` when nothing
@@ -120,6 +126,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 "editor.toggle_keymap",
                 "Swap vim ↔ standard input",
             )],
+            docs: Some("https://mnml.sh/manual/statusline-chrome/".into()),
             ..Default::default()
         }),
         StatuslineBranch => Some(InfoViewCopy {
@@ -136,6 +143,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             // `view.toggle_right_panel`, not the branch picker.
             // `git.branch_menu` has no chord — click-only for now.
             try_it: vec![PaletteLink::new("git.branch_menu", "Switch branch")],
+            docs: Some("https://mnml.sh/manual/git/".into()),
             ..Default::default()
         }),
         StatuslineWrap => Some(InfoViewCopy {
@@ -154,6 +162,12 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    Hover to see the full breakdown as a rich tooltip. Click to pin \
                    the panel open."
                 .into(),
+            aside: Some(
+                "Chip goes red at 100% — sessions still run but new turns queue \
+                 until the window resets; re-link if it reads 0% for a linked \
+                 account."
+                    .into(),
+            ),
             shortcuts: vec![ShortcutHint::new("Esc", "Dismiss pinned panel")],
             try_it: vec![
                 PaletteLink::new("ai.usage", "Open the AI usage panel"),
@@ -362,6 +376,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    (or opens mixr when idle); right-click for a source menu."
                 .into(),
             try_it: vec![PaletteLink::new("mixr.show", "Open mixr")],
+            docs: Some("https://mnml.sh/manual/now-playing/".into()),
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::StatuslineMixrPlay
@@ -450,6 +465,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 "integrations.show_marketplace",
                 "Marketplace…",
             )],
+            docs: Some("https://mnml.sh/manual/integrations/overview/".into()),
             ..Default::default()
         }),
         // src: src/ui/palette_bar.rs::draw_search_chip
@@ -480,6 +496,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             shortcuts: vec![ShortcutHint::new("Ctrl+Shift+B", "Toggle")],
             try_it: vec![PaletteLink::new("view.toggle_right_panel", "Toggle now")],
+            docs: Some("https://mnml.sh/manual/right-panel/".into()),
             ..Default::default()
         }),
         // src: src/tui/mouse/down_left.rs — palette-bar back arrow
@@ -546,6 +563,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    Alt+<letter> from anywhere opens the same menu by keyboard."
                 .into(),
             shortcuts: vec![ShortcutHint::new("Alt+<letter>", "Open by keyboard")],
+            docs: Some("https://mnml.sh/manual/menu-bar/".into()),
             ..Default::default()
         }),
         // src: src/ui/activity_bar.rs — one row per section
@@ -554,6 +572,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             body: "One of the sections that shares the left panel — Files, Git, \
                    Integrations, Agents, HTTP, Findings. Click to switch."
                 .into(),
+            docs: Some("https://mnml.sh/manual/activity-bar/".into()),
             ..Default::default()
         }),
         // src: src/ui/activity_bar.rs::draw_gear
@@ -563,18 +582,49 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    config key with inline pickers for each value."
                 .into(),
             try_it: vec![PaletteLink::new("file.open_settings", "Open settings")],
+            docs: Some("https://mnml.sh/manual/settings/".into()),
             ..Default::default()
         }),
         // src: src/ui/claude_agents_view.rs::draw_topbar_chip
-        AgentsPanelChip(_) => Some(InfoViewCopy {
-            title: "Agents-dashboard filter chip".into(),
-            body: "Filters the agents dashboard by source, workspace, or state. \
-                   Click to toggle; the currently-active filters render bold."
+        // R14 modernize pass (2026-08-16, drift fix) — this entry used
+        // to describe `ClaudeAgentsTopbarChip` ("filters the agents
+        // dashboard by source, workspace, or state") under the WRONG
+        // chip. `AgentsPanelChipKind` (src/lib.rs:640-651) is the
+        // sidebar Agents-panel HEADER row — New session / From PR /
+        // View toggle — verified against src/ui/tooltip.rs:694-715 and
+        // the click handlers at src/tui/mouse/down_left.rs:3021-3040.
+        // Split into 3 real entries; `ClaudeAgentsTopbarChip` below
+        // keeps the (correct) filter-chip copy.
+        AgentsPanelChip(AgentsPanelChipKind::NewSession) => Some(InfoViewCopy {
+            title: "New agent session".into(),
+            body: "Spawns a fresh Claude Code session scoped to this \
+                   workspace — same as opening one from the palette. Shows \
+                   up as a new row in the Agents dashboard once it starts."
                 .into(),
-            // Drift fix (2026-08-11): "ai.agents_dashboard" doesn't
-            // resolve — the real id is "ai.dashboard" (matches the
-            // StatuslineAiCodex entry above).
-            try_it: vec![PaletteLink::new("ai.dashboard", "Open the dashboard")],
+            try_it: vec![PaletteLink::new(
+                "ai.claude_code",
+                "New Claude Code session",
+            )],
+            ..Default::default()
+        }),
+        AgentsPanelChip(AgentsPanelChipKind::FromPr) => Some(InfoViewCopy {
+            title: "New agent session from PR".into(),
+            body: "Opens the multi-PR wizard — pick one or more open pull \
+                   requests and an action (review, fix CI, address \
+                   comments), and it fires one Claude session per PR."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "agents.new_from_pr",
+                "New session from PR",
+            )],
+            ..Default::default()
+        }),
+        AgentsPanelChip(AgentsPanelChipKind::ViewToggle) => Some(InfoViewCopy {
+            title: "Agents-panel view toggle".into(),
+            body: "Cycles how the sidebar Agents panel groups its rows — by \
+                   workspace or by status. Grouping by workspace collapses \
+                   each project into its own expandable section."
+                .into(),
             ..Default::default()
         }),
         // src: src/ui/http_panel.rs L75-86 — top toolbar row has
@@ -589,6 +639,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    the HTTP-panel caches. Same as the palette command."
                 .into(),
             try_it: vec![PaletteLink::new("http.refresh", "Refresh HTTP list")],
+            docs: Some("https://mnml.sh/manual/http/".into()),
             ..Default::default()
         }),
         HttpToolbarChip(1) => Some(InfoViewCopy {
@@ -754,6 +805,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 "view.switch_workspace",
                 "Switch workspace",
             )],
+            docs: Some("https://mnml.sh/manual/workspaces/".into()),
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::ExtraWorkspaceHeader,
@@ -780,12 +832,61 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RailHeaderChip
-        RailHeaderChip(_) => Some(InfoViewCopy {
-            title: "Git rail header action".into(),
-            body: "One-click git action in the `> GIT` rail header — Fetch, \
-                   Pull, Push, Stage all, Commit, or Open graph. Mirrors the \
-                   equivalent chip in the top-right git toolbar cluster, just \
-                   scoped to whichever repo owns this rail section."
+        // R14 modernize pass (2026-08-16) — per-action copy for the 6
+        // `GitRailHeaderAction` variants (src/lib.rs:236-247). Command
+        // ids taken straight from that enum's own doc comments (which
+        // name the exact command each action wraps); `StageAll` has no
+        // command id — it calls `git_stage_all_rail` directly.
+        RailHeaderChip(GitRailHeaderAction::Fetch) => Some(InfoViewCopy {
+            title: "Git rail: Fetch".into(),
+            body: "Fetches from origin for the repo that owns this rail \
+                   section — updates remote-tracking refs without touching \
+                   your working tree or the branch you're on."
+                .into(),
+            try_it: vec![PaletteLink::new("git.fetch", "Fetch")],
+            ..Default::default()
+        }),
+        RailHeaderChip(GitRailHeaderAction::Pull) => Some(InfoViewCopy {
+            title: "Git rail: Pull".into(),
+            body: "`git pull --ff-only` for this repo — fast-forwards the \
+                   current branch if origin has moved ahead cleanly; \
+                   refuses (rather than merging) if it can't."
+                .into(),
+            try_it: vec![PaletteLink::new("git.pull", "Pull")],
+            ..Default::default()
+        }),
+        RailHeaderChip(GitRailHeaderAction::Push) => Some(InfoViewCopy {
+            title: "Git rail: Push".into(),
+            body: "Pushes committed work to origin. First push on a new \
+                   branch falls back to `--set-upstream` automatically — no \
+                   separate step needed."
+                .into(),
+            aside: Some("Refuses (doesn't force) on a diverged branch — pull first.".into()),
+            try_it: vec![PaletteLink::new("git.push", "Push")],
+            ..Default::default()
+        }),
+        RailHeaderChip(GitRailHeaderAction::StageAll) => Some(InfoViewCopy {
+            title: "Git rail: Stage all".into(),
+            body: "`git add -A` against this repo — stages every working- \
+                   tree change (new, modified, deleted) in one click, ready \
+                   for Commit."
+                .into(),
+            ..Default::default()
+        }),
+        RailHeaderChip(GitRailHeaderAction::Commit) => Some(InfoViewCopy {
+            title: "Git rail: Commit".into(),
+            body: "Opens the commit-message prompt for whatever's staged in \
+                   this repo. Nothing staged yet? Stage all first, or stage \
+                   individual files from the WIP row."
+                .into(),
+            try_it: vec![PaletteLink::new("git.commit", "Commit")],
+            ..Default::default()
+        }),
+        RailHeaderChip(GitRailHeaderAction::Graph) => Some(InfoViewCopy {
+            title: "Git rail: Open graph".into(),
+            body: "Opens the commit graph pane for this repo — full lane \
+                   view of every branch's history, not just the current \
+                   one."
                 .into(),
             try_it: vec![PaletteLink::new("git.graph", "Open commit graph")],
             ..Default::default()
@@ -947,22 +1048,89 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::GutterMark
-        GutterMark { .. } => Some(InfoViewCopy {
-            title: "Gutter sign".into(),
-            body: "A mark in the editor's sign column — a breakpoint, a \
-                   paused-debugger arrow, a diagnostic dot, or a git change \
-                   bar, in that priority order when more than one applies to \
-                   a line. Click the gutter at this line to toggle a \
-                   breakpoint; hover a diagnostic dot for the message."
+        // R14 modernize pass (2026-08-16) — `GutterMark` carries a
+        // `GutterMarkKind` (src/lib.rs:615-626); this used to be one
+        // generic entry regardless of which kind was actually under
+        // the mouse. Split per kind — a breakpoint dot and a
+        // diagnostic dot mean very different things at a glance.
+        GutterMark {
+            kind: GutterMarkKind::DapArrow,
+            ..
+        } => Some(InfoViewCopy {
+            title: "Paused-here arrow".into(),
+            body: "`▶` — the debugger is stopped on this line right now. \
+                   Step, continue, or inspect variables in the Debug panel; \
+                   the arrow moves as execution advances."
                 .into(),
-            shortcuts: vec![ShortcutHint::new(
-                "]c / [c",
-                "Jump to next / previous git hunk",
+            shortcuts: vec![
+                ShortcutHint::new("F10", "Step over"),
+                ShortcutHint::new("F11", "Step in"),
+                ShortcutHint::new("F5", "Continue"),
+            ],
+            try_it: vec![PaletteLink::new("dap.next", "Step over")],
+            ..Default::default()
+        }),
+        GutterMark {
+            kind: GutterMarkKind::ConditionalBreakpoint,
+            ..
+        } => Some(InfoViewCopy {
+            title: "Conditional breakpoint".into(),
+            body: "`◆` — a breakpoint that only stops execution when its \
+                   condition expression evaluates truthy. Click the gutter \
+                   again to clear it; the condition itself is edited via \
+                   the same prompt that created it."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "dap.toggle_breakpoint_conditional",
+                "Edit condition",
             )],
+            ..Default::default()
+        }),
+        GutterMark {
+            kind: GutterMarkKind::Breakpoint,
+            ..
+        } => Some(InfoViewCopy {
+            title: "Breakpoint".into(),
+            body: "`●` (red) — execution pauses here once a DAP session is \
+                   running. Works ahead of time — set it before you start \
+                   debugging and it's honored the moment a session connects."
+                .into(),
+            aside: Some("Click the gutter at this line again to clear it.".into()),
+            shortcuts: vec![ShortcutHint::new("F9", "Toggle breakpoint")],
             try_it: vec![PaletteLink::new(
                 "dap.toggle_breakpoint",
                 "Toggle breakpoint at cursor",
             )],
+            ..Default::default()
+        }),
+        GutterMark {
+            kind: GutterMarkKind::Diagnostic(_),
+            ..
+        } => Some(InfoViewCopy {
+            title: "Diagnostic mark".into(),
+            body: "`●` colored by severity — red for errors, yellow for \
+                   warnings, cyan for info, grey for hints. Hover the mark \
+                   itself (not just the gutter column) for the message text; \
+                   click to jump the cursor to that line."
+                .into(),
+            try_it: vec![PaletteLink::new("lsp.diagnostics", "Open diagnostics")],
+            ..Default::default()
+        }),
+        GutterMark {
+            kind: GutterMarkKind::GitChange(_),
+            ..
+        } => Some(InfoViewCopy {
+            title: "Git change bar".into(),
+            body: "`▎` — this line differs from the last commit. Green means \
+                   added, blue means modified, red means lines were removed \
+                   just above. Reflects the working tree against HEAD, same \
+                   diff the `> GIT` rail summarizes."
+                .into(),
+            shortcuts: vec![ShortcutHint::new(
+                "]c / [c",
+                "Jump to next / previous git hunk (vim)",
+            )],
+            try_it: vec![PaletteLink::new("git.jump_next_change", "Next hunk")],
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::CodeLensChip
@@ -976,24 +1144,96 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::DiffToolbar
-        DiffToolbar(_) => Some(InfoViewCopy {
-            title: "Diff view toolbar".into(),
-            body: "Switches how a Diff pane renders — Inline (whole file, \
-                   changes highlighted in place), Hunk (only the changed \
-                   regions, focused), or Split (side-by-side old/new). The \
-                   same row also has line-wrap and close chips."
+        // R14 modernize pass (2026-08-16) — per-action copy for the 5
+        // `DiffToolbarAction` variants (src/lib.rs:215-229). None of
+        // these have a palette command id (click-only UI toggles), so
+        // no `try_it` — verified against src/command.rs (no `diff.*`
+        // view-mode entries exist).
+        DiffToolbar(DiffToolbarAction::ViewInline) => Some(InfoViewCopy {
+            title: "Diff: Inline view".into(),
+            body: "Renders the whole file with changes highlighted in \
+                   place — closest to what the file actually looks like on \
+                   disk, with additions and removals colored inline."
+                .into(),
+            ..Default::default()
+        }),
+        DiffToolbar(DiffToolbarAction::ViewHunk) => Some(InfoViewCopy {
+            title: "Diff: Hunk view".into(),
+            body: "Shows only the changed regions, each collapsed to a \
+                   focused block with a few lines of context — skips the \
+                   unchanged bulk of a large file so you can scan every \
+                   change fast."
+                .into(),
+            ..Default::default()
+        }),
+        DiffToolbar(DiffToolbarAction::ViewSplit) => Some(InfoViewCopy {
+            title: "Diff: Split view".into(),
+            body: "Side-by-side old-vs-new columns, classic two-pane diff \
+                   layout. Needs more width than Inline or Hunk to stay \
+                   readable — narrow panes fall back automatically."
+                .into(),
+            ..Default::default()
+        }),
+        DiffToolbar(DiffToolbarAction::ToggleWrap) => Some(InfoViewCopy {
+            title: "Diff: toggle wrap".into(),
+            body: "Wraps long lines at the pane's right edge instead of \
+                   scrolling horizontally — handy for diffs on minified or \
+                   very long single-line changes."
+                .into(),
+            ..Default::default()
+        }),
+        DiffToolbar(DiffToolbarAction::Close) => Some(InfoViewCopy {
+            title: "Diff: close".into(),
+            body: "Clears the embedded diff when shown inside a commit \
+                   graph's detail panel, or closes the pane entirely for a \
+                   standalone Diff view."
                 .into(),
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::ClaudeAgentsTopbarChip
-        ClaudeAgentsTopbarChip(_) => Some(InfoViewCopy {
-            title: "Agents dashboard topbar chip".into(),
-            body: "Cycles one axis of the Agents dashboard's view — drill-down \
-                   depth, sort key, grouping, source filter, or workspace-only \
-                   filter, depending on which chip. Each has a keyboard \
-                   shortcut too, shown on hover."
+        // R14 modernize pass (2026-08-16) — per-kind copy for the 5
+        // `TopbarChipKind` variants (src/ui/mod.rs:33-39). Click
+        // behavior grounded against src/tui/mouse/mod.rs:510-545 —
+        // all 5 are `Pane::ClaudeAgents` method calls with no
+        // dedicated palette command id, so no `try_it` per-kind.
+        ClaudeAgentsTopbarChip(TopbarChipKind::View) => Some(InfoViewCopy {
+            title: "Dashboard: cycle detail depth".into(),
+            body: "Cycles how much detail each row shows — compact one-line \
+                   rows, up through the fullest per-session breakdown. Same \
+                   axis regardless of sort or grouping."
                 .into(),
-            try_it: vec![PaletteLink::new("ai.dashboard", "Open agents dashboard")],
+            ..Default::default()
+        }),
+        ClaudeAgentsTopbarChip(TopbarChipKind::Sort) => Some(InfoViewCopy {
+            title: "Dashboard: cycle sort".into(),
+            body: "Cycles the sort key for the row list — most-recent \
+                   activity, workspace, or state. The active key is what \
+                   the chip's label currently reads."
+                .into(),
+            ..Default::default()
+        }),
+        ClaudeAgentsTopbarChip(TopbarChipKind::Group) => Some(InfoViewCopy {
+            title: "Dashboard: cycle grouping".into(),
+            body: "Cycles how rows are grouped — flat list, by workspace, \
+                   or by state (running / idle / ended)."
+                .into(),
+            ..Default::default()
+        }),
+        ClaudeAgentsTopbarChip(TopbarChipKind::Source) => Some(InfoViewCopy {
+            title: "Dashboard: filter by source".into(),
+            body: "Cycles the source filter — all sessions, Claude only, \
+                   Codex only, then back to all. Cloud-runner and \
+                   Anthropic-Managed rows live in a separate dashboard, so \
+                   they're not part of this cycle."
+                .into(),
+            ..Default::default()
+        }),
+        ClaudeAgentsTopbarChip(TopbarChipKind::Workspace) => Some(InfoViewCopy {
+            title: "Dashboard: workspace-only toggle".into(),
+            body: "Restricts the row list to sessions in the current \
+                   workspace only, hiding every other project's sessions. \
+                   Click again to see everything."
+                .into(),
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::SessionsTab
@@ -1007,15 +1247,74 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RequestTopBarChip
-        RequestTopBarChip(_) => Some(InfoViewCopy {
-            title: "Request pane top-bar chip".into(),
-            body: "One of the Request pane's primary actions — pick the HTTP \
-                   method, switch the active env, send (or abort) the \
-                   request, save it, clear the fields, or generate a code \
-                   snippet. Right-click most of them for a secondary-action \
-                   menu."
+        // R14 modernize pass (2026-08-16) — per-chip copy for the 6
+        // `RequestTopBarChip` variants (src/lib.rs:631-638). Command
+        // ids grounded against src/command.rs + click behavior against
+        // src/tui/mouse/down_left.rs:700-815.
+        RequestTopBarChip(ReqChip::Method) => Some(InfoViewCopy {
+            title: "HTTP method".into(),
+            body: "The verb this request sends — GET / POST / PUT / PATCH / \
+                   DELETE / HEAD / OPTIONS. Click to cycle, or right-click \
+                   for the full list in one menu."
                 .into(),
+            try_it: vec![PaletteLink::new("http.cycle_method", "Cycle method")],
+            ..Default::default()
+        }),
+        RequestTopBarChip(ReqChip::Env) => Some(InfoViewCopy {
+            title: "Active environment".into(),
+            body: "Names the `.env` file supplying `{{VAR}}` values for this \
+                   request — dev / staging / prod, whatever your workspace \
+                   defines. Click to switch; the picker also offers \
+                   creating a new env."
+                .into(),
+            aside: Some(
+                "A var with no match in the active env renders bold red in \
+                 the URL / body / headers."
+                    .into(),
+            ),
+            try_it: vec![PaletteLink::new("http.pick_env", "Switch environment")],
+            ..Default::default()
+        }),
+        RequestTopBarChip(ReqChip::Send) => Some(InfoViewCopy {
+            title: "Send request".into(),
+            body: "Fires the request over the network. While in flight the \
+                   chip flips to `⟳ Abort` — click again to cancel a hung \
+                   request instead of waiting out the timeout."
+                .into(),
+            aside: Some(
+                "A failed send still lands a response pane — check status \
+                 code + the ⚡ AI debug chip if it's not a 2xx."
+                    .into(),
+            ),
+            shortcuts: vec![ShortcutHint::new("r", "Send (vim, Request pane focus)")],
             try_it: vec![PaletteLink::new("http.send", "Send request")],
+            docs: Some("https://mnml.sh/manual/http/".into()),
+        }),
+        RequestTopBarChip(ReqChip::Save) => Some(InfoViewCopy {
+            title: "Save request".into(),
+            body: "Writes the current method / URL / headers / body back to \
+                   its source `.http` / `.curl` file. No source file yet? \
+                   Opens a Save-As prompt instead."
+                .into(),
+            try_it: vec![PaletteLink::new("http.save", "Save request")],
+            ..Default::default()
+        }),
+        RequestTopBarChip(ReqChip::Clear) => Some(InfoViewCopy {
+            title: "Clear request".into(),
+            body: "Resets every field back to a blank template — same as \
+                   opening a fresh scratch request. A pending-undo chip \
+                   appears afterward so a misclick is one click to reverse."
+                .into(),
+            try_it: vec![PaletteLink::new("http.new", "New blank request")],
+            ..Default::default()
+        }),
+        RequestTopBarChip(ReqChip::Code) => Some(InfoViewCopy {
+            title: "Generate code".into(),
+            body: "Opens the Bruno-style language picker and copies this \
+                   request as a ready-to-paste snippet — curl, Python \
+                   requests, JS fetch, and more."
+                .into(),
+            try_it: vec![PaletteLink::new("http.generate_code", "Generate code")],
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RequestSplitToggle
@@ -1058,6 +1357,13 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    means it's undefined. Click jumps to its definition line in \
                    the env file (or opens the file at EOF, ready to define it)."
                 .into(),
+            aside: Some(
+                "Bold red at send time means the raw `{{name}}` text goes over \
+                 the wire unresolved — right-click → \"Set value…\" fixes it \
+                 without leaving the pane."
+                    .into(),
+            ),
+            docs: Some("https://mnml.sh/manual/http-envs/".into()),
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RequestResponseCopy
@@ -1232,8 +1538,8 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    filter / open-report actions."
                 .into(),
             try_it: vec![PaletteLink::new(
-                "tattle_coverage.open",
-                "Open coverage overlay",
+                "tattle_coverage_ext.open",
+                "Open coverage pane",
             )],
             ..Default::default()
         }),
@@ -1707,6 +2013,135 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             ],
             ..Default::default()
         }),
+        // ── R14 modernize pass (2026-08-16) — Go menu gaps ───────────
+        // src: src/menu_bar.rs::go_menu
+        ("Go", i) if i.contains("Go to file") => Some(InfoViewCopy {
+            title: "Go → Go to file…".into(),
+            body: "Opens the fuzzy file picker over the workspace — same \
+                   overlay as `Ctrl+P`. Type to match, Enter opens in the \
+                   active pane."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+P", "Go to file")],
+            try_it: vec![PaletteLink::new("view.discovery", "Go to file")],
+            ..Default::default()
+        }),
+        ("Go", i) if i.contains("Go to line") => Some(InfoViewCopy {
+            title: "Go → Go to line…".into(),
+            body: "Prompts for a 1-based line number and jumps the cursor \
+                   there in the active buffer."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+G", "Go to line")],
+            try_it: vec![PaletteLink::new("editor.goto_line", "Go to line…")],
+            ..Default::default()
+        }),
+        ("Go", i) if i.contains("Previous buffer") => Some(InfoViewCopy {
+            title: "Go → Previous buffer".into(),
+            body: "Jumps to the previous buffer in MRU order — same as \
+                   `Ctrl+PageUp` or the back-arrow chip in the palette bar."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+PageUp", "Previous buffer")],
+            try_it: vec![PaletteLink::new("buffer.prev", "Previous buffer")],
+            ..Default::default()
+        }),
+        ("Go", i) if i.contains("Next buffer") => Some(InfoViewCopy {
+            title: "Go → Next buffer".into(),
+            body: "Jumps to the next buffer in MRU order — same as \
+                   `Ctrl+PageDown` or the forward-arrow chip in the palette \
+                   bar."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+PageDown", "Next buffer")],
+            try_it: vec![PaletteLink::new("buffer.next", "Next buffer")],
+            ..Default::default()
+        }),
+        ("Go", i) if i.contains("Last buffer") => Some(InfoViewCopy {
+            title: "Go → Last buffer".into(),
+            body: "Switches to whichever buffer was active before this one \
+                   — vim's `Ctrl+^` alternate-file convention. Repeatable — \
+                   fire again to bounce back."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Tab", "Last buffer")],
+            try_it: vec![PaletteLink::new("buffer.last", "Last buffer")],
+            ..Default::default()
+        }),
+        // ── R14 modernize pass (2026-08-16) — View menu gaps ─────────
+        // src: src/menu_bar.rs::view_menu
+        ("View", i) if i.contains("Command palette") => Some(InfoViewCopy {
+            title: "View → Command palette".into(),
+            body: "Opens the universal command palette — every mnml \
+                   command, searchable by name or id. Same overlay `Ctrl+P` \
+                   / Go → Go to file opens (they share `view.discovery`)."
+                .into(),
+            try_it: vec![PaletteLink::new("view.discovery", "Open palette")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("right panel") => Some(InfoViewCopy {
+            title: "View → Toggle right panel".into(),
+            body: "Shows / hides the right panel — hosts outline, \
+                   diagnostics, or whatever route is currently pinned \
+                   there."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+B", "Toggle")],
+            try_it: vec![PaletteLink::new("view.toggle_right_panel", "Toggle now")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("Cycle menu bar") => Some(InfoViewCopy {
+            title: "View → Cycle menu bar".into(),
+            body: "Cycles the menu bar's visibility mode — always visible, \
+                   auto-hide (appears on Alt), or fully hidden. Doesn't \
+                   change any bindings, just how much chrome is on screen."
+                .into(),
+            try_it: vec![PaletteLink::new("view.menu_bar_cycle", "Cycle now")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("zen mode") => Some(InfoViewCopy {
+            title: "View → Toggle zen mode".into(),
+            body: "Hides the tree, bufferline, and statusline for a \
+                   distraction-free single-pane view. Toggle again (or the \
+                   chord) to bring the chrome back."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K z", "Toggle zen mode")],
+            try_it: vec![PaletteLink::new("view.zen", "Toggle zen mode")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("workspace dots") => Some(InfoViewCopy {
+            title: "View → Toggle workspace dots".into(),
+            body: "Toggles the ● / ○ dot markers mnml paints on workspace- \
+                   root rows in the tree — a quick at-a-glance read on which \
+                   roots have uncommitted changes."
+                .into(),
+            try_it: vec![PaletteLink::new("view.toggle_workspace_dots", "Toggle now")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("Commands reference") => Some(InfoViewCopy {
+            title: "View → Commands reference…".into(),
+            body: "Opens every registered palette command, grouped, in a \
+                   scratch buffer — the full surface the palette searches, \
+                   without needing to type anything into it first."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "view.commands_reference",
+                "Open commands reference",
+            )],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("Pick theme") => Some(InfoViewCopy {
+            title: "View → Pick theme…".into(),
+            body: "Opens the theme picker — every built-in + user-defined \
+                   theme, live preview as you move the selection."
+                .into(),
+            try_it: vec![PaletteLink::new("theme.pick", "Pick theme…")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("Toggle theme") => Some(InfoViewCopy {
+            title: "View → Toggle theme".into(),
+            body: "Swaps between `[ui] theme` and `[ui] theme_toggle` — the \
+                   same action as clicking the `●━` pill in the top-right \
+                   chrome cluster."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K t", "Toggle theme")],
+            try_it: vec![PaletteLink::new("theme.toggle", "Toggle theme")],
+            ..Default::default()
+        }),
         // src: src/menu_bar.rs — File menu
         ("File", i) if i.contains("New file") => Some(InfoViewCopy {
             title: "File → New file".into(),
@@ -1726,12 +2161,67 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("picker.files", "Open picker")],
             ..Default::default()
         }),
-        // Drift fix (2026-08-11): menu labels carry a glyph prefix
-        // (`"\u{F0193}  Save"`), so `i == "Save"` never matched and
-        // `i.contains("Save ")` only matched "Save all" (which the
-        // old guard then excluded) — this arm was dead code. Anchor
-        // on the leading space instead so it survives the glyph.
-        ("File", i) if i.contains(" Save") && !i.contains("all") => Some(InfoViewCopy {
+        // ── R14 modernize pass (2026-08-16) — File menu gaps ─────────
+        // src: src/menu_bar.rs::file_menu
+        ("File", i) if i.contains("Add folder to workspace") => Some(InfoViewCopy {
+            title: "File → Add folder to workspace…".into(),
+            body: "Adds a second (or third…) folder as an extra workspace \
+                   root — the tree grows a new top-level section instead of \
+                   replacing what's already open. Runtime only; not \
+                   persisted to config."
+                .into(),
+            try_it: vec![PaletteLink::new("view.add_workspace", "Add folder")],
+            ..Default::default()
+        }),
+        ("File", i) if i.contains("Open recent file") => Some(InfoViewCopy {
+            title: "File → Open recent file".into(),
+            body: "A submenu listing files touched this session, most- \
+                   recent first — same list `Ctrl+R` opens as a picker \
+                   instead. Pick one to open it in the active pane."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+R", "Recent files (picker)")],
+            try_it: vec![PaletteLink::new("picker.recent", "Open recent files")],
+            ..Default::default()
+        }),
+        ("File", i) if i.contains("Switch workspace") => Some(InfoViewCopy {
+            title: "File → Switch workspace…".into(),
+            body: "Opens the workspace picker — swaps the tree to a \
+                   different root entirely, as opposed to Add folder to \
+                   workspace which keeps the current one and adds another \
+                   alongside it."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K Ctrl+O", "Switch workspace")],
+            try_it: vec![PaletteLink::new(
+                "view.switch_workspace",
+                "Switch workspace",
+            )],
+            ..Default::default()
+        }),
+        ("File", i) if i.contains("Close tab") => Some(InfoViewCopy {
+            title: "File → Close tab".into(),
+            body: "Closes the active buffer. Dirty buffers prompt before \
+                   discarding; `Ctrl+Shift+T` reopens the last closed tab \
+                   if you change your mind."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+W", "Close tab")],
+            try_it: vec![PaletteLink::new("buffer.close", "Close tab")],
+            ..Default::default()
+        }),
+        ("File", i) if i.contains("Settings") => Some(InfoViewCopy {
+            title: "File → Settings…".into(),
+            body: "Opens the keyboard-driven Settings overlay — sectioned \
+                   discrete-choice rows for UI, editor, and integration \
+                   toggles. Same overlay as mnml → Settings…."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+,", "Open Settings")],
+            try_it: vec![PaletteLink::new("view.settings", "Open Settings")],
+            ..Default::default()
+        }),
+        // Guard tightened (2026-08-16): menu icons moved to their own
+        // `MenuItem::Action.icon` field (#886) — labels are now clean
+        // ("Save", not a glyph-prefixed string), so an exact match is
+        // both correct and simpler than the old glyph-survival anchor.
+        ("File", "Save") => Some(InfoViewCopy {
             title: "File → Save".into(),
             body: "Writes the active buffer to disk. Untitled buffers prompt \
                        for a path first."
@@ -1758,8 +2248,15 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/menu_bar.rs — Edit menu
-        ("Edit", i) if i.contains("Find") && !i.contains("Replace") => Some(InfoViewCopy {
-            title: "Edit → Find".into(),
+        // Drift fix (2026-08-16): the old broad guards
+        // (`contains("Find") && !contains("Replace")` /
+        // `contains("Replace")`) swallowed "Find next", "Find
+        // previous", "Find in files…", and "Replace in files…" too —
+        // all 4 fired the wrong ("Edit → Find" / "Edit → Replace")
+        // copy since they're checked first. Tightened to exact labels
+        // + added the 4 missing distinct entries.
+        ("Edit", "Find…") => Some(InfoViewCopy {
+            title: "Edit → Find…".into(),
             body: "Opens the find bar over the active buffer. Type to search; \
                    `n` / `N` step forward / back; Esc closes."
                 .into(),
@@ -1767,12 +2264,52 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("find.find", "Find in buffer")],
             ..Default::default()
         }),
-        ("Edit", i) if i.contains("Replace") => Some(InfoViewCopy {
-            title: "Edit → Replace".into(),
+        ("Edit", "Find next") => Some(InfoViewCopy {
+            title: "Edit → Find next".into(),
+            body: "Jumps to the next match of the active find query in the \
+                   current buffer. No-op with a toast if there's no active \
+                   query yet — run Find first."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("F3", "Find next")],
+            try_it: vec![PaletteLink::new("find.next", "Find next")],
+            ..Default::default()
+        }),
+        ("Edit", "Find previous") => Some(InfoViewCopy {
+            title: "Edit → Find previous".into(),
+            body: "Jumps to the previous match of the active find query — \
+                   the reverse of Find next, same query."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Shift+F3", "Find previous")],
+            try_it: vec![PaletteLink::new("find.prev", "Find previous")],
+            ..Default::default()
+        }),
+        ("Edit", i) if i.contains("Replace") && !i.contains("files") => Some(InfoViewCopy {
+            title: "Edit → Replace…".into(),
             body: "Opens the find + replace bar. Type the pattern, Tab to the \
                    replacement, Enter fires; `Ctrl+Alt+Enter` replaces all."
                 .into(),
             shortcuts: vec![ShortcutHint::new("Ctrl+H", "Replace")],
+            try_it: vec![PaletteLink::new("find.replace", "Replace in buffer")],
+            ..Default::default()
+        }),
+        ("Edit", i) if i.contains("Find in files") => Some(InfoViewCopy {
+            title: "Edit → Find in files…".into(),
+            body: "Greps the whole workspace (`rg` / `git grep`) instead of \
+                   just the active buffer — results land in a dedicated \
+                   grep pane, one row per match, Enter jumps to it."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+F", "Find in files")],
+            try_it: vec![PaletteLink::new("find.grep", "Find in files")],
+            ..Default::default()
+        }),
+        ("Edit", i) if i.contains("Replace in files") => Some(InfoViewCopy {
+            title: "Edit → Replace in files…".into(),
+            body: "Applies a replacement across every hit in the active \
+                   grep pane's results — the workspace-wide sibling of the \
+                   single-buffer Replace. Review the match list before \
+                   firing; this touches multiple files at once."
+                .into(),
+            try_it: vec![PaletteLink::new("find.grep_replace", "Replace in files")],
             ..Default::default()
         }),
         // Drift fix (2026-08-11): removed the `("Edit", "Undo")` arm
@@ -1807,6 +2344,7 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
                 "view.toggle_hover_help",
                 "Hide this panel",
             )],
+            docs: Some("https://mnml.sh/manual/hover-help/".into()),
             ..Default::default()
         }),
         // src: src/menu_bar.rs — Window menu (fill batch 2026-08-11)

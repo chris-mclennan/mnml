@@ -65,6 +65,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     app.rects.hover_help_strip = Some(area);
+    // Cleared up front so a tiny panel (early-returns below before the
+    // body renders) doesn't leave a stale, unreachable click target
+    // from the previous frame's taller layout.
+    app.rects.hover_help_try_it.clear();
+    app.rects.hover_help_docs = None;
     let t = theme::cur();
     // Body bg is slightly darker than the tree rail so the box reads
     // as its own pane. Title bar uses `bg2` (the menu / popup fill,
@@ -169,13 +174,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // Rows 2..N — spacer + body + optional aside + optional shortcuts.
-    // 1-cell gutter left + right; trailing row stays blank as cushion
-    // before the statusbar directly below.
+    // Rows 2..N — spacer + body + optional aside + optional shortcuts
+    // + optional `Try it →` action buttons. 1-cell gutter left + right;
+    // trailing row stays blank as cushion before the statusbar directly
+    // below.
+    //
+    // `line_actions` runs parallel to `lines` — `Some(command_id)` marks
+    // a row as a clickable `Try it →` action button, `None` is plain
+    // prose/spacer. Kept parallel (rather than embedding the id in the
+    // `Line` itself) so the scroll/clip math below can slice both
+    // together and land on the exact screen rect a click needs to hit.
     let content_w = area.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut line_actions: Vec<Option<String>> = Vec::new();
     // Spacer row between title bar and body.
     lines.push(spacer(body_bg));
+    line_actions.push(None);
     // Body — regular weight, comment-color (softer than fg-bold so the
     // TITLE bar owns the visual weight).
     for line in wrap_words(&copy.body, content_w) {
@@ -183,6 +197,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ", Style::default().bg(body_bg)),
             Span::styled(line, Style::default().fg(t.fg).bg(body_bg)),
         ]));
+        line_actions.push(None);
     }
     // Aside — italic caveat.
     if let Some(aside) = &copy.aside {
@@ -197,6 +212,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                         .add_modifier(Modifier::ITALIC),
                 ),
             ]));
+            line_actions.push(None);
         }
     }
     // Shortcut hints — `[Chord] Label` per row. Only if there's room
@@ -206,6 +222,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if rows_left > 0 && !copy.shortcuts.is_empty() {
         // Blank spacer between prose and shortcuts.
         lines.push(spacer(body_bg));
+        line_actions.push(None);
         for hint in copy.shortcuts.iter().take(rows_left.saturating_sub(1)) {
             lines.push(Line::from(vec![
                 Span::styled(" ", Style::default().bg(body_bg)),
@@ -221,8 +238,57 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(t.fg).bg(body_bg),
                 ),
             ]));
+            line_actions.push(None);
         }
     }
+    // `Try it →` action buttons — 0-3 clickable palette-command links,
+    // Info View v0.3's `try_it` field. Framework carried this data
+    // since Phase 1 but nothing rendered or dispatched it (102 curated
+    // entries had dead `try_it` links until 2026-08-16). Rendered last
+    // (after shortcuts) so the reference material reads before the
+    // calls-to-action; each gets its own row so the click rect maps
+    // 1:1 to a command id via `line_actions`.
+    let rows_left = max_body_rows.saturating_sub(lines.len());
+    if rows_left > 0 && !copy.try_it.is_empty() {
+        lines.push(spacer(body_bg));
+        line_actions.push(None);
+        for link in copy.try_it.iter().take(rows_left.saturating_sub(1)) {
+            lines.push(Line::from(vec![
+                Span::styled(" ", Style::default().bg(body_bg)),
+                Span::styled(
+                    format!("→ {}", link.label),
+                    Style::default()
+                        .fg(t.green)
+                        .bg(body_bg)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ),
+            ]));
+            line_actions.push(Some(link.command_id.clone()));
+        }
+    }
+    // `→ Manual` docs link — opens the corresponding site manual page
+    // in the OS browser. Rendered last, own row; tracked separately
+    // from `line_actions` (which is command-id-keyed) since this is a
+    // URL, not a palette command.
+    let rows_left = max_body_rows.saturating_sub(lines.len());
+    let docs_line_idx = if rows_left > 0 {
+        copy.docs.as_ref().map(|_| {
+            lines.push(Line::from(vec![
+                Span::styled(" ", Style::default().bg(body_bg)),
+                Span::styled(
+                    "→ Manual",
+                    Style::default()
+                        .fg(t.cyan)
+                        .bg(body_bg)
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
+            ]));
+            line_actions.push(None);
+            lines.len() - 1
+        })
+    } else {
+        None
+    };
 
     // Body starts at row 2 (after divider + title). Height reserves
     // 1 trailing row as cushion.
@@ -243,7 +309,44 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let scroll = app.hover_help_scroll.min(max_scroll);
     // Persist the clamp so subsequent wheel events see the true value.
     app.hover_help_scroll = scroll;
-    let visible: Vec<Line<'static>> = lines.into_iter().skip(scroll as usize).take(cap).collect();
+    // Pair each visible line with its action (if any) so `Try it →`
+    // rows land a click rect at the exact screen row they paint on —
+    // scroll-aware, so scrolling the panel keeps the rect in sync with
+    // whichever action row is currently visible.
+    let scrollbar_reserved = if overflow { 1u16 } else { 0 };
+    let mut try_it_rects: Vec<(Rect, String)> = Vec::new();
+    let mut docs_rect: Option<(Rect, String)> = None;
+    // `.enumerate()` runs before `.skip()` so `orig_idx` stays the
+    // ORIGINAL (pre-scroll) line index — needed to spot the docs-link
+    // row (`docs_line_idx`) — while `screen_row` (from the fresh
+    // `.enumerate()` after skip/take) is the on-screen row for the rect.
+    let visible: Vec<Line<'static>> = lines
+        .into_iter()
+        .zip(line_actions)
+        .enumerate()
+        .skip(scroll as usize)
+        .take(cap)
+        .enumerate()
+        .map(|(screen_row, (orig_idx, (line, action)))| {
+            let row_rect = Rect {
+                x: body_rect.x,
+                y: body_rect.y + screen_row as u16,
+                width: body_rect.width.saturating_sub(scrollbar_reserved),
+                height: 1,
+            };
+            if let Some(cmd) = action {
+                try_it_rects.push((row_rect, cmd));
+            }
+            if docs_line_idx == Some(orig_idx)
+                && let Some(url) = &copy.docs
+            {
+                docs_rect = Some((row_rect, url.clone()));
+            }
+            line
+        })
+        .collect();
+    app.rects.hover_help_try_it = try_it_rects;
+    app.rects.hover_help_docs = docs_rect;
     if overflow {
         // Reserve 1 col on the right for the scrollbar; render body in
         // the remaining width.
@@ -918,6 +1021,7 @@ fn one_line_trunc(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::wrap_words;
+    use super::*;
 
     #[test]
     fn wrap_preserves_word_boundaries() {
@@ -996,5 +1100,101 @@ mod tests {
     #[test]
     fn one_line_trunc_short_input_unchanged() {
         assert_eq!(one_line_trunc("short", 40), "short");
+    }
+
+    // 2026-08-16 — regression coverage for wiring `InfoViewCopy::try_it`
+    // + `::docs` into the panel (Info View v0.3's framework carried
+    // both fields since Phase 1 but nothing rendered or dispatched
+    // them until this session). Drives the real `draw()` fn against a
+    // `TestBackend` so a future refactor that silently drops the click
+    // rects gets caught here, not by a user reporting dead links.
+    #[test]
+    fn draw_populates_try_it_click_rects_for_a_chip_with_links() {
+        use crate::app::App;
+        use crate::config::Config;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // StatuslineMode has exactly one `try_it` link
+        // (`editor.toggle_keymap`) plus a `docs` link — pick a chip
+        // whose curated copy exercises both wired affordances.
+        app.hover_chip = Some((crate::HoverChip::StatuslineMode, std::time::Instant::now()));
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 30,
+            height: 20,
+        };
+        let mut term = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        term.draw(|f| draw(f, &mut app, area)).unwrap();
+
+        assert_eq!(
+            app.rects.hover_help_try_it.len(),
+            1,
+            "StatuslineMode's one try_it link should produce one click rect"
+        );
+        let (rect, cmd_id) = &app.rects.hover_help_try_it[0];
+        assert_eq!(cmd_id, "editor.toggle_keymap");
+        assert!(
+            area.intersects(*rect),
+            "try_it rect must sit inside the panel area"
+        );
+        let (docs_rect, url) = app
+            .rects
+            .hover_help_docs
+            .as_ref()
+            .expect("StatuslineMode has a docs link");
+        assert!(url.starts_with("https://mnml.sh/manual/"));
+        assert!(area.intersects(*docs_rect));
+    }
+
+    #[test]
+    fn draw_clears_stale_try_it_rects_when_panel_shrinks_to_a_sliver() {
+        use crate::app::App;
+        use crate::config::Config;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.hover_chip = Some((crate::HoverChip::StatuslineMode, std::time::Instant::now()));
+        // First draw at full height populates a try_it rect.
+        let mut term = Terminal::new(TestBackend::new(30, 20)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 30,
+                    height: 20,
+                },
+            )
+        })
+        .unwrap();
+        assert_eq!(app.rects.hover_help_try_it.len(), 1);
+        // Shrink to a 1-row sliver (early-returns before the body
+        // renders) — the stale rect from the taller frame must not
+        // survive, or a click there would fire a command with nothing
+        // visibly clickable on screen.
+        let mut term2 = Terminal::new(TestBackend::new(30, 1)).unwrap();
+        term2
+            .draw(|f| {
+                draw(
+                    f,
+                    &mut app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 30,
+                        height: 1,
+                    },
+                )
+            })
+            .unwrap();
+        assert!(app.rects.hover_help_try_it.is_empty());
     }
 }
