@@ -2198,12 +2198,31 @@ impl Config {
             // "gitlab", "cypress"). Both the built-in defaults and
             // any installed integration manifests can re-inject these,
             // so the retain runs after both merge paths.
-            merged.retain(|i| {
-                !matches!(
-                    i.id.as_str(),
-                    "bitbucket" | "linear" | "gitlab" | "cypress" | "slack"
-                )
-            });
+            // Belt-and-suspenders: delete any on-disk manifest for
+            // these dead IDs at the same time we drop them from the
+            // in-memory list. The Installed tab reads the raw
+            // manifest dir (not the filtered rail list), so an
+            // orphaned `slack.toml` would still surface as a ghost
+            // "S Slack (hidden)" row — user report 2026-08-16. If a
+            // future weird write path re-materializes the file, the
+            // next startup wipes it. 2026-08-16.
+            const DEAD_IDS: &[&str] = &["bitbucket", "linear", "gitlab", "cypress", "slack"];
+            merged.retain(|i| !DEAD_IDS.contains(&i.id.as_str()));
+            for id in DEAD_IDS {
+                if let Ok(path) = mnml_bridge::integration_manifest_path(id)
+                    && path.exists()
+                {
+                    let _ = std::fs::remove_file(&path);
+                }
+                if let Ok(base) = mnml_bridge::integration_manifest_path(id)
+                    && let Some(dir) = base.parent()
+                {
+                    let override_path = dir.join(format!("{id}.override.toml"));
+                    if override_path.exists() {
+                        let _ = std::fs::remove_file(&override_path);
+                    }
+                }
+            }
             self.ui.integration_icons = merged;
         }
         // #864 — user-persisted rail order. Blanks stripped so a
