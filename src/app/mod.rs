@@ -5926,20 +5926,36 @@ impl App {
     pub fn merge_integration_manifests(&mut self) {
         for m in &self.integration_manifests {
             let Some(chip) = &m.chip else { continue };
-            // 2026-07-31 — sibling-icons SDK. If the manifest
-            // declared `glyph_svg` but left `glyph` empty, resolve
-            // the assigned codepoint from the discovery pass and
-            // build the glyph string from it. Explicit `chip.glyph`
-            // always wins — a sibling that also picks a Nerd Font
-            // glyph is allowed to override its own SVG assignment.
-            let glyph = if chip.glyph.is_empty()
-                && chip.glyph_svg.is_some()
+            // 2026-07-31 — sibling-icons SDK. Three-tier resolution:
+            //
+            //  1. Explicit `chip.glyph` always wins — a sibling that
+            //     also picks a Nerd Font glyph overrides its own
+            //     SVG/codepoint assignment.
+            //  2. `chip.glyph_svg` + an assignment from the bake
+            //     discovery pass — the codepoint mnml assigned to
+            //     the baked SVG. Used by siblings that ship an SVG.
+            //  3. `chip.glyph_codepoint` verbatim — for siblings
+            //     that declare "assign me this codepoint" without
+            //     shipping an SVG (the codepoint must already
+            //     resolve via a routed font). Was missing before
+            //     2026-08-15; caused installed chips like amplify
+            //     (glyph="" + glyph_codepoint="F1B00") to render
+            //     empty even though the codepoint was baked.
+            let glyph = if !chip.glyph.is_empty() {
+                chip.glyph.clone()
+            } else if chip.glyph_svg.is_some()
                 && let Some(cp) = self.integration_glyph_codepoints.get(&m.id).copied()
                 && let Some(ch) = char::from_u32(cp)
             {
                 ch.to_string()
+            } else if let Some(hex) = chip.glyph_codepoint.as_deref()
+                && let Ok(cp) =
+                    u32::from_str_radix(hex.trim_start_matches("U+").trim_start_matches("0x"), 16)
+                && let Some(ch) = char::from_u32(cp)
+            {
+                ch.to_string()
             } else {
-                chip.glyph.clone()
+                String::new()
             };
             let new_icon = crate::config::IntegrationIcon {
                 id: m.id.clone(),

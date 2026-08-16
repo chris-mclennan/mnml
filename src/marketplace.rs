@@ -582,10 +582,12 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         // the launcher so preview matches the installed chip.
         "mnml-tracker-jira" => ("\u{F0303}", "blue"),
 
-        // Tattle coverage (private) — nf-cod-graph (EC2E). Same
-        // codepoint the integration's own manifest chip uses, so
-        // marketplace row + installed statusline chip match.
-        "mnml-tattle-coverage" => ("\u{EC2E}", "cyan"),
+        // Tattle coverage (private) — nf-md-chart-line (F0128), a
+        // line-chart glyph in the MDI range that mnml's default
+        // font-codepoint-map routes. First attempt used EC2E
+        // (nf-cod-graph), which is above ghostty's default Codicons
+        // ceiling (EA60-EC1E) and rendered as tofu. 2026-08-15.
+        "mnml-tattle-coverage" => ("\u{F0128}", "cyan"),
 
         // AWS integrations — SVGs baked from
         // ~/Downloads/mnml-aws-icon-preview-inverted at F1C03-F1C0E.
