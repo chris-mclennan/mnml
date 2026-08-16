@@ -4122,6 +4122,75 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     .bg(bg)
                     .add_modifier(Modifier::DIM),
             ));
+            // 2026-08-16 — "↑ Update to <ver>" / "✓ Up to date" chip
+            // rendered ONLY on rows that are already installed AND we
+            // have a fresh update-check result from the background
+            // worker. The chip is appended to the line's spans (right
+            // of the existing chips); its rect is computed by
+            // summing the prior spans' display widths so mouse hit-
+            // testing lands precisely on the chip glyph + label.
+            //
+            // Held across the borrow because `app.rects.push` below
+            // needs `&mut app`, but the map lookup needs `&app`. The
+            // whole map is cloned per row — cheap for the ~dozens of
+            // installed integrations we ever see; nothing else holds
+            // this lock long enough to matter.
+            let update_chip: Option<(String, ratatui::style::Color, bool)> = if is_installed {
+                app.integration_updates
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.get(&entry.id).cloned())
+                    .map(|c| {
+                        if crate::app::integration_updates::is_update_available(&c) {
+                            (format!("  \u{2191} Update to {}", c.latest), t.green, true)
+                        } else {
+                            ("  \u{2713} Up to date".to_string(), t.comment, false)
+                        }
+                    })
+            } else {
+                None
+            };
+            if let Some((label, fg, clickable)) = &update_chip {
+                let mut style = Style::default().fg(*fg).bg(bg);
+                if *clickable {
+                    style = style.add_modifier(Modifier::BOLD);
+                } else {
+                    style = style.add_modifier(Modifier::DIM);
+                }
+                // Sum the display widths of the spans painted so far
+                // to derive the chip's origin. Saturating math keeps
+                // a narrow terminal from underflowing.
+                let prior_cols: usize = name_spans
+                    .iter()
+                    .map(|s| {
+                        use unicode_width::UnicodeWidthStr;
+                        UnicodeWidthStr::width(s.content.as_ref())
+                    })
+                    .sum();
+                let chip_w = {
+                    use unicode_width::UnicodeWidthStr;
+                    UnicodeWidthStr::width(label.as_str()) as u16
+                };
+                let x0 = row1
+                    .x
+                    .saturating_add(prior_cols.min(u16::MAX as usize) as u16);
+                let x_end = row1.x.saturating_add(row1.width);
+                if x0 < x_end && clickable == &true {
+                    // Only register a click rect on the actionable
+                    // "↑ Update to <ver>" chip. "Up to date" is a
+                    // passive indicator.
+                    let chip_rect = Rect {
+                        x: x0,
+                        y: row1.y,
+                        width: chip_w.min(x_end.saturating_sub(x0)),
+                        height: 1,
+                    };
+                    app.rects
+                        .update_chip_rects
+                        .push((chip_rect, entry.id.clone()));
+                }
+                name_spans.push(Span::styled(label.clone(), style));
+            }
             frame.render_widget(Paragraph::new(ratatui::text::Line::from(name_spans)), row1);
             app.rects.marketplace_row_rects.push((row1, idx));
 

@@ -56,6 +56,7 @@ pub(crate) mod integration_audit;
 pub(crate) mod integration_glyphs;
 pub(crate) mod integration_install_methods;
 pub(crate) mod integration_settings;
+pub(crate) mod integration_updates;
 mod playwright;
 mod scm;
 mod session;
@@ -2008,6 +2009,14 @@ pub struct PaneRects {
     /// entries. Each `(rect, idx)` where `idx` indexes into
     /// `app.marketplace_entries`. Left-click → install action.
     pub marketplace_row_rects: Vec<(Rect, usize)>,
+    /// 2026-08-16 — clickable rects for the "↑ Update to <ver>" chip
+    /// painted at the right edge of installed marketplace rows when
+    /// `app.integration_updates` reports an available upgrade. Each
+    /// `(rect, id)` — mouse handler looks the id up in
+    /// `marketplace_entries` to route to the right install path.
+    /// Cleared + repopulated every frame (default reset via
+    /// `reset_for_frame`).
+    pub update_chip_rects: Vec<(Rect, String)>,
     /// Activity-bar icon rects (the far-left vscode-style strip) —
     /// `(rect, section)`. Click dispatcher in `tui.rs` flips
     /// `App.active_section`.
@@ -3727,6 +3736,23 @@ pub struct App {
     /// froze the render thread for up to 10s.
     pub launcher_install_pending:
         Vec<std::sync::mpsc::Receiver<Result<(String, std::path::PathBuf), (String, String)>>>,
+    /// 2026-08-16 — cross-thread map of installed-integration →
+    /// upstream-version-check result. Populated by the background
+    /// worker in `integration_updates::spawn_update_check_worker`;
+    /// consulted by the marketplace-tab renderer to light up an
+    /// "↑ Update to <ver>" chip on installed rows. Empty until the
+    /// worker's first sweep resolves (or the persisted cache seeds
+    /// it via `integration_updates::load_update_cache_into`).
+    pub integration_updates: std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, crate::app::integration_updates::UpdateCheck>,
+        >,
+    >,
+    /// Signaller for the `integrations.check_updates_now` palette
+    /// command. `Some` in real runtime; `None` under `cfg!(test)` so
+    /// the unit + e2e suites don't stack un-joined worker threads
+    /// (matches the `spawn_coverage_s3_syncer` gating pattern).
+    pub integration_updates_waker: Option<crate::app::integration_updates::UpdateWaker>,
     /// 2026-08-06 — README cache for the integration-detail pane.
     /// Keyed by integration id. `Loading` = worker spawned but not
     /// yet delivered. `Text` = fetched body. `NotFound` = fetch
@@ -5495,6 +5521,27 @@ impl App {
         // flag on 0be3cba3).
         #[cfg(not(test))]
         crate::app::coverage_methods::spawn_coverage_s3_syncer();
+        // 2026-08-16 — background worker that pings crates.io / GitHub
+        // for newer versions of installed integrations. Seeds the map
+        // from the persisted cache before spawn so the marketplace
+        // tab renders update chips instantly, without waiting on the
+        // first network sweep. Same test-gating rationale as
+        // spawn_coverage_s3_syncer above.
+        let integration_updates_map: std::sync::Arc<
+            std::sync::Mutex<
+                std::collections::HashMap<String, crate::app::integration_updates::UpdateCheck>,
+            >,
+        > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let _ = crate::app::integration_updates::load_update_cache_into(&integration_updates_map);
+        #[cfg(not(test))]
+        let integration_updates_waker_init =
+            Some(crate::app::integration_updates::spawn_update_check_worker(
+                integration_updates_map.clone(),
+            ));
+        #[cfg(test)]
+        let integration_updates_waker_init: Option<
+            crate::app::integration_updates::UpdateWaker,
+        > = None;
         Ok(App {
             workspace,
             config,
@@ -5517,6 +5564,8 @@ impl App {
             marketplace_entries: Vec::new(),
             marketplace_pending: Vec::new(),
             launcher_install_pending: Vec::new(),
+            integration_updates: integration_updates_map,
+            integration_updates_waker: integration_updates_waker_init,
             readme_cache: std::collections::HashMap::new(),
             readme_pending: Vec::new(),
             ai_usage_claude: None,

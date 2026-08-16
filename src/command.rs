@@ -5558,6 +5558,24 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.refresh_marketplace(),
         },
+        // 2026-08-16 — nudge the background update-check worker so the
+        // "↑ Update to <ver>" chip on the Marketplace tab reflects
+        // upstream state without waiting for the 6h auto-tick.
+        Command {
+            id: "integrations.check_updates_now",
+            title: "Integrations: check for updates now (bypass 6h auto-tick)",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                if let Some(w) = app.integration_updates_waker.as_ref() {
+                    w.poke();
+                    app.toast("checking for updates...".to_string());
+                } else {
+                    // cfg(test) or spawn-failure path.
+                    app.toast("update check worker unavailable".to_string());
+                }
+            },
+        },
         // 2026-08-07 vscode-mouse r1 F2 — marketplace-row right-click
         // menu targets. Each acts on `pending_marketplace_install_idx`
         // (the entry the right-click landed on).
