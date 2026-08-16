@@ -444,7 +444,13 @@ fn workspace_header_chips(
     let chip_bg = rail_bg;
     let chips = workspace_action_chip_specs(app);
     let width = header_rect.width as usize;
-    let chip_w = 3usize;
+    // 2026-08-16 — Nerd Font glyphs (EA80/EA7F/EB37/EA9A/…) are 2 display
+    // columns wide, so the rendered `" {glyph} "` span occupies 4 cells
+    // (space + wide glyph + space). Prior chip_w=3 for both modes made the
+    // rect narrower than the glyph AND advanced the next chip start under
+    // the previous chip's trailing space, so clicks landed 1-N cells right
+    // of the visible icon. Match the actual rendered width per-mode.
+    let chip_w = if nerd { 4usize } else { 3usize };
     let min_separation = 1usize;
     let chip_count = {
         let mut n = chips.len();
