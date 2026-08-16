@@ -613,20 +613,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         && let Some(c_now) = code_now
     {
         let t = theme::cur();
-        let (arrow, fg) = match code_prev {
+        // Same "arrow + magnitude" format as feature's delta suffix
+        // for consistency (was arrow-only prior to 2026-08-16 fix).
+        let (delta, fg) = match code_prev {
             Some(p) => {
                 let d = c_now - p;
-                if d.abs() < 0.05 {
-                    ("±", t.comment)
+                let arrow = if d.abs() < 0.05 {
+                    "±"
                 } else if d > 0.0 {
-                    ("▲", t.green)
+                    "▲"
                 } else {
-                    ("▼", t.red)
-                }
+                    "▼"
+                };
+                let color = if d.abs() < 0.05 {
+                    t.comment
+                } else if d > 0.0 {
+                    t.green
+                } else {
+                    t.red
+                };
+                (format!(" {arrow}{:.1}", d.abs()), color)
             }
-            None => ("", t.comment),
+            None => (String::new(), t.comment),
         };
-        let text = format!(" \u{EB03} C {:.0}%{} ", c_now, arrow);
+        let text = format!(" \u{EB03} C {:.0}%{} ", c_now, delta);
         coverage_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     } else if let Some(f_now) = feature_now {
@@ -654,20 +664,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let code_str = code_now
             .map(|c_now| {
-                let arrow = match code_prev {
+                // Match feature's " ▲1.4"-style delta suffix (arrow +
+                // 1-decimal magnitude) instead of arrow-only. User
+                // reported the missing change value 2026-08-16:
+                // "up down change value not showing for code. it shows
+                // for feature".
+                let delta = match code_prev {
                     Some(p) => {
                         let d = c_now - p;
-                        if d.abs() < 0.05 {
+                        let arrow = if d.abs() < 0.05 {
                             "±"
                         } else if d > 0.0 {
                             "▲"
                         } else {
                             "▼"
-                        }
+                        };
+                        format!(" {arrow}{:.1}", d.abs())
                     }
-                    None => "",
+                    None => String::new(),
                 };
-                format!(" · C {:.0}%{}", c_now, arrow)
+                format!(" · C {:.0}%{}", c_now, delta)
             })
             .unwrap_or_default();
         let text = format!(" \u{EB03} F {:.0}%{}{} ", f_now, f_delta, code_str);
