@@ -63,6 +63,9 @@ fn unix_secs() -> u64 {
 ///
 /// Skipped entirely when `aws` isn't on PATH (non-tattle users get
 /// no useless syscalls). Called once from `App::new`. 2026-08-16.
+/// Test-mode call site is `#[cfg(not(test))]`-gated to prevent
+/// per-test-invocation thread stacks — hence `dead_code` in test.
+#[cfg_attr(test, allow(dead_code))]
 pub fn spawn_coverage_s3_syncer() {
     // Cheap probe: skip the whole thread if aws CLI isn't available.
     // `which` succeeds silently; failure = binary absent.

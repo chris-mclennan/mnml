@@ -5489,7 +5489,11 @@ impl App {
         // 2026-08-16 — daemon thread that keeps the coverage-rollup
         // JSONs at ~/.tattle-claude-artifacts/{feature,code}-coverage/
         // fresh so the statusline chip's local-disk read always has
-        // recent data. Skipped when `aws` isn't on PATH.
+        // recent data. Skipped when `aws` isn't on PATH. Gated on
+        // `cfg!(not(test))` so unit + e2e suites don't stack an
+        // un-joined daemon thread per App::new invocation (reviewer
+        // flag on 0be3cba3).
+        #[cfg(not(test))]
         crate::app::coverage_methods::spawn_coverage_s3_syncer();
         Ok(App {
             workspace,
