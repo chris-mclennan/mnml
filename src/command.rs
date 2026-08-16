@@ -5607,31 +5607,34 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "coverage.chip_show_both",
             title: "Coverage chip: show Feature + Code",
-            group: "integrations",
+            group: "view",
             keys: &[],
             run: |app| {
                 app.config.ui.coverage_chip_mode = "both".to_string();
                 let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "both");
+                app.toast("coverage chip: showing Feature + Code");
             },
         },
         Command {
             id: "coverage.chip_show_feature",
             title: "Coverage chip: show Feature only",
-            group: "integrations",
+            group: "view",
             keys: &[],
             run: |app| {
                 app.config.ui.coverage_chip_mode = "feature".to_string();
                 let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "feature");
+                app.toast("coverage chip: showing Feature only");
             },
         },
         Command {
             id: "coverage.chip_show_code",
             title: "Coverage chip: show Code (Istanbul) only",
-            group: "integrations",
+            group: "view",
             keys: &[],
             run: |app| {
                 app.config.ui.coverage_chip_mode = "code".to_string();
                 let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "code");
+                app.toast("coverage chip: showing Code (Istanbul) only");
             },
         },
         Command {
