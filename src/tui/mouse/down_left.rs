@@ -1717,6 +1717,29 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_hover_help_kebab_menu((r.x, r.y + 1));
         return;
     }
+    // Hover-help `Try it →` action buttons — checked before the
+    // whole-panel inert-click catch-all below, so a click landing on
+    // one of these narrow rows fires its palette command instead of
+    // being swallowed. 2026-08-16 — wires up `InfoViewCopy::try_it`,
+    // which the framework carried since Phase 1 but never dispatched.
+    if let Some((_, cmd_id)) = app
+        .rects
+        .hover_help_try_it
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        let _ = crate::command::run(&cmd_id, app);
+        return;
+    }
+    // Hover-help `→ Manual` docs link — opens the site manual page.
+    if let Some((r, url)) = app.rects.hover_help_docs.clone()
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::app::open_url_external(&url);
+        app.toast("opened in browser");
+        return;
+    }
     // Body clicks inside the info panel are swallowed so they don't
     // fall through to tree / statusline hit-tests below.
     if let Some(r) = app.rects.hover_help_strip
@@ -1768,11 +1791,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.maybe_refresh_ai_usage();
         return;
     }
-    // Statusline coverage chip (#889) → open the Coverage pane.
+    // Statusline coverage chip (#889) → open the coverage integration
+    // Pty pane (provided by `mnml-tattle-coverage`). The built-in
+    // Pane::Coverage was removed in favor of the external tool, which
+    // also shows Istanbul coverage alongside the feature-coverage
+    // sparklines this chip renders.
     if let Some(r) = app.rects.statusline_coverage_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.open_coverage_pane();
+        let _ = crate::command::run("tattle_coverage_ext.open", app);
         return;
     }
     // Statusline mode chip → toggle input style (vim ↔ standard).

@@ -1,10 +1,12 @@
 //! Tattle Feature Coverage — Trends. Reads the aggregate JSON that
 //! `render_trends.py` publishes (same data source the Confluence page
-//! renders from) and exposes it to mnml's statusline chip + Pane::Coverage.
+//! renders from) and exposes it to mnml's statusline chip. (The built-in
+//! Coverage pane was removed; the full per-surface report now lives in the
+//! `mnml-tattle-coverage` integration, which opens as a Pty pane.)
 //!
 //! Data path: `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`
 //! (produced by the scheduled coverage runs). If the file is missing, the
-//! chip + pane hide themselves — no auth, no network, no HTTP fallback in v1.
+//! chip hides itself — no auth, no network, no HTTP fallback in v1.
 
 use serde::Deserialize;
 use std::path::PathBuf;

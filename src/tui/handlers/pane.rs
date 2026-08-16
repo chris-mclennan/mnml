@@ -260,7 +260,6 @@ fn is_view_only_pane(pane: Option<&Pane>) -> bool {
             | Some(Pane::Flaky(_))
             | Some(Pane::Debug(_))
             | Some(Pane::IntegrationDetail(_))
-            | Some(Pane::Coverage(_))
     )
 }
 
@@ -847,54 +846,6 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('i') => app.toggle_active_image_header(),
             KeyCode::Char('r') => app.reload_active_image(),
             KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
-        return;
-    }
-    // Coverage pane: j/k scroll (clamped), gg/G jump, r refresh,
-    // Esc/q focus tree.
-    // 2026-08-06 design-critic: header advertised r/esc — now wired.
-    // 2026-08-07 nvchad r6: added upper clamp so 10× j didn't blank
-    // the pane; added g/G to match other view-only panes.
-    if matches!(app.panes.get(i), Some(Pane::Coverage(_))) {
-        let max_scroll = app
-            .coverage_trends
-            .as_ref()
-            .map(|t| t.apps.len().saturating_sub(1))
-            .unwrap_or(0);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
-            KeyCode::Char('r') => app.force_reload_coverage(),
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_sub(1);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_add(1).min(max_scroll);
-                }
-            }
-            KeyCode::PageUp => {
-                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_sub(5);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_add(5).min(max_scroll);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
-                    p.scroll = 0;
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
-                    p.scroll = max_scroll;
-                }
-            }
             _ => {}
         }
         return;

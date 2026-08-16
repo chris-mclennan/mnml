@@ -1601,20 +1601,16 @@ impl App {
     }
 
     /// Task #875 (R5 SEV-3 F8) — Right-click on the statusline
-    /// coverage chip. Prior state was silent; now offers refresh +
-    /// open-report.
+    /// coverage chip. The built-in Coverage pane was removed; this
+    /// now opens the coverage integration Pty pane (provided by
+    /// `mnml-tattle-coverage`). Refresh lives inside that pane
+    /// (`r` reflex), so only one menu row remains.
     pub fn open_statusline_coverage_context_menu(&mut self, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![
-            MenuItem::new(
-                "Open coverage overlay",
-                MenuAction::Command("tattle_coverage.open"),
-            ),
-            MenuItem::new(
-                "Refresh coverage",
-                MenuAction::Command("tattle_coverage.refresh"),
-            ),
-        ];
+        let items = vec![MenuItem::new(
+            "Open coverage pane",
+            MenuAction::Command("tattle_coverage_ext.open"),
+        )];
         self.context_menu = Some(ContextMenu::new(Some("Coverage".into()), anchor, items));
     }
 

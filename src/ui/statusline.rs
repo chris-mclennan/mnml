@@ -568,8 +568,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Coverage meter — Tattle feature-coverage rollup. Only paints
     // when trends.json exists at
     // ~/.tattle-claude-artifacts/feature-coverage/_trends/. Click →
-    // `tattle_coverage.open`. Delta arrow colored green/red by
-    // direction vs 7d ago.
+    // `tattle_coverage_ext.open` (integration Pty pane). Delta arrow
+    // colored green/red by direction vs 7d ago.
     app.rects.statusline_coverage_chip = None;
     app.ensure_coverage_loaded();
     let mut coverage_seg_idx: Option<usize> = None;

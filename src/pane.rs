@@ -138,14 +138,6 @@ pub enum Pane {
     /// (same as Outline / Diagnostics), opened via
     /// `integrations.show_details`.
     IntegrationDetail(IntegrationDetailPane),
-    /// Tattle feature-coverage trends (Merchant Dashboard / ADX / API /
-    /// Mobile / Customer Web / Site). Reads
-    /// `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`
-    /// which the scheduled `render_trends.py` job publishes (same
-    /// data the Confluence rollup page renders). Per-surface rows
-    /// show current API + UI coverage with a braille sparkline of
-    /// recent history and a delta arrow vs 7 days ago.
-    Coverage(CoveragePane),
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
@@ -447,23 +439,6 @@ impl IntegrationDetailPane {
     }
 }
 
-/// Feature-coverage rollup pane state — scroll offset + refresh timestamp.
-/// The underlying data lives in `App::coverage_trends`; the pane is stateless
-/// beyond scroll so the App can hot-swap the trends without touching the pane.
-#[derive(Debug, Clone, Default)]
-pub struct CoveragePane {
-    pub scroll: usize,
-}
-
-impl CoveragePane {
-    pub fn new() -> Self {
-        Self { scroll: 0 }
-    }
-    pub fn tab_title(&self) -> String {
-        "Coverage".to_string()
-    }
-}
-
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
 /// commands. Up/Down navigate; Enter re-fires the selected entry.
 #[derive(Debug, Clone, Default)]
@@ -701,7 +676,6 @@ impl Pane {
             Pane::NewCloudAgentWizard(_) => "+ New Agent from PR".to_string(),
             Pane::NewCloudRunWizard(_) => "+ New Cloud Run".to_string(),
             Pane::IntegrationDetail(d) => d.tab_title(),
-            Pane::Coverage(c) => c.tab_title(),
         }
     }
 
@@ -735,8 +709,7 @@ impl Pane {
             | Pane::CloudAgentRun(_)
             | Pane::NewCloudAgentWizard(_)
             | Pane::NewCloudRunWizard(_)
-            | Pane::IntegrationDetail(_)
-            | Pane::Coverage(_) => false,
+            | Pane::IntegrationDetail(_) => false,
         }
     }
 

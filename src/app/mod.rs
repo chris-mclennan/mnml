@@ -2307,7 +2307,8 @@ pub struct PaneRects {
     /// refresh + toast the details.
     pub statusline_ai_claude_chip: Option<Rect>,
     pub statusline_ai_codex_chip: Option<Rect>,
-    /// Coverage rollup chip (#889). Click → `tattle_coverage.open`.
+    /// Coverage rollup chip (#889). Click → integration Pty pane
+    /// (`tattle_coverage_ext.open`, provided by `mnml-tattle-coverage`).
     pub statusline_coverage_chip: Option<Rect>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
@@ -2845,6 +2846,22 @@ pub struct PaneRects {
     /// (About the info box…, per-panel settings) without further
     /// wiring. Matches the widget kebab pattern (`src/ui/dock.rs`).
     pub hover_help_kebab: Option<Rect>,
+    /// 2026-08-16 — `Try it →` action-button rects for the current
+    /// Info View copy (`InfoViewCopy::try_it`). `(rect, command_id)`
+    /// per rendered link, rebuilt every frame in `hover_help::draw`.
+    /// Distinct from `hover_help_strip` (whose body clicks are inert
+    /// by design, see the comment above) — a click landing exactly on
+    /// one of these small link rects fires the palette command instead
+    /// of being swallowed. Part of wiring the Info View v0.3 `try_it`
+    /// field, which the framework had carried since Phase 1 but never
+    /// rendered or dispatched.
+    pub hover_help_try_it: Vec<(Rect, String)>,
+    /// 2026-08-16 — the `→ Manual…` docs-link rect for the current
+    /// Info View copy (`InfoViewCopy::docs`), when set. `(rect, url)`;
+    /// click opens the URL in the OS browser via `open_url_external`.
+    /// Only entries with a verified `site/src/content/docs/manual/*`
+    /// page get a `docs` value — see `src/ui/info_view_copy.rs`.
+    pub hover_help_docs: Option<(Rect, String)>,
     /// 2026-06-21 vscode SEV-2 — the floating peek_definition overlay's
     /// outer rect when shown. The mouse dispatcher uses this to consume
     /// inside-clicks (instead of bleeding through to the editor) and
@@ -12826,7 +12843,6 @@ impl App {
             Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
             Pane::NewCloudRunWizard(_) => Some(("+ New Cloud Run".to_string(), false)),
             Pane::IntegrationDetail(d) => Some((d.tab_title(), false)),
-            Pane::Coverage(c) => Some((c.tab_title(), false)),
         }
     }
 

@@ -47,7 +47,6 @@ pub mod cmdline_bar;
 pub mod cmdline_history_view;
 pub mod cmdline_popup_view;
 pub mod confirm_modal;
-pub mod coverage_view;
 pub mod peek_overlay_view;
 pub mod ws_view;
 // codebuilds_view moved to mnml-aws-codebuild.
@@ -989,9 +988,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 Some(crate::pane::Pane::IntegrationDetail(_)) => {
                     integration_detail_view::draw(frame, app, pid, body, focused);
                 }
-                Some(crate::pane::Pane::Coverage(_)) => {
-                    coverage_view::draw(frame, app, pid, body, focused);
-                }
                 Some(crate::pane::Pane::Tests(_)) => {
                     tests_view::draw(frame, app, pid, body, focused);
                 }
@@ -1790,7 +1786,6 @@ fn render_layout(
                 Some(crate::pane::Pane::NewCloudAgentWizard(_)) => 39,
                 Some(crate::pane::Pane::NewCloudRunWizard(_)) => 40,
                 Some(crate::pane::Pane::IntegrationDetail(_)) => 41,
-                Some(crate::pane::Pane::Coverage(_)) => 42,
                 _ => 0,
             };
             match kind {
@@ -1855,10 +1850,6 @@ fn render_layout(
                     None
                 }
                 41 => integration_detail_view::draw(frame, app, *id, area, focused),
-                42 => {
-                    coverage_view::draw(frame, app, *id, area, focused);
-                    None
-                }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
@@ -4921,10 +4912,6 @@ fn icon_for_pane(
         // so the tab icon reads unambiguously as "integration detail"
         // (user 2026-08-06: was a lighthouse-looking glyph).
         Pane::IntegrationDetail(_) => s(if nerd { "\u{F0431}" } else { "◈" }, theme::cur().cyan),
-        // nf-cod-graph (EB03) — bar-chart glyph. Was EC2E (checklist)
-        // which sits above ghostty's font-codepoint-map (EA60-EC1E)
-        // and rendered as tofu.
-        Pane::Coverage(_) => s(if nerd { "\u{EB03}" } else { "%" }, theme::cur().green),
     }
 }
 
