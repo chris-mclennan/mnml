@@ -3770,8 +3770,9 @@ pub struct App {
     /// `drain_ai_usage`.
     pub ai_usage_claude: Option<crate::ai_usage::ClaudeUsage>,
     pub ai_usage_codex: Option<crate::ai_usage::CodexUsage>,
-    pub ai_usage_pending_claude:
-        Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::ClaudeUsage, String>>>,
+    pub ai_usage_pending_claude: Option<
+        std::sync::mpsc::Receiver<Result<crate::ai_usage::ClaudeUsage, crate::ai_usage::FetchErr>>,
+    >,
     pub ai_usage_pending_codex:
         Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::CodexUsage, String>>>,
     /// 2026-08-08 — Keychain lookup for the LinkClaudeToken prompt's
@@ -7851,6 +7852,17 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        // 2026-08-16 — honor `Retry-After` from the last 429. When
+        // Anthropic's cooldown window is longer than 5 min (real
+        // blocks can be 30-60 min), the fixed interval would keep
+        // hitting 429 unnecessarily and could re-accumulate the
+        // limit. When shorter, we'd wait too long. Trust the header.
+        // Zero = no cooldown.
+        if let Some(u) = self.ai_usage_claude.as_ref()
+            && u.retry_after_at > now
+        {
+            return;
+        }
         let interval = REFRESH_INTERVAL_SECS;
         if now.saturating_sub(self.ai_usage_last_refresh_at) < interval {
             return;
@@ -7900,11 +7912,22 @@ impl App {
                     // meant an expired/revoked token silently showed
                     // yesterday's numbers forever, with only the
                     // hover tooltip surfacing the failure.
+                    //
+                    // 2026-08-16 — on 429 with Retry-After, stamp
+                    // `retry_after_at` so `maybe_refresh_ai_usage`
+                    // waits exactly the window Anthropic asked for.
                     let mut u = self.ai_usage_claude.clone().unwrap_or_default();
                     u.percent = 0;
                     u.weekly_percent = 0;
                     u.scoped_limits.clear();
-                    u.last_error = Some(e);
+                    if let Some(secs) = e.retry_after_secs {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        u.retry_after_at = now.saturating_add(secs);
+                    }
+                    u.last_error = Some(e.message);
                     self.ai_usage_claude = Some(u);
                     self.ai_usage_pending_claude = None;
                 }

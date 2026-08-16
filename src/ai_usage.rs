@@ -38,6 +38,15 @@ pub struct ClaudeUsage {
     pub tokens_5h: u64,
     pub fetched_at: u64,
     pub last_error: Option<String>,
+    /// 2026-08-16 — Unix seconds when we should retry after a 429.
+    /// Populated from Anthropic's `Retry-After` header (which is a
+    /// delta in seconds); the render loop's `maybe_refresh_ai_usage`
+    /// skips spawning until `now >= retry_after_at`. Anthropic knows
+    /// how long its own block lasts (typical: 30-3600s); honoring
+    /// the header beats mnml's fixed 5-min guess in both directions
+    /// (shorter for brief blocks, longer for real hour+ blocks).
+    /// Zero = no cooldown active.
+    pub retry_after_at: u64,
 }
 
 /// One entry from the response's `limits[]` array with
@@ -283,7 +292,7 @@ pub fn spawn_keychain_claude_token() -> mpsc::Receiver<Result<String, String>> {
 /// Receiver — poll via `try_recv()` in a per-tick drain. Emits Err
 /// with a human-readable message on any failure (network, HTTP
 /// status, JSON parse). No token = Err.
-pub fn spawn_claude_fetch() -> mpsc::Receiver<Result<ClaudeUsage, String>> {
+pub fn spawn_claude_fetch() -> mpsc::Receiver<Result<ClaudeUsage, FetchErr>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let result = fetch_claude_blocking();
@@ -292,18 +301,47 @@ pub fn spawn_claude_fetch() -> mpsc::Receiver<Result<ClaudeUsage, String>> {
     rx
 }
 
-fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
-    let token = read_claude_token().ok_or_else(|| "not linked".to_string())?;
+/// Fetch failure payload. Carries the human-readable message and,
+/// on 429s, the `Retry-After` header value (seconds) so the render
+/// loop's throttle can honor Anthropic's own cooldown window instead
+/// of guessing. 2026-08-16.
+#[derive(Debug, Clone)]
+pub struct FetchErr {
+    pub message: String,
+    pub retry_after_secs: Option<u64>,
+}
+
+impl FetchErr {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retry_after_secs: None,
+        }
+    }
+    fn with_retry_after(mut self, secs: u64) -> Self {
+        self.retry_after_secs = Some(secs);
+        self
+    }
+}
+
+impl From<String> for FetchErr {
+    fn from(s: String) -> Self {
+        Self::new(s)
+    }
+}
+
+fn fetch_claude_blocking() -> Result<ClaudeUsage, FetchErr> {
+    let token = read_claude_token().ok_or_else(|| FetchErr::new("not linked"))?;
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("mnml/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("http client: {e}"))?;
+        .map_err(|e| FetchErr::new(format!("http client: {e}")))?;
     let mut resp = client
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {token}"))
         .send()
-        .map_err(|e| format!("fetch: {e}"))?;
+        .map_err(|e| FetchErr::new(format!("fetch: {e}")))?;
     // 2026-08-08 — auto-refresh on 401/403 when a refreshToken is
     // available. Claude Code OAuth tokens expire ~every 8h, and the
     // "re-link daily" UX was noise. Try once; on refresh success,
@@ -318,10 +356,24 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
             .get("https://api.anthropic.com/api/oauth/usage")
             .header("Authorization", format!("Bearer {new_access}"))
             .send()
-            .map_err(|e| format!("fetch (post-refresh): {e}"))?;
+            .map_err(|e| FetchErr::new(format!("fetch (post-refresh): {e}")))?;
     }
     let status = resp.status();
-    let text = resp.text().map_err(|e| format!("body read: {e}"))?;
+    // Extract `Retry-After` header BEFORE `resp.text()` consumes the
+    // response. Anthropic emits it as a delta-seconds integer on 429s
+    // (`retry-after: 3150` = wait 52 min). RFC-7231 also allows an
+    // HTTP-date form; we try the numeric form first (Anthropic uses
+    // that shape) and fall back to zero on parse failure — worst case
+    // we just miss the header hint and fall back to the fixed 5-min
+    // throttle. 2026-08-16.
+    let retry_after_secs = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok());
+    let text = resp
+        .text()
+        .map_err(|e| FetchErr::new(format!("body read: {e}")))?;
     // Debug hook — write the last response to a predictable path so
     // `:ai.show_last_response` can open it when the parser returns 0%
     // for something the endpoint clearly filled in. Best-effort, silent
@@ -368,9 +420,20 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
         } else {
             truncate(&redact_bearer(&text), 80)
         };
-        return Err(format!("HTTP {}: {}", status.as_u16(), msg));
+        let err = FetchErr::new(format!("HTTP {}: {}", status.as_u16(), msg));
+        // On 429 with a numeric Retry-After, attach it so the render
+        // loop can honor Anthropic's own cooldown window (see
+        // `App::maybe_refresh_ai_usage`).
+        let err = if status.as_u16() == 429
+            && let Some(secs) = retry_after_secs
+        {
+            err.with_retry_after(secs)
+        } else {
+            err
+        };
+        return Err(err);
     }
-    parse_claude_response(&text)
+    parse_claude_response(&text).map_err(FetchErr::new)
 }
 
 /// Replace anything that looks like a bearer token with `<redacted>`
@@ -426,6 +489,7 @@ fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
         tokens_5h: 0, // endpoint doesn't return raw token counts
         fetched_at: now_unix(),
         last_error: None,
+        retry_after_at: 0,
     })
 }
 
