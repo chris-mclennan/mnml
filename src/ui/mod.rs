@@ -394,17 +394,37 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (None, None, upper)
     };
 
-    // 2026-08-08 — the global 1-row bufferline above the empty-
-    // workspace body is retired. Per-leaf tab strips carry the
-    // launcher cluster in the split cases, and the empty-workspace
-    // body itself (welcome/tree renderers) surfaces the cluster on
-    // startup — the top-strip variant was a fourth spot that only
-    // ever ran on empty state and produced no visually distinct
-    // outcome vs. hiding it. `bufferline_visible` field + palette
-    // command + `:set bufferline` + toggle method were all deleted
-    // together.
-    let bufferline_area: Option<Rect> = None;
-    let body_area = right;
+    // 2026-08-16 — empty-state top-strip re-instated (user request).
+    // When no panes are open the welcome screen fills the body, but
+    // there's nowhere for the `+ new-tab` chip + right cluster to
+    // live. Reserve the top 1-row strip in that case, matching the
+    // visual position where a pane's own tab strip would appear as
+    // soon as the first pane opens — so opening a tab replaces this
+    // row with the tab strip at the same y, no layout jump. When
+    // any pane exists, `bufferline_area = None` and body_area gets
+    // the full `right` — per-pane tab strips carry the cluster then.
+    //
+    // The 2026-08-08 delete note is preserved above for context: the
+    // top-strip was retired then because "produced no visually
+    // distinct outcome vs. hiding it". User asks for it back on the
+    // empty-state case.
+    let (bufferline_area, body_area) = if app.panes.is_empty() && right.height > 1 {
+        let strip = Rect {
+            x: right.x,
+            y: right.y,
+            width: right.width,
+            height: 1,
+        };
+        let body = Rect {
+            x: right.x,
+            y: right.y + 1,
+            width: right.width,
+            height: right.height - 1,
+        };
+        (Some(strip), body)
+    } else {
+        (None, right)
+    };
 
     // ── tree rail (full height of `upper`) ──
     // The rail is split into two columns: a 4-cell activity-bar
