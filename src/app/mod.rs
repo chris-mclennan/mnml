@@ -7612,8 +7612,8 @@ impl App {
             crate::marketplace::InstallSpec::LauncherToml { .. } => {
                 format!("Install launcher `{}`?", entry.id)
             }
-            crate::marketplace::InstallSpec::CargoGit { repo, path } => {
-                format!("Install `{}` from private repo {repo}/{path}?", entry.id)
+            crate::marketplace::InstallSpec::CargoGit { repo, .. } => {
+                format!("Install `{}` from private repo {repo}?", entry.id)
             }
         };
         self.pending_marketplace_install_idx = Some(idx);
@@ -7693,6 +7693,15 @@ impl App {
                 // here so a future refactor that adds another entry
                 // path can't silently reach this shell command with
                 // an unchecked string.
+                //
+                // `path` is retained on the InstallSpec because the
+                // README-fetch path uses it (github.com/<repo>/<path>/
+                // README.md) — but it's NOT passed to `cargo install`.
+                // Cargo rejects `--git URL --path X` as mutually
+                // exclusive; instead, the sub-crate in a workspace is
+                // identified positionally by its Cargo.toml `name`,
+                // which we assume matches the directory name (id).
+                // Errors out with the first-fix landmine 2026-08-16.
                 if !crate::marketplace::is_safe_repo_slug(repo)
                     || !crate::marketplace::is_safe_repo_subpath(path)
                     || !crate::marketplace::is_safe_crate_component(&name)
@@ -7715,7 +7724,7 @@ impl App {
                 // above).
                 let ipc_cmd = self.workspace.join(".mnml").join("ipc").join("command");
                 self.run_ex_command(&format!(
-                    "term cargo install --force --git https://github.com/{repo}.git --path {path} && $HOME/.cargo/bin/{name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
+                    "term cargo install --force --git https://github.com/{repo}.git {name} && $HOME/.cargo/bin/{name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
                     ipc = ipc_cmd.display(),
                 ));
             }
