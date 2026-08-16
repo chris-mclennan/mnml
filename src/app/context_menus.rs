@@ -1641,7 +1641,7 @@ impl App {
     pub fn open_statusline_ai_context_menu(&mut self, anchor: (u16, u16), is_codex: bool) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let title = if is_codex { "Codex" } else { "Claude" };
-        let items = vec![
+        let mut items = vec![
             MenuItem::new("Show usage overlay", MenuAction::Command("ai.usage")),
             MenuItem::new("Refresh usage now", MenuAction::Command("ai.refresh_usage")),
             MenuItem::new(
@@ -1649,6 +1649,34 @@ impl App {
                 MenuAction::Command("ai.show_last_response"),
             ),
         ];
+        // 2026-08-16 — Claude-side meter mode picker. Same idiom as the
+        // coverage-chip filter — three rows with ✓ on the current mode.
+        // Backed by `[ai] claude_meter_mode` which the render already
+        // reads (three values: "session" / "weekly" / "both"). Codex chip
+        // doesn't have a session-vs-weekly distinction so this only
+        // surfaces on the Claude menu.
+        if !is_codex {
+            let mode = self
+                .config
+                .ai
+                .as_table()
+                .and_then(|t| t.get("claude_meter_mode"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("session");
+            let check = |on: bool| if on { "✓ " } else { "  " };
+            items.push(MenuItem::new(
+                format!("{}Show session % only", check(mode == "session")),
+                MenuAction::Command("ai.chip_show_session"),
+            ));
+            items.push(MenuItem::new(
+                format!("{}Show weekly % only", check(mode == "weekly")),
+                MenuAction::Command("ai.chip_show_weekly"),
+            ));
+            items.push(MenuItem::new(
+                format!("{}Show both (session · weekly)", check(mode == "both")),
+                MenuAction::Command("ai.chip_show_both"),
+            ));
+        }
         self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
     }
 

@@ -231,6 +231,26 @@ fn build_commands_reference_text(dyn_cmds: &[DynCommand]) -> String {
     out
 }
 
+/// Set `[ai] claude_meter_mode` in memory + persist to config.toml,
+/// then toast. 2026-08-16.
+fn set_claude_meter_mode(app: &mut App, mode: &'static str) {
+    // In-memory update — chip render reads `app.config.ai.get("claude_meter_mode")`
+    // on every frame, so this takes effect same-frame.
+    let mut table = app
+        .config
+        .ai
+        .as_table()
+        .cloned()
+        .unwrap_or_else(toml::Table::new);
+    table.insert(
+        "claude_meter_mode".to_string(),
+        toml::Value::String(mode.to_string()),
+    );
+    app.config.ai = toml::Value::Table(table);
+    let _ = crate::app::discovery::persist_ai_string("claude_meter_mode", mode);
+    app.toast(format!("Claude chip: showing {mode}"));
+}
+
 fn open_recent_by_idx(app: &mut App, idx: usize) {
     let Some(path) = app.recent_files.get(idx).cloned() else {
         app.toast(format!("no recent file at #{}", idx + 1));
@@ -5979,6 +5999,39 @@ fn builtin_commands() -> Vec<Command> {
                 app.ai_usage_last_refresh_at = 0;
                 app.maybe_refresh_ai_usage();
                 app.toast("refreshing AI usage…".to_string());
+            },
+        },
+        // 2026-08-16 — Claude chip meter-mode picker. `[ai]
+        // claude_meter_mode` is read at render time; these commands
+        // update the in-memory Value AND persist so restart survives.
+        // Mutates `app.config.ai` (a toml::Value table) via direct
+        // insert; falls back to constructing a fresh table if it
+        // doesn't parse as one for some reason.
+        Command {
+            id: "ai.chip_show_session",
+            title: "AI (Claude) chip: show session % only",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                set_claude_meter_mode(app, "session");
+            },
+        },
+        Command {
+            id: "ai.chip_show_weekly",
+            title: "AI (Claude) chip: show weekly % only",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                set_claude_meter_mode(app, "weekly");
+            },
+        },
+        Command {
+            id: "ai.chip_show_both",
+            title: "AI (Claude) chip: show both (session · weekly)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                set_claude_meter_mode(app, "both");
             },
         },
         Command {
