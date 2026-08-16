@@ -4085,10 +4085,22 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 entry.label.clone(),
                 Style::default().fg(row_fg).bg(bg).add_modifier(row_mod),
             ));
-            name_spans.push(Span::styled(
-                format!("  {prov_glyph} {prov_label}"),
-                Style::default().fg(prov_fg).bg(bg),
-            ));
+            // 2026-08-15 — CargoGit (private-repo) entries are neither
+            // Official nor Community — they came in from a user-added
+            // `github_monorepo_apps` source pointing at a private repo.
+            // The `Private` chip below carries the "you added this
+            // source" signal on its own; showing `~ Community` here too
+            // would misleadingly imply third-party open-source origin.
+            let is_private = matches!(
+                entry.install,
+                crate::marketplace::InstallSpec::CargoGit { .. }
+            );
+            if !is_private {
+                name_spans.push(Span::styled(
+                    format!("  {prov_glyph} {prov_label}"),
+                    Style::default().fg(prov_fg).bg(bg),
+                ));
+            }
             // 2026-08-08 — Verified chip. Curated allow-list in
             // marketplace::verified_ids() signals "we (maintainer) used
             // this in real work and it functions correctly." Separate
@@ -4106,10 +4118,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // isn't on crates.io — cargo will shell to git; make
             // sure you have repo access." Distinct from Verified;
             // the two can coexist on the same row.
-            if matches!(
-                entry.install,
-                crate::marketplace::InstallSpec::CargoGit { .. }
-            ) {
+            if is_private {
                 name_spans.push(Span::styled(
                     "  Private".to_string(),
                     Style::default().fg(t.yellow).bg(bg),

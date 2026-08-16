@@ -435,6 +435,40 @@ pub fn is_safe_repo_subpath(s: &str) -> bool {
         .all(|seg| !seg.is_empty() && seg != ".." && is_safe_crate_component(seg))
 }
 
+/// Extract `(description, label)` from a Cargo.toml raw body.
+/// Used by [`Source::GithubMonorepoApps`] to enrich each app's row
+/// with the crate's own description and (if present) a friendlier
+/// display name. Missing / empty fields return `None` for that
+/// component so the caller falls back to the crate name. 2026-08-15.
+pub fn parse_cargo_toml_metadata(body: &str) -> Result<(Option<String>, Option<String>), String> {
+    #[derive(Debug, Deserialize)]
+    struct CargoManifest {
+        package: Option<Package>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Package {
+        description: Option<String>,
+        // cargo doesn't have a "label" field; `package.metadata.mnml.
+        // label` is the convention — but for v1 we just fall through
+        // to `name` at the call site.
+        name: Option<String>,
+    }
+    let m: CargoManifest = toml::from_str(body).map_err(|e| format!("cargo.toml: {e}"))?;
+    let pkg = m.package.unwrap_or(Package {
+        description: None,
+        name: None,
+    });
+    let desc = pkg
+        .description
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let label = pkg
+        .name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Ok((desc, label))
+}
+
 /// Parse a launcher TOML file's raw contents into a marketplace
 /// entry. Uses the existing `IntegrationManifest` type so the
 /// schema stays in sync with what mnml expects on install.
@@ -545,6 +579,11 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         // Jira tracker app (3 chips on install) — same F0303 as
         // the launcher so preview matches the installed chip.
         "mnml-tracker-jira" => ("\u{F0303}", "blue"),
+
+        // Tattle coverage (private) — nf-cod-graph (EC2E). Same
+        // codepoint the integration's own manifest chip uses, so
+        // marketplace row + installed statusline chip match.
+        "mnml-tattle-coverage" => ("\u{EC2E}", "cyan"),
 
         // AWS integrations — SVGs baked from
         // ~/Downloads/mnml-aws-icon-preview-inverted at F1C03-F1C0E.
@@ -815,20 +854,42 @@ pub fn fetch_source(source: &Source) -> Result<Vec<MarketplaceEntry>, String> {
                 .and_then(|r| r.text())
                 .map_err(|e| format!("github contents (monorepo apps): {e}"))?;
             let dirs = parse_github_dir_children(&body)?;
+            let gh_tok = detect_gh_auth_token();
             Ok(dirs
                 .into_iter()
                 .map(|name| {
                     let (glyph, color) = catalog_lookup(&name);
                     let install_path = format!("{}/{}", apps_dir, name);
+                    // Best-effort: fetch the app's Cargo.toml so the
+                    // marketplace row shows a real description +
+                    // label instead of a bare crate name. Silent on
+                    // failure — a missing Cargo.toml doesn't block
+                    // the row from appearing. 2026-08-15.
+                    let cargo_toml_url = format!(
+                        "https://api.github.com/repos/{}/contents/{}/Cargo.toml",
+                        repo, install_path
+                    );
+                    let mut cargo_req = client.get(&cargo_toml_url);
+                    if let Some(tok) = &gh_tok {
+                        cargo_req = cargo_req.bearer_auth(tok);
+                    }
+                    let cargo_meta = cargo_req
+                        .header("Accept", "application/vnd.github.raw")
+                        .send()
+                        .ok()
+                        .and_then(|r| r.error_for_status().ok())
+                        .and_then(|r| r.text().ok())
+                        .and_then(|body| parse_cargo_toml_metadata(&body).ok());
+                    let (description, label) = match cargo_meta {
+                        Some((desc, lbl)) => (desc, lbl.unwrap_or_else(|| name.clone())),
+                        None => (None, name.clone()),
+                    };
                     MarketplaceEntry {
                         source_id: id.clone(),
                         kind: MarketplaceKind::App,
                         id: name.clone(),
-                        label: name.clone(),
-                        // Description lands after cargo install runs
-                        // the crate's own metadata; the list-time
-                        // response here doesn't carry it.
-                        description: None,
+                        label,
+                        description,
                         install: InstallSpec::CargoGit {
                             repo: repo.clone(),
                             path: install_path,
@@ -961,6 +1022,41 @@ mod tests {
         ]"#;
         let dirs = parse_github_dir_children(body).unwrap();
         assert_eq!(dirs, vec!["mnml-tattle-coverage", "mnml-tattle-launchpad"]);
+    }
+
+    #[test]
+    fn parses_cargo_toml_metadata_extracts_description_and_name() {
+        let body = r#"
+[package]
+name = "mnml-tattle-coverage"
+version = "0.1.0"
+description = "Feature + Istanbul coverage rollups from tattle S3 (employees only)"
+edition = "2024"
+
+[dependencies]
+serde = "1"
+"#;
+        let (desc, label) = parse_cargo_toml_metadata(body).unwrap();
+        assert_eq!(
+            desc.as_deref(),
+            Some("Feature + Istanbul coverage rollups from tattle S3 (employees only)")
+        );
+        assert_eq!(label.as_deref(), Some("mnml-tattle-coverage"));
+    }
+
+    #[test]
+    fn parses_cargo_toml_metadata_handles_missing_fields_gracefully() {
+        // No [package] table at all — legitimate for a workspace-only
+        // Cargo.toml. Both fields come back None.
+        assert_eq!(
+            parse_cargo_toml_metadata("[workspace]\nmembers = []").unwrap(),
+            (None, None)
+        );
+        // Empty description string collapses to None so the caller
+        // shows "(no description)" instead of a blank line.
+        let (desc, _) =
+            parse_cargo_toml_metadata("[package]\nname = \"foo\"\ndescription = \"   \"").unwrap();
+        assert_eq!(desc, None);
     }
 
     #[test]
