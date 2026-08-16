@@ -49,3 +49,77 @@ fn unix_secs() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
+
+/// S3 sync daemon — spawns ONE background thread that periodically
+/// pulls both coverage rollups from S3 into
+/// `~/.tattle-claude-artifacts/{feature,code}-coverage/_trends/trends.json`
+/// so the statusline chip's `ensure_coverage_loaded` (which reads local
+/// disk) stays fresh.
+///
+/// Fire-and-forget: silent on every failure mode (aws CLI absent, no
+/// credentials, network hiccup, bucket permission). No signaling back
+/// to the app — the render loop discovers new data on its next
+/// throttled read.
+///
+/// Skipped entirely when `aws` isn't on PATH (non-tattle users get
+/// no useless syscalls). Called once from `App::new`. 2026-08-16.
+pub fn spawn_coverage_s3_syncer() {
+    // Cheap probe: skip the whole thread if aws CLI isn't available.
+    // `which` succeeds silently; failure = binary absent.
+    if std::process::Command::new("which")
+        .arg("aws")
+        .output()
+        .ok()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("mnml-coverage-s3-sync".into())
+        .spawn(|| {
+            const BUCKET: &str = "s3://tattle-claude-artifacts/artifacts";
+            const INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+            let Some(home) = std::env::var_os("HOME") else {
+                return;
+            };
+            let home = std::path::PathBuf::from(home);
+            let targets: &[(&str, &str)] = &[
+                (
+                    "feature-coverage/_trends/trends.json",
+                    "feature-coverage/_trends/trends.json",
+                ),
+                (
+                    "code-coverage/_trends/trends.json",
+                    "code-coverage/_trends/trends.json",
+                ),
+            ];
+            loop {
+                for (remote_suffix, local_suffix) in targets {
+                    let local_path = home.join(".tattle-claude-artifacts").join(local_suffix);
+                    if let Some(parent) = local_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let remote = format!("{BUCKET}/{remote_suffix}");
+                    // 30s timeout keeps a hung network call from
+                    // starving the next tick. `-only-show-errors`
+                    // suppresses the progress bar on stdout.
+                    let _ = std::process::Command::new("aws")
+                        .args([
+                            "s3",
+                            "cp",
+                            &remote,
+                            local_path.to_string_lossy().as_ref(),
+                            "--only-show-errors",
+                            "--cli-read-timeout",
+                            "30",
+                            "--cli-connect-timeout",
+                            "10",
+                        ])
+                        .output(); // ignore result entirely
+                }
+                std::thread::sleep(INTERVAL);
+            }
+        })
+        .ok();
+}
