@@ -4396,6 +4396,15 @@ pub struct App {
     /// [`Self::drain_statusline_segments`].
     pub statusline_segments_rx:
         Option<std::sync::mpsc::Receiver<crate::app::statusline_segments::SourceUpdate>>,
+    /// Task #966 (2026-08-17) — per-worker shutdown senders. Each
+    /// spawned worker owns one `Receiver<()>` and uses
+    /// `recv_timeout(interval)` instead of `sleep(interval)` so
+    /// dropping the paired sender wakes it immediately (channel
+    /// closes → `Err(Disconnected)` → worker exits). Without this,
+    /// `integrations.refresh` orphans workers for up to
+    /// `MAX_POLL_SECS=3600` (one hour) until they wake naturally on
+    /// the next sleep-cycle. Cleared on re-init.
+    pub statusline_segment_worker_shutdowns: Vec<std::sync::mpsc::Sender<()>>,
     /// Ids currently written to `dynamic_segments` by the
     /// manifest-segment render pass. Lets us CLEAR only what we
     /// own (never a segment set by an IPC `statusline_set_segment`
@@ -5904,6 +5913,7 @@ impl App {
             values_source_snapshots: std::collections::HashMap::new(),
             statusline_segments_tx: None,
             statusline_segments_rx: None,
+            statusline_segment_worker_shutdowns: Vec::new(),
             statusline_segment_managed_ids: std::collections::HashSet::new(),
             pending_os_notifications: Vec::new(),
             notify_last_fired: std::collections::HashMap::new(),

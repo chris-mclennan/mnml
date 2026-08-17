@@ -57,6 +57,15 @@ pub const MIN_POLL_SECS: u64 = 30;
 /// Clamp ceiling — an hour-plus stale chip is worse than no chip.
 pub const MAX_POLL_SECS: u64 = 3600;
 
+/// Task #966 (2026-08-17) — cap on total worker threads across ALL
+/// installed integrations. Per-source `MIN_POLL_SECS=30` bounds
+/// frequency but not fleet size — a user with dozens of installed
+/// integrations, each declaring N sources, could otherwise spawn
+/// unbounded long-lived daemon threads. 32 is enough for any
+/// realistic install (each integration would need 5+ sources to
+/// hit it) but firm enough to prevent runaway.
+pub const MAX_WORKERS: usize = 32;
+
 /// Priority chip poll-derived segments use when we push into
 /// `dynamic_segments`. Sits below the "always show" tier (200)
 /// used by high-signal IPC segments but above the default (100)
@@ -111,7 +120,7 @@ impl App {
         // Snapshot the sources we want to poll, applying the
         // install gate here so a disabled chip never even spawns a
         // worker.
-        let sources: Vec<(String, String, u64)> = self
+        let mut sources: Vec<(String, String, u64)> = self
             .integration_manifests
             .iter()
             .filter(|m| self.integration_chip_enabled(&m.id))
@@ -129,6 +138,33 @@ impl App {
             })
             .collect();
 
+        // Task #966 (2026-08-17) — force old worker generation to
+        // exit IMMEDIATELY by dropping their shutdown senders (the
+        // per-worker Receiver<()> gets Disconnected on the next
+        // recv_timeout, wakes, sees the close, returns). Prior code
+        // relied on the OLD SourceUpdate sender being dropped, but
+        // that only surfaces to a worker on its NEXT poll cycle
+        // (up to MAX_POLL_SECS=3600 later). Now: refresh is
+        // effectively instant, no stacking generations, no wasted
+        // extra poll per orphan.
+        self.statusline_segment_worker_shutdowns.clear();
+
+        // Task #966 — cap fleet at MAX_WORKERS across the union
+        // of all installed integrations. Toast + truncate if
+        // exceeded so the user sees which chips didn't spawn.
+        if sources.len() > MAX_WORKERS {
+            let dropped_count = sources.len() - MAX_WORKERS;
+            let dropped_ids: Vec<String> = sources[MAX_WORKERS..]
+                .iter()
+                .map(|(id, _, _)| id.clone())
+                .collect();
+            sources.truncate(MAX_WORKERS);
+            self.toast(format!(
+                "statusline: {dropped_count} segment source(s) skipped (cap {MAX_WORKERS}): {}",
+                dropped_ids.join(", ")
+            ));
+        }
+
         if sources.is_empty() {
             // No sources = no workers. Drop any stale channel so a
             // refresh doesn't hold onto dead threads.
@@ -137,14 +173,16 @@ impl App {
             return;
         }
 
-        // Fresh channel every re-init — old workers see the old
-        // sender closed on their next send and exit.
+        // Fresh channel every re-init — old workers already exiting
+        // per the shutdown-drop above.
         let (tx, rx) = mpsc::channel::<SourceUpdate>();
         self.statusline_segments_tx = Some(tx.clone());
         self.statusline_segments_rx = Some(rx);
 
         for (id, command, interval) in sources {
-            spawn_worker(id, command, interval, tx.clone());
+            let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
+            self.statusline_segment_worker_shutdowns.push(shutdown_tx);
+            spawn_worker(id, command, interval, tx.clone(), shutdown_rx);
         }
     }
 
@@ -458,11 +496,24 @@ fn now_secs() -> u64 {
 /// Spawn one poll thread. Gated `#[cfg(not(test))]` so the unit
 /// suite doesn't stack un-joined daemon threads across every
 /// `App::new` call.
+///
+/// Task #966 (2026-08-17) — added `shutdown_rx` so the worker
+/// sleeps via `recv_timeout(interval)` instead of blocking
+/// `sleep(interval)`. Refresh drops the paired shutdown sender →
+/// worker's next recv_timeout returns `Err(Disconnected)` → worker
+/// exits without polling one more time. Was one-orphan-poll +
+/// up-to-3600s latency; now instant + zero wasted polls.
 #[cfg(not(test))]
-fn spawn_worker(source_id: String, command: String, interval_secs: u64, tx: Sender<SourceUpdate>) {
+fn spawn_worker(
+    source_id: String,
+    command: String,
+    interval_secs: u64,
+    tx: Sender<SourceUpdate>,
+    shutdown_rx: std::sync::mpsc::Receiver<()>,
+) {
     std::thread::Builder::new()
         .name(format!("mnml-statusline-{source_id}"))
-        .spawn(move || run_worker(source_id, command, interval_secs, tx))
+        .spawn(move || run_worker(source_id, command, interval_secs, tx, shutdown_rx))
         .ok();
 }
 
@@ -472,13 +523,20 @@ fn spawn_worker(
     _command: String,
     _interval_secs: u64,
     _tx: Sender<SourceUpdate>,
+    _shutdown_rx: std::sync::mpsc::Receiver<()>,
 ) {
     // Tests skip the thread spawn — poll shape is exercised
     // directly by unit tests below.
 }
 
 #[cfg(not(test))]
-fn run_worker(source_id: String, command: String, interval_secs: u64, tx: Sender<SourceUpdate>) {
+fn run_worker(
+    source_id: String,
+    command: String,
+    interval_secs: u64,
+    tx: Sender<SourceUpdate>,
+    shutdown_rx: std::sync::mpsc::Receiver<()>,
+) {
     loop {
         let result = run_poll_once(&command);
         if tx
@@ -488,11 +546,25 @@ fn run_worker(source_id: String, command: String, interval_secs: u64, tx: Sender
             })
             .is_err()
         {
-            // Receiver dropped — parent App re-init'd or is
-            // shutting down. Exit cleanly.
+            // Receiver dropped — parent App shutting down. Exit.
             return;
         }
-        std::thread::sleep(Duration::from_secs(interval_secs));
+        // Task #966 — interruptible sleep. `recv_timeout` returns
+        // `Err(Timeout)` when the interval elapses (natural wake,
+        // continue to next poll), `Err(Disconnected)` when the App
+        // drops our shutdown sender (refresh or shutdown — exit
+        // cleanly, don't poll again), `Ok(())` if someone sent an
+        // explicit `()` (also treated as shutdown — future hook for
+        // graceful drain).
+        match shutdown_rx.recv_timeout(Duration::from_secs(interval_secs)) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Natural wake — loop back to poll.
+            }
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                // Shutdown signal — exit without another poll.
+                return;
+            }
+        }
     }
 }
 
