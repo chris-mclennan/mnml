@@ -336,6 +336,26 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: diag_style_idx != diag_style_default_idx,
     }));
 
+    // Task #954 — Expand-indicator glyph shape. Two choices —
+    // chevron (>/v or Nerd Font F460/F47C) or triangle (▸/▾).
+    let expand_idx = if cfg.ui.expand_indicator == "triangle" {
+        1
+    } else {
+        0
+    };
+    let expand_default_idx = if d.ui.expand_indicator == "triangle" {
+        1
+    } else {
+        0
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "ui.expand_indicator",
+        label: "Expand indicator shape",
+        options: vec!["chevron".into(), "triangle".into()],
+        current_idx: expand_idx,
+        modified: expand_idx != expand_default_idx,
+    }));
+
     out.push(bool_row(
         "ui.cursor_line",
         "Cursor line",
@@ -877,6 +897,12 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             cfg.ui.bufferline_diag_style = new.to_string();
             changed
         }
+        "ui.expand_indicator" => {
+            let new = if opt_idx == 1 { "triangle" } else { "chevron" };
+            let changed = cfg.ui.expand_indicator != new;
+            cfg.ui.expand_indicator = new.to_string();
+            changed
+        }
         "ui.preferred_music_app" => {
             let new = match opt_idx {
                 1 => "music",
@@ -1114,6 +1140,7 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             "bufferline_diag_style",
             q(&cfg.ui.bufferline_diag_style),
         )],
+        "ui.expand_indicator" => vec![("ui", "expand_indicator", q(&cfg.ui.expand_indicator))],
         "ui.theme" => vec![("ui", "theme", q(&cfg.ui.theme))],
         "ui.cmdline_popup_border_color" => vec![(
             "ui",
