@@ -758,10 +758,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.update_tab_drop_target(x, y);
             app.update_tab_insert_hint(x, y);
         }
-        let new_chip = crate::app::dispatch::hover_chip_at(app, x, y);
-        let prev_chip = app.hover_chip.map(|(c, _)| c);
-        if new_chip != prev_chip {
-            app.hover_chip = new_chip.map(|c| (c, now));
+        // Task #947 — Freeze hover-help panel content when the cursor
+        // enters the panel itself. Without this, moving the mouse
+        // toward the panel to scroll (wheel over its rect) or select
+        // text switches `hover_chip` to whatever it crosses along the
+        // way — the panel repaints under the cursor and the content
+        // the user was trying to reach vanishes. Guard the cursor-in-
+        // panel path so the last committed help copy stays put.
+        let in_hover_help_panel = app
+            .rects
+            .hover_help_strip
+            .map(|r| crate::app::dispatch::contains(r, x, y))
+            .unwrap_or(false);
+        if !in_hover_help_panel {
+            let new_chip = crate::app::dispatch::hover_chip_at(app, x, y);
+            let prev_chip = app.hover_chip.map(|(c, _)| c);
+            if new_chip != prev_chip {
+                app.hover_chip = new_chip.map(|c| (c, now));
+            }
         }
         // VS Code-style fold-arrow tracking. When the mouse is over
         // an editor pane's body OR gutter, compute the file line

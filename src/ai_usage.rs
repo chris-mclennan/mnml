@@ -180,6 +180,80 @@ pub fn write_claude_token(token: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Task #949 — Multi-account-aware token write. Same JSON/plain
+/// autodetect as `write_claude_token` but persists to an explicit
+/// path instead of the default single-account location. Used by the
+/// keychain-resync path on 401 to update whichever token file we
+/// were reading from.
+pub fn write_claude_token_to(path: &Path, token: &str) -> Result<PathBuf, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+    }
+    let trimmed = token.trim();
+    let to_write = if trimmed.starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(trimmed)
+            .and_then(|v| serde_json::to_string_pretty(&v))
+            .unwrap_or_else(|_| trimmed.to_string())
+    } else {
+        trimmed.to_string()
+    };
+    write_secret_file(path, to_write.as_bytes())?;
+    Ok(path.to_path_buf())
+}
+
+/// Task #949 — Blocking read of the macOS keychain's `Claude Code-
+/// credentials` entry, safe to call from a worker thread (never from
+/// the UI thread — `security` can pop a GUI auth prompt). Returns the
+/// raw password contents (typically the `claudeAiOauth` JSON blob).
+/// `None` on any failure — empty output, non-zero exit, missing
+/// `security` binary. Callers use this as a best-effort auto-resync
+/// after a refresh-token attempt has already failed.
+fn read_keychain_claude_token_blocking() -> Option<String> {
+    // macOS-only. On other platforms, Claude Code's credential store
+    // shape is different and mnml doesn't try to auto-resync there.
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if raw.is_empty() { None } else { Some(raw) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Task #949 — Extract the access token from a possibly-JSON blob.
+/// Returns `Some(token)` when the input parses as JSON with an
+/// `accessToken` field (Claude Code's keychain shape) or as a plain
+/// `sk-ant-…` string. `None` for junk. Same logic as `read_claude_token`
+/// but taking a string arg instead of a file path.
+fn parse_access_token(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if s.starts_with('{') {
+        let v: serde_json::Value = serde_json::from_str(s).ok()?;
+        let inner = v.get("claudeAiOauth").unwrap_or(&v);
+        let token = inner.get("accessToken")?.as_str()?.trim().to_string();
+        if token.is_empty() { None } else { Some(token) }
+    } else {
+        Some(s.to_string())
+    }
+}
+
 /// Create-or-truncate a file with mode 0600 on Unix, using
 /// `OpenOptions` so the file never exists at the umask default
 /// during the write. Falls back to plain `fs::write` on non-Unix
@@ -495,6 +569,38 @@ fn fetch_claude_with_token(
             .header("Authorization", format!("Bearer {new_access}"))
             .send()
             .map_err(|e| FetchErr::new(format!("fetch (post-refresh): {e}")))?;
+    }
+    // Task #949 (2026-08-16) — auto-resync from keychain when
+    // refresh flow fails. Common case: user ran `claude login`
+    // fresh (e.g. after a session-timeout), updating the keychain,
+    // but mnml's on-disk copy is stale + the refresh token in the
+    // stale copy is also stale → refresh fails → chip stays dashed
+    // until user manually re-runs the `security find-generic-
+    // password … > ai_token` copy step. Try to grab the current
+    // keychain blob; if it differs from what we tried, persist it
+    // and re-fetch once. Only helpful for the account whose file
+    // matches the currently-logged-in `claude` CLI account —
+    // multi-account users still need to re-seed per account,
+    // but the DEFAULT account path Just Works. Safe because we're
+    // already on a worker thread — the `security` CLI's occasional
+    // GUI prompt won't freeze the UI.
+    if (resp.status() == 401 || resp.status() == 403)
+        && let Some(back) = refresh_write_back
+        && let Some(keychain_blob) = read_keychain_claude_token_blocking()
+        && keychain_blob.trim() != token.trim()
+    {
+        // Persist and try once more. Failure to persist is silent —
+        // if the disk write fails we still try the fetch with the
+        // in-memory blob.
+        let _ = write_claude_token_to(back, &keychain_blob);
+        // Extract the access token from the (possibly-JSON) blob.
+        let new_access =
+            parse_access_token(&keychain_blob).unwrap_or_else(|| keychain_blob.clone());
+        resp = client
+            .get("https://api.anthropic.com/api/oauth/usage")
+            .header("Authorization", format!("Bearer {new_access}"))
+            .send()
+            .map_err(|e| FetchErr::new(format!("fetch (post-keychain-resync): {e}")))?;
     }
     let status = resp.status();
     // Extract `Retry-After` header BEFORE `resp.text()` consumes the

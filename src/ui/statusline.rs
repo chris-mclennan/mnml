@@ -741,7 +741,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             None => (String::new(), t.comment),
         };
-        let text = format!(" \u{F437} C {:.0}%{} ", c_now, delta);
+        let text = format!(" {} C {:.0}%{} ", coverage_glyph(app), c_now, delta);
         coverage_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     } else if let Some(f_now) = feature_now {
@@ -791,7 +791,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 format!(" · C {:.0}%{}", c_now, delta)
             })
             .unwrap_or_default();
-        let text = format!(" \u{F437} F {:.0}%{}{} ", f_now, f_delta, code_str);
+        let text = format!(
+            " {} F {:.0}%{}{} ",
+            coverage_glyph(app),
+            f_now,
+            f_delta,
+            code_str
+        );
         coverage_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     }
@@ -1503,6 +1509,27 @@ fn format_byte_size(bytes: usize) -> String {
             format!("{}M", mb as usize)
         }
     }
+}
+
+/// Task #955 — Coverage chip glyph lookup. Reads the installed
+/// `tattle_coverage` integration's glyph from `App::integration_icons`
+/// (which merges built-in defaults + manifest overrides + user
+/// preferences at load time). Fallback: `U+F437` (nf-oct-graph) —
+/// the current default set in `src/marketplace.rs::catalog_lookup`.
+/// A future glyph swap only needs to update the integration
+/// manifest (`~/.config/mnml/integrations/tattle_coverage.toml`) or
+/// the sibling's `install.rs` — the statusline chip picks it up
+/// automatically, no more triple-source drift.
+fn coverage_glyph(app: &crate::app::App) -> String {
+    const FALLBACK: &str = "\u{F437}";
+    app.config
+        .ui
+        .integration_icons
+        .iter()
+        .find(|ic| ic.id == "tattle_coverage")
+        .map(|ic| ic.glyph.clone())
+        .filter(|g| !g.is_empty())
+        .unwrap_or_else(|| FALLBACK.to_string())
 }
 
 #[cfg(test)]
