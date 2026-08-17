@@ -234,19 +234,24 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     let mut parts: Vec<String> = Vec::with_capacity(app.ai_usage_claude_accounts.len());
     let mut worst: u16 = 0;
     let mut any_error = false;
+    // 2026-08-17 — same three-state logic as `render_single_account_chip`:
+    //   errored          → `!` + red
+    //   fetched (any %)  → tier color, 0% renders as `0%` green (idle+healthy)
+    //   never fetched    → `…` gray
+    // Prior version lumped "fetched 0%" with "never fetched" and rendered
+    // both gray, which was misleading for genuinely-idle accounts.
+    let mut any_fetched_gt_zero = false;
     for acc in &app.ai_usage_claude_accounts {
         let abbrev = account_abbrev(&acc.name);
         let u = &acc.usage;
-        // Tightened 2026-08-17 — no space between letter and value
-        // (`W62%` not `Wo 62%`). Saves ~1 cell per segment which is
-        // 3 cells across 3 accounts — the difference between clipping
-        // and fitting in a busy right-side cluster.
-        if u.percent > 0 || u.weekly_percent > 0 {
-            parts.push(format!("{abbrev}{}%", u.percent));
-            worst = worst.max(u.percent);
-        } else if u.last_error.is_some() {
+        if u.last_error.is_some() {
             parts.push(format!("{abbrev}—!"));
             any_error = true;
+        } else if u.fetched_at > 0 {
+            // Successful fetch — always show the number (0% included).
+            parts.push(format!("{abbrev}{}%", u.percent));
+            worst = worst.max(u.percent);
+            any_fetched_gt_zero = true;
         } else {
             parts.push(format!("{abbrev}…"));
         }
@@ -256,10 +261,13 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     }
     let color = if any_error && worst == 0 {
         t.red
-    } else if worst == 0 {
-        t.comment
-    } else {
+    } else if any_fetched_gt_zero {
+        // At least one account has a successful fetch — reflect the
+        // worst tier (green when everyone's low, yellow/red when hot).
         tier_color(worst, t)
+    } else {
+        // No account has a successful fetch yet — gray.
+        t.comment
     };
     let text = format!(" \u{F1E00} {} ", parts.join(" · "));
     (text, color)
@@ -284,25 +292,45 @@ fn render_single_account_chip(
     } else {
         format!("{letter_prefix} ")
     };
-    if u.percent > 0 || u.weekly_percent > 0 {
+    // Task #944 (2026-08-17) — three states, four rendered cases:
+    //
+    //   1. Errored (last_error set)     → red em-dash + `!` sigil
+    //   2. Fetched successfully, any %   → tier color (green /
+    //      yellow / red by threshold — 0% is HEALTHY, so green)
+    //   3. Fetched successfully, 0%      → falls into case 2 (green
+    //      / fully available)
+    //   4. Never fetched (fetched_at=0)  → gray em-dash — no data
+    //
+    // Prior code lumped cases 3 and 4 into the same gray em-dash,
+    // which was misleading: an idle account looked identical to
+    // "we don't know yet." Now a successful fetch of 0/0 renders
+    // as green `0% 0%` — user sees "healthy + available".
+    //
+    // Format (2026-08-17 user report): dropped the `s`/`w` letters
+    // and the middot. `both` mode renders `<prefix>0% 62%` — session
+    // first, weekly second, space-separated. Consistent with the
+    // single-value modes.
+    if u.last_error.is_some() {
+        // R5 keyboard SEV-3 2026-08-08 — differentiate errors from 0%.
+        (format!(" \u{F1E00} {prefix}—! "), t.red)
+    } else if u.fetched_at == 0 {
+        // Never fetched — no signal yet.
+        (format!(" \u{F1E00} {prefix}— "), t.comment)
+    } else {
+        // Successful fetch. Render per mode; tier color reflects the
+        // worst of the shown numbers (0% used ⇒ green).
         let (label, tier_pct) = match mode {
             "weekly" => (
-                format!(" \u{F1E00} {prefix}{}%w ", u.weekly_percent),
+                format!(" \u{F1E00} {prefix}{}% ", u.weekly_percent),
                 u.weekly_percent,
             ),
             "both" => (
-                format!(" \u{F1E00} {prefix}{}%s·{}%w ", u.percent, u.weekly_percent),
+                format!(" \u{F1E00} {prefix}{}% {}% ", u.percent, u.weekly_percent),
                 u.percent.max(u.weekly_percent),
             ),
             _ => (format!(" \u{F1E00} {prefix}{}% ", u.percent), u.percent),
         };
         (label, tier_color(tier_pct, t))
-    } else if u.last_error.is_some() {
-        // R5 keyboard SEV-3 2026-08-08 — differentiate "genuine 0%"
-        // from "fetch failed". Red em-dash + `!` sigil.
-        (format!(" \u{F1E00} {prefix}—! "), t.red)
-    } else {
-        (format!(" \u{F1E00} {prefix}— "), t.comment)
     }
 }
 
