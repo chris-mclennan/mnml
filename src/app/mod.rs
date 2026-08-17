@@ -25,8 +25,9 @@ use crate::tree::Tree;
 // `mod gitlab` was split out to mnml-forge-gitlab in 2026-06.
 
 pub mod ai;
-mod ai_usage_pane;
 mod cdp;
+mod claude_usage_pane;
+mod codex_usage_pane;
 mod context_menus;
 mod coverage_methods;
 mod dap;
@@ -1469,6 +1470,21 @@ fn scan_listening_ports(root_pid: u32) -> Vec<u16> {
     }
     ports.sort_unstable();
     ports
+}
+
+/// Merge one fresh `ClaudeAccountUsage` into the vec — replace-in-place
+/// if a slot with the same `name` exists, else push. Multi-account
+/// fetch results arrive one-at-a-time and need to update the right
+/// slot without disturbing the others. Task #944.
+fn upsert_claude_account(
+    slots: &mut Vec<crate::ai_usage::ClaudeAccountUsage>,
+    fresh: crate::ai_usage::ClaudeAccountUsage,
+) {
+    if let Some(existing) = slots.iter_mut().find(|a| a.name == fresh.name) {
+        *existing = fresh;
+    } else {
+        slots.push(fresh);
+    }
 }
 
 fn open_path_external(path: &std::path::Path) {
@@ -3764,16 +3780,23 @@ pub struct App {
         std::collections::HashMap<String, crate::app::integration_detail::ReadmeState>,
     pub readme_pending:
         Vec<std::sync::mpsc::Receiver<(String, crate::app::integration_detail::ReadmeState)>>,
-    /// AI usage meter state (#876). `None` = never fetched (chip
-    /// shows dashes / hidden depending on integration enabled).
-    /// Populated by background workers spawned via
-    /// `maybe_refresh_ai_usage` + drained per tick via
-    /// `drain_ai_usage`.
-    pub ai_usage_claude: Option<crate::ai_usage::ClaudeUsage>,
+    /// AI usage meter state (#876, extended to multi-account #944).
+    /// One entry per `[[ai.claude.accounts]]` config row (the
+    /// synthetic single-account default keeps the vec at len==1 for
+    /// pre-#944 installs). Populated by background workers spawned
+    /// via `maybe_refresh_ai_usage` + drained per tick via
+    /// `drain_ai_usage`. See `active_claude_account`.
+    pub ai_usage_claude_accounts: Vec<crate::ai_usage::ClaudeAccountUsage>,
     pub ai_usage_codex: Option<crate::ai_usage::CodexUsage>,
-    pub ai_usage_pending_claude: Option<
-        std::sync::mpsc::Receiver<Result<crate::ai_usage::ClaudeUsage, crate::ai_usage::FetchErr>>,
-    >,
+    /// In-flight per-account Claude fetches. Keyed by account name
+    /// so a slow account can't block a fast one; drained per tick,
+    /// results merge into `ai_usage_claude_accounts` by name.
+    pub ai_usage_pending_claude_accounts: Vec<(
+        String,
+        std::sync::mpsc::Receiver<
+            Result<crate::ai_usage::ClaudeAccountUsage, crate::ai_usage::FetchErr>,
+        >,
+    )>,
     pub ai_usage_pending_codex:
         Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::CodexUsage, String>>>,
     /// 2026-08-08 — Keychain lookup for the LinkClaudeToken prompt's
@@ -3783,8 +3806,15 @@ pub struct App {
     pub pending_keychain_fetch: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Unix seconds of the last refresh spawn — throttles the
     /// per-tick "should I refresh again" check to at most once per
-    /// 5 min.
+    /// 5 min. Used by the Codex fetcher and by the (rare) "no
+    /// accounts configured" Claude fallback.
     pub ai_usage_last_refresh_at: u64,
+    /// Per-account throttle map for Claude fetches — mirrors
+    /// `ai_usage_last_refresh_at` but keyed by account name so a
+    /// 429 on one account doesn't stall the others. Populated by
+    /// `maybe_refresh_ai_usage` when it spawns each per-account
+    /// worker. Task #944, 2026-08-16.
+    pub ai_usage_claude_last_refresh_at: std::collections::HashMap<String, u64>,
     /// Tattle Feature Coverage trends — read from
     /// `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`.
     /// None until first load; hidden UI if the file doesn't exist.
@@ -5566,12 +5596,13 @@ impl App {
             integration_updates_waker: integration_updates_waker_init,
             readme_cache: std::collections::HashMap::new(),
             readme_pending: Vec::new(),
-            ai_usage_claude: None,
+            ai_usage_claude_accounts: Vec::new(),
             ai_usage_codex: None,
-            ai_usage_pending_claude: None,
+            ai_usage_pending_claude_accounts: Vec::new(),
             pending_keychain_fetch: None,
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
+            ai_usage_claude_last_refresh_at: std::collections::HashMap::new(),
             coverage_trends: None,
             istanbul_trends: None,
             coverage_trends_last_loaded_at: 0,
@@ -7837,21 +7868,6 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        // 2026-08-16 — honor `Retry-After` from the last 429. When
-        // Anthropic's cooldown window is longer than 5 min (real
-        // blocks can be 30-60 min), the fixed interval would keep
-        // hitting 429 unnecessarily and could re-accumulate the
-        // limit. When shorter, we'd wait too long. Trust the header.
-        // Zero = no cooldown.
-        if let Some(u) = self.ai_usage_claude.as_ref()
-            && u.retry_after_at > now
-        {
-            return;
-        }
-        let interval = REFRESH_INTERVAL_SECS;
-        if now.saturating_sub(self.ai_usage_last_refresh_at) < interval {
-            return;
-        }
         // Only spawn if the corresponding integration is enabled;
         // otherwise the chip won't render anyway.
         let claude_enabled = self
@@ -7869,56 +7885,159 @@ impl App {
         if !claude_enabled && !codex_enabled {
             return;
         }
-        self.ai_usage_last_refresh_at = now;
-        if claude_enabled && self.ai_usage_pending_claude.is_none() {
-            self.ai_usage_pending_claude = Some(crate::ai_usage::spawn_claude_fetch());
-        }
-        if codex_enabled && self.ai_usage_pending_codex.is_none() {
+        // Codex — single-instance, same 5-min throttle as before
+        // (it reads local JSONL files, no rate limit to negotiate).
+        if codex_enabled
+            && self.ai_usage_pending_codex.is_none()
+            && now.saturating_sub(self.ai_usage_last_refresh_at) >= REFRESH_INTERVAL_SECS
+        {
+            self.ai_usage_last_refresh_at = now;
             self.ai_usage_pending_codex = Some(crate::ai_usage::spawn_codex_fetch());
         }
+        // Claude — per-account (task #944). Independent throttle +
+        // Retry-After per account so a 429 on one doesn't stall
+        // another. Also drops slots for accounts removed from the
+        // config so stale entries clear on config reload.
+        if !claude_enabled {
+            return;
+        }
+        let configured = self.config.claude_accounts();
+        let configured_names: std::collections::HashSet<String> =
+            configured.iter().map(|a| a.name.clone()).collect();
+        self.ai_usage_claude_accounts
+            .retain(|a| configured_names.contains(&a.name));
+        self.ai_usage_claude_last_refresh_at
+            .retain(|k, _| configured_names.contains(k));
+        for account in &configured {
+            // Skip when a fetch is already in flight for this account.
+            if self
+                .ai_usage_pending_claude_accounts
+                .iter()
+                .any(|(n, _)| n == &account.name)
+            {
+                continue;
+            }
+            // Honor Retry-After for THIS account only.
+            if let Some(existing) = self
+                .ai_usage_claude_accounts
+                .iter()
+                .find(|a| a.name == account.name)
+                && existing.usage.retry_after_at > now
+            {
+                continue;
+            }
+            let last = self
+                .ai_usage_claude_last_refresh_at
+                .get(&account.name)
+                .copied()
+                .unwrap_or(0);
+            if now.saturating_sub(last) < REFRESH_INTERVAL_SECS {
+                continue;
+            }
+            self.ai_usage_claude_last_refresh_at
+                .insert(account.name.clone(), now);
+            let rx = crate::ai_usage::spawn_claude_fetch_account(
+                account.name.clone(),
+                account.resolved_token_path(),
+            );
+            self.ai_usage_pending_claude_accounts
+                .push((account.name.clone(), rx));
+        }
+    }
+
+    /// The single account tagged `active = true` in the config —
+    /// used by the statusline chip's default (single-account)
+    /// rendering. `None` when nothing has been fetched yet.
+    /// Task #944.
+    pub fn active_claude_account(&self) -> Option<&crate::ai_usage::ClaudeAccountUsage> {
+        // Prefer whatever the config currently marks active. Fall
+        // back to the first entry so a snapshot exists even if the
+        // config was edited between fetch + render.
+        let active_name: Option<String> = self
+            .config
+            .claude_accounts()
+            .into_iter()
+            .find(|a| a.active)
+            .map(|a| a.name);
+        if let Some(name) = active_name.as_ref()
+            && let Some(hit) = self
+                .ai_usage_claude_accounts
+                .iter()
+                .find(|a| &a.name == name)
+        {
+            return Some(hit);
+        }
+        self.ai_usage_claude_accounts.first()
     }
 
     /// Drain any completed AI-usage worker replies. Called per tick.
     /// Failures are stored on the snapshot's `last_error` so the
     /// chip's hover tooltip can surface them.
     pub fn drain_ai_usage(&mut self) {
-        if let Some(rx) = &self.ai_usage_pending_claude {
-            match rx.try_recv() {
-                Ok(Ok(u)) => {
-                    self.ai_usage_claude = Some(u);
-                    self.ai_usage_pending_claude = None;
+        // Claude — drain each per-account receiver independently.
+        // Retain-with-side-effect: any receiver that hasn't emitted
+        // yet stays in the vec; any that returned Ok/Err is spliced
+        // into `ai_usage_claude_accounts` and removed.
+        //
+        // Task #944 — per-account error handling mirrors the
+        // pre-multi-account semantics (zero percentages, keep the
+        // slot so the pane empty-state + chip surface the failure).
+        let active_names: std::collections::HashSet<String> = self
+            .config
+            .claude_accounts()
+            .into_iter()
+            .filter(|a| a.active)
+            .map(|a| a.name)
+            .collect();
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut drained: Vec<(
+            String,
+            Result<crate::ai_usage::ClaudeAccountUsage, crate::ai_usage::FetchErr>,
+        )> = Vec::new();
+        self.ai_usage_pending_claude_accounts
+            .retain(|(name, rx)| match rx.try_recv() {
+                Ok(payload) => {
+                    drained.push((name.clone(), payload));
+                    false
                 }
-                Ok(Err(e)) => {
-                    // claude-agents-user r3+r4 (2026-08-05/06) — on
-                    // fetch error, zero out `percent`/`weekly_percent`
-                    // so the chip color reflects "no fresh data" and
-                    // the overlay's empty-state ("last error: …")
-                    // kicks in. Leaving the cached values in place
-                    // meant an expired/revoked token silently showed
-                    // yesterday's numbers forever, with only the
-                    // hover tooltip surfacing the failure.
-                    //
-                    // 2026-08-16 — on 429 with Retry-After, stamp
-                    // `retry_after_at` so `maybe_refresh_ai_usage`
-                    // waits exactly the window Anthropic asked for.
-                    let mut u = self.ai_usage_claude.clone().unwrap_or_default();
-                    u.percent = 0;
-                    u.weekly_percent = 0;
-                    u.scoped_limits.clear();
+                Err(std::sync::mpsc::TryRecvError::Empty) => true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+            });
+        for (name, result) in drained {
+            let is_active = active_names.contains(&name);
+            match result {
+                Ok(mut acc) => {
+                    acc.is_active = is_active;
+                    upsert_claude_account(&mut self.ai_usage_claude_accounts, acc);
+                }
+                Err(e) => {
+                    // Preserve any prior snapshot for this account so
+                    // resets_at / weekly_resets_at survive a transient
+                    // failure; overwrite percents to zero so the chip
+                    // color reflects "no fresh data" and the pane's
+                    // empty-state kicks in.
+                    let mut existing = self
+                        .ai_usage_claude_accounts
+                        .iter()
+                        .find(|a| a.name == name)
+                        .cloned()
+                        .unwrap_or_else(|| crate::ai_usage::ClaudeAccountUsage {
+                            name: name.clone(),
+                            usage: crate::ai_usage::ClaudeUsage::default(),
+                            is_active,
+                        });
+                    existing.is_active = is_active;
+                    existing.usage.percent = 0;
+                    existing.usage.weekly_percent = 0;
+                    existing.usage.scoped_limits.clear();
                     if let Some(secs) = e.retry_after_secs {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        u.retry_after_at = now.saturating_add(secs);
+                        existing.usage.retry_after_at = now_ts.saturating_add(secs);
                     }
-                    u.last_error = Some(e.message);
-                    self.ai_usage_claude = Some(u);
-                    self.ai_usage_pending_claude = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.ai_usage_pending_claude = None;
+                    existing.usage.last_error = Some(e.message);
+                    upsert_claude_account(&mut self.ai_usage_claude_accounts, existing);
                 }
             }
         }
@@ -7995,7 +8114,8 @@ impl App {
                 // Force an immediate refresh — bypass the 5-min
                 // throttle so the chip lights up right away.
                 self.ai_usage_last_refresh_at = 0;
-                self.ai_usage_pending_claude = None;
+                self.ai_usage_claude_last_refresh_at.clear();
+                self.ai_usage_pending_claude_accounts.clear();
                 self.maybe_refresh_ai_usage();
             }
             Err(e) => self.toast(format!("link failed: {e}")),
@@ -12911,7 +13031,8 @@ impl App {
             Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
             Pane::NewCloudRunWizard(_) => Some(("+ New Cloud Run".to_string(), false)),
             Pane::IntegrationDetail(d) => Some((d.tab_title(), false)),
-            Pane::AiUsage(p) => Some((p.tab_title(), false)),
+            Pane::ClaudeUsage(p) => Some((p.tab_title(), false)),
+            Pane::CodexUsage(p) => Some((p.tab_title(), false)),
         }
     }
 

@@ -141,10 +141,16 @@ pub enum Pane {
     /// 2026-08-16 — the Claude usage panel, ported from the old
     /// centered-modal overlay into a proper pane so it
     /// docks / splits / tabs like anything else. Same data source
-    /// as the statusline chip (`App::ai_usage_claude`); scroll
+    /// as the statusline chip (`App::ai_usage_claude_accounts`); scroll
     /// lives on the pane so long per-model scoped-limit lists can
-    /// overflow. Opened via `ai.usage`.
-    AiUsage(AiUsagePane),
+    /// overflow. Opened via `ai.claude_usage`.
+    ClaudeUsage(ClaudeUsagePane),
+    /// 2026-08-16 — the Codex usage panel, split off from the shared
+    /// `Pane::AiUsage` when Claude went multi-account (the two
+    /// products' data shapes and refresh cadences diverged enough
+    /// that one pane rendering both was doing neither justice).
+    /// Opened via `ai.codex_usage`.
+    CodexUsage(CodexUsagePane),
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
@@ -446,22 +452,39 @@ impl IntegrationDetailPane {
     }
 }
 
-/// State for [`Pane::AiUsage`] — nothing but a scroll offset. The
-/// underlying data lives in `App::ai_usage_claude`; the pane is
-/// stateless beyond scroll so the App can hot-swap the usage
-/// snapshot (fetcher pushes new frames every 5 min) without
+/// State for [`Pane::ClaudeUsage`] — nothing but a scroll offset.
+/// The underlying data lives in `App::ai_usage_claude_accounts`;
+/// the pane is stateless beyond scroll so the App can hot-swap the
+/// usage snapshot (fetcher pushes new frames every 5 min) without
 /// touching the pane.
 #[derive(Debug, Clone, Default)]
-pub struct AiUsagePane {
+pub struct ClaudeUsagePane {
     pub scroll: usize,
 }
 
-impl AiUsagePane {
+impl ClaudeUsagePane {
     pub fn new() -> Self {
         Self { scroll: 0 }
     }
     pub fn tab_title(&self) -> String {
-        "AI Usage".to_string()
+        "Claude Usage".to_string()
+    }
+}
+
+/// State for [`Pane::CodexUsage`] — nothing but a scroll offset.
+/// The underlying data lives in `App::ai_usage_codex` (a single
+/// snapshot; Codex is per-machine, no multi-account concept).
+#[derive(Debug, Clone, Default)]
+pub struct CodexUsagePane {
+    pub scroll: usize,
+}
+
+impl CodexUsagePane {
+    pub fn new() -> Self {
+        Self { scroll: 0 }
+    }
+    pub fn tab_title(&self) -> String {
+        "Codex Usage".to_string()
     }
 }
 
@@ -702,7 +725,8 @@ impl Pane {
             Pane::NewCloudAgentWizard(_) => "+ New Agent from PR".to_string(),
             Pane::NewCloudRunWizard(_) => "+ New Cloud Run".to_string(),
             Pane::IntegrationDetail(d) => d.tab_title(),
-            Pane::AiUsage(p) => p.tab_title(),
+            Pane::ClaudeUsage(p) => p.tab_title(),
+            Pane::CodexUsage(p) => p.tab_title(),
         }
     }
 
@@ -737,7 +761,8 @@ impl Pane {
             | Pane::NewCloudAgentWizard(_)
             | Pane::NewCloudRunWizard(_)
             | Pane::IntegrationDetail(_)
-            | Pane::AiUsage(_) => false,
+            | Pane::ClaudeUsage(_)
+            | Pane::CodexUsage(_) => false,
         }
     }
 

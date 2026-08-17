@@ -1833,6 +1833,127 @@ struct RawIntegrationIcon {
     in_palette_bar: Option<bool>,
 }
 
+/// One Claude account declared under `[[ai.claude.accounts]]`.
+/// `token_path` is relative to `data_root()` when non-absolute
+/// (matches the default `ai_token` path); `~` is expanded. When
+/// no `[[ai.claude.accounts]]` block is present at all, mnml
+/// synthesizes a single-account default entry (`name = "default"`,
+/// `token_path = "ai_token"`, `active = true`) so pre-multi-account
+/// installs see zero behavior change. Task #944, 2026-08-16.
+#[derive(Debug, Clone)]
+pub struct ClaudeAccountConfig {
+    pub name: String,
+    pub token_path: String,
+    pub active: bool,
+}
+
+impl ClaudeAccountConfig {
+    /// Resolve `token_path` to an absolute filesystem path — `~`
+    /// expands to the resolved home dir, relative paths anchor
+    /// under `data_root()` (so `token_path = "ai_token.work"`
+    /// lands next to the default `ai_token`).
+    pub fn resolved_token_path(&self) -> PathBuf {
+        let raw = self.token_path.trim();
+        if let Some(rest) = raw.strip_prefix("~/")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            return PathBuf::from(home).join(rest);
+        }
+        if raw == "~"
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            return PathBuf::from(home);
+        }
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else {
+            crate::data_root::data_root().join(raw)
+        }
+    }
+}
+
+impl Config {
+    /// Resolve the `[[ai.claude.accounts]]` array from `config.ai`
+    /// into a normalized list. Falls back to a single synthetic
+    /// entry when no block is present (`name = "default"`,
+    /// `token_path = "ai_token"`, `active = true`) — the pre-#944
+    /// behavior is preserved for existing installs. Task #944.
+    ///
+    /// Also normalizes the `active = true` invariant: exactly one
+    /// account is active. If none are declared active, the first
+    /// wins; if multiple are, the first-declared active-true wins
+    /// and the rest are flipped false.
+    pub fn claude_accounts(&self) -> Vec<ClaudeAccountConfig> {
+        let mut out: Vec<ClaudeAccountConfig> = Vec::new();
+        let claude = self.ai.as_table().and_then(|t| t.get("claude"));
+        let arr = claude
+            .and_then(|c| c.as_table())
+            .and_then(|c| c.get("accounts"))
+            .and_then(|a| a.as_array());
+        if let Some(arr) = arr {
+            for entry in arr {
+                let Some(tbl) = entry.as_table() else {
+                    continue;
+                };
+                let name = tbl
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("default")
+                    .to_string();
+                let token_path = tbl
+                    .get("token_path")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("ai_token")
+                    .to_string();
+                let active = tbl.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+                out.push(ClaudeAccountConfig {
+                    name,
+                    token_path,
+                    active,
+                });
+            }
+        }
+        if out.is_empty() {
+            out.push(ClaudeAccountConfig {
+                name: "default".to_string(),
+                token_path: "ai_token".to_string(),
+                active: true,
+            });
+            return out;
+        }
+        // Normalize `active` — exactly one wins.
+        let mut seen_active = false;
+        for acc in out.iter_mut() {
+            if acc.active && !seen_active {
+                seen_active = true;
+            } else if acc.active {
+                acc.active = false;
+            }
+        }
+        if !seen_active && let Some(first) = out.first_mut() {
+            first.active = true;
+        }
+        out
+    }
+
+    /// Config-backed flag: `[ai] claude_show_all_accounts = true`
+    /// swaps the statusline chip to a compact per-account
+    /// rendering (`Pe 40% · Wo 62% · Co 12%`). Default false — the
+    /// chip shows the active account only. Task #944.
+    pub fn ai_claude_show_all(&self) -> bool {
+        self.ai
+            .as_table()
+            .and_then(|t| t.get("claude_show_all_accounts"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+}
+
 impl Config {
     /// Load + merge. Never fails — a malformed file is reported on stderr and skipped.
     pub fn load(explicit: Option<&Path>, workspace: &Path) -> Config {
@@ -3395,6 +3516,83 @@ mod tests {
         assert!(out.contains("relative_line_numbers = true"));
         assert!(out.contains("line_numbers = false"));
         assert_eq!(out.matches("relative_line_numbers = ").count(), 1);
+    }
+
+    // Task #944 — multi-account Claude support. The migration path
+    // must synthesize a single-account default when no
+    // `[[ai.claude.accounts]]` block is present so existing installs
+    // keep working with zero config edits.
+    #[test]
+    fn claude_accounts_defaults_to_single_account_when_absent() {
+        let cfg = Config::default();
+        let accounts = cfg.claude_accounts();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "default");
+        assert_eq!(accounts[0].token_path, "ai_token");
+        assert!(accounts[0].active);
+    }
+
+    #[test]
+    fn claude_accounts_parses_multi_account_block() {
+        let src = "[ai]\n\
+                   [[ai.claude.accounts]]\n\
+                   name = \"personal\"\n\
+                   token_path = \"ai_token\"\n\
+                   active = true\n\
+                   [[ai.claude.accounts]]\n\
+                   name = \"work\"\n\
+                   token_path = \"ai_token.work\"\n";
+        let mut cfg = Config::default();
+        // clippy field_reassign_with_default off here — the rest of
+        // Config::default() is what we want; only `ai` needs
+        // replacing for this test.
+        #[allow(clippy::field_reassign_with_default)]
+        {
+            cfg.ai = toml::from_str::<toml::Value>(src)
+                .unwrap()
+                .get("ai")
+                .cloned()
+                .unwrap();
+        }
+        let accounts = cfg.claude_accounts();
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[0].name, "personal");
+        assert!(accounts[0].active);
+        assert_eq!(accounts[1].name, "work");
+        assert!(!accounts[1].active);
+    }
+
+    #[test]
+    fn claude_accounts_normalizes_no_active_to_first_wins() {
+        let src = "[ai]\n\
+                   [[ai.claude.accounts]]\n\
+                   name = \"personal\"\n\
+                   token_path = \"ai_token\"\n\
+                   [[ai.claude.accounts]]\n\
+                   name = \"work\"\n\
+                   token_path = \"ai_token.work\"\n";
+        let mut cfg = Config::default();
+        // clippy field_reassign_with_default off here — the rest of
+        // Config::default() is what we want; only `ai` needs
+        // replacing for this test.
+        #[allow(clippy::field_reassign_with_default)]
+        {
+            cfg.ai = toml::from_str::<toml::Value>(src)
+                .unwrap()
+                .get("ai")
+                .cloned()
+                .unwrap();
+        }
+        let accounts = cfg.claude_accounts();
+        assert_eq!(accounts.len(), 2);
+        assert!(accounts[0].active);
+        assert!(!accounts[1].active);
+    }
+
+    #[test]
+    fn claude_accounts_show_all_flag_defaults_false() {
+        let cfg = Config::default();
+        assert!(!cfg.ai_claude_show_all());
     }
 
     #[test]

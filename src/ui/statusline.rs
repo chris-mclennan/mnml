@@ -211,6 +211,68 @@ fn ellipsize(s: &str, target_cols: usize) -> String {
     out
 }
 
+/// Tier color for a Claude usage %. <60 = green, 60-84 = yellow,
+/// 85+ = red. Shared by the single-account chip and the multi-
+/// account render so both surfaces color-code identically. #944.
+fn tier_color(percent: u16, t: &theme::Theme) -> ratatui::style::Color {
+    if percent >= 85 {
+        t.red
+    } else if percent >= 60 {
+        t.yellow
+    } else {
+        t.green
+    }
+}
+
+/// Task #944 (2026-08-16) — compact per-account chip content.
+/// Renders as `0 Pe 40% · Wo 62% · Co 12%` (glyph + one
+/// segment per account, 2-char name prefix). Chip color = worst
+/// tier across accounts so a hot account is visible without
+/// staring at each number. Accounts with no snapshot yet render
+/// as `Nm …`; last-error accounts render as `Nm —!` (red family).
+fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, ratatui::style::Color) {
+    let mut parts: Vec<String> = Vec::with_capacity(app.ai_usage_claude_accounts.len());
+    let mut worst: u16 = 0;
+    let mut any_error = false;
+    for acc in &app.ai_usage_claude_accounts {
+        let abbrev = account_abbrev(&acc.name);
+        let u = &acc.usage;
+        if u.percent > 0 || u.weekly_percent > 0 {
+            parts.push(format!("{abbrev} {}%", u.percent));
+            worst = worst.max(u.percent);
+        } else if u.last_error.is_some() {
+            parts.push(format!("{abbrev} —!"));
+            any_error = true;
+        } else {
+            parts.push(format!("{abbrev} …"));
+        }
+    }
+    if parts.is_empty() {
+        return (" \u{F1E00} … ".to_string(), t.comment);
+    }
+    let color = if any_error && worst == 0 {
+        t.red
+    } else if worst == 0 {
+        t.comment
+    } else {
+        tier_color(worst, t)
+    };
+    let text = format!(" \u{F1E00} {} ", parts.join(" · "));
+    (text, color)
+}
+
+/// Two-character name prefix for the multi-account chip. Uses the
+/// first two chars, upper-cased first char, so `personal` → `Pe`,
+/// `work` → `Wo`, `consulting` → `Co`. Falls back to `??` when
+/// the name is empty (shouldn't happen — config synthesizer
+/// defaults to `"default"`).
+fn account_abbrev(name: &str) -> String {
+    let mut chars = name.chars();
+    let a = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or('?');
+    let b = chars.next().unwrap_or('?');
+    format!("{a}{b}")
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new("").style(Style::default().bg(theme::cur().statusline)),
@@ -516,38 +578,48 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .and_then(|t| t.get("claude_meter_mode"))
             .and_then(|v| v.as_str())
             .unwrap_or("session");
-        let (text, fg) = match &app.ai_usage_claude {
-            Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
-                let (label, tier_pct) = match mode {
-                    "weekly" => (
-                        format!(" \u{F1E00} {}%w ", u.weekly_percent),
-                        u.weekly_percent,
-                    ),
-                    "both" => (
-                        format!(" \u{F1E00} {}%s·{}%w ", u.percent, u.weekly_percent),
-                        u.percent.max(u.weekly_percent),
-                    ),
-                    _ => (format!(" \u{F1E00} {}% ", u.percent), u.percent),
-                };
-                let color = if tier_pct >= 85 {
-                    t.red
-                } else if tier_pct >= 60 {
-                    t.yellow
-                } else {
-                    t.green
-                };
-                (label, color)
+        // Task #944 (2026-08-16) — when `[ai] claude_show_all_accounts
+        // = true`, render one segment per account (`Pe 40% · Wo 62%
+        // · Co 12%`). Two-char name prefix, session % only (weekly is
+        // still available via the pane). Chip color = worst tier
+        // across accounts so a hot account is visible at a glance.
+        // Falls back to the single-account render when only ONE
+        // account is configured (the multi-account chip is width-
+        // expensive; no point paying for it when there's nothing to
+        // compare).
+        let show_all = app.config.ai_claude_show_all() && app.ai_usage_claude_accounts.len() > 1;
+        let (text, fg) = if show_all {
+            render_claude_chip_all_accounts(app, &t)
+        } else {
+            let active = app.active_claude_account();
+            let usage_ref = active.map(|a| &a.usage);
+            match usage_ref {
+                Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
+                    let (label, tier_pct) = match mode {
+                        "weekly" => (
+                            format!(" \u{F1E00} {}%w ", u.weekly_percent),
+                            u.weekly_percent,
+                        ),
+                        "both" => (
+                            format!(" \u{F1E00} {}%s·{}%w ", u.percent, u.weekly_percent),
+                            u.percent.max(u.weekly_percent),
+                        ),
+                        _ => (format!(" \u{F1E00} {}% ", u.percent), u.percent),
+                    };
+                    let color = tier_color(tier_pct, &t);
+                    (label, color)
+                }
+                // R5 keyboard SEV-3 2026-08-08 — differentiate "genuine 0%"
+                // from "fetch failed" so the chip surfaces the state without
+                // requiring a hover-tooltip drill-down. Red em-dash + `!`
+                // sigil when `last_error` is populated; gray em-dash for
+                // "successfully fetched, 0% used". Also route 429 / other
+                // non-401 errors through the same visual as a token miss so
+                // the user knows something is off.
+                Some(u) if u.last_error.is_some() => (" \u{F1E00} —! ".to_string(), t.red),
+                Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
+                None => (" \u{F1E00} … ".to_string(), t.comment),
             }
-            // R5 keyboard SEV-3 2026-08-08 — differentiate "genuine 0%"
-            // from "fetch failed" so the chip surfaces the state without
-            // requiring a hover-tooltip drill-down. Red em-dash + `!`
-            // sigil when `last_error` is populated; gray em-dash for
-            // "successfully fetched, 0% used". Also route 429 / other
-            // non-401 errors through the same visual as a token miss so
-            // the user knows something is off.
-            Some(u) if u.last_error.is_some() => (" \u{F1E00} —! ".to_string(), t.red),
-            Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
-            None => (" \u{F1E00} … ".to_string(), t.comment),
         };
         ai_claude_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));

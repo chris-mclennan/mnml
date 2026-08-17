@@ -1648,8 +1648,16 @@ impl App {
     pub fn open_statusline_ai_context_menu(&mut self, anchor: (u16, u16), is_codex: bool) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let title = if is_codex { "Codex" } else { "Claude" };
+        // 2026-08-16 — the "open usage pane" action fans out to the
+        // per-product command since `Pane::AiUsage` split into
+        // `Pane::ClaudeUsage` + `Pane::CodexUsage`.
+        let open_cmd = if is_codex {
+            "ai.codex_usage"
+        } else {
+            "ai.claude_usage"
+        };
         let mut items = vec![
-            MenuItem::new("Open usage pane", MenuAction::Command("ai.usage")),
+            MenuItem::new("Open usage pane", MenuAction::Command(open_cmd)),
             MenuItem::new("Refresh usage now", MenuAction::Command("ai.refresh_usage")),
             MenuItem::new(
                 "Show last response (debug)",
@@ -1683,6 +1691,19 @@ impl App {
                 format!("{}Show both (session · weekly)", check(mode == "both")),
                 MenuAction::Command("ai.chip_show_both"),
             ));
+            // Task #944 (2026-08-16) — multi-account toggle. Only
+            // visually offered when >1 account is configured (the
+            // toggle is inert otherwise — the compact chip falls
+            // back to the single-account render below the account
+            // threshold). Persists via `persist_ai_bool`.
+            let show_all = self.config.ai_claude_show_all();
+            let n_accounts = self.config.claude_accounts().len();
+            if n_accounts > 1 {
+                items.push(MenuItem::new(
+                    format!("{}Show all accounts (compact)", check(show_all)),
+                    MenuAction::Command("ai.chip_show_all_accounts"),
+                ));
+            }
         }
         self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
     }

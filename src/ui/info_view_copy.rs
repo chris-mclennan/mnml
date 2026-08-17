@@ -170,17 +170,20 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ),
             shortcuts: vec![ShortcutHint::new("Esc", "Dismiss pinned panel")],
             try_it: vec![
-                PaletteLink::new("ai.usage", "Open the AI usage pane"),
+                PaletteLink::new("ai.claude_usage", "Open the Claude usage pane"),
                 PaletteLink::new("ai.link_claude_token", "Re-link Claude token"),
             ],
             ..Default::default()
         }),
         StatuslineAiCodex => Some(InfoViewCopy {
             title: "Codex activity indicator".into(),
-            body: "Live count of active Codex sessions. Click to open the agents \
-                   dashboard filtered to Codex."
+            body: "Live count of active Codex sessions. Click to open the Codex \
+                   usage pane (tokens + sessions today)."
                 .into(),
-            try_it: vec![PaletteLink::new("ai.dashboard", "Open agents dashboard")],
+            try_it: vec![
+                PaletteLink::new("ai.codex_usage", "Open the Codex usage pane"),
+                PaletteLink::new("ai.dashboard", "Open agents dashboard"),
+            ],
             ..Default::default()
         }),
         StatuslineWorkspace => Some(InfoViewCopy {

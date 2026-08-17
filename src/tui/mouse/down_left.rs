@@ -1758,39 +1758,28 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // Statusline AI Claude chip — unlinked → link prompt;
-    // linked → open the full-panel usage pane. #876.
-    // 2026-08-16 — was the overlay toggle; now opens the
-    // `Pane::AiUsage` center-hosted pane.
+    // linked → open the Claude usage pane. #876.
+    // 2026-08-16 — Pane::AiUsage was split into two per-product
+    // panes; Claude chip now opens Pane::ClaudeUsage.
     if let Some(r) = app.rects.statusline_ai_claude_chip
         && crate::app::dispatch::contains(r, x, y)
     {
         if crate::ai_usage::read_claude_token().is_none() {
             app.open_link_claude_token_prompt();
         } else {
-            app.open_ai_usage_pane();
+            app.open_claude_usage_pane();
         }
         return;
     }
-    // Statusline AI Codex chip → toast detail + refresh. #876.
+    // Statusline AI Codex chip → open the Codex usage pane.
+    // 2026-08-16 — was a toast + refresh; the pane surface makes
+    // the tokens/sessions/last-error legible without hover, matches
+    // the Claude chip's affordance, and still nudges a refresh via
+    // `open_codex_usage_pane`.
     if let Some(r) = app.rects.statusline_ai_codex_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        let detail = match &app.ai_usage_codex {
-            Some(u) if u.tokens_today > 0 => {
-                format!(
-                    "Codex: {} tokens today across {} session(s)",
-                    u.tokens_today, u.sessions_today
-                )
-            }
-            Some(u) => u
-                .last_error
-                .clone()
-                .unwrap_or_else(|| "Codex: 0 tokens today".to_string()),
-            None => "Codex: scanning…".to_string(),
-        };
-        app.toast(detail);
-        app.ai_usage_last_refresh_at = 0;
-        app.maybe_refresh_ai_usage();
+        app.open_codex_usage_pane();
         return;
     }
     // Statusline coverage chip (#889) → open the coverage integration

@@ -5974,11 +5974,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_link_claude_token_prompt(),
         },
         Command {
-            id: "ai.usage",
+            id: "ai.claude_usage",
             title: "AI: open Claude usage pane (session + weekly + per-model)",
             group: "ai",
             keys: &[],
-            run: |app| app.open_ai_usage_pane(),
+            run: |app| app.open_claude_usage_pane(),
+        },
+        Command {
+            id: "ai.codex_usage",
+            title: "AI: open Codex usage pane (tokens + sessions today)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex_usage_pane(),
         },
         Command {
             id: "ai.show_last_response",
@@ -6008,6 +6015,7 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 app.ai_usage_last_refresh_at = 0;
+                app.ai_usage_claude_last_refresh_at.clear();
                 app.maybe_refresh_ai_usage();
                 app.toast("refreshing AI usage…".to_string());
             },
@@ -6043,6 +6051,37 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 set_claude_meter_mode(app, "both");
+            },
+        },
+        // Task #944 (2026-08-16) — toggle the compact
+        // "all accounts on one chip" render (Pe 40% · Wo 62%). The
+        // in-memory `config.ai` table is authoritative — the render
+        // reads it on every frame via `config.ai_claude_show_all()`.
+        Command {
+            id: "ai.chip_show_all_accounts",
+            title: "AI (Claude) chip: toggle show-all-accounts mode",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                let current = app.config.ai_claude_show_all();
+                let next = !current;
+                let mut table = app
+                    .config
+                    .ai
+                    .as_table()
+                    .cloned()
+                    .unwrap_or_else(toml::Table::new);
+                table.insert(
+                    "claude_show_all_accounts".to_string(),
+                    toml::Value::Boolean(next),
+                );
+                app.config.ai = toml::Value::Table(table);
+                let _ = crate::app::discovery::persist_ai_bool("claude_show_all_accounts", next);
+                app.toast(if next {
+                    "Claude chip: showing all accounts".to_string()
+                } else {
+                    "Claude chip: showing active account only".to_string()
+                });
             },
         },
         Command {

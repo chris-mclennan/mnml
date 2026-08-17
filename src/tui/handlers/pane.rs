@@ -260,7 +260,8 @@ fn is_view_only_pane(pane: Option<&Pane>) -> bool {
             | Some(Pane::Flaky(_))
             | Some(Pane::Debug(_))
             | Some(Pane::IntegrationDetail(_))
-            | Some(Pane::AiUsage(_))
+            | Some(Pane::ClaudeUsage(_))
+            | Some(Pane::CodexUsage(_))
     )
 }
 
@@ -851,34 +852,70 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // AI Usage pane: j/k scroll (clamped by renderer), r refreshes,
-    // Esc/q focuses tree. Header advertises `r refresh · esc close`.
-    if matches!(app.panes.get(i), Some(Pane::AiUsage(_))) {
+    // Claude Usage pane: j/k scroll (clamped by renderer), r
+    // refreshes, Esc/q focuses tree. Header advertises `r refresh
+    // · esc close`.
+    if matches!(app.panes.get(i), Some(Pane::ClaudeUsage(_))) {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
-            KeyCode::Char('r') => app.refresh_ai_usage_pane(),
+            KeyCode::Char('r') => app.refresh_claude_usage_pane(),
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::AiUsage(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(1);
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::AiUsage(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_add(1);
                 }
             }
             KeyCode::PageUp => {
-                if let Some(Pane::AiUsage(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(5);
                 }
             }
             KeyCode::PageDown => {
-                if let Some(Pane::AiUsage(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_add(5);
                 }
             }
             KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::AiUsage(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
+                    p.scroll = 0;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    // Codex Usage pane: same keys, but routes to the Codex refresh
+    // + scroll targets. 2026-08-16 split.
+    if matches!(app.panes.get(i), Some(Pane::CodexUsage(_))) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
+            KeyCode::Char('r') => app.refresh_codex_usage_pane(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::CodexUsage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::CodexUsage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::CodexUsage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(5);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::CodexUsage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(5);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::CodexUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = 0;
                 }
             }

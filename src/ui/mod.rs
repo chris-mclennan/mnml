@@ -21,10 +21,12 @@
 
 pub mod about_overlay;
 pub mod activity_bar;
-pub mod ai_usage_view;
 pub mod ai_view;
+pub mod claude_usage_view;
+pub mod codex_usage_view;
 pub mod design_tokens;
 pub mod spend_report_view;
+pub mod usage_time;
 
 /// 2026-06-21 vscode-mouse SEV-2 — which Claude Agents dashboard
 /// topbar chip a click is on. The mouse dispatcher matches this
@@ -1008,8 +1010,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 Some(crate::pane::Pane::IntegrationDetail(_)) => {
                     integration_detail_view::draw(frame, app, pid, body, focused);
                 }
-                Some(crate::pane::Pane::AiUsage(_)) => {
-                    ai_usage_view::draw(frame, app, pid, body, focused);
+                Some(crate::pane::Pane::ClaudeUsage(_)) => {
+                    claude_usage_view::draw(frame, app, pid, body, focused);
+                }
+                Some(crate::pane::Pane::CodexUsage(_)) => {
+                    codex_usage_view::draw(frame, app, pid, body, focused);
                 }
                 Some(crate::pane::Pane::Tests(_)) => {
                     tests_view::draw(frame, app, pid, body, focused);
@@ -1809,7 +1814,8 @@ fn render_layout(
                 Some(crate::pane::Pane::NewCloudAgentWizard(_)) => 39,
                 Some(crate::pane::Pane::NewCloudRunWizard(_)) => 40,
                 Some(crate::pane::Pane::IntegrationDetail(_)) => 41,
-                Some(crate::pane::Pane::AiUsage(_)) => 42,
+                Some(crate::pane::Pane::ClaudeUsage(_)) => 42,
+                Some(crate::pane::Pane::CodexUsage(_)) => 43,
                 _ => 0,
             };
             match kind {
@@ -1875,7 +1881,11 @@ fn render_layout(
                 }
                 41 => integration_detail_view::draw(frame, app, *id, area, focused),
                 42 => {
-                    ai_usage_view::draw(frame, app, *id, area, focused);
+                    claude_usage_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                43 => {
+                    codex_usage_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
@@ -5009,10 +5019,15 @@ fn icon_for_pane(
         // so the tab icon reads unambiguously as "integration detail"
         // (user 2026-08-06: was a lighthouse-looking glyph).
         Pane::IntegrationDetail(_) => s(if nerd { "\u{F0431}" } else { "◈" }, theme::cur().cyan),
-        // nf-md-gauge — matches the meter/gauge metaphor of the pane
-        // (session + weekly usage bars). Purple to match the AI family
-        // in the palette (Ai pane, ClaudeAgents, etc).
-        Pane::AiUsage(_) => s(if nerd { "\u{F00E4}" } else { "%" }, theme::cur().purple),
+        // 2026-08-16 — product-specific glyphs from mnml's baked
+        // AI-tool range (F1E00-F1EFF, see `icon_catalog.rs`). Using
+        // the same spark/logo pair the statusline chip renders keeps
+        // the tab, the chip, and the right-click context menu visually
+        // consistent — a user hovering "Claude" anywhere in the app
+        // sees the same red spark. Was one shared `Pane::AiUsage`
+        // rendered as a purple speedometer.
+        Pane::ClaudeUsage(_) => s(if nerd { "\u{F1E00}" } else { "%" }, theme::cur().red),
+        Pane::CodexUsage(_) => s(if nerd { "\u{F1E01}" } else { "%" }, theme::cur().green),
     }
 }
 

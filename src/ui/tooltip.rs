@@ -207,14 +207,16 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         HoverChip::StatuslineAiClaude => Some((
             app.rects.statusline_ai_claude_chip?,
             // 2026-08-16 — was a full hover-overlay; retired in
-            // favor of `Pane::AiUsage`, so the chip now just
+            // favor of `Pane::ClaudeUsage`, so the chip now just
             // hints the click target like every other chip.
             "click: open Claude usage pane".into(),
             None,
         )),
         HoverChip::StatuslineAiCodex => Some((
             app.rects.statusline_ai_codex_chip?,
-            "click: refresh + toast Codex tokens today".into(),
+            // 2026-08-16 — was a toast-only chip; now opens the
+            // dedicated `Pane::CodexUsage` after the AiUsage split.
+            "click: open Codex usage pane".into(),
             None,
         )),
         HoverChip::StatuslineAutosave => Some((

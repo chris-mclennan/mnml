@@ -1636,7 +1636,14 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll = p.scroll.saturating_add(delta as usize);
                 }
             }
-            Some(Pane::AiUsage(p)) => {
+            Some(Pane::ClaudeUsage(p)) => {
+                if delta < 0 {
+                    p.scroll = p.scroll.saturating_sub(delta.unsigned_abs() as usize);
+                } else {
+                    p.scroll = p.scroll.saturating_add(delta as usize);
+                }
+            }
+            Some(Pane::CodexUsage(p)) => {
                 if delta < 0 {
                     p.scroll = p.scroll.saturating_sub(delta.unsigned_abs() as usize);
                 } else {

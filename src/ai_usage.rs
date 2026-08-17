@@ -20,6 +20,19 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+/// One Claude account's usage snapshot — pairs a display `name`
+/// with a `ClaudeUsage` payload and a flag marking which account
+/// the current mnml session is "actually running as" (used by the
+/// statusline chip's default single-account rendering). Task #944
+/// (2026-08-16) added multi-account tracking so the user can see
+/// per-account % without account-switching.
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeAccountUsage {
+    pub name: String,
+    pub usage: ClaudeUsage,
+    pub is_active: bool,
+}
+
 /// Last-fetched snapshot for the Claude chip. `percent` is the 5-hour
 /// window utilization; `weekly_percent` is the weekly window.
 /// `resets_at` is a Unix timestamp when the current 5h window ends.
@@ -111,21 +124,12 @@ pub fn read_claude_token() -> Option<String> {
 
 /// If the on-disk token file is a JSON blob with a `refreshToken`,
 /// return it. `None` when the file is a plain-string token or the
-/// blob doesn't include a refresh token.
+/// blob doesn't include a refresh token. Reads from the default
+/// single-account path; multi-account callers use
+/// [`read_refresh_token_at`] with the account-specific path.
 pub fn read_claude_refresh_token() -> Option<String> {
     let path = claude_token_path()?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    let s = raw.trim();
-    if !s.starts_with('{') {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_str(s).ok()?;
-    let inner = v.get("claudeAiOauth").unwrap_or(&v);
-    inner
-        .get("refreshToken")
-        .and_then(|x| x.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    read_refresh_token_at(&path)
 }
 
 /// Persist the OAuth token to `~/.config/mnml/ai_token` with 0600
@@ -195,12 +199,15 @@ const CLAUDE_OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
 /// POST the refresh token to Claude's OAuth token endpoint. On
 /// success, writes the new `{accessToken, refreshToken, expiresAt}`
-/// JSON blob back to disk (preserving auto-refresh next cycle) and
-/// returns the new access token. Errors bubble up as human-readable
-/// strings — the caller falls back to the original 401 message.
+/// JSON blob back to the given path (or the default single-account
+/// path when `write_back_path` is None), preserving auto-refresh
+/// next cycle, and returns the new access token. Errors bubble up
+/// as human-readable strings — the caller falls back to the
+/// original 401 message.
 fn try_refresh_claude_token(
     client: &reqwest::blocking::Client,
     refresh_token: &str,
+    write_back_path: Option<&Path>,
 ) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct TokenResp {
@@ -238,7 +245,19 @@ fn try_refresh_claude_token(
             "expiresAt": expires_at_ms,
         }
     });
-    let _ = write_claude_token(&blob.to_string());
+    // Multi-account: write back to the SAME path we read the
+    // refresh token from, not the default. Single-account still
+    // routes through `write_claude_token` for the default path so
+    // its parent-dir creation + secret perms are honored.
+    match write_back_path {
+        Some(p) => {
+            let s = serde_json::to_string_pretty(&blob).unwrap_or_else(|_| blob.to_string());
+            let _ = write_secret_file(p, s.as_bytes());
+        }
+        None => {
+            let _ = write_claude_token(&blob.to_string());
+        }
+    }
     Ok(tr.access_token)
 }
 
@@ -292,6 +311,10 @@ pub fn spawn_keychain_claude_token() -> mpsc::Receiver<Result<String, String>> {
 /// Receiver — poll via `try_recv()` in a per-tick drain. Emits Err
 /// with a human-readable message on any failure (network, HTTP
 /// status, JSON parse). No token = Err.
+///
+/// Reads the token from the default single-account path
+/// (`data_root()/ai_token`). For the multi-account path see
+/// [`spawn_claude_fetch_account`].
 pub fn spawn_claude_fetch() -> mpsc::Receiver<Result<ClaudeUsage, FetchErr>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -299,6 +322,81 @@ pub fn spawn_claude_fetch() -> mpsc::Receiver<Result<ClaudeUsage, FetchErr>> {
         let _ = tx.send(result);
     });
     rx
+}
+
+/// Task #944 (2026-08-16). Per-account variant of
+/// [`spawn_claude_fetch`] — the caller supplies the account's
+/// display name (echoed back on the result) plus the on-disk
+/// token path so the worker doesn't have to know about the config
+/// or the "which account is active" question. Returns a Receiver
+/// yielding [`ClaudeAccountUsage`] on success, [`FetchErr`] on
+/// failure. `is_active` on the returned account is always false;
+/// the caller stamps it based on the config.
+pub fn spawn_claude_fetch_account(
+    name: String,
+    token_path: PathBuf,
+) -> mpsc::Receiver<Result<ClaudeAccountUsage, FetchErr>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result =
+            fetch_claude_account_blocking(&name, &token_path).map(|usage| ClaudeAccountUsage {
+                name: name.clone(),
+                usage,
+                is_active: false,
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+/// Read `token_path` and hit Anthropic's OAuth usage endpoint —
+/// same wire logic as [`fetch_claude_blocking`] but the token
+/// source is an arbitrary file (per-account, chosen by the
+/// caller). Multi-account entry point. 2026-08-16.
+pub fn fetch_claude_account_blocking(
+    _name: &str,
+    token_path: &Path,
+) -> Result<ClaudeUsage, FetchErr> {
+    let raw = std::fs::read_to_string(token_path)
+        .map_err(|e| FetchErr::new(format!("read token {}: {e}", token_path.display())))?;
+    let token = parse_token_blob(&raw).ok_or_else(|| FetchErr::new("not linked"))?;
+    fetch_claude_with_token(&token, Some(token_path))
+}
+
+/// Extract a bearer access token from either a plain `sk-ant-…`
+/// string or a `{claudeAiOauth: {accessToken: …}}` JSON blob.
+/// Shared by `read_claude_token` and the multi-account fetcher.
+fn parse_token_blob(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if s.starts_with('{') {
+        let v: serde_json::Value = serde_json::from_str(s).ok()?;
+        let inner = v.get("claudeAiOauth").unwrap_or(&v);
+        let token = inner.get("accessToken")?.as_str()?.trim().to_string();
+        if token.is_empty() { None } else { Some(token) }
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// Extract the refresh token from a `{claudeAiOauth: {…}}` JSON
+/// blob stored at `token_path`. Returns `None` when the file is a
+/// plain-string token or the JSON has no refreshToken.
+fn read_refresh_token_at(token_path: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(token_path).ok()?;
+    let s = raw.trim();
+    if !s.starts_with('{') {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(s).ok()?;
+    let inner = v.get("claudeAiOauth").unwrap_or(&v);
+    inner
+        .get("refreshToken")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Fetch failure payload. Carries the human-readable message and,
@@ -332,6 +430,19 @@ impl From<String> for FetchErr {
 
 fn fetch_claude_blocking() -> Result<ClaudeUsage, FetchErr> {
     let token = read_claude_token().ok_or_else(|| FetchErr::new("not linked"))?;
+    // The default single-account path is the write-back destination
+    // for a successful refresh — same as before this refactor.
+    fetch_claude_with_token(&token, claude_token_path().as_deref())
+}
+
+/// Shared inner — takes an already-loaded bearer token (from
+/// wherever the caller sourced it) plus the on-disk path to
+/// write a refreshed token back to when Anthropic hands us one.
+/// `refresh_write_back` may be None (won't attempt a refresh).
+fn fetch_claude_with_token(
+    token: &str,
+    refresh_write_back: Option<&Path>,
+) -> Result<ClaudeUsage, FetchErr> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("mnml/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(10))
@@ -349,8 +460,9 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, FetchErr> {
     // fresh bearer. On refresh failure, fall through to the original
     // "token rejected" error so the chip still surfaces the state.
     if (resp.status() == 401 || resp.status() == 403)
-        && let Some(refresh) = read_claude_refresh_token()
-        && let Ok(new_access) = try_refresh_claude_token(&client, &refresh)
+        && let Some(back) = refresh_write_back
+        && let Some(refresh) = read_refresh_token_at(back)
+        && let Ok(new_access) = try_refresh_claude_token(&client, &refresh, Some(back))
     {
         resp = client
             .get("https://api.anthropic.com/api/oauth/usage")
