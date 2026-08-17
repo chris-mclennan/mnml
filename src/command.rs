@@ -5676,6 +5676,17 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "coverage.chip_show_ticker",
+            title: "Coverage chip: ticker (auto-cycle F ↔ C)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.coverage_chip_mode = "ticker".to_string();
+                let _ = crate::app::discovery::persist_ui_string("coverage_chip_mode", "ticker");
+                app.toast("coverage chip: ticker (auto-cycle F ↔ C)");
+            },
+        },
+        Command {
             id: "launcher.add_local",
             title: "Launcher: add a local chip (glyph / label / :term <cmd>)",
             group: "integrations",
@@ -5964,10 +5975,10 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "ai.usage",
-            title: "AI: show Claude usage panel (session + weekly + per-model)",
+            title: "AI: open Claude usage pane (session + weekly + per-model)",
             group: "ai",
             keys: &[],
-            run: |app| app.toggle_ai_usage(),
+            run: |app| app.open_ai_usage_pane(),
         },
         Command {
             id: "ai.show_last_response",

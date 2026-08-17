@@ -1758,14 +1758,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // Statusline AI Claude chip — unlinked → link prompt;
-    // linked → open the full-panel usage overlay. #876.
+    // linked → open the full-panel usage pane. #876.
+    // 2026-08-16 — was the overlay toggle; now opens the
+    // `Pane::AiUsage` center-hosted pane.
     if let Some(r) = app.rects.statusline_ai_claude_chip
         && crate::app::dispatch::contains(r, x, y)
     {
         if crate::ai_usage::read_claude_token().is_none() {
             app.open_link_claude_token_prompt();
         } else {
-            app.toggle_ai_usage();
+            app.open_ai_usage_pane();
         }
         return;
     }

@@ -871,10 +871,12 @@ pub struct UiConfig {
     pub bufferline_diag_style: String,
 
     /// Statusline coverage chip filter — controls which halves render.
-    /// Values: `"both"` (default, `F NN% · C NN%`), `"feature"`
-    /// (feature-only, backwards-compat), `"code"` (Istanbul-only).
-    /// Right-click the chip for a picker; persisted here so it
-    /// survives restart. 2026-08-16.
+    /// Values: `"feature"` (default, F only), `"code"` (Istanbul only),
+    /// `"both"` (side-by-side `F NN% · C NN%` — widest), `"ticker"`
+    /// (auto-cycle F ↔ C every 4s — narrow like feature/code but
+    /// eventually shows both). Right-click the chip for a picker;
+    /// persisted here so it survives restart. 2026-08-16 — default
+    /// flipped from "both" to "feature" (user report: too wide).
     pub coverage_chip_mode: String,
 
     /// Rows the hover-help panel occupies at the bottom of the left
@@ -1319,7 +1321,7 @@ impl Default for Config {
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
                 bufferline_diag_style: "count".to_string(),
-                coverage_chip_mode: "both".to_string(),
+                coverage_chip_mode: "feature".to_string(),
                 hover_help_height: 8,
                 terminal_label: "terminal".to_string(),
                 terminal_glyph_svg: String::new(),
@@ -1754,7 +1756,8 @@ struct RawUi {
     /// See [`UiConfig::bufferline_diag_style`].
     #[serde(default)]
     bufferline_diag_style: Option<String>,
-    /// Statusline coverage-chip mode: `"both"` / `"feature"` / `"code"`.
+    /// Statusline coverage-chip mode: `"feature"` (default) / `"code"` /
+    /// `"both"` / `"ticker"`.
     #[serde(default)]
     coverage_chip_mode: Option<String>,
     /// Height (rows) of the hover-help panel — see
@@ -2312,7 +2315,7 @@ impl Config {
         }
         if let Some(s) = raw.ui.coverage_chip_mode {
             let normalized = s.trim().to_ascii_lowercase();
-            if matches!(normalized.as_str(), "both" | "feature" | "code") {
+            if matches!(normalized.as_str(), "both" | "feature" | "code" | "ticker") {
                 self.ui.coverage_chip_mode = normalized;
             }
         }

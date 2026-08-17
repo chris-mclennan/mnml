@@ -2124,18 +2124,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             app.dismiss_welcome();
         }
         app.show_about = false;
-        app.show_ai_usage = false;
     }
-    // nvchad-user r2 + vscode-mouse r2 (2026-08-05) — AI usage
-    // overlay must steal every non-Esc key so it doesn't leak into
-    // the editor beneath. Was: unhandled keys fell through, so `i`
-    // + typed chars silently mutated the file behind the panel.
-    // Esc was handled above; anything else while pinned = swallow +
-    // dismiss so a single key press feels like "get me out."
-    if app.show_ai_usage {
-        app.show_ai_usage = false;
-        return;
-    }
+    // The AI usage overlay was retired 2026-08-16 in favor of a
+    // proper `Pane::AiUsage` — no key-steal shim needed anymore.
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels
     // and falls through to normal dispatch.

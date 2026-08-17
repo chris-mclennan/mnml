@@ -1,52 +1,69 @@
-//! `:ai.usage` overlay — centered floating panel that mirrors what
-//! Claude Code's `/usage` slash command shows. Progress bars for
-//! session (5h) + weekly + any per-model scoped limits. Data comes
-//! from the API fetch that also feeds the statusline chip.
+//! `Pane::AiUsage` renderer — the full Claude usage panel, ported
+//! from the retired centered-modal overlay into a proper pane.
+//! Shows the same content: session %, weekly %, per-model scoped
+//! limits, resets, retry-after status, last error.
 //!
-//! Sibling to `about_overlay` / `welcome_overlay`. Dismiss: Esc /
-//! `:ai.usage` (toggles) / click outside.
+//! Data source is `App::ai_usage_claude` (populated by the fetcher
+//! that also feeds the statusline chip). Header advertises the
+//! `r refresh · esc close` hints; the actual key handler lives in
+//! `src/tui/handlers/pane.rs`.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::layout::PaneId;
 use crate::ui::theme;
 
-const BAR_WIDTH: u16 = 60;
+/// Bar width in cells. Was hard-coded to 60 in the overlay; here we
+/// clamp to the available body width minus the `" N% used"` suffix
+/// so a narrow pane still renders a bar rather than clipping off.
+const MAX_BAR_WIDTH: u16 = 60;
+const SUFFIX_CELLS: u16 = 10; // ` 100% used` = 10 cells
 
-pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
-    // Two paths: pinned (`:ai.usage` toggled) or hovering the
-    // statusline chip. Hover state is transient — moving the mouse
-    // off the chip clears app.hover_chip which un-renders us next
-    // frame. Pinned persists until Esc / `:ai.usage` again.
-    let hovering = matches!(
-        app.hover_chip,
-        Some((crate::HoverChip::StatuslineAiClaude, _))
-    );
-    if !app.show_ai_usage && !hovering {
+pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: bool) {
+    if area.width == 0 || area.height == 0 {
         return;
     }
     let t = theme::cur();
     let usage = app.ai_usage_claude.clone().unwrap_or_default();
+
+    // Header row inside the pane body — mirrors the "Esc to dismiss"
+    // affordance the overlay had, adjusted for the pane world where
+    // Esc focuses the tree and `r` refreshes.
+    let header_color = if focused { t.fg } else { t.comment };
     let mut rows: Vec<Line<'static>> = vec![
-        Line::from(Span::styled(
-            " Claude usage · Esc to dismiss ".to_string(),
-            Style::default()
-                .fg(t.comment)
-                .add_modifier(Modifier::ITALIC),
-        )),
+        Line::from(vec![
+            Span::styled(
+                " Claude usage ".to_string(),
+                Style::default()
+                    .fg(header_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "· r refresh · esc close".to_string(),
+                Style::default()
+                    .fg(t.comment)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]),
         Line::from(""),
     ];
+
+    let bar_w = area
+        .width
+        .saturating_sub(SUFFIX_CELLS + 2)
+        .min(MAX_BAR_WIDTH);
 
     // Session section
     rows.push(Line::from(Span::styled(
         "Current session".to_string(),
         Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
     )));
-    rows.push(bar_row(usage.percent, &t));
+    rows.push(bar_row(usage.percent, bar_w, &t));
     rows.push(reset_row(usage.resets_at, &t));
     rows.push(Line::from(""));
 
@@ -55,7 +72,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         "Current week (all models)".to_string(),
         Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
     )));
-    rows.push(bar_row(usage.weekly_percent, &t));
+    rows.push(bar_row(usage.weekly_percent, bar_w, &t));
     rows.push(reset_row_weekly(usage.weekly_resets_at, &t));
     rows.push(Line::from(""));
 
@@ -65,10 +82,24 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             format!("Current week ({})", scoped.model_display_name),
             Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
         )));
-        rows.push(bar_row(scoped.percent, &t));
+        rows.push(bar_row(scoped.percent, bar_w, &t));
         if scoped.resets_at > 0 {
             rows.push(reset_row_weekly(scoped.resets_at, &t));
         }
+        rows.push(Line::from(""));
+    }
+
+    // Retry-after — surfaced when Anthropic told us to back off.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if usage.retry_after_at > now {
+        let remaining = usage.retry_after_at - now;
+        rows.push(Line::from(Span::styled(
+            format!("  Anthropic asked us to retry in {}s (429)", remaining),
+            Style::default().fg(t.yellow),
+        )));
         rows.push(Line::from(""));
     }
 
@@ -81,9 +112,18 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             },
             Style::default().fg(t.comment),
         )));
+    } else if let Some(ref e) = usage.last_error {
+        // Data was fetched at some point but the most recent poll
+        // failed — surface the error under the meters so the user
+        // knows the numbers are stale.
+        rows.push(Line::from(Span::styled(
+            format!("  last fetch error: {e}"),
+            Style::default().fg(t.red),
+        )));
     }
 
     // Footer hint
+    rows.push(Line::from(""));
     rows.push(Line::from(Span::styled(
         " `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON ".to_string(),
         Style::default()
@@ -91,38 +131,34 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             .add_modifier(Modifier::ITALIC),
     )));
 
-    let title = " Usage ";
-    // nvchad-user r2 (2026-08-05) — was `+ 12`, footer overflowed
-    // by 4 chars. Widened to `+ 16` so the raw-JSON hint fits.
-    let inner_w = (BAR_WIDTH as usize) + 16;
-    let w = (inner_w as u16 + 4).min(screen.width);
-    let h = (rows.len() as u16 + 2).min(screen.height);
-    let x = screen
-        .x
-        .saturating_add((screen.width.saturating_sub(w)) / 2);
-    let y = screen
-        .y
-        .saturating_add((screen.height.saturating_sub(h)) / 3);
-    let area = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
+    // Apply the pane's scroll offset. Clamp so `j` past the end
+    // doesn't blank the pane.
+    let total = rows.len();
+    let visible = area.height as usize;
+    let max_scroll = total.saturating_sub(visible.max(1));
+    let scroll = if let Some(crate::pane::Pane::AiUsage(p)) = app.panes.get_mut(pid) {
+        p.scroll = p.scroll.min(max_scroll);
+        p.scroll
+    } else {
+        0
     };
-    frame.render_widget(Clear, area);
-    let block = crate::ui::design_tokens::modal_panel(title);
-    frame.render_widget(Paragraph::new(rows).block(block), area);
+
+    let visible_rows: Vec<Line<'static>> = rows.into_iter().skip(scroll).collect();
+    frame.render_widget(
+        Paragraph::new(visible_rows).style(Style::default().fg(t.fg).bg(t.bg)),
+        area,
+    );
 }
 
 /// Progress bar row — full-width filled/empty frame + `N% used`
 /// suffix. Color: green <60%, yellow 60-85%, red 85%+. The empty
 /// portion uses a solid mid-tone background so the FRAME is always
-/// visible even at 0% (user report 2026-08-05: 0% Fable rendered
-/// as "nothing there").
-fn bar_row(percent: u16, t: &crate::ui::theme::Theme) -> Line<'static> {
+/// visible even at 0% (overlay-era report 2026-08-05: 0% Fable
+/// rendered as "nothing there").
+fn bar_row(percent: u16, bar_w: u16, t: &crate::ui::theme::Theme) -> Line<'static> {
     let clamped = percent.min(100);
-    let filled_w = ((BAR_WIDTH as u32) * (clamped as u32) / 100) as u16;
-    let empty_w = BAR_WIDTH.saturating_sub(filled_w);
+    let filled_w = ((bar_w as u32) * (clamped as u32) / 100) as u16;
+    let empty_w = bar_w.saturating_sub(filled_w);
     let color = if percent >= 85 {
         t.red
     } else if percent >= 60 {
@@ -130,8 +166,6 @@ fn bar_row(percent: u16, t: &crate::ui::theme::Theme) -> Line<'static> {
     } else {
         t.purple
     };
-    // Filled: solid background block. Empty: spaces on a slightly
-    // darker background so the whole bar reads as one framed rect.
     let filled: String = " ".repeat(filled_w as usize);
     let empty: String = " ".repeat(empty_w as usize);
     Line::from(vec![
@@ -174,8 +208,6 @@ fn reset_row_weekly(resets_at: u64, t: &crate::ui::theme::Theme) -> Line<'static
 
 /// `6:50pm` shape — for session resets (same day).
 fn format_short_time(unix_secs: u64) -> String {
-    // Approximate local time by adding the TZ offset. Fall back to
-    // UTC if offset can't be resolved.
     let (h, m) = split_hm(unix_secs);
     let (h12, ampm) = if h == 0 {
         (12, "am")

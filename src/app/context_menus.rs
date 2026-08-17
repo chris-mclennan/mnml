@@ -1630,6 +1630,13 @@ impl App {
                 format!("{}Show Code only", checkmark(mode == "code")),
                 MenuAction::Command("coverage.chip_show_code"),
             ),
+            MenuItem::new(
+                format!(
+                    "{}Ticker (cycle F ↔ C every 4s)",
+                    checkmark(mode == "ticker")
+                ),
+                MenuAction::Command("coverage.chip_show_ticker"),
+            ),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Coverage".into()), anchor, items));
     }
@@ -1642,7 +1649,7 @@ impl App {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let title = if is_codex { "Codex" } else { "Claude" };
         let mut items = vec![
-            MenuItem::new("Show usage overlay", MenuAction::Command("ai.usage")),
+            MenuItem::new("Open usage pane", MenuAction::Command("ai.usage")),
             MenuItem::new("Refresh usage now", MenuAction::Command("ai.refresh_usage")),
             MenuItem::new(
                 "Show last response (debug)",

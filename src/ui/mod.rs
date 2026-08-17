@@ -21,7 +21,7 @@
 
 pub mod about_overlay;
 pub mod activity_bar;
-pub mod ai_usage_overlay;
+pub mod ai_usage_view;
 pub mod ai_view;
 pub mod design_tokens;
 pub mod spend_report_view;
@@ -1008,6 +1008,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 Some(crate::pane::Pane::IntegrationDetail(_)) => {
                     integration_detail_view::draw(frame, app, pid, body, focused);
                 }
+                Some(crate::pane::Pane::AiUsage(_)) => {
+                    ai_usage_view::draw(frame, app, pid, body, focused);
+                }
                 Some(crate::pane::Pane::Tests(_)) => {
                     tests_view::draw(frame, app, pid, body, focused);
                 }
@@ -1537,7 +1540,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     welcome_overlay::draw(frame, app, area);
     // About overlay — `:about` / view.about.
     about_overlay::draw(frame, app, area);
-    ai_usage_overlay::draw(frame, app, area);
+    // (Retired 2026-08-16: the AI usage overlay is now `Pane::AiUsage`.)
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
     // First-launch wizard — auto-opens if `[ui] first_launch_complete`
@@ -1806,6 +1809,7 @@ fn render_layout(
                 Some(crate::pane::Pane::NewCloudAgentWizard(_)) => 39,
                 Some(crate::pane::Pane::NewCloudRunWizard(_)) => 40,
                 Some(crate::pane::Pane::IntegrationDetail(_)) => 41,
+                Some(crate::pane::Pane::AiUsage(_)) => 42,
                 _ => 0,
             };
             match kind {
@@ -1870,6 +1874,10 @@ fn render_layout(
                     None
                 }
                 41 => integration_detail_view::draw(frame, app, *id, area, focused),
+                42 => {
+                    ai_usage_view::draw(frame, app, *id, area, focused);
+                    None
+                }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
@@ -5001,6 +5009,10 @@ fn icon_for_pane(
         // so the tab icon reads unambiguously as "integration detail"
         // (user 2026-08-06: was a lighthouse-looking glyph).
         Pane::IntegrationDetail(_) => s(if nerd { "\u{F0431}" } else { "◈" }, theme::cur().cyan),
+        // nf-md-gauge — matches the meter/gauge metaphor of the pane
+        // (session + weekly usage bars). Purple to match the AI family
+        // in the palette (Ai pane, ClaudeAgents, etc).
+        Pane::AiUsage(_) => s(if nerd { "\u{F00E4}" } else { "%" }, theme::cur().purple),
     }
 }
 

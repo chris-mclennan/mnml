@@ -582,9 +582,42 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // to None so the existing "hide the C block if code_now.is_none()"
     // path handles the both→feature transition without extra branches.
     // The code-only case takes a dedicated render arm below.
+    // 2026-08-16 — narrow-chip modes. Prior default `both` felt too
+    // wide in a busy statusline. `feature` (new default) / `code` show
+    // one half; `ticker` auto-cycles between F-only and C-only on a
+    // ~4s wall-clock period so users can see both without paying the
+    // width cost. Redraw cadence (~120ms idle poll → term.draw) is
+    // fine-grained enough that the swap looks smooth.
+    //
+    // Ticker degrades gracefully when only one data source exists —
+    // the "either can be absent" case (no Istanbul rollup, or no
+    // feature rollup). If both present: alternate. If one present:
+    // pin to it (else the chip blinks off half the time and the
+    // right-click hitbox vanishes with it).
     let mode = app.config.ui.coverage_chip_mode.as_str();
-    let show_f = matches!(mode, "both" | "feature");
-    let show_c = matches!(mode, "both" | "code");
+    let has_f = app
+        .coverage_trends
+        .as_ref()
+        .and_then(|t| t.overall_current())
+        .is_some();
+    let has_c = app
+        .istanbul_trends
+        .as_ref()
+        .and_then(|t| t.overall_current())
+        .is_some();
+    let ticker_show_f = if mode == "ticker" && has_f && has_c {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 4 % 2 == 0)
+            .unwrap_or(true)
+    } else {
+        // Single-source or non-ticker: pin ticker_show_f meaningfully.
+        // For ticker with only F: true (show F). For ticker with only
+        // C: false (show C). Ignored otherwise.
+        has_f
+    };
+    let show_f = matches!(mode, "both" | "feature") || (mode == "ticker" && ticker_show_f);
+    let show_c = matches!(mode, "both" | "code") || (mode == "ticker" && !ticker_show_f);
     let feature_now = app
         .coverage_trends
         .as_ref()
@@ -636,7 +669,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             None => (String::new(), t.comment),
         };
-        let text = format!(" \u{EB03} C {:.0}%{} ", c_now, delta);
+        let text = format!(" \u{F437} C {:.0}%{} ", c_now, delta);
         coverage_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     } else if let Some(f_now) = feature_now {
@@ -686,7 +719,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 format!(" · C {:.0}%{}", c_now, delta)
             })
             .unwrap_or_default();
-        let text = format!(" \u{EB03} F {:.0}%{}{} ", f_now, f_delta, code_str);
+        let text = format!(" \u{F437} F {:.0}%{}{} ", f_now, f_delta, code_str);
         coverage_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     }

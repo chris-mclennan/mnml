@@ -204,13 +204,14 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: toggle line wrap".into(),
             None,
         )),
-        HoverChip::StatuslineAiClaude => {
-            // Hover already renders the full overlay via
-            // ai_usage_overlay::draw when this HoverChip is
-            // active. Return None so the generic tooltip box
-            // doesn't ALSO fire — that would double-render.
-            None
-        }
+        HoverChip::StatuslineAiClaude => Some((
+            app.rects.statusline_ai_claude_chip?,
+            // 2026-08-16 — was a full hover-overlay; retired in
+            // favor of `Pane::AiUsage`, so the chip now just
+            // hints the click target like every other chip.
+            "click: open Claude usage pane".into(),
+            None,
+        )),
         HoverChip::StatuslineAiCodex => Some((
             app.rects.statusline_ai_codex_chip?,
             "click: refresh + toast Codex tokens today".into(),

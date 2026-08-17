@@ -170,7 +170,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ),
             shortcuts: vec![ShortcutHint::new("Esc", "Dismiss pinned panel")],
             try_it: vec![
-                PaletteLink::new("ai.usage", "Open the AI usage panel"),
+                PaletteLink::new("ai.usage", "Open the AI usage pane"),
                 PaletteLink::new("ai.link_claude_token", "Re-link Claude token"),
             ],
             ..Default::default()
