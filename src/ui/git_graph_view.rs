@@ -727,6 +727,9 @@ pub fn draw(
         // Scrollbar rects flow through `rects.scrollbars` tagged
         // `EmbeddedDiff` so the drag dispatcher knows to update
         // `g.embedded_diff.scroll`.
+        // Task #962 (2026-08-17) — snapshot expand pref before the
+        // mutable app borrow split; render_hunk needs it.
+        let expand_indicator = app.config.ui.expand_indicator.clone();
         let rects = &mut app.rects;
         if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id)
             && let Some(d) = g.embedded_diff.as_mut()
@@ -755,6 +758,7 @@ pub fn draw(
                     &mut rects.diff_hunk_buttons,
                     kind,
                     pane_id,
+                    &expand_indicator,
                 ),
                 crate::pane::DiffViewMode::Split => crate::ui::diff_view::render_split(
                     frame,

@@ -113,6 +113,11 @@ pub fn draw(
         }
     }
 
+    // Snapshot config values BEFORE the mutable App borrow split
+    // below — render_hunk needs the expand_indicator pref but can't
+    // reach App through the borrow.
+    let expand_indicator = app.config.ui.expand_indicator.clone();
+
     // Split-borrow: get `d` AND the rect registries simultaneously.
     let rects = &mut app.rects;
     let Some(Pane::Diff(d)) = app.panes.get_mut(pane_id) else {
@@ -155,6 +160,7 @@ pub fn draw(
             &mut rects.diff_hunk_buttons,
             kind,
             pane_id,
+            &expand_indicator,
         ),
         DiffViewMode::Split => render_split(
             frame,
@@ -606,6 +612,11 @@ pub fn render_hunk(
     hunk_chips_out: &mut Vec<(Rect, PaneId, usize, crate::DiffHunkAction)>,
     sb_kind: crate::app::ScrollbarKind,
     pane_id: PaneId,
+    // Task #962 (2026-08-17) — expand-indicator pref threaded through
+    // so hunk headers honor the same chevron/triangle choice as the
+    // rest of mnml (`[ui] expand_indicator`). App isn't in scope
+    // here, so callers pass the string slice directly.
+    expand_indicator: &str,
 ) {
     // Reserve two columns on the right edge: inner = thin change
     // indicator (`▏` glyphs), outer = scrollbar.
@@ -663,10 +674,16 @@ pub fn render_hunk(
         // Hunks default to expanded; the user collapses ones they
         // don't care about (sibling of file-tree directory collapse).
         let expanded = !d.hunk_collapsed.contains(&hi);
-        // TODO(#954-followup) — plumb expand_indicator through
-        // render_hunk (needs a param through 2 callers). Diff hunks
-        // stay triangles for now.
-        let chevron = if expanded { "▾ " } else { "▸ " };
+        // Task #962 (2026-08-17) — honor `[ui] expand_indicator`.
+        // Chevron mode = `>` / `v` (ASCII-safe — File Tree's Nerd
+        // Font glyphs stay on their own helper). Triangle mode =
+        // `▸` / `▾` — the pre-2026-08-16 default.
+        let chevron = match (expanded, expand_indicator) {
+            (true, "triangle") => "▾ ",
+            (false, "triangle") => "▸ ",
+            (true, _) => "v ",
+            (false, _) => "> ",
+        };
         let head_bg = if on_cursor { t.bg2 } else { t.bg_dark };
         let mut head_style = Style::default().fg(t.cyan).bg(head_bg);
         if on_cursor {
