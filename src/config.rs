@@ -879,6 +879,17 @@ pub struct UiConfig {
     /// flipped from "both" to "feature" (user report: too wide).
     pub coverage_chip_mode: String,
 
+    /// Task #954 — Which glyph shape to use for expandable-section
+    /// indicators throughout mnml (diff hunks, DAP debug pane, DAP
+    /// REPL, etc.). File tree already uses chevrons, and users want a
+    /// consistent shape. Two-value discrete choice:
+    /// - `"chevron"` (default) — mnml uses `>`/`v` (or the Nerd Font
+    ///   glyphs U+F460/U+F47C when available).
+    /// - `"triangle"` — mnml uses `▸`/`▾` (small filled triangles),
+    ///   the pre-2026-08-16 default.
+    /// Runtime toggle via Settings; no direct ex-command yet.
+    pub expand_indicator: String,
+
     /// Rows the hover-help panel occupies at the bottom of the left
     /// panel. Clamped to `[3, 20]` at load time (below 3 the title +
     /// body break; above 20 crowds out the tree).
@@ -1322,6 +1333,7 @@ impl Default for Config {
                 menu_bar: "always".to_string(),
                 bufferline_diag_style: "count".to_string(),
                 coverage_chip_mode: "feature".to_string(),
+                expand_indicator: "chevron".to_string(),
                 hover_help_height: 8,
                 terminal_label: "terminal".to_string(),
                 terminal_glyph_svg: String::new(),
@@ -1760,6 +1772,10 @@ struct RawUi {
     /// `"both"` / `"ticker"`.
     #[serde(default)]
     coverage_chip_mode: Option<String>,
+    /// Task #954 — Which glyph shape to use for expandable-section
+    /// indicators: `"chevron"` (default) or `"triangle"`.
+    #[serde(default)]
+    expand_indicator: Option<String>,
     /// Height (rows) of the hover-help panel — see
     /// [`UiConfig::hover_help_height`].
     #[serde(default)]
@@ -2438,6 +2454,12 @@ impl Config {
             let normalized = s.trim().to_ascii_lowercase();
             if matches!(normalized.as_str(), "both" | "feature" | "code" | "ticker") {
                 self.ui.coverage_chip_mode = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.expand_indicator {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "chevron" | "triangle") {
+                self.ui.expand_indicator = normalized;
             }
         }
         if let Some(h) = raw.ui.hover_help_height {

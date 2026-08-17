@@ -133,9 +133,9 @@ fn draw_history(frame: &mut Frame, app: &App, p: &DapReplPane, area: Rect) {
             // `> expr` row — yellow prefix, fg text. Selected row gets
             // a brighter bg so the user knows where `o` will fire.
             let expand_chip = if entry.variables_ref > 0 {
-                if entry.expanded { "▾ " } else { "▸ " }
+                format!("{} ", crate::ui::expand_glyph(app, entry.expanded))
             } else {
-                "  "
+                "  ".to_string()
             };
             lines.push(Line::from(vec![
                 Span::styled(

@@ -226,9 +226,9 @@ fn draw_variables(frame: &mut Frame, app: &App, p: &DebugPane, area: Rect) {
             };
             let indent = "  ".repeat(row.depth);
             let chevron = if row.expandable {
-                if row.expanded { "▾ " } else { "▸ " }
+                format!("{} ", crate::ui::expand_glyph(app, row.expanded))
             } else {
-                "  "
+                "  ".to_string()
             };
             // Compose: indent + chevron + label = value
             // Scope rows render `▾ Locals`, leaf rows `   foo: i32 = 42`,

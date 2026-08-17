@@ -663,6 +663,9 @@ pub fn render_hunk(
         // Hunks default to expanded; the user collapses ones they
         // don't care about (sibling of file-tree directory collapse).
         let expanded = !d.hunk_collapsed.contains(&hi);
+        // TODO(#954-followup) — plumb expand_indicator through
+        // render_hunk (needs a param through 2 callers). Diff hunks
+        // stay triangles for now.
         let chevron = if expanded { "▾ " } else { "▸ " };
         let head_bg = if on_cursor { t.bg2 } else { t.bg_dark };
         let mut head_style = Style::default().fg(t.cyan).bg(head_bg);
