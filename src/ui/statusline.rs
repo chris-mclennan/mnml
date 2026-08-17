@@ -237,14 +237,18 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     for acc in &app.ai_usage_claude_accounts {
         let abbrev = account_abbrev(&acc.name);
         let u = &acc.usage;
+        // Tightened 2026-08-17 — no space between letter and value
+        // (`W62%` not `Wo 62%`). Saves ~1 cell per segment which is
+        // 3 cells across 3 accounts — the difference between clipping
+        // and fitting in a busy right-side cluster.
         if u.percent > 0 || u.weekly_percent > 0 {
-            parts.push(format!("{abbrev} {}%", u.percent));
+            parts.push(format!("{abbrev}{}%", u.percent));
             worst = worst.max(u.percent);
         } else if u.last_error.is_some() {
-            parts.push(format!("{abbrev} —!"));
+            parts.push(format!("{abbrev}—!"));
             any_error = true;
         } else {
-            parts.push(format!("{abbrev} …"));
+            parts.push(format!("{abbrev}…"));
         }
     }
     if parts.is_empty() {
@@ -261,16 +265,21 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     (text, color)
 }
 
-/// Two-character name prefix for the multi-account chip. Uses the
-/// first two chars, upper-cased first char, so `personal` → `Pe`,
-/// `work` → `Wo`, `consulting` → `Co`. Falls back to `??` when
-/// the name is empty (shouldn't happen — config synthesizer
-/// defaults to `"default"`).
+/// Single-character name prefix for the multi-account chip. Uses
+/// the first char upper-cased, so `personal` → `P`, `work` → `W`,
+/// `consulting` → `C`. Was 2-char (`Pe`/`Wo`/`Co`) — user report
+/// 2026-08-17: with 3 accounts + spaces, the chip clipped for
+/// 1990-cell terminals. Collision on first-letter is possible but
+/// rare (2 accounts starting with the same letter); user
+/// disambiguates via the Claude Usage pane's section headers.
+/// Falls back to `?` when the name is empty.
 fn account_abbrev(name: &str) -> String {
-    let mut chars = name.chars();
-    let a = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or('?');
-    let b = chars.next().unwrap_or('?');
-    format!("{a}{b}")
+    let a = name
+        .chars()
+        .next()
+        .map(|c| c.to_ascii_uppercase())
+        .unwrap_or('?');
+    a.to_string()
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
