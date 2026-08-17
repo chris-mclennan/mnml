@@ -739,7 +739,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             None => (" \u{F1E01} … ".to_string(), t.comment),
         };
         ai_codex_seg_idx = Some(right.len());
-        right.push(Seg::new(text, fg, t.bg));
+        // 2026-08-17 user report — built-in chips (AI usage,
+        // coverage) rendered flat on the plain statusline bg,
+        // while dynamic sibling chips got the pill/bg treatment.
+        // Unify by applying the pill shape to built-ins too:
+        // dark fg on the chip's tier color. Consistent visual
+        // language across the whole right cluster.
+        right.push(Seg::new(text, t.bg_darker, fg));
     }
     // Coverage meter — Tattle rollups. Feature % (from
     // `feature-coverage/_trends/trends.json`) always leads; Code %
@@ -847,7 +853,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let text = format!(" {} C {:.0}%{} ", coverage_glyph(app), c_now, delta);
         coverage_seg_idx = Some(right.len());
-        right.push(Seg::new(text, fg, t.bg));
+        // 2026-08-17 user report — built-in chips (AI usage,
+        // coverage) rendered flat on the plain statusline bg,
+        // while dynamic sibling chips got the pill/bg treatment.
+        // Unify by applying the pill shape to built-ins too:
+        // dark fg on the chip's tier color. Consistent visual
+        // language across the whole right cluster.
+        right.push(Seg::new(text, t.bg_darker, fg));
     } else if let Some(f_now) = feature_now {
         let t = theme::cur();
         let (f_delta, fg) = match feature_prev {
@@ -903,7 +915,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             code_str
         );
         coverage_seg_idx = Some(right.len());
-        right.push(Seg::new(text, fg, t.bg));
+        // 2026-08-17 user report — built-in chips (AI usage,
+        // coverage) rendered flat on the plain statusline bg,
+        // while dynamic sibling chips got the pill/bg treatment.
+        // Unify by applying the pill shape to built-ins too:
+        // dark fg on the chip's tier color. Consistent visual
+        // language across the whole right cluster.
+        right.push(Seg::new(text, t.bg_darker, fg));
     }
     // Now-playing chip — pushed first so it's the leftmost segment of
     // the right cluster (closer to centre). Doubles as the mixr launch
