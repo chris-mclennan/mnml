@@ -722,7 +722,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         };
         ai_claude_seg_idx = Some(right.len());
-        let mut seg = Seg::new(text, fg, t.bg);
+        // 2026-08-17 — pill treatment (see Codex/coverage siblings).
+        // Dark text on the chip's tier color for a consistent look
+        // across the right cluster. Bold-when-active preserved.
+        let mut seg = Seg::new(text, t.bg_darker, fg);
         if bold {
             seg = seg.bold();
         }
