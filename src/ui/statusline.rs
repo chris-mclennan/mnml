@@ -670,8 +670,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             crate::config::ClaudeMultiMode::Off
         };
-        let (text, fg) = match multi_mode {
-            crate::config::ClaudeMultiMode::Compact => render_claude_chip_all_accounts(app, &t),
+        let (text, fg, bold) = match multi_mode {
+            crate::config::ClaudeMultiMode::Compact => {
+                let (t2, c) = render_claude_chip_all_accounts(app, &t);
+                (t2, c, false)
+            }
             crate::config::ClaudeMultiMode::Ticker => {
                 // Wall-clock-driven index — same 4s cadence as the
                 // coverage chip's ticker mode. Render the chosen
@@ -686,28 +689,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(0);
                 let acc = &app.ai_usage_claude_accounts[idx];
                 let letter = account_abbrev(&acc.name);
-                // 2026-08-17 — mark the active account with a leading
-                // `→` so the user can tell WHICH account is on-screen
-                // vs which one is authorized right now. All 3 letters
-                // rotate; only the active-one rotation gets the arrow.
-                let prefix = if acc.is_active {
-                    format!("\u{2192}{letter}")
-                } else {
-                    letter
-                };
-                render_single_account_chip(&acc.usage, mode, &prefix, &t)
+                let (text, fg) = render_single_account_chip(&acc.usage, mode, &letter, &t);
+                // 2026-08-17 — mark the active account by bolding the
+                // whole chip. Arrow prefix was tried first and dropped
+                // in favor of bold — cleaner, uses the terminal's
+                // native emphasis, no width cost.
+                (text, fg, acc.is_active)
             }
             crate::config::ClaudeMultiMode::Off => {
                 let active = app.active_claude_account();
                 let usage_ref = active.map(|a| &a.usage);
-                match usage_ref {
+                let (text, fg) = match usage_ref {
                     Some(u) => render_single_account_chip(u, mode, "", &t),
                     None => (" \u{F1E00} … ".to_string(), t.comment),
-                }
+                };
+                (text, fg, false)
             }
         };
         ai_claude_seg_idx = Some(right.len());
-        right.push(Seg::new(text, fg, t.bg));
+        let mut seg = Seg::new(text, fg, t.bg);
+        if bold {
+            seg = seg.bold();
+        }
+        right.push(seg);
     }
     if codex_enabled {
         let t = theme::cur();
