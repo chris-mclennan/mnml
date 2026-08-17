@@ -226,6 +226,36 @@ pub(super) fn rewrite_claude_account_name(old: &str, new: &str) -> Result<PathBu
     let existing =
         std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let target = "[[ai.claude.accounts]]";
+
+    // Task #960 (2026-08-17) — detect the file's line-ending flavor
+    // so a CRLF file stays CRLF (was silently converted to LF by
+    // `.lines()` + `\n`-join). Sample: use the first `\r\n` we see
+    // as evidence; else LF. Handles mixed input by preserving what
+    // the majority of the original was (crude — pathological mixed
+    // files still snap to one flavor, but the "no more file
+    // corruption" line stays true for the common cases).
+    let line_ending = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+
+    // Task #960 — duplicate-name pre-check. The in-memory
+    // `rename_claude_account` iterates ALL matching entries in
+    // `ai_usage_claude_accounts` and renames each; the rewriter only
+    // touches the FIRST matching block. If the config has two blocks
+    // with the same name (hand-edited or a prior partial-failure),
+    // one block would get renamed and the other wouldn't, silently
+    // diverging in-memory state from on-disk state (reverts on
+    // restart). Refuse with a clear error instead — user must
+    // manually resolve the duplicate before the rename can proceed.
+    let match_count = count_name_matches_in(&existing, old);
+    if match_count > 1 {
+        return Err(format!(
+            "config has {match_count} `[[ai.claude.accounts]]` blocks named `{old}` — resolve the duplicate manually before renaming"
+        ));
+    }
+
     // Walk lines; when the current block header is
     // `[[ai.claude.accounts]]`, look for a `name = "<old>"` line and
     // rewrite it. Any OTHER header (`[ui]`, `[[ai.claude.accounts]]`
@@ -263,7 +293,7 @@ pub(super) fn rewrite_claude_account_name(old: &str, new: &str) -> Result<PathBu
     if !found {
         return Err(format!("no `[[ai.claude.accounts]]` block named `{old}`"));
     }
-    let contents = out.join("\n") + "\n";
+    let contents = out.join(line_ending) + line_ending;
     // Reuse the tree's backup-then-write helper so a corrupt write
     // can be recovered from `~/.config/mnml/backups/`.
     if let Some(parent) = path.parent() {
@@ -272,6 +302,29 @@ pub(super) fn rewrite_claude_account_name(old: &str, new: &str) -> Result<PathBu
     crate::config::write_user_config(&path, &contents)
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// Task #960 — count `[[ai.claude.accounts]]` blocks whose FIRST
+/// `name = "…"` line matches `expected`. Used by the rewriter's
+/// duplicate-name pre-check + directly testable without touching
+/// the filesystem. Returns 0 when no match, 1 for the normal case,
+/// >1 when the config has been hand-edited into ambiguity.
+fn count_name_matches_in(contents: &str, expected: &str) -> usize {
+    let target = "[[ai.claude.accounts]]";
+    let mut count = 0usize;
+    let mut in_scope = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_scope = trimmed == target;
+            continue;
+        }
+        if in_scope && is_name_line(trimmed, expected) {
+            count += 1;
+            in_scope = false; // one name key per block
+        }
+    }
+    count
 }
 
 /// Match a `name = "<value>"` line (with any spacing around `=`)
@@ -347,5 +400,62 @@ mod rewrite_tests {
             r#"name = "he said \"hi\"""#,
             r#"he said "hi""#
         ));
+    }
+
+    // Task #960 tests — duplicate-name pre-check.
+
+    #[test]
+    fn count_name_matches_single_block() {
+        let toml = r#"
+[[ai.claude.accounts]]
+name = "personal"
+token_path = "ai_token"
+"#;
+        assert_eq!(count_name_matches_in(toml, "personal"), 1);
+        assert_eq!(count_name_matches_in(toml, "work"), 0);
+    }
+
+    #[test]
+    fn count_name_matches_duplicate_blocks() {
+        // Hand-edited into ambiguity — should be detected.
+        let toml = r#"
+[[ai.claude.accounts]]
+name = "personal"
+token_path = "ai_token"
+
+[[ai.claude.accounts]]
+name = "personal"
+token_path = "ai_token.other"
+"#;
+        assert_eq!(count_name_matches_in(toml, "personal"), 2);
+    }
+
+    #[test]
+    fn count_name_matches_ignores_other_sections() {
+        // A `name = "personal"` under `[ui]` or `[bitbucket]` is
+        // NOT a match — scoped only to `[[ai.claude.accounts]]`.
+        let toml = r#"
+[ui]
+name = "personal"
+
+[bitbucket]
+name = "personal"
+
+[[ai.claude.accounts]]
+name = "personal"
+"#;
+        assert_eq!(count_name_matches_in(toml, "personal"), 1);
+    }
+
+    #[test]
+    fn count_name_matches_stops_at_next_header() {
+        // Only the FIRST name in each block counts (defensive against
+        // a malformed block with multiple `name = …` keys).
+        let toml = r#"
+[[ai.claude.accounts]]
+name = "personal"
+name = "personal"
+"#;
+        assert_eq!(count_name_matches_in(toml, "personal"), 1);
     }
 }

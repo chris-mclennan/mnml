@@ -589,11 +589,14 @@ fn fetch_claude_with_token(
         && let Some(keychain_blob) = read_keychain_claude_token_blocking()
         && keychain_blob.trim() != token.trim()
     {
-        // Persist and try once more. Failure to persist is silent —
-        // if the disk write fails we still try the fetch with the
-        // in-memory blob.
-        let _ = write_claude_token_to(back, &keychain_blob);
-        // Extract the access token from the (possibly-JSON) blob.
+        // Task #961 (2026-08-16 reviewer follow-up) — try the fetch
+        // FIRST, persist only on success. Prior order (persist →
+        // fetch) could overwrite a working refreshToken in the old
+        // blob with an equally-stale keychain blob if the user's
+        // keychain hadn't actually been refreshed, losing the normal
+        // refresh recovery path on the next cycle. Now the on-disk
+        // token only changes when we've proven the keychain blob
+        // actually works.
         let new_access =
             parse_access_token(&keychain_blob).unwrap_or_else(|| keychain_blob.clone());
         resp = client
@@ -601,6 +604,9 @@ fn fetch_claude_with_token(
             .header("Authorization", format!("Bearer {new_access}"))
             .send()
             .map_err(|e| FetchErr::new(format!("fetch (post-keychain-resync): {e}")))?;
+        if resp.status().is_success() {
+            let _ = write_claude_token_to(back, &keychain_blob);
+        }
     }
     let status = resp.status();
     // Extract `Retry-After` header BEFORE `resp.text()` consumes the
