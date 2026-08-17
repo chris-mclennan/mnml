@@ -144,13 +144,24 @@ use crate::layout::{Layout, SplitDir, split_rects};
 /// help overlay sections). File tree has its own chevron helper
 /// (`section_chev` in `tree_view.rs`) — it doesn't consult this pref
 /// yet because it defaults to chevron already; a follow-up unifies.
+///
+/// Chevron mode uses Nerd Font glyphs (`U+F460` / `U+F47C` — same as
+/// `tree_view::section_chev`) unless `[ui] ascii_icons = true`, in
+/// which case it falls back to ASCII `>`/`v`. Triangle mode uses
+/// small filled triangles (`▸`/`▾`) regardless of ascii mode — those
+/// are BMP glyphs available everywhere.
 pub fn expand_glyph(app: &App, expanded: bool) -> &'static str {
     let use_triangle = app.config.ui.expand_indicator == "triangle";
-    match (expanded, use_triangle) {
-        (true, true) => "▾",
-        (false, true) => "▸",
-        (true, false) => "v",
-        (false, false) => ">",
+    let nerd = !app.config.ui.ascii_icons;
+    match (expanded, use_triangle, nerd) {
+        (true, true, _) => "▾",
+        (false, true, _) => "▸",
+        // Chevron branch: Nerd Font glyphs when available, ASCII
+        // otherwise. Codepoints match tree_view::section_chev.
+        (true, false, true) => "\u{F47C}",
+        (false, false, true) => "\u{F460}",
+        (true, false, false) => "v",
+        (false, false, false) => ">",
     }
 }
 
