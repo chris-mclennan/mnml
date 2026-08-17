@@ -52,9 +52,9 @@ pub mod install;
 pub mod ipc;
 pub use install::{
     AuthField, ChipSpec, CommandSpec, ContextMenuEntry, IntegrationSpec, MenuBarEntry,
-    NotificationsSpec, OsNotifyPolicy, Requires, SettingsPage, StatuslineSpec, install_integration,
-    integration_manifest_path, list_installed_integrations, pending_glyphs_dir,
-    uninstall_integration,
+    NotificationsSpec, OsNotifyPolicy, Requires, SettingsPage, StatuslineSegment, StatuslineSpec,
+    ValuesSource, install_integration, integration_manifest_path, list_installed_integrations,
+    pending_glyphs_dir, uninstall_integration,
 };
 pub use ipc::{
     NotifyOpts, ProgressStatus, SegmentSide, ToastLevel, notify, progress_end, progress_start,

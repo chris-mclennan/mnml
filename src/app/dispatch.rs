@@ -658,6 +658,20 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineLnCol);
     }
+    // 2026-08-17 — data-driven statusline chips (both manifest
+    // `[[statusline_segments]]` and IPC-set `DynamicSegment`s).
+    // Checked before the launcher/integration rects further down
+    // because the statusline row is above the rail, but that
+    // ordering is defensive — the rects belong to different
+    // regions and don't overlap in practice.
+    if let Some(idx) = app
+        .rects
+        .statusline_segment_hits
+        .iter()
+        .position(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::StatuslineSegment(idx));
+    }
     // 2026-08-01 (P2) — launcher_icon_rects hit-test removed with
     // the LauncherIcon retirement.
     if let Some(&(_, cmd_id)) = app

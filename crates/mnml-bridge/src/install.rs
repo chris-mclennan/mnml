@@ -100,6 +100,116 @@ pub struct IntegrationSpec {
     /// of silently failing. Added in 0.7.0 (2026-08-11).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub auth: Vec<AuthField>,
+    /// Data sources this integration wants mnml to poll on its
+    /// behalf. Each source is one background thread that runs
+    /// `command` on `poll_interval_secs`, parses stdout as JSON,
+    /// and caches the resulting map for template substitution by
+    /// [`StatuslineSegment`] entries below. One source can back N
+    /// chips: an integration whose CLI returns `{"open": 3,
+    /// "approved": 1, "stale": 4}` in one shot lets each chip
+    /// render its own subset without paying for a separate spawn.
+    /// Added 0.8.0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values_sources: Vec<ValuesSource>,
+    /// Statusline chips this integration wants rendered. Each chip
+    /// references a `source` id declared under [`values_sources`]
+    /// and formats a template like `"{open}({approved})"` against
+    /// the polled JSON blob. mnml renders one chip per entry,
+    /// respecting the install gate (chip disabled → skip render,
+    /// binary missing → placeholder). Added 0.8.0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub statusline_segments: Vec<StatuslineSegment>,
+}
+
+/// A polling data source declared by an integration. mnml spawns
+/// ONE background thread per source, runs `command` on
+/// `poll_interval_secs`, parses stdout as JSON, and stashes the
+/// result under `id`. Zero or more [`StatuslineSegment`] chips
+/// reference this id via their own `source` field. Added 0.8.0.
+///
+/// The command's stdout MUST be a JSON object at the top level —
+/// nested objects are supported via `{a.b}` template lookups on
+/// the chip side. Any other shape (array, primitive) is treated
+/// as an error and surfaces as `!` on the chip.
+///
+/// Example:
+///
+/// ```
+/// use mnml_bridge::ValuesSource;
+/// let s = ValuesSource {
+///     id: "bitbucket_values".into(),
+///     command: "mnml-forge-bitbucket --values".into(),
+///     poll_interval_secs: Some(300),
+/// };
+/// # let _ = s;
+/// ```
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ValuesSource {
+    /// Unique-across-all-integrations id. Referenced by
+    /// [`StatuslineSegment::source`]. e.g. `"bitbucket_values"`.
+    pub id: String,
+    /// Command line mnml runs on the poll cadence. First token is
+    /// the binary (PATH-resolved); remaining tokens are argv. No
+    /// shell expansion — quoted strings are NOT parsed as one arg
+    /// yet, keep it simple.
+    pub command: String,
+    /// Seconds between polls. `None` (or missing) falls back to
+    /// mnml's default (currently 300s). Clamped to [30, 3600].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll_interval_secs: Option<u64>,
+}
+
+/// One statusline chip an integration wants rendered. References a
+/// [`ValuesSource`] by id; templates `format` against the source's
+/// last-polled JSON blob. mnml applies the install gate at render
+/// time — a chip whose parent integration is disabled or whose
+/// backing binary is missing is not rendered. Added 0.8.0.
+///
+/// Example:
+///
+/// ```
+/// use mnml_bridge::StatuslineSegment;
+/// let s = StatuslineSegment {
+///     id: "bitbucket_prs_open".into(),
+///     source: "bitbucket_values".into(),
+///     glyph: "\u{f0400}".into(),
+///     color: "cyan".into(),
+///     format: "{open}({approved})".into(),
+///     tooltip: Some("Open PRs — parens = approved count".into()),
+///     click_command: Some("bitbucket.open".into()),
+/// };
+/// # let _ = s;
+/// ```
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct StatuslineSegment {
+    /// Unique-across-all-integrations id. Also the key mnml stores
+    /// hover-help + click routing under.
+    pub id: String,
+    /// The [`ValuesSource::id`] whose polled JSON this chip reads.
+    /// A mismatched / missing id renders the chip as `?`.
+    pub source: String,
+    /// Nerd Font (or emoji) glyph prepended to the rendered chip.
+    pub glyph: String,
+    /// Named theme color — one of the strings mnml core's
+    /// `ALLOWED_COLORS` accepts (`cyan`, `green`, `yellow`, `red`,
+    /// `blue`, `magenta`, `comment`, `fg`, `orange`, `purple`,
+    /// `pink`, `teal`, `bg2`, `white`, `black`). Unknown ⇒ mnml
+    /// falls back to `comment`.
+    pub color: String,
+    /// Template rendered against the source's JSON. `{key}` /
+    /// `{a.b}` substitute the value at that path. Missing keys
+    /// render as `?`. Non-string primitives (numbers, bools) render
+    /// via `to_string`.
+    pub format: String,
+    /// Hover-help body shown in the tooltip and info panel. `None`
+    /// falls back to a generic "click to fire `<click_command>`"
+    /// string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tooltip: Option<String>,
+    /// Palette command id fired on left-click. `None` = the chip
+    /// is display-only (no click affordance).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub click_command: Option<String>,
 }
 
 /// One user-configurable field the integration needs before it can
@@ -578,6 +688,58 @@ mod tests {
         assert!(toml.contains("kind = \"text\""));
         // `required = false` is skipped via skip_serializing_if.
         assert!(!toml.contains("required = false"));
+    }
+
+    #[test]
+    fn serializes_values_source_and_statusline_segments() {
+        // 0.8.0 — the split shape: one values_source polled once,
+        // N statusline_segments referencing it via `source`.
+        let spec = IntegrationSpec {
+            id: "bitbucket".into(),
+            label: "Bitbucket".into(),
+            binary: "mnml-forge-bitbucket".into(),
+            values_sources: vec![ValuesSource {
+                id: "bitbucket_values".into(),
+                command: "mnml-forge-bitbucket --values".into(),
+                poll_interval_secs: Some(300),
+            }],
+            statusline_segments: vec![
+                StatuslineSegment {
+                    id: "bitbucket_prs_open".into(),
+                    source: "bitbucket_values".into(),
+                    glyph: "\u{f0400}".into(),
+                    color: "cyan".into(),
+                    format: "{open}({approved})".into(),
+                    tooltip: Some("Open PRs — parens = approved count".into()),
+                    click_command: Some("bitbucket.open".into()),
+                },
+                StatuslineSegment {
+                    id: "bitbucket_stale".into(),
+                    source: "bitbucket_values".into(),
+                    glyph: "\u{f0400}".into(),
+                    color: "yellow".into(),
+                    format: "{stale} stale".into(),
+                    tooltip: None,
+                    click_command: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let toml = toml_serialize(&spec).unwrap();
+        // Values source block.
+        assert!(toml.contains("[[values_sources]]"));
+        assert!(toml.contains("id = \"bitbucket_values\""));
+        assert!(toml.contains("command = \"mnml-forge-bitbucket --values\""));
+        assert!(toml.contains("poll_interval_secs = 300"));
+        // Two chip blocks — one for each subset of the source.
+        assert!(toml.contains("[[statusline_segments]]"));
+        assert!(toml.contains("id = \"bitbucket_prs_open\""));
+        assert!(toml.contains("source = \"bitbucket_values\""));
+        assert!(toml.contains("format = \"{open}({approved})\""));
+        assert!(toml.contains("click_command = \"bitbucket.open\""));
+        assert!(toml.contains("id = \"bitbucket_stale\""));
+        // Unset optionals shouldn't leak empty keys.
+        assert!(!toml.contains("tooltip = \"\""));
     }
 
     #[test]

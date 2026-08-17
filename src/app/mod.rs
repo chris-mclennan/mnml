@@ -65,6 +65,7 @@ mod session;
 pub(crate) mod settings;
 mod snippets;
 mod startup_picker;
+pub(crate) mod statusline_segments;
 pub(crate) mod tab_drop;
 mod toggles;
 pub(crate) mod util;
@@ -2834,6 +2835,15 @@ pub struct PaneRects {
     /// active env file (or the file's tail when the var is missing).
     /// Cleared + rebuilt per frame. 2026-07-07.
     pub request_var_click_rects: Vec<(Rect, String)>,
+    /// Per-frame `(rect, segment_id)` for each rendered dynamic
+    /// statusline segment — the manifest-declared chips written by
+    /// [`crate::app::statusline_segments`] and the IPC-driven
+    /// segments set via `statusline_set_segment`. Both surfaces
+    /// share this vec because they render as the same
+    /// `DynamicSegment` shape; hover / click routing looks up the
+    /// declaring manifest by id to enrich tooltip copy. Cleared
+    /// + rebuilt per render. 2026-08-17.
+    pub statusline_segment_hits: Vec<(Rect, String)>,
     /// `(row_rect, filtered_index)` for each visible completion popup row
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.
@@ -3053,6 +3063,7 @@ impl PaneRects {
         check_vec!(activity_bar_icons);
         check_vec!(session_tabs);
         check_vec!(integration_icon_rects);
+        check_vec!(statusline_segment_hits);
         check_vec!(bufferline_tabs);
         check_vec!(right_panel_tabs);
         check_vec!(split_strip_buttons);
@@ -4357,6 +4368,31 @@ pub struct App {
     /// budget < `min_width`. Left- and right-side segments compete
     /// separately for their half of the statusline.
     pub dynamic_segments: Vec<DynamicSegment>,
+    /// Latest polled JSON blob per manifest-declared
+    /// `[[values_sources]]` id. Populated by the workers spawned
+    /// from [`Self::start_statusline_segment_workers`]; consumed by
+    /// [`Self::drain_statusline_segments`] to template-render the
+    /// paired `[[statusline_segments]]` chips. See
+    /// `src/app/statusline_segments.rs`.
+    pub values_source_snapshots:
+        std::collections::HashMap<String, crate::app::statusline_segments::ValuesSnapshot>,
+    /// Kept for the lifetime of the worker set — dropping this
+    /// closes every worker's send handle so they exit on their
+    /// next poll cycle. Re-populated on
+    /// [`Self::start_statusline_segment_workers`] (startup +
+    /// `integrations.refresh`).
+    pub statusline_segments_tx:
+        Option<std::sync::mpsc::Sender<crate::app::statusline_segments::SourceUpdate>>,
+    /// Receive side of the same channel. Drained per tick via
+    /// [`Self::drain_statusline_segments`].
+    pub statusline_segments_rx:
+        Option<std::sync::mpsc::Receiver<crate::app::statusline_segments::SourceUpdate>>,
+    /// Ids currently written to `dynamic_segments` by the
+    /// manifest-segment render pass. Lets us CLEAR only what we
+    /// own (never a segment set by an IPC `statusline_set_segment`
+    /// call from a sibling) when an integration is uninstalled or
+    /// disabled between ticks.
+    pub statusline_segment_managed_ids: std::collections::HashSet<String>,
     /// OS notifications queued this tick — drained + emitted as
     /// terminal escape sequences (OSC 9 / OSC 777) after the next
     /// paint. Ghostty/iTerm2/kitty/WezTerm route these to native
@@ -5856,6 +5892,10 @@ impl App {
             persistent_toasts: Vec::new(),
             progress_items: Vec::new(),
             dynamic_segments: Vec::new(),
+            values_source_snapshots: std::collections::HashMap::new(),
+            statusline_segments_tx: None,
+            statusline_segments_rx: None,
+            statusline_segment_managed_ids: std::collections::HashSet::new(),
             pending_os_notifications: Vec::new(),
             notify_last_fired: std::collections::HashMap::new(),
             should_quit: false,
@@ -6250,6 +6290,13 @@ impl App {
             eprintln!("mnml: cleaned up {purged} baked pending-glyph SVG(s)");
         }
         self.merge_integration_manifests();
+        // 2026-08-17 — spawn one background poll thread per
+        // manifest-declared `[[values_sources]]` block, gated on
+        // the parent chip being enabled AND the backing binary
+        // being on PATH. Idempotent — a subsequent
+        // `integrations.refresh` calls this again after re-merging
+        // and drops the old channel to signal workers to exit.
+        self.start_statusline_segment_workers();
         // 2026-08-01 (P4b) — populate marketplace entries from the
         // on-disk cache so the Marketplace tab has something to
         // render on cold start. Passive: no network I/O here — the
@@ -14968,6 +15015,11 @@ impl App {
         self.drain_readme_fetches();
         self.maybe_refresh_ai_usage();
         self.drain_ai_usage();
+        // 2026-08-17 — pull any completed manifest-declared
+        // `[[values_sources]]` poll results into their snapshots
+        // + re-render the `[[statusline_segments]]` chips that
+        // depend on them. See `src/app/statusline_segments.rs`.
+        self.drain_statusline_segments();
         self.drain_pending_keychain();
         self.drain_suggestions();
         self.maybe_fire_suggestion();

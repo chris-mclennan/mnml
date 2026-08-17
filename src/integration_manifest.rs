@@ -153,6 +153,24 @@ pub struct IntegrationManifest {
     pub menu_bar: Vec<MenuBarEntry>,
     #[serde(default)]
     pub statusline: Option<StatuslineSpec>,
+    /// Data sources this integration wants mnml to poll on its
+    /// behalf — one background thread per source, runs `command`,
+    /// parses stdout JSON, caches under `id` for chip rendering
+    /// (below). Added 2026-08-17 alongside the paired
+    /// `statusline_segments` block. Zero or more chips can share
+    /// one source, so an integration whose CLI returns
+    /// `{"open": 3, "approved": 1, "stale": 4}` in one shot pays
+    /// for exactly one spawn regardless of how many chips read
+    /// which subset.
+    #[serde(default)]
+    pub values_sources: Vec<ValuesSource>,
+    /// Statusline chips this integration wants rendered, each
+    /// referencing one [`values_sources`] entry via `source` and
+    /// formatting a template like `"{open}({approved})"` against
+    /// the polled JSON blob. See [`StatuslineSegment`] for the
+    /// template rules and install-gate semantics. Added 2026-08-17.
+    #[serde(default)]
+    pub statusline_segments: Vec<StatuslineSegment>,
     #[serde(default)]
     pub settings: Vec<SettingsPage>,
     #[serde(default)]
@@ -359,6 +377,67 @@ fn default_min_width() -> u16 {
 }
 fn default_max_width() -> u16 {
     30
+}
+
+/// One polling data source declared by an integration. mnml
+/// spawns a background thread that runs `command` on
+/// `poll_interval_secs` and parses stdout as JSON, caching the
+/// resulting map under `id` for the paired `[[statusline_segments]]`
+/// entries to template-render against. Any error (spawn fail,
+/// non-JSON stdout, non-object shape) is recorded on the snapshot
+/// so the chip can surface a distinct `!` state instead of just
+/// going blank. See `src/app/statusline_segments.rs` for the
+/// worker/render lifecycle.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ValuesSource {
+    /// Unique-across-all-integrations id. Referenced by
+    /// [`StatuslineSegment::source`].
+    pub id: String,
+    /// Command line to spawn on the poll cadence. First token is
+    /// the binary (PATH-resolved with the same walk as
+    /// [`crate::integration_manifest::binary_on_path`]); remaining
+    /// whitespace-split tokens are argv. No shell expansion.
+    pub command: String,
+    /// Seconds between polls. `None` (or missing in TOML) falls
+    /// back to [`crate::app::statusline_segments::DEFAULT_POLL_SECS`].
+    /// Clamped to `[MIN_POLL_SECS, MAX_POLL_SECS]` at spawn time.
+    #[serde(default)]
+    pub poll_interval_secs: Option<u64>,
+}
+
+/// One statusline chip declared by an integration. References a
+/// [`ValuesSource`] via `source`; renders `format` templated
+/// against that source's latest polled JSON. Install-gated (the
+/// parent integration's chip must be enabled AND its backing
+/// binary must be on PATH) — a chip whose gate fails is not
+/// rendered. See `src/app/statusline_segments.rs`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StatuslineSegment {
+    /// Unique id — also the key mnml stores click-routing and
+    /// hover-help under.
+    pub id: String,
+    /// The [`ValuesSource::id`] this chip reads.
+    pub source: String,
+    /// Nerd Font (or emoji) glyph prepended to the rendered text.
+    pub glyph: String,
+    /// Named theme color (`cyan` / `green` / `yellow` / `red` /
+    /// `blue` / `magenta` / `comment` / `fg` / `orange` / …). See
+    /// [`ALLOWED_COLORS`] for the accepted set. Unknown values
+    /// fall back to `comment` at render time.
+    pub color: String,
+    /// Format template — `{key}` and `{a.b}` substitute values
+    /// from the source's JSON. Missing keys render as `?`, non-
+    /// string primitives render via `to_string`.
+    pub format: String,
+    /// Hover-help body shown in the tooltip and info panel. `None`
+    /// falls back to a generic "click to fire `<click_command>`"
+    /// line when a click command is set, or the chip id otherwise.
+    #[serde(default)]
+    pub tooltip: Option<String>,
+    /// Palette command id fired on left-click. `None` = display-
+    /// only (no click affordance).
+    #[serde(default)]
+    pub click_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -834,6 +913,8 @@ color = "nonsense-neon"
             context_menu: vec![],
             menu_bar: vec![],
             statusline: None,
+            values_sources: vec![],
+            statusline_segments: vec![],
             settings: vec![],
             notifications: None,
             requires: None,

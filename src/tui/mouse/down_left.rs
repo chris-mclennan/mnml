@@ -1817,6 +1817,30 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         let _ = crate::command::run("editor.toggle_keymap", app);
         return;
     }
+    // Dynamic statusline segments — both manifest-declared
+    // `[[statusline_segments]]` chips (see
+    // `src/app/statusline_segments.rs`) and IPC-driven segments
+    // set via a sibling's `statusline_set_segment` call. Both use
+    // the same `DynamicSegment.click_command` field so a click
+    // fires whichever palette command the source declared.
+    // 2026-08-17 (data-driven statusline chips).
+    if let Some((_, seg_id)) = app
+        .rects
+        .statusline_segment_hits
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let seg_id = seg_id.clone();
+        if let Some(cmd) = app
+            .dynamic_segments
+            .iter()
+            .find(|d| d.id == seg_id)
+            .and_then(|d| d.click_command.clone())
+        {
+            let _ = crate::command::run(&cmd, app);
+        }
+        return;
+    }
     // Cmdline bar — click anywhere on the bottom 1-row strip
     // opens the ex-cmdline (same as typing `:`). Checked
     // BEFORE the statusline chips because the bar sits below

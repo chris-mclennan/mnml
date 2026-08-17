@@ -104,6 +104,10 @@ fn dynamic_lane_budget(total_width: usize) -> usize {
 /// One dynamic segment that survived packing, in the form we
 /// render (already truncated to fit its allocation).
 struct RenderedDynamicSegment {
+    /// Segment id — used post-render to register a hover / click
+    /// hitrect (`statusline_segment_hits`) so downstream tooltip
+    /// + info-panel copy can look the source manifest up.
+    id: String,
     text: String,
     color: Option<String>,
 }
@@ -155,6 +159,7 @@ fn collect_dynamic_segments(
         let final_width = text.chars().count();
         budget = budget.saturating_sub(final_width);
         out.push(RenderedDynamicSegment {
+            id: s.id.clone(),
             text,
             color: s.color.clone(),
         });
@@ -436,7 +441,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mode_seg_end = left.len(); // exclusive
     // Append left-lane dynamic segments (from sibling
     // `statusline_set_segment` calls) right after the mode chip.
+    // Track (left_seg_index, segment_id) so we can register hover
+    // / click hitrects after `render_left` computes the on-screen
+    // column ranges.
+    let mut dyn_left_placements: Vec<(usize, String)> = Vec::with_capacity(dyn_left.len());
     for spec in &dyn_left {
+        dyn_left_placements.push((left.len(), spec.id.clone()));
         left.push(seg_from_dynamic(spec));
     }
     {
@@ -591,7 +601,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // right lane so they don't push the builtin chips off screen
     // — losing a sibling segment is better than losing line/col.
     let dyn_right = collect_dynamic_segments(&app.dynamic_segments, SegmentSide::Right, width);
+    // Track (right_seg_index, segment_id) so hover / click rects
+    // can be registered against on-screen positions after
+    // `render_right` computes them.
+    let mut dyn_right_placements: Vec<(usize, String)> = Vec::with_capacity(dyn_right.len());
     for spec in &dyn_right {
+        dyn_right_placements.push((right.len(), spec.id.clone()));
         right.push(seg_from_dynamic(spec));
     }
     // Test-runner chip — `🧪 <label>`. Shown when the user has
@@ -1322,6 +1337,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.statusline_lncol_chip = to_rect(lncol_seg_idx, &right_rects);
     app.rects.statusline_stress_chip = to_rect(stress_seg_idx, &right_rects);
+    // Dynamic segment hitrects (both manifest-declared chips and
+    // IPC-driven `statusline_set_segment` chips). Cleared + rebuilt
+    // per frame. Registered from BOTH lanes; consumer (mouse
+    // dispatch / tooltip) doesn't care which side each id
+    // originated on. 2026-08-17.
+    app.rects.statusline_segment_hits.clear();
+    for (seg_idx, id) in &dyn_right_placements {
+        if let Some(rect) = to_rect(Some(*seg_idx), &right_rects) {
+            app.rects.statusline_segment_hits.push((rect, id.clone()));
+        }
+    }
+    for (seg_idx, id) in &dyn_left_placements {
+        // Inline the left-lane translation — `left_to_rect` is
+        // declared further down; hitrect registration only needs
+        // the same shape (start_col + width → screen Rect).
+        let Some(&(start, w)) = left_rects.get(*seg_idx) else {
+            continue;
+        };
+        if w == 0 || (start + w) as u16 > area.width {
+            continue;
+        }
+        app.rects.statusline_segment_hits.push((
+            Rect {
+                x: area.x + start as u16,
+                y: area.y,
+                width: w as u16,
+                height: 1,
+            },
+            id.clone(),
+        ));
+    }
     // AI usage meter chips — same pattern as the others (#876).
     if let Some(idx) = ai_claude_seg_idx
         && let Some(&(start, w)) = right_rects.get(idx)

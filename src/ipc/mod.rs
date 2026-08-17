@@ -2186,6 +2186,8 @@ mod tests {
             context_menu: vec![],
             menu_bar: vec![],
             statusline: None,
+            values_sources: vec![],
+            statusline_segments: vec![],
             settings: vec![],
             notifications: Some(NotificationsSpec {
                 os_notify_on: OsNotifyPolicy::Never,

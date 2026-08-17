@@ -65,6 +65,13 @@ pub fn lookup(app: &App, target: &InfoViewTarget) -> Option<InfoViewCopy> {
             integration_icon_copy(app, *idx)
                 .or_else(|| chip_copy(crate::HoverChip::IntegrationIcon(*idx)))
         }
+        // 2026-08-17 — manifest-declared dynamic statusline chips.
+        // Copy is pulled from the source `[[statusline_segments]]`
+        // block's `tooltip` field; a click-command hint lands in
+        // the "try_it" row so the reader sees what fires.
+        InfoViewTarget::Chip(crate::HoverChip::StatuslineSegment(idx)) => {
+            statusline_segment_copy(app, *idx)
+        }
         InfoViewTarget::Chip(chip) => chip_copy(*chip),
         InfoViewTarget::TreeRow { label, is_dir } => tree_row_copy(label, *is_dir),
         InfoViewTarget::MenuItem { menu, item } => menu_item_copy(menu, item),
@@ -239,6 +246,61 @@ fn activity_bar_section_copy(
         }
         _ => None, // fall through to chip_copy's generic arm
     }
+}
+
+/// Info-panel copy for a dynamic statusline chip declared via a
+/// `[[statusline_segments]]` block in an integration manifest.
+/// Also handles the IPC-driven variant (sibling call to
+/// `statusline_set_segment`) as a graceful fallback with a
+/// generic "click to fire <cmd>" body. 2026-08-17.
+fn statusline_segment_copy(app: &App, idx: usize) -> Option<InfoViewCopy> {
+    let (_, seg_id) = app.rects.statusline_segment_hits.get(idx)?;
+    // Search the loaded manifests for a matching [[statusline_segments]]
+    // block. When found, title = manifest label + segment id, body =
+    // manifest tooltip (or a generated one from the format string).
+    for m in &app.integration_manifests {
+        if let Some(seg) = m.statusline_segments.iter().find(|s| &s.id == seg_id) {
+            let title = format!("{} — {}", m.label, seg.id);
+            let body = seg.tooltip.clone().unwrap_or_else(|| {
+                format!(
+                    "Data-driven statusline chip declared by `{}`. Format: `{}`; \
+                     source: `{}`.",
+                    m.id, seg.format, seg.source
+                )
+            });
+            let mut try_it: Vec<PaletteLink> = Vec::new();
+            if let Some(cmd) = seg.click_command.as_deref() {
+                try_it.push(PaletteLink::new(cmd.to_string(), "Fire click command"));
+            }
+            return Some(InfoViewCopy {
+                title,
+                body,
+                try_it,
+                docs: m.docs.clone().or_else(|| m.homepage.clone()),
+                ..Default::default()
+            });
+        }
+    }
+    // IPC-set fallback — no manifest match; describe from the
+    // live `DynamicSegment` slot only.
+    let d = app.dynamic_segments.iter().find(|d| &d.id == seg_id)?;
+    let title = format!("Sibling chip · {}", d.id);
+    let body = format!(
+        "A statusline chip set at runtime by a sibling via the mnml-bridge \
+         `statusline_set_segment` API (id `{}`).",
+        d.id
+    );
+    let try_it = d
+        .click_command
+        .as_ref()
+        .map(|c| vec![PaletteLink::new(c.clone(), "Fire click command")])
+        .unwrap_or_default();
+    Some(InfoViewCopy {
+        title,
+        body,
+        try_it,
+        ..Default::default()
+    })
 }
 
 /// Integration-chip hover copy (palette-bar variant). Same lookup as
@@ -1705,6 +1767,13 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             )],
             ..Default::default()
         }),
+        // 2026-08-17 — data-driven dynamic statusline chips. Copy
+        // is resolved via `statusline_segment_copy` in `lookup`
+        // (which has access to `App` to walk the manifests). If
+        // we reach here we're inside `chip_copy` which is
+        // App-less, so return None and let the caller's fallback
+        // path handle it.
+        StatuslineSegment(_) => None,
     }
 }
 

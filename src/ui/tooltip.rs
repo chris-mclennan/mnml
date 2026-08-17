@@ -1802,5 +1802,30 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         // `info_view_copy::resolve_menu_bar_item_copy` and lands in
         // the bottom-left panel.
         HoverChip::MenuBarItem { .. } => None,
+        HoverChip::StatuslineSegment(idx) => {
+            let (rect, seg_id) = app.rects.statusline_segment_hits.get(idx)?.clone();
+            // Prefer the manifest's own tooltip when this id came
+            // from a `[[statusline_segments]]` block; fall back to
+            // the segment's click-command hint otherwise (IPC-set
+            // segments have no manifest to pull tooltip copy from).
+            let manifest_tooltip = app.integration_manifests.iter().find_map(|m| {
+                m.statusline_segments
+                    .iter()
+                    .find(|s| s.id == seg_id)
+                    .and_then(|s| s.tooltip.clone())
+            });
+            let click_hint = app
+                .dynamic_segments
+                .iter()
+                .find(|d| d.id == seg_id)
+                .and_then(|d| d.click_command.clone())
+                .map(|cmd| format!("click: {cmd}"));
+            let primary = manifest_tooltip
+                .clone()
+                .or_else(|| click_hint.clone())
+                .unwrap_or_else(|| seg_id.clone());
+            let secondary = manifest_tooltip.and(click_hint);
+            Some((rect, primary, secondary))
+        }
     }
 }

@@ -34,6 +34,12 @@ impl App {
         // before the merge pass fills IntegrationIcon.glyph.
         self.discover_integration_glyphs();
         self.merge_integration_manifests();
+        // 2026-08-17 — re-spawn statusline-segment workers after
+        // the manifest re-scan so newly-added or removed
+        // `[[values_sources]]` entries take effect without a
+        // restart. Dropping the old sender inside `start_…`
+        // signals in-flight workers to exit on their next send.
+        self.start_statusline_segment_workers();
         // R9 api-workflow SEV-3 — users hitting the palette
         // `integrations.refresh` reasonably expect ALL on-disk
         // scanned state to be re-read, not just integration
