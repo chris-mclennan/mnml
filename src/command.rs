@@ -5981,6 +5981,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_claude_usage_pane(),
         },
         Command {
+            id: "ai.claude_rename_account",
+            title: "AI: rename Claude account (in-config)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.ai_claude_rename_account_command(),
+        },
+        Command {
             id: "ai.codex_usage",
             title: "AI: open Codex usage pane (tokens + sessions today)",
             group: "ai",

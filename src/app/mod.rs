@@ -2333,6 +2333,13 @@ pub struct PaneRects {
     /// refresh + toast the details.
     pub statusline_ai_claude_chip: Option<Rect>,
     pub statusline_ai_codex_chip: Option<Rect>,
+    /// Task #944 rename UX (2026-08-16) — per-account pencil hitrect
+    /// captured while `claude_usage_view::draw` renders each
+    /// `── name ✎ · (active) ──` section header. The paired String
+    /// is the account name AT RENDER TIME (used as the "old name"
+    /// key for the TOML rewrite). Cleared + rebuilt every render,
+    /// same pattern as the other view-populated rect vecs.
+    pub claude_usage_pencils: Vec<(Rect, String)>,
     /// Coverage rollup chip (#889). Click → integration Pty pane
     /// (`tattle_coverage_ext.open`, provided by `mnml-tattle-coverage`).
     pub statusline_coverage_chip: Option<Rect>,
@@ -5231,6 +5238,13 @@ pub struct App {
     /// `PromptKind::IntegrationLauncher` prompt. Set by the chip's
     /// "Set launcher script…" menu, read by the prompt-accept.
     pub pending_integration_launcher_id: Option<String>,
+    /// Task #944 rename UX (2026-08-16) — Claude account name being
+    /// renamed by the `PromptKind::ClaudeAccountRename` prompt.
+    /// Populated by `App::open_claude_account_rename_prompt` (from
+    /// a pencil click or the `ai.claude_rename_account` command);
+    /// consumed by the accept handler → `App::rename_claude_account`.
+    /// Cleared by the standard `prompt_cancel` path on Esc.
+    pub pending_claude_account_rename: Option<String>,
     /// Pending worktree path for `:git.worktree_add` and
     /// `:git.worktree_remove` confirm prompts.
     pub pending_worktree_path: Option<std::path::PathBuf>,
@@ -5975,6 +5989,7 @@ impl App {
             pending_integration_remove_id: None,
             pending_integration_remove_binary: None,
             pending_integration_launcher_id: None,
+            pending_claude_account_rename: None,
             pending_worktree_path: None,
             pending_merge_source: None,
             pending_rebase_onto: None,
@@ -8028,6 +8043,8 @@ impl App {
                             name: name.clone(),
                             usage: crate::ai_usage::ClaudeUsage::default(),
                             is_active,
+                            email: None,
+                            org_name: None,
                         });
                     existing.is_active = is_active;
                     existing.usage.percent = 0;

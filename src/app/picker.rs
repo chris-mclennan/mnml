@@ -1596,6 +1596,7 @@ impl App {
         // stale state.
         self.pending_lookup_picked_id = None;
         self.pending_env_edit_key = None;
+        self.pending_claude_account_rename = None;
         if was_find {
             self.restore_find_preview_snapshot();
             self.find_pending_range = None;
@@ -2186,6 +2187,12 @@ impl App {
             crate::prompt::PromptKind::IntegrationLauncher => {
                 let input = p.input.clone();
                 self.accept_integration_launcher(input);
+            }
+            crate::prompt::PromptKind::ClaudeAccountRename => {
+                let typed = p.input.clone();
+                if let Some(old) = self.pending_claude_account_rename.take() {
+                    self.rename_claude_account(&old, typed);
+                }
             }
         }
     }

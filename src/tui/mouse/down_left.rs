@@ -1771,6 +1771,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // Task #944 rename UX (2026-08-16) — pencil hitrect on a
+    // Claude Usage pane section header. Click → open the rename
+    // prompt seeded with that account's current name. Checked
+    // BEFORE generic pane-body clicks so a click on the pencil
+    // doesn't get consumed by the pane's focus-then-nothing path.
+    {
+        let hit = app
+            .rects
+            .claude_usage_pencils
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|(_, name)| name.clone());
+        if let Some(name) = hit {
+            app.open_claude_account_rename_prompt(name);
+            return;
+        }
+    }
     // Statusline AI Codex chip → open the Codex usage pane.
     // 2026-08-16 — was a toast + refresh; the pane surface makes
     // the tokens/sessions/last-error legible without hover, matches

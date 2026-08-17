@@ -26,11 +26,25 @@ use std::sync::mpsc;
 /// statusline chip's default single-account rendering). Task #944
 /// (2026-08-16) added multi-account tracking so the user can see
 /// per-account % without account-switching.
+///
+/// 2026-08-16 identity extension — `email` and `org_name` are
+/// populated best-effort from Anthropic's `/api/oauth/profile`
+/// endpoint after a successful usage fetch (see
+/// `fetch_claude_profile_best_effort`). A profile-fetch failure is
+/// non-fatal (usage still returns); the fields simply stay `None`
+/// and the render layer falls back to the account's display name.
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeAccountUsage {
     pub name: String,
     pub usage: ClaudeUsage,
     pub is_active: bool,
+    /// e.g. `"you@example.com"`. `None` when the identity endpoint
+    /// isn't reachable, returned non-2xx, or was never queried
+    /// (e.g. after a usage-fetch failure).
+    pub email: Option<String>,
+    /// e.g. `"Anthropic"` or `"you@example.com's Organization"`.
+    /// Same `None` semantics as `email`.
+    pub org_name: Option<String>,
 }
 
 /// Last-fetched snapshot for the Claude chip. `percent` is the 5-hour
@@ -338,12 +352,24 @@ pub fn spawn_claude_fetch_account(
 ) -> mpsc::Receiver<Result<ClaudeAccountUsage, FetchErr>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let result =
-            fetch_claude_account_blocking(&name, &token_path).map(|usage| ClaudeAccountUsage {
+        let result = fetch_claude_account_blocking(&name, &token_path).map(|usage| {
+            // Best-effort identity fetch — must not fail the whole
+            // account snapshot if it 404s / times out. Reads the
+            // token from the same on-disk file so a fresh refresh
+            // (written by the usage fetch) is picked up. See
+            // `fetch_claude_profile_best_effort`.
+            let profile = std::fs::read_to_string(&token_path)
+                .ok()
+                .and_then(|raw| parse_token_blob(&raw))
+                .and_then(|token| fetch_claude_profile_best_effort(&token));
+            ClaudeAccountUsage {
                 name: name.clone(),
                 usage,
                 is_active: false,
-            });
+                email: profile.as_ref().and_then(|p| p.email.clone()),
+                org_name: profile.and_then(|p| p.org_name),
+            }
+        });
         let _ = tx.send(result);
     });
     rx
@@ -576,6 +602,69 @@ fn redact_bearer(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Parsed subset of Anthropic's `/api/oauth/profile` response —
+/// only the fields the account chip cares about (see
+/// [`fetch_claude_profile_best_effort`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ProfileInfo {
+    email: Option<String>,
+    org_name: Option<String>,
+}
+
+/// GET `https://api.anthropic.com/api/oauth/profile` with the
+/// given bearer token and pull out `account.email` + `organization.name`.
+/// Any failure — no client, network, non-2xx, JSON parse — returns
+/// `None`. Timeouts are aggressive (5s) so a slow identity endpoint
+/// doesn't stall the usage-fetch worker meaningfully. Callers who
+/// need to distinguish "no data" from "known no email" should treat
+/// `None` as "unknown, don't render".
+fn fetch_claude_profile_best_effort(token: &str) -> Option<ProfileInfo> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(concat!("mnml/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = client
+        .get("https://api.anthropic.com/api/oauth/profile")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().ok()?;
+    parse_profile_response(&text)
+}
+
+/// Parse Anthropic's `/api/oauth/profile` response body.
+/// Verified shape (2026-08-16):
+///   `{account: {uuid, full_name, display_name, email, has_claude_max,
+///               has_claude_pro, created_at},
+///     organization: {uuid, name, organization_type, billing_type, …},
+///     application: {…}}`
+/// Returns `None` when JSON is invalid; a partial payload (one field
+/// missing) still returns `Some` with the available field set.
+fn parse_profile_response(text: &str) -> Option<ProfileInfo> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let email = v
+        .get("account")
+        .and_then(|a| a.get("email"))
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let org_name = v
+        .get("organization")
+        .and_then(|o| o.get("name"))
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if email.is_none() && org_name.is_none() {
+        return None;
+    }
+    Some(ProfileInfo { email, org_name })
 }
 
 /// Parse the real Anthropic `/api/oauth/usage` response.
@@ -950,5 +1039,81 @@ fn truncate(s: &str, n: usize) -> String {
         s.to_string()
     } else {
         s.chars().take(n).collect::<String>() + "…"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Verified against a real `/api/oauth/profile` response captured
+    // on 2026-08-16 (email / uuid stripped). See ai_usage.rs top-of-file
+    // docs for the endpoint's known-good shape.
+    const PROFILE_FIXTURE: &str = r#"{
+        "account": {
+            "uuid": "00000000-0000-4000-8000-000000000000",
+            "full_name": "Test User",
+            "display_name": "Test",
+            "email": "test@example.com",
+            "has_claude_max": true,
+            "has_claude_pro": false,
+            "created_at": "2024-06-04T15:49:25.622079Z"
+        },
+        "organization": {
+            "uuid": "00000000-0000-4000-8000-000000000001",
+            "name": "Test Org",
+            "organization_type": "claude_max",
+            "billing_type": "stripe_subscription"
+        },
+        "application": {
+            "uuid": "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+        }
+    }"#;
+
+    #[test]
+    fn parse_profile_returns_email_and_org() {
+        let got = parse_profile_response(PROFILE_FIXTURE).expect("some");
+        assert_eq!(got.email.as_deref(), Some("test@example.com"));
+        assert_eq!(got.org_name.as_deref(), Some("Test Org"));
+    }
+
+    #[test]
+    fn parse_profile_tolerates_missing_organization() {
+        let json = r#"{"account":{"email":"only@example.com"}}"#;
+        let got = parse_profile_response(json).expect("some");
+        assert_eq!(got.email.as_deref(), Some("only@example.com"));
+        assert!(got.org_name.is_none());
+    }
+
+    #[test]
+    fn parse_profile_tolerates_missing_account() {
+        let json = r#"{"organization":{"name":"Anthropic"}}"#;
+        let got = parse_profile_response(json).expect("some");
+        assert!(got.email.is_none());
+        assert_eq!(got.org_name.as_deref(), Some("Anthropic"));
+    }
+
+    #[test]
+    fn parse_profile_returns_none_when_both_fields_absent() {
+        // Body is valid JSON but carries neither account.email nor
+        // organization.name — treat as "no signal" so the caller
+        // doesn't stamp an empty pair over prior good data.
+        let json = r#"{"account":{"uuid":"x"},"organization":{"uuid":"y"}}"#;
+        assert!(parse_profile_response(json).is_none());
+    }
+
+    #[test]
+    fn parse_profile_returns_none_on_bad_json() {
+        assert!(parse_profile_response("not json").is_none());
+        assert!(parse_profile_response("").is_none());
+    }
+
+    #[test]
+    fn parse_profile_ignores_empty_strings() {
+        // A whitespace-only or empty email/org field is treated as
+        // absent — otherwise the render layer would show a blank
+        // "@" glyph or double-space where the identity should be.
+        let json = r#"{"account":{"email":"  "},"organization":{"name":""}}"#;
+        assert!(parse_profile_response(json).is_none());
     }
 }

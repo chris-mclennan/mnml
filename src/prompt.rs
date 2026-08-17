@@ -359,6 +359,13 @@ pub enum PromptKind {
     /// (folder was found next to the binary — user probably wants
     /// portable), Normal otherwise.
     PortableChoicePrompt,
+    /// Task #944 rename UX (2026-08-16) — inline pencil next to a
+    /// Claude account's section header in the Claude Usage pane.
+    /// Seeded with the current name; accept edits the
+    /// `[[ai.claude.accounts]]` block in place (comments preserved)
+    /// via `App::rename_claude_account`. The old name is stashed on
+    /// `App::pending_claude_account_rename` at open time.
+    ClaudeAccountRename,
 }
 
 #[derive(Debug)]

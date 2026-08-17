@@ -33,9 +33,14 @@ const SUFFIX_CELLS: u16 = 10; // ` 100% used` = 10 cells
 
 pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: bool) {
     if area.width == 0 || area.height == 0 {
+        app.rects.claude_usage_pencils.clear();
         return;
     }
     let t = theme::cur();
+    // Task #944 rename UX (2026-08-16) — clear + repopulate pencil
+    // hitrects for the mouse handler. Same pattern as the other
+    // per-render rect vecs (help_section_headers, request_vars_rows).
+    app.rects.claude_usage_pencils.clear();
 
     // Header row inside the pane body — mirrors the "Esc to dismiss"
     // affordance the overlay had, adjusted for the pane world where
@@ -74,6 +79,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    // Task #944 rename UX (2026-08-16) — record per-section
+    // header info (row_index_within_rows, x_offset_of_pencil,
+    // account_name) so the mouse hitrect can be computed once we
+    // know the final scroll offset. Left-clean at empty state.
+    let mut pencil_meta: Vec<(usize, u16, String)> = Vec::new();
     if accounts.is_empty() {
         rows.push(Line::from(Span::styled(
             "fetching… (link a token via `:ai.link_claude_token`)".to_string(),
@@ -82,15 +92,48 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
     } else {
         for (i, account) in accounts.iter().enumerate() {
             let usage = &account.usage;
-            let heading = if account.is_active {
-                format!("── {} (active) ──", account.name)
+            // Header shape: `── <name> ✎ · <email> · <org> · (active) ──`.
+            // Pencil is a discrete Span so we can pin the hitrect to
+            // its cell. Email + org come from Anthropic's OAuth
+            // `/api/oauth/profile` endpoint (best-effort populate on
+            // each fetch — `None` when the endpoint returns 404 or
+            // the token can't authenticate). When both `None` the
+            // header collapses to just `── <name> ✎ · (active) ──`.
+            let prefix = format!("── {} ", account.name);
+            let prefix_cells = prefix.chars().count() as u16;
+            let pencil = "\u{F040}"; // nf-fa-pencil — safer than F02EC across the Nerd Font builds we ship against
+            // Build the identity middle-piece — `· email · org`,
+            // any/all optional. Rendered in comment tone so it reads
+            // as metadata not part of the header structure.
+            let mut identity = String::new();
+            if let Some(email) = account.email.as_deref() {
+                identity.push_str(" · ");
+                identity.push_str(email);
+            }
+            if let Some(org) = account.org_name.as_deref() {
+                identity.push_str(" · ");
+                identity.push_str(org);
+            }
+            let tail = if account.is_active {
+                " · (active) ──".to_string()
             } else {
-                format!("── {} ──", account.name)
+                " ──".to_string()
             };
-            rows.push(Line::from(Span::styled(
-                heading,
-                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
-            )));
+            let header_row_idx = rows.len();
+            rows.push(Line::from(vec![
+                Span::styled(
+                    prefix,
+                    Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+                ),
+                // Pencil chip — subtly de-emphasized (comment tone
+                // + no bold) so it reads as an affordance, not part
+                // of the name. Hover-tinting would be nice; deferred
+                // to a follow-up.
+                Span::styled(pencil.to_string(), Style::default().fg(t.comment)),
+                Span::styled(identity, Style::default().fg(t.comment)),
+                Span::styled(tail, Style::default().fg(t.fg).add_modifier(Modifier::BOLD)),
+            ]));
+            pencil_meta.push((header_row_idx, prefix_cells, account.name.clone()));
             rows.push(Line::from(""));
 
             // Session
@@ -178,6 +221,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
     } else {
         0
     };
+
+    // Populate pencil hitrects — one per section header that's on
+    // screen after the scroll offset is applied. The pencil is a
+    // 2-cell-wide clickable target (glyph + a 1-cell hover slop
+    // so a slightly-off click still lands).
+    for (row_idx, x_off, name) in pencil_meta {
+        if row_idx < scroll {
+            continue;
+        }
+        let visible_y = (row_idx - scroll) as u16;
+        if visible_y >= area.height {
+            continue;
+        }
+        // Clip against the pane's right edge — a narrow pane can
+        // scroll the pencil off-screen; skip the rect entirely
+        // rather than reporting an out-of-bounds hitrect.
+        if x_off >= area.width {
+            continue;
+        }
+        let pencil_x = area.x + x_off;
+        let pencil_w = 2u16.min(area.width.saturating_sub(x_off));
+        app.rects.claude_usage_pencils.push((
+            Rect {
+                x: pencil_x,
+                y: area.y + visible_y,
+                width: pencil_w,
+                height: 1,
+            },
+            name,
+        ));
+    }
 
     let visible_rows: Vec<Line<'static>> = rows.into_iter().skip(scroll).collect();
     frame.render_widget(

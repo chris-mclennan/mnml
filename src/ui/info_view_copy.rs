@@ -43,6 +43,15 @@ pub fn lookup(app: &App, target: &InfoViewTarget) -> Option<InfoViewCopy> {
         InfoViewTarget::Chip(crate::HoverChip::MenuBarItem { menu_idx, item_idx }) => {
             resolve_menu_bar_item_copy(app, *menu_idx, *item_idx)
         }
+        // Task #946 — a hovered bufferline tab that belongs to a Pty
+        // pane deserves richer copy than the generic "one tab per
+        // open pane" — mention the terminal implementation
+        // (libghostty-vt) and the user's `terminal_label` if set.
+        InfoViewTarget::Chip(crate::HoverChip::BufferlineTab(pid))
+            if matches!(app.panes.get(*pid), Some(crate::pane::Pane::Pty(_))) =>
+        {
+            Some(pty_tab_copy(app))
+        }
         InfoViewTarget::Chip(chip) => chip_copy(*chip),
         InfoViewTarget::TreeRow { label, is_dir } => tree_row_copy(label, *is_dir),
         InfoViewTarget::MenuItem { menu, item } => menu_item_copy(menu, item),
@@ -104,6 +113,37 @@ fn resolve_menu_bar_item_copy(app: &App, menu_idx: usize, encoded: usize) -> Opt
         shortcuts: vec![ShortcutHint::new("Enter", "Fire")],
         ..Default::default()
     })
+}
+
+// Task #946 — Pty tab hover copy. Emitted from `lookup` when the
+// hovered bufferline tab belongs to a `Pane::Pty`. Names the
+// terminal implementation (libghostty-vt — Ghostty's VT engine,
+// used since 2026-06 when mnml swapped away from vt100) and
+// surfaces the user's rebrand label if they've set one. The
+// generic BufferlineTab arm still handles editor / integration
+// tabs — no regression there.
+fn pty_tab_copy(app: &App) -> InfoViewCopy {
+    let brand = app.config.ui.terminal_label.trim();
+    let brand_line = if brand.is_empty() || brand.eq_ignore_ascii_case("terminal") {
+        String::new()
+    } else {
+        format!(" You've rebranded this to \"{brand}\" (change: Terminal menu → Rename terminal…).")
+    };
+    InfoViewCopy {
+        title: "Terminal (Pty) tab".into(),
+        body: format!(
+            "A running shell hosted inside mnml, driven by the libghostty-vt \
+             VT engine (Ghostty's cross-platform terminal emulator library). \
+             Click to focus; middle-click closes; drag to reorder. Panes \
+             render at ~120 FPS and honor sixel/kitty image protocols where \
+             the outer terminal supports them.{brand_line}"
+        ),
+        shortcuts: vec![
+            ShortcutHint::new("Ctrl+PgUp/PgDn", "Prev / next buffer"),
+            ShortcutHint::new("Ctrl+W", "Close active buffer"),
+        ],
+        ..Default::default()
+    }
 }
 
 // ── Chrome chips ────────────────────────────────────────────────────
