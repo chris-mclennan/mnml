@@ -686,7 +686,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(0);
                 let acc = &app.ai_usage_claude_accounts[idx];
                 let letter = account_abbrev(&acc.name);
-                render_single_account_chip(&acc.usage, mode, &letter, &t)
+                // 2026-08-17 — mark the active account with a leading
+                // `→` so the user can tell WHICH account is on-screen
+                // vs which one is authorized right now. All 3 letters
+                // rotate; only the active-one rotation gets the arrow.
+                let prefix = if acc.is_active {
+                    format!("\u{2192}{letter}")
+                } else {
+                    letter
+                };
+                render_single_account_chip(&acc.usage, mode, &prefix, &t)
             }
             crate::config::ClaudeMultiMode::Off => {
                 let active = app.active_claude_account();
