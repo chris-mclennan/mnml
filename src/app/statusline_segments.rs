@@ -250,13 +250,25 @@ impl App {
             self.statusline_clear_segment(&id);
             self.statusline_segment_managed_ids.remove(&id);
         }
-        // Push / update.
+        // Push / update. Task #965 reviewer follow-up 2026-08-17:
+        // combine manifest tooltip + render-time tooltip_extra
+        // ("waiting for first poll" / "last error: …") into ONE
+        // tooltip body piped through the tooltip-aware setter so
+        // hover-help can explain why the chip is showing what it
+        // does. Prior code dropped both on the floor.
         for d in desired {
-            self.statusline_set_segment(
+            let tooltip = match (d.tooltip.as_deref(), d.tooltip_extra.as_deref()) {
+                (Some(base), Some(extra)) => Some(format!("{base}\n{extra}")),
+                (Some(base), None) => Some(base.to_string()),
+                (None, Some(extra)) => Some(extra.to_string()),
+                (None, None) => None,
+            };
+            self.statusline_set_segment_full(
                 d.id.clone(),
                 SegmentSide::Right,
                 d.text,
                 Some(d.color),
+                tooltip,
                 d.click_command,
                 RENDER_PRIORITY,
                 RENDER_MIN_WIDTH,
@@ -289,12 +301,11 @@ struct RenderedSegment {
     text: String,
     color: String,
     click_command: Option<String>,
-    #[allow(dead_code)] // consumed by info_view_copy / tooltip via app lookup
+    /// Manifest-declared base tooltip body.
     tooltip: Option<String>,
     /// Extra tooltip note appended by the render — "waiting for
-    /// binary…" or "last error: …". Consumers pull the base
-    /// tooltip from the manifest, then append this if present.
-    #[allow(dead_code)]
+    /// binary…" or "last error: …". Appended to `tooltip` before
+    /// piping to `statusline_set_segment_full`.
     tooltip_extra: Option<String>,
 }
 

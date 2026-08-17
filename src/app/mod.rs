@@ -3548,6 +3548,15 @@ pub struct DynamicSegment {
     /// with `…`. Text shorter is padded to the actual text width
     /// (no trailing whitespace).
     pub max_width: u16,
+    /// Optional per-segment tooltip body. Rendered by the tooltip
+    /// path (or fed into the info-view hover-help panel) so the
+    /// user can see WHY a chip is showing what it is — e.g. the
+    /// "waiting for first poll" / "last error: …" states that
+    /// manifest-driven statusline segments compute. Set to `None`
+    /// for IPC-set segments that don't provide one. Task #965
+    /// follow-up 2026-08-17: reviewer flagged that this data was
+    /// computed but never surfaced.
+    pub tooltip: Option<String>,
     pub last_updated: Instant,
 }
 
@@ -14776,12 +14785,46 @@ impl App {
         min_width: u16,
         max_width: u16,
     ) {
+        // Delegate to the tooltip-aware setter with tooltip=None so
+        // existing sibling IPC callers stay call-compatible while
+        // the manifest-driven poll pipeline can pass a real tooltip.
+        self.statusline_set_segment_full(
+            id,
+            side,
+            text,
+            color,
+            None,
+            click_command,
+            priority,
+            min_width,
+            max_width,
+        );
+    }
+
+    /// Task #965 follow-up 2026-08-17 — same as `statusline_set_segment`
+    /// with an added `tooltip` slot so the manifest-driven pipeline
+    /// can surface `waiting for first poll` / `last error: …` states
+    /// through hover-help instead of silently swallowing them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn statusline_set_segment_full(
+        &mut self,
+        id: impl Into<String>,
+        side: SegmentSide,
+        text: impl Into<String>,
+        color: Option<String>,
+        tooltip: Option<String>,
+        click_command: Option<String>,
+        priority: u8,
+        min_width: u16,
+        max_width: u16,
+    ) {
         let id: String = id.into();
         let text: String = text.into();
         if let Some(slot) = self.dynamic_segments.iter_mut().find(|s| s.id == id) {
             slot.side = side;
             slot.text = text;
             slot.color = color;
+            slot.tooltip = tooltip;
             slot.click_command = click_command;
             slot.priority = priority;
             slot.min_width = min_width;
@@ -14793,6 +14836,7 @@ impl App {
                 side,
                 text,
                 color,
+                tooltip,
                 click_command,
                 priority,
                 min_width,

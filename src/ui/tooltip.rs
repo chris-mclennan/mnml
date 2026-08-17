@@ -1804,10 +1804,19 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         HoverChip::MenuBarItem { .. } => None,
         HoverChip::StatuslineSegment(idx) => {
             let (rect, seg_id) = app.rects.statusline_segment_hits.get(idx)?.clone();
-            // Prefer the manifest's own tooltip when this id came
-            // from a `[[statusline_segments]]` block; fall back to
-            // the segment's click-command hint otherwise (IPC-set
-            // segments have no manifest to pull tooltip copy from).
+            // Task #965 reviewer follow-up 2026-08-17: prefer the
+            // DYNAMIC segment's tooltip first — that's where the
+            // manifest-driven pipeline stores the combined base +
+            // runtime state ("waiting for first poll" / "last error:
+            // <msg>"). Fall back to the manifest's static tooltip
+            // (in case DynamicSegment.tooltip is None, e.g. an
+            // IPC-set segment that didn't declare one), then to a
+            // click-command hint, then the raw id as last resort.
+            let dyn_tooltip = app
+                .dynamic_segments
+                .iter()
+                .find(|d| d.id == seg_id)
+                .and_then(|d| d.tooltip.clone());
             let manifest_tooltip = app.integration_manifests.iter().find_map(|m| {
                 m.statusline_segments
                     .iter()
@@ -1820,11 +1829,16 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .find(|d| d.id == seg_id)
                 .and_then(|d| d.click_command.clone())
                 .map(|cmd| format!("click: {cmd}"));
-            let primary = manifest_tooltip
+            let primary = dyn_tooltip
                 .clone()
+                .or_else(|| manifest_tooltip.clone())
                 .or_else(|| click_hint.clone())
                 .unwrap_or_else(|| seg_id.clone());
-            let secondary = manifest_tooltip.and(click_hint);
+            let secondary = if primary != click_hint.clone().unwrap_or_default() {
+                click_hint
+            } else {
+                None
+            };
             Some((rect, primary, secondary))
         }
     }
