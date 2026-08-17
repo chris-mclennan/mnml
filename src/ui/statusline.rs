@@ -265,6 +265,47 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     (text, color)
 }
 
+/// Render a single account's usage as a chip. Shared by the
+/// single-account (`Off`) render path and the multi-account
+/// `Ticker` render path — extracted 2026-08-17 so ticker mode
+/// gets the same session/weekly/both detail the single-account
+/// chip provides. `letter_prefix` is an optional 1-char account
+/// letter (`P`/`W`/`C`) — empty string for the Off case (no
+/// disambiguation needed), non-empty for Ticker (identifies which
+/// account is currently on-screen).
+fn render_single_account_chip(
+    u: &crate::ai_usage::ClaudeUsage,
+    mode: &str,
+    letter_prefix: &str,
+    t: &theme::Theme,
+) -> (String, ratatui::style::Color) {
+    let prefix = if letter_prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{letter_prefix} ")
+    };
+    if u.percent > 0 || u.weekly_percent > 0 {
+        let (label, tier_pct) = match mode {
+            "weekly" => (
+                format!(" \u{F1E00} {prefix}{}%w ", u.weekly_percent),
+                u.weekly_percent,
+            ),
+            "both" => (
+                format!(" \u{F1E00} {prefix}{}%s·{}%w ", u.percent, u.weekly_percent),
+                u.percent.max(u.weekly_percent),
+            ),
+            _ => (format!(" \u{F1E00} {prefix}{}% ", u.percent), u.percent),
+        };
+        (label, tier_color(tier_pct, t))
+    } else if u.last_error.is_some() {
+        // R5 keyboard SEV-3 2026-08-08 — differentiate "genuine 0%"
+        // from "fetch failed". Red em-dash + `!` sigil.
+        (format!(" \u{F1E00} {prefix}—! "), t.red)
+    } else {
+        (format!(" \u{F1E00} {prefix}— "), t.comment)
+    }
+}
+
 /// Single-character name prefix for the multi-account chip. Uses
 /// the first char upper-cased, so `personal` → `P`, `work` → `W`,
 /// `consulting` → `C`. Was 2-char (`Pe`/`Wo`/`Co`) — user report
@@ -587,47 +628,45 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .and_then(|t| t.get("claude_meter_mode"))
             .and_then(|v| v.as_str())
             .unwrap_or("session");
-        // Task #944 (2026-08-16) — when `[ai] claude_show_all_accounts
-        // = true`, render one segment per account (`Pe 40% · Wo 62%
-        // · Co 12%`). Two-char name prefix, session % only (weekly is
-        // still available via the pane). Chip color = worst tier
-        // across accounts so a hot account is visible at a glance.
-        // Falls back to the single-account render when only ONE
-        // account is configured (the multi-account chip is width-
-        // expensive; no point paying for it when there's nothing to
-        // compare).
-        let show_all = app.config.ai_claude_show_all() && app.ai_usage_claude_accounts.len() > 1;
-        let (text, fg) = if show_all {
-            render_claude_chip_all_accounts(app, &t)
+        // Task #944 — tri-state multi-account display. `Off` (default)
+        // = active account only. `Compact` = one segment per account
+        // (`P40% · W62% · C12%`, worst-tier color) — visible-all-at-
+        // once but width-expensive. `Ticker` (2026-08-17) rotates
+        // through accounts on wall-clock (4s per window) rendering
+        // each with the full session+weekly detail — trades "see all
+        // at once" for "see full detail for each in turn". Falls back
+        // to Off render when only ONE account is configured (the
+        // multi-account modes have nothing to compare).
+        let multi_mode = if app.ai_usage_claude_accounts.len() > 1 {
+            app.config.ai_claude_multi_mode()
         } else {
-            let active = app.active_claude_account();
-            let usage_ref = active.map(|a| &a.usage);
-            match usage_ref {
-                Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
-                    let (label, tier_pct) = match mode {
-                        "weekly" => (
-                            format!(" \u{F1E00} {}%w ", u.weekly_percent),
-                            u.weekly_percent,
-                        ),
-                        "both" => (
-                            format!(" \u{F1E00} {}%s·{}%w ", u.percent, u.weekly_percent),
-                            u.percent.max(u.weekly_percent),
-                        ),
-                        _ => (format!(" \u{F1E00} {}% ", u.percent), u.percent),
-                    };
-                    let color = tier_color(tier_pct, &t);
-                    (label, color)
+            crate::config::ClaudeMultiMode::Off
+        };
+        let (text, fg) = match multi_mode {
+            crate::config::ClaudeMultiMode::Compact => render_claude_chip_all_accounts(app, &t),
+            crate::config::ClaudeMultiMode::Ticker => {
+                // Wall-clock-driven index — same 4s cadence as the
+                // coverage chip's ticker mode. Render the chosen
+                // account with the full active-chip shape (respects
+                // claude_meter_mode: session/weekly/both) plus a
+                // 1-char account letter prefix so the user knows
+                // which account is on screen right now.
+                let n = app.ai_usage_claude_accounts.len();
+                let idx = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| (d.as_secs() / 4) as usize % n)
+                    .unwrap_or(0);
+                let acc = &app.ai_usage_claude_accounts[idx];
+                let letter = account_abbrev(&acc.name);
+                render_single_account_chip(&acc.usage, mode, &letter, &t)
+            }
+            crate::config::ClaudeMultiMode::Off => {
+                let active = app.active_claude_account();
+                let usage_ref = active.map(|a| &a.usage);
+                match usage_ref {
+                    Some(u) => render_single_account_chip(u, mode, "", &t),
+                    None => (" \u{F1E00} … ".to_string(), t.comment),
                 }
-                // R5 keyboard SEV-3 2026-08-08 — differentiate "genuine 0%"
-                // from "fetch failed" so the chip surfaces the state without
-                // requiring a hover-tooltip drill-down. Red em-dash + `!`
-                // sigil when `last_error` is populated; gray em-dash for
-                // "successfully fetched, 0% used". Also route 429 / other
-                // non-401 errors through the same visual as a token miss so
-                // the user knows something is off.
-                Some(u) if u.last_error.is_some() => (" \u{F1E00} —! ".to_string(), t.red),
-                Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
-                None => (" \u{F1E00} … ".to_string(), t.comment),
             }
         };
         ai_claude_seg_idx = Some(right.len());

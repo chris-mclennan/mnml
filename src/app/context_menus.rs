@@ -1691,17 +1691,40 @@ impl App {
                 format!("{}Show both (session · weekly)", check(mode == "both")),
                 MenuAction::Command("ai.chip_show_both"),
             ));
-            // Task #944 (2026-08-16) — multi-account toggle. Only
-            // visually offered when >1 account is configured (the
-            // toggle is inert otherwise — the compact chip falls
-            // back to the single-account render below the account
-            // threshold). Persists via `persist_ai_bool`.
-            let show_all = self.config.ai_claude_show_all();
+            // Task #944 (extended 2026-08-17) — multi-account tri-state
+            // picker. Only offered when >1 account is configured. Three
+            // choices — the current one gets a ✓:
+            //   Off      = active account only (original default).
+            //   Compact  = all accounts in one row (`P40% · W62%
+            //              · C12%`); can clip on busy right-side
+            //              clusters.
+            //   Ticker   = rotate one account per 4s window, full
+            //              session+weekly detail per rotation (fits
+            //              even with lots of other statusline chips).
             let n_accounts = self.config.claude_accounts().len();
             if n_accounts > 1 {
+                use crate::config::ClaudeMultiMode;
+                let multi = self.config.ai_claude_multi_mode();
                 items.push(MenuItem::new(
-                    format!("{}Show all accounts (compact)", check(show_all)),
-                    MenuAction::Command("ai.chip_show_all_accounts"),
+                    format!(
+                        "{}Active account only",
+                        check(multi == ClaudeMultiMode::Off)
+                    ),
+                    MenuAction::Command("ai.chip_show_all_off"),
+                ));
+                items.push(MenuItem::new(
+                    format!(
+                        "{}All accounts (compact — P% · W% · C%)",
+                        check(multi == ClaudeMultiMode::Compact)
+                    ),
+                    MenuAction::Command("ai.chip_show_all_compact"),
+                ));
+                items.push(MenuItem::new(
+                    format!(
+                        "{}All accounts (ticker — rotate every 4s)",
+                        check(multi == ClaudeMultiMode::Ticker)
+                    ),
+                    MenuAction::Command("ai.chip_show_all_ticker"),
                 ));
             }
         }

@@ -251,6 +251,26 @@ fn set_claude_meter_mode(app: &mut App, mode: &'static str) {
     app.toast(format!("Claude chip: showing {mode}"));
 }
 
+/// Task #944 (2026-08-17) — set `[ai] claude_show_all_accounts` as a
+/// string (`"off"` / `"compact"` / `"ticker"`) instead of a bool.
+/// Back-compat: `Config::ai_claude_multi_mode()` accepts either
+/// shape, but new writes emit the string form so downstream tools
+/// don't get surprised.
+fn set_claude_multi_mode(app: &mut App, mode: &'static str) {
+    let mut table = app
+        .config
+        .ai
+        .as_table()
+        .cloned()
+        .unwrap_or_else(toml::Table::new);
+    table.insert(
+        "claude_show_all_accounts".to_string(),
+        toml::Value::String(mode.to_string()),
+    );
+    app.config.ai = toml::Value::Table(table);
+    let _ = crate::app::discovery::persist_ai_string("claude_show_all_accounts", mode);
+}
+
 fn open_recent_by_idx(app: &mut App, idx: usize) {
     let Some(path) = app.recent_files.get(idx).cloned() else {
         app.toast(format!("no recent file at #{}", idx + 1));
@@ -6066,29 +6086,50 @@ fn builtin_commands() -> Vec<Command> {
         // reads it on every frame via `config.ai_claude_show_all()`.
         Command {
             id: "ai.chip_show_all_accounts",
-            title: "AI (Claude) chip: toggle show-all-accounts mode",
+            title: "AI (Claude) chip: cycle multi-account mode (off / compact / ticker)",
             group: "ai",
             keys: &[],
             run: |app| {
-                let current = app.config.ai_claude_show_all();
-                let next = !current;
-                let mut table = app
-                    .config
-                    .ai
-                    .as_table()
-                    .cloned()
-                    .unwrap_or_else(toml::Table::new);
-                table.insert(
-                    "claude_show_all_accounts".to_string(),
-                    toml::Value::Boolean(next),
-                );
-                app.config.ai = toml::Value::Table(table);
-                let _ = crate::app::discovery::persist_ai_bool("claude_show_all_accounts", next);
-                app.toast(if next {
-                    "Claude chip: showing all accounts".to_string()
-                } else {
-                    "Claude chip: showing active account only".to_string()
-                });
+                use crate::config::ClaudeMultiMode;
+                let next = match app.config.ai_claude_multi_mode() {
+                    ClaudeMultiMode::Off => ("compact", "showing all accounts (compact)"),
+                    ClaudeMultiMode::Compact => {
+                        ("ticker", "ticker mode — rotating every 4s with full detail")
+                    }
+                    ClaudeMultiMode::Ticker => ("off", "showing active account only"),
+                };
+                set_claude_multi_mode(app, next.0);
+                app.toast(format!("Claude chip: {}", next.1));
+            },
+        },
+        Command {
+            id: "ai.chip_show_all_off",
+            title: "AI (Claude) chip: show active account only",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                set_claude_multi_mode(app, "off");
+                app.toast("Claude chip: showing active account only");
+            },
+        },
+        Command {
+            id: "ai.chip_show_all_compact",
+            title: "AI (Claude) chip: compact all accounts (P40% · W62% · C12%)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                set_claude_multi_mode(app, "compact");
+                app.toast("Claude chip: compact all accounts");
+            },
+        },
+        Command {
+            id: "ai.chip_show_all_ticker",
+            title: "AI (Claude) chip: ticker — rotate accounts every 4s",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                set_claude_multi_mode(app, "ticker");
+                app.toast("Claude chip: ticker (rotating every 4s)");
             },
         },
         Command {

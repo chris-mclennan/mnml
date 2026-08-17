@@ -1959,15 +1959,61 @@ impl Config {
 
     /// Config-backed flag: `[ai] claude_show_all_accounts = true`
     /// swaps the statusline chip to a compact per-account
-    /// rendering (`Pe 40% · Wo 62% · Co 12%`). Default false — the
-    /// chip shows the active account only. Task #944.
+    /// rendering. Default false — the chip shows the active
+    /// account only. Task #944.
+    ///
+    /// 2026-08-17 — accepts a STRING for tri-state (`"off"` /
+    /// `"compact"` / `"ticker"`). Bool for back-compat:
+    /// `true` → "compact", `false` → "off". `ticker` rotates
+    /// through accounts one per 4s and renders each with the
+    /// full session+weekly detail (like the single-account chip).
+    /// See `ai_claude_multi_mode()` for the string form.
     pub fn ai_claude_show_all(&self) -> bool {
-        self.ai
-            .as_table()
-            .and_then(|t| t.get("claude_show_all_accounts"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+        !matches!(self.ai_claude_multi_mode(), ClaudeMultiMode::Off)
     }
+
+    /// Task #944 (extended 2026-08-17) — tri-state multi-account
+    /// display mode for the statusline chip. Reads `[ai]
+    /// claude_show_all_accounts` as either a bool (back-compat) or
+    /// a string (`"off"` / `"compact"` / `"ticker"`).
+    pub fn ai_claude_multi_mode(&self) -> ClaudeMultiMode {
+        let value = self
+            .ai
+            .as_table()
+            .and_then(|t| t.get("claude_show_all_accounts"));
+        match value {
+            Some(v) if v.as_bool() == Some(true) => ClaudeMultiMode::Compact,
+            Some(v) if v.as_bool() == Some(false) => ClaudeMultiMode::Off,
+            Some(v) => match v
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "compact" => ClaudeMultiMode::Compact,
+                "ticker" => ClaudeMultiMode::Ticker,
+                _ => ClaudeMultiMode::Off,
+            },
+            None => ClaudeMultiMode::Off,
+        }
+    }
+}
+
+/// Task #944 — tri-state multi-account statusline chip mode.
+/// - `Off`: show only the active account (single-account render).
+/// - `Compact`: show every account in a compact row (`P40% · W62%
+///   · C12%`); worst-tier color; can clip for 4+ accounts on
+///   busy right-side clusters.
+/// - `Ticker`: rotate through accounts on wall-clock (4s per
+///   window), rendering each with the full session+weekly detail
+///   the single-account chip uses. Trades "see all at once" for
+///   "see full detail for each in turn."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudeMultiMode {
+    Off,
+    Compact,
+    Ticker,
 }
 
 impl Config {
