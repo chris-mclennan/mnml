@@ -52,6 +52,19 @@ pub fn lookup(app: &App, target: &InfoViewTarget) -> Option<InfoViewCopy> {
         {
             Some(pty_tab_copy(app))
         }
+        // User feedback 2026-08-17 — a hovered activity-bar icon that
+        // maps to a pinned integration deserves the integration's own
+        // title/description instead of the generic "one of the sections"
+        // copy. Same for the two side-panel toggle chips (IntegrationIcon
+        // in the palette bar) — surface the specific integration.
+        InfoViewTarget::Chip(crate::HoverChip::ActivityBarIcon(section)) => {
+            activity_bar_section_copy(app, *section)
+                .or_else(|| chip_copy(crate::HoverChip::ActivityBarIcon(*section)))
+        }
+        InfoViewTarget::Chip(crate::HoverChip::IntegrationIcon(idx)) => {
+            integration_icon_copy(app, *idx)
+                .or_else(|| chip_copy(crate::HoverChip::IntegrationIcon(*idx)))
+        }
         InfoViewTarget::Chip(chip) => chip_copy(*chip),
         InfoViewTarget::TreeRow { label, is_dir } => tree_row_copy(label, *is_dir),
         InfoViewTarget::MenuItem { menu, item } => menu_item_copy(menu, item),
@@ -144,6 +157,112 @@ fn pty_tab_copy(app: &App) -> InfoViewCopy {
         ],
         ..Default::default()
     }
+}
+
+/// User feedback 2026-08-17 — activity-bar section hover-help. The
+/// generic `chip_copy` arm just said "one of the sections that shares
+/// the left panel"; the user complained that hovering pinned
+/// integration icons on the activity bar didn't tell them which
+/// integration was under the cursor. Now dispatches per-section
+/// (Files / Git / Debug / etc.) and per-integration for
+/// `LauncherIcon(idx)` — inspects
+/// `config.ui.activity_bar_pinned_integrations` to resolve the pinned
+/// id, then looks up the matching `IntegrationIcon` for its label +
+/// description + homepage.
+fn activity_bar_section_copy(
+    app: &App,
+    section: crate::app::ActivitySection,
+) -> Option<InfoViewCopy> {
+    use crate::app::ActivitySection;
+    match section {
+        ActivitySection::LauncherIcon(idx) => {
+            let id = app
+                .config
+                .ui
+                .activity_bar_pinned_integrations
+                .get(idx as usize)?;
+            let icon = app
+                .config
+                .ui
+                .integration_icons
+                .iter()
+                .find(|i| &i.id == id)?;
+            let title = icon.label.clone().unwrap_or_else(|| icon.id.clone());
+            let body = icon.description.clone().unwrap_or_else(|| {
+                format!(
+                    "Pinned integration `{id}`. Click to launch — runs `{cmd}`. \
+                     Right-click the chip in the palette bar to unpin or configure.",
+                    id = icon.id,
+                    cmd = icon.command,
+                )
+            });
+            let mut try_it = Vec::new();
+            if !icon.command.is_empty() {
+                try_it.push(PaletteLink::new(icon.command.clone(), "Launch"));
+            }
+            Some(InfoViewCopy {
+                title,
+                body,
+                try_it,
+                docs: icon.docs.clone().or_else(|| icon.homepage.clone()),
+                ..Default::default()
+            })
+        }
+        ActivitySection::Mount(idx) => {
+            // Mounted integration side-panel — hosted by `mount_manifests`
+            // (populated by dynamically-mounted integrations), not the
+            // static `activity_bar_pinned_integrations` list.
+            let m = app.mount_manifests.get(idx as usize)?;
+            let icon = app
+                .config
+                .ui
+                .integration_icons
+                .iter()
+                .find(|i| i.id == m.id);
+            let title = icon
+                .and_then(|i| i.label.clone())
+                .unwrap_or_else(|| m.id.clone());
+            let title = format!("{title} (side panel)");
+            let body = icon.and_then(|i| i.description.clone()).unwrap_or_else(|| {
+                format!(
+                    "Integration `{id}` mounted as an activity-bar side panel. \
+                         Click to focus its rail; right-click for unmount / configure.",
+                    id = m.id,
+                )
+            });
+            Some(InfoViewCopy {
+                title,
+                body,
+                docs: icon.and_then(|i| i.docs.clone().or_else(|| i.homepage.clone())),
+                ..Default::default()
+            })
+        }
+        _ => None, // fall through to chip_copy's generic arm
+    }
+}
+
+/// Integration-chip hover copy (palette-bar variant). Same lookup as
+/// `activity_bar_section_copy`'s LauncherIcon branch but scoped to
+/// the palette-bar chip index (which is a direct index into
+/// `config.ui.integration_icons`, not the pinned-integration list).
+fn integration_icon_copy(app: &App, idx: usize) -> Option<InfoViewCopy> {
+    let icon = app.config.ui.integration_icons.get(idx)?;
+    let title = icon.label.clone().unwrap_or_else(|| icon.id.clone());
+    let body = icon.description.clone().unwrap_or_else(|| {
+        format!(
+            "Integration `{id}` — click to launch (`{cmd}`); right-click for \
+             configure / remove / disable. Add or remove from the palette bar \
+             via right-click → \"Show in palette bar\".",
+            id = icon.id,
+            cmd = icon.command,
+        )
+    });
+    Some(InfoViewCopy {
+        title,
+        body,
+        docs: icon.docs.clone().or_else(|| icon.homepage.clone()),
+        ..Default::default()
+    })
 }
 
 // ── Chrome chips ────────────────────────────────────────────────────
