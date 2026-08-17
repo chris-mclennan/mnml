@@ -32,13 +32,12 @@ export default defineConfig({
       customCss: ['./src/styles/install.css'],
       description:
         'A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.',
-      // Hidden-during-dev: drop the noindex entry before public launch.
-      // The og:image + Twitter card meta stay.
+      // 2026-08-17 — dropped the noindex entry per launch checklist.
+      // User report: "mnml.sh" showed up in exact-quote fallback search
+      // (Google's last-resort match) but no general/ranked results,
+      // because every page carried `<meta name="robots" content="noindex,
+      // nofollow">`. Removed. og:image + Twitter card meta stay.
       head: [
-        {
-          tag: 'meta',
-          attrs: { name: 'robots', content: 'noindex, nofollow' },
-        },
         {
           tag: 'meta',
           attrs: { property: 'og:image', content: 'https://mnml.sh/og/hero.png' },
