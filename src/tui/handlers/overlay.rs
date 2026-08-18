@@ -164,12 +164,14 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
 }
 
 /// Cycle the focused AI-routing row's backend chip. Row 0 = Claude
-/// (Auto / Sub / API / Off), row 1 = Codex (Auto / Sub / Off).
+/// (Auto / Sub / API / Off), row 1 = Codex (Auto / Sub / API / Off).
 fn cycle_ai_routing(app: &mut App, row: usize, delta: i32) {
-    // Row-specific option list — Codex doesn't have an API path so
-    // it skips the "api" chip. Empty string ("") = Auto.
+    // Codex supports both ChatGPT Plus/Team sub auth AND the
+    // OpenAI API key (`$OPENAI_API_KEY`) — same option set as
+    // Claude. Empty string ("") = Auto. Corrected 2026-08-17
+    // (was missing "api" — user flag).
     let (choices_claude, choices_codex): (&[&str], &[&str]) =
-        (&["", "sub", "api", "off"], &["", "sub", "off"]);
+        (&["", "sub", "api", "off"], &["", "sub", "api", "off"]);
     match row {
         0 => {
             let cur = app

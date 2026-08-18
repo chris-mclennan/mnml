@@ -1476,7 +1476,8 @@ impl App {
     /// on the current machine. Reads `[ai.routing.<product>] backend`
     /// (new key, task #975), falling back to the legacy `[ai] backend`
     /// key for Claude. `Auto` resolves to `Sub` or `Api` via a `PATH`
-    /// probe + `$ANTHROPIC_API_KEY` check.
+    /// probe + the vendor's API-key env var (`$ANTHROPIC_API_KEY` for
+    /// Claude, `$OPENAI_API_KEY` for Codex).
     pub fn ai_resolved_backend(&self, product: crate::ai::AiProduct) -> crate::ai::ResolvedBackend {
         crate::ai::resolve_backend(&self.config.ai, product)
     }
@@ -1486,8 +1487,9 @@ impl App {
         self.ai_resolved_backend(crate::ai::AiProduct::Claude)
     }
 
-    /// `[ai.routing.codex] backend` resolved. Sub / Off today (no
-    /// Codex-API path exists in mnml).
+    /// `[ai.routing.codex] backend` resolved. Sub / Api / Off — same
+    /// three lanes as Claude (Codex CLI supports both ChatGPT Plus/Team
+    /// sub auth and the OpenAI API key).
     pub fn ai_route_codex(&self) -> crate::ai::ResolvedBackend {
         self.ai_resolved_backend(crate::ai::AiProduct::Codex)
     }

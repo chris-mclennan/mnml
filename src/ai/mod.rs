@@ -237,35 +237,35 @@ pub fn has_legacy_and_new_claude(ai: &toml::Value) -> bool {
 
 /// Resolve `configured_backend(ai, product)` against the current
 /// machine. Turns `Auto` into a concrete `Sub` or `Api` by probing
-/// `PATH` for the sub binary and `$ANTHROPIC_API_KEY` for the API
-/// fallback (Claude only — Codex `Auto` is always `Sub`, since mnml
-/// has no Codex-API path). `Off` and explicit `Sub` / `Api` pass
-/// through untouched.
+/// `PATH` for the sub binary and the vendor's API-key env var
+/// (`$ANTHROPIC_API_KEY` for Claude, `$OPENAI_API_KEY` for Codex).
+/// `Off` and explicit `Sub` / `Api` pass through untouched.
 pub fn resolve_backend(ai: &toml::Value, product: AiProduct) -> ResolvedBackend {
     match configured_backend(ai, product) {
         RoutingBackend::Sub => ResolvedBackend::Sub,
         RoutingBackend::Api => ResolvedBackend::Api,
         RoutingBackend::Off => ResolvedBackend::Off,
-        RoutingBackend::Auto => match product {
-            AiProduct::Claude => {
-                let has_bin = crate::integration_detect::is_binary_installed("claude");
-                let has_key = std::env::var("ANTHROPIC_API_KEY")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .is_some();
-                if has_bin {
-                    ResolvedBackend::Sub
-                } else if has_key {
-                    ResolvedBackend::Api
-                } else {
-                    // No detection wins; default to sub so the first
-                    // call surfaces the "run `claude` to sign in"
-                    // toast rather than silently failing under Api.
-                    ResolvedBackend::Sub
-                }
+        RoutingBackend::Auto => {
+            let (bin, key_env) = match product {
+                AiProduct::Claude => ("claude", "ANTHROPIC_API_KEY"),
+                AiProduct::Codex => ("codex", "OPENAI_API_KEY"),
+            };
+            let has_bin = crate::integration_detect::is_binary_installed(bin);
+            let has_key = std::env::var(key_env)
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .is_some();
+            if has_bin {
+                ResolvedBackend::Sub
+            } else if has_key {
+                ResolvedBackend::Api
+            } else {
+                // No detection wins; default to sub so the first
+                // call surfaces the "run `<bin>` to sign in" toast
+                // rather than silently failing under Api.
+                ResolvedBackend::Sub
             }
-            AiProduct::Codex => ResolvedBackend::Sub,
-        },
+        }
     }
 }
 

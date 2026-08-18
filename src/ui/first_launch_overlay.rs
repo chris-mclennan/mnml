@@ -388,7 +388,7 @@ fn section_widgets<'a>(
                 ai_routing_row(
                     "Codex:",
                     &answers.route_codex,
-                    &[("", "Auto"), ("sub", "Sub"), ("off", "Off")],
+                    &[("", "Auto"), ("sub", "Sub"), ("api", "API"), ("off", "Off")],
                     codex_focused,
                     t,
                 ),

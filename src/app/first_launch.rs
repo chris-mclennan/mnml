@@ -20,7 +20,7 @@
 //!    action per `curl … | sh` docs, 2026-08-11 verified — install
 //!    before choosing routing)
 //! 4. AI billing preference (per-product routing — task #975,
-//!    2026-08-17): Claude Code Sub/API/Off + Codex Sub/Off
+//!    2026-08-17): Claude Code + Codex each pick Auto/Sub/API/Off
 //! 5. AI ghost-text backend (specific always-on feature — inherits
 //!    from #4's Claude routing)
 //! 6. VSCode `code` shim (detection badge; symlink helper —
