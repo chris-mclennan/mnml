@@ -339,7 +339,43 @@ fn activity_bar_section_copy(
             try_it: vec![PaletteLink::new("view.activity_debug", "Focus debug")],
             ..Default::default()
         }),
-        _ => None, // less-common variants fall through to chip_copy's generic arm
+        ActivitySection::CloudAgents => Some(InfoViewCopy {
+            title: "Cloud Agents (ECS)".into(),
+            body: "Cloud-side agents dashboard — ECS runner rows and any \
+                   future cloud bots. Separated from local Agents because \
+                   the affordances differ: Copy runId / Open CloudWatch / \
+                   view remote logs instead of resume-in-pty."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "view.activity_cloud_agents",
+                "Focus cloud agents",
+            )],
+            ..Default::default()
+        }),
+        ActivitySection::Notes => Some(InfoViewCopy {
+            title: "Notes (.mnml/notes/*.md)".into(),
+            body: "One row per note file in `<workspace>/.mnml/notes/`. \
+                   `+ New note` scaffolds a fresh file; `/` filters; Enter \
+                   opens the note in an editor pane."
+                .into(),
+            try_it: vec![
+                PaletteLink::new("view.activity_notes", "Focus notes"),
+                PaletteLink::new("notes.new", "New note"),
+            ],
+            ..Default::default()
+        }),
+        ActivitySection::Todos => Some(InfoViewCopy {
+            title: "TODOs (workspace grep)".into(),
+            body: "Ripgrep-backed sweep for `TODO`/`FIXME`/`HACK` comments \
+                   across the workspace, grouped by file. Refresh chip \
+                   re-runs the scan; `/` filters; Enter jumps to the hit."
+                .into(),
+            try_it: vec![
+                PaletteLink::new("view.activity_todos", "Focus TODOs"),
+                PaletteLink::new("todos.refresh", "Refresh scan"),
+            ],
+            ..Default::default()
+        }),
     }
 }
 

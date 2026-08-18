@@ -3,11 +3,15 @@
 //! icon switches `App.active_section`, which the rail layout uses to
 //! pick which content pane fills the area to the right of this strip.
 //!
-//! All five sections ship live content: Explorer (file tree), Git
-//! (branch + status), Agents (Claude/Codex dashboard), Findings
-//! (`.mnml/findings/*.md` viewer), Integrations (installed sibling
-//! chips). Individual sibling repos add their own activity-bar
-//! entries via the marketplace flow.
+//! Every section ships live content: Explorer (file tree), Search
+//! (ripgrep), Git (branch + worktrees), Debug (DAP), Integrations
+//! (installed sibling chips), Sessions (open Pty tabs), Agents
+//! (Claude/Codex dashboard), Cloud Agents (ECS runner), HTTP
+//! (`.http` / `.curl` files), Notes (`.mnml/notes/*.md`), TODOs
+//! (workspace grep for TODO/FIXME/HACK), Findings
+//! (`.mnml/findings/*.md`). Plus LauncherIcon (pinned integration
+//! chip) and Mount (integration-owned side panel) that individual
+//! sibling repos add via the marketplace flow.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
