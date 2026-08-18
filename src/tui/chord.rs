@@ -88,6 +88,20 @@ pub fn dispatch_chord_chain(app: &mut App, key: KeyEvent) -> bool {
             // fresh chain or fire a single-chord binding. One
             // level of recursion is bounded (was_first_key would
             // be true on the inner call).
+            //
+            // #1026 (2026-08-18) — but ONLY if the current key is
+            // a Char. Non-Char navigation keys (arrows, Esc,
+            // Enter, Tab, Home/End, PageUp/Down, F-keys, etc.)
+            // are almost never intentional chord starters — the
+            // user was navigating away from an incomplete chord.
+            // Firing the fallback AND the navigation binding
+            // double-fired both actions (e.g., `<leader>f` → arrow
+            // opened a file AND moved the cursor). Return false so
+            // the non-Char key falls through to the focused
+            // handler for its normal meaning.
+            if !matches!(new_chord.code, ratatui::crossterm::event::KeyCode::Char(_)) {
+                return false;
+            }
             app.pending_chord_seq.push(new_chord);
             match app.keymap.resolve_seq(&app.pending_chord_seq) {
                 SeqResolution::Run(id) => {

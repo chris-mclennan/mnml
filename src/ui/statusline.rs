@@ -74,6 +74,20 @@ struct Seg {
     /// tier-color pill is too close to unbold to spot at a
     /// glance). Empty range = no underline.
     underline_range: Option<(usize, usize)>,
+    /// #1038 (2026-08-18) — half-open char range `[start, end)`
+    /// within `text` whose foreground is overridden. Used to color
+    /// JUST the "status" element inside a chip (the % on Claude/
+    /// Codex, the ± delta on coverage) with a tier color while
+    /// the rest of the chip keeps the base fg (dark) on a stable
+    /// brand-color bg. Preserves powerline arrows between chips
+    /// because bg no longer collapses to a shared tier color when
+    /// two neighbors happen to hit the same green/yellow/red.
+    fg_range: Option<(usize, usize, Color)>,
+    /// #1038 — same shape as `fg_range`, but overrides the bg
+    /// on that range. Produces a mini-pill INSIDE the chip
+    /// (e.g. tier-colored numbers on the chip's brand bg). Bg
+    /// is higher-contrast than fg for narrow status glyphs.
+    bg_range: Option<(usize, usize, Color)>,
 }
 
 impl Seg {
@@ -84,6 +98,8 @@ impl Seg {
             bg,
             bold: false,
             underline_range: None,
+            fg_range: None,
+            bg_range: None,
         }
     }
     fn bold(mut self) -> Self {
@@ -101,6 +117,27 @@ impl Seg {
         }
         self
     }
+    /// #1038 — override the fg on char range `[start, end)` while
+    /// the rest of the chip keeps its base fg. Used to color the
+    /// status element (% / delta / count) inside a chip whose bg
+    /// is the stable brand color. Empty range → no override.
+    /// Peer to `bg_range` — retained for future chip designs where
+    /// the bg patch reads worse than an fg tint.
+    #[allow(dead_code)]
+    fn fg_range(mut self, start: usize, end: usize, color: Color) -> Self {
+        if end > start {
+            self.fg_range = Some((start, end, color));
+        }
+        self
+    }
+    /// #1038 — same shape but overrides bg. Emits a colored
+    /// mini-pill inside the chip. Zero-width → no override.
+    fn bg_range(mut self, start: usize, end: usize, color: Color) -> Self {
+        if end > start {
+            self.bg_range = Some((start, end, color));
+        }
+        self
+    }
     fn style(&self) -> Style {
         let s = Style::default().fg(self.fg).bg(self.bg);
         if self.bold {
@@ -112,21 +149,45 @@ impl Seg {
     fn cols(&self) -> usize {
         self.text.chars().count()
     }
-    /// Emit either one Span (base style) or up to three (chars
-    /// before, chars in range with UNDERLINED added, chars after).
-    /// Zero-width segments are elided. Called by render_left /
-    /// render_right so the split works in both lanes.
+    /// Emit spans covering the char breakpoints from underline_range
+    /// + fg_range + bg_range. Zero-width segments elided.
+    ///
+    /// Style composition, per-char (in this order):
+    ///   - inside fg_range → override fg
+    ///   - inside bg_range → override bg
+    ///   - inside underline_range → add UNDERLINED
     fn to_spans(&self) -> Vec<Span<'static>> {
         let base = self.style();
-        let Some((start, end)) = self.underline_range else {
-            return vec![Span::styled(self.text.clone(), base)];
-        };
         let cols = self.cols();
-        let start = start.min(cols);
-        let end = end.min(cols);
-        if start >= end {
+        if cols == 0 {
+            return Vec::new();
+        }
+        let ul = self
+            .underline_range
+            .map(|(s, e)| (s.min(cols), e.min(cols)));
+        let fg = self.fg_range.map(|(s, e, c)| (s.min(cols), e.min(cols), c));
+        let bg = self.bg_range.map(|(s, e, c)| (s.min(cols), e.min(cols), c));
+        let any = ul.map(|(s, e)| e > s).unwrap_or(false)
+            || fg.map(|(s, e, _)| e > s).unwrap_or(false)
+            || bg.map(|(s, e, _)| e > s).unwrap_or(false);
+        if !any {
             return vec![Span::styled(self.text.clone(), base)];
         }
+        let mut cuts: Vec<usize> = vec![0, cols];
+        if let Some((s, e)) = ul {
+            cuts.push(s);
+            cuts.push(e);
+        }
+        if let Some((s, e, _)) = fg {
+            cuts.push(s);
+            cuts.push(e);
+        }
+        if let Some((s, e, _)) = bg {
+            cuts.push(s);
+            cuts.push(e);
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
         let byte_at = |char_idx: usize| -> usize {
             self.text
                 .char_indices()
@@ -134,18 +195,33 @@ impl Seg {
                 .map(|(b, _)| b)
                 .unwrap_or(self.text.len())
         };
-        let b_start = byte_at(start);
-        let b_end = byte_at(end);
-        let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
-        if b_start > 0 {
-            spans.push(Span::styled(self.text[..b_start].to_string(), base));
-        }
-        spans.push(Span::styled(
-            self.text[b_start..b_end].to_string(),
-            base.add_modifier(Modifier::UNDERLINED),
-        ));
-        if b_end < self.text.len() {
-            spans.push(Span::styled(self.text[b_end..].to_string(), base));
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(cuts.len());
+        for w in cuts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if a >= b {
+                continue;
+            }
+            let mid = a;
+            let in_ul = ul.map(|(s, e)| mid >= s && mid < e).unwrap_or(false);
+            let in_fg = fg.map(|(s, e, _)| mid >= s && mid < e).unwrap_or(false);
+            let in_bg = bg.map(|(s, e, _)| mid >= s && mid < e).unwrap_or(false);
+            let mut style = base;
+            if let Some((_, _, c)) = fg
+                && in_fg
+            {
+                style = style.fg(c);
+            }
+            if let Some((_, _, c)) = bg
+                && in_bg
+            {
+                style = style.bg(c);
+            }
+            if in_ul {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            let ba = byte_at(a);
+            let bb = byte_at(b);
+            spans.push(Span::styled(self.text[ba..bb].to_string(), style));
         }
         spans
     }
@@ -335,6 +411,21 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     (text, color)
 }
 
+/// #1038 — render result for a Claude account chip. `text` is the
+/// fully-formed chip label. `tier_fg` colors the numeric status
+/// portion `[tier_range]` when set; the rest of the chip uses the
+/// caller's base fg on the chip's brand bg. `tier_range` is the
+/// char range covering the % + optional reset suffix (typically
+/// everything after the glyph and any letter prefix, before the
+/// trailing space). When `tier_range` is `None`, the whole chip
+/// gets `tier_fg` — used for the error / never-fetched em-dash
+/// states where there's no distinct status element to color.
+struct ClaudeChipResult {
+    text: String,
+    tier_fg: ratatui::style::Color,
+    tier_range: Option<(usize, usize)>,
+}
+
 /// Render a single account's usage as a chip. Shared by the
 /// single-account (`Off`) render path and the multi-account
 /// `Ticker` render path — extracted 2026-08-17 so ticker mode
@@ -349,73 +440,80 @@ fn render_single_account_chip(
     letter_prefix: &str,
     show_reset: bool,
     t: &theme::Theme,
-) -> (String, ratatui::style::Color) {
+) -> ClaudeChipResult {
     let prefix = if letter_prefix.is_empty() {
         String::new()
     } else {
         format!("{letter_prefix} ")
     };
-    // Task #944 (2026-08-17) — three states, four rendered cases:
-    //
-    //   1. Errored (last_error set)     → red em-dash + `!` sigil
-    //   2. Fetched successfully, any %   → tier color (green /
-    //      yellow / red by threshold — 0% is HEALTHY, so green)
-    //   3. Fetched successfully, 0%      → falls into case 2 (green
-    //      / fully available)
-    //   4. Never fetched (fetched_at=0)  → gray em-dash — no data
-    //
-    // Prior code lumped cases 3 and 4 into the same gray em-dash,
-    // which was misleading: an idle account looked identical to
-    // "we don't know yet." Now a successful fetch of 0/0 renders
-    // as green `0% 0%` — user sees "healthy + available".
-    //
-    // Format (2026-08-17 user report): dropped the `s`/`w` letters
-    // and the middot. `both` mode renders `<prefix>0% 62%` — session
-    // first, weekly second, space-separated. Consistent with the
-    // single-value modes.
     if u.last_error.is_some() {
         // R5 keyboard SEV-3 2026-08-08 — differentiate errors from 0%.
-        (format!(" \u{F1E00} {prefix}—! "), t.red)
-    } else if u.fetched_at == 0 {
+        return ClaudeChipResult {
+            text: format!(" \u{F1E00} {prefix}—! "),
+            tier_fg: t.red,
+            tier_range: None,
+        };
+    }
+    if u.fetched_at == 0 {
         // Never fetched — no signal yet.
-        (format!(" \u{F1E00} {prefix}— "), t.comment)
+        return ClaudeChipResult {
+            text: format!(" \u{F1E00} {prefix}— "),
+            tier_fg: t.comment,
+            tier_range: None,
+        };
+    }
+    // Successful fetch. Render per mode; tier color reflects the
+    // worst of the shown numbers (0% used ⇒ green).
+    //
+    // #1012 (2026-08-18) — when `show_reset` is true (`[ai]
+    // claude_show_reset = true`), append `⟳<countdown>` after each
+    // percent so the user sees when the window opens back up:
+    // "24%⟳3h 62%⟳4d".
+    let session_r = if show_reset {
+        format_reset_suffix(u.resets_at, u.percent)
     } else {
-        // Successful fetch. Render per mode; tier color reflects the
-        // worst of the shown numbers (0% used ⇒ green).
-        //
-        // #1012 (2026-08-18) — when `show_reset` is true (`[ai]
-        // claude_show_reset = true`), append `⟳<countdown>` after each
-        // percent so the user sees when the window opens back up:
-        // "24%⟳3h 62%⟳4d". No space between % and ⟳ — space would
-        // otherwise inflate width and split the couple visually.
-        let session_r = if show_reset {
-            format_reset_suffix(u.resets_at, u.percent)
-        } else {
-            String::new()
-        };
-        let weekly_r = if show_reset {
-            format_reset_suffix(u.weekly_resets_at, u.weekly_percent)
-        } else {
-            String::new()
-        };
-        let (label, tier_pct) = match mode {
-            "weekly" => (
-                format!(" \u{F1E00} {prefix}{}%{} ", u.weekly_percent, weekly_r),
-                u.weekly_percent,
+        String::new()
+    };
+    let weekly_r = if show_reset {
+        format_reset_suffix(u.weekly_resets_at, u.weekly_percent)
+    } else {
+        String::new()
+    };
+    let (label, tier_pct) = match mode {
+        "weekly" => (
+            format!(" \u{F1E00} {prefix}{}%{} ", u.weekly_percent, weekly_r),
+            u.weekly_percent,
+        ),
+        "both" => (
+            format!(
+                " \u{F1E00} {prefix}{}%{} {}%{} ",
+                u.percent, session_r, u.weekly_percent, weekly_r
             ),
-            "both" => (
-                format!(
-                    " \u{F1E00} {prefix}{}%{} {}%{} ",
-                    u.percent, session_r, u.weekly_percent, weekly_r
-                ),
-                u.percent.max(u.weekly_percent),
-            ),
-            _ => (
-                format!(" \u{F1E00} {prefix}{}%{} ", u.percent, session_r),
-                u.percent,
-            ),
-        };
-        (label, tier_color(tier_pct, t))
+            u.percent.max(u.weekly_percent),
+        ),
+        _ => (
+            format!(" \u{F1E00} {prefix}{}%{} ", u.percent, session_r),
+            u.percent,
+        ),
+    };
+    // Compute the tier range = span of the numeric status element.
+    // Layout is ` <glyph> [prefix]<numbers> ` — char 0 is the
+    // leading space, char 1 is the glyph, char 2 is the space
+    // after the glyph, chars 3..3+prefix_cols are the letter
+    // prefix, then numbers to the last non-space char.
+    let cols = label.chars().count();
+    let prefix_cols = prefix.chars().count();
+    let numeric_start = 3 + prefix_cols;
+    let numeric_end = cols.saturating_sub(1); // strip trailing space
+    let tier_range = if numeric_end > numeric_start {
+        Some((numeric_start, numeric_end))
+    } else {
+        None
+    };
+    ClaudeChipResult {
+        text: label,
+        tier_fg: tier_color(tier_pct, t),
+        tier_range,
     }
 }
 
@@ -818,18 +916,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             crate::config::ClaudeMultiMode::Off
         };
-        let (text, fg, underline): (String, Color, (usize, usize)) = match multi_mode {
+        // #1038 — chip bg is Claude's brand color (stable orange),
+        // tier color (green/yellow/red) moves onto the % via
+        // fg_range. Two neighbor chips no longer fuse when both hit
+        // the same tier — bg differs by chip identity, powerline
+        // arrows stay visible.
+        struct ClaudeRender {
+            text: String,
+            tier_fg: Color,
+            tier_range: Option<(usize, usize)>,
+            underline: (usize, usize),
+        }
+        let claude_render: ClaudeRender = match multi_mode {
             crate::config::ClaudeMultiMode::Compact => {
-                let (t2, c) = render_claude_chip_all_accounts(app, &t);
-                (t2, c, (0, 0))
+                let (text, tier_fg) = render_claude_chip_all_accounts(app, &t);
+                // Compact chip is `<glyph> Pe 40% · Wo 62% · Co 12%` —
+                // the whole numeric block is worth coloring. Span from
+                // after `<space><glyph><space>` (char 3) to before the
+                // trailing space.
+                let cols = text.chars().count();
+                let tier_range = if cols > 4 { Some((3, cols - 1)) } else { None };
+                ClaudeRender {
+                    text,
+                    tier_fg,
+                    tier_range,
+                    underline: (0, 0),
+                }
             }
             crate::config::ClaudeMultiMode::Ticker => {
-                // Wall-clock-driven index — same 4s cadence as the
-                // coverage chip's ticker mode. Render the chosen
-                // account with the full active-chip shape (respects
-                // claude_meter_mode: session/weekly/both) plus a
-                // 1-char account letter prefix so the user knows
-                // which account is on screen right now.
                 let n = app.ai_usage_claude_accounts.len();
                 let idx = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -837,53 +951,76 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(0);
                 let acc = &app.ai_usage_claude_accounts[idx];
                 let letter = account_abbrev(&acc.name);
-                let (text, fg) =
-                    render_single_account_chip(&acc.usage, mode, &letter, show_reset, &t);
-                // #1012 f/u (2026-08-18) — mark the ACTIVE account by
-                // underlining just the letter (was: bolding the whole
-                // chip → too close to unbold on a tier-color pill to
-                // spot at a glance). Chip text is ` \u{F1E00} P …` so
-                // the letter sits at char index 3. Letter is always
-                // 1 char (via `account_abbrev`), so range = (3, 4).
-                let (u_start, u_end) = if acc.is_active { (3, 4) } else { (0, 0) };
-                (text, fg, (u_start, u_end))
+                let res = render_single_account_chip(&acc.usage, mode, &letter, show_reset, &t);
+                // #1012 f/u — active-account letter (char 3..4) gets
+                // an underline; tier_range covers the numbers after.
+                let underline = if acc.is_active { (3, 4) } else { (0, 0) };
+                ClaudeRender {
+                    text: res.text,
+                    tier_fg: res.tier_fg,
+                    tier_range: res.tier_range,
+                    underline,
+                }
             }
             crate::config::ClaudeMultiMode::Off => {
                 let active = app.active_claude_account();
                 let usage_ref = active.map(|a| &a.usage);
-                let (text, fg) = match usage_ref {
-                    Some(u) => render_single_account_chip(u, mode, "", show_reset, &t),
-                    None => (" \u{F1E00} … ".to_string(), t.comment),
-                };
-                (text, fg, (0, 0))
+                match usage_ref {
+                    Some(u) => {
+                        let res = render_single_account_chip(u, mode, "", show_reset, &t);
+                        ClaudeRender {
+                            text: res.text,
+                            tier_fg: res.tier_fg,
+                            tier_range: res.tier_range,
+                            underline: (0, 0),
+                        }
+                    }
+                    None => ClaudeRender {
+                        text: " \u{F1E00} … ".to_string(),
+                        tier_fg: t.comment,
+                        tier_range: None,
+                        underline: (0, 0),
+                    },
+                }
             }
         };
         ai_claude_seg_idx = Some(right.len());
-        // Pill treatment (dark text on tier color, matches Codex /
-        // coverage siblings). Underline-just-the-letter is applied
-        // when the ticker's currently-shown account is the active one.
-        let (u_start, u_end) = underline;
-        let seg = Seg::new(text, t.bg_darker, fg).underline_range(u_start, u_end);
+        // Brand color = Claude orange (stable, so neighboring chips
+        // never fuse). Text is dark for readability. The numeric
+        // status span gets a tier-colored bg patch (mini-pill inside
+        // the chip), matching the old whole-chip pill treatment but
+        // scoped so the outer bg stays brand-stable. When there's
+        // no numeric span (error / no-data em-dash), the whole chip
+        // uses the tier fg on the brand bg.
+        let base_fg = if claude_render.tier_range.is_none() {
+            claude_render.tier_fg
+        } else {
+            t.bg_darker
+        };
+        let mut seg = Seg::new(claude_render.text, base_fg, t.orange);
+        if let Some((s, e)) = claude_render.tier_range {
+            seg = seg.bg_range(s, e, claude_render.tier_fg);
+        }
+        let (u_start, u_end) = claude_render.underline;
+        seg = seg.underline_range(u_start, u_end);
         right.push(seg);
     }
     if codex_enabled {
         let t = theme::cur();
-        let (text, fg) = match &app.ai_usage_codex {
+        // #1038 — Codex bg = cyan (brand, stable). Codex has no
+        // tier status (no known quota), so the whole chip is dark
+        // on cyan. No-data em-dash dims the text.
+        let (text, has_data) = match &app.ai_usage_codex {
             Some(u) if u.tokens_today > 0 => (
                 format!(" \u{F1E01} {} ", format_tokens(u.tokens_today)),
-                t.cyan,
+                true,
             ),
-            Some(_) => (" \u{F1E01} 0 ".to_string(), t.comment),
-            None => (" \u{F1E01} … ".to_string(), t.comment),
+            Some(_) => (" \u{F1E01} 0 ".to_string(), true),
+            None => (" \u{F1E01} … ".to_string(), false),
         };
         ai_codex_seg_idx = Some(right.len());
-        // 2026-08-17 user report — built-in chips (AI usage,
-        // coverage) rendered flat on the plain statusline bg,
-        // while dynamic sibling chips got the pill/bg treatment.
-        // Unify by applying the pill shape to built-ins too:
-        // dark fg on the chip's tier color. Consistent visual
-        // language across the whole right cluster.
-        right.push(Seg::new(text, t.bg_darker, fg));
+        let fg = if has_data { t.bg_darker } else { t.comment };
+        right.push(Seg::new(text, fg, t.cyan));
     }
     // Coverage meter — Tattle rollups. Feature % (from
     // `feature-coverage/_trends/trends.json`) always leads; Code %
@@ -991,13 +1128,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let text = format!(" {} C {:.0}%{} ", coverage_glyph(app), c_now, delta);
         coverage_seg_idx = Some(right.len());
-        // 2026-08-17 user report — built-in chips (AI usage,
-        // coverage) rendered flat on the plain statusline bg,
-        // while dynamic sibling chips got the pill/bg treatment.
-        // Unify by applying the pill shape to built-ins too:
-        // dark fg on the chip's tier color. Consistent visual
-        // language across the whole right cluster.
-        right.push(Seg::new(text, t.bg_darker, fg));
+        // #1038 — bg = teal (coverage brand, stable). Delta arrow +
+        // magnitude gets a tier-color bg patch (mini-pill inside).
+        // Empty delta case: no patch, whole chip is dark on teal.
+        let delta_cols = delta.chars().count();
+        let cols = text.chars().count();
+        let mut seg = Seg::new(text, t.bg_darker, t.teal);
+        if delta_cols > 0 {
+            let start = cols - 1 - delta_cols; // strip trailing space + delta width
+            let end = cols - 1;
+            seg = seg.bg_range(start, end, fg);
+        }
+        right.push(seg);
     } else if let Some(f_now) = feature_now {
         let t = theme::cur();
         let (f_delta, fg) = match feature_prev {
@@ -1053,13 +1195,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             code_str
         );
         coverage_seg_idx = Some(right.len());
-        // 2026-08-17 user report — built-in chips (AI usage,
-        // coverage) rendered flat on the plain statusline bg,
-        // while dynamic sibling chips got the pill/bg treatment.
-        // Unify by applying the pill shape to built-ins too:
-        // dark fg on the chip's tier color. Consistent visual
-        // language across the whole right cluster.
-        right.push(Seg::new(text, t.bg_darker, fg));
+        // #1038 — bg = teal (stable). The F delta gets a tier-color
+        // bg patch; if code_now is present, the C delta gets its own
+        // patch too. Multi-range bg via chained bg_range wouldn't
+        // work (single field), so use fg_range to tint the FIRST
+        // delta and bg_range for the SECOND when both are shown.
+        // Simpler for now: only tint the FIRST delta patch. Full
+        // two-patch treatment is a follow-up if the user wants it.
+        let f_delta_cols = f_delta.chars().count();
+        let cols = text.chars().count();
+        let mut seg = Seg::new(text, t.bg_darker, t.teal);
+        if f_delta_cols > 0 {
+            // Locate f_delta at "` F {:.0}%<f_delta>...`".
+            // Compute start by summing widths of everything before it.
+            let head_cols = format!(" {} F {:.0}%", coverage_glyph(app), f_now)
+                .chars()
+                .count();
+            let start = head_cols;
+            let end = start + f_delta_cols;
+            if end <= cols {
+                seg = seg.bg_range(start, end, fg);
+            }
+        }
+        right.push(seg);
     }
     // Now-playing chip — pushed first so it's the leftmost segment of
     // the right cluster (closer to centre). Doubles as the mixr launch
