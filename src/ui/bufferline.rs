@@ -566,14 +566,11 @@ pub fn right_cluster_width(app: &App) -> u16 {
     w += 6;
     for i in 0..app.layouts.len() {
         let dig = (i + 1).to_string().chars().count() as u16;
-        // 2026-07-31 — paint always emits ` {marker}{i+1} ` (space +
-        // marker char + digit(s) + space) whether the tab is clean or
-        // dirty; the marker is either "●" or " " but reserves the same
-        // 1 cell either way. Was `2 + dig + dirty`, which undercounted
-        // every clean tab by 1 cell. With 4-5 tab pages open the `×`
-        // window-close overshot the right edge (user reported clipped
-        // off-screen).
-        w += 3 + dig;
+        // 2026-08-18 (#1020) — paint emits `{marker}{i+1} ` (marker
+        // + digit(s) + space) = 2 + dig cells. Was `3 + dig` when
+        // the paint included a leading space; user asked to tighten
+        // gap from "1   2   3" to "1  2  3".
+        w += 2 + dig;
         if i == app.active_layout {
             w += 2;
         }
@@ -622,7 +619,10 @@ pub fn compact_cluster_width(app: &App) -> u16 {
     if app.layouts.len() >= 2 {
         for i in 0..app.layouts.len() {
             let dig = (i + 1).to_string().chars().count() as u16;
-            w += 3 + dig; // ` <marker><digits> `
+            // 2026-08-18 (#1020) — 2 + dig (marker + digit + trailing
+            // space). Was 3 + dig with a leading space; dropped to
+            // tighten the visual gap between chips.
+            w += 2 + dig;
             if i == app.active_layout {
                 w += 2; // ` × `
             }
@@ -781,8 +781,15 @@ pub fn paint_right_cluster(
             // marker regardless of state so chip widths stay
             // stable. Was: dirty added `●` prefix inline, shifting
             // sibling chips 1 cell every time the marker flipped.
+            //
+            // 2026-08-18 (#1020) — dropped the leading space. Was
+            // ` {marker}{digit} ` (4 cells for 1-digit tab); adjacent
+            // chips rendered with 3 spaces between digits which read
+            // as "1   2   3". Now `{marker}{digit} ` (3 cells) so
+            // adjacent chips render as "1  2  3" — one fewer cell
+            // of gap. Dirty state still gets its marker cell.
             let marker = if dirty { "\u{25CF}" } else { " " };
-            let label = format!(" {marker}{} ", i + 1);
+            let label = format!("{marker}{} ", i + 1);
             let label_w = label.chars().count() as u16;
             let (chip_fg, chip_bg) = if active {
                 (t.bg_darker, t.blue)
