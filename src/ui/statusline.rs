@@ -290,6 +290,7 @@ fn render_single_account_chip(
     u: &crate::ai_usage::ClaudeUsage,
     mode: &str,
     letter_prefix: &str,
+    show_reset: bool,
     t: &theme::Theme,
 ) -> (String, ratatui::style::Color) {
     let prefix = if letter_prefix.is_empty() {
@@ -324,18 +325,72 @@ fn render_single_account_chip(
     } else {
         // Successful fetch. Render per mode; tier color reflects the
         // worst of the shown numbers (0% used ⇒ green).
+        //
+        // #1012 (2026-08-18) — when `show_reset` is true (`[ai]
+        // claude_show_reset = true`), append `⟳<countdown>` after each
+        // percent so the user sees when the window opens back up:
+        // "24%⟳3h 62%⟳4d". No space between % and ⟳ — space would
+        // otherwise inflate width and split the couple visually.
+        let session_r = if show_reset {
+            format_reset_suffix(u.resets_at)
+        } else {
+            String::new()
+        };
+        let weekly_r = if show_reset {
+            format_reset_suffix(u.weekly_resets_at)
+        } else {
+            String::new()
+        };
         let (label, tier_pct) = match mode {
             "weekly" => (
-                format!(" \u{F1E00} {prefix}{}% ", u.weekly_percent),
+                format!(" \u{F1E00} {prefix}{}%{} ", u.weekly_percent, weekly_r),
                 u.weekly_percent,
             ),
             "both" => (
-                format!(" \u{F1E00} {prefix}{}% {}% ", u.percent, u.weekly_percent),
+                format!(
+                    " \u{F1E00} {prefix}{}%{} {}%{} ",
+                    u.percent, session_r, u.weekly_percent, weekly_r
+                ),
                 u.percent.max(u.weekly_percent),
             ),
-            _ => (format!(" \u{F1E00} {prefix}{}% ", u.percent), u.percent),
+            _ => (
+                format!(" \u{F1E00} {prefix}{}%{} ", u.percent, session_r),
+                u.percent,
+            ),
         };
         (label, tier_color(tier_pct, t))
+    }
+}
+
+/// #1012 (2026-08-18) — format the time remaining until `resets_at`
+/// (Unix epoch seconds) as a compact `⟳<n><unit>` suffix. Empty when
+/// `resets_at` is 0 (never fetched) or already past. Uses the largest
+/// unit that fits at 1 digit + a letter, so we render `⟳3h` not
+/// `⟳3h27m` (busy chip real estate on a narrow terminal). Buckets:
+///   <1m         → `⟳<1m`
+///   <60m        → `⟳<n>m`
+///   <24h        → `⟳<n>h`
+///   otherwise   → `⟳<n>d`
+fn format_reset_suffix(resets_at: u64) -> String {
+    if resets_at == 0 {
+        return String::new();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let remaining = resets_at.saturating_sub(now);
+    if remaining == 0 {
+        return String::new();
+    }
+    if remaining < 60 {
+        "\u{27F3}<1m".to_string()
+    } else if remaining < 3600 {
+        format!("\u{27F3}{}m", remaining / 60)
+    } else if remaining < 86_400 {
+        format!("\u{27F3}{}h", remaining / 3600)
+    } else {
+        format!("\u{27F3}{}d", remaining / 86_400)
     }
 }
 
@@ -671,6 +726,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .and_then(|t| t.get("claude_meter_mode"))
             .and_then(|v| v.as_str())
             .unwrap_or("session");
+        // #1012 (2026-08-18) — opt-in `⟳<countdown>` suffix after each
+        // percent. Off by default; a busy statusline user asked for it
+        // so long-running sessions know how many days remain in the
+        // weekly window. Reads from `[ai] claude_show_reset = true`.
+        let show_reset = app
+            .config
+            .ai
+            .as_table()
+            .and_then(|t| t.get("claude_show_reset"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         // Task #944 — tri-state multi-account display. `Off` (default)
         // = active account only. `Compact` = one segment per account
         // (`P40% · W62% · C12%`, worst-tier color) — visible-all-at-
@@ -704,7 +770,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(0);
                 let acc = &app.ai_usage_claude_accounts[idx];
                 let letter = account_abbrev(&acc.name);
-                let (text, fg) = render_single_account_chip(&acc.usage, mode, &letter, &t);
+                let (text, fg) =
+                    render_single_account_chip(&acc.usage, mode, &letter, show_reset, &t);
                 // 2026-08-17 — mark the active account by bolding the
                 // whole chip. Arrow prefix was tried first and dropped
                 // in favor of bold — cleaner, uses the terminal's
@@ -715,7 +782,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let active = app.active_claude_account();
                 let usage_ref = active.map(|a| &a.usage);
                 let (text, fg) = match usage_ref {
-                    Some(u) => render_single_account_chip(u, mode, "", &t),
+                    Some(u) => render_single_account_chip(u, mode, "", show_reset, &t),
                     None => (" \u{F1E00} … ".to_string(), t.comment),
                 };
                 (text, fg, false)
