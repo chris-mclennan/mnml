@@ -1,5 +1,10 @@
+# requires: network
 # http.bench fires a background worker; a second call while the first
 # is still in flight must toast "http.bench already running".
+#
+# Skipped unless MNML_E2E_NETWORK=1 — hits httpbin.org, which
+# CI runners (GH Actions macOS especially) drop often enough to
+# flake the whole suite.
 
 write probe.curl "curl 'https://httpbin.org/get'"
 open probe.curl

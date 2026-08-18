@@ -885,6 +885,26 @@ pub fn run_path(root: &Path) -> (Vec<TestOutcome>, bool) {
         }
     }
     files.sort();
+
+    // Network opt-in gate (#1042). A `.test` file whose top-of-file
+    // comment block contains `# requires: network` is skipped unless
+    // MNML_E2E_NETWORK=1. Reason: CI runners (especially GH Actions
+    // macOS) drop external HTTPS often enough that a single httpbin
+    // fetch flakes the whole suite. Devs running the full suite
+    // locally can `MNML_E2E_NETWORK=1 cargo test`; project CI sets
+    // this in the workflow when we want it. See MNML_E2E_ALLOW_SHELL
+    // (same idiom, different resource).
+    let network_ok = std::env::var("MNML_E2E_NETWORK").as_deref() == Ok("1");
+    if !network_ok {
+        files.retain(|p| {
+            if requires_network(p) {
+                println!("⊘ e2e SKIP (network opt-in): {}", p.display());
+                false
+            } else {
+                true
+            }
+        });
+    }
     let per_file_timeout = std::env::var("MNML_E2E_FILE_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -896,6 +916,39 @@ pub fn run_path(root: &Path) -> (Vec<TestOutcome>, bool) {
         .collect();
     let all_passed = outcomes.iter().all(|o| o.passed);
     (outcomes, all_passed)
+}
+
+/// True when `path`'s top-of-file comment block declares the test
+/// as requiring external network access. Format:
+///
+/// ```text
+/// # requires: network
+/// # (rest of file)
+/// ```
+///
+/// Only lines before the first non-comment, non-blank line are
+/// consulted — the marker MUST be in the file header, not buried
+/// mid-script. See #1042 for context.
+fn requires_network(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !trimmed.starts_with('#') {
+            // First real statement — header block ended.
+            return false;
+        }
+        // Compare after stripping `#` + any whitespace.
+        let after_hash = trimmed.trim_start_matches('#').trim();
+        if after_hash.eq_ignore_ascii_case("requires: network") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Wrap [`run_test`] with a hard wall-clock deadline. On timeout the
