@@ -438,7 +438,15 @@ fn paint_mode_chip_and_split_buttons(frame: &mut Frame, app: &mut App, area: Rec
     // continuity: your first tab starts here, click to fill it.
     // Once a pane exists, the row hides entirely and the per-leaf
     // strip's own `+` takes over.
-    if app.panes.is_empty() {
+    //
+    // 2026-08-18 (#1019) — check the ACTIVE layout's emptiness, not
+    // the global pane pool. Was: `app.panes.is_empty()` which only
+    // fired on first-launch (fresh workspace, zero panes total). A
+    // user clicking `+` in the top-right to open a new desktop tab
+    // creates an Empty layout — but `app.panes` still has the OTHER
+    // tab's panes, so the empty-state `+` never appeared. Now we
+    // fire when the current tab's layout has no leaves.
+    if matches!(app.layout(), crate::layout::Layout::Empty) {
         let nerd = !app.config.ui.ascii_icons;
         let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
         let plus_w = 3u16;
