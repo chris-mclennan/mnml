@@ -4164,10 +4164,18 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // axis from Official (authorship) — a Community integration
             // could also be Verified once we've used it. Sits after the
             // Official/Community chip.
+            //
+            // 2026-08-18 (R8-D-critic HIGH) — glyph + color differ from
+            // Official so the two chips are visually distinguishable at
+            // a glance. Star (yellow) reads as "maintainer-vouched
+            // quality badge"; checkmark green stayed on Official
+            // (provenance-as-verifiable-truth). Prior render was two
+            // adjacent `✓` chips in identical green — indistinguishable
+            // as separate concepts.
             if entry.verified {
                 name_spans.push(Span::styled(
-                    "  ✓ Verified".to_string(),
-                    Style::default().fg(t.green).bg(bg),
+                    "  ★ Verified".to_string(),
+                    Style::default().fg(t.yellow).bg(bg),
                 ));
             }
             // 2026-08-15 — `[Private]` chip for CargoGit installs
