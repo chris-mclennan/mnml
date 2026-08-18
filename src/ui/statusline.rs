@@ -84,9 +84,10 @@ struct Seg {
     /// two neighbors happen to hit the same green/yellow/red.
     fg_range: Option<(usize, usize, Color)>,
     /// #1038 — same shape as `fg_range`, but overrides the bg
-    /// on that range. Produces a mini-pill INSIDE the chip
-    /// (e.g. tier-colored numbers on the chip's brand bg). Bg
-    /// is higher-contrast than fg for narrow status glyphs.
+    /// on that range. Produces a mini-pill INSIDE the chip.
+    /// Currently unused (fg tint reads better than a bg patch —
+    /// see 2026-08-18 f/u) but the composition machinery in
+    /// `to_spans` still honors it if a future chip sets it.
     bg_range: Option<(usize, usize, Color)>,
 }
 
@@ -132,6 +133,10 @@ impl Seg {
     }
     /// #1038 — same shape but overrides bg. Emits a colored
     /// mini-pill inside the chip. Zero-width → no override.
+    /// Currently unused (the "mini-pill inside a pill" look tested
+    /// weird — chips settled on fg_range for tier color) but kept
+    /// for future chip designs where a bg patch might read better.
+    #[allow(dead_code)]
     fn bg_range(mut self, start: usize, end: usize, color: Color) -> Self {
         if end > start {
             self.bg_range = Some((start, end, color));
@@ -992,6 +997,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // scoped so the outer bg stays brand-stable. When there's
         // no numeric span (error / no-data em-dash), the whole chip
         // uses the tier fg on the brand bg.
+        //
+        // 2026-08-18 f/u: was `bg_range` (tier bg-patch inside the
+        // chip) — visually read as a "mini-pill nested inside a
+        // pill" because the sharp bg-edge inside the brand pill
+        // looked like a separate chip. Switched to `fg_range`:
+        // numbers get colored TEXT on the brand bg instead of a
+        // colored patch. Same info-density, no nested rectangle.
         let base_fg = if claude_render.tier_range.is_none() {
             claude_render.tier_fg
         } else {
@@ -999,7 +1011,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let mut seg = Seg::new(claude_render.text, base_fg, t.orange);
         if let Some((s, e)) = claude_render.tier_range {
-            seg = seg.bg_range(s, e, claude_render.tier_fg);
+            seg = seg.fg_range(s, e, claude_render.tier_fg);
         }
         let (u_start, u_end) = claude_render.underline;
         seg = seg.underline_range(u_start, u_end);
@@ -1137,7 +1149,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if delta_cols > 0 {
             let start = cols - 1 - delta_cols; // strip trailing space + delta width
             let end = cols - 1;
-            seg = seg.bg_range(start, end, fg);
+            seg = seg.fg_range(start, end, fg);
         }
         right.push(seg);
     } else if let Some(f_now) = feature_now {
@@ -1214,7 +1226,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let start = head_cols;
             let end = start + f_delta_cols;
             if end <= cols {
-                seg = seg.bg_range(start, end, fg);
+                seg = seg.fg_range(start, end, fg);
             }
         }
         right.push(seg);
