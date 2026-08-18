@@ -141,15 +141,15 @@ use crate::layout::{Layout, SplitDir, split_rects};
 /// expand_indicator` (`"chevron"` default, `"triangle"` alt). Used
 /// across the ~4 mnml-core render sites that draw a section header
 /// with an expand affordance (diff hunks, DAP debug pane, DAP REPL,
-/// help overlay sections). File tree has its own chevron helper
-/// (`section_chev` in `tree_view.rs`) — it doesn't consult this pref
-/// yet because it defaults to chevron already; a follow-up unifies.
+/// help overlay sections). File tree has its own helper
+/// (`section_chev_with_pref` in `tree_view.rs`) that consults the
+/// same pref, so triangle mode is a whole-app swap as of #970.
 ///
 /// Chevron mode uses Nerd Font glyphs (`U+F460` / `U+F47C` — same as
-/// `tree_view::section_chev`) unless `[ui] ascii_icons = true`, in
-/// which case it falls back to ASCII `>`/`v`. Triangle mode uses
-/// small filled triangles (`▸`/`▾`) regardless of ascii mode — those
-/// are BMP glyphs available everywhere.
+/// `tree_view::section_chev_with_pref`) unless `[ui] ascii_icons =
+/// true`, in which case it falls back to ASCII `>`/`v`. Triangle
+/// mode uses small filled triangles (`▸`/`▾`) regardless of ascii
+/// mode — those are BMP glyphs available everywhere.
 pub fn expand_glyph(app: &App, expanded: bool) -> &'static str {
     let use_triangle = app.config.ui.expand_indicator == "triangle";
     let nerd = !app.config.ui.ascii_icons;

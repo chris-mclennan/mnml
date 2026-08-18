@@ -1126,13 +1126,7 @@ fn draw_workspace_files(
         // (VS Code / NvChad tree style) while the folder/file icon keeps
         // its devicon color.
         let (chev_part, icon_part) = if nerd && row.is_dir {
-            let c = if triangle {
-                if row.is_expanded { "▾" } else { "▸" }
-            } else if row.is_expanded {
-                CHEVRON_OPEN
-            } else {
-                CHEVRON_CLOSED
-            };
+            let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{indent}{c} "), format!("{glyph} "))
         } else if nerd {
             // File row — pad the chevron column with spaces so icons
@@ -1493,13 +1487,7 @@ fn draw_extra_workspace_section(
         };
         let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
         let (chev_part, icon_part) = if nerd && row.is_dir {
-            let c = if triangle {
-                if row.is_expanded { "▾" } else { "▸" }
-            } else if row.is_expanded {
-                CHEVRON_OPEN
-            } else {
-                CHEVRON_CLOSED
-            };
+            let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{indent}{c} "), format!("{glyph} "))
         } else if nerd {
             (format!("{indent}  "), format!("{glyph} "))
