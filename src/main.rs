@@ -769,6 +769,17 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if !app.config.ui.first_launch_complete {
         app.open_first_launch();
     }
+    // Task #975 (2026-08-17) — deprecation notice when a user has BOTH
+    // the new `[ai.routing.claude]` key AND the legacy `[ai] backend`.
+    // The new key silently wins in `configured_backend`; surface the
+    // fact so the legacy line can be deleted at leisure. Toast +
+    // eprintln so it lands in both the visible UI and any log tail.
+    if mnml::ai::has_legacy_and_new_claude(&app.config.ai) {
+        let msg = "[ai] backend is deprecated — [ai.routing.claude] backend wins. \
+                   Delete the legacy key to silence this notice.";
+        eprintln!("mnml: {msg}");
+        app.toast(msg);
+    }
     // If we just came back from `app.reset_to_defaults`, the fresh
     // ~/.config/mnml/ has a `.last-reset-from` marker pointing at
     // the backup — surface it as a persistent toast with the restore

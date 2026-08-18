@@ -197,7 +197,14 @@ fn render_lines<'a>(
             out.push((body_line(&wrapped, t), None));
         }
         // Interactive row(s) per section.
-        for row in section_widgets(*section, &state.answers, app, t) {
+        for row in section_widgets(
+            *section,
+            &state.answers,
+            app,
+            t,
+            state.focused_ai_route_row,
+            focused,
+        ) {
             out.push(row);
         }
         out.push((spacer(t), None));
@@ -258,6 +265,9 @@ fn body_line<'a>(text: &str, t: &theme::Theme) -> Line<'a> {
 }
 
 fn footer<'a>(t: &theme::Theme) -> Line<'a> {
+    // Six sections now (task #975 added AI billing preference). The
+    // digit hint keeps its 1-6 range — the parser at
+    // `handle_first_launch_key` already accepts `1..='6'`.
     let text = "   [1-6] jump section  · [↑↓] move  · [Enter] Finish  · [Esc] Ask me later";
     let padded = pad_to(text, INNER_W as usize);
     Line::from(Span::styled(
@@ -274,6 +284,8 @@ fn section_widgets<'a>(
     answers: &crate::app::first_launch::WizardAnswers,
     app: &App,
     t: &theme::Theme,
+    focused_ai_route_row: usize,
+    section_focused: bool,
 ) -> Vec<(Line<'a>, Option<FirstLaunchHit>)> {
     match section {
         WizardSection::AiBackend => radio_rows(
@@ -352,6 +364,38 @@ fn section_widgets<'a>(
             }
             out
         }
+        WizardSection::AiRouting => {
+            // Two rows — Claude Code (Sub / API / Off) and Codex
+            // (Sub / Off). Same visual as the input-style radio but
+            // arranged inline (label + Sub | API | Off chips) so both
+            // rows fit at 74 cells. The row currently focused shows a
+            // `▸` marker; ←/→/h/l cycle its choices. Empty answer
+            // means Auto — rendered as an unmarked `[Auto]` chip.
+            let mut out: Vec<(Line<'a>, Option<FirstLaunchHit>)> = Vec::new();
+            let claude_focused = section_focused && focused_ai_route_row == 0;
+            let codex_focused = section_focused && focused_ai_route_row == 1;
+            out.push((
+                ai_routing_row(
+                    "Claude Code:",
+                    &answers.route_claude,
+                    &[("", "Auto"), ("sub", "Sub"), ("api", "API"), ("off", "Off")],
+                    claude_focused,
+                    t,
+                ),
+                None,
+            ));
+            out.push((
+                ai_routing_row(
+                    "Codex:",
+                    &answers.route_codex,
+                    &[("", "Auto"), ("sub", "Sub"), ("off", "Off")],
+                    codex_focused,
+                    t,
+                ),
+                None,
+            ));
+            out
+        }
         WizardSection::ClaudeCode => vec![
             (
                 badge_row(
@@ -370,6 +414,68 @@ fn section_widgets<'a>(
             vec![(badge_row("`code` on PATH", answers.vscode_shim_ok, t), None)]
         }
     }
+}
+
+/// Single-line horizontal-chip row for the AI-routing section
+/// (task #975, 2026-08-17). Shape:
+///
+/// ```text
+///      ▸ Claude Code:   [Sub]  API   Off   Auto
+/// ```
+///
+/// The `▸` marker is drawn only when this row is focused (so a user
+/// sees which of Claude / Codex their ←/→ will cycle); the current
+/// choice is bracketed and colored green. Empty `current` maps to the
+/// `""` entry in `options`, which we style as "Auto".
+fn ai_routing_row<'a>(
+    label: &str,
+    current: &str,
+    options: &[(&str, &str)],
+    focused: bool,
+    t: &theme::Theme,
+) -> Line<'a> {
+    let marker = if focused { "▸" } else { " " };
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    spans.push(Span::styled(
+        format!("    {marker} {label:<14}  "),
+        Style::default()
+            .fg(if focused { t.cyan } else { t.fg })
+            .bg(t.bg_dark)
+            .add_modifier(if focused {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+    ));
+    for (i, (key, label)) in options.iter().enumerate() {
+        let is_current = *key == current;
+        let chip = if is_current {
+            format!("[{label}]")
+        } else {
+            format!(" {label} ")
+        };
+        let style = if is_current {
+            Style::default()
+                .fg(t.green)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.comment).bg(t.bg_dark)
+        };
+        spans.push(Span::styled(chip, style));
+        if i + 1 < options.len() {
+            spans.push(Span::styled(" ", Style::default().bg(t.bg_dark)));
+        }
+    }
+    // Pad to inner width so the row's bg fills the modal.
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    if used < INNER_W as usize {
+        spans.push(Span::styled(
+            " ".repeat(INNER_W as usize - used),
+            Style::default().bg(t.bg_dark),
+        ));
+    }
+    Line::from(spans)
 }
 
 /// One row per option, `●` for selected / `○` for unselected. Vertical

@@ -10,13 +10,15 @@
 //!
 //! ## Design
 //!
-//! Single scrollable overlay, 5 sections top-to-bottom:
+//! Single scrollable overlay, 6 sections top-to-bottom:
 //! 1. AI ghost-text backend (Claude API / Local / Skip)
 //! 2. Input style (standard / vim — standard is the default)
 //! 3. Nerd Font check (Yes / No — diagnostic only)
-//! 4. Claude Code + Codex CLI (detection badges + shell-installer
+//! 4. AI billing preference (per-product routing — task #975,
+//!    2026-08-17): Claude Code Sub/API/Off + Codex Sub/Off
+//! 5. Claude Code + Codex CLI (detection badges + shell-installer
 //!    action per `curl … | sh` docs, 2026-08-11 verified)
-//! 5. VSCode `code` shim (detection badge; symlink helper)
+//! 6. VSCode `code` shim (detection badge; symlink helper)
 //!
 //! (Process monitors section removed 2026-08-11 — was inline
 //! btop/htop/iftop checkboxes; discovered via the marketplace pane
@@ -27,12 +29,28 @@
 
 use super::*;
 
+/// Read the DECLARED `[ai.routing.<product>] backend` value from the
+/// config, if set. `None` when unset — the wizard treats that as "leave
+/// the resolved default alone" (the Auto radio in the UI). Task #975.
+fn declared_route(ai: &toml::Value, product: crate::ai::AiProduct) -> String {
+    ai.get("routing")
+        .and_then(|r| r.get(product.key()))
+        .and_then(|p| p.get("backend"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
 /// Which section the user is focused on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WizardSection {
     AiBackend,
     InputStyle,
     NerdFont,
+    /// Per-product routing — task #975 (2026-08-17). Two rows inside
+    /// (Claude Code + Codex); `focused_ai_route_row` tracks which
+    /// one the caret is on.
+    AiRouting,
     ClaudeCode,
     VscodeShim,
 }
@@ -42,6 +60,7 @@ impl WizardSection {
         Self::AiBackend,
         Self::InputStyle,
         Self::NerdFont,
+        Self::AiRouting,
         Self::ClaudeCode,
         Self::VscodeShim,
     ];
@@ -51,6 +70,7 @@ impl WizardSection {
             Self::AiBackend => "AI ghost-text",
             Self::InputStyle => "Input style",
             Self::NerdFont => "Nerd Font",
+            Self::AiRouting => "AI billing preference",
             Self::ClaudeCode => "Claude Code + Codex",
             Self::VscodeShim => "VSCode `code` shim",
         }
@@ -75,6 +95,13 @@ impl WizardSection {
                  font isn't a Nerd Font. Press Space to auto-install Symbols \
                  Nerd Font Mono (brew / winget / curl per OS) — you'll still \
                  need to point your terminal at the new font and restart it."
+            }
+            Self::AiRouting => {
+                "For each AI product below, tell mnml where to route calls. \
+                 Subscription = reuses your Max/Pro / ChatGPT Plus plan via the \
+                 vendor's own CLI (no per-token charge). API = billed against your \
+                 pay-per-token console budget (needs $ANTHROPIC_API_KEY). Off = \
+                 hide the chips + disable the commands for that product entirely."
             }
             Self::ClaudeCode => {
                 "The two AI CLIs mnml integrates most deeply with. Not installed = \
@@ -106,6 +133,19 @@ pub struct WizardAnswers {
     /// User self-reports whether Nerd glyphs render: `Some(true)` /
     /// `Some(false)` / `None` (unanswered).
     pub nerd_font_ok: Option<bool>,
+    /// Per-product routing (task #975, 2026-08-17). One of "sub",
+    /// "api", "off", or "" (leave the resolved default alone).
+    /// Persists to `[ai.routing.claude] backend = ...`.
+    pub route_claude: String,
+    /// Sibling to `route_claude`. One of "sub", "off", or "" (Codex
+    /// has no API-passthrough today, so "api" isn't offered). Persists
+    /// to `[ai.routing.codex] backend = ...`.
+    pub route_codex: String,
+    /// True once the user has actively cycled either AI-routing row —
+    /// same guard as `input_style_touched`. Prevents a returning user
+    /// who reopens the wizard from silently overwriting their existing
+    /// `[ai.routing.*]` pins by hitting Enter without visiting the row.
+    pub ai_routing_touched: bool,
     /// Deferred to Phase 2 — install actions. In P1 these carry the
     /// detected-installed state as a hint for the renderer.
     pub claude_code_installed: bool,
@@ -118,6 +158,12 @@ pub struct WizardAnswers {
 pub struct FirstLaunchState {
     pub focused_section: usize,
     pub answers: WizardAnswers,
+    /// Row index inside the AI-routing section (0 = Claude, 1 = Codex).
+    /// Sections without inner rows ignore this. Tracked because the
+    /// AI-routing section has TWO rows the user can independently
+    /// cycle. j/k move rows within the section; the section-move
+    /// arrows (up/down at section boundaries) still cycle sections.
+    pub focused_ai_route_row: usize,
 }
 
 impl FirstLaunchState {
@@ -125,6 +171,7 @@ impl FirstLaunchState {
         Self {
             focused_section: 0,
             answers: WizardAnswers::default(),
+            focused_ai_route_row: 0,
         }
     }
 
@@ -137,6 +184,9 @@ impl FirstLaunchState {
         let cur = self.focused_section as i32;
         let next = (cur + delta).rem_euclid(len);
         self.focused_section = next as usize;
+        // Reset the AI-route sub-row when leaving/re-entering; matches
+        // the "top row when a section becomes focused" convention.
+        self.focused_ai_route_row = 0;
     }
 }
 
@@ -186,11 +236,21 @@ impl App {
         } else {
             self.config.editor.input_style.clone()
         };
+        // Pre-select each AI-routing row from the DECLARED config
+        // choice (not the resolved one) so a returning user sees their
+        // pinned selection. Empty when the key isn't set — the "Auto"
+        // radio shown in the overlay maps to "" here so the wizard's
+        // touched-guard keeps the file untouched on Finish.
+        let route_claude = declared_route(&self.config.ai, crate::ai::AiProduct::Claude);
+        let route_codex = declared_route(&self.config.ai, crate::ai::AiProduct::Codex);
         WizardAnswers {
             ai_backend,
             input_style,
             input_style_touched: false,
             nerd_font_ok: None,
+            route_claude,
+            route_codex,
+            ai_routing_touched: false,
             claude_code_installed: crate::integration_detect::is_binary_installed("claude"),
             codex_installed: crate::integration_detect::is_binary_installed("codex"),
             vscode_shim_ok: crate::integration_detect::is_binary_installed("code"),
@@ -266,6 +326,30 @@ impl App {
                 errs.push(format!("editor.input_style: {e}"));
             }
         }
+        // AI billing preference (task #975). Same touched-guard as
+        // input_style so a returning user can't have their existing
+        // pins silently rewritten by hitting Enter. Empty value =
+        // "Auto" radio in the UI = clear any pin (but we don't rewrite
+        // the file in that case — leaving keys undefined is what Auto
+        // means at the config level).
+        if state.answers.ai_routing_touched {
+            for (product, choice) in [
+                ("claude", state.answers.route_claude.as_str()),
+                ("codex", state.answers.route_codex.as_str()),
+            ] {
+                if choice.is_empty() {
+                    continue;
+                }
+                if let Err(e) = crate::app::discovery::persist_ai_routing(product, choice) {
+                    errs.push(format!("ai.routing.{product}: {e}"));
+                    continue;
+                }
+                // Reflect the change in the live in-memory config so
+                // the next-tick chip / gate behaviour matches without
+                // a restart.
+                self.write_live_ai_routing(product, choice);
+            }
+        }
         self.config.ui.first_launch_complete = true;
         if let Err(e) = persist_ui_bool("first_launch_complete", true) {
             errs.push(format!("ui.first_launch_complete: {e}"));
@@ -294,6 +378,59 @@ impl App {
         if let Some(s) = self.first_launch.as_mut() {
             s.answers.input_style = choice.to_string();
             s.answers.input_style_touched = true;
+        }
+    }
+
+    /// Set the wizard's Claude routing pick. `choice` is "sub" / "api"
+    /// / "off" / "" (empty = Auto — leave existing pin alone). Sets
+    /// the touched-guard so Finish knows to persist. Task #975.
+    pub fn wizard_set_route_claude(&mut self, choice: &str) {
+        if let Some(s) = self.first_launch.as_mut() {
+            s.answers.route_claude = choice.to_string();
+            s.answers.ai_routing_touched = true;
+        }
+    }
+
+    /// Sibling to `wizard_set_route_claude` for Codex. Task #975.
+    pub fn wizard_set_route_codex(&mut self, choice: &str) {
+        if let Some(s) = self.first_launch.as_mut() {
+            s.answers.route_codex = choice.to_string();
+            s.answers.ai_routing_touched = true;
+        }
+    }
+
+    /// Mirror a persisted `[ai.routing.<product>] backend = <choice>`
+    /// into the live `self.config.ai` toml tree so the next-tick
+    /// chip / gate behavior matches without a full restart. The
+    /// on-disk write is done by `persist_ai_routing`; this is the
+    /// in-memory twin.
+    pub(super) fn write_live_ai_routing(&mut self, product: &str, choice: &str) {
+        if !self.config.ai.is_table() {
+            self.config.ai = toml::Value::Table(toml::value::Table::new());
+        }
+        let Some(ai_tbl) = self.config.ai.as_table_mut() else {
+            return;
+        };
+        let routing = ai_tbl
+            .entry("routing".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        if !routing.is_table() {
+            *routing = toml::Value::Table(toml::value::Table::new());
+        }
+        let Some(routing_tbl) = routing.as_table_mut() else {
+            return;
+        };
+        let product_tbl = routing_tbl
+            .entry(product.to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        if !product_tbl.is_table() {
+            *product_tbl = toml::Value::Table(toml::value::Table::new());
+        }
+        if let Some(t) = product_tbl.as_table_mut() {
+            t.insert(
+                "backend".to_string(),
+                toml::Value::String(choice.to_string()),
+            );
         }
     }
 

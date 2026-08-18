@@ -104,6 +104,166 @@ impl SuggestBackend {
     }
 }
 
+/// A generic AI product mnml routes to. Currently Claude (Anthropic —
+/// Claude Code CLI + Anthropic API) and Codex (OpenAI's `codex exec`).
+/// The routing schema (`[ai.routing.<product>]`) lets each product be
+/// pinned to a backend independently. Task #975 (2026-08-17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiProduct {
+    Claude,
+    Codex,
+}
+
+impl AiProduct {
+    /// The TOML key under `[ai.routing]` for this product.
+    pub fn key(self) -> &'static str {
+        match self {
+            AiProduct::Claude => "claude",
+            AiProduct::Codex => "codex",
+        }
+    }
+    /// The binary that would provide the "sub" backend for this product.
+    pub fn sub_binary(self) -> &'static str {
+        match self {
+            AiProduct::Claude => "claude",
+            AiProduct::Codex => "codex",
+        }
+    }
+}
+
+/// A user's declared routing choice for one AI product.
+///
+/// - `Sub`: force the subscription (CLI) path; error if the binary is
+///   missing.
+/// - `Api`: force the direct-API path; error if `$ANTHROPIC_API_KEY` is
+///   missing. Only meaningful for Claude today — Codex has no API
+///   passthrough in mnml.
+/// - `Auto`: detect the binary on PATH. Sub if found, else Api if the
+///   env key is set, else Sub (the failure surfaces on first call with
+///   the actionable "run `claude` to sign in" toast, which is the same
+///   behaviour as an explicit `Sub` choice on a fresh machine).
+/// - `Off`: disable AI features for this product entirely. Chips + menu
+///   items hide; commands become no-ops with a targeted toast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingBackend {
+    Sub,
+    Api,
+    Auto,
+    Off,
+}
+
+impl RoutingBackend {
+    pub fn parse(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "sub" | "subscription" | "cli" | "cc" | "claude-code" => RoutingBackend::Sub,
+            "api" | "http" | "direct" | "claude-api" => RoutingBackend::Api,
+            "off" | "disable" | "disabled" => RoutingBackend::Off,
+            _ => RoutingBackend::Auto,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RoutingBackend::Sub => "sub",
+            RoutingBackend::Api => "api",
+            RoutingBackend::Auto => "auto",
+            RoutingBackend::Off => "off",
+        }
+    }
+}
+
+/// The `Auto` variant resolved against the current machine. Every code
+/// path that fires an AI request switches on this — never on the raw
+/// declared choice — so the auto detection stays in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedBackend {
+    Sub,
+    Api,
+    Off,
+}
+
+/// Read the DECLARED routing choice for `product` from the `[ai]`
+/// table. Pure — no PATH probes, no env reads. Testable off a synthetic
+/// toml value. `resolve_backend` layers the auto-detection on top.
+///
+/// Precedence:
+/// 1. `[ai.routing.<product>] backend = "..."` (the new key) wins.
+/// 2. Fall back to the legacy `[ai] backend` key, Claude only:
+///    `"cli"` → `Sub`, `"api"` → `Api`, anything else → `Auto`.
+/// 3. Codex has no legacy key — its default is `Auto`.
+pub fn configured_backend(ai: &toml::Value, product: AiProduct) -> RoutingBackend {
+    if let Some(s) = ai
+        .get("routing")
+        .and_then(|r| r.get(product.key()))
+        .and_then(|p| p.get("backend"))
+        .and_then(|v| v.as_str())
+    {
+        return RoutingBackend::parse(s);
+    }
+    match product {
+        AiProduct::Claude => match ai.get("backend").and_then(|v| v.as_str()) {
+            Some(s) => {
+                let low = s.to_ascii_lowercase();
+                match low.as_str() {
+                    "api" | "http" | "direct" => RoutingBackend::Api,
+                    "cli" | "sub" | "subscription" | "cc" | "claude-code" => RoutingBackend::Sub,
+                    "off" | "disable" | "disabled" => RoutingBackend::Off,
+                    _ => RoutingBackend::Auto,
+                }
+            }
+            None => RoutingBackend::Auto,
+        },
+        AiProduct::Codex => RoutingBackend::Auto,
+    }
+}
+
+/// True when the user has BOTH the new `[ai.routing.claude] backend`
+/// key AND the legacy `[ai] backend` key set. Startup uses this to
+/// emit a one-line deprecation warning so users know the new key
+/// silently wins. Only checked for Claude (Codex has no legacy key).
+pub fn has_legacy_and_new_claude(ai: &toml::Value) -> bool {
+    let new = ai
+        .get("routing")
+        .and_then(|r| r.get("claude"))
+        .and_then(|p| p.get("backend"))
+        .is_some();
+    let legacy = ai.get("backend").is_some();
+    new && legacy
+}
+
+/// Resolve `configured_backend(ai, product)` against the current
+/// machine. Turns `Auto` into a concrete `Sub` or `Api` by probing
+/// `PATH` for the sub binary and `$ANTHROPIC_API_KEY` for the API
+/// fallback (Claude only — Codex `Auto` is always `Sub`, since mnml
+/// has no Codex-API path). `Off` and explicit `Sub` / `Api` pass
+/// through untouched.
+pub fn resolve_backend(ai: &toml::Value, product: AiProduct) -> ResolvedBackend {
+    match configured_backend(ai, product) {
+        RoutingBackend::Sub => ResolvedBackend::Sub,
+        RoutingBackend::Api => ResolvedBackend::Api,
+        RoutingBackend::Off => ResolvedBackend::Off,
+        RoutingBackend::Auto => match product {
+            AiProduct::Claude => {
+                let has_bin = crate::integration_detect::is_binary_installed("claude");
+                let has_key = std::env::var("ANTHROPIC_API_KEY")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .is_some();
+                if has_bin {
+                    ResolvedBackend::Sub
+                } else if has_key {
+                    ResolvedBackend::Api
+                } else {
+                    // No detection wins; default to sub so the first
+                    // call surfaces the "run `claude` to sign in"
+                    // toast rather than silently failing under Api.
+                    ResolvedBackend::Sub
+                }
+            }
+            AiProduct::Codex => ResolvedBackend::Sub,
+        },
+    }
+}
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -743,5 +903,166 @@ mod tests {
         let p = action_prompt("write_tests", "def f(): pass", "python");
         assert!(p.contains("```python"));
         assert!(p.to_lowercase().contains("test"));
+    }
+
+    // ── Per-product routing (task #975) ─────────────────────────────
+
+    fn ai_from(s: &str) -> toml::Value {
+        toml::from_str::<toml::Value>(s).unwrap()
+    }
+
+    #[test]
+    fn configured_backend_defaults_to_auto_when_empty() {
+        let ai = ai_from("");
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Claude),
+            RoutingBackend::Auto
+        );
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Codex),
+            RoutingBackend::Auto
+        );
+    }
+
+    #[test]
+    fn configured_backend_reads_new_key_per_product() {
+        let ai = ai_from(
+            r#"
+            [routing.claude]
+            backend = "sub"
+            [routing.codex]
+            backend = "off"
+            "#,
+        );
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Claude),
+            RoutingBackend::Sub
+        );
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Codex),
+            RoutingBackend::Off
+        );
+    }
+
+    #[test]
+    fn configured_backend_migrates_legacy_backend_key_for_claude() {
+        // Legacy `[ai] backend = "cli"` → Sub for Claude.
+        let ai = ai_from(r#"backend = "cli""#);
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Claude),
+            RoutingBackend::Sub
+        );
+        // Codex isn't governed by the legacy key — stays Auto.
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Codex),
+            RoutingBackend::Auto
+        );
+        // Legacy `[ai] backend = "api"` → Api for Claude.
+        let ai = ai_from(r#"backend = "api""#);
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Claude),
+            RoutingBackend::Api
+        );
+    }
+
+    #[test]
+    fn configured_backend_new_key_wins_over_legacy() {
+        // New key set → legacy is ignored, new value wins.
+        let ai = ai_from(
+            r#"
+            backend = "api"
+            [routing.claude]
+            backend = "sub"
+            "#,
+        );
+        assert_eq!(
+            configured_backend(&ai, AiProduct::Claude),
+            RoutingBackend::Sub
+        );
+        assert!(has_legacy_and_new_claude(&ai));
+    }
+
+    #[test]
+    fn has_legacy_and_new_flags_dual_config_only() {
+        // Only legacy — no flag.
+        let ai = ai_from(r#"backend = "cli""#);
+        assert!(!has_legacy_and_new_claude(&ai));
+        // Only new — no flag.
+        let ai = ai_from(
+            r#"[routing.claude]
+backend = "sub""#,
+        );
+        assert!(!has_legacy_and_new_claude(&ai));
+        // Both — flag.
+        let ai = ai_from(
+            r#"
+            backend = "cli"
+            [routing.claude]
+            backend = "api"
+            "#,
+        );
+        assert!(has_legacy_and_new_claude(&ai));
+    }
+
+    #[test]
+    fn routing_backend_parse_covers_synonyms() {
+        assert_eq!(RoutingBackend::parse("sub"), RoutingBackend::Sub);
+        assert_eq!(RoutingBackend::parse("subscription"), RoutingBackend::Sub);
+        assert_eq!(RoutingBackend::parse("cli"), RoutingBackend::Sub);
+        assert_eq!(RoutingBackend::parse("cc"), RoutingBackend::Sub);
+        assert_eq!(RoutingBackend::parse("claude-code"), RoutingBackend::Sub);
+        assert_eq!(RoutingBackend::parse("api"), RoutingBackend::Api);
+        assert_eq!(RoutingBackend::parse("claude-api"), RoutingBackend::Api);
+        assert_eq!(RoutingBackend::parse("http"), RoutingBackend::Api);
+        assert_eq!(RoutingBackend::parse("off"), RoutingBackend::Off);
+        assert_eq!(RoutingBackend::parse("disabled"), RoutingBackend::Off);
+        assert_eq!(RoutingBackend::parse(""), RoutingBackend::Auto);
+        assert_eq!(RoutingBackend::parse("nonsense"), RoutingBackend::Auto);
+        assert_eq!(RoutingBackend::parse("auto"), RoutingBackend::Auto);
+    }
+
+    #[test]
+    fn resolve_backend_passes_explicit_choices_through() {
+        // Explicit off / sub / api never touch the auto detector, so
+        // this test is deterministic regardless of the host machine.
+        let ai = ai_from(
+            r#"[routing.claude]
+backend = "off""#,
+        );
+        assert_eq!(
+            resolve_backend(&ai, AiProduct::Claude),
+            ResolvedBackend::Off
+        );
+        let ai = ai_from(
+            r#"[routing.claude]
+backend = "sub""#,
+        );
+        assert_eq!(
+            resolve_backend(&ai, AiProduct::Claude),
+            ResolvedBackend::Sub
+        );
+        let ai = ai_from(
+            r#"[routing.claude]
+backend = "api""#,
+        );
+        assert_eq!(
+            resolve_backend(&ai, AiProduct::Claude),
+            ResolvedBackend::Api
+        );
+        let ai = ai_from(
+            r#"[routing.codex]
+backend = "off""#,
+        );
+        assert_eq!(resolve_backend(&ai, AiProduct::Codex), ResolvedBackend::Off);
+    }
+
+    #[test]
+    fn resolve_backend_migrates_legacy_cli_to_sub() {
+        // No auto detection involved — legacy `cli` maps directly to Sub.
+        let ai = ai_from(r#"backend = "cli""#);
+        assert_eq!(
+            resolve_backend(&ai, AiProduct::Claude),
+            ResolvedBackend::Sub
+        );
     }
 }

@@ -1315,14 +1315,28 @@ impl App {
     /// Read the user's `[ai] backend = "cli" | "api"` setting. Default
     /// `Cli` (no surprises for users without an API key set).
     /// `[ai] inline_suggestions` — whether Cursor-style AI ghost-text
-    /// fires as you type. Off by default (it costs API tokens per
-    /// suggestion). Toggle at runtime via `ai.toggle_inline_suggestions`.
+    /// fires as you type. Defaults to **on** (task #974, 2026-08-17)
+    /// now that the default AI backend is `cli` / `claude-code` (sub-
+    /// backed via the Keychain OAuth token — no per-keystroke API
+    /// billing). Existing users with an explicit `inline_suggestions =
+    /// false` in their config keep it off (defaults only kick in when
+    /// the key is absent). Also automatically disabled when the Claude
+    /// product is routed `off` (task #975).
     pub fn ai_inline_suggestions(&self) -> bool {
+        // Product-off short-circuits the config default. A user who
+        // set `[ai.routing.claude] backend = "off"` clearly doesn't
+        // want any Claude calls, ghost-text included, so we never
+        // fire them regardless of `inline_suggestions`.
+        if crate::ai::resolve_backend(&self.config.ai, crate::ai::AiProduct::Claude)
+            == crate::ai::ResolvedBackend::Off
+        {
+            return false;
+        }
         self.config
             .ai
             .get("inline_suggestions")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
 
     /// Flip `[ai] inline_suggestions` at runtime. Doesn't persist —
@@ -1443,15 +1457,39 @@ impl App {
     }
 
     /// `[ai] suggest_backend` — which engine powers inline ghost-text.
-    /// `Unset` until the user picks via the setup picker.
+    /// Defaults to `ClaudeCode` (sub-backed OAuth) as of task #974
+    /// (2026-08-17); was `Unset` (forcing a setup picker on first
+    /// enable) back when ghost-text billed API tokens per keystroke.
+    /// The setup picker is still reachable via `ai.setup_suggestions`
+    /// for anyone who wants Local or ClaudeApi instead.
     pub fn ai_suggest_backend(&self) -> crate::ai::SuggestBackend {
         let s = self
             .config
             .ai
             .get("suggest_backend")
             .and_then(|v| v.as_str())
-            .unwrap_or("unset");
+            .unwrap_or("claude-code");
         crate::ai::SuggestBackend::parse(s)
+    }
+
+    /// Resolve which billing/routing lane THIS product's calls take
+    /// on the current machine. Reads `[ai.routing.<product>] backend`
+    /// (new key, task #975), falling back to the legacy `[ai] backend`
+    /// key for Claude. `Auto` resolves to `Sub` or `Api` via a `PATH`
+    /// probe + `$ANTHROPIC_API_KEY` check.
+    pub fn ai_resolved_backend(&self, product: crate::ai::AiProduct) -> crate::ai::ResolvedBackend {
+        crate::ai::resolve_backend(&self.config.ai, product)
+    }
+
+    /// `[ai.routing.claude] backend` resolved. Sub / Api / Off.
+    pub fn ai_route_claude(&self) -> crate::ai::ResolvedBackend {
+        self.ai_resolved_backend(crate::ai::AiProduct::Claude)
+    }
+
+    /// `[ai.routing.codex] backend` resolved. Sub / Off today (no
+    /// Codex-API path exists in mnml).
+    pub fn ai_route_codex(&self) -> crate::ai::ResolvedBackend {
+        self.ai_resolved_backend(crate::ai::AiProduct::Codex)
     }
 
     /// Persist the inline-suggestion backend choice into the runtime
@@ -1470,13 +1508,16 @@ impl App {
     }
 
     pub fn ai_backend(&self) -> crate::ai::AiBackend {
-        let s = self
-            .config
-            .ai
-            .get("backend")
-            .and_then(|v| v.as_str())
-            .unwrap_or("cli");
-        crate::ai::AiBackend::parse(s)
+        // Task #975 (2026-08-17) — route through the resolved product
+        // backend so `[ai.routing.claude] backend = "api"` etc. take
+        // effect for the ask/explain/fix Claude job path too. `Off`
+        // maps to `Cli` (a safer default than surprise-hitting the
+        // API); ask/explain call sites can further gate on
+        // `ai_route_claude() == Off` if they want to hide the action.
+        match self.ai_route_claude() {
+            crate::ai::ResolvedBackend::Api => crate::ai::AiBackend::Api,
+            _ => crate::ai::AiBackend::Cli,
+        }
     }
 
     /// Flip `[ai] backend` at runtime (`cli` ↔ `api`). Affects every

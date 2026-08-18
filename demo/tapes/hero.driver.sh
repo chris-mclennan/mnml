@@ -42,11 +42,14 @@ wait_ms() { local ms="$1"; awk "BEGIN{system(\"sleep \" $ms/1000)}"; }
 # 1  welcome        (dwell on the ASCII logo + git branch line)
 # 2  activity sweep (five sections — one info-panel copy per beat)
 # 3  editor         (open main.ts, LSP diagnostics render)
-# 4  settings       (overlay, navigate rows)
-# 5  splits + reqs  (split → open notes.http on the right)
-# 6  terminal       (split_down → open Pty running `ls src`)
-# 7  hero shot      (dwell on all three pane types side-by-side)
-# 8  quit           (recorder trims tail so the last drawn frame stays)
+# 4  picker         (Ctrl+P fuzzy file picker → open store.ts)
+# 5  which-key      (Ctrl+K leader menu — discoverable chords)
+# 6  settings       (overlay, navigate rows)
+# 7  split right    (open notes.http beside the editor)
+# 8  terminal       (term.shell_bottom — Pty in bottom half of the
+#                    right leaf; runs `ls src`, `cat package.json`)
+# 9  hero shot      (dwell on all pane types side-by-side)
+# 10 quit           (recorder trims tail so the last drawn frame stays)
 
 # ── 1. welcome ────────────────────────────────────────────────────
 wait_ms 1600
@@ -70,9 +73,36 @@ key "down"; wait_ms 130
 key "end"
 wait_ms 1000
 
-# ── 4. settings overlay ──────────────────────────────────────────
+# ── 4. Ctrl+P fuzzy file picker ─────────────────────────────────
+# Shows fuzzy file navigation and the "picker overlay → type →
+# Enter" flow. Deferred in the initial hero pass (22f5668d) —
+# added 2026-08-17 when we switched away from typing chords
+# (`ctrl+p`) to firing the registered command directly (no chord
+# race), which sidesteps the previous flakiness.
+run "picker.files"
+wait_ms 1200
+type "store"
+wait_ms 900
+key "enter"
+wait_ms 1600
+# Nudge the cursor in the newly-opened store.ts so viewers see
+# the second tab is active + the editor is populated.
+key "down"; wait_ms 130
+key "down"; wait_ms 130
+wait_ms 700
+
+# ── 5. Which-key leader menu ─────────────────────────────────────
+# `Ctrl+K` opens the leader chord menu (nvchad muscle memory).
+# Firing the command directly bypasses the chord dispatcher —
+# same win as beat 4, no ctrl-chord flake.
+run "whichkey.leader"
+wait_ms 2400
+key "escape"
+wait_ms 700
+
+# ── 6. settings overlay ──────────────────────────────────────────
 run "view.settings"
-wait_ms 2200
+wait_ms 2000
 key "down"; wait_ms 320
 key "down"; wait_ms 320
 key "down"; wait_ms 320
@@ -80,16 +110,27 @@ key "down"; wait_ms 450
 key "escape"
 wait_ms 800
 
-# ── 5. split right → HTTP request pane ───────────────────────────
+# ── 7. split right → HTTP request pane ───────────────────────────
 run "view.split_right"
 wait_ms 1200
 open "requests/notes.http"
 wait_ms 2200
 
-# ── 6. split down → Pty terminal ─────────────────────────────────
-run "view.split_down"
-wait_ms 1100
-run "term.shell"
+# ── 8. terminal in the bottom half of the right leaf ─────────────
+# 2026-08-17 — was `view.split_down` + `term.shell`. That fired
+# TWO splits on the notes.http leaf: split_down duplicated the
+# HTTP pane into a stacked empty-request pane, then term.shell
+# (whose default placement is *beside*, not below — see
+# `src/app/pty_methods.rs::open_shell`) added a third pane
+# side-by-side. Result was a cramped 5-pane frame with three
+# narrow columns on the right.
+#
+# `term.shell_bottom` splits the *active* leaf vertically with
+# the shell on the bottom — one command, one split. Final layout
+# is tree · editor · (notes.http top / terminal bottom) — the
+# clean 4-pane "all types visible" hero shot the original brief
+# called for.
+run "term.shell_bottom"
 wait_ms 1800
 type "ls src"
 wait_ms 250
@@ -100,12 +141,12 @@ wait_ms 250
 key "enter"
 wait_ms 1800
 
-# ── 7. hero shot ─────────────────────────────────────────────────
+# ── 9. hero shot ─────────────────────────────────────────────────
 # Dwell on the composite view: file tree · editor · HTTP request
 # · terminal. This is the frame the GIF ends on (recorder trims
 # the mnml-quit escape sequence, so this stays visible during the
 # loop hold and as the static preview).
 wait_ms 3200
 
-# ── 8. quit ──────────────────────────────────────────────────────
+# ── 10. quit ─────────────────────────────────────────────────────
 send '{"cmd":"quit"}'

@@ -52,9 +52,10 @@ pub(crate) fn handle_integration_settings_key(app: &mut App, key: KeyEvent) {
 /// `src/app/first_launch.rs`. Keys:
 ///   Esc          — Ask me later (does NOT set complete)
 ///   Enter        — Finish (commits + sets complete)
-///   ↑ ↓ / j k    — Move focused section
+///   ↑ ↓ / j k    — Move focused section (or, in AiRouting, sub-row)
 ///   1-6          — Jump directly to section N
 ///   ← → / h l    — For radio sections: cycle choice; for others: no-op
+///   Space        — For AiRouting: cycle the focused row's choice
 ///   y / n        — For Nerd Font section: quick yes/no
 pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
     use crate::app::first_launch::WizardSection;
@@ -62,8 +63,13 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
         return;
     };
     let section = state.section();
+    let sub_row = state.focused_ai_route_row;
 
-    // Global keys first.
+    // Global keys first. Up/Down inside the AiRouting section moves the
+    // sub-row (Claude ↔ Codex) instead of the section — the section
+    // itself only advances when we're already at the last sub-row
+    // moving down (or first sub-row moving up). Prevents "j drops out
+    // of routing before I've picked Codex" surprise.
     match key.code {
         KeyCode::Esc => {
             app.close_first_launch_defer();
@@ -74,12 +80,30 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
             return;
         }
         KeyCode::Up | KeyCode::Char('k') => {
+            if matches!(section, WizardSection::AiRouting) && sub_row > 0 {
+                if let Some(s) = app.first_launch.as_mut() {
+                    s.focused_ai_route_row -= 1;
+                }
+                return;
+            }
             if let Some(s) = app.first_launch.as_mut() {
                 s.move_focus(-1);
+                // Landing on AiRouting from above (via section wrap
+                // from the first section) should focus the last row so
+                // Down-arrow doesn't skip Codex on the way back.
+                if matches!(s.section(), WizardSection::AiRouting) {
+                    s.focused_ai_route_row = 1;
+                }
             }
             return;
         }
         KeyCode::Down | KeyCode::Char('j') => {
+            if matches!(section, WizardSection::AiRouting) && sub_row == 0 {
+                if let Some(s) = app.first_launch.as_mut() {
+                    s.focused_ai_route_row = 1;
+                }
+                return;
+            }
             if let Some(s) = app.first_launch.as_mut() {
                 s.move_focus(1);
             }
@@ -88,6 +112,7 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c @ '1'..='6') => {
             if let Some(s) = app.first_launch.as_mut() {
                 s.focused_section = (c as u8 - b'1') as usize;
+                s.focused_ai_route_row = 0;
             }
             return;
         }
@@ -116,6 +141,13 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(' ') => app.wizard_install_nerd_font(),
             _ => {}
         },
+        WizardSection::AiRouting => match key.code {
+            KeyCode::Left | KeyCode::Char('h') => cycle_ai_routing(app, sub_row, -1),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') => {
+                cycle_ai_routing(app, sub_row, 1)
+            }
+            _ => {}
+        },
         WizardSection::ClaudeCode => {
             // Space fires the install (npm install -g …) in a Pty
             // pane. Wizard closes so the Pty is visible.
@@ -128,6 +160,38 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
                 app.wizard_install_vscode_shim();
             }
         }
+    }
+}
+
+/// Cycle the focused AI-routing row's backend chip. Row 0 = Claude
+/// (Auto / Sub / API / Off), row 1 = Codex (Auto / Sub / Off).
+fn cycle_ai_routing(app: &mut App, row: usize, delta: i32) {
+    // Row-specific option list — Codex doesn't have an API path so
+    // it skips the "api" chip. Empty string ("") = Auto.
+    let (choices_claude, choices_codex): (&[&str], &[&str]) =
+        (&["", "sub", "api", "off"], &["", "sub", "off"]);
+    match row {
+        0 => {
+            let cur = app
+                .first_launch
+                .as_ref()
+                .map(|s| s.answers.route_claude.clone())
+                .unwrap_or_default();
+            let idx = choices_claude.iter().position(|c| *c == cur).unwrap_or(0) as i32;
+            let next = (idx + delta).rem_euclid(choices_claude.len() as i32) as usize;
+            app.wizard_set_route_claude(choices_claude[next]);
+        }
+        1 => {
+            let cur = app
+                .first_launch
+                .as_ref()
+                .map(|s| s.answers.route_codex.clone())
+                .unwrap_or_default();
+            let idx = choices_codex.iter().position(|c| *c == cur).unwrap_or(0) as i32;
+            let next = (idx + delta).rem_euclid(choices_codex.len() as i32) as usize;
+            app.wizard_set_route_codex(choices_codex[next]);
+        }
+        _ => {}
     }
 }
 

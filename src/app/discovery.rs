@@ -1061,6 +1061,22 @@ pub fn persist_ai_string(key: &'static str, value: &str) -> Result<std::path::Pa
     persist_config_scalar("ai", key, format!("\"{esc}\""))
 }
 
+/// `[ai.routing.<product>] backend = "<value>"`. Task #975 (2026-08-17)
+/// — the per-product billing/routing preference set by the wizard's
+/// AI billing section. `product` is "claude" or "codex"; `value` is
+/// "sub" / "api" / "auto" / "off".
+///
+/// The section header is written as `[ai.routing.<product>]` and
+/// discovered as such by `persist_config_scalar`'s in-place replace /
+/// append logic. TOML parses that dotted-section form back into a
+/// nested table (`ai.routing.<product>.backend`) which `configured_backend`
+/// then reads via `.get("routing")`.
+pub fn persist_ai_routing(product: &str, value: &str) -> Result<std::path::PathBuf, String> {
+    let esc = value.replace('\\', r"\\").replace('"', "\\\"");
+    let section = format!("ai.routing.{product}");
+    persist_config_scalar(&section, "backend", format!("\"{esc}\""))
+}
+
 /// Shared writer for `[section] KEY = <toml-encoded-value>`. The
 /// caller pre-encodes the value (quoted string, bare bool, bare
 /// int) — this fn owns the section-header find / in-place replace
