@@ -230,8 +230,15 @@ fn render_lines<'a>(
         if i > 0 {
             out.push((section_rule(t), None));
         }
+        // #986 (2026-08-18) — pulse the arrow on the NerdFont
+        // section header while it's focused AND unanswered, so
+        // the user knows to answer y/n. Wall-clock cadence keeps
+        // the pulse frame-rate-independent.
+        let pulse = focused
+            && matches!(*section, WizardSection::NerdFont)
+            && state.answers.nerd_font_ok.is_none();
         // Section header row with a leading number.
-        out.push((section_header(i + 1, *section, focused, t), None));
+        out.push((section_header(i + 1, *section, focused, pulse, t), None));
         // 1-2 wrapped body-description rows.
         for wrapped in wrap_body(section.description(), (INNER_W - PAD_X * 2) as usize) {
             out.push((body_line(&wrapped, t), None));
@@ -266,22 +273,47 @@ fn section_header<'a>(
     number: usize,
     section: WizardSection,
     focused: bool,
+    pulse: bool,
     t: &theme::Theme,
 ) -> Line<'a> {
     // Focused = cyan + arrow prefix + bold. Unfocused = fg + bold
     // still (headers always pop against the body's dim comment
     // color) — otherwise the sections read as a single wall.
     let arrow = if focused { "▸ " } else { "  " };
-    let fg = if focused { t.cyan } else { t.fg };
-    let text = format!(" {}{}. {}", arrow, number, section.title());
-    let padded = pad_to(&text, INNER_W as usize);
-    Line::from(Span::styled(
-        padded,
+    // #986 (2026-08-18) — when pulse is set, alternate the arrow
+    // fg between accent cyan and warm orange on a ~700ms cadence.
+    // Draws attention to an unanswered section (currently: the
+    // NerdFont y/n) without adding characters or changing width.
+    // Uses wall-clock so the pulse advances even without input.
+    let arrow_fg = if pulse {
+        let phase = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() / 700 % 2)
+            .unwrap_or(0);
+        if phase == 0 { t.cyan } else { t.orange }
+    } else if focused {
+        t.cyan
+    } else {
+        t.fg
+    };
+    let body_fg = if focused { t.cyan } else { t.fg };
+    let arrow_span = Span::styled(
+        format!(" {}", arrow),
         Style::default()
-            .fg(fg)
+            .fg(arrow_fg)
             .bg(t.bg_dark)
             .add_modifier(Modifier::BOLD),
-    ))
+    );
+    let body_text = format!("{}. {}", number, section.title());
+    let padded_body = pad_to(&body_text, (INNER_W as usize).saturating_sub(3));
+    let body_span = Span::styled(
+        padded_body,
+        Style::default()
+            .fg(body_fg)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD),
+    );
+    Line::from(vec![arrow_span, body_span])
 }
 
 /// Thin horizontal rule between sections — same background as the
