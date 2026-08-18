@@ -6662,8 +6662,19 @@ fn builtin_commands() -> Vec<Command> {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",
-            // `<space>` in vim Normal also opens this (the vim handler routes it).
-            keys: &["ctrl+k"],
+            // 2026-08-18 (#968) — added `"space"` here to fix SEV-1.
+            // `picker.files` binds `"space f f"`, which made bare
+            // <space> return `SeqResolution::Pending` (no fallback,
+            // no timeout action). All ~60 whichkey leader chords
+            // silently evaporated: user pressed <space>e, chord
+            // chain held space in a Pending state waiting for `f`,
+            // then chord None on `e`, and `e` fell through to vim
+            // as end-of-word motion. Now bare <space> returns
+            // `PendingWithFallback(whichkey.leader)` — after the
+            // 1s timeout OR on the first non-`f` continuation, the
+            // whichkey overlay opens and subsequent keys feed the
+            // trie (matching how `Ctrl+K` has always worked).
+            keys: &["ctrl+k", "space"],
             run: |app| app.open_whichkey(),
         },
         Command {
