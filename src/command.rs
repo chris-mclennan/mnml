@@ -6129,6 +6129,40 @@ fn builtin_commands() -> Vec<Command> {
                 set_claude_meter_mode(app, "both");
             },
         },
+        // #1012 f/u (2026-08-18) — toggle the ⟳<countdown> suffix
+        // that shows time until the current window resets. Off by
+        // default (extra width); on when the user wants "when does
+        // my quota reset?" answered at a glance.
+        Command {
+            id: "ai.chip_toggle_reset",
+            title: "AI (Claude) chip: toggle reset countdown suffix (⟳)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                let current = app
+                    .config
+                    .ai
+                    .as_table()
+                    .and_then(|t| t.get("claude_show_reset"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let next = !current;
+                let mut table = app
+                    .config
+                    .ai
+                    .as_table()
+                    .cloned()
+                    .unwrap_or_else(toml::Table::new);
+                table.insert("claude_show_reset".to_string(), toml::Value::Boolean(next));
+                app.config.ai = toml::Value::Table(table);
+                let _ = crate::app::discovery::persist_ai_bool("claude_show_reset", next);
+                if next {
+                    app.toast("Claude chip: reset countdown ⟳ on");
+                } else {
+                    app.toast("Claude chip: reset countdown ⟳ off");
+                }
+            },
+        },
         // Task #944 (2026-08-16) — toggle the compact
         // "all accounts on one chip" render (Pe 40% · Wo 62%). The
         // in-memory `config.ai` table is authoritative — the render

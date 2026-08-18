@@ -66,6 +66,14 @@ struct Seg {
     fg: Color,
     bg: Color,
     bold: bool,
+    /// #1012 f/u (2026-08-18) — half-open char range `[start, end)`
+    /// within `text` to underline. Used by the multi-account Claude
+    /// chip to underline JUST the account letter (e.g. `P` in
+    /// ` \u{F1E00} P 24% ` — chars 3..4), which reads more
+    /// distinctly than bolding the whole chip (bold on a
+    /// tier-color pill is too close to unbold to spot at a
+    /// glance). Empty range = no underline.
+    underline_range: Option<(usize, usize)>,
 }
 
 impl Seg {
@@ -75,10 +83,22 @@ impl Seg {
             fg,
             bg,
             bold: false,
+            underline_range: None,
         }
     }
     fn bold(mut self) -> Self {
         self.bold = true;
+        self
+    }
+    /// #1012 f/u — underline just the char range `[start, end)`
+    /// (half-open). Used to mark the ACTIVE account letter in the
+    /// multi-account ticker chip without underlining the whole
+    /// percent-and-glyph pill. Empty or out-of-range values are
+    /// treated as "no underline".
+    fn underline_range(mut self, start: usize, end: usize) -> Self {
+        if end > start {
+            self.underline_range = Some((start, end));
+        }
         self
     }
     fn style(&self) -> Style {
@@ -91,6 +111,43 @@ impl Seg {
     }
     fn cols(&self) -> usize {
         self.text.chars().count()
+    }
+    /// Emit either one Span (base style) or up to three (chars
+    /// before, chars in range with UNDERLINED added, chars after).
+    /// Zero-width segments are elided. Called by render_left /
+    /// render_right so the split works in both lanes.
+    fn to_spans(&self) -> Vec<Span<'static>> {
+        let base = self.style();
+        let Some((start, end)) = self.underline_range else {
+            return vec![Span::styled(self.text.clone(), base)];
+        };
+        let cols = self.cols();
+        let start = start.min(cols);
+        let end = end.min(cols);
+        if start >= end {
+            return vec![Span::styled(self.text.clone(), base)];
+        }
+        let byte_at = |char_idx: usize| -> usize {
+            self.text
+                .char_indices()
+                .nth(char_idx)
+                .map(|(b, _)| b)
+                .unwrap_or(self.text.len())
+        };
+        let b_start = byte_at(start);
+        let b_end = byte_at(end);
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(3);
+        if b_start > 0 {
+            spans.push(Span::styled(self.text[..b_start].to_string(), base));
+        }
+        spans.push(Span::styled(
+            self.text[b_start..b_end].to_string(),
+            base.add_modifier(Modifier::UNDERLINED),
+        ));
+        if b_end < self.text.len() {
+            spans.push(Span::styled(self.text[b_end..].to_string(), base));
+        }
+        spans
     }
 }
 
@@ -751,10 +808,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             crate::config::ClaudeMultiMode::Off
         };
-        let (text, fg, bold) = match multi_mode {
+        let (text, fg, underline): (String, Color, (usize, usize)) = match multi_mode {
             crate::config::ClaudeMultiMode::Compact => {
                 let (t2, c) = render_claude_chip_all_accounts(app, &t);
-                (t2, c, false)
+                (t2, c, (0, 0))
             }
             crate::config::ClaudeMultiMode::Ticker => {
                 // Wall-clock-driven index — same 4s cadence as the
@@ -772,11 +829,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let letter = account_abbrev(&acc.name);
                 let (text, fg) =
                     render_single_account_chip(&acc.usage, mode, &letter, show_reset, &t);
-                // 2026-08-17 — mark the active account by bolding the
-                // whole chip. Arrow prefix was tried first and dropped
-                // in favor of bold — cleaner, uses the terminal's
-                // native emphasis, no width cost.
-                (text, fg, acc.is_active)
+                // #1012 f/u (2026-08-18) — mark the ACTIVE account by
+                // underlining just the letter (was: bolding the whole
+                // chip → too close to unbold on a tier-color pill to
+                // spot at a glance). Chip text is ` \u{F1E00} P …` so
+                // the letter sits at char index 3. Letter is always
+                // 1 char (via `account_abbrev`), so range = (3, 4).
+                let (u_start, u_end) = if acc.is_active { (3, 4) } else { (0, 0) };
+                (text, fg, (u_start, u_end))
             }
             crate::config::ClaudeMultiMode::Off => {
                 let active = app.active_claude_account();
@@ -785,17 +845,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     Some(u) => render_single_account_chip(u, mode, "", show_reset, &t),
                     None => (" \u{F1E00} … ".to_string(), t.comment),
                 };
-                (text, fg, false)
+                (text, fg, (0, 0))
             }
         };
         ai_claude_seg_idx = Some(right.len());
-        // 2026-08-17 — pill treatment (see Codex/coverage siblings).
-        // Dark text on the chip's tier color for a consistent look
-        // across the right cluster. Bold-when-active preserved.
-        let mut seg = Seg::new(text, t.bg_darker, fg);
-        if bold {
-            seg = seg.bold();
-        }
+        // Pill treatment (dark text on tier color, matches Codex /
+        // coverage siblings). Underline-just-the-letter is applied
+        // when the ticker's currently-shown account is the active one.
+        let (u_start, u_end) = underline;
+        let seg = Seg::new(text, t.bg_darker, fg).underline_range(u_start, u_end);
         right.push(seg);
     }
     if codex_enabled {
@@ -1644,7 +1702,9 @@ fn render_left(
     let mut seg_rects: Vec<(usize, usize)> = Vec::with_capacity(segs.len());
     for (i, s) in segs.iter().enumerate() {
         let start = used;
-        out.push(Span::styled(s.text.clone(), s.style()));
+        for span in s.to_spans() {
+            out.push(span);
+        }
         used += s.cols();
         seg_rects.push((start, s.cols()));
         let next_bg = segs.get(i + 1).map(|n| n.bg).unwrap_or(tail_bg);
@@ -1677,7 +1737,9 @@ fn render_right(
             used += 1;
         }
         let start = used;
-        out.push(Span::styled(s.text.clone(), s.style()));
+        for span in s.to_spans() {
+            out.push(span);
+        }
         used += s.cols();
         seg_rects.push((start, s.cols()));
     }

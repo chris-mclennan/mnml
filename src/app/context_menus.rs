@@ -1691,6 +1691,20 @@ impl App {
                 format!("{}Show both (session · weekly)", check(mode == "both")),
                 MenuAction::Command("ai.chip_show_both"),
             ));
+            // #1012 f/u (2026-08-18) — countdown-to-reset suffix
+            // toggle. Reads the same `[ai] claude_show_reset` the
+            // render fn honors, same shape as claude_meter_mode.
+            let show_reset = self
+                .config
+                .ai
+                .as_table()
+                .and_then(|t| t.get("claude_show_reset"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            items.push(MenuItem::new(
+                format!("{}Show ⟳ reset countdown", check(show_reset)),
+                MenuAction::Command("ai.chip_toggle_reset"),
+            ));
             // Task #944 (extended 2026-08-17) — multi-account tri-state
             // picker. Only offered when >1 account is configured. Three
             // choices — the current one gets a ✓:
