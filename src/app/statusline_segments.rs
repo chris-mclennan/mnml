@@ -674,8 +674,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn binary_lookup_absolute_path() {
-        // Whatever `sh` maps to should exist on any test host.
+        // Whatever `sh` maps to should exist on any Unix test host.
+        // Windows has no `/bin/sh` — skipped there.
         assert!(binary_from_command_on_path("/bin/sh -c 'echo hi'"));
         assert!(!binary_from_command_on_path(
             "/definitely/nonexistent/xyzzy --flag"

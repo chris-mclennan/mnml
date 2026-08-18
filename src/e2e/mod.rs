@@ -423,7 +423,14 @@ pub fn run_test(path: &Path) -> TestOutcome {
         Err(e) => return fail(format!("tempdir: {e}")),
     };
     let workspace = dir.path().to_path_buf();
-    let mut app = match App::new(workspace.clone(), Config::default()) {
+    // E2E tests assume minimal chrome: row 0 = palette, row 1 = bufferline,
+    // rows 2..N = editor body. The breadcrumb row (default-on 2026-08-14)
+    // shifts everything down by 1 and breaks all mouse coordinate math in
+    // the .test files. Force it off so tests stay legible + coordinate math
+    // stays stable.
+    let mut cfg = Config::default();
+    cfg.editor.breadcrumb = false;
+    let mut app = match App::new(workspace.clone(), cfg) {
         Ok(a) => a,
         Err(e) => return fail(format!("App::new: {e}")),
     };
