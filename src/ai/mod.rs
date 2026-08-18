@@ -135,9 +135,9 @@ impl AiProduct {
 ///
 /// - `Sub`: force the subscription (CLI) path; error if the binary is
 ///   missing.
-/// - `Api`: force the direct-API path; error if `$ANTHROPIC_API_KEY` is
-///   missing. Only meaningful for Claude today — Codex has no API
-///   passthrough in mnml.
+/// - `Api`: force the direct-API path; error if the vendor's API-key
+///   env var is missing (`$ANTHROPIC_API_KEY` for Claude,
+///   `$OPENAI_API_KEY` for Codex).
 /// - `Auto`: detect the binary on PATH. Sub if found, else Api if the
 ///   env key is set, else Sub (the failure surfaces on first call with
 ///   the actionable "run `claude` to sign in" toast, which is the same
@@ -1059,6 +1059,19 @@ backend = "api""#,
 backend = "off""#,
         );
         assert_eq!(resolve_backend(&ai, AiProduct::Codex), ResolvedBackend::Off);
+        // Codex explicit sub / api pass through symmetrically with
+        // Claude — regression guard for the Codex-Api support added
+        // 2026-08-17 (was previously Sub-only + hardcoded Auto = Sub).
+        let ai = ai_from(
+            r#"[routing.codex]
+backend = "sub""#,
+        );
+        assert_eq!(resolve_backend(&ai, AiProduct::Codex), ResolvedBackend::Sub);
+        let ai = ai_from(
+            r#"[routing.codex]
+backend = "api""#,
+        );
+        assert_eq!(resolve_backend(&ai, AiProduct::Codex), ResolvedBackend::Api);
     }
 
     #[test]

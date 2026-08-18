@@ -115,8 +115,9 @@ impl WizardSection {
                 "For each AI product below, tell mnml where to route calls. \
                  Subscription = reuses your Max/Pro / ChatGPT Plus plan via the \
                  vendor's own CLI (no per-token charge). API = billed against your \
-                 pay-per-token console budget (needs $ANTHROPIC_API_KEY). Off = \
-                 hide the chips + disable the commands for that product entirely."
+                 pay-per-token console budget — Claude needs $ANTHROPIC_API_KEY, \
+                 Codex needs $OPENAI_API_KEY. Off = hide the chips + disable the \
+                 commands for that product entirely."
             }
             Self::ClaudeCode => {
                 "The two AI CLIs mnml integrates most deeply with. Not installed = \
@@ -152,9 +153,9 @@ pub struct WizardAnswers {
     /// "api", "off", or "" (leave the resolved default alone).
     /// Persists to `[ai.routing.claude] backend = ...`.
     pub route_claude: String,
-    /// Sibling to `route_claude`. One of "sub", "off", or "" (Codex
-    /// has no API-passthrough today, so "api" isn't offered). Persists
-    /// to `[ai.routing.codex] backend = ...`.
+    /// Sibling to `route_claude`. One of "sub", "api", "off", or ""
+    /// (Codex CLI supports both ChatGPT sub auth and `$OPENAI_API_KEY`).
+    /// Persists to `[ai.routing.codex] backend = ...`.
     pub route_codex: String,
     /// True once the user has actively cycled either AI-routing row —
     /// same guard as `input_style_touched`. Prevents a returning user

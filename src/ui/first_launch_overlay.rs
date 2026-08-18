@@ -366,7 +366,7 @@ fn section_widgets<'a>(
         }
         WizardSection::AiRouting => {
             // Two rows — Claude Code (Sub / API / Off) and Codex
-            // (Sub / Off). Same visual as the input-style radio but
+            // (Sub / API / Off). Same visual as the input-style radio but
             // arranged inline (label + Sub | API | Off chips) so both
             // rows fit at 74 cells. The row currently focused shows a
             // `▸` marker; ←/→/h/l cycle its choices. Empty answer
