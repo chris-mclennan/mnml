@@ -475,3 +475,14 @@ For flows that benefit visually from an animated demo, follow up with:
 ```
 Use tape-recorder to record <flow-name> for <site>
 ```
+
+After the tape lands (either freshly recorded, or before embedding an
+existing one in a manual page), review it:
+
+```
+Use tape-reviewer to review <tape-name>
+```
+
+Writes a severity-ranked report to `.mnml/tape-reviews/<name>.md`.
+Verdict `clean` → ship; `needs-reshoot` → run tape-recorder again with
+the report's fix list. Task #984 formalized this pattern.
