@@ -472,7 +472,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             shortcuts: vec![
                 ShortcutHint::new("Esc", "Leave the current mode (vim)"),
-                ShortcutHint::new("Ctrl+E", "Cycle keyboard focus across panels"),
+                ShortcutHint::new("F6", "Cycle keyboard focus across panels"),
             ],
             try_it: vec![PaletteLink::new(
                 "editor.toggle_keymap",

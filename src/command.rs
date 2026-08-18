@@ -2502,7 +2502,14 @@ fn builtin_commands() -> Vec<Command> {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",
-            keys: &["ctrl+e"],
+            // 2026-08-18 (R8 SEV-2) — was `ctrl+e`, silently shadowed by
+            // vim's own Ctrl+E in Normal (scroll-down) and Insert
+            // (char-from-line-below). Pluggable-input gives the handler
+            // first refusal, so focus.cycle was unreachable from the
+            // editor pane in vim mode (the default input style). Rebound
+            // to F6 — VS Code / IntelliJ / JetBrains convention for
+            // "focus next part," and no input handler owns it.
+            keys: &["f6"],
             run: |app| app.cycle_focus(),
         },
         Command {

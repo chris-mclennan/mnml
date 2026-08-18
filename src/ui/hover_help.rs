@@ -569,11 +569,11 @@ fn pick_help_copy(app: &App) -> crate::ui::info_view::InfoViewCopy {
         ),
         crate::focus::Focus::RightPanel => (
             "Right panel",
-            "Arrows walk rows. Enter jumps to the source. Ctrl+E cycles focus.",
+            "Arrows walk rows. Enter jumps to the source. F6 cycles focus.",
         ),
         crate::focus::Focus::BottomPanel => (
             "Bottom panel",
-            "Arrows walk rows. Ctrl+Shift+J hides. Ctrl+E cycles focus.",
+            "Arrows walk rows. Ctrl+Shift+J hides. F6 cycles focus.",
         ),
     };
     InfoViewCopy {
@@ -681,7 +681,7 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
             Some((
                 primary,
                 Some(
-                    "Right-panel focus. Arrows walk rows. Enter jumps. Ctrl+E cycles focus."
+                    "Right-panel focus. Arrows walk rows. Enter jumps. F6 cycles focus."
                         .to_string(),
                 ),
             ))
@@ -693,7 +693,7 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
             Some((
                 primary,
                 Some(
-                    "Bottom-panel focus. Arrows walk rows. Ctrl+Shift+J hides. Ctrl+E cycles focus."
+                    "Bottom-panel focus. Arrows walk rows. Ctrl+Shift+J hides. F6 cycles focus."
                         .to_string(),
                 ),
             ))
