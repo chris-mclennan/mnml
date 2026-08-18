@@ -348,7 +348,6 @@ fn render_single_account_chip(
     mode: &str,
     letter_prefix: &str,
     show_reset: bool,
-    nerd: bool,
     t: &theme::Theme,
 ) -> (String, ratatui::style::Color) {
     let prefix = if letter_prefix.is_empty() {
@@ -390,12 +389,12 @@ fn render_single_account_chip(
         // "24%⟳3h 62%⟳4d". No space between % and ⟳ — space would
         // otherwise inflate width and split the couple visually.
         let session_r = if show_reset {
-            format_reset_suffix(u.resets_at, nerd)
+            format_reset_suffix(u.resets_at, u.percent)
         } else {
             String::new()
         };
         let weekly_r = if show_reset {
-            format_reset_suffix(u.weekly_resets_at, nerd)
+            format_reset_suffix(u.weekly_resets_at, u.weekly_percent)
         } else {
             String::new()
         };
@@ -421,26 +420,26 @@ fn render_single_account_chip(
 }
 
 /// #1012 (2026-08-18) — format the time remaining until `resets_at`
-/// (Unix epoch seconds) as a compact `<sep><n><unit>` suffix. Empty
-/// when `resets_at` is 0 (never fetched) or already past. Uses the
-/// largest unit that fits at 1 digit + a letter, so we render `3h`
-/// not `3h27m` (busy chip real estate on a narrow terminal).
+/// (Unix epoch seconds) as a compact ` <n><unit>` suffix (leading
+/// space acts as the separator). Empty in three cases so the chip
+/// doesn't grow when the countdown adds no info:
+///   - `resets_at == 0` — never fetched
+///   - `remaining == 0` — already past
+///   - `percent == 0`   — user hasn't touched this window; the
+///     countdown to a reset we haven't consumed is noise
 ///
-/// Separator was U+27F3 `⟳` originally, but that codepoint is a
-/// wide/emoji glyph in many terminal fonts — it overlapped the
-/// next digit even in the "letter is 1 cell" case, making the
-/// chip read as `1%⟳4h` where the ⟳ sits ON TOP of the digit.
-/// Swapped 2026-08-18 f/u to Codicon refresh (`\u{eb37}` — same
-/// glyph mnml uses for `tree.refresh`, guaranteed narrow via
-/// MnmlSymbols.ttf) with a slash fallback in ascii mode.
+/// Uses the largest unit that fits at 1 digit + a letter (`3h` not
+/// `3h27m`) so the chip stays narrow. Prior versions used a
+/// separator glyph (U+27F3 ⟳, then Codicon refresh) — both were
+/// visually noisy; a plain space is the cleanest read.
 ///
 /// Buckets:
-///   <1m         → `<sep><1m`
-///   <60m        → `<sep><n>m`
-///   <24h        → `<sep><n>h`
-///   otherwise   → `<sep><n>d`
-fn format_reset_suffix(resets_at: u64, nerd: bool) -> String {
-    if resets_at == 0 {
+///   <1m         → ` <1m`
+///   <60m        → ` <n>m`
+///   <24h        → ` <n>h`
+///   otherwise   → ` <n>d`
+fn format_reset_suffix(resets_at: u64, percent: u16) -> String {
+    if resets_at == 0 || percent == 0 {
         return String::new();
     }
     let now = std::time::SystemTime::now()
@@ -451,15 +450,14 @@ fn format_reset_suffix(resets_at: u64, nerd: bool) -> String {
     if remaining == 0 {
         return String::new();
     }
-    let sep = if nerd { "\u{eb37}" } else { "/" };
     if remaining < 60 {
-        format!("{sep}<1m")
+        " <1m".to_string()
     } else if remaining < 3600 {
-        format!("{sep}{}m", remaining / 60)
+        format!(" {}m", remaining / 60)
     } else if remaining < 86_400 {
-        format!("{sep}{}h", remaining / 3600)
+        format!(" {}h", remaining / 3600)
     } else {
-        format!("{sep}{}d", remaining / 86_400)
+        format!(" {}d", remaining / 86_400)
     }
 }
 
@@ -839,9 +837,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(0);
                 let acc = &app.ai_usage_claude_accounts[idx];
                 let letter = account_abbrev(&acc.name);
-                let nerd = !app.config.ui.ascii_icons;
                 let (text, fg) =
-                    render_single_account_chip(&acc.usage, mode, &letter, show_reset, nerd, &t);
+                    render_single_account_chip(&acc.usage, mode, &letter, show_reset, &t);
                 // #1012 f/u (2026-08-18) — mark the ACTIVE account by
                 // underlining just the letter (was: bolding the whole
                 // chip → too close to unbold on a tier-color pill to
@@ -854,9 +851,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             crate::config::ClaudeMultiMode::Off => {
                 let active = app.active_claude_account();
                 let usage_ref = active.map(|a| &a.usage);
-                let nerd = !app.config.ui.ascii_icons;
                 let (text, fg) = match usage_ref {
-                    Some(u) => render_single_account_chip(u, mode, "", show_reset, nerd, &t),
+                    Some(u) => render_single_account_chip(u, mode, "", show_reset, &t),
                     None => (" \u{F1E00} … ".to_string(), t.comment),
                 };
                 (text, fg, (0, 0))
