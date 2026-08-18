@@ -244,7 +244,102 @@ fn activity_bar_section_copy(
                 ..Default::default()
             })
         }
-        _ => None, // fall through to chip_copy's generic arm
+        // 2026-08-18 (#969) — per-section copy for the built-in
+        // activity-bar sections. Previously fell through to
+        // chip_copy's generic "one of the sections" placeholder;
+        // now each shipped section explains what it does + surfaces
+        // the palette command that focuses it.
+        ActivitySection::Explorer => Some(InfoViewCopy {
+            title: "Files (explorer)".into(),
+            body: "File tree for the active workspace + secondary git / integrations \
+                   sections stacked below. Cmd+P opens fuzzy pick; right-click a row \
+                   for cut/copy/paste/rename/new-in-here."
+                .into(),
+            try_it: vec![
+                PaletteLink::new("view.activity_explorer", "Focus files"),
+                PaletteLink::new("picker.files", "Fuzzy open"),
+            ],
+            docs: Some("https://mnml.sh/manual/tree/".into()),
+            ..Default::default()
+        }),
+        ActivitySection::Git => Some(InfoViewCopy {
+            title: "Git (branch + worktrees)".into(),
+            body: "Dedicated git view — branch list, worktrees, log preview, and \
+                   stash actions. The compact GIT strip inside Explorer is a \
+                   subset of what shows here."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_git", "Focus git")],
+            docs: Some("https://mnml.sh/manual/git/".into()),
+            ..Default::default()
+        }),
+        ActivitySection::Integrations => Some(InfoViewCopy {
+            title: "Integrations".into(),
+            body: "Installed integration list on top, Marketplace tab below. Each \
+                   installed row shows its chip glyph + label; right-click to \
+                   configure / uninstall / open sibling settings pane."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "view.activity_integrations",
+                "Focus integrations",
+            )],
+            docs: Some("https://mnml.sh/manual/integrations/".into()),
+            ..Default::default()
+        }),
+        ActivitySection::Agents => Some(InfoViewCopy {
+            title: "Agents (Claude / Codex sessions)".into(),
+            body: "Cross-workspace dashboard of your Claude Code + Codex CLI \
+                   sessions. Rows grouped by status (Action Needed / Running / \
+                   Done). Filter input at top; + New starts a fresh session."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_agents", "Focus agents")],
+            docs: Some("https://mnml.sh/manual/agents/".into()),
+            ..Default::default()
+        }),
+        ActivitySection::Sessions => Some(InfoViewCopy {
+            title: "Sessions (open Pty tabs)".into(),
+            body: "Vertical-tab strip of open Pty panes (Claude, Codex, shell). \
+                   Each row shows session name + git branch + cwd + notification \
+                   ring when there's unread output. Click a row to focus that pane."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_sessions", "Focus sessions")],
+            ..Default::default()
+        }),
+        ActivitySection::Http => Some(InfoViewCopy {
+            title: "HTTP requests".into(),
+            body: "One row per `.http` / `.curl` / `.rest` file in the workspace, \
+                   plus RECENT / CAPTURED / ENVS / CHAINS / MOCKS / COLLECTIONS \
+                   sections. `/` filters, `+ New request` scaffolds a fresh file."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_http", "Focus HTTP")],
+            docs: Some("https://mnml.sh/manual/http/".into()),
+            ..Default::default()
+        }),
+        ActivitySection::Findings => Some(InfoViewCopy {
+            title: "Findings (.mnml/findings/*.md)".into(),
+            body: "Viewer for bug-hunt / tester-round finding markdown files in \
+                   `<workspace>/.mnml/findings/`. Each finding renders as a \
+                   scrollable entry with severity + reproduction steps."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_findings", "Focus findings")],
+            ..Default::default()
+        }),
+        ActivitySection::Search => Some(InfoViewCopy {
+            title: "Search (workspace-wide)".into(),
+            body: "Ripgrep-backed content search across the workspace. Type to \
+                   filter; Enter opens the hit in the editor."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_search", "Focus search")],
+            ..Default::default()
+        }),
+        ActivitySection::Debug => Some(InfoViewCopy {
+            title: "Debug (DAP)".into(),
+            body: "Debug Adapter Protocol view — breakpoints, call stack, \
+                   variables. Wire a DAP adapter via `[dap]` in the config."
+                .into(),
+            try_it: vec![PaletteLink::new("view.activity_debug", "Focus debug")],
+            ..Default::default()
+        }),
+        _ => None, // less-common variants fall through to chip_copy's generic arm
     }
 }
 
