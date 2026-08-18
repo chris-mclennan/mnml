@@ -2,11 +2,13 @@
 
 # mnml
 
-**A NvChad-style terminal IDE, in Rust.**
+**NvChad meets VSCode — a terminal IDE in Rust.**
 
-Vim *or* standard editing — without `if vim {}` scattered through the codebase.
-LSP, rich git, fuzzy everything, embedded terminal & AI panes, a baked-in HTTP
-client, and a headless test harness — one binary.
+Vim *or* standard editing, first-class on both sides — without `if vim {}`
+scattered through the codebase. NvChad-style tree / tabline / statusline
+chrome; VSCode-style palette, mouse fluency, and modeless keymap. LSP, rich
+git, fuzzy everything, embedded terminal & AI panes, a baked-in HTTP client,
+and a headless test harness — one binary.
 
 [![Docs](https://img.shields.io/badge/docs-mnml.sh-purple.svg)](https://mnml.sh)
 [![Crates.io](https://img.shields.io/crates/v/mnml-rs.svg?logo=rust)](https://crates.io/crates/mnml-rs)
@@ -25,12 +27,14 @@ client, and a headless test harness — one binary.
 request client and a scriptable, testable surface — built so the pieces compose
 instead of fighting each other.
 
-It takes the NvChad look and feel — file-tree rail, a tabline of open buffers, a
-powerline statusline, Nerd-Font devicons, tree-sitter highlighting — and pairs it
-with one design decision that runs through everything: **a pluggable input
-layer.** Vim modal editing and a modeless VS Code-style keymap are both
-first-class, both fully remappable, and swappable at runtime. The editor, buffer,
-and render layers never branch on which one is active.
+It takes NvChad's look — file-tree rail, tabline of open buffers, powerline
+statusline, Nerd-Font devicons, tree-sitter highlighting — and marries it to
+VSCode's discoverability — command palette, activity bar, right-click menus,
+mouse-first chrome, a modeless keymap that doesn't hide anything behind a
+modifier. Under both surfaces sits one design decision: **a pluggable input
+layer.** Vim modal editing and the modeless standard keymap are both
+first-class, both fully remappable, and swappable at runtime. The editor,
+buffer, and render layers never branch on which one is active.
 
 ## Highlights
 

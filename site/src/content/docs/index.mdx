@@ -1,9 +1,9 @@
 ---
 title: mnml
-description: A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.
+description: NvChad meets VSCode — a terminal IDE in Rust. Vim or standard editing, LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.
 template: splash
 hero:
-  tagline: A terminal IDE for the people who do everything in a terminal. Vim or standard editing — neither buried in `if vim {}`. One binary, 39+ languages, 94 themes.
+  tagline: NvChad meets VSCode — a terminal IDE for the people who do everything in a terminal. Vim modal editing and the modeless standard keymap are both first-class, neither buried in `if vim {}`. One binary, 39+ languages, 94 themes.
   actions:
     - text: Install
       link: /install/
@@ -18,9 +18,15 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ![mnml in action — activity-bar sweep, editor, HTTP request pane, terminal](/media/hero.gif)
 
+### Focused walkthroughs
+
+Short per-feature tapes for the surfaces the hero above only glances at:
+
+- **[Ghost-text](/media/ghost-text.gif)** — type a function stub, Tab accepts the suggestion.
+
 ## What is mnml
 
-mnml is a terminal IDE in the NvChad aesthetic — file-tree rail, tabline, powerline statusline, Nerd-Font devicons, tree-sitter highlighting — built on one design decision that runs through everything: **a pluggable input layer.** Vim modal editing and a modeless VS Code-style keymap are both first-class, both fully remappable, and swappable at runtime. The editor, buffer, and render layers never branch on which one is active.
+mnml is a terminal IDE that takes NvChad's aesthetic — file-tree rail, tabline, powerline statusline, Nerd-Font devicons, tree-sitter highlighting — and marries it to VSCode's discoverability — command palette, activity bar, right-click menus, mouse-first chrome, and a modeless keymap that doesn't hide anything behind a modifier. Under both surfaces sits one design decision: **a pluggable input layer.** Vim modal editing and the modeless standard keymap are both first-class, both fully remappable, and swappable at runtime. The editor, buffer, and render layers never branch on which one is active.
 
 Install with `brew install chris-mclennan/tap/mnml` on macOS, `winget install mnml` on Windows, `cargo install mnml-rs` anywhere Rust runs — or grab the portable tarball for your platform.
 
