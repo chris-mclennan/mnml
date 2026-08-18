@@ -600,6 +600,13 @@ pub struct UiConfig {
     /// users configure a light+dark pair, the button is a 1-press flip).
     /// When `None`, slider click falls back to opening the full theme picker.
     pub theme_toggle: Option<String>,
+    /// #1023 (2026-08-18) — when true, mnml polls the OS's
+    /// dark/light preference every ~15s and auto-swaps the active
+    /// theme so a system-wide dark-mode toggle propagates without
+    /// re-firing `theme.auto_system`. Set by the same command;
+    /// off by default so users on split-preference setups (dark
+    /// system + light editor, etc.) aren't overridden.
+    pub theme_auto_system: bool,
     pub ascii_icons: bool,
     pub tree_width: u16,
     /// Default visibility of the right side panel on launch.
@@ -1191,6 +1198,7 @@ impl Default for Config {
                 theme: "onedark".to_string(),
                 cmdline_popup_border_color: String::new(),
                 theme_toggle: None,
+                theme_auto_system: false,
                 ascii_icons: false,
                 tree_width: 30,
                 right_panel_visible: false,
@@ -1695,6 +1703,7 @@ struct RawUi {
     theme: Option<String>,
     cmdline_popup_border_color: Option<String>,
     theme_toggle: Option<String>,
+    theme_auto_system: Option<bool>,
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
     right_panel_visible: Option<bool>,
@@ -2131,6 +2140,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.theme_toggle {
             self.ui.theme_toggle = Some(v);
+        }
+        if let Some(v) = raw.ui.theme_auto_system {
+            self.ui.theme_auto_system = v;
         }
         if let Some(v) = raw.ui.ascii_icons {
             self.ui.ascii_icons = v;

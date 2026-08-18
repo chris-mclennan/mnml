@@ -112,6 +112,7 @@ impl App {
         self.drain_readme_fetches();
         self.maybe_refresh_ai_usage();
         self.drain_ai_usage();
+        self.maybe_poll_system_theme();
         // 2026-08-17 — pull any completed manifest-declared
         // `[[values_sources]]` poll results into their snapshots
         // + re-render the `[[statusline_segments]]` chips that
@@ -332,6 +333,47 @@ impl App {
             .collect();
         for (p, t) in saved {
             self.lsp.did_save(&p, &t);
+        }
+    }
+
+    /// #1023 (2026-08-18) — When `[ui] theme_auto_system` is on,
+    /// poll the OS dark/light preference every 15s and swap
+    /// themes if the user toggled system-wide dark mode. No-op
+    /// when the pref is off, so users on split-preference setups
+    /// aren't overridden. First call schedules the initial poll
+    /// immediately; steady-state throttles to 1 poll per 15s.
+    ///
+    /// Swap policy: if system is dark, apply `theme_toggle` (the
+    /// configured dark counterpart); if light, apply `theme`
+    /// (the base). Falls back to `theme` when `theme_toggle` is
+    /// unset. Matches the one-shot `theme.auto_system` command's
+    /// mapping in `src/command.rs`.
+    fn maybe_poll_system_theme(&mut self) {
+        if !self.config.ui.theme_auto_system {
+            return;
+        }
+        const THEME_POLL_MIN: std::time::Duration = std::time::Duration::from_secs(15);
+        let should_check = self
+            .last_theme_system_check
+            .map(|t| t.elapsed() >= THEME_POLL_MIN)
+            .unwrap_or(true);
+        if !should_check {
+            return;
+        }
+        self.last_theme_system_check = Some(std::time::Instant::now());
+        let is_dark = crate::ui::theme::detect_system_dark();
+        let target = if is_dark {
+            self.config
+                .ui
+                .theme_toggle
+                .clone()
+                .unwrap_or_else(|| self.config.ui.theme.clone())
+        } else {
+            self.config.ui.theme.clone()
+        };
+        if crate::ui::theme::cur().name != target && crate::ui::theme::set(&target).is_some() {
+            let mode = if is_dark { "dark" } else { "light" };
+            self.toast(format!("theme: {target} (system {mode})"));
         }
     }
 }

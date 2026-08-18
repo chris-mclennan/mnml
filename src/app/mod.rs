@@ -4374,6 +4374,12 @@ pub struct App {
     /// next paint so a scrambled terminal repaints cleanly. The crossterm loop
     /// checks + clears this flag at the top of each iteration.
     pub redraw_requested: bool,
+    /// #1023 (2026-08-18) — last time `App::tick` polled the OS
+    /// dark/light preference under `[ui] theme_auto_system`. `None`
+    /// before the first check; set to `Some(Instant)` after each
+    /// poll. Guarded to fire at most every 15s so `defaults`/
+    /// `gsettings`/reg-read isn't hammered.
+    pub last_theme_system_check: Option<std::time::Instant>,
     /// Set by command handlers that fail in a way the user already
     /// saw via a toast — `command::run` checks this after invoking
     /// the closure to report `ok=false` in the events log. Reset to
@@ -5864,6 +5870,7 @@ impl App {
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
+            last_theme_system_check: None,
             last_command_failed: false,
             clock_show_utc: false,
             now_playing: None,

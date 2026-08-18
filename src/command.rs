@@ -3229,15 +3229,16 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
-        // 2026-08-18 (#1007) — one-shot detect the OS light/dark
+        // 2026-08-18 (#1007 + #1023) — detect the OS light/dark
         // preference and swap. Uses `[ui] theme_toggle` as the "dark
         // theme" if set; falls back to `[ui] theme` as the light one.
-        // Polling on interval is a follow-up — for now the user
-        // re-fires this command (via right-click) when their OS
-        // preference changes.
+        // Also enables `[ui] theme_auto_system` so App::tick keeps
+        // polling every 15s (see maybe_poll_system_theme). Users who
+        // want a one-shot without ongoing polling can just re-fire
+        // theme.set directly with a specific theme.
         Command {
             id: "theme.auto_system",
-            title: "Theme: match system (light/dark) — one-shot",
+            title: "Theme: match system (light/dark) + keep in sync",
             group: "view",
             keys: &[],
             run: |app| {
@@ -3252,11 +3253,29 @@ fn builtin_commands() -> Vec<Command> {
                     app.config.ui.theme.clone()
                 };
                 if crate::ui::theme::set(&target).is_some() {
+                    app.config.ui.theme_auto_system = true;
+                    let _ = crate::app::discovery::persist_ui_bool("theme_auto_system", true);
+                    app.last_theme_system_check = Some(std::time::Instant::now());
                     let mode = if is_dark { "dark" } else { "light" };
-                    app.toast(format!("theme: {target} (system {mode})"));
+                    app.toast(format!("theme: {target} (system {mode}, auto-poll on)"));
                 } else {
                     app.toast(format!("theme: unknown \"{target}\""));
                 }
+            },
+        },
+        // 2026-08-18 (#1023) — companion to `theme.auto_system`:
+        // stop the auto-poll and stay on whatever theme is currently
+        // active. Useful when the user has picked a theme manually
+        // and doesn't want the next 15s tick to overwrite it.
+        Command {
+            id: "theme.auto_system_off",
+            title: "Theme: stop matching system (freeze on current)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.theme_auto_system = false;
+                let _ = crate::app::discovery::persist_ui_bool("theme_auto_system", false);
+                app.toast("theme: auto-poll off");
             },
         },
         // 2026-07-13 user request — quick-toggle visibility of

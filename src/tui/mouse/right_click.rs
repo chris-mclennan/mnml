@@ -935,10 +935,19 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             },
             MenuAction::Command("theme.toggle"),
         ));
-        items.push(MenuItem::new(
-            "Auto: match system (light/dark)",
-            MenuAction::Command("theme.auto_system"),
-        ));
+        // #1023 (2026-08-18) — same command now enables tick-based
+        // polling, so the menu label reflects the toggle state.
+        if app.config.ui.theme_auto_system {
+            items.push(MenuItem::new(
+                "Auto: match system ● (stop syncing)",
+                MenuAction::Command("theme.auto_system_off"),
+            ));
+        } else {
+            items.push(MenuItem::new(
+                "Auto: match system (light/dark)",
+                MenuAction::Command("theme.auto_system"),
+            ));
+        }
         items.push(MenuItem::new(
             "Reset to config default",
             MenuAction::Command("theme.reset"),
