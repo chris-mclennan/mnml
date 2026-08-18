@@ -224,7 +224,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         hover_help_finish(frame, app, hover_help_area);
         return;
     }
-    let chev = section_chev(app.git_section_expanded, nerd);
+    let triangle = app.config.ui.expand_indicator == "triangle";
+    let chev = section_chev_with_pref(app.git_section_expanded, nerd, triangle);
     // Multi-repo workspaces append `· <repo-name>` to the GIT header so
     // the user knows which repo the rail is currently scoped to. Single-
     // repo case keeps the bare "GIT" label.
@@ -606,7 +607,8 @@ fn draw_integration_section(
     // covers browse + enable + edit + install, so the overlay was
     // just a redundant second copy. The `integrations.add` command
     // is still callable from the palette for muscle-memory users.
-    let chev = section_chev(app.integration_section_expanded, nerd);
+    let triangle = app.config.ui.expand_indicator == "triangle";
+    let chev = section_chev_with_pref(app.integration_section_expanded, nerd, triangle);
     let chev_str = format!(" {chev} ");
     let label = "INTEGRATIONS".to_string();
     let used = chev_str.chars().count() + label.chars().count();
@@ -812,7 +814,18 @@ fn draw_integration_section(
     }
 }
 
-fn section_chev(expanded: bool, nerd: bool) -> &'static str {
+/// Return the section-header expand glyph, honoring `[ui]
+/// expand_indicator`.
+/// 2026-08-18 (#970) — R8 tester finding: setting
+/// `expand_indicator = "triangle"` on non-tree render sites already
+/// swapped via `expand_glyph()` (ui/mod.rs), but the file tree kept
+/// its chevron helper hardcoded to chevrons. This helper takes the
+/// pref and returns the small triangle glyphs (`▾` / `▸`) when
+/// `use_triangle` is true, matching the other render sites.
+fn section_chev_with_pref(expanded: bool, nerd: bool, use_triangle: bool) -> &'static str {
+    if use_triangle {
+        return if expanded { "▾" } else { "▸" };
+    }
     // 2026-07-12 — the Unicode fallback also upgrades to the
     // BLACK triangles (`▼` / `▶`) so the ascii_icons path stays
     // visibly larger than the small `▾` / `▸` variants when the
@@ -849,7 +862,8 @@ fn draw_primary_workspace_section(
         .and_then(|n| n.to_str())
         .unwrap_or("workspace")
         .to_string();
-    let chev = section_chev(app.tree_root_expanded, nerd);
+    let triangle = app.config.ui.expand_indicator == "triangle";
+    let chev = section_chev_with_pref(app.tree_root_expanded, nerd, triangle);
     let chev_str = format!(" {chev} ");
     const CURRENT_DOT_W: usize = 2;
     const CHIP_RESERVE: usize = 5 * 3 + 1;
@@ -1084,6 +1098,7 @@ fn draw_workspace_files(
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
+    let triangle = app.config.ui.expand_indicator == "triangle";
     for (vi, row) in rows.iter().enumerate().skip(app.tree.scroll).take(h) {
         let is_cursor = vi == cursor;
         let is_repo_row = multi_repo
@@ -1111,7 +1126,9 @@ fn draw_workspace_files(
         // (VS Code / NvChad tree style) while the folder/file icon keeps
         // its devicon color.
         let (chev_part, icon_part) = if nerd && row.is_dir {
-            let c = if row.is_expanded {
+            let c = if triangle {
+                if row.is_expanded { "▾" } else { "▸" }
+            } else if row.is_expanded {
                 CHEVRON_OPEN
             } else {
                 CHEVRON_CLOSED
@@ -1323,7 +1340,8 @@ fn draw_extra_workspace_section(
         let ws = &app.extra_workspaces[ws_idx];
         (ws.name.clone(), ws.expanded)
     };
-    let chev = section_chev(expanded, nerd);
+    let triangle = app.config.ui.expand_indicator == "triangle";
+    let chev = section_chev_with_pref(expanded, nerd, triangle);
     let chev_str = format!(" {chev} ");
     // qa-feature 2026-07-01 — extras no longer render the
     // right-side action chip cluster. The `workspace_header_chips`
@@ -1446,6 +1464,7 @@ fn draw_extra_workspace_section(
     let focused =
         matches!(app.focus, crate::focus::Focus::Tree) && app.focused_extra_ws == Some(ws_idx);
     let cursor = app.extra_workspaces[ws_idx].tree.cursor();
+    let triangle = app.config.ui.expand_indicator == "triangle";
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
@@ -1474,7 +1493,9 @@ fn draw_extra_workspace_section(
         };
         let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
         let (chev_part, icon_part) = if nerd && row.is_dir {
-            let c = if row.is_expanded {
+            let c = if triangle {
+                if row.is_expanded { "▾" } else { "▸" }
+            } else if row.is_expanded {
                 CHEVRON_OPEN
             } else {
                 CHEVRON_CLOSED
