@@ -2757,15 +2757,25 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         .unwrap_or(false);
     let pane_wants_bare_space = matches!(key.code, KeyCode::Char(' '))
         && key.modifiers.is_empty()
-        && !matches!(app.focus, crate::focus::Focus::Tree)
-        && (vim_op_pending
-            || !matches!(
-                app.editing_mode(),
-                crate::input::EditingMode::Normal
-                    | crate::input::EditingMode::Visual
-                    | crate::input::EditingMode::VisualLine
-                    | crate::input::EditingMode::VisualBlock
-            ));
+        && (
+            // 2026-08-18 (#968 reviewer follow-up) — Tree focus was
+            // previously EXCLUDED from the bypass so `<space>ff`
+            // leader chord could work from the tree, but that meant
+            // pane.rs::handle_tree_key's Space arm (documented as
+            // "activate row") was unreachable. Now Tree focus bypasses
+            // the chord chain: Space activates the focused row, and
+            // leader chords are reached via Ctrl+K (which also opens
+            // whichkey) or by first focusing a pane.
+            matches!(app.focus, crate::focus::Focus::Tree)
+                || vim_op_pending
+                || !matches!(
+                    app.editing_mode(),
+                    crate::input::EditingMode::Normal
+                        | crate::input::EditingMode::Visual
+                        | crate::input::EditingMode::VisualLine
+                        | crate::input::EditingMode::VisualBlock
+                )
+        );
     if !vim_reserves_key
         && !pty_reserves_key
         && !delete_owns_focus
