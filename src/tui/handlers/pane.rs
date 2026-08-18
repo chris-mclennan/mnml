@@ -293,18 +293,26 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             app.open_ex_command_prompt();
             return;
         }
-        // Ctrl+W → if the current style treats it as window-nav,
-        // jump to the first editor pane and re-dispatch so its
-        // handler enters Prefix::Window. Standard / VS Code
-        // treats Ctrl+W as buffer.close — skip.
-        if key.code == KeyCode::Char('w')
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && app.ctrl_w_is_window_nav()
-        {
-            if let Some(editor_id) = app.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
-                app.active = Some(editor_id);
-                app.focus = crate::focus::Focus::Pane;
-                handle_pane_key(app, key);
+        // Ctrl+W behavior on non-editor panes depends on input style:
+        //   - Vim: window-nav prefix — jump to first editor pane so
+        //     its handler enters Prefix::Window (canonical `Ctrl+W q`,
+        //     `Ctrl+W h`, etc. still work).
+        //   - Standard / VS Code: buffer.close — close the current
+        //     pane directly. #1037 (2026-08-18) fix: prior code
+        //     skipped this branch in standard mode and the per-pane
+        //     `_ => {}` catch-alls swallowed Ctrl+W entirely, so
+        //     Claude Usage / Codex Usage / SpendReport / etc. tabs
+        //     couldn't be closed with Ctrl+W in standard mode.
+        if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if app.ctrl_w_is_window_nav() {
+                if let Some(editor_id) = app.panes.iter().position(|p| matches!(p, Pane::Editor(_)))
+                {
+                    app.active = Some(editor_id);
+                    app.focus = crate::focus::Focus::Pane;
+                    handle_pane_key(app, key);
+                }
+            } else {
+                app.close_active_pane();
             }
             return;
         }
