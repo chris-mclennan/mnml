@@ -825,11 +825,16 @@ pub fn paint_right_cluster(
                     close,
                     Style::default().fg(chip_fg).bg(chip_bg),
                 ));
+                // 2026-08-18 (#1022) — close rect covers both painted
+                // cells (glyph + trailing space). Was width: 1 —
+                // trailing space wasn't clickable; a tap on the
+                // right half of the button read as clicking the
+                // background instead of the ×.
                 app.rects.bufferline_tab_page_close.push((
                     Rect {
                         x: cluster_x,
                         y: area.y,
-                        width: 1,
+                        width: 2,
                         height: 1,
                     },
                     i,

@@ -3229,6 +3229,36 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
+        // 2026-08-18 (#1007) — one-shot detect the OS light/dark
+        // preference and swap. Uses `[ui] theme_toggle` as the "dark
+        // theme" if set; falls back to `[ui] theme` as the light one.
+        // Polling on interval is a follow-up — for now the user
+        // re-fires this command (via right-click) when their OS
+        // preference changes.
+        Command {
+            id: "theme.auto_system",
+            title: "Theme: match system (light/dark) — one-shot",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let is_dark = crate::ui::theme::detect_system_dark();
+                let target = if is_dark {
+                    app.config
+                        .ui
+                        .theme_toggle
+                        .clone()
+                        .unwrap_or_else(|| app.config.ui.theme.clone())
+                } else {
+                    app.config.ui.theme.clone()
+                };
+                if crate::ui::theme::set(&target).is_some() {
+                    let mode = if is_dark { "dark" } else { "light" };
+                    app.toast(format!("theme: {target} (system {mode})"));
+                } else {
+                    app.toast(format!("theme: unknown \"{target}\""));
+                }
+            },
+        },
         // 2026-07-13 user request — quick-toggle visibility of
         // the Claude/Codex chips in the top-right tab-bar cluster.
         // Surfaced by the AI chip's right-click menu; also usable

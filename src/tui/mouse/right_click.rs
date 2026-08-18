@@ -936,8 +936,8 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuAction::Command("theme.toggle"),
         ));
         items.push(MenuItem::new(
-            "Auto (system light/dark) — coming soon",
-            MenuAction::Command("noop.info"),
+            "Auto: match system (light/dark)",
+            MenuAction::Command("theme.auto_system"),
         ));
         items.push(MenuItem::new(
             "Reset to config default",

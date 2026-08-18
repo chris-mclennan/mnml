@@ -386,6 +386,71 @@ pub fn set(name: &str) -> Option<Theme> {
     Some(t)
 }
 
+/// One-shot detect: does the OS report a dark appearance preference?
+/// macOS via `defaults read -g AppleInterfaceStyle` (returns "Dark"
+/// when dark; exits non-zero when light — no key exists for light).
+/// Linux via `gsettings get org.gnome.desktop.interface color-scheme`
+/// which returns `'prefer-dark'` or `'prefer-light'`. Windows via
+/// the `HKCU\...\AppsUseLightTheme` reg key (0 = dark).
+///
+/// Fail-open to `false` (light) on any parse/exec error — safer to
+/// stay on the config default than to guess wrong. Task #1007.
+pub fn detect_system_dark() -> bool {
+    use std::process::Command;
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("defaults")
+            .args(["read", "-g", "AppleInterfaceStyle"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case("Dark")
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .to_ascii_lowercase()
+                    .contains("dark")
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // AppsUseLightTheme = 0x0 → dark, 0x1 → light.
+        Command::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                "/v",
+                "AppsUseLightTheme",
+            ])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("0x0"))
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        false
+    }
+}
+
 /// Path to the canonical "current theme" file — `~/.config/mnml/current-theme.toml`
 /// (respecting `$XDG_CONFIG_HOME`). This is the family's single source of truth:
 /// [`write_current`] keeps it in sync with mnml's active theme, and every sibling
