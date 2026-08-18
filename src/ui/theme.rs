@@ -567,7 +567,7 @@ pub fn write_current(t: &Theme) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&path, to_toml(t));
+    let _ = crate::app::backup::write_toml_with_backup(&path, &to_toml(t), "theme");
 }
 
 #[cfg(test)]

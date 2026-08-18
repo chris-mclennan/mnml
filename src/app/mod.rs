@@ -26,6 +26,7 @@ use crate::tree::Tree;
 
 pub mod ai;
 mod ai_usage_methods;
+pub(crate) mod backup;
 mod buffer_save_methods;
 mod cdp;
 mod cdp_prompt_methods;

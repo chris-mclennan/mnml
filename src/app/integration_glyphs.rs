@@ -141,7 +141,7 @@ fn save_assignments(file: &AssignmentFile) {
     // Amplify-icon confusion (audit 2026-08-09).
     let deduped = dedupe_aliases(file);
     if let Ok(text) = toml::to_string_pretty(&deduped) {
-        let _ = std::fs::write(&p, text);
+        let _ = crate::app::backup::write_toml_with_backup(&p, &text, "assignments");
     }
 }
 

@@ -374,7 +374,7 @@ impl App {
                 return;
             }
         };
-        if let Err(e) = std::fs::write(path, serialized) {
+        if let Err(e) = crate::app::backup::write_toml_with_backup(path, &serialized, "settings") {
             self.toast(format!("save auth: write {}: {e}", path.display()));
             return;
         }

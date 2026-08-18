@@ -865,7 +865,8 @@ pub fn persist_integration_icons(icons: &[IntegrationIcon]) -> Result<std::path:
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let stripped = strip_integration_icon_blocks(&existing);
     let appended = append_integration_icon_blocks(&stripped, icons);
-    std::fs::write(&path, appended).map_err(|e| format!("write {}: {e}", path.display()))?;
+    crate::app::backup::write_toml_with_backup(&path, &appended, "config")
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -926,7 +927,8 @@ pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf,
     body.push_str(&format!("color = {}\n", toml_str(&icon.color)));
     body.push_str(&format!("enabled = {}\n", icon.enabled));
     body.push_str(&format!("in_palette_bar = {}\n", icon.in_palette_bar));
-    std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+    crate::app::backup::write_toml_with_backup(&path, &body, "manifest")
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -980,7 +982,8 @@ pub fn write_authored_manifest_toml(icon: &IntegrationIcon) -> Result<std::path:
         toml_str(&format!("{}: open", display_label))
     ));
     body.push_str(&format!("run = {}\n", toml_str(&icon.command)));
-    std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+    crate::app::backup::write_toml_with_backup(&path, &body, "manifest")
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -1132,7 +1135,8 @@ fn persist_config_scalar(
         }
     }
     let contents = out.join("\n") + "\n";
-    std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
+    crate::app::backup::write_toml_with_backup(&path, &contents, "config")
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -1214,7 +1218,8 @@ pub fn persist_ui_string_array(key: &str, ids: &[String]) -> Result<std::path::P
         }
     }
     let contents = out.join("\n") + "\n";
-    std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
+    crate::app::backup::write_toml_with_backup(&path, &contents, "config")
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
 
