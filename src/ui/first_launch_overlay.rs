@@ -45,7 +45,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         return;
     }
     let t = theme::cur();
-    let lines = render_lines(app, state, &t);
+    let (lines, section_starts) = render_lines(app, state, &t);
     let total_h = lines.len() as u16 + 2; // + top/bottom border
     // Collect hit tags before the immutable-borrow-heavy draw loop so
     // we can register rects mutably after positioning is decided.
@@ -54,6 +54,36 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let inner_w = INNER_W;
     let outer_w = inner_w + 2;
     let outer_h = total_h.min(screen.height.saturating_sub(2));
+    // #987 (2026-08-18) — when the wizard is taller than the terminal,
+    // scroll so the focused section stays visible. Without this the
+    // top of the content shows and later sections clip off the bottom
+    // (user hits `j` past section 4, focus moves but the screen never
+    // follows). `visible_h` = interior rows between borders. Compute
+    // scroll s.t. focused section's [start, end) fits in that window.
+    let visible_h = outer_h.saturating_sub(2) as usize;
+    let scroll = if lines.len() <= visible_h {
+        0
+    } else {
+        let focused = state
+            .focused_section
+            .min(section_starts.len().saturating_sub(1));
+        let start = section_starts.get(focused).copied().unwrap_or(0);
+        let end = section_starts
+            .get(focused + 1)
+            .copied()
+            .unwrap_or(lines.len());
+        let max_scroll = lines.len().saturating_sub(visible_h);
+        // If focused section fits below current scroll, scroll up to
+        // its start; else scroll down so its end aligns with the
+        // bottom of the window.
+        if end.saturating_sub(start) >= visible_h {
+            start.min(max_scroll)
+        } else if end > visible_h {
+            end.saturating_sub(visible_h).min(max_scroll)
+        } else {
+            0
+        }
+    };
     let x = screen.x + screen.width.saturating_sub(outer_w) / 2;
     let y = screen.y + screen.height.saturating_sub(outer_h) / 2;
     let outer = Rect {
@@ -95,12 +125,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         },
     );
 
-    // Draw content lines with left/right border chars.
-    for (i, line_body) in lines.iter().enumerate() {
+    // Draw content lines with left/right border chars. Skip the first
+    // `scroll` lines when the wizard exceeds the terminal height
+    // (#987) — hit-tag lookups use the source `line_idx = scroll + i`
+    // so clicks still target the correct answer.
+    for (i, line_body) in lines.iter().skip(scroll).enumerate() {
         let row_y = y.saturating_add(1 + i as u16);
         if row_y >= y + outer_h.saturating_sub(1) {
             break;
         }
+        let line_idx = scroll + i;
         let border_style = Style::default().fg(t.cyan).bg(t.bg_dark);
         // Left border
         frame.render_widget(
@@ -126,7 +160,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // Register click hit for this row's tag, if any. Uses the
         // content rect (excluding borders) so the click target
         // matches the visible row.
-        if let Some(hit) = hit_tags.get(i).and_then(|h| h.as_ref()) {
+        if let Some(hit) = hit_tags.get(line_idx).and_then(|h| h.as_ref()) {
             app.rects.first_launch_hits.push((content_rect, *hit));
         }
         // Right border
@@ -177,12 +211,18 @@ fn render_lines<'a>(
     app: &App,
     state: &crate::app::first_launch::FirstLaunchState,
     t: &theme::Theme,
-) -> Vec<(Line<'a>, Option<FirstLaunchHit>)> {
+) -> (Vec<(Line<'a>, Option<FirstLaunchHit>)>, Vec<usize>) {
     let mut out: Vec<(Line<'a>, Option<FirstLaunchHit>)> = Vec::new();
+    // #987 (2026-08-18) — line-index of each section's `section_rule`
+    // (or its header for i == 0). `draw()` uses this to compute a
+    // scroll offset that keeps the focused section on-screen when
+    // the wizard's total lines exceed the terminal's height.
+    let mut section_starts: Vec<usize> = Vec::with_capacity(WizardSection::ALL.len());
     out.push((spacer(t), None));
 
     for (i, section) in WizardSection::ALL.iter().enumerate() {
         let focused = i == state.focused_section;
+        section_starts.push(out.len());
         // A subtle rule above each section (skip the first) — turns
         // the run-together wall of text into visually-parseable
         // sections. The numbers connect with the [1-6] jump hint in
@@ -212,7 +252,7 @@ fn render_lines<'a>(
 
     // Footer with actions.
     out.push((footer(t), None));
-    out
+    (out, section_starts)
 }
 
 fn spacer<'a>(t: &theme::Theme) -> Line<'a> {
