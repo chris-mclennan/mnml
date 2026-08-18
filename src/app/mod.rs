@@ -1512,9 +1512,8 @@ pub struct RailSectionDrag {
 
 /// Top-level rail mode driven by the far-left vscode-style activity
 /// bar. Each variant maps to a single rail pane filling everything to
-/// the right of the activity-bar strip. v1 only fully wires
-/// `Explorer` — the others render a "Coming soon" placeholder; their
-/// content is staged as follow-ups so the activity-bar shape can
+/// the right of the activity-bar strip. All five sections ship live
+/// content — Explorer / Git / Agents / Findings / Integrations.
 /// qa-feature 2026-07-01 — Installed / Marketplace tabs in the
 /// Integrations panel. `Installed` lists enabled integrations
 /// (daily driver rail); `Marketplace` lists everything else so

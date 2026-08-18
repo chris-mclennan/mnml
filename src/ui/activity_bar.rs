@@ -3,10 +3,11 @@
 //! icon switches `App.active_section`, which the rail layout uses to
 //! pick which content pane fills the area to the right of this strip.
 //!
-//! v1 only fully wires `Explorer` (the existing file tree); the other
-//! sections render a "Coming soon" placeholder pane drawn by the
-//! activity-section dispatcher. The activity bar itself ships with
-//! all five icons so the shape is visible from day one.
+//! All five sections ship live content: Explorer (file tree), Git
+//! (branch + status), Agents (Claude/Codex dashboard), Findings
+//! (`.mnml/findings/*.md` viewer), Integrations (installed sibling
+//! chips). Individual sibling repos add their own activity-bar
+//! entries via the marketplace flow.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
