@@ -369,59 +369,41 @@ pub fn complete_code(
 /// curl command (with `\` line continuations stripped — `crate::http::parse`
 /// handles either form, but the smaller form is friendlier in the
 /// Source field). Blocking — call from a worker thread.
-pub fn nl_to_curl(description: &str, model: Option<&str>) -> Result<String, String> {
-    let api_key =
-        std::env::var("ANTHROPIC_API_KEY").map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
-    let system = "You are an API request generator. The user describes an HTTP request \
-        in natural language; you output the EXACT corresponding `curl` command on a \
-        SINGLE LINE — no backslash continuations, no markdown fences, no commentary, no \
-        leading `$ ` prompt. Include explicit -X <METHOD>, -H 'Header: …' for every needed \
-        header (Content-Type, Authorization when implied, Accept where useful), and \
-        --data '<json>' for bodies (always JSON unless the user says otherwise). Prefer \
-        https://. When auth is implied but not given, use the placeholder `{{TOKEN}}`. \
-        When a host is implied but not given, use `https://api.example.com`.";
-    let user = format!(
-        "Request description:\n\n{description}\n\nOutput the curl command (one line, no fences):"
+pub fn nl_to_curl(description: &str, _model: Option<&str>) -> Result<String, String> {
+    // Task #973 (2026-08-17) — was direct-API POST to Anthropic
+    // (billed per call). Now spawns `claude -p "<prompt>"` so the
+    // request bills against the user's subscription instead. Mirrors
+    // the pattern every other AI feature in mnml uses (see
+    // `ai::stream_to_channel` / `ai::stream_cli_to_channel`).
+    // `_model` arg preserved for callsite compat but ignored — the
+    // sub CLI picks its own model.
+    let prompt = format!(
+        "You are an API request generator. The user describes an HTTP request in natural \
+         language; you output the EXACT corresponding `curl` command on a SINGLE LINE — no \
+         backslash continuations, no markdown fences, no commentary, no leading `$ ` prompt. \
+         Include explicit -X <METHOD>, -H 'Header: …' for every needed header (Content-Type, \
+         Authorization when implied, Accept where useful), and --data '<json>' for bodies \
+         (always JSON unless the user says otherwise). Prefer https://. When auth is implied \
+         but not given, use the placeholder `{{{{TOKEN}}}}`. When a host is implied but not \
+         given, use `https://api.example.com`.\n\nRequest description:\n\n{description}\n\n\
+         Output the curl command (one line, no fences):"
     );
-    let body = serde_json::json!({
-        "model": model.unwrap_or(DEFAULT_MODEL),
-        "max_tokens": 1024u32,
-        "system": system,
-        "messages": [{ "role": "user", "content": user }],
-    })
-    .to_string();
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("build client: {e}"))?;
-    let resp = client
-        .post(ENDPOINT)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", API_VERSION)
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .map_err(|e| format!("POST: {e}"))?;
-    let status = resp.status();
-    let text = resp.text().unwrap_or_default();
-    if !status.is_success() {
+    let out = std::process::Command::new("claude")
+        .args(["-p", &prompt])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("spawn claude: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
-            "HTTP {status}: {}",
-            text.chars().take(200).collect::<String>()
+            "claude -p exited {}: {}",
+            out.status,
+            stderr.chars().take(200).collect::<String>()
         ));
     }
-    let v: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("parse reply: {e}"))?;
-    let raw: String = v
-        .get("content")
-        .and_then(|c| c.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
-                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-                .collect::<String>()
-        })
-        .unwrap_or_default();
+    let raw = String::from_utf8_lossy(&out.stdout).to_string();
     // Strip code fences and stray prompt markers if the model added them.
     let mut out = raw.trim().to_string();
     if let Some(rest) = out.strip_prefix("```") {

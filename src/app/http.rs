@@ -1511,10 +1511,11 @@ impl App {
     /// switches it to the Source tab so the user can see what came
     /// back. Requires `$ANTHROPIC_API_KEY`.
     pub fn http_ai_build_prompt(&mut self) {
-        if std::env::var("ANTHROPIC_API_KEY").is_err() {
-            self.toast("http.ai_build: $ANTHROPIC_API_KEY not set");
-            return;
-        }
+        // Task #973 (2026-08-17) — was gated on $ANTHROPIC_API_KEY
+        // (direct-API path). Now spawns `claude -p` via
+        // `nl_to_curl`, so the only requirement is that `claude` is
+        // on PATH. Silent path preferred here since a `command not
+        // found` from the spawn surfaces a clear stderr in the toast.
         if self.http_ai_build_in_flight {
             self.toast("http.ai_build: a build is already in flight");
             return;
