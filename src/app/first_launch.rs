@@ -10,15 +10,21 @@
 //!
 //! ## Design
 //!
-//! Single scrollable overlay, 6 sections top-to-bottom:
-//! 1. AI ghost-text backend (Claude API / Local / Skip)
-//! 2. Input style (standard / vim — standard is the default)
-//! 3. Nerd Font check (Yes / No — diagnostic only)
+//! Single scrollable overlay, 6 sections top-to-bottom. Order matches
+//! dependency flow (reordered 2026-08-17 — prior order asked ghost-text
+//! backend first, before install / billing were even covered):
+//! 1. Nerd Font check (Yes / No — visual foundation, affects rendering
+//!    of everything below)
+//! 2. Input style (standard / vim — fundamental interaction model)
+//! 3. Claude Code + Codex CLI (detection badges + shell-installer
+//!    action per `curl … | sh` docs, 2026-08-11 verified — install
+//!    before choosing routing)
 //! 4. AI billing preference (per-product routing — task #975,
 //!    2026-08-17): Claude Code Sub/API/Off + Codex Sub/Off
-//! 5. Claude Code + Codex CLI (detection badges + shell-installer
-//!    action per `curl … | sh` docs, 2026-08-11 verified)
-//! 6. VSCode `code` shim (detection badge; symlink helper)
+//! 5. AI ghost-text backend (specific always-on feature — inherits
+//!    from #4's Claude routing)
+//! 6. VSCode `code` shim (detection badge; symlink helper —
+//!    optional convenience)
 //!
 //! (Process monitors section removed 2026-08-11 — was inline
 //! btop/htop/iftop checkboxes; discovered via the marketplace pane
