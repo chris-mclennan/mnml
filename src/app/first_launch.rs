@@ -56,12 +56,21 @@ pub enum WizardSection {
 }
 
 impl WizardSection {
+    // 2026-08-17 — reordered so dependencies flow naturally:
+    //   1. Nerd Font (visual foundation — affects everything rendered below)
+    //   2. Input style (vim vs standard — fundamental interaction model)
+    //   3. Claude Code + Codex install (install CLIs before choosing routing)
+    //   4. AI billing preference (Sub option only usable once CLI installed)
+    //   5. AI ghost-text (specific always-on feature — inherits backend from #4)
+    //   6. VSCode `code` shim (optional convenience)
+    // Prior order asked ghost-text FIRST, before install/billing were even
+    // covered — user hit a chicken-and-egg wall and reported it.
     pub const ALL: &'static [WizardSection] = &[
-        Self::AiBackend,
-        Self::InputStyle,
         Self::NerdFont,
-        Self::AiRouting,
+        Self::InputStyle,
         Self::ClaudeCode,
+        Self::AiRouting,
+        Self::AiBackend,
         Self::VscodeShim,
     ];
 

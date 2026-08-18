@@ -142,8 +142,13 @@ impl AiProduct {
 ///   env key is set, else Sub (the failure surfaces on first call with
 ///   the actionable "run `claude` to sign in" toast, which is the same
 ///   behaviour as an explicit `Sub` choice on a fresh machine).
-/// - `Off`: disable AI features for this product entirely. Chips + menu
-///   items hide; commands become no-ops with a targeted toast.
+/// - `Off`: user-declared intent to disable this AI product. v1 partial:
+///   ghost-text short-circuits (`ai_inline_suggestions` returns false),
+///   but ask/explain/fix/refactor/write-tests still fire `claude -p` —
+///   the chip-hide + palette-command gate is deferred (documented as a
+///   TODO on `ai_backend()`). Reviewer flag 2026-08-17 on 2a5a5b14 —
+///   fix pending. For now: setting `Off` reliably disables ghost-text
+///   only; other commands still bill / call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutingBackend {
     Sub,

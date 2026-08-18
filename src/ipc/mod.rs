@@ -304,6 +304,13 @@ pub enum IpcCommand {
     /// dir. Each entry has `{x, y, w, h, label}`. Used by the
     /// click-rect audit + by ad-hoc debugging (`./run.sh dump-rects`).
     DumpRects,
+    /// Demo / test helper: seed a ghost-text suggestion into the
+    /// active editor pane (bypasses the AI backend). Useful for demo
+    /// tapes that want to SHOW ghost-text UX without waiting on a
+    /// real API round-trip (which is non-deterministic in timing and
+    /// requires an API key). Mirrors the `.test` runner's `ghost`
+    /// step (`src/e2e/mod.rs`). No-op if no editor pane is active.
+    Ghost(String),
     /// Stop the loop.
     Quit,
     /// Stop the loop with the restart exit code (the `run.sh` wrapper rebuilds + relaunches).
@@ -661,6 +668,14 @@ fn parse_command(line: &str) -> IpcCommand {
             _ => IpcCommand::Unknown(line.to_string()),
         },
         "dump-rects" => IpcCommand::DumpRects,
+        // Seed a ghost-text suggestion into the active editor pane
+        // — demo/test helper, no AI backend involved. Reuses the
+        // `text` field on RawCommand. Empty string ⇒ Unknown (would
+        // be a silent no-op otherwise, easy to miss in a script).
+        "ghost" => match raw.text {
+            Some(t) if !t.is_empty() => IpcCommand::Ghost(t),
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
         _ => IpcCommand::Unknown(line.to_string()),
@@ -1184,6 +1199,24 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             ])
         }
         IpcCommand::DumpRects => json_event(&[("event", "dump_rects")]),
+        IpcCommand::Ghost(text) => {
+            // Mirror `.test` runner: set ghost_suggestion on the
+            // active editor pane. Silent no-op when the active pane
+            // isn't an editor (still emits the event so the host
+            // script can trace it).
+            let mut applied = false;
+            if let Some(pane) = app.active.and_then(|i| app.panes.get_mut(i))
+                && let crate::pane::Pane::Editor(b) = pane
+            {
+                b.editor.ghost_suggestion = Some(text.clone());
+                applied = true;
+            }
+            json_event(&[
+                ("event", "ghost"),
+                ("applied", if applied { "true" } else { "false" }),
+                ("text", text),
+            ])
+        }
         IpcCommand::Quit => {
             // Scripts/E2E know what they're doing — force, bypassing the dirty guard.
             app.should_quit = true;
@@ -1892,6 +1925,16 @@ mod tests {
         assert!(matches!(parse_command(r#"{"cmd":"snapshot"}"#), Snapshot));
         assert!(matches!(parse_command(r#"{"cmd":"quit"}"#), Quit));
         assert!(matches!(parse_command(r#"{"cmd":"restart"}"#), Restart));
+        // Ghost — needs non-empty `text`; empty ⇒ Unknown.
+        assert!(matches!(
+            parse_command(r#"{"cmd":"ghost","text":"foo()"}"#),
+            Ghost(_)
+        ));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"ghost","text":""}"#),
+            Unknown(_)
+        ));
+        assert!(matches!(parse_command(r#"{"cmd":"ghost"}"#), Unknown(_)));
         assert!(matches!(parse_command(r#"{"cmd":"bogus"}"#), Unknown(_)));
         // Malformed JSON ⇒ Unknown, never a panic.
         assert!(matches!(parse_command("not json at all"), Unknown(_)));

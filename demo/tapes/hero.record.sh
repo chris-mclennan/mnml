@@ -239,6 +239,46 @@ if [ -n "$GIF_MIRROR" ]; then
   cp "$GIF_OUT" "$GIF_MIRROR"
 fi
 
+# ── Extract review frames ─────────────────────────────────────
+# Pull 8 evenly-spaced frames out of the rendered GIF so a
+# downstream reviewer (human OR an agent invoked with a `frames/`
+# manifest) can pattern-match "frame N should show X" against the
+# driver script's inline beat comments.
+#
+# Total frame count varies with the .cast's --fps-cap output;
+# ffmpeg's `select='not(mod(n,K))'` needs a step K to yield ~8.
+# We probe the frame count with ffprobe (fast — the GIF is small)
+# and compute K = max(1, round(total / 8)).
+FRAMES_DIR="$REPO/demo/tapes/frames/$TAPE_NAME"
+if command -v ffmpeg >/dev/null 2>&1; then
+  rm -rf "$FRAMES_DIR"
+  mkdir -p "$FRAMES_DIR"
+  # ffprobe returns e.g. "nb_read_frames=142". Fall back to 8 if it
+  # fails (K=1 → every frame, ffmpeg's -frames:v caps to 8).
+  total="$(ffprobe -v error -count_frames -select_streams v:0 \
+            -show_entries stream=nb_read_frames -of csv=p=0 \
+            "$GIF_OUT" 2>/dev/null || echo '')"
+  if [[ "$total" =~ ^[0-9]+$ ]] && [ "$total" -gt 8 ]; then
+    K=$(( total / 8 ))
+    [ "$K" -lt 1 ] && K=1
+  else
+    K=1
+  fi
+  # -frames:v 8 caps the emitted count even if the modulo picks 9
+  # (last cell can land on an off-by-one). vsync=vfr keeps
+  # ffmpeg from padding duplicate frames back in.
+  ffmpeg -y -loglevel error \
+    -i "$GIF_OUT" \
+    -vf "select='not(mod(n,${K}))'" -vsync vfr \
+    -frames:v 8 \
+    "$FRAMES_DIR/frame_%03d.png"
+  n_frames="$(ls "$FRAMES_DIR"/frame_*.png 2>/dev/null | wc -l | tr -d ' ')"
+  echo "  frames        $FRAMES_DIR ($n_frames PNGs, step=$K, total≈$total)"
+else
+  echo "[demo-record] ffmpeg not on PATH — skipping frame extraction"
+  echo "              (install with: brew install ffmpeg)"
+fi
+
 echo "[demo-record] done"
 echo "  cast          $CAST ($(du -h "$CAST" | cut -f1))"
 echo "  site GIF      $GIF_OUT ($(du -h "$GIF_OUT" | cut -f1))"
