@@ -809,6 +809,11 @@ mod tests {
         // as `src/shell_prompt.rs::tests`.
         let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        // #1041 — pin data_root to the tempdir explicitly. HOME+XDG
+        // guards were not enough on Ubuntu because PORTABLE_CACHE
+        // (a OnceLock) can be poisoned by earlier tests in the same
+        // binary; MNML_DATA_ROOT is the highest-precedence override.
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
         let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         // Seed two sibling glyphs; discover assigns codepoints.
@@ -876,6 +881,7 @@ mod tests {
         // `len == 1` fail. Remove XDG for the test's duration.
         let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
         let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         write_svg(&dir, "victim.svg");
@@ -924,7 +930,9 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
         let (svg_gone, assignment_gone) = purge_integration_glyph_state("nonexistent");
         assert!(!svg_gone);
         assert!(!assignment_gone);

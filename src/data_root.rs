@@ -80,6 +80,17 @@ fn is_portable() -> bool {
 /// 3. `$HOME/.config/mnml/` — standard fallback.
 /// 4. `./mnml` — degenerate, no HOME.
 pub fn data_root() -> PathBuf {
+    // Highest-precedence override — a hermetic sandbox for tests
+    // (Ubuntu-CI's `PORTABLE_CACHE` OnceLock can't be reset, and
+    // this test-only env var sidesteps that entirely) and for
+    // power users who want a per-shell mnml (e.g. `MNML_DATA_ROOT=
+    // /tmp/mnml-scratch mnml`). When set + non-empty, ALL resolution
+    // logic below (portable, XDG, HOME) is skipped. Task #1041.
+    if let Ok(root) = std::env::var("MNML_DATA_ROOT")
+        && !root.is_empty()
+    {
+        return PathBuf::from(root);
+    }
     if is_portable()
         && let Some(p) = portable_candidate()
     {
