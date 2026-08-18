@@ -415,7 +415,12 @@ pub fn detect_system_dark() -> bool {
 
     #[cfg(target_os = "linux")]
     {
-        Command::new("gsettings")
+        // Try GNOME (gsettings) first, then KDE (kreadconfig6 →
+        // kreadconfig5 fallback for older Plasma). Both are best-
+        // effort; other DEs (Sway, Hyprland, xfce4) fall through
+        // to light. Reviewer flag 2026-08-18: bare GNOME check
+        // was misleading on KDE.
+        let gnome = Command::new("gsettings")
             .args(["get", "org.gnome.desktop.interface", "color-scheme"])
             .output()
             .ok()
@@ -424,8 +429,26 @@ pub fn detect_system_dark() -> bool {
                 String::from_utf8_lossy(&o.stdout)
                     .to_ascii_lowercase()
                     .contains("dark")
-            })
-            .unwrap_or(false)
+            });
+        if let Some(dark) = gnome {
+            return dark;
+        }
+        for bin in ["kreadconfig6", "kreadconfig5"] {
+            let kde = Command::new(bin)
+                .args(["--group", "General", "--key", "ColorScheme"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .to_ascii_lowercase()
+                        .contains("dark")
+                });
+            if let Some(dark) = kde {
+                return dark;
+            }
+        }
+        false
     }
 
     #[cfg(target_os = "windows")]
