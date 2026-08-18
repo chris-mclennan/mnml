@@ -998,21 +998,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // no numeric span (error / no-data em-dash), the whole chip
         // uses the tier fg on the brand bg.
         //
-        // 2026-08-18 f/u: was `bg_range` (tier bg-patch inside the
-        // chip) — visually read as a "mini-pill nested inside a
-        // pill" because the sharp bg-edge inside the brand pill
-        // looked like a separate chip. Switched to `fg_range`:
-        // numbers get colored TEXT on the brand bg instead of a
-        // colored patch. Same info-density, no nested rectangle.
+        // 2026-08-18 f/u round 2: user report — tier fg on numbers
+        // was low-contrast against the brand pill (green/yellow/red
+        // text on coral bg = hard to read). Also the bg was `t.orange`
+        // (theme's generic orange) rather than the ACTUAL Anthropic
+        // brand color. Two fixes:
+        // 1. Bg → `brand_color_for_builtin("claude_code")` = Anthropic
+        //    coral (RGB 209,109,81). Real brand match, not theme guess.
+        // 2. All text stays dark (bg_darker) UNIFORMLY — no tier fg
+        //    on numbers. Loses the color-coded status signal, but
+        //    the chip is now cleanly readable. Follow-up: add a
+        //    subtler tier indicator (bold on numeric range, or a
+        //    tiny leading colored dot) if the status info is missed.
+        let claude_bg = theme::brand_color_for_builtin("claude_code").unwrap_or(t.orange);
         let base_fg = if claude_render.tier_range.is_none() {
             claude_render.tier_fg
         } else {
             t.bg_darker
         };
-        let mut seg = Seg::new(claude_render.text, base_fg, t.orange);
-        if let Some((s, e)) = claude_render.tier_range {
-            seg = seg.fg_range(s, e, claude_render.tier_fg);
-        }
+        let mut seg = Seg::new(claude_render.text, base_fg, claude_bg);
         let (u_start, u_end) = claude_render.underline;
         seg = seg.underline_range(u_start, u_end);
         right.push(seg);
