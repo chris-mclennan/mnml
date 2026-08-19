@@ -828,6 +828,87 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// #878 step 2 (2026-08-19). Apply the declarative
+    /// `[[startup.layout]]` block from config, honoring the boot-time
+    /// gate: only fires when the layout is empty AND no panes are
+    /// open (i.e. session restore didn't already populate the
+    /// workspace). Callers: `main.rs` right after `try_restore_session`.
+    /// Idempotent-ish — if a stray call runs after the layout is
+    /// non-empty, it no-ops. Not called from headless / demo mode
+    /// (both set up their own state before this could fire).
+    ///
+    /// Semantics: linear chain of splits. First entry lands in the
+    /// initial (empty) leaf via `open_path` / `open_pty_dir`. Each
+    /// subsequent entry has its `split` direction applied first,
+    /// then the pane is opened in the new leaf. Invalid entries
+    /// (validated at config-load time) never make it into the list,
+    /// so the applier can trust the vec's shape.
+    pub fn apply_startup_layout(&mut self) {
+        // Boot-time gate: nothing to apply, or session restore already
+        // owns the layout.
+        if self.config.startup_layout.is_empty() {
+            return;
+        }
+        if !matches!(self.layout(), crate::layout::Layout::Empty) || !self.panes.is_empty() {
+            return;
+        }
+        let entries = self.config.startup_layout.clone();
+        for (i, entry) in entries.iter().enumerate() {
+            // Direction to split for entries after the first. Validated at
+            // config load, but re-check defensively in case config was
+            // built programmatically.
+            let split_dir = if i == 0 {
+                None
+            } else {
+                match entry.split.as_deref() {
+                    Some("right") => Some(crate::layout::SplitDir::Horizontal),
+                    Some("down") => Some(crate::layout::SplitDir::Vertical),
+                    _ => continue,
+                }
+            };
+            match entry.kind.as_str() {
+                "editor" => {
+                    let Some(raw) = entry.path.as_deref() else {
+                        continue;
+                    };
+                    let path = crate::app::util::expand_tilde_and_resolve(&self.workspace, raw);
+                    // Editor path: split first (creates a scratch pane
+                    // in the new leaf), then open_path adds our file as
+                    // a tab. The scratch is left in place — cheap enough
+                    // (empty buffer) and the user closes it or ignores it.
+                    // If step 2 UX tests surface friction, switch to a
+                    // dedicated `split_leaf_with(cur, dir, Editor(buf))`
+                    // helper — deferring that until we know the shape is
+                    // actually painful in practice.
+                    if let Some(d) = split_dir {
+                        self.split_active(d);
+                    }
+                    self.open_path(&path);
+                }
+                "pty" => {
+                    let Some(cmd) = entry.cmd.as_deref() else {
+                        continue;
+                    };
+                    // Pty path uses `open_pty_dir` which does its own
+                    // split, so we don't call `split_active` first.
+                    // For the FIRST entry (i == 0, no split_dir),
+                    // default to vertical (below) — matches the shell
+                    // convention. For subsequent entries, use the
+                    // entry's declared split direction.
+                    let dir = split_dir.unwrap_or(crate::layout::SplitDir::Vertical);
+                    let mut profile =
+                        crate::pty_pane::BinaryProfile::shell(Some(self.workspace.clone()));
+                    profile.args = vec!["-c".to_string(), cmd.to_string()];
+                    // Label the tab with the command so it's obvious
+                    // in the bufferline that this isn't a plain shell.
+                    profile.label = cmd.to_string();
+                    self.open_pty_dir(profile, dir);
+                }
+                _ => continue,
+            }
+        }
+    }
+
     /// Replace `Leaf(leaf)` with `Split{leaf, new-pane}`; returns the new pane id.
     /// The source leaf's background tabs are preserved on the `first` side so
     /// splitting a leaf that held [A,B,C] with A active leaves [A,B,C] on the
@@ -2753,6 +2834,102 @@ mod layout_tests {
     }
 
     // ── #978 — arbitrary-depth splits ───────────────────────────────
+
+    // ── #878 step 2 — apply_startup_layout ─────────────────────────
+
+    #[test]
+    fn apply_startup_layout_no_op_when_empty() {
+        let (_d, mut app) = app_with_files();
+        // No entries in cfg.startup_layout — should no-op regardless
+        // of session state.
+        assert!(app.config.startup_layout.is_empty());
+        let panes_before = app.panes.len();
+        app.apply_startup_layout();
+        assert_eq!(app.panes.len(), panes_before);
+    }
+
+    #[test]
+    fn apply_startup_layout_skips_when_layout_non_empty() {
+        // Session restore already populated the layout — the applier
+        // must NOT stack panes on top. Simulates "user has a saved
+        // session; startup_layout is just the cold-start baseline."
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        assert!(!matches!(app.layout(), crate::layout::Layout::Empty));
+        // Populate the config's startup_layout with an entry that
+        // would otherwise fire.
+        app.config
+            .startup_layout
+            .push(crate::config::StartupLayoutEntry {
+                kind: "editor".to_string(),
+                path: Some(d.path().join("b.txt").to_string_lossy().to_string()),
+                cmd: None,
+                split: None,
+                ratio: None,
+            });
+        let panes_before = app.panes.len();
+        app.apply_startup_layout();
+        // Existing pane count unchanged — the gate skipped.
+        assert_eq!(app.panes.len(), panes_before);
+    }
+
+    #[test]
+    fn apply_startup_layout_opens_first_editor_entry() {
+        let (d, mut app) = app_with_files();
+        // Layout is empty at this point (no session, no open files).
+        assert!(matches!(app.layout(), crate::layout::Layout::Empty));
+        app.config
+            .startup_layout
+            .push(crate::config::StartupLayoutEntry {
+                kind: "editor".to_string(),
+                path: Some(d.path().join("a.txt").to_string_lossy().to_string()),
+                cmd: None,
+                split: None,
+                ratio: None,
+            });
+        app.apply_startup_layout();
+        // The file opened → layout is a single-tab leaf, one pane.
+        assert!(matches!(app.layout(), crate::layout::Layout::Leaf { .. }));
+        assert_eq!(app.panes.len(), 1);
+    }
+
+    #[test]
+    fn apply_startup_layout_two_editor_entries_produce_a_split() {
+        let (d, mut app) = app_with_files();
+        app.config
+            .startup_layout
+            .push(crate::config::StartupLayoutEntry {
+                kind: "editor".to_string(),
+                path: Some(d.path().join("a.txt").to_string_lossy().to_string()),
+                cmd: None,
+                split: None,
+                ratio: None,
+            });
+        app.config
+            .startup_layout
+            .push(crate::config::StartupLayoutEntry {
+                kind: "editor".to_string(),
+                path: Some(d.path().join("b.txt").to_string_lossy().to_string()),
+                cmd: None,
+                split: Some("right".to_string()),
+                ratio: None,
+            });
+        app.apply_startup_layout();
+        assert!(matches!(
+            app.layout(),
+            crate::layout::Layout::Split {
+                dir: crate::layout::SplitDir::Horizontal,
+                ..
+            }
+        ));
+        // Two open files ⇒ ≥2 panes (may be more if split_active
+        // opened a scratch buffer alongside).
+        assert!(
+            app.panes.len() >= 2,
+            "expected ≥2 panes after two-entry layout, got {}",
+            app.panes.len()
+        );
+    }
 
     #[test]
     fn split_active_can_nest_four_levels_deep() {

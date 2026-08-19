@@ -712,6 +712,17 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if !args.sandbox {
         app.try_restore_session();
     }
+    // #878 step 2 (2026-08-19) — apply the declarative
+    // `[[startup.layout]]` block, gated internally on layout-empty +
+    // panes-empty so a real session restore always wins. Skip in
+    // sandbox mode for the same reason session restore is skipped —
+    // the sandbox wants a brand-new-user view. Not gated on --demo
+    // here because `--demo` sets up its own state via
+    // `--sandbox` + `apply_demo_state`; if that changes, the gate
+    // inside `apply_startup_layout` still no-ops.
+    if !args.sandbox {
+        app.apply_startup_layout();
+    }
     // #851 phase 3 — one-shot aggressive migration of any legacy
     // `[[ui.integration_icon]]` blocks in ~/.config/mnml/config.toml
     // into `<id>.override.toml` sidecars. Idempotent — no-op on
