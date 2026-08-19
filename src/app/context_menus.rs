@@ -1079,6 +1079,14 @@ impl App {
                 MenuAction::Command("lsp.selection_expand"),
             ),
             MenuItem::new("Toggle fold", MenuAction::Command("editor.toggle_fold")),
+            // #980 (2026-08-18) — talk-to-Claude entry points. The
+            // commands themselves have existed since the ai.* group
+            // shipped (leader ae = explain, aa = ask); this menu was
+            // the missing surface for mouse users. `ai.explain`
+            // operates on the current selection if there is one, else
+            // the whole file — matches the LSP/edit ops above.
+            MenuItem::new("Explain with Claude", MenuAction::Command("ai.explain")),
+            MenuItem::new("Ask Claude…", MenuAction::Command("ai.ask")),
         ];
         if dirty && has_path {
             items.push(MenuItem::new("Save", MenuAction::SavePane(pane_id)));
