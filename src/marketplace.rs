@@ -275,18 +275,6 @@ pub fn default_sources() -> Vec<Source> {
             repo: "chris-mclennan/mnml-integrations".to_string(),
             path: "launchers".to_string(),
         },
-        // 2026-08-19 (#1054) — the crates.io keyword source only
-        // finds crates whose Cargo.toml sets `keywords = ["mnml-
-        // integration"]`. Most siblings in the monorepo never opted
-        // into that, so the marketplace looked empty even for
-        // installed integrations like mnml-tracker-jira. Adding the
-        // monorepo apps folder as a third source surfaces every
-        // sibling regardless of keyword hygiene.
-        Source::GithubMonorepoApps {
-            id: "chris-mclennan/mnml-integrations-apps".to_string(),
-            repo: "chris-mclennan/mnml-integrations".to_string(),
-            apps_dir: "apps".to_string(),
-        },
     ]
 }
 
@@ -947,13 +935,9 @@ mod tests {
     #[test]
     fn default_sources_include_crates_and_github() {
         let s = default_sources();
-        assert_eq!(s.len(), 3);
+        assert_eq!(s.len(), 2);
         assert!(matches!(s[0], Source::CratesKeyword { .. }));
         assert!(matches!(s[1], Source::GithubLauncherFolder { .. }));
-        // #1054 (2026-08-19) — third default source: the monorepo
-        // apps folder, so siblings that never opted into the
-        // `mnml-integration` crates.io keyword still surface.
-        assert!(matches!(s[2], Source::GithubMonorepoApps { .. }));
     }
 
     #[test]

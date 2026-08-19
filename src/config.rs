@@ -4222,9 +4222,8 @@ integration_icon_order = ["codex", "browser"]
         assert!(cfg.marketplace.use_defaults);
         assert!(cfg.marketplace.sources.is_empty());
         // Effective source list picks up the built-in defaults when
-        // use_defaults is on and no user sources are set. #1054
-        // added a third default (monorepo apps folder).
-        assert_eq!(cfg.marketplace.effective_sources().len(), 3);
+        // use_defaults is on and no user sources are set.
+        assert_eq!(cfg.marketplace.effective_sources().len(), 2);
     }
 
     #[test]
@@ -4251,11 +4250,9 @@ path = "."
         assert_eq!(cfg.marketplace.cache_ttl_secs, 7200);
         assert_eq!(cfg.marketplace.sources.len(), 1);
         // Effective = built-in defaults + user entry (use_defaults on).
-        // #1054 added a third default source, so the user entry is
-        // now at index 3.
         let effective = cfg.marketplace.effective_sources();
-        assert_eq!(effective.len(), 4);
-        assert_eq!(effective[3].id(), "acme");
+        assert_eq!(effective.len(), 3);
+        assert_eq!(effective[2].id(), "acme");
     }
 
     #[test]
