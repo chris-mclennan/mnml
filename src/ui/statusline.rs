@@ -367,6 +367,75 @@ fn tier_color(percent: u16, t: &theme::Theme) -> ratatui::style::Color {
     }
 }
 
+/// Sparkline block for a usage %. 0 -> lower block, 100 -> full block.
+/// Eight buckets over 0-100 (each covers 12.5 pct-points). Used by
+/// the multi-account sparkline chip (#1043).
+fn sparkline_char(percent: u16) -> char {
+    const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let clamped = percent.min(100) as usize;
+    let idx = (clamped * (BLOCKS.len() - 1)) / 100;
+    BLOCKS[idx.min(BLOCKS.len() - 1)]
+}
+
+/// #1043 (2026-08-18) — `urgency = remaining_pct / hours_to_reset`.
+/// Higher urgency = more tokens at risk of being wasted per hour of
+/// runway on this account, i.e. more reason to be on it NOW. Zero
+/// when the account has no valid snapshot, no reset window, or is
+/// already at 100%. Prefers the session (5h) reset window; falls
+/// back to weekly. `now_secs` is Unix time.
+fn account_urgency(u: &crate::ai_usage::ClaudeUsage, now_secs: u64) -> f32 {
+    if u.fetched_at == 0 || u.last_error.is_some() {
+        return 0.0;
+    }
+    if u.percent >= 100 {
+        return 0.0;
+    }
+    let remaining = 100u16.saturating_sub(u.percent) as f32;
+    let reset_at = if u.resets_at > now_secs {
+        u.resets_at
+    } else if u.weekly_resets_at > now_secs {
+        u.weekly_resets_at
+    } else {
+        return 0.0;
+    };
+    let hours = (reset_at - now_secs) as f32 / 3600.0;
+    if hours <= 0.05 {
+        // Reset imminent (< 3 minutes) — mash to a very large
+        // number so an about-to-reset account wins decisively.
+        // Avoids divide-by-zero.
+        return remaining * 1000.0;
+    }
+    remaining / hours
+}
+
+/// Earliest positive reset across all accounts, in whole hours
+/// from `now_secs`. Used by the sparkline chip's "all near-empty
+/// → relief in Xh" fallback so the user knows when the first
+/// account will free up.
+fn hours_until_first_reset(
+    accounts: &[crate::ai_usage::ClaudeAccountUsage],
+    now_secs: u64,
+) -> Option<u64> {
+    accounts
+        .iter()
+        .filter_map(|a| {
+            let u = &a.usage;
+            let session = if u.resets_at > now_secs {
+                Some(u.resets_at)
+            } else {
+                None
+            };
+            let weekly = if u.weekly_resets_at > now_secs {
+                Some(u.weekly_resets_at)
+            } else {
+                None
+            };
+            session.into_iter().chain(weekly).min()
+        })
+        .min()
+        .map(|when| (when - now_secs) / 3600)
+}
+
 /// Task #944 (2026-08-16) — compact per-account chip content.
 /// Renders as `0 Pe 40% · Wo 62% · Co 12%` (glyph + one
 /// segment per account, 2-char name prefix). Chip color = worst
@@ -374,45 +443,89 @@ fn tier_color(percent: u16, t: &theme::Theme) -> ratatui::style::Color {
 /// staring at each number. Accounts with no snapshot yet render
 /// as `Nm …`; last-error accounts render as `Nm —!` (red family).
 fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, ratatui::style::Color) {
-    let mut parts: Vec<String> = Vec::with_capacity(app.ai_usage_claude_accounts.len());
-    let mut worst: u16 = 0;
-    let mut any_error = false;
-    // 2026-08-17 — same three-state logic as `render_single_account_chip`:
-    //   errored          → `!` + red
-    //   fetched (any %)  → tier color, 0% renders as `0%` green (idle+healthy)
-    //   never fetched    → `…` gray
-    // Prior version lumped "fetched 0%" with "never fetched" and rendered
-    // both gray, which was misleading for genuinely-idle accounts.
-    let mut any_fetched_gt_zero = false;
-    for acc in &app.ai_usage_claude_accounts {
-        let abbrev = account_abbrev(&acc.name);
-        let u = &acc.usage;
-        if u.last_error.is_some() {
-            parts.push(format!("{abbrev}—!"));
-            any_error = true;
-        } else if u.fetched_at > 0 {
-            // Successful fetch — always show the number (0% included).
-            parts.push(format!("{abbrev}{}%", u.percent));
-            worst = worst.max(u.percent);
-            any_fetched_gt_zero = true;
-        } else {
-            parts.push(format!("{abbrev}…"));
-        }
-    }
-    if parts.is_empty() {
+    // #1043 (2026-08-18) — swapped from `Pe 40% · Wo 62% · Co 12%`
+    // per-account text to a sparkline + urgency arrow. Sparkline
+    // encodes usage % per account (▁ → █); arrow points at the
+    // highest-urgency account (remaining%/hours-to-reset) so it
+    // reads as "be on this one next to avoid wasting tokens the
+    // reset will otherwise reclaim." When every account is
+    // near-empty (≥90% used), no arrow — instead show hours to
+    // the first reset ("relief in Xh").
+    if app.ai_usage_claude_accounts.is_empty() {
         return (" \u{F1E00} … ".to_string(), t.comment);
     }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut sparkline = String::new();
+    let mut worst: u16 = 0;
+    let mut any_error = false;
+    let mut any_fetched_gt_zero = false;
+    let mut all_near_empty = true;
+    for acc in &app.ai_usage_claude_accounts {
+        let u = &acc.usage;
+        if u.last_error.is_some() {
+            sparkline.push('!');
+            any_error = true;
+            all_near_empty = false;
+        } else if u.fetched_at > 0 {
+            sparkline.push(sparkline_char(u.percent));
+            worst = worst.max(u.percent);
+            any_fetched_gt_zero = true;
+            if u.percent < 90 {
+                all_near_empty = false;
+            }
+        } else {
+            sparkline.push('…');
+            all_near_empty = false;
+        }
+    }
+
+    // Suffix: relief timer if all near-empty; otherwise arrow to
+    // highest-urgency account when there's a clear winner (>1.5×
+    // the runner-up so we don't nag when accounts are close).
+    let suffix: String = if all_near_empty && any_fetched_gt_zero {
+        match hours_until_first_reset(&app.ai_usage_claude_accounts, now) {
+            Some(0) => " ⟳<1h".to_string(),
+            Some(h) if h < 100 => format!(" ⟳{h}h"),
+            Some(_) => " ⟳soon".to_string(),
+            None => String::new(),
+        }
+    } else if any_fetched_gt_zero {
+        let mut urgencies: Vec<(f32, char)> = app
+            .ai_usage_claude_accounts
+            .iter()
+            .filter_map(|a| {
+                let u = &a.usage;
+                let urg = account_urgency(u, now);
+                if urg <= 0.0 {
+                    return None;
+                }
+                let letter = account_abbrev(&a.name).chars().next()?;
+                Some((urg, letter))
+            })
+            .collect();
+        urgencies.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        match urgencies.as_slice() {
+            [(top, letter), rest @ ..] if rest.is_empty() || rest[0].0 * 1.5 < *top => {
+                format!(" →{letter}")
+            }
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
     let color = if any_error && worst == 0 {
         t.red
     } else if any_fetched_gt_zero {
-        // At least one account has a successful fetch — reflect the
-        // worst tier (green when everyone's low, yellow/red when hot).
         tier_color(worst, t)
     } else {
-        // No account has a successful fetch yet — gray.
         t.comment
     };
-    let text = format!(" \u{F1E00} {} ", parts.join(" · "));
+    let text = format!(" \u{F1E00} {sparkline}{suffix} ");
     (text, color)
 }
 
