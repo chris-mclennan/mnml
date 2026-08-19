@@ -65,6 +65,17 @@ impl Layout {
         self.collect_leaves(&mut out);
         out
     }
+
+    /// Maximum recursion depth of the split tree. `0` for an empty
+    /// layout or a single leaf; `1` for a single split; adds one per
+    /// additional level. Used by #978's arbitrary-depth test to
+    /// prove `split_active` genuinely nests without a hidden cap.
+    pub fn max_depth(&self) -> usize {
+        match self {
+            Layout::Empty | Layout::Leaf { .. } => 0,
+            Layout::Split { first, second, .. } => 1 + first.max_depth().max(second.max_depth()),
+        }
+    }
     fn collect_leaves(&self, out: &mut Vec<PaneId>) {
         match self {
             Layout::Empty => {}

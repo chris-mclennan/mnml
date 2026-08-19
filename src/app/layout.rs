@@ -2751,4 +2751,58 @@ mod layout_tests {
             "second toggle from a different active leaf should reassign"
         );
     }
+
+    // ── #978 — arbitrary-depth splits ───────────────────────────────
+
+    #[test]
+    fn split_active_can_nest_four_levels_deep() {
+        // Verifies the "arbitrary depth" promise: repeatedly calling
+        // `split_active` from the newly-focused pane recursively wraps
+        // the current leaf in a fresh `Layout::Split`, no cap kicks
+        // in, and every intermediate leaf remains addressable. `Layout`
+        // is genuinely recursive (Split.first / Split.second are both
+        // `Box<Layout>`), so this test is more a canary than a fix.
+        let (d, mut app) = app_with_files();
+        std::fs::write(d.path().join("c.txt"), "gamma").unwrap();
+        std::fs::write(d.path().join("d.txt"), "delta").unwrap();
+        std::fs::write(d.path().join("e.txt"), "epsilon").unwrap();
+        // Start with one file open (1 leaf, 0 splits).
+        app.open_path(&d.path().join("a.txt"));
+        assert!(matches!(app.layout(), Layout::Leaf { .. }));
+
+        // Split four times, alternating horizontal / vertical so the
+        // resulting tree isn't a degenerate spine in one axis.
+        for (i, dir) in [
+            crate::layout::SplitDir::Horizontal,
+            crate::layout::SplitDir::Vertical,
+            crate::layout::SplitDir::Horizontal,
+            crate::layout::SplitDir::Vertical,
+        ]
+        .iter()
+        .enumerate()
+        {
+            app.split_active(*dir);
+            // Depth after i splits should equal (i+1). Split.depth
+            // returns the max recursion depth of the tree.
+            assert_eq!(
+                app.layout().max_depth(),
+                i + 1,
+                "after {} split(s), max_depth should be {}",
+                i + 1,
+                i + 1
+            );
+        }
+        // Final geometry sanity: 5 leaves, 4 splits.
+        assert_eq!(app.layout().leaves().len(), 5);
+        // compute_rects should produce 5 leaf rects + 4 divider rects
+        // without panicking, even at 4-deep nesting.
+        let (leaves, dividers) = app.layout().compute_rects(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 160,
+            height: 40,
+        });
+        assert_eq!(leaves.len(), 5);
+        assert_eq!(dividers.len(), 4);
+    }
 }
