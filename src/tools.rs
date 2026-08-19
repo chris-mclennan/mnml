@@ -428,12 +428,42 @@ mod tests {
         }
     }
 
+    /// Was: `assert!(is_on_path("sh"))`. That relies on the CI
+    /// runner having `/bin` or `/usr/bin` on PATH — which the
+    /// ubuntu-latest cargo-test job apparently doesn't (SEV: CI red
+    /// 2026-08-19 run 32206837207). Replaced with a hermetic
+    /// self-check: create a temp dir, drop a fake binary into it,
+    /// point PATH at that dir only, verify is_on_path finds it.
+    /// No dependency on system state; passes identically on every
+    /// runner + on Windows (PATHEXT branch exercised via the .exe
+    /// candidate below).
     #[test]
-    fn is_on_path_finds_sh() {
-        // `sh` should exist on every POSIX system; on Windows just skip.
-        if cfg!(unix) {
-            assert!(is_on_path("sh"));
+    fn is_on_path_finds_binary_in_synthetic_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_name = "mnml_test_binary";
+        let bin_path = dir.path().join(bin_name);
+        std::fs::write(&bin_path, b"").expect("write fake bin");
+        // Existence — not executability — is what `is_on_path`
+        // checks (matches how `which(1)` on Linux behaves for
+        // scripts). Windows also gets tested against the
+        // extensionless form here; the PATHEXT branch is exercised
+        // separately in `finds_binary_via_pathext` below.
+        let prev = std::env::var_os("PATH");
+        // SAFETY: single-threaded test env; we restore below.
+        // Tests don't run truly-parallel in unsafe env access on
+        // stable, but Rust's set_var is unsafe from 1.79+. Wrap in
+        // unsafe blocks accordingly.
+        unsafe {
+            std::env::set_var("PATH", dir.path());
         }
+        let found = is_on_path(bin_name);
+        unsafe {
+            match prev {
+                Some(p) => std::env::set_var("PATH", p),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+        assert!(found, "is_on_path should find {bin_name} in synthetic PATH");
     }
 
     #[test]
