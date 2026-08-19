@@ -3635,17 +3635,80 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "integrations.toggle_tab",
-            title: "Integrations: toggle Installed/Marketplace tab",
+            id: "integrations.show_in_dev",
+            title: "Integrations: show In-Development tab (author view)",
             group: "view",
             keys: &[],
             run: |app| {
                 app.set_activity_section(crate::app::ActivitySection::Integrations);
+                // #1056 — the tab strip only renders the In-Dev tab
+                // when the flag is on, so opening the tab via this
+                // command flips the flag on first (and persists) so
+                // the strip actually shows the tab the user just
+                // switched to.
+                if !app.config.marketplace.show_dev_tab {
+                    app.config.marketplace.show_dev_tab = true;
+                    if let Err(e) =
+                        crate::app::discovery::persist_marketplace_bool("show_dev_tab", true)
+                    {
+                        app.toast(format!("saved in memory only: {e}"));
+                    }
+                }
+                app.integrations_panel_tab = crate::app::IntegrationsPanelTab::InDev;
+                app.focus = crate::focus::Focus::Tree;
+            },
+        },
+        Command {
+            id: "integrations.toggle_dev_tab",
+            title: "Integrations: toggle the In-Development tab's visibility",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let next = !app.config.marketplace.show_dev_tab;
+                app.config.marketplace.show_dev_tab = next;
+                match crate::app::discovery::persist_marketplace_bool("show_dev_tab", next) {
+                    Ok(_) => app.toast(format!(
+                        "In-Development tab: {}",
+                        if next { "shown" } else { "hidden" }
+                    )),
+                    Err(e) => app.toast(format!("saved in memory only: {e}")),
+                }
+                // If we just hid the tab and the user was on it,
+                // bounce back to Marketplace so they aren't stuck
+                // on a tab that no longer renders.
+                if !next
+                    && matches!(
+                        app.integrations_panel_tab,
+                        crate::app::IntegrationsPanelTab::InDev
+                    )
+                {
+                    app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+                }
+            },
+        },
+        Command {
+            id: "integrations.toggle_tab",
+            title: "Integrations: cycle tab (Installed / Marketplace / In-Dev)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.set_activity_section(crate::app::ActivitySection::Integrations);
+                // #1056 — cycle through the tabs. Skip InDev when
+                // the config flag is off so users who haven't
+                // opted in never land on a tab they can't see.
+                let show_dev_tab = app.config.marketplace.show_dev_tab;
                 app.integrations_panel_tab = match app.integrations_panel_tab {
                     crate::app::IntegrationsPanelTab::Installed => {
                         crate::app::IntegrationsPanelTab::Marketplace
                     }
                     crate::app::IntegrationsPanelTab::Marketplace => {
+                        if show_dev_tab {
+                            crate::app::IntegrationsPanelTab::InDev
+                        } else {
+                            crate::app::IntegrationsPanelTab::Installed
+                        }
+                    }
+                    crate::app::IntegrationsPanelTab::InDev => {
                         crate::app::IntegrationsPanelTab::Installed
                     }
                 };
@@ -5653,7 +5716,13 @@ fn builtin_commands() -> Vec<Command> {
                     app.installed_sort = app.installed_sort.cycle();
                     app.toast(format!("sort: {}", app.installed_sort.label()));
                 }
-                crate::app::IntegrationsPanelTab::Marketplace => {
+                // #1056 — InDev shares the marketplace sort mode
+                // (same underlying entries list, just an inverted
+                // Ready filter). Cycling on either tab keeps them
+                // in sync so a user who switches tabs sees the
+                // same ordering.
+                crate::app::IntegrationsPanelTab::Marketplace
+                | crate::app::IntegrationsPanelTab::InDev => {
                     app.marketplace_sort = app.marketplace_sort.cycle();
                     app.toast(format!("sort: {}", app.marketplace_sort.label()));
                 }

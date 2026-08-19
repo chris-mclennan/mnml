@@ -1163,6 +1163,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             crate::app::IntegrationsPanelTab::Marketplace => {
                 &mut app.integrations_panel_scroll_marketplace
             }
+            crate::app::IntegrationsPanelTab::InDev => &mut app.integrations_panel_scroll_in_dev,
         };
         if d < 0 {
             *target = target.saturating_sub(step * d.unsigned_abs() as usize);

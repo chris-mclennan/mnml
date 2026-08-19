@@ -1221,6 +1221,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
         return;
     }
+    // #1056 — third tab (In-Development). Only registered when
+    // `[marketplace] show_dev_tab = true`, so this branch is inert
+    // when the option is off.
+    if let Some(rect) = app.rects.integrations_tab_in_dev
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.focus = crate::focus::Focus::Tree;
+        app.integrations_panel_tab = crate::app::IntegrationsPanelTab::InDev;
+        return;
+    }
     // 2026-08-04 — click the ⟳ chip on the tab row → refresh the
     // active tab's data source. Marketplace: re-fetch crates.io +
     // GitHub launcher entries (async, doesn't block the tick).
@@ -1232,7 +1242,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         app.focus = crate::focus::Focus::Tree;
         match app.integrations_panel_tab {
-            crate::app::IntegrationsPanelTab::Marketplace => app.refresh_marketplace(),
+            crate::app::IntegrationsPanelTab::Marketplace
+            | crate::app::IntegrationsPanelTab::InDev => app.refresh_marketplace(),
             crate::app::IntegrationsPanelTab::Installed => app.refresh_integration_manifests(),
         }
         return;
@@ -1249,7 +1260,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 app.installed_sort = app.installed_sort.cycle();
                 app.toast(format!("sort: {}", app.installed_sort.label()));
             }
-            crate::app::IntegrationsPanelTab::Marketplace => {
+            crate::app::IntegrationsPanelTab::Marketplace
+            | crate::app::IntegrationsPanelTab::InDev => {
                 app.marketplace_sort = app.marketplace_sort.cycle();
                 app.toast(format!("sort: {}", app.marketplace_sort.label()));
             }

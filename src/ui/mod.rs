@@ -3430,9 +3430,30 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // so refresh stays visible down to ~15-cell widths.
     let tiny_installed = " Inst ".to_string();
     let tiny_marketplace = " Mkt ".to_string();
-    let full_total = full_installed.chars().count() + full_marketplace.chars().count();
-    let compact_total = compact_installed.chars().count() + compact_marketplace.chars().count();
-    let tiny_total = tiny_installed.chars().count() + tiny_marketplace.chars().count();
+    // 2026-08-19 (#1056) — In-Development tab. Config-gated
+    // (`[marketplace] show_dev_tab = true`) so regular users don't see
+    // the extra tab. Label is a single Nerd Font glyph (nf-fa-dev at
+    // U+EEF4) so all three tabs fit inside the ~28-cell activity
+    // panel. Renders App entries that failed the Ready gate — meant
+    // for integration authors browsing their own not-yet-shipped work.
+    let show_dev_tab = app.config.marketplace.show_dev_tab;
+    let in_dev_count = app
+        .marketplace_entries
+        .iter()
+        .filter(|e| matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready)
+        .count();
+    let in_dev_label = format!(" \u{EEF4} ({in_dev_count}) ");
+    let in_dev_w_usize = if show_dev_tab {
+        in_dev_label.chars().count()
+    } else {
+        0
+    };
+    let full_total =
+        full_installed.chars().count() + full_marketplace.chars().count() + in_dev_w_usize;
+    let compact_total =
+        compact_installed.chars().count() + compact_marketplace.chars().count() + in_dev_w_usize;
+    let tiny_total =
+        tiny_installed.chars().count() + tiny_marketplace.chars().count() + in_dev_w_usize;
     // Refresh chip is 3 chars (" ⟳ "). Priority ladder: prefer showing
     // refresh over long labels since refresh is a frequent action and
     // Inst/Mkt reads unambiguously.
@@ -3502,6 +3523,28 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     app.rects.integrations_tab_installed = Some(installed_rect);
     app.rects.integrations_tab_marketplace = Some(marketplace_rect);
+    // 2026-08-19 (#1056) — third tab (In-Development). Rendered
+    // only when `show_dev_tab` config is on. Rect registered
+    // conditionally so the mouse dispatcher only matches when the
+    // tab is actually visible.
+    if show_dev_tab {
+        let in_dev_w = in_dev_label.chars().count() as u16;
+        let in_dev_rect = Rect {
+            x: area.x + installed_w + marketplace_w,
+            y: area.y + 1,
+            width: in_dev_w.min(area.width.saturating_sub(installed_w + marketplace_w)),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(in_dev_label).style(tab_style(
+                active_tab == crate::app::IntegrationsPanelTab::InDev,
+            )),
+            in_dev_rect,
+        );
+        app.rects.integrations_tab_in_dev = Some(in_dev_rect);
+    } else {
+        app.rects.integrations_tab_in_dev = None;
+    }
 
     // Refresh affordance — small ⟳ chip on the far right of the tab
     // row. Clicks fire `marketplace.refresh` when on the Marketplace
@@ -3541,7 +3584,9 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // Label is short so it fits alongside the filter input.
     let sort_label = match active_tab {
         crate::app::IntegrationsPanelTab::Installed => app.installed_sort.label(),
-        crate::app::IntegrationsPanelTab::Marketplace => app.marketplace_sort.label(),
+        crate::app::IntegrationsPanelTab::Marketplace | crate::app::IntegrationsPanelTab::InDev => {
+            app.marketplace_sort.label()
+        }
     };
     let sort_label_owned = format!(" {sort_label} ");
     let sort_w = sort_label_owned.chars().count() as u16;
@@ -3638,7 +3683,8 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         // in the entries loop).
         .filter(|(_, _icon)| match active_tab {
             crate::app::IntegrationsPanelTab::Installed => true,
-            crate::app::IntegrationsPanelTab::Marketplace => false,
+            crate::app::IntegrationsPanelTab::Marketplace
+            | crate::app::IntegrationsPanelTab::InDev => false,
         })
         .filter(|(_, icon)| {
             if filter_lc.is_empty() {
@@ -3675,10 +3721,11 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     .then_with(|| name_key(a).cmp(&name_key(b)))
             }),
         },
-        crate::app::IntegrationsPanelTab::Marketplace => {
-            // Icons list is empty on Marketplace tab (filtered above),
-            // but keep the sort call for symmetry — the marketplace
-            // entries loop applies its own sort further down.
+        crate::app::IntegrationsPanelTab::Marketplace | crate::app::IntegrationsPanelTab::InDev => {
+            // Icons list is empty on Marketplace / InDev tabs
+            // (filtered above), but keep the sort call for symmetry
+            // — the marketplace entries loop applies its own sort
+            // further down.
             if matches!(app.marketplace_sort, crate::app::MarketplaceSort::Name) {
                 icons.sort_by_key(|(_, a)| name_key(a));
             }
@@ -3691,8 +3738,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // empty. If entries are present, we render them below (rows
     // painted after the icons loop).
     let show_empty_state = icons.is_empty()
-        && !(matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace)
-            && !app.marketplace_entries.is_empty());
+        && !(matches!(
+            active_tab,
+            crate::app::IntegrationsPanelTab::Marketplace | crate::app::IntegrationsPanelTab::InDev
+        ) && !app.marketplace_entries.is_empty());
     if show_empty_state {
         let msg = if !app.integrations_panel_filter.is_empty() {
             format!(
@@ -3713,6 +3762,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                         " No marketplace entries yet — run `marketplace.refresh`".to_string()
                     } else {
                         " Everything is installed (nice)".to_string()
+                    }
+                }
+                crate::app::IntegrationsPanelTab::InDev => {
+                    if app.marketplace_entries.is_empty() {
+                        " No entries yet — run `marketplace.refresh`".to_string()
+                    } else {
+                        " Nothing in development — everything is ready".to_string()
                     }
                 }
             }
@@ -3768,63 +3824,77 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         crate::app::IntegrationsPanelTab::Marketplace => {
             &mut app.integrations_panel_scroll_marketplace
         }
+        crate::app::IntegrationsPanelTab::InDev => &mut app.integrations_panel_scroll_in_dev,
     };
     // 2026-08-06 — max_scroll must include marketplace_entries on
     // the Marketplace tab, else the wheel/drag caps at the (usually
     // tiny) disabled-icon count and the user can't scroll to the
     // real marketplace list. Compute total renderable rows per tab.
-    let marketplace_extra_len =
-        if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
-            let installed_ids: std::collections::HashSet<String> = app
-                .config
-                .ui
-                .integration_icons
-                .iter()
-                .map(|i| i.id.clone())
-                .collect();
-            let installed_binaries: std::collections::HashSet<String> = app
-                .config
-                .ui
-                .integration_icons
-                .iter()
-                .filter_map(|i| {
-                    crate::integration_detect::integration_binary_for_command(&i.command)
-                })
-                .map(|s| s.to_string())
-                .collect();
-            // Apply the SAME filter the render loop uses so max_scroll
-            // and entries_skip stay in sync when the user has an
-            // integrations-panel filter active. Reviewer flag on
-            // 9670a164 — unfiltered count let scroll run past the
-            // last visible row into blank space.
-            let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
-            // 2026-08-07 — count includes installed entries (they now
-            // render dimmed rather than being hidden). Keep in sync
-            // with the marketplace-render loop below.
-            let _ = (&installed_ids, &installed_binaries);
-            app.marketplace_entries
-                .iter()
-                .filter(|e| {
-                    // #1055 — Ready gate: mirror the render loop.
-                    if matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready {
+    let marketplace_extra_len = if matches!(
+        active_tab,
+        crate::app::IntegrationsPanelTab::Marketplace | crate::app::IntegrationsPanelTab::InDev
+    ) {
+        let installed_ids: std::collections::HashSet<String> = app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
+        let installed_binaries: std::collections::HashSet<String> = app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .filter_map(|i| crate::integration_detect::integration_binary_for_command(&i.command))
+            .map(|s| s.to_string())
+            .collect();
+        // Apply the SAME filter the render loop uses so max_scroll
+        // and entries_skip stay in sync when the user has an
+        // integrations-panel filter active. Reviewer flag on
+        // 9670a164 — unfiltered count let scroll run past the
+        // last visible row into blank space.
+        let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
+        // 2026-08-07 — count includes installed entries (they now
+        // render dimmed rather than being hidden). Keep in sync
+        // with the marketplace-render loop below.
+        let _ = (&installed_ids, &installed_binaries);
+        let is_in_dev = matches!(active_tab, crate::app::IntegrationsPanelTab::InDev);
+        app.marketplace_entries
+            .iter()
+            .filter(|e| {
+                // #1055 / #1056 — Ready gate: Marketplace tab hides
+                // App entries with `ready = false`; InDev tab hides
+                // App entries with `ready = true` (mirror image).
+                // Launchers / drivers always show on Marketplace but
+                // never appear on InDev (they're external tools with
+                // their own release cycle).
+                if is_in_dev {
+                    if !matches!(e.kind, crate::marketplace::MarketplaceKind::App) {
                         return false;
                     }
-                    if filter_lc_mp.is_empty() {
-                        return true;
+                    if e.ready {
+                        return false;
                     }
-                    let hay = format!(
-                        "{} {} {}",
-                        e.label,
-                        e.id,
-                        e.description.as_deref().unwrap_or(""),
-                    )
-                    .to_ascii_lowercase();
-                    hay.contains(&filter_lc_mp)
-                })
-                .count()
-        } else {
-            0
-        };
+                } else if matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready {
+                    return false;
+                }
+                if filter_lc_mp.is_empty() {
+                    return true;
+                }
+                let hay = format!(
+                    "{} {} {}",
+                    e.label,
+                    e.id,
+                    e.description.as_deref().unwrap_or(""),
+                )
+                .to_ascii_lowercase();
+                hay.contains(&filter_lc_mp)
+            })
+            .count()
+    } else {
+        0
+    };
     let total_row_count = icons.len() + marketplace_extra_len;
     let max_scroll = total_row_count.saturating_sub(1).saturating_mul(rows_per);
     if *scroll > max_scroll {
@@ -3974,7 +4044,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // paint the fetched marketplace_entries as browsable rows.
     // Each entry: 3 rows — label + source tag, description, install
     // hint. Left-click on any row → install action.
-    if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
+    if matches!(
+        active_tab,
+        crate::app::IntegrationsPanelTab::Marketplace | crate::app::IntegrationsPanelTab::InDev
+    ) {
         let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
         // Skip marketplace entries for ids the user already has
         // installed — those appear in the top section of this same
@@ -4049,15 +4122,29 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     .then_with(|| sort_key_name(a).cmp(&sort_key_name(b)))
             }),
         }
+        // 2026-08-19 (#1056) — the InDev tab is the mirror image of
+        // the Marketplace gate: instead of hiding App entries with
+        // `ready = false`, it hides everything ELSE (launchers,
+        // drivers, and ready App entries). Precomputed once so the
+        // per-entry check stays cheap.
+        let is_in_dev_tab = matches!(active_tab, crate::app::IntegrationsPanelTab::InDev);
         for (idx, entry) in sorted.into_iter() {
-            // 2026-08-19 (#1055) — Ready gate. App entries whose
-            // author hasn't declared them ready (interim: not in
-            // `ready_ids()`) get hidden entirely. Prevents the
-            // GithubMonorepoApps source from drowning the list with
-            // half-baked experiments. Launcher / driver entries are
-            // NOT gated — they're external tools with their own
-            // publish criteria, not authored integrations.
-            if matches!(entry.kind, crate::marketplace::MarketplaceKind::App) && !entry.ready {
+            // 2026-08-19 (#1055 / #1056) — Ready gate.
+            //  * Marketplace: hide App entries where `ready = false`
+            //    (author hasn't declared them ready). Launchers and
+            //    drivers bypass — they're external tools with their
+            //    own publish criteria, not authored integrations.
+            //  * InDev: mirror — show ONLY App entries with
+            //    `ready = false`. Launchers/drivers never appear.
+            if is_in_dev_tab {
+                if !matches!(entry.kind, crate::marketplace::MarketplaceKind::App) {
+                    continue;
+                }
+                if entry.ready {
+                    continue;
+                }
+            } else if matches!(entry.kind, crate::marketplace::MarketplaceKind::App) && !entry.ready
+            {
                 continue;
             }
             // 2026-08-07 — installed entries stay visible in the

@@ -154,6 +154,14 @@ pub struct MarketplaceConfig {
     pub use_defaults: bool,
     /// User-configured additional sources.
     pub sources: Vec<crate::marketplace::Source>,
+    /// 2026-08-19 (#1056) — surface a third "In Development" tab
+    /// (label = single `nf-fa-dev` glyph) next to Installed +
+    /// Marketplace. Renders entries the Ready gate hides so
+    /// integration authors can browse their own not-yet-shipped
+    /// work. Default `false` — regular users don't need to see
+    /// half-baked drivers. Toggle via right-click on the tab strip,
+    /// or `:set devtab on` / `off`. Deserialized from `RawMarketplace`.
+    pub show_dev_tab: bool,
 }
 
 impl Default for MarketplaceConfig {
@@ -163,6 +171,7 @@ impl Default for MarketplaceConfig {
             cache_ttl_secs: 3600,
             use_defaults: true,
             sources: Vec::new(),
+            show_dev_tab: false,
         }
     }
 }
@@ -1547,6 +1556,8 @@ struct RawMarketplace {
     use_defaults: Option<bool>,
     #[serde(default, rename = "source")]
     sources: Vec<RawMarketplaceSource>,
+    #[serde(default)]
+    show_dev_tab: Option<bool>,
 }
 
 /// One `[[marketplace.source]]` entry. Sum type over the two source
@@ -2951,6 +2962,9 @@ impl Config {
             if let Some(src) = s.into_source() {
                 self.marketplace.sources.push(src);
             }
+        }
+        if let Some(v) = raw.marketplace.show_dev_tab {
+            self.marketplace.show_dev_tab = v;
         }
         // Cloud Run defaults — empty strings mean "not set yet"
         // (the UI checks .is_empty() to route Enter to the

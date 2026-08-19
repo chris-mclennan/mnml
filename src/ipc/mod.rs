@@ -1350,6 +1350,7 @@ pub fn rects_dump_json(app: &App) -> String {
         "integrations_tab_marketplace",
         app.rects.integrations_tab_marketplace
     );
+    one!("integrations_tab_in_dev", app.rects.integrations_tab_in_dev);
     one!(
         "integrations_tab_refresh",
         app.rects.integrations_tab_refresh

@@ -1036,6 +1036,16 @@ pub fn persist_ui_int(key: &'static str, value: i64) -> Result<std::path::PathBu
     persist_config_scalar("ui", key, value.to_string())
 }
 
+/// `[marketplace] KEY = <bool>`. Used by the "Show In-Development
+/// tab" toggle so a user's per-session choice survives restart.
+/// 2026-08-19 (#1056).
+pub fn persist_marketplace_bool(
+    key: &'static str,
+    value: bool,
+) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("marketplace", key, value.to_string())
+}
+
 /// `[editor] KEY = <value>` (bool). Same in-place replace / append
 /// semantics as the `[ui]` helpers, targeting the `[editor]`
 /// section instead. Used by runtime editor toggles (auto-pair,

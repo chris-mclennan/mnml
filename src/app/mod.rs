@@ -1523,6 +1523,15 @@ pub struct RailSectionDrag {
 pub enum IntegrationsPanelTab {
     Installed,
     Marketplace,
+    /// 2026-08-19 (#1055 follow-up) — the "in development" tab.
+    /// Same source list as Marketplace, but shows the App entries
+    /// filtered OUT by the Ready gate. Aimed at integration authors
+    /// who want to browse their own not-yet-shipped work. Config-
+    /// gated: only rendered when
+    /// `config.marketplace.show_dev_tab = true`, so regular users
+    /// never see it. Label is a single glyph (`nf-fa-dev` at U+EEF4)
+    /// so the three tabs fit in the ~28-cell activity panel.
+    InDev,
 }
 
 /// 2026-08-07 — how the Installed tab is sorted.
@@ -2208,6 +2217,10 @@ pub struct PaneRects {
     /// chips below the header. Click switches the active tab.
     pub integrations_tab_installed: Option<Rect>,
     pub integrations_tab_marketplace: Option<Rect>,
+    /// 2026-08-19 (#1056) — third tab (In-Development). Only
+    /// populated when `[marketplace] show_dev_tab = true`. Click
+    /// switches to `IntegrationsPanelTab::InDev`.
+    pub integrations_tab_in_dev: Option<Rect>,
     /// 2026-08-04 — small `⟳` chip on the far right of the tab
     /// row; clicks fire `marketplace.refresh` (on Marketplace tab)
     /// or `integrations.refresh` (on Installed tab). Absent when
@@ -3005,6 +3018,7 @@ impl PaneRects {
         check_opt!(integrations_add_chip);
         check_opt!(integrations_tab_installed);
         check_opt!(integrations_tab_marketplace);
+        check_opt!(integrations_tab_in_dev);
         check_opt!(integrations_tab_refresh);
         check_opt!(integrations_tab_sort);
         check_opt!(bottom_panel_close);
@@ -4688,6 +4702,9 @@ pub struct App {
     pub integrations_panel_scroll: usize,
     pub integrations_panel_scroll_installed: usize,
     pub integrations_panel_scroll_marketplace: usize,
+    /// 2026-08-19 (#1056) — companion scroll state for the In-Dev tab
+    /// so switching between tabs keeps each one's position.
+    pub integrations_panel_scroll_in_dev: usize,
     /// Held by `open_marketplace_install_prompt` while the
     /// `MarketplaceInstallConfirm` two-button dialog is showing.
     /// Accept path reads this to know which entry to install.
@@ -5823,6 +5840,7 @@ impl App {
             integrations_panel_scroll: 0,
             integrations_panel_scroll_installed: 0,
             integrations_panel_scroll_marketplace: 0,
+            integrations_panel_scroll_in_dev: 0,
             pending_marketplace_install_idx: None,
             integrations_panel_filter: String::new(),
             integrations_panel_filter_focused: false,
