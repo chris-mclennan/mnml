@@ -520,6 +520,27 @@ impl App {
             "View details",
             MenuAction::ShowIntegrationDetails(id.clone()),
         ));
+        // #992 (2026-08-18) — "Update to <latest>" when an update
+        // check reports one. Rendered above "Show in marketplace" so
+        // an actionable item is the first thing a user reaching for
+        // an update lands on. Live-lookup — mutex is held briefly.
+        if let Ok(guard) = self.integration_updates.lock()
+            && let Some(check) = guard.get(&id)
+            && crate::app::integration_updates::is_update_available(check)
+        {
+            items.push(MenuItem::new(
+                format!("\u{2191} Update to {}", check.latest),
+                MenuAction::UpdateIntegration(id.clone()),
+            ));
+        }
+        // #992 (2026-08-18) — always available: jump to the
+        // integration's row inside the activity-bar Marketplace tab.
+        // Filters the panel by the id so the row surfaces regardless
+        // of tab order.
+        items.push(MenuItem::new(
+            "Show in marketplace",
+            MenuAction::ShowIntegrationInMarketplace(id.clone()),
+        ));
         if !is_first {
             items.push(MenuItem::new(
                 "Move to top",
@@ -1883,6 +1904,17 @@ impl App {
             }
             ShowIntegrationDetails(id) => {
                 self.open_integration_detail_pane(&id);
+            }
+            ShowIntegrationInMarketplace(id) => {
+                self.set_activity_section(crate::app::ActivitySection::Integrations);
+                self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+                self.integrations_panel_filter = id.clone();
+                self.integrations_panel_filter_focused = false;
+                self.focus = crate::focus::Focus::Tree;
+                self.toast(format!("filtered marketplace to `{id}`"));
+            }
+            UpdateIntegration(id) => {
+                self.apply_integration_update(&id);
             }
             SetIntegrationLauncher(id) => {
                 self.open_integration_launcher_prompt(id);

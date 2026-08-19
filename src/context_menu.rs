@@ -62,6 +62,18 @@ pub enum MenuAction {
     /// details") + also fires from `integrations.show_details` when
     /// the palette command takes an id.
     ShowIntegrationDetails(String),
+    /// #992 (2026-08-18) — surface this integration inside the
+    /// activity-bar Marketplace tab. Switches to Integrations panel,
+    /// Marketplace tab, and pre-fills the panel filter with the id
+    /// so the row scrolls into view. Available on every integration
+    /// chip regardless of update state.
+    ShowIntegrationInMarketplace(String),
+    /// #992 (2026-08-18) — apply an available update for this
+    /// integration id (equivalent to clicking the `↑ Update to X`
+    /// chip on the marketplace row). Only added to the menu when
+    /// `integration_updates` holds a live UpdateCheck reporting the
+    /// current version differs from the latest.
+    UpdateIntegration(String),
     /// Drop the integration from the rail (config + persist). Same
     /// effect as clicking the chip's row in the discovery overlay
     /// when it's already InRail. Surfaced by the chip right-click

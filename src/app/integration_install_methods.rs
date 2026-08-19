@@ -109,4 +109,64 @@ impl App {
             }
         }
     }
+
+    /// #992 (2026-08-18) — apply an available integration update.
+    /// Shared by (a) the marketplace-row `↑ Update to X` chip click,
+    /// (b) the integration-chip right-click "Update to X" menu item.
+    /// Both surfaces need the SAME install-spec routing (Cargo vs
+    /// CargoGit vs LauncherToml vs plain-id fallback) and the same
+    /// optimistic clear of `integration_updates`.
+    ///
+    /// Silent no-op with toast if the id's install spec can't be
+    /// classified — the chip / menu item shouldn't render in that
+    /// case, but defense against races.
+    pub fn apply_integration_update(&mut self, id: &str) {
+        let install_spec = self
+            .marketplace_entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.install.clone());
+        let cmd = match install_spec {
+            Some(crate::marketplace::InstallSpec::Cargo { name })
+                if crate::marketplace::is_safe_crate_component(&name) =>
+            {
+                Some(format!(
+                    "term cargo install --force {name} && $HOME/.cargo/bin/{name} --install && echo '✓ {name} updated'",
+                ))
+            }
+            Some(crate::marketplace::InstallSpec::Cargo { .. }) => None,
+            Some(crate::marketplace::InstallSpec::CargoGit { repo, .. }) => {
+                if crate::marketplace::is_safe_repo_slug(&repo)
+                    && crate::marketplace::is_safe_crate_component(id)
+                {
+                    Some(format!(
+                        "term cargo install --force --git https://github.com/{repo}.git {id} && $HOME/.cargo/bin/{id} --install && echo '✓ {id} updated'",
+                    ))
+                } else {
+                    None
+                }
+            }
+            // LauncherToml installs have no cargo version — never
+            // enqueued for update checks, so this branch is
+            // effectively unreachable.
+            Some(crate::marketplace::InstallSpec::LauncherToml { .. }) => None,
+            None if crate::marketplace::is_safe_crate_component(id) => Some(format!(
+                "term cargo install --force {id} && $HOME/.cargo/bin/{id} --install && echo '✓ {id} updated'",
+            )),
+            None => None,
+        };
+        if let Some(cmd) = cmd {
+            self.run_ex_command(&cmd);
+            // Optimistic clear — the background sweep will
+            // re-populate if the install fails or the version
+            // didn't move. Makes the chip disappear immediately
+            // (matches "I clicked, so it's happening").
+            if let Ok(mut guard) = self.integration_updates.lock() {
+                guard.remove(id);
+            }
+            self.toast(format!("updating {id}..."));
+        } else {
+            self.toast(format!("cannot update {id}: unknown install source"));
+        }
+    }
 }

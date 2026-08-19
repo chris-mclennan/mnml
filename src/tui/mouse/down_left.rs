@@ -2144,62 +2144,10 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         .map(|(_, id)| id.clone())
     {
-        let install_spec = app
-            .marketplace_entries
-            .iter()
-            .find(|e| e.id == id)
-            .map(|e| e.install.clone());
-        // If the id isn't in marketplace_entries (e.g. cache-only
-        // entries) fall back to a plain `cargo install --force <id>`,
-        // since Cargo is the majority path.
-        let cmd = match install_spec {
-            // 2026-08-16 (reviewer polish) — symmetry with the CargoGit
-            // branch: guard `name` even though crates.io enforces the
-            // same charset at publish time, so a future non-crates.io
-            // `InstallSpec::Cargo` source can't reach the shell string
-            // with an unchecked value.
-            Some(crate::marketplace::InstallSpec::Cargo { name })
-                if crate::marketplace::is_safe_crate_component(&name) =>
-            {
-                Some(format!(
-                    "term cargo install --force {name} && $HOME/.cargo/bin/{name} --install && echo '✓ {name} updated'",
-                ))
-            }
-            Some(crate::marketplace::InstallSpec::Cargo { .. }) => None,
-            Some(crate::marketplace::InstallSpec::CargoGit { repo, .. }) => {
-                if crate::marketplace::is_safe_repo_slug(&repo)
-                    && crate::marketplace::is_safe_crate_component(&id)
-                {
-                    Some(format!(
-                        "term cargo install --force --git https://github.com/{repo}.git {id} && $HOME/.cargo/bin/{id} --install && echo '✓ {id} updated'",
-                    ))
-                } else {
-                    None
-                }
-            }
-            // A LauncherToml install has no cargo version — the
-            // background worker never enqueues update checks for
-            // launchers, so this branch is unreachable in practice.
-            Some(crate::marketplace::InstallSpec::LauncherToml { .. }) => None,
-            None if crate::marketplace::is_safe_crate_component(&id) => Some(format!(
-                "term cargo install --force {id} && $HOME/.cargo/bin/{id} --install && echo '✓ {id} updated'",
-            )),
-            None => None,
-        };
-        if let Some(cmd) = cmd {
-            app.run_ex_command(&cmd);
-            // Optimistic clear — the background sweep will re-populate
-            // if the install actually fails or the version genuinely
-            // didn't move. This is what makes the chip disappear
-            // immediately on click (matches user expectation of
-            // "I clicked, so it's happening").
-            if let Ok(mut guard) = app.integration_updates.lock() {
-                guard.remove(&id);
-            }
-            app.toast(format!("updating {id}..."));
-        } else {
-            app.toast(format!("cannot update {id}: unknown install source"));
-        }
+        // #992 (2026-08-18) — routing moved to
+        // App::apply_integration_update so the chip-click here and
+        // the right-click "Update to X" menu item stay in lockstep.
+        app.apply_integration_update(&id);
         return;
     }
     // P4c (2026-08-01) — click on a marketplace entry row → install
