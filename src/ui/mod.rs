@@ -218,7 +218,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         } else {
             (area, None)
         };
-        let layout = app.layout().clone();
+        let layout = app.effective_layout_for_render();
         let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
             welcome::draw(frame, app, body_area);
             None
@@ -279,6 +279,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.split_strip_buttons.clear();
     app.rects.split_strip_term_buttons.clear();
     app.rects.split_strip_ai_buttons.clear();
+    app.rects.split_strip_maximize_buttons.clear();
 
     // Split off the bottom statusline + cmdline bar (each 1 row, full width).
     // Cmdline bar sits BELOW the statusline (vim/neovim convention: the
@@ -1350,7 +1351,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.pty_tabs.clear();
     app.rects.pty_tab_new.clear();
     app.rects.pty_tab_close.clear();
-    let layout = app.layout().clone();
+    let layout = app.effective_layout_for_render();
     // 2026-06-22 — clear per-split tab chip rects before the
     // recursive walk re-populates them. Without this, frames
     // would accumulate stale chip rects from prior layouts and
@@ -4427,7 +4428,11 @@ fn paint_leaf_tab_strip_with_hidden(
             .filter(|b| **b)
             .count() as u16
     };
-    let base_split_w: u16 = SPLIT_BTN_W * 3;
+    // Terminal + Vertical-split + Horizontal-split + Maximize/Restore.
+    // Maximize joined this cluster 2026-08-18 (#1018) — a click-to-zoom
+    // control matching the VS Code ⛶ affordance, wired to
+    // `App::toggle_zoom_active_leaf`.
+    let base_split_w: u16 = SPLIT_BTN_W * 4;
     while strip.width < base_split_w + ai_button_count * SPLIT_BTN_W && ai_button_count > 0 {
         ai_button_count -= 1;
     }
@@ -4739,6 +4744,42 @@ fn paint_leaf_tab_strip_with_hidden(
             .push((btn_rect, Some(active), dir));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
+
+    // Maximize / Restore button — #1018. Rightmost in the cluster so
+    // it's the natural "grab and expand" affordance. Glyph flips
+    // between expand and restore based on `App::zoomed_leaf` so the
+    // button self-documents state. Cyan when zoom is live so it's
+    // visibly different from the neutral splits — matches VS Code's
+    // "you're in a zoomed editor" tint.
+    let is_zoomed_here = app.zoomed_leaf == Some(active);
+    let (max_glyph, max_color) = if nerd {
+        if is_zoomed_here {
+            // nf-oct-screen_normal — the "shrink back" arrows.
+            ("\u{f066f}", t.cyan)
+        } else {
+            // nf-oct-screen_full — the "expand outwards" arrows.
+            ("\u{f066e}", dim_fg)
+        }
+    } else if is_zoomed_here {
+        ("]", t.cyan)
+    } else {
+        ("[", dim_fg)
+    };
+    let max_rect = Rect {
+        x: bx,
+        y: strip.y,
+        width: SPLIT_BTN_W,
+        height: 1,
+    };
+    let line = Line::from(vec![
+        Span::styled(" ", Style::default().bg(strip_bg)),
+        Span::styled(max_glyph, Style::default().fg(max_color).bg(strip_bg)),
+        Span::styled(" ", Style::default().bg(strip_bg)),
+    ]);
+    frame.render_widget(Paragraph::new(line), max_rect);
+    app.rects
+        .split_strip_maximize_buttons
+        .push((max_rect, Some(active)));
 }
 
 /// Paint the `+ Add Claude Code` card into the BR quadrant of the

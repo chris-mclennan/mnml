@@ -1408,6 +1408,18 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.maximize_split_width(),
         },
+        // #1018 — full-frame zoom toggle. Distinct from the two
+        // `view.maximize_*` above (which push a split's RATIO in one
+        // axis but keep neighbors on-screen). This flips the render
+        // layer to paint ONLY this leaf. Click ⛶ in a per-leaf tab
+        // strip fires the same command.
+        Command {
+            id: "view.toggle_zoom",
+            title: "Toggle maximize (zoom this pane full-frame)",
+            group: "view",
+            keys: &["<leader>zz"],
+            run: |app| app.toggle_zoom_active_leaf(),
+        },
         Command {
             id: "view.move_to_new_tab",
             title: "Move active split to a new tab page (vim `Ctrl+W T`)",

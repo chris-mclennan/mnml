@@ -1633,6 +1633,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // #1018 — maximize / restore button (rightmost in the per-leaf
+    // strip cluster). Click → focus this leaf so the toggle acts on
+    // the leaf whose button was clicked (not whichever pane happened
+    // to hold focus), then flip the zoom.
+    if let Some(&(_, leaf_active)) = app
+        .rects
+        .split_strip_maximize_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+            app.focus = crate::focus::Focus::Pane;
+        }
+        app.toggle_zoom_active_leaf();
+        return;
+    }
     if let Some(&(_, leaf_active, tab_pane)) = app
         .rects
         .split_tab_chips

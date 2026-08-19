@@ -1128,6 +1128,12 @@ impl App {
         if id >= self.panes.len() {
             return;
         }
+        // #1018 — if this was the zoomed leaf, clear the zoom so we
+        // don't render a stale synthetic leaf holding a pane that no
+        // longer exists in the layout. Cheap when nothing's zoomed.
+        if self.zoomed_leaf == Some(id) {
+            self.clear_zoom();
+        }
         // Capture the cursor + scroll so a future `open_path` for this file
         // jumps back to where the user was. Done *before* the pane is removed
         // (and only for editor panes — other variants don't have a "position").
@@ -2648,5 +2654,101 @@ mod layout_tests {
             Some(a.as_path())
         );
         assert_eq!(app.active_editor().unwrap().editor.row_col(), (0, 2));
+    }
+
+    // ── #1018 — maximize / restore zoom ────────────────────────────
+
+    #[test]
+    fn toggle_zoom_no_active_pane_is_noop() {
+        // Fresh app has no active pane; the toggle should stay None
+        // (not panic, not toggle-into-Some(bogus)). Fires a toast we
+        // don't need to inspect here.
+        let d = tempfile::tempdir().unwrap();
+        let cfg = Config::default();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        assert_eq!(app.active, None);
+        app.toggle_zoom_active_leaf();
+        assert_eq!(app.zoomed_leaf, None);
+    }
+
+    #[test]
+    fn toggle_zoom_flips_on_active_pane() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        let a = app.active.expect("pane a should be active");
+        assert_eq!(app.zoomed_leaf, None);
+        app.toggle_zoom_active_leaf();
+        assert_eq!(app.zoomed_leaf, Some(a));
+        app.toggle_zoom_active_leaf();
+        assert_eq!(app.zoomed_leaf, None);
+    }
+
+    #[test]
+    fn effective_layout_paints_only_zoomed_leaf() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        let a = app.active.unwrap();
+        app.split_active(crate::layout::SplitDir::Horizontal);
+        app.open_path(&d.path().join("b.txt"));
+        let b = app.active.unwrap();
+        assert_ne!(a, b);
+        // Real layout: a Split with both leaves — cloned unchanged.
+        let real = app.layout().clone();
+        assert!(
+            matches!(real, Layout::Split { .. }),
+            "expected split after split_active"
+        );
+        // No zoom: effective mirrors real.
+        assert!(matches!(
+            app.effective_layout_for_render(),
+            Layout::Split { .. }
+        ));
+        // Zoom leaf containing `b`.
+        app.zoomed_leaf = Some(b);
+        let zoomed = app.effective_layout_for_render();
+        match zoomed {
+            Layout::Leaf { active, tabs } => {
+                assert_eq!(active, b);
+                assert!(tabs.contains(&b));
+                assert!(!tabs.contains(&a), "zoom on b's leaf should not surface a");
+            }
+            _ => panic!("expected synthetic Leaf under zoom"),
+        }
+    }
+
+    #[test]
+    fn closing_zoomed_pane_clears_zoom() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        let a = app.active.unwrap();
+        app.zoomed_leaf = Some(a);
+        app.force_close_pane(a);
+        assert_eq!(
+            app.zoomed_leaf, None,
+            "closing the zoomed pane must clear zoom"
+        );
+    }
+
+    #[test]
+    fn switching_to_a_different_leafs_button_reassigns_zoom() {
+        // Clicking ⛶ in leaf B when leaf A is currently zoomed should
+        // switch the zoom to B, not un-zoom entirely. Matches the way
+        // clicking any leaf's ⛶ implies "this is what I want big".
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        let a = app.active.unwrap();
+        app.split_active(crate::layout::SplitDir::Horizontal);
+        app.open_path(&d.path().join("b.txt"));
+        let b = app.active.unwrap();
+        app.active = Some(a);
+        app.toggle_zoom_active_leaf();
+        assert_eq!(app.zoomed_leaf, Some(a));
+        app.active = Some(b);
+        app.toggle_zoom_active_leaf();
+        assert_eq!(
+            app.zoomed_leaf,
+            Some(b),
+            "second toggle from a different active leaf should reassign"
+        );
     }
 }

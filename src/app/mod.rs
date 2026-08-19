@@ -2658,6 +2658,13 @@ pub struct PaneRects {
     /// `[ui] tab_bar_ai_icon = "both"` (#19). Pane id is Option for
     /// the same reason as the terminal button.
     pub split_strip_ai_buttons: Vec<(Rect, Option<PaneId>, u8)>,
+    /// `(rect, pane_id?)` per visible maximize / restore button in the
+    /// split-strip cluster (rightmost — after the H/V buttons). Click →
+    /// `App::toggle_zoom_active_leaf()`, which paints ONLY this leaf
+    /// full-frame until clicked again. Glyph flips between expand
+    /// (`nf-oct-screen_full`) and restore (`nf-oct-screen_normal`) so
+    /// the button self-documents state.
+    pub split_strip_maximize_buttons: Vec<(Rect, Option<PaneId>)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region
@@ -3555,6 +3562,16 @@ pub struct App {
     /// tab.
     pub active: Option<PaneId>,
     pub focus: Focus,
+    /// Zoom / maximize (`view.toggle_zoom`, ⛶ button in each per-leaf
+    /// tab strip). When set, the render layer paints ONLY the leaf
+    /// containing this pane, filling the full body area — every other
+    /// split is hidden. Click the ⛶ button again (or fire the command)
+    /// to restore the original split tree. Cleared automatically when
+    /// the zoomed leaf's pane disappears (close/split rearrange) so we
+    /// never render a stale zoom over a layout that no longer contains
+    /// it. Per-tab-page: switching tab pages resets to `None` so the
+    /// user isn't surprised by a stale zoom on the new tab.
+    pub zoomed_leaf: Option<PaneId>,
     pub tree: Tree,
     /// Additional workspace trees rendered as sibling sections below the
     /// primary `> WORKSPACE-NAME` section in the rail. Each entry comes from
@@ -5448,6 +5465,56 @@ impl App {
         &self.layouts[self.active_layout]
     }
 
+    /// Layout to render THIS frame — accounts for a live zoom
+    /// (`Self::zoomed_leaf`) by returning a synthetic single-leaf tree
+    /// containing every tab that lives in the same leaf as the zoomed
+    /// pane. When no zoom is active (or the zoomed pane has since been
+    /// closed / moved out of the layout), returns a clone of the real
+    /// split tree.
+    ///
+    /// Callers already own the layout by value (they `.clone()` it
+    /// before walking), so returning `Layout` keeps the shape and
+    /// short-circuits transparently. Do NOT call this from anything
+    /// that needs the true split shape (dividers, `Ctrl+W` focus nav,
+    /// keyboard-driven pane-close accounting) — those go through
+    /// `Self::layout()` unchanged so they operate on the real tree
+    /// underneath the zoom.
+    pub fn effective_layout_for_render(&self) -> Layout {
+        if let Some(zid) = self.zoomed_leaf
+            && let Some(tabs) = self.layout().leaf_containing(zid)
+        {
+            return Layout::leaf_with_tabs(zid, tabs.to_vec());
+        }
+        self.layout().clone()
+    }
+
+    /// Toggle the maximize/zoom flag against the active leaf. If a
+    /// pane is focused (`self.active`) and its leaf isn't already
+    /// zoomed, we zoom it. If it IS the zoomed leaf, we clear the
+    /// zoom. If some OTHER leaf was zoomed, we switch the zoom to
+    /// this one — pressing the maximize button in a leaf's own strip
+    /// shouldn't require un-zooming a hidden leaf first. Toasts a
+    /// hint when there's no active pane so the palette command
+    /// doesn't fail silently.
+    pub fn toggle_zoom_active_leaf(&mut self) {
+        let Some(active) = self.active else {
+            self.toast("nothing to maximize — open a pane first");
+            return;
+        };
+        if self.zoomed_leaf == Some(active) {
+            self.zoomed_leaf = None;
+            return;
+        }
+        self.zoomed_leaf = Some(active);
+    }
+
+    /// Clear any live zoom. Callers: pane close / tab-page switch /
+    /// layout rearrangement that could invalidate the zoomed leaf.
+    /// Cheap when already `None`; never toasts.
+    pub fn clear_zoom(&mut self) {
+        self.zoomed_leaf = None;
+    }
+
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
         // Propagate `[ui] terminal_label` into pty_pane's process-
         // global so every `BinaryProfile::shell()` picks up the
@@ -5598,6 +5665,7 @@ impl App {
             tab_actives: vec![None],
             active: None,
             focus: Focus::Tree,
+            zoomed_leaf: None,
             tree,
             tree_visible: true,
             active_section: ActivitySection::Explorer,
