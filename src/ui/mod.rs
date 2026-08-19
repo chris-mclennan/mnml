@@ -3404,7 +3404,16 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // of the tab); no longer applies. Keeps the count matching what
     // renders below.
     let _ = (&installed_ids_lc, &installed_binaries);
-    let marketplace_count = app.marketplace_entries.len();
+    // 2026-08-19 (#1055) — count only entries that pass the Ready
+    // gate. Was `app.marketplace_entries.len()` — that included
+    // unready App entries the render loop hides, so the tab read
+    // "Marketplace (48)" while only ~7 rows painted. Launchers /
+    // drivers bypass the gate (they show unconditionally).
+    let marketplace_count = app
+        .marketplace_entries
+        .iter()
+        .filter(|e| !matches!(e.kind, crate::marketplace::MarketplaceKind::App) || e.ready)
+        .count();
     // vscode-mouse SEV-2 2026-08-05 — was
     //   `" Installed ({N}) "` + `" Marketplace ({M}) "`
     // which needs ~32 chars minimum; the activity panel is ~28 wide
@@ -3796,6 +3805,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             app.marketplace_entries
                 .iter()
                 .filter(|e| {
+                    // #1055 — Ready gate: mirror the render loop.
+                    if matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready {
+                        return false;
+                    }
                     if filter_lc_mp.is_empty() {
                         return true;
                     }
@@ -4037,6 +4050,16 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             }),
         }
         for (idx, entry) in sorted.into_iter() {
+            // 2026-08-19 (#1055) — Ready gate. App entries whose
+            // author hasn't declared them ready (interim: not in
+            // `ready_ids()`) get hidden entirely. Prevents the
+            // GithubMonorepoApps source from drowning the list with
+            // half-baked experiments. Launcher / driver entries are
+            // NOT gated — they're external tools with their own
+            // publish criteria, not authored integrations.
+            if matches!(entry.kind, crate::marketplace::MarketplaceKind::App) && !entry.ready {
+                continue;
+            }
             // 2026-08-07 — installed entries stay visible in the
             // Marketplace list but render greyed with an `[installed]`
             // tag replacing `[app]`/`[launcher]`/`[driver]`. Click
@@ -4159,23 +4182,25 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(prov_fg).bg(bg),
                 ));
             }
-            // 2026-08-08 — Verified chip. Curated allow-list in
-            // marketplace::verified_ids() signals "we (maintainer) used
-            // this in real work and it functions correctly." Separate
-            // axis from Official (authorship) — a Community integration
-            // could also be Verified once we've used it. Sits after the
+            // 2026-08-08 (renamed 2026-08-19, task #1055) — Ready chip.
+            // Interim source is `marketplace::ready_ids()`; eventual
+            // source is `ready = true` in each integration's own
+            // manifest so community authors can hide their in-progress
+            // crates. Also (as of #1055) the render loop above HIDES
+            // App entries with `ready = false` — this chip only ever
+            // paints when an entry survived that gate. Sits after the
             // Official/Community chip.
             //
             // 2026-08-18 (R8-D-critic HIGH) — glyph + color differ from
             // Official so the two chips are visually distinguishable at
-            // a glance. Star (yellow) reads as "maintainer-vouched
-            // quality badge"; checkmark green stayed on Official
+            // a glance. Star (yellow) reads as "author-vouched ready
+            // badge"; checkmark green stayed on Official
             // (provenance-as-verifiable-truth). Prior render was two
             // adjacent `✓` chips in identical green — indistinguishable
             // as separate concepts.
-            if entry.verified {
+            if entry.ready {
                 name_spans.push(Span::styled(
-                    "  ★ Verified".to_string(),
+                    "  ★ Ready".to_string(),
                     Style::default().fg(t.yellow).bg(bg),
                 ));
             }

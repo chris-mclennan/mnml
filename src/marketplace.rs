@@ -93,15 +93,17 @@ pub struct MarketplaceEntry {
     /// `"yellow"`, …), applied to the glyph span. `None` → `t.fg`.
     #[serde(default)]
     pub color: Option<String>,
-    /// 2026-08-08 — separate from `provenance` ("who wrote it"), this
-    /// flags "have WE actually used and verified it in real work". A
-    /// curated allow-list in mnml core (see `verified_ids()`) — never
-    /// a manifest field since the sibling author could just set it.
-    /// Rendered as a `✓ Verified` chip on the marketplace row alongside
-    /// (not instead of) the Official/Community chip. Community-authored
-    /// integrations can also be verified once we've used them.
-    #[serde(default)]
-    pub verified: bool,
+    /// 2026-08-08 (renamed 2026-08-19, task #1055) — separate from
+    /// `provenance` ("who wrote it"), this flags "the author has
+    /// declared this ready to show". Interim source is a curated
+    /// allow-list in mnml core (see [`ready_ids`]); the eventual
+    /// design is `ready = true` in each integration's own manifest.
+    /// The Marketplace tab HIDES entries with `ready = false` by
+    /// default so half-baked experiments don't drown out real
+    /// integrations. Rendered as a `✓ Ready` chip on the row
+    /// alongside (not instead of) the Official/Community chip.
+    #[serde(default, alias = "verified")]
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,16 +164,23 @@ pub fn provenance_for(source_id: &str) -> Provenance {
     }
 }
 
-/// 2026-08-08 — the curated list of marketplace ids we (the maintainer)
-/// have actually used in real work and confirmed function correctly.
-/// Rendered as a green `✓ Verified` chip on the marketplace row. Add
-/// an id here after using the crate end-to-end without hitting
-/// blockers; remove one if a real user reports it's broken.
+/// 2026-08-08 — the curated list of marketplace ids the maintainer has
+/// declared ready to surface. Rendered as a green `✓ Ready` chip on the
+/// marketplace row, and (as of #1055) the Marketplace tab HIDES entries
+/// whose id is missing here — so half-baked experiments in the
+/// monorepo don't drown out real integrations. Add an id after using
+/// the crate end-to-end without hitting blockers; remove one if a real
+/// user reports it's broken.
 ///
 /// Distinct from [`Provenance`], which is about AUTHORSHIP (who wrote
-/// it). A community-authored integration can be verified once we've
-/// used it; an official integration is unverified until we've tried it.
-pub fn verified_ids() -> &'static [&'static str] {
+/// it). A community-authored integration can be marked ready once we've
+/// used it; an official integration stays unready until we've tried it.
+///
+/// This is the interim home for the flag; the eventual design is
+/// `ready = true` in each integration's own `mnml-bridge` manifest so
+/// community authors can hide their own in-progress crates without
+/// waiting on a mnml release (see task #1055).
+pub fn ready_ids() -> &'static [&'static str] {
     &[
         "mnml-forge-bitbucket",
         "mnml-tracker-jira",
@@ -183,9 +192,9 @@ pub fn verified_ids() -> &'static [&'static str] {
     ]
 }
 
-/// Convenience — does the given entry id appear in `verified_ids()`?
-pub fn is_verified(id: &str) -> bool {
-    verified_ids().contains(&id)
+/// Convenience — does the given entry id appear in [`ready_ids()`]?
+pub fn is_ready(id: &str) -> bool {
+    ready_ids().contains(&id)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +284,20 @@ pub fn default_sources() -> Vec<Source> {
             repo: "chris-mclennan/mnml-integrations".to_string(),
             path: "launchers".to_string(),
         },
+        // 2026-08-19 (#1055) — the crates.io keyword source only
+        // finds crates whose Cargo.toml sets `keywords =
+        // ["mnml-integration"]`. Most siblings never opted into that,
+        // so mnml-tracker-jira and friends were invisible in the
+        // marketplace even after being installed. The monorepo apps
+        // folder catches everything else — but the render layer
+        // filters to `ready = true` (populated from `ready_ids()`),
+        // so half-baked experiments in the folder don't drown out
+        // the ~7 real integrations.
+        Source::GithubMonorepoApps {
+            id: "chris-mclennan/mnml-integrations-apps".to_string(),
+            repo: "chris-mclennan/mnml-integrations".to_string(),
+            apps_dir: "apps".to_string(),
+        },
     ]
 }
 
@@ -330,7 +353,7 @@ pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<Marketpl
                 provenance,
                 glyph,
                 color,
-                verified: is_verified(&name_for_verified),
+                ready: is_ready(&name_for_verified),
             }
         })
         .collect();
@@ -489,7 +512,7 @@ pub fn parse_launcher_toml(
         None => (None, None),
     };
     let (fallback_glyph, fallback_color) = catalog_lookup(&m.id);
-    let verified = is_verified(&m.id);
+    let ready = is_ready(&m.id);
     Ok(MarketplaceEntry {
         source_id: source_id.to_string(),
         kind: MarketplaceKind::Launcher,
@@ -503,7 +526,7 @@ pub fn parse_launcher_toml(
         provenance: provenance_for(source_id),
         glyph: chip_glyph.or(fallback_glyph),
         color: chip_color.or(fallback_color),
-        verified,
+        ready,
     })
 }
 
@@ -902,7 +925,7 @@ pub fn fetch_source(source: &Source) -> Result<Vec<MarketplaceEntry>, String> {
                         provenance: provenance_for(id),
                         glyph,
                         color,
-                        verified: is_verified(&name),
+                        ready: is_ready(&name),
                     }
                 })
                 .collect())
@@ -935,9 +958,15 @@ mod tests {
     #[test]
     fn default_sources_include_crates_and_github() {
         let s = default_sources();
-        assert_eq!(s.len(), 2);
+        assert_eq!(s.len(), 3);
         assert!(matches!(s[0], Source::CratesKeyword { .. }));
         assert!(matches!(s[1], Source::GithubLauncherFolder { .. }));
+        // #1055 — third source: the monorepo apps folder. Necessary
+        // because most siblings' Cargo.toml never opted into the
+        // `mnml-integration` keyword the crates.io source searches
+        // for. Render-time Ready gate keeps this from surfacing the
+        // half-baked experiments in that folder.
+        assert!(matches!(s[2], Source::GithubMonorepoApps { .. }));
     }
 
     #[test]
@@ -1167,7 +1196,7 @@ run = ":term htop"
                 provenance: Provenance::Official,
                 glyph: None,
                 color: None,
-                verified: false,
+                ready: false,
             }],
         };
         original.save_to(&path).unwrap();
