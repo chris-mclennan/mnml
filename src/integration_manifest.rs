@@ -569,6 +569,16 @@ pub struct IntegrationManifestOverride {
     /// touching the user-config file.
     #[serde(default)]
     pub auth_values: Option<std::collections::HashMap<String, String>>,
+    /// #993 step 1 (2026-08-19). Per-integration opt-in override for
+    /// auto-update. When set, wins over the global
+    /// `Config::integrations.auto_update_{cargo,git}` regardless of
+    /// direction — a user with the global `true` can disable
+    /// auto-update on a specific integration by writing
+    /// `auto_update = false` here; and vice versa. Absent → fall
+    /// through to the global. Design:
+    /// `docs/design/auto-update-integrations.md`.
+    #[serde(default)]
+    pub auto_update: Option<bool>,
 }
 
 /// Chip-level overrides. Every field optional; only set ones win.

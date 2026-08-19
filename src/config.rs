@@ -111,6 +111,13 @@ pub struct Config {
     pub dap: BTreeMap<String, toml::Value>,
     pub browser: BrowserConfig,
     pub ci: CiConfig,
+    /// `[integrations]` — global switches for the integration
+    /// ecosystem. Only the auto-update opt-in lives here today; the
+    /// enabled-list / rail-pinning / per-integration overrides live
+    /// in `~/.config/mnml/integrations/<id>.toml` (a separate file
+    /// per integration — see `IntegrationManifestOverride`). Task
+    /// #993 (design doc: `docs/design/auto-update-integrations.md`).
+    pub integrations: IntegrationsConfig,
     // [gitlab] config moved to mnml-forge-gitlab.
     // [azdevops] config moved to mnml-forge-azdevops.
     /// `[[workspaces]]` — additional workspaces shown as integration sections in
@@ -357,6 +364,34 @@ pub struct CiConfig {
     pub provider: Option<String>,
     pub project: Option<String>,
     pub region: Option<String>,
+}
+
+/// `[integrations]` — global switches for the integration ecosystem.
+/// Currently just the auto-update opt-in (task #993). Kept as a
+/// dedicated typed struct rather than a raw `toml::Value` so schema
+/// evolution is checked at load time.
+///
+/// Both auto-update knobs default OFF. The opt-in is source-typed
+/// on purpose:
+///
+/// - **cargo (crates.io)** installs auto-update on tick when this is
+///   `true`. Semver + `--locked` mean the risk of a broken pull is
+///   bounded to whatever the integration's own lockfile allows.
+/// - **git** installs auto-update on tick when this is `true`.
+///   Higher risk than cargo — `git+…#<sha>` can move underneath you
+///   between HEAD checks; a bad merge on the tracked branch installs
+///   immediately.
+///
+/// See `docs/design/auto-update-integrations.md` for the full plan
+/// (rate cap, failure surfacing, per-integration override).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IntegrationsConfig {
+    /// Auto-fire `cargo install --locked --force <name>` when the
+    /// update-check worker detects a newer crates.io version.
+    /// Default: `false`.
+    pub auto_update_cargo: bool,
+    /// Same, for git-installed integrations. Default: `false`.
+    pub auto_update_git: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1396,6 +1431,7 @@ impl Default for Config {
                 autocapture_to_log: true,
             },
             ci: CiConfig::default(),
+            integrations: IntegrationsConfig::default(),
             workspaces: Vec::new(),
             marketplace: MarketplaceConfig::default(),
             cloud_run: CloudRunConfig::default(),
@@ -1445,6 +1481,8 @@ struct RawConfig {
     browser: RawBrowser,
     #[serde(default)]
     ci: RawCi,
+    #[serde(default)]
+    integrations: RawIntegrations,
     #[serde(default)]
     workspaces: Vec<RawWorkspace>,
     #[serde(default)]
@@ -1566,6 +1604,14 @@ struct RawCi {
     provider: Option<String>,
     project: Option<String>,
     region: Option<String>,
+}
+
+/// `[integrations]` raw table — #993 step 1. Both fields are opt-in
+/// booleans; absent → `None` → keep the default (false).
+#[derive(Debug, Default, Deserialize)]
+struct RawIntegrations {
+    auto_update_cargo: Option<bool>,
+    auto_update_git: Option<bool>,
 }
 
 /// `[http]` raw table (api 2nd 2026-06-28 SEV-3d).
@@ -2715,6 +2761,13 @@ impl Config {
         }
         if let Some(v) = raw.ci.region {
             self.ci.region = Some(v);
+        }
+        // `[integrations]` — task #993 step 1 (auto-update opt-in).
+        if let Some(v) = raw.integrations.auto_update_cargo {
+            self.integrations.auto_update_cargo = v;
+        }
+        if let Some(v) = raw.integrations.auto_update_git {
+            self.integrations.auto_update_git = v;
         }
         // `[bitbucket]` section is silently ignored — Bitbucket panes
         // moved to the standalone mnml-forge-bitbucket binary in

@@ -60,6 +60,43 @@ pub fn is_update_available(check: &UpdateCheck) -> bool {
     !check.current.is_empty() && !check.latest.is_empty() && check.current != check.latest
 }
 
+/// #993 step 1 (2026-08-19). Resolve the effective auto-update
+/// setting for one integration + source-kind, honoring the
+/// precedence chain:
+///
+///   1. Per-integration override (`IntegrationManifestOverride::auto_update`)
+///      wins outright when set — user's per-integration choice
+///      always beats the global.
+///   2. Global config (`Config::integrations.auto_update_cargo` /
+///      `auto_update_git`) — different keys per source kind.
+///   3. Shipped default: `false` for everything.
+///
+/// `override_flag` is `Some(x)` iff the user wrote
+/// `auto_update = x` in `~/.config/mnml/integrations/<id>.toml`.
+/// `None` = not set, fall through.
+///
+/// Full worker wiring lands in step 2 (see design doc); this step
+/// exposes the resolution so tests + a future Settings-row lookup
+/// share one code path. Design:
+/// `docs/design/auto-update-integrations.md`.
+// Used only by tests until step 2 wires the sweeper against it —
+// suppress the dead_code lint at the fn level so `-D warnings`
+// stays enabled everywhere else.
+#[allow(dead_code)]
+pub fn effective_auto_update(
+    override_flag: Option<bool>,
+    kind: UpdateKind,
+    integrations_cfg: &crate::config::IntegrationsConfig,
+) -> bool {
+    if let Some(v) = override_flag {
+        return v;
+    }
+    match kind {
+        UpdateKind::Cargo => integrations_cfg.auto_update_cargo,
+        UpdateKind::CargoGit => integrations_cfg.auto_update_git,
+    }
+}
+
 /// Persist shape for the last sweep. Loaded on startup so the UI has
 /// data instantly (before the first fetch resolves); rewritten after
 /// every successful sweep.
@@ -445,6 +482,53 @@ mod tests {
             ..check.clone()
         };
         assert!(!is_update_available(&same));
+    }
+
+    // ── #993 step 1 — effective_auto_update resolution ──────────
+
+    #[test]
+    fn effective_auto_update_defaults_off_for_both_kinds() {
+        let cfg = crate::config::IntegrationsConfig::default();
+        assert!(!effective_auto_update(None, UpdateKind::Cargo, &cfg));
+        assert!(!effective_auto_update(None, UpdateKind::CargoGit, &cfg));
+    }
+
+    #[test]
+    fn effective_auto_update_global_cargo_toggle_only_flips_cargo() {
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: false,
+        };
+        assert!(effective_auto_update(None, UpdateKind::Cargo, &cfg));
+        assert!(!effective_auto_update(None, UpdateKind::CargoGit, &cfg));
+    }
+
+    #[test]
+    fn effective_auto_update_per_integration_true_wins_over_global_false() {
+        let cfg = crate::config::IntegrationsConfig::default();
+        assert!(effective_auto_update(Some(true), UpdateKind::Cargo, &cfg));
+        assert!(effective_auto_update(
+            Some(true),
+            UpdateKind::CargoGit,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn effective_auto_update_per_integration_false_wins_over_global_true() {
+        // Confirms the override precedence is bidirectional: a user
+        // with `auto_update = false` on one integration keeps that
+        // integration manual even when the global cargo switch is on.
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: true,
+        };
+        assert!(!effective_auto_update(Some(false), UpdateKind::Cargo, &cfg));
+        assert!(!effective_auto_update(
+            Some(false),
+            UpdateKind::CargoGit,
+            &cfg
+        ));
     }
 
     #[test]
