@@ -315,6 +315,65 @@ pub fn record_attempt(attempts: &mut HashMap<String, u64>, id: &str, now_secs: u
     attempts.insert(id.to_string(), now_secs);
 }
 
+/// #993 step 2c (2026-08-19). Fire one round of auto-updates.
+/// Composes the pieces from step 2a + 2b:
+///
+///   1. Load the persisted last-attempts map.
+///   2. Call `plan_auto_updates` with the current checks + overrides
+///      + config + attempts.
+///   3. For each Cargo-kind plan, spawn `cargo install --locked
+///      --force <id>` as a DETACHED subprocess (non-blocking; the
+///      TUI keeps rendering while cargo works).
+///   4. Record + persist attempts for every plan that fired
+///      (regardless of the eventual install outcome — rate cap
+///      counts fires, not successes, so a broken upstream can't
+///      hammer the shell).
+///
+/// Returns the list of plans that were actually fired. `CargoGit`
+/// plans are skipped in this pass — step 2d wires the `--git` args
+/// pulled from the InstalledEntry side. Failure to spawn (missing
+/// `cargo` binary) is silent + the id is NOT added to attempts, so
+/// the next sweep re-tries.
+///
+/// Called from the palette command `integrations.fire_auto_updates_now`
+/// and (in step 2d) from the update-check worker after each sweep.
+#[allow(dead_code)]
+pub fn fire_auto_updates(
+    checks: &HashMap<String, UpdateCheck>,
+    overrides: &HashMap<String, Option<bool>>,
+    integrations_cfg: &crate::config::IntegrationsConfig,
+    now_secs: u64,
+) -> Vec<AutoUpdatePlan> {
+    let mut attempts = load_last_attempts();
+    let plans = plan_auto_updates(checks, overrides, integrations_cfg, &attempts, now_secs);
+    let mut fired: Vec<AutoUpdatePlan> = Vec::new();
+    for plan in plans {
+        let Some(args) = plan.cargo_install_args() else {
+            // CargoGit — defer to step 2d, don't count as an attempt.
+            continue;
+        };
+        // Spawn detached: no wait, no stdio piped back. cargo's own
+        // progress lands in whatever terminal the user launched mnml
+        // from; a future step 2d/3 hook will surface completion via
+        // toast. `--locked --force` is baked into `cargo_install_args`.
+        let spawn_ok = std::process::Command::new("cargo")
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_ok();
+        if spawn_ok {
+            record_attempt(&mut attempts, &plan.id, now_secs);
+            fired.push(plan);
+        }
+    }
+    if !fired.is_empty() {
+        save_last_attempts(&attempts);
+    }
+    fired
+}
+
 /// Load the persisted cache into the shared map so the UI has data
 /// instantly on startup — no waiting for the first network fetch.
 /// Silent no-op on any error (missing file, malformed JSON, etc);

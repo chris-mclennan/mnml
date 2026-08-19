@@ -5684,6 +5684,52 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
+        // #993 step 2c (2026-08-19). Manual trigger for the auto-update
+        // pipeline. Reads the current update-check map + config +
+        // last-attempts, plans eligible auto-updates, spawns
+        // `cargo install --locked --force <id>` for each Cargo-kind
+        // plan. Detached — cargo runs in the background while mnml
+        // keeps rendering. The scheduled worker-tick hook (step 2d)
+        // fires this same fn without user action.
+        //
+        // Toasts summarize the pass:
+        //   - 0 planned → "auto-update: nothing eligible"
+        //   - N fired  → "auto-update: firing 3 (bitbucket, jira, s3)"
+        Command {
+            id: "integrations.fire_auto_updates_now",
+            title: "Integrations: fire auto-updates now (opt-in per config)",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                // Snapshot the checks map under a short lock so
+                // fire_auto_updates works on a stable view.
+                let checks_snapshot = match app.integration_updates.lock() {
+                    Ok(g) => g.clone(),
+                    Err(e) => e.into_inner().clone(),
+                };
+                let overrides = std::collections::HashMap::new(); // step 2d wires per-integration overrides
+                let fired = crate::app::integration_updates::fire_auto_updates(
+                    &checks_snapshot,
+                    &overrides,
+                    &app.config.integrations,
+                    now,
+                );
+                if fired.is_empty() {
+                    app.toast("auto-update: nothing eligible (check config + opt-in)");
+                } else {
+                    let ids: Vec<&str> = fired.iter().map(|p| p.id.as_str()).collect();
+                    app.toast(format!(
+                        "auto-update: firing {} ({})",
+                        fired.len(),
+                        ids.join(", ")
+                    ));
+                }
+            },
+        },
         // 2026-08-07 vscode-mouse r1 F2 — marketplace-row right-click
         // menu targets. Each acts on `pending_marketplace_install_idx`
         // (the entry the right-click landed on).
