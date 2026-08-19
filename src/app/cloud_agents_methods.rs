@@ -702,7 +702,11 @@ impl App {
             ),
             _ => return,
         };
-        let template = cfg.1.prompt_template();
+        // #997 (2026-08-19) — read the per-user override from
+        // `[ai.review_templates]` when present, else fall back to
+        // the shipped default. Custom action still returns
+        // `<custom>` as before (that path uses `cfg.2` verbatim).
+        let template = cfg.1.prompt_template_from(&self.config);
         let make_prompt = |pr_num: u32| -> String {
             if matches!(cfg.1, Action::Custom) {
                 format!("{}\n\n(context: PR #{})", cfg.2, pr_num)

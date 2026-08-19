@@ -94,6 +94,10 @@ impl Action {
     /// `<num>` placeholder is replaced with the actual PR number
     /// at submit time. Manual / Custom action returns the user's
     /// typed prompt verbatim from `pane.custom_prompt`.
+    ///
+    /// Baseline used when the user hasn't set a per-action override
+    /// under `[ai.review_templates]` in config. See
+    /// `prompt_template_from` for the config-aware resolution.
     pub fn prompt_template(self) -> &'static str {
         match self {
             Action::Triage => {
@@ -115,6 +119,45 @@ impl Action {
             }
             Action::Custom => "<custom>",
         }
+    }
+
+    /// #997 (2026-08-19) — resolve a prompt template with per-user
+    /// overrides. Users tune the Triage / Review / Test prompt via:
+    ///
+    /// ```toml
+    /// [ai.review_templates]
+    /// triage = "Your triage prompt referencing <num>"
+    /// review = "..."
+    /// test   = "..."
+    /// ```
+    ///
+    /// Unset → falls back to `prompt_template()` (the shipped
+    /// default). Blank string in config → also falls back (treats
+    /// `""` as "unset", so users can't silently break their own
+    /// wizard by clearing a value). Whitespace-only same story.
+    /// Custom action is never resolved via config — it's the
+    /// user's typed prompt for that one submission.
+    pub fn prompt_template_from(self, cfg: &crate::config::Config) -> String {
+        if matches!(self, Action::Custom) {
+            return self.prompt_template().to_string();
+        }
+        let key = match self {
+            Action::Triage => "triage",
+            Action::Review => "review",
+            Action::Test => "test",
+            Action::Custom => unreachable!(),
+        };
+        let user_override = cfg
+            .ai
+            .as_table()
+            .and_then(|t| t.get("review_templates"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get(key))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        user_override.unwrap_or_else(|| self.prompt_template().to_string())
     }
 }
 
@@ -449,4 +492,88 @@ struct BbPr {
 #[derive(serde::Deserialize)]
 struct BbAuthor {
     display_name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Action;
+    use crate::config::Config;
+
+    fn cfg_with_ai(toml_str: &str) -> Config {
+        Config {
+            ai: toml::from_str(toml_str).expect("valid ai toml"),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn prompt_template_from_falls_back_to_default_when_unset() {
+        let cfg = Config::default();
+        for action in [Action::Triage, Action::Review, Action::Test] {
+            let resolved = action.prompt_template_from(&cfg);
+            assert_eq!(
+                resolved,
+                action.prompt_template(),
+                "{:?} should fall back to default",
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_template_from_uses_user_override_when_set() {
+        let cfg = cfg_with_ai(
+            r#"
+            [review_templates]
+            triage = "MY TRIAGE for PR #<num>"
+            review = "MY REVIEW for #<num>"
+            test   = "run tests for <num>"
+            "#,
+        );
+        assert_eq!(
+            Action::Triage.prompt_template_from(&cfg),
+            "MY TRIAGE for PR #<num>"
+        );
+        assert_eq!(
+            Action::Review.prompt_template_from(&cfg),
+            "MY REVIEW for #<num>"
+        );
+        assert_eq!(
+            Action::Test.prompt_template_from(&cfg),
+            "run tests for <num>"
+        );
+    }
+
+    #[test]
+    fn prompt_template_from_blank_string_falls_back() {
+        let cfg = cfg_with_ai(
+            r#"
+            [review_templates]
+            triage = "   "
+            review = ""
+            "#,
+        );
+        assert_eq!(
+            Action::Triage.prompt_template_from(&cfg),
+            Action::Triage.prompt_template()
+        );
+        assert_eq!(
+            Action::Review.prompt_template_from(&cfg),
+            Action::Review.prompt_template()
+        );
+    }
+
+    #[test]
+    fn prompt_template_from_custom_ignores_config() {
+        let cfg = cfg_with_ai(
+            r#"
+            [review_templates]
+            custom = "won't be used"
+            "#,
+        );
+        assert_eq!(
+            Action::Custom.prompt_template_from(&cfg),
+            Action::Custom.prompt_template()
+        );
+    }
 }
