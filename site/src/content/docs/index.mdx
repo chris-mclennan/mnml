@@ -18,11 +18,46 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ![mnml in action — activity-bar sweep, editor, HTTP request pane, terminal](/media/hero.gif)
 
+<details>
+<summary>Playbook — what's happening in the hero, second by second</summary>
+
+| t (s) | Beat | What to watch |
+| ---: | :--- | :--- |
+| 0.0 | Welcome | ASCII logo + git-branch line — the first-paint state you get after `mnml <workspace>`. |
+| 1.4 | Activity sweep | Five left-rail sections cycle: file tree · HTTP · Integrations · Agents · Git · Notes. Each swap re-populates the info panel at the bottom. |
+| 11.4 | Editor | `src/main.ts` opens; LSP diagnostics render as squiggles + a red count on the bufferline chip. |
+| 14.4 | Picker | `Ctrl+P` fuzzy pick → `store.ts`. Type a few chars, hit Enter. |
+| 18.0 | Which-key | `Ctrl+K` opens the leader menu; every chord under it is discoverable. |
+| 21.0 | Ghost-text | Dim-grey inline suggestion appears at the cursor; `Tab` accepts it. |
+| 25.5 | Hover-help | Mouse dwells over palette-bar chips; the info-view panel updates in real time. |
+| 29.5 | Settings | Settings overlay opens, arrow keys nav the rows. |
+| 33.5 | Right cluster | Statusline chips light up: Claude usage sparkline, coverage badge, mixr now-playing. |
+| 45.5 | Split right | `view.split_right` opens a second pane; `notes.http` loads in it. |
+| 49.0 | Terminal | `term.shell_bottom` docks a Pty pane; two commands run. |
+| 57.0 | Hero shot | Composite dwell: tree · editor · http · terminal on-screen at once. |
+
+</details>
+
 ### Focused walkthroughs
 
 Short per-feature tapes for the surfaces the hero above only glances at:
 
 - **[Ghost-text](/media/ghost-text.gif)** — type a function stub, Tab accepts the suggestion.
+
+  <details>
+  <summary>Playbook — beat by beat</summary>
+
+  | t (s) | Beat | What to watch |
+  | ---: | :--- | :--- |
+  | 0.0 | Welcome dwell + open `store.ts` | The editor lands on an existing TypeScript file. |
+  | 3.0 | Jump to EOF, add a blank line | Cursor moves to end-of-file, room to type. |
+  | 3.8 | Type a function signature | Cursor blinks at the open paren. |
+  | 7.0 | Seed ghost suggestion | A dim-grey continuation appears at the cursor. |
+  | 9.5 | Dwell on the ghost text | Read what mnml proposes. |
+  | 12.0 | `Tab` — accept | The completion becomes real text. |
+  | 14.0 | Cursor nudge + dwell | The accepted code sits at the caret. |
+
+  </details>
 
 ## What is mnml
 
