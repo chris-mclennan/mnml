@@ -520,17 +520,27 @@ impl App {
             "View details",
             MenuAction::ShowIntegrationDetails(id.clone()),
         ));
+        // #1054 (2026-08-19) — icon ids (`jira_work`, `jira_boards`)
+        // aren't marketplace / update-cache keys; those are keyed by
+        // CRATE id (`mnml-tracker-jira`). Resolve to the underlying
+        // binary via the same helper the dedup path uses, so both
+        // "Update to X" and "Show in marketplace" hit the right row.
+        // Falls back to the icon id when the command isn't a
+        // `:term <binary>` form (built-ins, ex commands, etc.).
+        let crate_id = crate::integration_detect::integration_binary_for_command(&icon.command)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| id.clone());
         // #992 (2026-08-18) — "Update to <latest>" when an update
         // check reports one. Rendered above "Show in marketplace" so
         // an actionable item is the first thing a user reaching for
         // an update lands on. Live-lookup — mutex is held briefly.
         if let Ok(guard) = self.integration_updates.lock()
-            && let Some(check) = guard.get(&id)
+            && let Some(check) = guard.get(&crate_id)
             && crate::app::integration_updates::is_update_available(check)
         {
             items.push(MenuItem::new(
                 format!("\u{2191} Update to {}", check.latest),
-                MenuAction::UpdateIntegration(id.clone()),
+                MenuAction::UpdateIntegration(crate_id.clone()),
             ));
         }
         // #992 (2026-08-18) — always available: jump to the
@@ -539,7 +549,7 @@ impl App {
         // of tab order.
         items.push(MenuItem::new(
             "Show in marketplace",
-            MenuAction::ShowIntegrationInMarketplace(id.clone()),
+            MenuAction::ShowIntegrationInMarketplace(crate_id.clone()),
         ));
         if !is_first {
             items.push(MenuItem::new(
