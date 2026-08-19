@@ -72,6 +72,15 @@ pub struct Config {
     pub tasks: BTreeMap<String, TaskDef>,
     /// `[startup] tasks = [...]` — task names auto-run in pty panes on workspace open.
     pub startup_tasks: Vec<String>,
+    /// `[[startup.layout]]` — declarative startup panes (task #878).
+    /// Each entry opens either an editor pane (with `path`) or a Pty
+    /// pane (with `cmd`); after the first entry, each subsequent
+    /// entry splits the previously-added pane in the given direction.
+    /// Empty ⇒ no auto-layout (session restore + welcome screen own
+    /// the boot state). Session restore always wins when present;
+    /// `startup_layout` is the cold-start baseline only. See
+    /// `docs/design/programmatic-layout-config.md`.
+    pub startup_layout: Vec<StartupLayoutEntry>,
     /// `[startup] default_workspace = "<path>"` — folder mnml opens when
     /// launched with no positional workspace arg. Falls back to
     /// `current_dir()` when unset. `~` is expanded. The folder is
@@ -418,6 +427,35 @@ pub struct BrowserConfig {
     /// `tempfile::tempdir()` per open — clean-slate for login testing /
     /// fresh-eyes debugging; state vanishes when the pane closes.
     pub profile_mode: String,
+}
+
+/// One entry in `[[startup.layout]]` — a pane mnml auto-opens on
+/// cold-start when no session file is being restored.
+///
+/// #878 step 1 (2026-08-19). The first entry lands in the initial
+/// leaf; subsequent entries each split the previously-added pane in
+/// `split`. All parsing is best-effort — a malformed entry logs +
+/// falls through to the welcome screen rather than aborting startup.
+#[derive(Debug, Clone)]
+pub struct StartupLayoutEntry {
+    /// `"editor"` (uses `path`) or `"pty"` (uses `cmd`). Anything
+    /// else is dropped at merge time with a stderr warning.
+    pub kind: String,
+    /// Workspace-relative or `~`-prefixed absolute path for the
+    /// editor pane. Missing files fall through to a scratch buffer
+    /// named after the path (matches how `open_path` handles it).
+    pub path: Option<String>,
+    /// Shell command line for the Pty pane. Missing / empty ⇒ drop
+    /// the entry with a startup toast.
+    pub cmd: Option<String>,
+    /// `"right"` (horizontal side-by-side) or `"down"` (vertical
+    /// stacked). None on the first entry; required on subsequent
+    /// entries (missing ⇒ drop the entry with a toast).
+    pub split: Option<String>,
+    /// Percent 10..=90 of the split's long axis given to the NEW
+    /// pane. None ⇒ inherit `Layout` default (50). Ignored on the
+    /// first entry.
+    pub ratio: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -1419,6 +1457,7 @@ impl Default for Config {
             git_graph: GitGraphConfig::default(),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
+            startup_layout: Vec::new(),
             default_workspace: None,
             snippets: BTreeMap::new(),
             abbreviations: BTreeMap::new(),
@@ -1666,6 +1705,26 @@ struct RawStartup {
     tasks: Vec<String>,
     #[serde(default)]
     default_workspace: Option<String>,
+    /// #878 step 1 — `[[startup.layout]]` block. Each entry is a
+    /// `RawStartupLayoutEntry`; validation happens at merge time
+    /// (unknown `kind` warned + dropped; missing `path`/`cmd` for
+    /// the declared kind warned + dropped).
+    #[serde(default)]
+    layout: Vec<RawStartupLayoutEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawStartupLayoutEntry {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    cmd: Option<String>,
+    #[serde(default)]
+    split: Option<String>,
+    #[serde(default)]
+    ratio: Option<u16>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2722,6 +2781,86 @@ impl Config {
             && !s.trim().is_empty()
         {
             self.default_workspace = Some(expand_tilde(&s));
+        }
+        // #878 step 1 — `[[startup.layout]]` block. Each entry is
+        // validated in-place; a malformed row (unknown kind, missing
+        // path/cmd for the declared kind, invalid split direction, or
+        // out-of-range ratio) is dropped with an stderr warning
+        // rather than aborting the whole layout. `App::apply_startup_layout`
+        // (step 2) reads the validated list; missing files fall back
+        // to scratch buffers there, not here.
+        for (i, entry) in raw.startup.layout.into_iter().enumerate() {
+            let kind = entry.kind.as_deref().unwrap_or("").trim().to_lowercase();
+            let is_first = i == 0;
+            match kind.as_str() {
+                "editor" => {
+                    let path = entry
+                        .path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    if path.is_none() {
+                        eprintln!(
+                            "mnml: [[startup.layout]] entry #{i} kind=editor missing `path`; dropped"
+                        );
+                        continue;
+                    }
+                }
+                "pty" => {
+                    let cmd = entry
+                        .cmd
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    if cmd.is_none() {
+                        eprintln!(
+                            "mnml: [[startup.layout]] entry #{i} kind=pty missing `cmd`; dropped"
+                        );
+                        continue;
+                    }
+                }
+                other => {
+                    eprintln!(
+                        "mnml: [[startup.layout]] entry #{i} unknown kind={other:?} (expected \"editor\" or \"pty\"); dropped"
+                    );
+                    continue;
+                }
+            }
+            let split = entry.split.as_deref().map(str::trim).map(str::to_lowercase);
+            if !is_first {
+                match split.as_deref() {
+                    Some("right") | Some("down") => {}
+                    Some(other) => {
+                        eprintln!(
+                            "mnml: [[startup.layout]] entry #{i} unknown split={other:?} (expected \"right\" or \"down\"); dropped"
+                        );
+                        continue;
+                    }
+                    None => {
+                        eprintln!(
+                            "mnml: [[startup.layout]] entry #{i} missing `split` (required after the first entry); dropped"
+                        );
+                        continue;
+                    }
+                }
+            }
+            let ratio = match entry.ratio {
+                Some(r) if (10..=90).contains(&r) => Some(r),
+                Some(other) => {
+                    eprintln!(
+                        "mnml: [[startup.layout]] entry #{i} ratio={other} out of range (10..=90); using layout default (50)"
+                    );
+                    None
+                }
+                None => None,
+            };
+            self.startup_layout.push(StartupLayoutEntry {
+                kind,
+                path: entry.path,
+                cmd: entry.cmd,
+                split,
+                ratio,
+            });
         }
         for (scope, map) in raw.snippets {
             self.snippets.entry(scope).or_default().extend(map);
@@ -4163,5 +4302,126 @@ keyword = "test"
         cfg.apply_file_pub(&cfg_path);
         assert!(!cfg.marketplace.enabled);
         assert_eq!(cfg.marketplace.sources.len(), 1);
+    }
+
+    // ── #878 step 1 — startup_layout parsing ──────────────────────
+
+    /// Round-trip a raw TOML string through the real `apply_file`
+    /// merge path so the resolver is exercised end-to-end (parse +
+    /// validate + write to Config). Writes to a tempfile because
+    /// `apply_file` reads from disk — Config has no `merge_raw` pub
+    /// entry to bypass the read.
+    fn cfg_from_toml(s: &str) -> Config {
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        std::io::Write::write_all(&mut tmp.as_file(), s.as_bytes()).expect("write config");
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(tmp.path());
+        cfg
+    }
+
+    #[test]
+    fn startup_layout_default_is_empty() {
+        assert!(Config::default().startup_layout.is_empty());
+    }
+
+    #[test]
+    fn startup_layout_parses_valid_editor_then_pty_chain() {
+        let cfg = cfg_from_toml(
+            r#"
+[[startup.layout]]
+kind = "editor"
+path = "src/main.rs"
+
+[[startup.layout]]
+kind = "pty"
+cmd  = "cargo watch"
+split = "down"
+ratio = 30
+"#,
+        );
+        assert_eq!(cfg.startup_layout.len(), 2);
+        assert_eq!(cfg.startup_layout[0].kind, "editor");
+        assert_eq!(cfg.startup_layout[0].path.as_deref(), Some("src/main.rs"));
+        assert_eq!(cfg.startup_layout[1].kind, "pty");
+        assert_eq!(cfg.startup_layout[1].cmd.as_deref(), Some("cargo watch"));
+        assert_eq!(cfg.startup_layout[1].split.as_deref(), Some("down"));
+        assert_eq!(cfg.startup_layout[1].ratio, Some(30));
+    }
+
+    #[test]
+    fn startup_layout_drops_unknown_kind() {
+        let cfg = cfg_from_toml(
+            r#"
+[[startup.layout]]
+kind = "editor"
+path = "src/main.rs"
+
+[[startup.layout]]
+kind = "wat"
+"#,
+        );
+        // The unknown kind is dropped; the valid entry survives.
+        assert_eq!(cfg.startup_layout.len(), 1);
+        assert_eq!(cfg.startup_layout[0].kind, "editor");
+    }
+
+    #[test]
+    fn startup_layout_drops_editor_without_path() {
+        let cfg = cfg_from_toml(
+            r#"
+[[startup.layout]]
+kind = "editor"
+"#,
+        );
+        assert!(cfg.startup_layout.is_empty());
+    }
+
+    #[test]
+    fn startup_layout_drops_pty_without_cmd() {
+        let cfg = cfg_from_toml(
+            r#"
+[[startup.layout]]
+kind = "pty"
+"#,
+        );
+        assert!(cfg.startup_layout.is_empty());
+    }
+
+    #[test]
+    fn startup_layout_second_entry_requires_split() {
+        let cfg = cfg_from_toml(
+            r#"
+[[startup.layout]]
+kind = "editor"
+path = "a"
+
+[[startup.layout]]
+kind = "editor"
+path = "b"
+"#,
+        );
+        // Second entry is missing `split` — dropped; first survives.
+        assert_eq!(cfg.startup_layout.len(), 1);
+        assert_eq!(cfg.startup_layout[0].path.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn startup_layout_out_of_range_ratio_falls_back_to_default() {
+        let cfg = cfg_from_toml(
+            r#"
+[[startup.layout]]
+kind = "editor"
+path = "a"
+
+[[startup.layout]]
+kind = "editor"
+path = "b"
+split = "right"
+ratio = 99
+"#,
+        );
+        assert_eq!(cfg.startup_layout.len(), 2);
+        // Out-of-range ratio → None, applier picks layout default (50).
+        assert_eq!(cfg.startup_layout[1].ratio, None);
     }
 }
