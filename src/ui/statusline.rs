@@ -588,12 +588,12 @@ fn render_single_account_chip(
     // percent so the user sees when the window opens back up:
     // "24%⟳3h 62%⟳4d".
     let session_r = if show_reset {
-        format_reset_suffix(u.resets_at, u.percent)
+        format_reset_suffix(u.resets_at)
     } else {
         String::new()
     };
     let weekly_r = if show_reset {
-        format_reset_suffix(u.weekly_resets_at, u.weekly_percent)
+        format_reset_suffix(u.weekly_resets_at)
     } else {
         String::new()
     };
@@ -637,12 +637,21 @@ fn render_single_account_chip(
 
 /// #1012 (2026-08-18) — format the time remaining until `resets_at`
 /// (Unix epoch seconds) as a compact ` <n><unit>` suffix (leading
-/// space acts as the separator). Empty in three cases so the chip
-/// doesn't grow when the countdown adds no info:
+/// space acts as the separator). Empty when there's no useful
+/// countdown to render:
 ///   - `resets_at == 0` — never fetched
 ///   - `remaining == 0` — already past
-///   - `percent == 0`   — user hasn't touched this window; the
-///     countdown to a reset we haven't consumed is noise
+///
+/// #1044 (2026-08-19) — the previous version also suppressed the
+/// countdown at `percent == 0`, reasoning that "the countdown to a
+/// reset we haven't consumed is noise." That was backwards: at 0%
+/// you have the FULL budget available, and knowing when it resets is
+/// critical signal, not noise — sitting on a fresh session until it
+/// rolls over is throwing 100% of your allowance in the bin. Now we
+/// always render the suffix (whenever the window is valid), so the
+/// chip reads `C 0% 5h 64% 3d` and the user can see "go hard for the
+/// next 5 hours before the session flips over." Same rationale drove
+/// the sparkline urgency arrow in #1043.
 ///
 /// Uses the largest unit that fits at 1 digit + a letter (`3h` not
 /// `3h27m`) so the chip stays narrow. Prior versions used a
@@ -654,8 +663,8 @@ fn render_single_account_chip(
 ///   <60m        → ` <n>m`
 ///   <24h        → ` <n>h`
 ///   otherwise   → ` <n>d`
-fn format_reset_suffix(resets_at: u64, percent: u16) -> String {
-    if resets_at == 0 || percent == 0 {
+fn format_reset_suffix(resets_at: u64) -> String {
+    if resets_at == 0 {
         return String::new();
     }
     let now = std::time::SystemTime::now()
