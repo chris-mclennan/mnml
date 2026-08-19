@@ -776,7 +776,19 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Same Ubuntu-CI flake as `purge_integration_glyph_state_drops_svg_and_assignment_entry`:
+        // XDG_CONFIG_HOME (if set on the runner) routes the assignments
+        // file outside the tempdir before HOME even gets a look-in, so
+        // the second `discover` call doesn't see the first call's
+        // persisted state and the "prior assignment persisted"
+        // assertion fires against a fresh allocation. Same guards fix
+        // it: clear XDG + pin MNML_DATA_ROOT explicitly (PORTABLE_CACHE
+        // OnceLock can be poisoned by a prior test in the same binary,
+        // so #1041's MNML_DATA_ROOT is the actual load-bearing pin).
+        // Was CI-red 2026-08-19 run 32267413016.
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
         let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         write_svg(&dir, "one.svg");
