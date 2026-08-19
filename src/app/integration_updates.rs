@@ -79,7 +79,7 @@ pub fn is_update_available(check: &UpdateCheck) -> bool {
 /// exposes the resolution so tests + a future Settings-row lookup
 /// share one code path. Design:
 /// `docs/design/auto-update-integrations.md`.
-// Used only by tests until step 2 wires the sweeper against it —
+// Used only by tests until step 2b wires the sweeper against it —
 // suppress the dead_code lint at the fn level so `-D warnings`
 // stays enabled everywhere else.
 #[allow(dead_code)]
@@ -94,6 +94,111 @@ pub fn effective_auto_update(
     match kind {
         UpdateKind::Cargo => integrations_cfg.auto_update_cargo,
         UpdateKind::CargoGit => integrations_cfg.auto_update_git,
+    }
+}
+
+/// #993 step 2a (2026-08-19). Pure planner: given a set of update
+/// checks + per-integration overrides + global config + a last-
+/// attempted map, return the subset that should auto-update NOW.
+///
+/// The planner is deliberately side-effect-free — it doesn't run
+/// `cargo install`, doesn't touch disk, doesn't fetch anything. Step
+/// 2b's worker calls this then dispatches. Split so the "who is
+/// eligible" logic is testable in isolation from the subprocess
+/// plumbing.
+///
+/// Eligibility rules (all must hold):
+///
+/// - `is_update_available(check)` — non-empty current + latest that
+///   differ. Stale-cache blanks are skipped upstream by the same
+///   guard the chip painter uses.
+/// - `effective_auto_update(override, kind, cfg)` — the resolution
+///   chain from step 1: per-integration override wins bidirectionally,
+///   then global-by-kind, then default OFF.
+/// - Rate cap: `now_secs - last_attempts.get(id).unwrap_or(0) >=
+///   AUTO_UPDATE_RATE_CAP_SECS` (24h). Design doc rationale — one
+///   auto-install per integration per day so a genuinely broken
+///   upstream can't hammer the user's shell all day.
+///
+/// The returned `AutoUpdatePlan`s carry enough info for step 2b to
+/// build the shell command + a status label; the `install_args`
+/// helper on `AutoUpdatePlan` produces the exact argv for Cargo
+/// installs (the CargoGit case defers to the worker's
+/// InstalledEntry lookup since the `--git <repo>` args live there,
+/// not on the UpdateCheck).
+#[allow(dead_code)]
+pub fn plan_auto_updates(
+    checks: &HashMap<String, UpdateCheck>,
+    overrides: &HashMap<String, Option<bool>>,
+    integrations_cfg: &crate::config::IntegrationsConfig,
+    last_attempts: &HashMap<String, u64>,
+    now_secs: u64,
+) -> Vec<AutoUpdatePlan> {
+    let mut out: Vec<AutoUpdatePlan> = Vec::new();
+    for check in checks.values() {
+        if !is_update_available(check) {
+            continue;
+        }
+        let override_flag = overrides.get(&check.id).copied().flatten();
+        if !effective_auto_update(override_flag, check.kind, integrations_cfg) {
+            continue;
+        }
+        let last = last_attempts.get(&check.id).copied().unwrap_or(0);
+        if now_secs.saturating_sub(last) < AUTO_UPDATE_RATE_CAP_SECS {
+            continue;
+        }
+        out.push(AutoUpdatePlan {
+            id: check.id.clone(),
+            kind: check.kind,
+            current: check.current.clone(),
+            latest: check.latest.clone(),
+        });
+    }
+    // Stable order so the sweeper + tests can rely on deterministic
+    // output. Sorted by id — the sweep is per-integration independent
+    // so the order only matters for the sweeper's status logging.
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+/// Minimum seconds between auto-install attempts per integration.
+/// Design doc §Safety guardrails — one auto-install per integration
+/// per 24h; a broken upstream can't hammer the user's shell all day.
+pub const AUTO_UPDATE_RATE_CAP_SECS: u64 = 24 * 60 * 60;
+
+/// One entry in the planner's output — the "we should try to update
+/// this now" verdict. Consumed by the worker in step 2b to build the
+/// actual `cargo install` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct AutoUpdatePlan {
+    pub id: String,
+    pub kind: UpdateKind,
+    pub current: String,
+    pub latest: String,
+}
+
+impl AutoUpdatePlan {
+    /// Argv (excluding the leading `cargo` binary) for the Cargo-kind
+    /// case. `--locked` prevents dependency resolution from drifting
+    /// mid-install; `--force` replaces the currently-installed binary
+    /// (crates.io semver equality is the trigger, so cargo would
+    /// otherwise no-op).
+    ///
+    /// Returns `None` for `CargoGit` — that path needs the `--git
+    /// <repo>` args which live on the worker's `InstalledEntry`, not
+    /// on the plan. Worker wires that in step 2b.
+    #[allow(dead_code)]
+    pub fn cargo_install_args(&self) -> Option<Vec<String>> {
+        match self.kind {
+            UpdateKind::Cargo => Some(vec![
+                "install".into(),
+                "--locked".into(),
+                "--force".into(),
+                self.id.clone(),
+            ]),
+            UpdateKind::CargoGit => None,
+        }
     }
 }
 
@@ -529,6 +634,161 @@ mod tests {
             UpdateKind::CargoGit,
             &cfg
         ));
+    }
+
+    // ── #993 step 2a — plan_auto_updates planner ────────────────
+
+    fn mk_check(id: &str, current: &str, latest: &str, kind: UpdateKind) -> UpdateCheck {
+        UpdateCheck {
+            id: id.into(),
+            current: current.into(),
+            latest: latest.into(),
+            kind,
+            checked_at: 0,
+        }
+    }
+
+    fn checks_map(entries: Vec<UpdateCheck>) -> HashMap<String, UpdateCheck> {
+        entries.into_iter().map(|c| (c.id.clone(), c)).collect()
+    }
+
+    #[test]
+    fn plan_auto_updates_skips_everything_when_defaults_are_off() {
+        let checks = checks_map(vec![
+            mk_check(
+                "mnml-forge-bitbucket",
+                "0.3.15",
+                "0.3.16",
+                UpdateKind::Cargo,
+            ),
+            mk_check("mnml-obs-datadog", "abc123", "def456", UpdateKind::CargoGit),
+        ]);
+        let overrides = HashMap::new();
+        let cfg = crate::config::IntegrationsConfig::default();
+        let attempts = HashMap::new();
+        let plans = plan_auto_updates(&checks, &overrides, &cfg, &attempts, 1_000_000);
+        assert!(plans.is_empty(), "default OFF ⇒ nothing planned");
+    }
+
+    #[test]
+    fn plan_auto_updates_includes_eligible_cargo_but_not_git_when_only_cargo_on() {
+        let checks = checks_map(vec![
+            mk_check(
+                "mnml-forge-bitbucket",
+                "0.3.15",
+                "0.3.16",
+                UpdateKind::Cargo,
+            ),
+            mk_check("mnml-obs-datadog", "abc123", "def456", UpdateKind::CargoGit),
+        ]);
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: false,
+        };
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &HashMap::new(), 1_000_000);
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].id, "mnml-forge-bitbucket");
+        assert_eq!(plans[0].kind, UpdateKind::Cargo);
+    }
+
+    #[test]
+    fn plan_auto_updates_per_integration_override_wins_bidirectionally() {
+        let checks = checks_map(vec![
+            mk_check(
+                "mnml-forge-bitbucket",
+                "0.3.15",
+                "0.3.16",
+                UpdateKind::Cargo,
+            ),
+            mk_check("mnml-tracker-jira", "0.2.7", "0.2.8", UpdateKind::Cargo),
+        ]);
+        // Global cargo=true; per-integration `false` on jira should
+        // hold it back.
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: false,
+        };
+        let mut overrides = HashMap::new();
+        overrides.insert("mnml-tracker-jira".to_string(), Some(false));
+        let plans = plan_auto_updates(&checks, &overrides, &cfg, &HashMap::new(), 1_000_000);
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].id, "mnml-forge-bitbucket");
+
+        // Flip: global OFF; per-integration `true` on jira should
+        // include just jira.
+        let cfg = crate::config::IntegrationsConfig::default();
+        let mut overrides = HashMap::new();
+        overrides.insert("mnml-tracker-jira".to_string(), Some(true));
+        let plans = plan_auto_updates(&checks, &overrides, &cfg, &HashMap::new(), 1_000_000);
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].id, "mnml-tracker-jira");
+    }
+
+    #[test]
+    fn plan_auto_updates_rate_cap_skips_recent_attempts() {
+        let checks = checks_map(vec![mk_check(
+            "mnml-forge-bitbucket",
+            "0.3.15",
+            "0.3.16",
+            UpdateKind::Cargo,
+        )]);
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: false,
+        };
+        let now = 1_000_000u64;
+        // Attempted 12h ago → still within the 24h cap → skip.
+        let mut attempts = HashMap::new();
+        attempts.insert("mnml-forge-bitbucket".to_string(), now - 12 * 60 * 60);
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &attempts, now);
+        assert!(plans.is_empty(), "12h ago ⇒ inside 24h cap ⇒ skip");
+
+        // Attempted 25h ago → outside the cap → include.
+        attempts.insert("mnml-forge-bitbucket".to_string(), now - 25 * 60 * 60);
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &attempts, now);
+        assert_eq!(plans.len(), 1, "25h ago ⇒ outside cap ⇒ include");
+    }
+
+    #[test]
+    fn plan_auto_updates_skips_when_current_equals_latest() {
+        // Not really an "update available" but let's confirm the
+        // planner's guard against noise.
+        let checks = checks_map(vec![mk_check(
+            "mnml-forge-bitbucket",
+            "0.3.16",
+            "0.3.16",
+            UpdateKind::Cargo,
+        )]);
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: false,
+        };
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &HashMap::new(), 1_000_000);
+        assert!(plans.is_empty(), "no version drift ⇒ nothing to plan");
+    }
+
+    #[test]
+    fn cargo_install_args_shape() {
+        let plan = AutoUpdatePlan {
+            id: "mnml-forge-bitbucket".into(),
+            kind: UpdateKind::Cargo,
+            current: "0.3.15".into(),
+            latest: "0.3.16".into(),
+        };
+        assert_eq!(
+            plan.cargo_install_args().unwrap(),
+            vec!["install", "--locked", "--force", "mnml-forge-bitbucket"]
+        );
+
+        let git_plan = AutoUpdatePlan {
+            id: "mnml-obs-datadog".into(),
+            kind: UpdateKind::CargoGit,
+            current: "abc".into(),
+            latest: "def".into(),
+        };
+        // CargoGit deferred to step 2b — planner returns None so the
+        // worker knows to look up InstalledEntry for --git args.
+        assert!(git_plan.cargo_install_args().is_none());
     }
 
     #[test]

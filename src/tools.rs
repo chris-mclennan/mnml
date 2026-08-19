@@ -439,20 +439,28 @@ mod tests {
     /// candidate below).
     #[test]
     fn is_on_path_finds_binary_in_synthetic_path() {
+        // #993 step 2a follow-up (2026-08-19): grab the shared
+        // test_env_lock so this test doesn't race
+        // `integration_detect::tests::find_shadowed_binaries_*`,
+        // which also mutates PATH without their own guard chain.
+        // Without the lock cargo test's parallel scheduler clobbers
+        // one's PATH mid-run and both fail. Was CI-red at 32267413016
+        // on the first run of the tools test alone (a different
+        // failure mode); this guards against re-introduction from
+        // parallel test collisions on repeat runs.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_name = "mnml_test_binary";
         let bin_path = dir.path().join(bin_name);
         std::fs::write(&bin_path, b"").expect("write fake bin");
         // Existence — not executability — is what `is_on_path`
         // checks (matches how `which(1)` on Linux behaves for
-        // scripts). Windows also gets tested against the
-        // extensionless form here; the PATHEXT branch is exercised
-        // separately in `finds_binary_via_pathext` below.
+        // scripts).
         let prev = std::env::var_os("PATH");
-        // SAFETY: single-threaded test env; we restore below.
-        // Tests don't run truly-parallel in unsafe env access on
-        // stable, but Rust's set_var is unsafe from 1.79+. Wrap in
-        // unsafe blocks accordingly.
+        // SAFETY: guarded by test_env_lock above; PATH is restored
+        // in the same critical section.
         unsafe {
             std::env::set_var("PATH", dir.path());
         }

@@ -319,17 +319,33 @@ mod tests {
     /// Scope $HOME + $PATH to a temp world so the shadow-finder walks
     /// only what the test authored. Reset on drop so peer tests aren't
     /// affected.
+    ///
+    /// #993 step 2a follow-up (2026-08-19): grabs `test_env_lock`
+    /// alongside the env vars so `find_shadowed_binaries_*` tests
+    /// serialise against every other env-mutating test in the crate
+    /// (integration_glyphs, tools::is_on_path_finds_binary_in_synthetic_path,
+    /// etc). Was racing on the second cargo-test invocation after the
+    /// tools fix landed — cargo runs tests in parallel by default,
+    /// two PATH-mutators clobbering each other = false-negative
+    /// assertion. The guard drops in `impl Drop` order (guard first,
+    /// then env vars restore) so the lock stays held across the
+    /// restore side-effects too.
     #[cfg(unix)]
     struct EnvScope {
         home: Option<std::ffi::OsString>,
         path: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
     #[cfg(unix)]
     impl EnvScope {
         fn install(home: &std::path::Path, path: &str) -> Self {
+            let lock = crate::test_env_lock()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let saved = EnvScope {
                 home: std::env::var_os("HOME"),
                 path: std::env::var_os("PATH"),
+                _lock: lock,
             };
             unsafe {
                 std::env::set_var("HOME", home);
