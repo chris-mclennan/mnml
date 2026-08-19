@@ -227,6 +227,94 @@ fn cache_path() -> Option<PathBuf> {
     )
 }
 
+/// #993 step 2b (2026-08-19). Path for the per-integration
+/// last-attempted-at map that backs the 24h rate cap in
+/// `plan_auto_updates`. Sibling of `cache_path()` — same portable /
+/// $HOME/.cache split, different filename so the two persist
+/// independently (rate-cap state survives a cache wipe, and vice
+/// versa).
+fn attempts_path() -> Option<PathBuf> {
+    if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+        return Some(
+            crate::data_root::data_root()
+                .join("cache")
+                .join("integration-update-attempts.json"),
+        );
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    Some(
+        home.join(".cache")
+            .join("mnml")
+            .join("integration-update-attempts.json"),
+    )
+}
+
+/// Persist shape for the per-integration last-attempted-at map.
+/// Wrapper struct rather than a raw HashMap so future fields (per-
+/// attempt outcome, error tail, etc.) fit without a migration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AttemptsFile {
+    /// `id -> unix-seconds-of-last-cargo-install-attempt`. Recorded
+    /// at fire time (not completion) so a hung install still counts
+    /// toward the 24h cap — a genuinely broken upstream can't
+    /// hammer the shell.
+    #[serde(default)]
+    attempts: HashMap<String, u64>,
+}
+
+/// #993 step 2b. Best-effort load of the rate-cap state. Silent
+/// no-op on any error (missing file / malformed JSON / no HOME) —
+/// treats "no data" as "no attempts recorded", which means the next
+/// sweep will fire eagerly. That matches the shipped-default posture:
+/// auto-update stays off unless the user opts in AND the ledger has
+/// no recent attempt.
+#[allow(dead_code)]
+pub fn load_last_attempts() -> HashMap<String, u64> {
+    let Some(path) = attempts_path() else {
+        return HashMap::new();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    let file: AttemptsFile = serde_json::from_str(&text).unwrap_or_default();
+    file.attempts
+}
+
+/// #993 step 2b. Persist the last-attempts map atomically-ish (write
+/// + rename via `std::fs::write` — same best-effort pattern
+/// `save_update_cache` uses; the file is decorative so a torn write
+/// on a crash just means the next sweep re-fires, which is safe under
+/// cargo's `--locked --force`). Silent on any error.
+#[allow(dead_code)]
+pub fn save_last_attempts(attempts: &HashMap<String, u64>) {
+    let Some(path) = attempts_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = AttemptsFile {
+        attempts: attempts.clone(),
+    };
+    let Ok(text) = serde_json::to_string_pretty(&file) else {
+        return;
+    };
+    let _ = std::fs::write(&path, text);
+}
+
+/// #993 step 2b. Record a fresh attempt against `id` at `now_secs`
+/// in-place. Cheap wrapper the future worker (step 2c) can call
+/// immediately after firing `cargo install` so the rate cap holds
+/// regardless of how long the install takes / whether it succeeds.
+///
+/// The caller decides when to persist — batching the writes across a
+/// whole sweep is fine (single file rewrite vs. one per plan) since
+/// nothing depends on the on-disk state within a single sweep pass.
+#[allow(dead_code)]
+pub fn record_attempt(attempts: &mut HashMap<String, u64>, id: &str, now_secs: u64) {
+    attempts.insert(id.to_string(), now_secs);
+}
+
 /// Load the persisted cache into the shared map so the UI has data
 /// instantly on startup — no waiting for the first network fetch.
 /// Silent no-op on any error (missing file, malformed JSON, etc);
@@ -789,6 +877,106 @@ mod tests {
         // CargoGit deferred to step 2b — planner returns None so the
         // worker knows to look up InstalledEntry for --git args.
         assert!(git_plan.cargo_install_args().is_none());
+    }
+
+    // ── #993 step 2b — LastAttempts persistence ─────────────────
+
+    #[test]
+    fn record_attempt_writes_now_secs() {
+        let mut m = HashMap::new();
+        record_attempt(&mut m, "mnml-forge-bitbucket", 1_000_000);
+        assert_eq!(m.get("mnml-forge-bitbucket").copied(), Some(1_000_000));
+        // Second attempt overwrites (fresh timestamp wins).
+        record_attempt(&mut m, "mnml-forge-bitbucket", 2_000_000);
+        assert_eq!(m.get("mnml-forge-bitbucket").copied(), Some(2_000_000));
+    }
+
+    #[test]
+    fn save_then_load_last_attempts_round_trips() {
+        // Sandbox HOME so save/load target the tempdir, not the
+        // dev machine's real ~/.cache/mnml. XDG guards + test_env_lock
+        // match the pattern from integration_glyphs's persistence
+        // tests (which also target data_root() paths).
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let _xdg = crate::EnvGuard::remove("XDG_CACHE_HOME");
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
+
+        let mut input = HashMap::new();
+        input.insert("mnml-forge-bitbucket".to_string(), 1_700_000_000);
+        input.insert("mnml-tracker-jira".to_string(), 1_700_050_000);
+        save_last_attempts(&input);
+
+        let loaded = load_last_attempts();
+        assert_eq!(loaded, input);
+    }
+
+    #[test]
+    fn load_last_attempts_missing_file_returns_empty() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let _xdg = crate::EnvGuard::remove("XDG_CACHE_HOME");
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
+
+        // No file written — load returns empty rather than erroring
+        // or panicking. Matches the shipped default: no attempts on
+        // disk = fire eagerly next sweep.
+        let loaded = load_last_attempts();
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn planner_end_to_end_with_persisted_attempts() {
+        // Compose the whole path: attempts are recorded + persisted,
+        // the planner reads them + honors the rate cap. This is the
+        // wiring shape the step-2c worker will use.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let _xdg = crate::EnvGuard::remove("XDG_CACHE_HOME");
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
+
+        let cfg = crate::config::IntegrationsConfig {
+            auto_update_cargo: true,
+            auto_update_git: false,
+        };
+        let checks = checks_map(vec![mk_check(
+            "mnml-forge-bitbucket",
+            "0.3.15",
+            "0.3.16",
+            UpdateKind::Cargo,
+        )]);
+        let now = 2_000_000u64;
+
+        // First pass: no attempts persisted → plan fires.
+        let attempts = load_last_attempts();
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &attempts, now);
+        assert_eq!(plans.len(), 1, "first sweep with no history should include");
+
+        // Simulate the worker: record + persist attempts for the
+        // planned integration.
+        let mut attempts = attempts;
+        for plan in &plans {
+            record_attempt(&mut attempts, &plan.id, now);
+        }
+        save_last_attempts(&attempts);
+
+        // Second pass 12h later: rate cap still active → skip.
+        let attempts = load_last_attempts();
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &attempts, now + 12 * 3600);
+        assert!(plans.is_empty(), "12h later ⇒ inside 24h cap ⇒ skip");
+
+        // Third pass 25h later: cap expired → fires again.
+        let plans = plan_auto_updates(&checks, &HashMap::new(), &cfg, &attempts, now + 25 * 3600);
+        assert_eq!(plans.len(), 1, "25h later ⇒ outside cap ⇒ include");
     }
 
     #[test]
