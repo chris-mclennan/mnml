@@ -1060,6 +1060,57 @@ pub fn persist_marketplace_bool(
     persist_config_scalar("marketplace", key, value.to_string())
 }
 
+/// #1088 (2026-08-19) — write the per-integration auto-update
+/// override to `~/.config/mnml/integrations/<id>.override.toml`.
+/// Creates or updates the file with the two required fields
+/// (`id = "<id>"` + `auto_update = <bool>`); other override
+/// fields the user set (e.g. `[env]`, `[auth_values]`) are
+/// preserved by an in-place merge — we parse the existing file,
+/// mutate just `auto_update`, and rewrite. Missing file OR
+/// unparseable file gets a fresh minimal write.
+pub fn persist_integration_auto_update(
+    id: &str,
+    value: bool,
+) -> Result<std::path::PathBuf, String> {
+    let dir = crate::data_root::data_root().join("integrations");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir integrations: {e}"))?;
+    }
+    let path = dir.join(format!("{id}.override.toml"));
+    let existing = std::fs::read_to_string(&path).ok();
+    // Simple line-based replace of `auto_update = <bool>` when the
+    // file exists AND has a top-level auto_update key. Falls back
+    // to a fresh minimal write otherwise. This keeps `[env]` /
+    // `[auth_values]` tables + comments untouched without needing
+    // a full serde round-trip (mnml-bridge doesn't yet serialize
+    // the override struct).
+    let mut wrote = false;
+    let new_body = if let Some(body) = existing {
+        let mut out = String::with_capacity(body.len() + 32);
+        for line in body.split_inclusive('\n') {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("auto_update") && line.contains('=') && !wrote {
+                out.push_str(&format!("auto_update = {value}\n"));
+                wrote = true;
+            } else {
+                out.push_str(line);
+            }
+        }
+        if !wrote {
+            // Ensure trailing newline before appending.
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&format!("auto_update = {value}\n"));
+        }
+        out
+    } else {
+        format!("id = \"{id}\"\nauto_update = {value}\n")
+    };
+    std::fs::write(&path, new_body).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// `[editor] KEY = <value>` (bool). Same in-place replace / append
 /// semantics as the `[ui]` helpers, targeting the `[editor]`
 /// section instead. Used by runtime editor toggles (auto-pair,

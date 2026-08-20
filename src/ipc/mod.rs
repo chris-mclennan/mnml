@@ -2246,6 +2246,7 @@ mod tests {
             author: None,
             override_env: std::collections::HashMap::new(),
             override_auth_values: std::collections::HashMap::new(),
+            auto_update_override: None,
         });
         apply(
             &mut app,

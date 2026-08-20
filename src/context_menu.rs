@@ -56,6 +56,13 @@ pub enum MenuAction {
     /// Surfaced by the integration-chip right-click menu so users
     /// can tweak a chip without going through the discovery overlay.
     EditIntegration(String),
+    /// #1088 (2026-08-19) — per-integration auto-update opt-in.
+    /// Writes/rewrites `~/.config/mnml/integrations/<id>.override.toml`
+    /// with `auto_update = <bool>`. Wins over the global
+    /// `[integrations] auto_update_cargo/git` toggles (see
+    /// `integration_updates::effective_auto_update`).
+    /// Payload: (id, next-value).
+    SetIntegrationAutoUpdate(String, bool),
     /// 2026-07-31 — Open the read-only `Pane::IntegrationDetail`
     /// pane in the right side panel for a specific integration id.
     /// Surfaced on the integration-chip right-click menu ("View

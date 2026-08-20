@@ -211,6 +211,14 @@ pub struct IntegrationManifest {
     /// Consumed by `App::integration_auth_env`.
     #[serde(skip)]
     pub override_auth_values: std::collections::HashMap<String, String>,
+
+    /// #1088 (2026-08-19) — merged from `.override.toml`'s
+    /// `auto_update = <bool>` field so the right-click menu can
+    /// reflect the current effective state without re-reading the
+    /// TOML each frame. `None` = user hasn't set it (falls through
+    /// to the global `[integrations] auto_update_{cargo,git}`).
+    #[serde(skip)]
+    pub auto_update_override: Option<bool>,
 }
 
 /// One field the user needs to configure before the integration
@@ -648,6 +656,9 @@ impl IntegrationManifestOverride {
         if let Some(av) = self.auth_values {
             base.override_auth_values.extend(av);
         }
+        if let Some(au) = self.auto_update {
+            base.auto_update_override = Some(au);
+        }
     }
 }
 
@@ -936,6 +947,7 @@ color = "nonsense-neon"
             author: None,
             override_env: std::collections::HashMap::new(),
             override_auth_values: std::collections::HashMap::new(),
+            auto_update_override: None,
         };
         assert!(m.is_ready());
 

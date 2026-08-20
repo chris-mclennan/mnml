@@ -551,6 +551,25 @@ impl App {
             "Show in marketplace",
             MenuAction::ShowIntegrationInMarketplace(crate_id.clone()),
         ));
+        // #1088 (2026-08-19) — per-integration auto-update opt-in.
+        // Resolve the current effective flag from any existing
+        // override file so the label reflects the actual state.
+        // Toggle writes to `<id>.override.toml`.
+        let auto_update_on = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == id)
+            .and_then(|m| m.auto_update_override)
+            .unwrap_or(false);
+        let auto_update_label = if auto_update_on {
+            "Auto-update: \u{25CF} on"
+        } else {
+            "Auto-update: \u{25CB} off"
+        };
+        items.push(MenuItem::new(
+            auto_update_label,
+            MenuAction::SetIntegrationAutoUpdate(crate_id.clone(), !auto_update_on),
+        ));
         if !is_first {
             items.push(MenuItem::new(
                 "Move to top",
@@ -1925,6 +1944,24 @@ impl App {
             }
             UpdateIntegration(id) => {
                 self.apply_integration_update(&id);
+            }
+            SetIntegrationAutoUpdate(id, on) => {
+                match crate::app::discovery::persist_integration_auto_update(&id, on) {
+                    Ok(path) => {
+                        // Refresh manifests so the in-memory
+                        // `auto_update_override` reflects the new
+                        // value (the menu builder reads it next
+                        // right-click).
+                        self.refresh_integration_manifests();
+                        self.toast(format!(
+                            "auto-update: {} \u{2192} {}",
+                            id,
+                            if on { "on" } else { "off" }
+                        ));
+                        let _ = path;
+                    }
+                    Err(e) => self.toast(format!("auto-update: {id}: {e}")),
+                }
             }
             SetIntegrationLauncher(id) => {
                 self.open_integration_launcher_prompt(id);

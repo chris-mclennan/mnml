@@ -715,6 +715,7 @@ mod tests {
             source_path: PathBuf::new(),
             override_env: HashMap::new(),
             override_auth_values: HashMap::new(),
+            auto_update_override: None,
         };
         let seg = StatuslineSegment {
             id: "prs".into(),
