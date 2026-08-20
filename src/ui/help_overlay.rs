@@ -223,13 +223,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let max_scroll = lines.len().saturating_sub(body_h);
     let scroll = scroll.min(max_scroll);
     let window: Vec<Line<'static>> = lines.iter().skip(scroll).take(body_h).cloned().collect();
+    // #1098 (2026-08-20) — reserve rightmost cell for a scrollbar
+    // when content overflows, so users can see there's more without
+    // scrolling to hit the end. Body width shrinks by 1 in that case.
+    let needs_scrollbar = lines.len() > body_h;
+    let body_width = if needs_scrollbar {
+        inner.width.saturating_sub(1)
+    } else {
+        inner.width
+    };
     let body_rect = Rect {
         x: inner.x,
         y: inner.y + 1,
-        width: inner.width,
+        width: body_width,
         height: body_h as u16,
     };
     frame.render_widget(Paragraph::new(window), body_rect);
+    if needs_scrollbar {
+        let sb_area = Rect {
+            x: inner.x + inner.width.saturating_sub(1),
+            y: inner.y + 1,
+            width: 1,
+            height: body_h as u16,
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            sb_area,
+            &t,
+            lines.len(),
+            body_h,
+            scroll,
+        );
+    }
 
     // Register click rects for visible section headers.
     for (visible_idx, header_name) in header_names.iter().skip(scroll).take(body_h).enumerate() {
