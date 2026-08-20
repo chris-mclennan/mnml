@@ -1994,17 +1994,30 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // all of it, `Ctrl+Right` accepts the next word, `Ctrl+Down` the
     // next line (both leave the remainder as a ghost); any other key
     // dismisses it (and then does its normal thing).
+    //
+    // 2026-08-19 (#1070) — accepting a ghost also dismisses any open
+    // LSP completion popup. The two UIs commonly overlap: the user
+    // types "reset(" which auto-triggers `textDocument/completion`
+    // AND fires the ghost debounce; the ghost lands first, but the
+    // completion popup stays visible underneath. Bare Tab hits this
+    // early-return before the popup's own Tab-accept branch below
+    // (line ~2335), so without this the popup lingers indefinitely.
+    // Confirmed via hero-tape review: the popup stuck around for
+    // ~15s across the hover-help + settings beats.
     if app.has_ghost_suggestion() {
         if key.code == KeyCode::Tab && key.modifiers.is_empty() {
             app.accept_ghost_suggestion();
+            app.completion = None;
             return;
         }
         if key.code == KeyCode::Right && key.modifiers == KeyModifiers::CONTROL {
             app.accept_ghost_word();
+            app.completion = None;
             return;
         }
         if key.code == KeyCode::Down && key.modifiers == KeyModifiers::CONTROL {
             app.accept_ghost_line();
+            app.completion = None;
             return;
         }
         app.clear_ghost_suggestion();
@@ -2866,6 +2879,31 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // pushed nav_back, so within-file jumps like `G`/`gg`/`{N}G`/
     // `/pattern` never made Ctrl+O go anywhere.
     let before = app.current_nav_point();
+    // #1076 (2026-08-19) — global Ctrl+W (buffer.close) intercept for
+    // Standard mode. Prior #1037 fix routed Ctrl+W through
+    // `handle_pane_key`'s view-only branch, but many pane-openers
+    // (`open_claude_usage_pane`, `open_codex_usage_pane`,
+    // `open_spend_report_pane`, `open_integration_detail_pane`, …)
+    // call `reveal_pane` without also shifting focus to
+    // `Focus::Pane`. If the user opens Claude Usage from the palette
+    // while focused on the tree, Ctrl+W goes to `handle_tree_key`
+    // which has no close branch → key gets eaten silently.
+    //
+    // In standard/VS Code mode Ctrl+W is unambiguously "close the
+    // active pane" no matter where focus is (the palette + menu-bar
+    // both bind it to `buffer.close`). Route it directly here so it
+    // stops depending on where the user happened to click last.
+    //
+    // Vim mode preserved: Ctrl+W in vim is the window-navigation
+    // prefix, handled downstream — leave it to the pane router.
+    if key.code == KeyCode::Char('w')
+        && key.modifiers == KeyModifiers::CONTROL
+        && !app.ctrl_w_is_window_nav()
+        && app.active.is_some()
+    {
+        app.close_active_pane();
+        return;
+    }
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),

@@ -188,7 +188,10 @@ pub fn ready_ids() -> &'static [&'static str] {
         "mnml-aws-codebuild",
         "mnml-db",
         "mnml-forge-github",
-        "mnml-msg-slack",
+        // 2026-08-19 (#1062) — `mnml-msg-slack` removed from the
+        // ready set: still WIP (threads unfinished, canvases tab
+        // was mislabeled "Slack Boards" until 0.1.4). Reinstate
+        // when the sibling ships end-to-end + user confirms.
     ]
 }
 

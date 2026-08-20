@@ -483,17 +483,30 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
         }
     }
 
-    // Suffix: relief timer if all near-empty; otherwise arrow to
-    // highest-urgency account when there's a clear winner (>1.5×
-    // the runner-up so we don't nag when accounts are close).
-    let suffix: String = if all_near_empty && any_fetched_gt_zero {
+    // Suffix strategy (2026-08-19, #1077):
+    //   1. Always try to show the reset countdown (⟳Xh) when at
+    //      least one account has been fetched. User wants to pace
+    //      consumption toward the reset even at 0% ("get to 99% by
+    //      reset time"), so the reset time is useful information at
+    //      every usage level, not just the near-empty relief moment.
+    //   2. If a clear-winner urgency arrow (→X) applies AND the
+    //      chip has room, prefer that — it tells the user which
+    //      account to use next, which is more actionable when
+    //      several accounts are configured. Fall back to the ⟳ when
+    //      no clear winner emerges.
+    let reset_suffix = |now: u64| -> String {
         match hours_until_first_reset(&app.ai_usage_claude_accounts, now) {
             Some(0) => " ⟳<1h".to_string(),
             Some(h) if h < 100 => format!(" ⟳{h}h"),
             Some(_) => " ⟳soon".to_string(),
             None => String::new(),
         }
-    } else if any_fetched_gt_zero {
+    };
+    let suffix: String = if !any_fetched_gt_zero {
+        String::new()
+    } else if all_near_empty {
+        reset_suffix(now)
+    } else {
         let mut urgencies: Vec<(f32, char)> = app
             .ai_usage_claude_accounts
             .iter()
@@ -512,10 +525,12 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
             [(top, letter), rest @ ..] if rest.is_empty() || rest[0].0 * 1.5 < *top => {
                 format!(" →{letter}")
             }
-            _ => String::new(),
+            // No clear winner (accounts too close or all at 0%) —
+            // still show the reset countdown so the user has SOMETHING
+            // actionable to plan against. This is the 0%-visibility
+            // fix from #1077.
+            _ => reset_suffix(now),
         }
-    } else {
-        String::new()
     };
 
     let color = if any_error && worst == 0 {

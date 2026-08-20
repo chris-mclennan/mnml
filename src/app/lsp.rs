@@ -1221,6 +1221,16 @@ impl App {
                 if items.is_empty() {
                     return;
                 }
+                // 2026-08-19 (#1070) — if an AI ghost suggestion is currently
+                // showing, drop the completion reply on the floor instead of
+                // opening a competing popup on top of it. The user's next
+                // keystroke will accept the ghost (dismissing this popup at
+                // the input layer) or reject it; either way, a stacked LSP
+                // popup underneath the ghost was distracting and the popup
+                // could linger past the ghost's lifetime.
+                if self.has_ghost_suggestion() {
+                    return;
+                }
                 // Build from the *current* cursor — the request may have been
                 // fired a few keystrokes ago; we filter against the live prefix.
                 let Some(prefix) = self.cursor_id_prefix() else {
