@@ -1298,7 +1298,13 @@ impl Default for Config {
                 scrollbar: true,
                 highlight_trailing_ws: false,
                 clock: true,
-                stress_meter: true,
+                // #1081 (2026-08-19) — flipped default to OFF. Users
+                // repeatedly reported the flickering four-block chip
+                // being distracting during real work, and the earlier
+                // hide command didn't persist so it kept coming back
+                // on restart. Perf-curious users can flip it back on
+                // via `:perf.toggle_stress` or Settings › UI.
+                stress_meter: false,
                 activity_bar_pinned_integrations: Vec::new(),
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,

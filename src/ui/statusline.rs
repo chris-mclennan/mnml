@@ -1258,26 +1258,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let t = theme::cur();
         // Same "arrow + magnitude" format as feature's delta suffix
         // for consistency (was arrow-only prior to 2026-08-16 fix).
-        let (delta, fg) = match code_prev {
+        // #1080 (2026-08-19) — `is_zero_delta` gates whether we
+        // override the delta color. When delta is essentially zero,
+        // the prior code forced `t.comment` (dim grey) which is
+        // unreadable on the teal chip background. Now: return
+        // `None` for `fg` in the zero case so the delta stays in
+        // the chip's own dark-on-teal fg — legible + implies "no
+        // change" through the `±` glyph alone.
+        let (delta, fg): (String, Option<Color>) = match code_prev {
             Some(p) => {
                 let d = c_now - p;
-                let arrow = if d.abs() < 0.05 {
+                let is_zero_delta = d.abs() < 0.05;
+                let arrow = if is_zero_delta {
                     "±"
                 } else if d > 0.0 {
                     "▲"
                 } else {
                     "▼"
                 };
-                let color = if d.abs() < 0.05 {
-                    t.comment
+                let color = if is_zero_delta {
+                    None
                 } else if d > 0.0 {
-                    t.green
+                    Some(t.green)
                 } else {
-                    t.red
+                    Some(t.red)
                 };
                 (format!(" {arrow}{:.1}", d.abs()), color)
             }
-            None => (String::new(), t.comment),
+            None => (String::new(), None),
         };
         let text = format!(" {} C {:.0}%{} ", coverage_glyph(app), c_now, delta);
         coverage_seg_idx = Some(right.len());
@@ -1287,7 +1295,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let delta_cols = delta.chars().count();
         let cols = text.chars().count();
         let mut seg = Seg::new(text, t.bg_darker, t.teal);
-        if delta_cols > 0 {
+        if delta_cols > 0
+            && let Some(fg) = fg
+        {
             let start = cols - 1 - delta_cols; // strip trailing space + delta width
             let end = cols - 1;
             seg = seg.fg_range(start, end, fg);
@@ -1295,26 +1305,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         right.push(seg);
     } else if let Some(f_now) = feature_now {
         let t = theme::cur();
-        let (f_delta, fg) = match feature_prev {
+        // #1080 (2026-08-19) — same zero-delta legibility fix as
+        // the code-only branch above. See its comment for rationale.
+        let (f_delta, fg): (String, Option<Color>) = match feature_prev {
             Some(p) => {
                 let d = f_now - p;
-                let arrow = if d.abs() < 0.05 {
+                let is_zero_delta = d.abs() < 0.05;
+                let arrow = if is_zero_delta {
                     "±"
                 } else if d > 0.0 {
                     "▲"
                 } else {
                     "▼"
                 };
-                let color = if d.abs() < 0.05 {
-                    t.comment
+                let color = if is_zero_delta {
+                    None
                 } else if d > 0.0 {
-                    t.green
+                    Some(t.green)
                 } else {
-                    t.red
+                    Some(t.red)
                 };
                 (format!(" {arrow}{:.1}", d.abs()), color)
             }
-            None => (String::new(), t.comment),
+            None => (String::new(), None),
         };
         let code_str = code_now
             .map(|c_now| {
@@ -1358,7 +1371,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let f_delta_cols = f_delta.chars().count();
         let cols = text.chars().count();
         let mut seg = Seg::new(text, t.bg_darker, t.teal);
-        if f_delta_cols > 0 {
+        if f_delta_cols > 0
+            && let Some(fg) = fg
+        {
             // Locate f_delta at "` F {:.0}%<f_delta>...`".
             // Compute start by summing widths of everything before it.
             let head_cols = format!(" {} F {:.0}%", coverage_glyph(app), f_now)

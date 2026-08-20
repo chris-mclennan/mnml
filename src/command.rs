@@ -2727,7 +2727,15 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 app.config.ui.stress_meter = false;
-                app.toast("stress meter hidden — Settings › UI › stress_meter to re-enable");
+                // #1081 (2026-08-19) — persist so the choice survives
+                // restart. Prior code only mutated in-memory config
+                // and the meter came back on next launch. Same class
+                // of bug as the persist sweep (0f47e49a) missed.
+                if let Err(e) = crate::app::discovery::persist_ui_bool("stress_meter", false) {
+                    app.toast(format!("saved in memory only: {e}"));
+                } else {
+                    app.toast("stress meter hidden — Settings › UI › stress_meter to re-enable");
+                }
             },
         },
         Command {
@@ -2738,11 +2746,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| {
                 app.config.ui.stress_meter = !app.config.ui.stress_meter;
                 let on = app.config.ui.stress_meter;
-                app.toast(if on {
-                    "stress meter: shown"
+                // #1081 (2026-08-19) — persist so the choice survives
+                // restart. See `perf.hide_stress` above for context.
+                if let Err(e) = crate::app::discovery::persist_ui_bool("stress_meter", on) {
+                    app.toast(format!("saved in memory only: {e}"));
                 } else {
-                    "stress meter: hidden"
-                });
+                    app.toast(if on {
+                        "stress meter: shown"
+                    } else {
+                        "stress meter: hidden"
+                    });
+                }
             },
         },
         Command {
