@@ -2675,10 +2675,10 @@ pub struct PaneRects {
     /// split-strip cluster (rightmost — after the H/V buttons). Click →
     /// `App::toggle_zoom_active_leaf()`, which paints ONLY this leaf
     /// full-frame until clicked again. Glyph flips between expand
-    /// (`nf-md-fullscreen` U+F0293) and restore
-    /// (`nf-md-fullscreen_exit` U+F0294 — Material Design maximize/
-    /// restore, verified to resolve correctly in shipping Nerd Font
-    /// distributions) so
+    /// (`nf-fa-expand` U+F065 — square + 4 outward diagonal arrows)
+    /// and restore (`nf-fa-compress` U+F066 — square + 4 inward
+    /// diagonal arrows). FontAwesome pair verified to resolve
+    /// correctly in shipping Nerd Font distributions, so
     /// the button self-documents state.
     pub split_strip_maximize_buttons: Vec<(Rect, Option<PaneId>)>,
     /// The whole central split-tree area.
