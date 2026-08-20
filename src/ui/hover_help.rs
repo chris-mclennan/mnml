@@ -54,11 +54,15 @@ pub const DEFAULT_INFO_BOX_HEIGHT: u16 = 8;
 /// ```
 /// Delay between the mouse settling on a new hover target and the
 /// info-box swapping to its copy. Suppresses rapid text flashes when
-/// the user drags across tree rows or chips (2026-08-12 report). Set
-/// low enough that a purposeful hover feels instant — 120ms is right
-/// at the edge of "immediate" perception. First swap ever renders
-/// with no delay so opening the panel isn't laggy.
-const HOVER_HELP_DEBOUNCE_MS: u128 = 120;
+/// the user drags across tree rows or chips (2026-08-12 report).
+/// Bumped from 120 → 350 (#1093, 2026-08-20) so the panel doesn't
+/// evaporate while the user drags the mouse from the trigger toward
+/// the panel to click a button inside it. 350ms is long enough to
+/// cross the corridor between a statusline chip and the panel; still
+/// short enough that a resolved fresh target commits fast when the
+/// mouse actually settles. First swap ever renders with no delay so
+/// opening the panel isn't laggy.
+const HOVER_HELP_DEBOUNCE_MS: u128 = 350;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 0 || area.width == 0 {
@@ -480,6 +484,21 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
 /// or deriving PartialEq on the whole struct.
 fn debounced_help_copy(app: &mut App) -> crate::ui::info_view::InfoViewCopy {
     let fresh = pick_help_copy(app);
+    // #1093 (2026-08-20) — hard freeze while the cursor is over the
+    // panel itself. #947 already prevents `hover_chip` from mutating
+    // in this state, but a pending commit that started BEFORE the
+    // cursor entered would still fire and blank the copy. Bail early:
+    // keep whatever's committed, drop any in-flight pending. This is
+    // what lets a mouse user reach the panel's `[Try it]` / docs
+    // rects without them evaporating.
+    if let Some(panel) = app.rects.hover_help_strip
+        && let Some((mx, my)) = app.mouse_pos
+        && crate::app::dispatch::contains(panel, mx, my)
+        && let Some(committed) = app.hover_help_committed.clone()
+    {
+        app.hover_help_pending = None;
+        return committed;
+    }
     // Never any committed → first paint, render immediately.
     let Some(committed) = app.hover_help_committed.clone() else {
         app.hover_help_committed = Some(fresh.clone());
