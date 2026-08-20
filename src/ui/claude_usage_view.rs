@@ -75,6 +75,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
     // for that account, identical to the pre-multi-account render
     // (which was implicitly a single-account view).
     let accounts = app.ai_usage_claude_accounts.clone();
+    // #1049 (2026-08-20) — resolve active-account name fresh from
+    // config every render. Each `ClaudeAccountUsage.is_active` was
+    // stamped when its last fetch drained; a mid-session switch
+    // (config edit or `:ai.set_active_claude_account`) leaves those
+    // flags stale for up to the poll interval (~5 min). Reading
+    // config here means the `(active)` tail label always tracks the
+    // *current* selection.
+    let active_name_now: Option<String> = app
+        .config
+        .claude_accounts()
+        .into_iter()
+        .find(|a| a.active)
+        .map(|a| a.name);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -114,7 +127,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                 identity.push_str(" · ");
                 identity.push_str(org);
             }
-            let tail = if account.is_active {
+            let tail = if active_name_now.as_deref() == Some(account.name.as_str()) {
                 " · (active) ──".to_string()
             } else {
                 " ──".to_string()

@@ -1094,9 +1094,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let acc = &app.ai_usage_claude_accounts[idx];
                 let letter = account_abbrev(&acc.name);
                 let res = render_single_account_chip(&acc.usage, mode, &letter, show_reset, &t);
+                // #1049 (2026-08-20) — derive `is_active` fresh from
+                // config every render, not from `acc.is_active`. The
+                // snapshot's flag is only re-stamped when a fetch
+                // drains, so a mid-session account switch (config
+                // rewrite) would leave the underline on the OLD name
+                // until the next fetch — up to 5 minutes stale.
+                let active_name: Option<String> = app
+                    .config
+                    .claude_accounts()
+                    .into_iter()
+                    .find(|a| a.active)
+                    .map(|a| a.name);
+                let is_active = active_name.as_deref() == Some(acc.name.as_str());
                 // #1012 f/u — active-account letter (char 3..4) gets
                 // an underline; tier_range covers the numbers after.
-                let underline = if acc.is_active { (3, 4) } else { (0, 0) };
+                let underline = if is_active { (3, 4) } else { (0, 0) };
                 ClaudeRender {
                     text: res.text,
                     tier_fg: res.tier_fg,
