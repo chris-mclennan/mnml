@@ -84,25 +84,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let copy = debounced_help_copy(app);
 
-    // Row 0 — divider + drag-to-resize grip. Center 4 cells switch to
-    // `═` (double horizontal) so users can see the panel is draggable.
-    // Whole row is the hit-target — see `tui/mouse/mod.rs`'s drag
-    // handler on `rects.hover_help_strip`.
+    // Row 0 — flat divider. #1089 (2026-08-19) — user asked to
+    // remove the `═════` drag grip (visual noise, competed with
+    // the section header directly above for attention). The whole
+    // row is still the hit-target for the drag-resize handler in
+    // `tui/mouse/mod.rs` — the affordance is now the vertical
+    // resize cursor on hover instead of a permanent glyph.
     let w = area.width as usize;
-    let grip_w = 4usize.min(w);
-    let grip_lead = (w.saturating_sub(grip_w)) / 2;
-    let grip_trail = w.saturating_sub(grip_lead + grip_w);
     let sep_style = Style::default()
         .fg(t.comment)
         .bg(body_bg)
         .add_modifier(Modifier::DIM);
-    let grip_style = Style::default().fg(t.comment).bg(body_bg);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("─".repeat(grip_lead), sep_style),
-            Span::styled("═".repeat(grip_w), grip_style),
-            Span::styled("─".repeat(grip_trail), sep_style),
-        ])),
+        Paragraph::new(Line::from(Span::styled("─".repeat(w), sep_style))),
         Rect {
             x: area.x,
             y: area.y,
