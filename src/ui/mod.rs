@@ -4963,18 +4963,20 @@ fn paint_leaf_tab_strip_with_hidden(
     let is_zoomed_here = app.zoomed_leaf == Some(active);
     let (max_glyph, max_color) = if nerd {
         if is_zoomed_here {
-            // #1095 (2026-08-20) — swap nf-oct-screen_normal (U+F066F)
-            // → nf-cod-screen_normal (U+EBB7). The octicons variant
-            // rendered as a Discord/chat-bubble in the user's Symbols
-            // Nerd Font Mono install (fallback into a different font
-            // table). Codicons is the VS Code icon set — literally
-            // the same glyph design VS Code uses for its own
-            // maximize/restore, and every Nerd Font ships them.
-            ("\u{ebb7}", t.cyan)
+            // #1095 (2026-08-20, take 2) — Symbols Nerd Font Mono in
+            // shipping distributions has an OFFSET codicon table:
+            // U+EBB7 (nf-cod-screen_normal) resolves to `cod-table`,
+            // U+EBB6 to `cod-combine`, and nf-oct-screen_normal
+            // (U+F066F) rendered as a chat bubble. The Material
+            // Design range is intact — U+F0294 correctly resolves to
+            // `md-fullscreen_exit` (arrows pointing inward to a
+            // square, the canonical restore icon).
+            ("\u{f0294}", t.cyan)
         } else {
-            // See above — nf-cod-screen_full (U+EBB6) replaces the
-            // broken nf-oct-screen_full (U+F066E).
-            ("\u{ebb6}", dim_fg)
+            // #1095 (2026-08-20, take 2) — U+F0293 correctly resolves
+            // to `md-fullscreen` (four arrows pointing outward from
+            // a square, the canonical maximize icon).
+            ("\u{f0293}", dim_fg)
         }
     } else if is_zoomed_here {
         ("]", t.cyan)

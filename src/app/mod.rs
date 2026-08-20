@@ -2675,8 +2675,10 @@ pub struct PaneRects {
     /// split-strip cluster (rightmost — after the H/V buttons). Click →
     /// `App::toggle_zoom_active_leaf()`, which paints ONLY this leaf
     /// full-frame until clicked again. Glyph flips between expand
-    /// (`nf-cod-screen_full` U+EBB6) and restore (`nf-cod-screen_normal`
-    /// U+EBB7 — codicons, matches VS Code's own maximize/restore) so
+    /// (`nf-md-fullscreen` U+F0293) and restore
+    /// (`nf-md-fullscreen_exit` U+F0294 — Material Design maximize/
+    /// restore, verified to resolve correctly in shipping Nerd Font
+    /// distributions) so
     /// the button self-documents state.
     pub split_strip_maximize_buttons: Vec<(Rect, Option<PaneId>)>,
     /// The whole central split-tree area.
