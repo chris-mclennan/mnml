@@ -4006,7 +4006,11 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .find(|m| m.id == icon.id)
             .and_then(|m| m.version.clone());
-        let update_info: Option<(String, bool)> = app
+        // Three-state:
+        //   Some(Ok(())) — known latest, matches current → "(Current)"
+        //   Some(Err(latest)) — known latest, newer than current → arrow + Update chip
+        //   None — never checked, no version to compare — nothing extra
+        let update_info: Option<Result<(), String>> = app
             .integration_updates
             .lock()
             .ok()
@@ -4014,11 +4018,9 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .and_then(|c| {
                 let is_upd = crate::app::integration_updates::is_update_available(&c);
                 if is_upd {
-                    Some((c.latest.clone(), true))
-                } else if !c.current.is_empty() {
-                    // Up-to-date with a known latest — nothing to
-                    // append past the current version.
-                    None
+                    Some(Err(c.latest.clone()))
+                } else if !c.current.is_empty() && !c.latest.is_empty() {
+                    Some(Ok(()))
                 } else {
                     None
                 }
@@ -4029,17 +4031,17 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 format!("  {v}"),
                 Style::default().fg(t.comment).bg(bg),
             ));
-            if let Some((latest, clickable)) = update_info {
-                name_spans.push(Span::styled(
-                    format!(" \u{2192} {latest}"),
-                    Style::default().fg(t.green).bg(bg),
-                ));
-                let chip_text = "  [ Update ]".to_string();
-                let chip_style = Style::default()
-                    .fg(t.green)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD);
-                if clickable {
+            match update_info {
+                Some(Err(latest)) => {
+                    name_spans.push(Span::styled(
+                        format!(" \u{2192} {latest}"),
+                        Style::default().fg(t.green).bg(bg),
+                    ));
+                    let chip_text = "  [ Update ]".to_string();
+                    let chip_style = Style::default()
+                        .fg(t.green)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD);
                     let prior_cols: usize = name_spans
                         .iter()
                         .map(|s| {
@@ -4064,8 +4066,19 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                             crate_id,
                         ));
                     }
+                    name_spans.push(Span::styled(chip_text, chip_style));
                 }
-                name_spans.push(Span::styled(chip_text, chip_style));
+                Some(Ok(())) => {
+                    // #1088 addendum (2026-08-19) — explicit "(Current)"
+                    // when we've checked and there IS a known latest that
+                    // matches, so the row reads as "already up-to-date"
+                    // instead of "no info".
+                    name_spans.push(Span::styled(
+                        "  (Current)".to_string(),
+                        Style::default().fg(t.comment).bg(bg),
+                    ));
+                }
+                None => {}
             }
         }
         frame.render_widget(Paragraph::new(ratatui::text::Line::from(name_spans)), row1);

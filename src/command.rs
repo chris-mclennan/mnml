@@ -5788,29 +5788,54 @@ fn builtin_commands() -> Vec<Command> {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                // Snapshot the checks map under a short lock so
-                // fire_auto_updates works on a stable view.
+                // #1088 (2026-08-19) — visibility fix. Prior code
+                // called `fire_auto_updates` which spawned cargo
+                // silently with stdio piped to null — user had no
+                // way to see the update happening. Now: use the
+                // same `apply_integration_update` path the manual
+                // right-click "Update to X" uses so each plan
+                // opens a Pty pane the user can watch cargo build
+                // in. Also feed the per-integration overrides
+                // (`auto_update_override`) that the manifest layer
+                // already loaded, so the toggle actually gates the
+                // firing (was: empty overrides map → global only).
                 let checks_snapshot = match app.integration_updates.lock() {
                     Ok(g) => g.clone(),
                     Err(e) => e.into_inner().clone(),
                 };
-                let overrides = std::collections::HashMap::new(); // step 2d wires per-integration overrides
-                let fired = crate::app::integration_updates::fire_auto_updates(
+                let overrides: std::collections::HashMap<String, Option<bool>> = app
+                    .integration_manifests
+                    .iter()
+                    .map(|m| (m.id.clone(), m.auto_update_override))
+                    .collect();
+                let mut attempts = crate::app::integration_updates::load_last_attempts();
+                let plans = crate::app::integration_updates::plan_auto_updates(
                     &checks_snapshot,
                     &overrides,
                     &app.config.integrations,
+                    &attempts,
                     now,
                 );
-                if fired.is_empty() {
-                    app.toast("auto-update: nothing eligible (check config + opt-in)");
-                } else {
-                    let ids: Vec<&str> = fired.iter().map(|p| p.id.as_str()).collect();
-                    app.toast(format!(
-                        "auto-update: firing {} ({})",
-                        fired.len(),
-                        ids.join(", ")
-                    ));
+                if plans.is_empty() {
+                    app.toast(
+                        "auto-update: nothing eligible (right-click a chip → Auto-update: on)",
+                    );
+                    return;
                 }
+                let ids: Vec<String> = plans.iter().map(|p| p.id.clone()).collect();
+                app.toast(format!(
+                    "auto-update: firing {} ({})",
+                    plans.len(),
+                    ids.join(", ")
+                ));
+                for id in &ids {
+                    // Reuses the manual-update codepath — cargo
+                    // install in a visible Pty pane + `<name>
+                    // --install` afterward + `✓` echo on success.
+                    app.apply_integration_update(id);
+                    crate::app::integration_updates::record_attempt(&mut attempts, id, now);
+                }
+                crate::app::integration_updates::save_last_attempts(&attempts);
             },
         },
         // 2026-08-07 vscode-mouse r1 F2 — marketplace-row right-click

@@ -46,6 +46,10 @@ pub(crate) enum DetailAction {
     Command(&'static str),
     /// Toggle enabled state for this integration id.
     ToggleEnabled(String),
+    /// #1088 (2026-08-19) — toggle per-integration auto-update opt-in.
+    /// Payload: (id, next-value). Wraps
+    /// `persist_integration_auto_update` + `refresh_integration_manifests`.
+    ToggleAutoUpdate(String, bool),
     /// Prompt-remove this integration.
     Uninstall(String),
     /// Open the on-disk manifest for this id (workspace, else user).
@@ -153,8 +157,17 @@ pub fn draw(
     // an [Install] button rather than the installed-integration
     // button set.
     let is_marketplace_only = marketplace_entry.is_some();
-    let (buttons, commands, links) =
-        build_actionable_with_marketplace(&id, installed_icon.as_ref(), is_marketplace_only);
+    let auto_update_state = app
+        .integration_manifests
+        .iter()
+        .find(|m| m.id == id)
+        .map(|m| m.auto_update_override.unwrap_or(false));
+    let (buttons, commands, links) = build_actionable_with_marketplace(
+        &id,
+        installed_icon.as_ref(),
+        is_marketplace_only,
+        auto_update_state,
+    );
     let total_actions = buttons.len() + commands.len() + links.len();
 
     // Clamp + read the pane's cursor.
@@ -220,10 +233,39 @@ pub fn draw(
     // ── Byline (version + author). Omit both if neither present.
     let byline = build_byline(icon.as_ref());
     if let Some(byline) = byline {
-        lines.push(Line::from(vec![
+        // #1088 addendum (2026-08-19) — surface "(Current)" or
+        // "→ vX.Y.Z" next to the version so the detail page tells
+        // the user at a glance whether they're up-to-date without
+        // hunting for the Update chip.
+        let crate_id = icon
+            .as_ref()
+            .and_then(|ic| {
+                crate::integration_detect::integration_binary_for_command(&ic.command)
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| id.clone());
+        let update_marker: Option<(String, ratatui::style::Color)> = app
+            .integration_updates
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&crate_id).cloned())
+            .and_then(|c| {
+                if crate::app::integration_updates::is_update_available(&c) {
+                    Some((format!("  \u{2192} v{} available", c.latest), t.green))
+                } else if !c.current.is_empty() && !c.latest.is_empty() {
+                    Some(("  (Current)".to_string(), t.comment))
+                } else {
+                    None
+                }
+            });
+        let mut spans = vec![
             Span::styled("      ", Style::default().bg(t.bg_dark)),
             Span::styled(byline, Style::default().fg(t.comment).bg(t.bg_dark)),
-        ]));
+        ];
+        if let Some((s, fg)) = update_marker {
+            spans.push(Span::styled(s, Style::default().fg(fg).bg(t.bg_dark)));
+        }
+        lines.push(Line::from(spans));
     }
     // Blank spacer.
     lines.push(Line::from(Span::styled(
@@ -700,17 +742,20 @@ pub(crate) fn build_actionable(
     Vec<IntegrationIconCommand>,
     Vec<(String, String)>,
 ) {
-    build_actionable_with_marketplace(id, icon, false)
+    build_actionable_with_marketplace(id, icon, false, None)
 }
 
 /// Extended form that also emits the `[Install]` button when the id
 /// refers to a marketplace-only entry (not yet installed). Callers
 /// with access to `App::marketplace_entries` pass `true` when the
-/// id resolves to a marketplace row.
+/// id resolves to a marketplace row. `auto_update_state` is `Some(bool)`
+/// when a manifest exists for this id (so an Auto-update toggle button
+/// makes sense), `None` for built-ins without a cargo-installable crate.
 pub(crate) fn build_actionable_with_marketplace(
     id: &str,
     icon: Option<&IntegrationIcon>,
     is_marketplace_only: bool,
+    auto_update_state: Option<bool>,
 ) -> (
     Vec<DetailButton>,
     Vec<IntegrationIconCommand>,
@@ -758,6 +803,21 @@ pub(crate) fn build_actionable_with_marketplace(
             buttons.push(DetailButton {
                 label: "Reinstall".to_string(),
                 action: DetailAction::InstallFromMarketplace(id.to_string()),
+            });
+        }
+        // #1088 (2026-08-19) — Auto-update toggle. Rendered when
+        // caller passed a manifest state; label reflects state so
+        // click = flip. Not shown for built-ins that can't be
+        // updated via cargo (browser / http / etc — no manifest).
+        if let Some(auto_update_on) = auto_update_state {
+            let label = if auto_update_on {
+                "Auto-update: \u{25CF} on".to_string()
+            } else {
+                "Auto-update: \u{25CB} off".to_string()
+            };
+            buttons.push(DetailButton {
+                label,
+                action: DetailAction::ToggleAutoUpdate(id.to_string(), !auto_update_on),
             });
         }
         // Uninstall — only meaningful for non-built-ins (i.e.
@@ -829,8 +889,17 @@ pub(crate) fn fire_action(app: &mut App, pane_id: PaneId, action_idx: usize) {
         .find(|i| i.id == id)
         .cloned();
     let is_marketplace_only = icon.is_none() && app.marketplace_entries.iter().any(|e| e.id == id);
-    let (buttons, commands, links) =
-        build_actionable_with_marketplace(&id, icon.as_ref(), is_marketplace_only);
+    let auto_update_state = app
+        .integration_manifests
+        .iter()
+        .find(|m| m.id == id)
+        .map(|m| m.auto_update_override.unwrap_or(false));
+    let (buttons, commands, links) = build_actionable_with_marketplace(
+        &id,
+        icon.as_ref(),
+        is_marketplace_only,
+        auto_update_state,
+    );
     let btn_n = buttons.len();
     let cmd_n = commands.len();
     let toast_msg = if action_idx < btn_n {
@@ -874,6 +943,20 @@ fn dispatch_detail_action(app: &mut App, action: &DetailAction, label: &str) -> 
             // uses so behavior stays in ONE place (persist,
             // toast, etc).
             app.toggle_integration_enabled_by_id(id.as_str());
+            format!("{label} · {id}")
+        }
+        DetailAction::ToggleAutoUpdate(id, on) => {
+            match crate::app::discovery::persist_integration_auto_update(id, *on) {
+                Ok(_) => {
+                    app.refresh_integration_manifests();
+                    app.toast(format!(
+                        "auto-update: {} \u{2192} {}",
+                        id,
+                        if *on { "on" } else { "off" }
+                    ));
+                }
+                Err(e) => app.toast(format!("auto-update: {id}: {e}")),
+            }
             format!("{label} · {id}")
         }
         DetailAction::Uninstall(id) => {
@@ -1086,7 +1169,7 @@ mod tests {
         // exists in the marketplace catalog gets a Reinstall button
         // between Open and Uninstall.
         let icon = sample_icon();
-        let (buttons, _, _) = build_actionable_with_marketplace(&icon.id, Some(&icon), true);
+        let (buttons, _, _) = build_actionable_with_marketplace(&icon.id, Some(&icon), true, None);
         let labels: Vec<&str> = buttons.iter().map(|b| b.label.as_str()).collect();
         assert!(
             labels.contains(&"Reinstall"),
@@ -1106,7 +1189,7 @@ mod tests {
         // user's local manifest): NO reinstall button — nothing to
         // reinstall from.
         let icon = sample_icon();
-        let (buttons, _, _) = build_actionable_with_marketplace(&icon.id, Some(&icon), false);
+        let (buttons, _, _) = build_actionable_with_marketplace(&icon.id, Some(&icon), false, None);
         let labels: Vec<&str> = buttons.iter().map(|b| b.label.as_str()).collect();
         assert!(
             !labels.contains(&"Reinstall"),
