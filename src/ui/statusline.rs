@@ -274,9 +274,16 @@ fn collect_dynamic_segments(
         // max_width, then to what's left of the budget.
         let desired = natural_width.min(s.max_width as usize);
         let alloc = desired.min(budget);
-        // Drop when the remaining budget can't even give this
-        // segment its declared minimum.
-        if alloc < s.min_width as usize {
+        // #1100 (2026-08-20) — was `alloc < min_width`, which
+        // silently dropped ANY manifest segment whose natural
+        // width was under 6 chars (jira `󰌃 3` = 3 chars) even
+        // when the statusline had plenty of room. Correct
+        // semantic: drop only when the remaining BUDGET can't fit
+        // this chip at all — natural_width when smaller than
+        // min_width, min_width otherwise (so long chips still get
+        // their reserved floor).
+        let need = natural_width.min(s.min_width as usize);
+        if alloc < need {
             continue;
         }
         // Truncate + pad to allocation.
