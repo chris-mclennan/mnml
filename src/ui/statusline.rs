@@ -259,12 +259,35 @@ fn collect_dynamic_segments(
     all: &[DynamicSegment],
     side: SegmentSide,
     total_width: usize,
+    user_order: &[String],
 ) -> Vec<RenderedDynamicSegment> {
     let mut candidates: Vec<&DynamicSegment> = all.iter().filter(|s| s.side == side).collect();
     if candidates.is_empty() {
         return Vec::new();
     }
-    candidates.sort_by_key(|c| std::cmp::Reverse(c.priority));
+    // #1102 (2026-08-20) — sort key precedence:
+    //   1. user_order position (listed ids first, in listed order —
+    //      populated by right-click Move left/right on any chip)
+    //   2. priority desc (existing tiebreaker for chips outside the
+    //      user's explicit order — e.g. brand-new integrations)
+    // We store user_order lookups in a HashMap<&str, usize> for O(1)
+    // per-candidate hits; unlisted ids sort AFTER the listed slice.
+    use std::collections::HashMap;
+    let order_pos: HashMap<&str, usize> = user_order
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+    candidates.sort_by(|a, b| {
+        let a_ord = order_pos.get(a.id.as_str()).copied();
+        let b_ord = order_pos.get(b.id.as_str()).copied();
+        match (a_ord, b_ord) {
+            (Some(ai), Some(bi)) => ai.cmp(&bi),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => b.priority.cmp(&a.priority),
+        }
+    });
 
     let mut budget = dynamic_lane_budget(total_width);
     let mut out: Vec<RenderedDynamicSegment> = Vec::new();
@@ -757,7 +780,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // priority desc, allocate max_width while budget allows, drop
     // lower-priority when full). Left-lane segments go here so
     // they render right after the mode chip.
-    let dyn_left = collect_dynamic_segments(&app.dynamic_segments, SegmentSide::Left, width);
+    let dyn_left = collect_dynamic_segments(
+        &app.dynamic_segments,
+        SegmentSide::Left,
+        width,
+        &app.config.ui.statusline_segment_order,
+    );
     // Index of the git-branch chip in `left` once pushed — used after
     // render_left to register a clickable rect that fires `git.graph`.
     let mut branch_seg_idx: Option<usize> = None;
@@ -969,7 +997,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // priority, dropped if overflow). Rendered leftmost on the
     // right lane so they don't push the builtin chips off screen
     // — losing a sibling segment is better than losing line/col.
-    let dyn_right = collect_dynamic_segments(&app.dynamic_segments, SegmentSide::Right, width);
+    let dyn_right = collect_dynamic_segments(
+        &app.dynamic_segments,
+        SegmentSide::Right,
+        width,
+        &app.config.ui.statusline_segment_order,
+    );
     // Track (right_seg_index, segment_id) so hover / click rects
     // can be registered against on-screen positions after
     // `render_right` computes them.

@@ -95,6 +95,19 @@ impl App {
                 .rects
                 .statusline_coverage_chip
                 .map(|rect| (crate::HoverChip::StatuslineCoverage, above_anchor(rect))),
+            // #1102 (2026-08-20) — dynamic statusline segment
+            // (manifest-declared + IPC-set). Anchor is the segment's
+            // hit rect index into `statusline_segment_hits`.
+            crate::HoverChip::StatuslineSegment(idx) => self
+                .rects
+                .statusline_segment_hits
+                .get(*idx)
+                .map(|(rect, _)| {
+                    (
+                        crate::HoverChip::StatuslineSegment(*idx),
+                        above_anchor(*rect),
+                    )
+                }),
             _ => None,
         });
         // Tree: use selected_row + the first tree row rect to derive
@@ -130,6 +143,9 @@ impl App {
                 }
                 crate::HoverChip::StatuslineCoverage => {
                     self.open_statusline_coverage_context_menu(anchor);
+                }
+                crate::HoverChip::StatuslineSegment(idx) => {
+                    self.open_statusline_segment_context_menu(idx, anchor);
                 }
                 _ => {}
             }
@@ -1699,6 +1715,63 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some("Coverage".into()), anchor, items));
     }
 
+    /// #1102 (2026-08-20) — Right-click on any dynamic statusline
+    /// segment (manifest-declared or IPC-set). Shows "← Move left"
+    /// and "Move right →" against the current effective order (from
+    /// `collect_dynamic_segments`), greying the endpoint direction
+    /// when the segment is already at the edge of its side. `idx`
+    /// is the index into `statusline_segment_hits` — we resolve the
+    /// segment id and its neighbors in-render order via
+    /// `statusline_segment_hits` (already sorted correctly).
+    pub fn open_statusline_segment_context_menu(&mut self, idx: usize, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        // The hits list is in render order per side, but sides can
+        // interleave. Filter to the same side as `idx` by walking
+        // `dynamic_segments` for each hit-id's side.
+        let hits = &self.rects.statusline_segment_hits;
+        let Some((_, id)) = hits.get(idx).cloned() else {
+            return;
+        };
+        let seg_side = self
+            .dynamic_segments
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.side);
+        let same_side_ids: Vec<String> = hits
+            .iter()
+            .filter(|(_, hid)| {
+                self.dynamic_segments
+                    .iter()
+                    .find(|s| &s.id == hid)
+                    .map(|s| Some(s.side) == seg_side)
+                    .unwrap_or(false)
+            })
+            .map(|(_, hid)| hid.clone())
+            .collect();
+        let pos = same_side_ids.iter().position(|hid| hid == &id).unwrap_or(0);
+        let at_left_end = pos == 0;
+        let at_right_end = pos + 1 >= same_side_ids.len();
+        // Both endpoints — nothing to reorder, don't waste a menu.
+        if at_left_end && at_right_end {
+            self.toast(format!("`{id}` is the only chip on its side"));
+            return;
+        }
+        let mut items: Vec<MenuItem> = Vec::new();
+        if !at_left_end {
+            items.push(MenuItem::new(
+                "\u{2190} Move left",
+                MenuAction::ReorderStatuslineSegment(id.clone(), -1),
+            ));
+        }
+        if !at_right_end {
+            items.push(MenuItem::new(
+                "Move right \u{2192}",
+                MenuAction::ReorderStatuslineSegment(id.clone(), 1),
+            ));
+        }
+        self.context_menu = Some(ContextMenu::new(Some(id), anchor, items));
+    }
+
     /// Task #915 (R5 SEV-2 F1) — Right-click on the statusline AI
     /// Claude/Codex chip. Prior state was silent (no menu rendered),
     /// which read as a broken chip. Expose the same commands the
@@ -1944,6 +2017,81 @@ impl App {
             }
             UpdateIntegration(id) => {
                 self.apply_integration_update(&id);
+            }
+            ReorderStatuslineSegment(id, delta) => {
+                // Materialize the order list against ALL currently-
+                // rendered dynamic segments on the same side so a
+                // brand-new user (empty order list) still gets a
+                // meaningful swap. Strategy:
+                //   1. Snapshot the currently rendered ids in order
+                //      (same side as `id`).
+                //   2. If `statusline_segment_order` is empty for the
+                //      chip's side, seed it with the snapshot.
+                //   3. Swap `id` with its neighbor at ±1.
+                //   4. Persist + refresh.
+                let seg_side = self
+                    .dynamic_segments
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| s.side);
+                let same_side_ids: Vec<String> = self
+                    .rects
+                    .statusline_segment_hits
+                    .iter()
+                    .filter(|(_, hid)| {
+                        self.dynamic_segments
+                            .iter()
+                            .find(|s| &s.id == hid)
+                            .map(|s| Some(s.side) == seg_side)
+                            .unwrap_or(false)
+                    })
+                    .map(|(_, hid)| hid.clone())
+                    .collect();
+                // Merge existing order with same_side_ids: keep any
+                // ids already in the order list (respect user's
+                // prior choices for other sides / hidden chips),
+                // and interleave the current same-side render order
+                // for ids not yet listed.
+                let mut order: Vec<String> = self.config.ui.statusline_segment_order.clone();
+                for hid in &same_side_ids {
+                    if !order.iter().any(|o| o == hid) {
+                        order.push(hid.clone());
+                    }
+                }
+                // Locate and swap.
+                let Some(pos) = order.iter().position(|o| o == &id) else {
+                    self.toast(format!("reorder: `{id}` not in order list"));
+                    return;
+                };
+                let target = if delta < 0 {
+                    if pos == 0 {
+                        self.toast(format!("`{id}` already at left"));
+                        return;
+                    }
+                    pos - 1
+                } else {
+                    if pos + 1 >= order.len() {
+                        self.toast(format!("`{id}` already at right"));
+                        return;
+                    }
+                    pos + 1
+                };
+                order.swap(pos, target);
+                match crate::app::discovery::persist_ui_string_array(
+                    "statusline_segment_order",
+                    &order,
+                ) {
+                    Ok(_) => {
+                        self.config.ui.statusline_segment_order = order;
+                        let dir = if delta < 0 {
+                            "\u{2190} left"
+                        } else {
+                            "right \u{2192}"
+                        };
+                        self.toast(format!("{id}: moved {dir}"));
+                    }
+                    Err(e) => self.toast(format!("reorder: persist failed: {e}")),
+                }
             }
             SetIntegrationAutoUpdate(id, on) => {
                 match crate::app::discovery::persist_integration_auto_update(&id, on) {

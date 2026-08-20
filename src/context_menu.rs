@@ -106,6 +106,13 @@ pub enum MenuAction {
     /// the current value; accept writes to
     /// `<workspace>/.mnml/integrations/<id>.toml`.
     SetIntegrationLauncher(String),
+    /// #1102 (2026-08-20) — reorder a dynamic statusline segment
+    /// in `[ui] statusline_segment_order`. Payload: (segment_id,
+    /// delta) where `delta = -1` moves left, `+1` moves right. The
+    /// segment's id is inserted into the order list if not already
+    /// present, then swapped with its neighbor at ±1. Persisted via
+    /// the same helper other `[ui]` toggles use.
+    ReorderStatuslineSegment(String, i8),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
     /// R7 vscode-mouse F1 2026-08-09 — set the current mnml theme

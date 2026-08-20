@@ -771,6 +771,19 @@ pub struct UiConfig {
     /// 2026-07-20 user report: "I only wanted a fucking launcher
     /// icon in the activity bar" — this field is that surface.
     pub activity_bar_pinned_integrations: Vec<String>,
+    /// #1102 (2026-08-20) — user-controlled reorder for dynamic
+    /// statusline segments (`[[statusline_segments]]` from any
+    /// installed integration manifest, plus IPC-set segments).
+    /// Empty ⇒ default sort (by priority desc then id alphabetical);
+    /// non-empty ⇒ listed ids come FIRST in that order, unlisted
+    /// segments fall through to the default. Applies to both sides
+    /// (left + right) — a chip's side is intrinsic to its declaration,
+    /// so a single order list works for both. Populated by the
+    /// statusline chip right-click menu → "← Move left" / "Move
+    /// right →" — no manual TOML editing expected. `finalize()` is
+    /// a no-op here; the sort happens at render time in
+    /// `collect_dynamic_segments`.
+    pub statusline_segment_order: Vec<String>,
     /// When the cursor is on an identifier (`[A-Za-z0-9_]+`), paint other
     /// occurrences of the same word in the visible viewport with a subtle
     /// background tint. Off by default — can be noisy in dense files.
@@ -1306,6 +1319,7 @@ impl Default for Config {
                 // via `:perf.toggle_stress` or Settings › UI.
                 stress_meter: false,
                 activity_bar_pinned_integrations: Vec::new(),
+                statusline_segment_order: Vec::new(),
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,
                 color_column: 0,
@@ -1845,6 +1859,7 @@ struct RawUi {
     clock: Option<bool>,
     stress_meter: Option<bool>,
     activity_bar_pinned_integrations: Option<Vec<String>>,
+    statusline_segment_order: Option<Vec<String>>,
     highlight_word_under_cursor: Option<bool>,
     auto_md_preview: Option<bool>,
     color_column: Option<usize>,
@@ -2324,6 +2339,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.activity_bar_pinned_integrations {
             self.ui.activity_bar_pinned_integrations = v;
+        }
+        if let Some(v) = raw.ui.statusline_segment_order {
+            self.ui.statusline_segment_order = v;
         }
         if let Some(v) = raw.ui.highlight_word_under_cursor {
             self.ui.highlight_word_under_cursor = v;

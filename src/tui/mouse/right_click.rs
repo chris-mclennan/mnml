@@ -1212,6 +1212,19 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_coverage_context_menu((x, y));
         return;
     }
+    // #1102 (2026-08-20) — dynamic statusline segment (manifest-
+    // declared / IPC-set). Walk `statusline_segment_hits` (already
+    // in render order) and open the "Move left / Move right" menu
+    // for whichever segment's rect contains (x, y).
+    if let Some(idx) = app
+        .rects
+        .statusline_segment_hits
+        .iter()
+        .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.open_statusline_segment_context_menu(idx, (x, y));
+        return;
+    }
     // qa-6th mouse SEV-3 2026-06-29: mixr chip on the statusline
     // had a left-click action (mixr.show) but no right-click menu
     // and no hover tooltip — felt like a black box. Added a small
