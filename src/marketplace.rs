@@ -187,11 +187,15 @@ pub fn ready_ids() -> &'static [&'static str] {
         "mnml-aws-amplify",
         "mnml-aws-codebuild",
         "mnml-db",
-        "mnml-forge-github",
         // 2026-08-19 (#1062) — `mnml-msg-slack` removed from the
         // ready set: still WIP (threads unfinished, canvases tab
         // was mislabeled "Slack Boards" until 0.1.4). Reinstate
         // when the sibling ships end-to-end + user confirms.
+        // 2026-08-19 (#1090) — `mnml-forge-github` removed too.
+        // User: "not ready, only in development tab should show
+        // this one". Also surfaced an install "Error:" message on
+        // config-template bootstrap (#1091). Reinstate when both
+        // are addressed.
     ]
 }
 
