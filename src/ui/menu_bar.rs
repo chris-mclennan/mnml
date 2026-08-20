@@ -96,8 +96,20 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         })
         .max()
         .unwrap_or(10);
+    // #1097 (2026-08-20) — cache the visible index list under the
+    // current filter. Empty filter → every index (existing render).
+    // Non-empty filter → only items whose label matches (case-
+    // insensitive substring); separators are dropped entirely so
+    // filtered groups don't render disjoint horizontal rules.
+    let visible_idxs: Vec<usize> = open.visible_indexes(&menu.items);
     let w = (max_label as u16 + icon_col_w + 4).max(20);
-    let h = menu.items.len() as u16 + 2; // +2 for borders
+    // #1097 — reserve a filter row at the top when filter_focused
+    // (or when a non-empty filter is left after a user unfocused
+    // via `/`) so the current filter text is always visible while
+    // it's affecting the list.
+    let show_filter_row = open.filter_focused || !open.filter.is_empty();
+    let filter_row_h: u16 = if show_filter_row { 1 } else { 0 };
+    let h = visible_idxs.len() as u16 + 2 + filter_row_h; // +2 for borders
     let x = word_rect.x;
     // Drop the panel just below the chrome row.
     let y = word_rect.y + 1;
@@ -135,10 +147,49 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
     // `icon_col_w` was computed above alongside `max_label` so the
     // panel-width math could include it.
 
-    for (i, item) in menu.items.iter().enumerate() {
+    // #1097 — draw the filter row (`/ text│`) at the top when we're
+    // in filter mode. Same "/" prefix as the palette + help overlay
+    // so the input affordance reads consistently.
+    let items_y_base = if show_filter_row {
+        let filter_row = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        let filter_style = if open.filter_focused {
+            Style::default().fg(t.cyan)
+        } else {
+            Style::default().fg(t.comment)
+        };
+        let cursor = if open.filter_focused { "│" } else { "" };
+        let empty_hint = if open.filter.is_empty() && open.filter_focused {
+            "type to filter…"
+        } else {
+            ""
+        };
+        let filter_line = Line::from(vec![
+            Span::styled(" / ", filter_style),
+            Span::styled(open.filter.clone(), Style::default().fg(t.fg)),
+            Span::styled(cursor.to_string(), filter_style),
+            Span::styled(
+                empty_hint.to_string(),
+                Style::default()
+                    .fg(t.comment)
+                    .add_modifier(ratatui::style::Modifier::DIM),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(filter_line), filter_row);
+        inner.y + 1
+    } else {
+        inner.y
+    };
+
+    for (row_i, &i) in visible_idxs.iter().enumerate() {
+        let item = &menu.items[i];
         let row_rect = Rect {
             x: inner.x,
-            y: inner.y + i as u16,
+            y: items_y_base + row_i as u16,
             width: inner.width,
             height: 1,
         };
@@ -215,7 +266,14 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
             items: sub_items, ..
         }) = menu.items.get(open.item_idx)
     {
-        let parent_row_y = inner.y + open.item_idx as u16;
+        // #1097 — under filter, the parent row's y is its position
+        // in the visible slice, not `open.item_idx` directly. Fall
+        // back to item_idx when filter is empty (original behavior).
+        let parent_visible_row = visible_idxs
+            .iter()
+            .position(|&i| i == open.item_idx)
+            .unwrap_or(open.item_idx);
+        let parent_row_y = items_y_base + parent_visible_row as u16;
         // Same icon-column treatment as the top-level dropdown above
         // (#886) — hoisted BEFORE the panel-width math so `sub_w`
         // reserves room for icon + label + trail (was previously

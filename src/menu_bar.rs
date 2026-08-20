@@ -140,9 +140,46 @@ pub struct MenuOpenState {
     /// index in the child list. `None` when no submenu is open.
     /// Only one level of nesting is currently supported.
     pub sub_item_idx: Option<usize>,
+    /// #1097 (2026-08-20) — inline filter shown at the top of the
+    /// dropdown. Empty = "no filter, all items visible + mnemonic
+    /// cycling active". Non-empty = "filter mode: only items whose
+    /// label contains this substring are surfaced". Toggled with
+    /// `/` (like the palette + help overlay). Backspace shortens,
+    /// Esc clears (first press) then closes menu (second press).
+    pub filter: String,
+    /// `true` when `/` was pressed and typed chars append to
+    /// `filter`. `false` = classic mnemonic-cycle mode (a-z keys
+    /// jump between first-letter matches).
+    pub filter_focused: bool,
 }
 
 impl MenuOpenState {
+    /// #1097 — returns the item indexes visible under the current
+    /// filter. Empty filter → every non-separator index. Non-empty
+    /// filter → case-insensitive substring match on the label.
+    /// Separators are dropped when filter is active (rendering
+    /// them between two disjoint filtered slices looks broken).
+    pub fn visible_indexes(&self, items: &[MenuItem]) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..items.len()).collect();
+        }
+        let needle = self.filter.to_lowercase();
+        items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| match it {
+                MenuItem::Action { label, .. } | MenuItem::Submenu { label, .. } => {
+                    if label.to_lowercase().contains(&needle) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                }
+                MenuItem::Separator => None,
+            })
+            .collect()
+    }
+
     pub fn new_keyboard(menu_idx: usize) -> Self {
         Self {
             menu_idx,
@@ -150,6 +187,8 @@ impl MenuOpenState {
             keyboard_opened: true,
             last_mnemonic: None,
             sub_item_idx: None,
+            filter: String::new(),
+            filter_focused: false,
         }
     }
 
@@ -160,6 +199,8 @@ impl MenuOpenState {
             keyboard_opened: false,
             last_mnemonic: None,
             sub_item_idx: None,
+            filter: String::new(),
+            filter_focused: false,
         }
     }
 }

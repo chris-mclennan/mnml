@@ -736,6 +736,71 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
         app.menu_open = None;
         return false;
     }
+    // #1097 (2026-08-20) — `/` toggles filter mode. In filter mode,
+    // printable chars append to `filter`, Backspace shortens, Esc
+    // clears (first) then closes menu (second). Non-filter mode keeps
+    // the existing mnemonic-cycle behavior so muscle memory holds.
+    if matches!(key.code, KeyCode::Char('/'))
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+        && let Some(s) = app.menu_open.as_mut()
+    {
+        s.filter_focused = !s.filter_focused;
+        if !s.filter_focused {
+            s.filter.clear();
+        }
+        s.last_mnemonic = None;
+        s.item_idx = 0;
+        return true;
+    }
+    // Filter-mode key routing — intercept BEFORE the standard arrow /
+    // Enter / mnemonic paths so typing narrows without triggering
+    // mnemonic cycling. Arrows + Enter still fall through so the user
+    // can nav filtered results and fire the highlighted match.
+    if open.filter_focused {
+        match key.code {
+            KeyCode::Backspace => {
+                if let Some(s) = app.menu_open.as_mut() {
+                    if s.filter.pop().is_none() {
+                        // Empty filter + Backspace → drop filter mode.
+                        s.filter_focused = false;
+                    }
+                    s.item_idx = 0;
+                }
+                return true;
+            }
+            KeyCode::Esc => {
+                if let Some(s) = app.menu_open.as_mut() {
+                    if s.filter.is_empty() {
+                        // Second Esc closes the menu.
+                        app.menu_open = None;
+                    } else {
+                        // First Esc clears the filter, stays in menu.
+                        s.filter.clear();
+                        s.filter_focused = false;
+                        s.item_idx = 0;
+                    }
+                }
+                return true;
+            }
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && !c.is_control() =>
+            {
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.filter.push(c);
+                    // Snap highlight to first visible match so the
+                    // narrowed set is immediately actionable.
+                    if let Some(&first) = s.visible_indexes(&menu.items).first() {
+                        s.item_idx = first;
+                    }
+                }
+                return true;
+            }
+            _ => {} // Arrows / Enter fall through to standard nav.
+        }
+    }
     // keyboard-round-14 SEV-3 #11 2026-07-17 — Alt+letter that
     // matches the currently-open menu's first-alpha closes it
     // (VS Code convention: Alt+V opens View → Alt+V again closes).
@@ -845,6 +910,21 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Up => {
+            // #1097 — when filter is active, nav the FILTERED index
+            // list; otherwise walk_to_action on the full items list
+            // (existing behavior).
+            if !open.filter.is_empty() {
+                let vis = open.visible_indexes(&menu.items);
+                if !vis.is_empty()
+                    && let Some(s) = app.menu_open.as_mut()
+                {
+                    let cur = vis.iter().position(|&i| i == s.item_idx).unwrap_or(0);
+                    let n = vis.len();
+                    s.item_idx = vis[(cur + n - 1) % n];
+                    s.keyboard_opened = true;
+                }
+                return true;
+            }
             let n = menu.items.len();
             if n > 0 {
                 // Skip past Separators by walking until we hit an
@@ -864,6 +944,17 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Down => {
+            if !open.filter.is_empty() {
+                let vis = open.visible_indexes(&menu.items);
+                if !vis.is_empty()
+                    && let Some(s) = app.menu_open.as_mut()
+                {
+                    let cur = vis.iter().position(|&i| i == s.item_idx).unwrap_or(0);
+                    s.item_idx = vis[(cur + 1) % vis.len()];
+                    s.keyboard_opened = true;
+                }
+                return true;
+            }
             let n = menu.items.len();
             if n > 0 {
                 let start = if open.item_idx == usize::MAX {
