@@ -303,16 +303,30 @@ impl App {
     /// unconditionally; this shim just guards the destructive
     /// entry points (context menu + palette picker).
     pub fn open_integration_remove_confirm(&mut self, id: String) {
-        // Fast-path: if the integration doesn't exist, skip the
-        // dialog and just toast — same UX as the direct-remove path.
-        if !self
+        // Fast-path: if the integration doesn't exist ANYWHERE (rail
+        // config AND on-disk manifest), skip the dialog and just
+        // toast — same UX as the direct-remove path.
+        //
+        // 2026-08-19 (#1085) — the check used to be rail-only, so
+        // right-clicking Uninstall on a manifest-only chip (an id
+        // that came from `~/.config/mnml/integrations/<id>.toml`
+        // but was never added to `[[ui.integration_icon]]`) toasted
+        // "not in rail" and silently no-op'd. That's how a ghost
+        // `slack.toml` from a pre-0.1.2 install survived every
+        // right-click Uninstall attempt: `slack` wasn't in the
+        // rail order (it was hidden), so the fast-path bounced.
+        // Now: allow uninstall when EITHER the rail knows it OR the
+        // manifest layer knows it. The rest of the flow (delete
+        // manifest + re-scan) already handles both cases.
+        let in_rail = self
             .config
             .ui
             .integration_icons
             .iter()
-            .any(|ic| ic.id == id)
-        {
-            self.toast(format!("integration: {id} not in rail"));
+            .any(|ic| ic.id == id);
+        let in_manifests = self.integration_manifests.iter().any(|m| m.id == id);
+        if !in_rail && !in_manifests {
+            self.toast(format!("integration: {id} not found"));
             return;
         }
         // 2026-08-07 — protect the first-party built-ins from an
