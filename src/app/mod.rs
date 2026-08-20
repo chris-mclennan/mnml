@@ -3948,11 +3948,11 @@ pub struct App {
     /// suppressed (the chevron actually scrolls). On active-pane
     /// change the stamp clears and auto-scroll resumes.
     pub bufferline_active_at_scroll: Option<crate::layout::PaneId>,
-    /// "Zen" focus mode (`view.zen`): hide the tree rail, bufferline, and
+    /// Full-screen focus mode (`view.fullscreen`): hide the tree rail, bufferline, and
     /// statusline; the editor takes the full window. Independent of the other
     /// visibility flags, which are remembered separately. Not persisted —
     /// always starts off so a fresh launch is a normal IDE view.
-    pub zen_mode: bool,
+    pub fullscreen_mode: bool,
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
@@ -5744,7 +5744,7 @@ impl App {
             diff_wrap_pref: false,
             bufferline_first_visible: 0,
             bufferline_active_at_scroll: None,
-            zen_mode: false,
+            fullscreen_mode: false,
             recent_files: Vec::new(),
             harpoon: Default::default(),
             browser_url_history: Vec::new(),

@@ -257,7 +257,7 @@ VS Code's AI is via extensions. mnml ships AI as first-class panes.
 | `Ctrl+,` Settings | `Ctrl+,` | `file.open_settings` | Opens the TOML in a buffer |
 | `Ctrl+K Ctrl+T` Color Theme | (palette / `<leader>tt`) | `theme.pick` | |
 | Settings UI (overlay) | (palette) | `view.settings` | mnml's keyboard-driven schema overlay |
-| `Ctrl+K Z` Zen Mode | `Ctrl+Shift+Z` | `view.zen` | Hide tree + bufferline + statusline |
+| `Ctrl+K Z` Zen Mode | `Ctrl+Shift+Z` | `view.fullscreen` | Hide tree + bufferline + statusline |
 | `Ctrl+L` Cursor Centered (vim style) | (vim mode: `zz`) | `view.cursor_to_center` | Standard mode rebinds `Ctrl+L` to redraw |
 | `Ctrl+K Ctrl+0` Fold All | (palette) | `lsp.fold_all` | LSP server ranges |
 | `Ctrl+K Ctrl+J` Unfold All | (palette) | `editor.unfold_all` | |

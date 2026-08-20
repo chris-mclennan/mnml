@@ -1,5 +1,5 @@
 //! Pane + layout methods on `App` — open / reveal / close panes,
-//! split tree mutators, focus / divider drag / tab pages, zen mode.
+//! split tree mutators, focus / divider drag / tab pages, full-screen mode.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
 //!. Pure non-destructive move. This is
@@ -2319,12 +2319,16 @@ impl App {
         }
     }
 
-    /// Toggle "zen" focus mode — hide everything but the editor (tree rail,
-    /// bufferline, statusline gone). Always lands focus on the active pane
-    /// when entering so the user can start typing immediately.
-    pub fn toggle_zen_mode(&mut self) {
-        self.zen_mode = !self.zen_mode;
-        if self.zen_mode && self.active.is_some() {
+    /// Toggle full-screen focus mode — hide everything but the editor (tree
+    /// rail, bufferline, statusline gone). Always lands focus on the active
+    /// pane when entering so the user can start typing immediately.
+    ///
+    /// #1096 (2026-08-20) — renamed from `toggle_zen_mode`. The behavior is
+    /// unchanged; the label change is discoverability (VS Code users search
+    /// for "full screen" / F11).
+    pub fn toggle_fullscreen_mode(&mut self) {
+        self.fullscreen_mode = !self.fullscreen_mode;
+        if self.fullscreen_mode && self.active.is_some() {
             self.focus = Focus::Pane;
         }
     }

@@ -1659,7 +1659,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             app.active = Some(la);
             app.focus = crate::focus::Focus::Pane;
         }
-        app.toggle_zoom_active_leaf();
+        // #1096 (2026-08-20) — in full-screen, the button's glyph
+        // flipped to the compress arrows so it reads as "exit
+        // full-screen." Route accordingly instead of firing
+        // toggle_zoom (which would flip an unrelated per-leaf zoom
+        // that has no visible effect while chrome is hidden).
+        if app.fullscreen_mode {
+            app.toggle_fullscreen_mode();
+        } else {
+            app.toggle_zoom_active_leaf();
+        }
         return;
     }
     if let Some(&(_, leaf_active, tab_pane)) = app

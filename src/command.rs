@@ -518,20 +518,23 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            // Zen mode is palette-only — `Ctrl+Shift+Z` is the
-            // universal Redo chord in VS Code (and every other modern
-            // editor). Three independent persona hunts on 2026-06-08
-            // flagged the prior `Ctrl+Shift+Z → Zen` binding as their
-            // #1 muscle-memory trap (silently nukes redo and reshuffles
-            // chrome). Zen lives in the palette as `view.zen`.
-            id: "view.zen",
-            title: "Toggle zen mode (hide tree + bufferline + statusline)",
+            // Full-screen mode is palette-only — `Ctrl+Shift+Z` is
+            // the universal Redo chord in VS Code (and every other
+            // modern editor). Three independent persona hunts on
+            // 2026-06-08 flagged the prior `Ctrl+Shift+Z → Zen`
+            // binding as their #1 muscle-memory trap (silently nukes
+            // redo and reshuffles chrome). #1096 (2026-08-20) —
+            // renamed from `view.zen` for discoverability; VS Code
+            // users search "full screen" / bind F11.
+            id: "view.fullscreen",
+            title: "Toggle full screen (hide tree + bufferline + statusline)",
             group: "view",
             // vscode-user-keyboard SEV-2 2026-07-11 — VS Code's
-            // Ctrl+K Z toggles zen. F11 also falls back to Zen when
-            // there's no active DAP session (e35a295).
+            // Ctrl+K Z toggles Zen (their term); we keep the chord
+            // as a familiar Ctrl+K Z entry. F11 also falls back to
+            // this when there's no active DAP session (e35a295).
             keys: &["ctrl+k z"],
-            run: |app| app.toggle_zen_mode(),
+            run: |app| app.toggle_fullscreen_mode(),
         },
         Command {
             // 2026-06-08 hunt fix — registered Redo so the keymap

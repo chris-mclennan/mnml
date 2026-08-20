@@ -1174,7 +1174,7 @@ impl App {
                 "Maximize height",
                 MenuAction::Command("view.maximize_height"),
             ),
-            MenuItem::new("Full screen (zen)", MenuAction::Command("view.zen")),
+            MenuItem::new("Full screen", MenuAction::Command("view.fullscreen")),
             MenuItem::new(
                 "Equalize splits",
                 MenuAction::Command("view.equalize_splits"),

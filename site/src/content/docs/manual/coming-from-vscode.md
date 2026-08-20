@@ -199,7 +199,7 @@ Standard VS Code keys all work; see [LSP](/manual/lsp/) for the language-server 
 
 | VS Code | mnml |
 |---|---|
-| `Ctrl+Shift+Z` zen mode | `Ctrl+Shift+Z` zen mode (full-screen single buffer) |
+| `Ctrl+Shift+Z` zen mode | `Ctrl+K Z` full screen (hides all chrome) |
 | `Alt+←` / `Alt+→` go-back / go-forward | `Alt+←` / `Alt+→` (mnml navigation history) |
 | `Ctrl+L` (terminal clear) | `Ctrl+L` is SelectLine in editor — for terminal-clear, use a shell pane (Ctrl+L is forwarded) |
 | `Ctrl+Q` quit | `Ctrl+Q` |

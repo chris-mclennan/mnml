@@ -1192,11 +1192,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         let _ = crate::command::run("file.duplicate", app);
         return;
     }
-    // Zen-mode escape hatch: when zen is on and no overlay is
-    // claiming Esc, treat Esc as "exit zen" so the user is never
-    // trapped. Overlays (picker / prompt / which-key) get first
-    // dibs by returning before this check below.
-    if app.zen_mode
+    // Full-screen escape hatch: when full-screen is on and no
+    // overlay is claiming Esc, treat Esc as "exit full-screen" so
+    // the user is never trapped. Overlays (picker / prompt /
+    // which-key) get first dibs by returning before this check below.
+    if app.fullscreen_mode
         && key.code == KeyCode::Esc
         && app.picker.is_none()
         && app.prompt.is_none()
@@ -1204,7 +1204,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         && app.context_menu.is_none()
         && app.menu_open.is_none()
     {
-        app.toggle_zen_mode();
+        app.toggle_fullscreen_mode();
         return;
     }
     // Workspace-picker dropdown — when open, intercept keys so they

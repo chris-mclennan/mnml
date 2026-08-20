@@ -139,7 +139,7 @@ Toggles for the panels, chrome, and theme. This menu grew the most in the 2026-0
 | Toggle right panel | `view.toggle_right_panel` |
 | Cycle menu bar (always / auto / hidden) | `view.menu_bar_cycle` |
 | Toggle word wrap | `view.toggle_wrap` |
-| Toggle zen mode | `view.zen` |
+| Toggle full screen | `view.fullscreen` |
 | Toggle hover-help strip | `view.toggle_hover_help` |
 | Toggle workspace dots | `view.toggle_workspace_dots` |
 | Commands reference… | `view.commands_reference` |

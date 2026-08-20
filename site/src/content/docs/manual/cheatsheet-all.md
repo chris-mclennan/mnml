@@ -406,7 +406,7 @@ For sibling-provided chords: see the manifest of whichever integration you've in
 | Help overlay | `F1` (toggle with palette) | `F1` | `view.help` |
 | Theme picker | `<leader>tt` | (palette) | `theme.pick` |
 | Vim ⇄ standard runtime swap | `<leader>tk` / `:set input=vim` / `:set input=standard` | `<leader>tk` (via `Ctrl+K`) | `editor.toggle_keymap` |
-| Zen mode (hide tree + bufferline + statusline) | (palette) | `Ctrl+Shift+Z` | `view.zen` |
+| Full screen (hide tree + bufferline + statusline) | (palette) | `Ctrl+Shift+Z` | `view.fullscreen` |
 | Redraw | `Ctrl+L` | (palette) | `view.redraw` |
 | Word wrap | (palette) | (palette) | `view.toggle_wrap` |
 | Scrollbar | (palette) | (palette) | `view.toggle_scrollbar` |

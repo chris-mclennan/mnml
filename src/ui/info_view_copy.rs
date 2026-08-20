@@ -2455,14 +2455,14 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("view.menu_bar_cycle", "Cycle now")],
             ..Default::default()
         }),
-        ("View", i) if i.contains("zen mode") => Some(InfoViewCopy {
-            title: "View → Toggle zen mode".into(),
+        ("View", i) if i.contains("full screen") => Some(InfoViewCopy {
+            title: "View → Toggle full screen".into(),
             body: "Hides the tree, bufferline, and statusline for a \
                    distraction-free single-pane view. Toggle again (or the \
                    chord) to bring the chrome back."
                 .into(),
-            shortcuts: vec![ShortcutHint::new("Ctrl+K z", "Toggle zen mode")],
-            try_it: vec![PaletteLink::new("view.zen", "Toggle zen mode")],
+            shortcuts: vec![ShortcutHint::new("Ctrl+K z", "Toggle full screen")],
+            try_it: vec![PaletteLink::new("view.fullscreen", "Toggle full screen")],
             ..Default::default()
         }),
         ("View", i) if i.contains("workspace dots") => Some(InfoViewCopy {

@@ -374,7 +374,7 @@ fn view_menu() -> MenuDef {
             MenuItem::action_with_icon("\u{EB80}", "Toggle line wrap", "view.toggle_wrap"),
             // fa-eye — zen = single-focus, not dark mode (F186 moon
             // was wrong; that reads as theme-dark).
-            MenuItem::action_with_icon("\u{F06E}", "Toggle zen mode", "view.zen"),
+            MenuItem::action_with_icon("\u{F06E}", "Toggle full screen", "view.fullscreen"),
             MenuItem::action_with_icon("\u{F02D6}", "Toggle hover-help", "view.toggle_hover_help"),
             // mdi-circle-outline — "dot marker" semantic. If tofu,
             // swap to a spacer per the R6 glyph convention.

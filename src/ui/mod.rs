@@ -191,13 +191,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // list for a guarantee.
     app.rects.reset_for_frame();
 
-    // Zen mode: skip the tree, bufferline, and statusline — the editor takes
+    // Full-screen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
     // the rest of the layout pipeline.
-    if app.zen_mode {
+    if app.fullscreen_mode {
         app.rects.body = Some(area);
         // Reserve a 1-row hint footer at the bottom so the user can
-        // always find their way out of zen mode. The chrome row
+        // always find their way out of full-screen mode. The chrome row
         // costs ~1% of the screen but eliminates the "I'm stuck"
         // failure mode the user reported.
         let (body_area, hint_area) = if area.height >= 4 {
@@ -228,7 +228,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
         if let Some(hint) = hint_area {
             let t = theme::cur();
-            let label = " Zen mode  ·  Esc to exit  ·  :view.zen toggle ";
+            let label = " Full screen  ·  Esc to exit  ·  :view.fullscreen toggle ";
             let pad = (hint.width as usize).saturating_sub(label.chars().count());
             let line = Line::from(vec![
                 Span::styled(
@@ -4960,22 +4960,25 @@ fn paint_leaf_tab_strip_with_hidden(
     // button self-documents state. Cyan when zoom is live so it's
     // visibly different from the neutral splits — matches VS Code's
     // "you're in a zoomed editor" tint.
+    //
+    // #1096 (2026-08-20) — when in full-screen mode the leaf zoom is
+    // moot (there's no chrome to zoom away from), so the button
+    // repurposes as a "compress = exit full-screen" affordance. Same
+    // inward-arrow glyph + cyan tint so mouse users have a click
+    // target for exiting; the tab strip is the only visible chrome
+    // left, so this is where it belongs. See click handler in
+    // `tui/mouse/down_left.rs` — special-cases `fullscreen_mode`.
     let is_zoomed_here = app.zoomed_leaf == Some(active);
+    let is_in_fullscreen = app.fullscreen_mode;
     let (max_glyph, max_color) = if nerd {
-        if is_zoomed_here {
-            // #1095 (2026-08-20, take 3) — user asked for the classic
-            // "four diagonal arrows pointing inward" look. Swap
-            // nf-md-fullscreen_exit → nf-fa-compress (U+F066),
-            // verified correct-mapping in shipping Symbols Nerd Font
-            // Mono. Iconic square + 4 inward diagonals.
+        if is_in_fullscreen || is_zoomed_here {
+            // Compress = exit-fullscreen / exit-zoom.
             ("\u{f066}", t.cyan)
         } else {
-            // Partner glyph — nf-fa-expand (U+F065): square + 4
-            // outward diagonals. Same FontAwesome pair VS Code /
-            // browsers / macOS use for fullscreen affordances.
+            // Expand = enter-zoom.
             ("\u{f065}", dim_fg)
         }
-    } else if is_zoomed_here {
+    } else if is_in_fullscreen || is_zoomed_here {
         ("]", t.cyan)
     } else {
         ("[", dim_fg)
