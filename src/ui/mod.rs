@@ -4963,11 +4963,18 @@ fn paint_leaf_tab_strip_with_hidden(
     let is_zoomed_here = app.zoomed_leaf == Some(active);
     let (max_glyph, max_color) = if nerd {
         if is_zoomed_here {
-            // nf-oct-screen_normal — the "shrink back" arrows.
-            ("\u{f066f}", t.cyan)
+            // #1095 (2026-08-20) — swap nf-oct-screen_normal (U+F066F)
+            // → nf-cod-screen_normal (U+EBB7). The octicons variant
+            // rendered as a Discord/chat-bubble in the user's Symbols
+            // Nerd Font Mono install (fallback into a different font
+            // table). Codicons is the VS Code icon set — literally
+            // the same glyph design VS Code uses for its own
+            // maximize/restore, and every Nerd Font ships them.
+            ("\u{ebb7}", t.cyan)
         } else {
-            // nf-oct-screen_full — the "expand outwards" arrows.
-            ("\u{f066e}", dim_fg)
+            // See above — nf-cod-screen_full (U+EBB6) replaces the
+            // broken nf-oct-screen_full (U+F066E).
+            ("\u{ebb6}", dim_fg)
         }
     } else if is_zoomed_here {
         ("]", t.cyan)
