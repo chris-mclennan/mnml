@@ -3989,7 +3989,89 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::DIM),
             ));
         }
+        // #1086 (2026-08-19) — version + update chip.
+        // Resolve the installed version via the manifest layer (which
+        // reads it from `~/.config/mnml/integrations/<id>.toml` at
+        // discovery time). Then consult the background update-check
+        // cache: if `latest > current`, append `→ <latest>  [ Update ]`
+        // as a clickable chip that fires the same `apply_integration_update`
+        // path as the right-click menu. Non-sibling built-ins (browser /
+        // claude_code / codex / http / search / …) have no manifest so
+        // render nothing. Cache-miss just shows `<current>` with no arrow.
+        let crate_id = crate::integration_detect::integration_binary_for_command(&icon.command)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| icon.id.clone());
+        let installed_version: Option<String> = app
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == icon.id)
+            .and_then(|m| m.version.clone());
+        let update_info: Option<(String, bool)> = app
+            .integration_updates
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&crate_id).cloned())
+            .and_then(|c| {
+                let is_upd = crate::app::integration_updates::is_update_available(&c);
+                if is_upd {
+                    Some((c.latest.clone(), true))
+                } else if !c.current.is_empty() {
+                    // Up-to-date with a known latest — nothing to
+                    // append past the current version.
+                    None
+                } else {
+                    None
+                }
+            });
+        let mut update_chip_rect: Option<(Rect, String)> = None;
+        if let Some(v) = installed_version.as_ref() {
+            name_spans.push(Span::styled(
+                format!("  {v}"),
+                Style::default().fg(t.comment).bg(bg),
+            ));
+            if let Some((latest, clickable)) = update_info {
+                name_spans.push(Span::styled(
+                    format!(" \u{2192} {latest}"),
+                    Style::default().fg(t.green).bg(bg),
+                ));
+                let chip_text = "  [ Update ]".to_string();
+                let chip_style = Style::default()
+                    .fg(t.green)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD);
+                if clickable {
+                    let prior_cols: usize = name_spans
+                        .iter()
+                        .map(|s| {
+                            use unicode_width::UnicodeWidthStr;
+                            UnicodeWidthStr::width(s.content.as_ref())
+                        })
+                        .sum();
+                    use unicode_width::UnicodeWidthStr;
+                    let chip_w = UnicodeWidthStr::width(chip_text.as_str()) as u16;
+                    let x0 = row1
+                        .x
+                        .saturating_add(prior_cols.min(u16::MAX as usize) as u16);
+                    let x_end = row1.x.saturating_add(row1.width);
+                    if x0 < x_end {
+                        update_chip_rect = Some((
+                            Rect {
+                                x: x0,
+                                y: row1.y,
+                                width: chip_w.min(x_end.saturating_sub(x0)),
+                                height: 1,
+                            },
+                            crate_id,
+                        ));
+                    }
+                }
+                name_spans.push(Span::styled(chip_text, chip_style));
+            }
+        }
         frame.render_widget(Paragraph::new(ratatui::text::Line::from(name_spans)), row1);
+        if let Some((rect, id)) = update_chip_rect {
+            app.rects.update_chip_rects.push((rect, id));
+        }
         // Register the whole row as a click target. The mouse
         // dispatcher in tui.rs walks the same `integration_icon_rects`
         // list it uses for the compact rail strip, so adding our row
@@ -4329,9 +4411,26 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     .and_then(|g| g.get(&entry.id).cloned())
                     .map(|c| {
                         if crate::app::integration_updates::is_update_available(&c) {
-                            (format!("  \u{2191} Update to {}", c.latest), t.green, true)
+                            // #1086 — show `current → latest` when we have
+                            // both, so the user knows how far behind they
+                            // are without hovering. Falls back to the
+                            // shorter form when current is missing (fresh
+                            // cache).
+                            let label = if !c.current.is_empty() {
+                                format!("  \u{2191} {} \u{2192} {}", c.current, c.latest)
+                            } else {
+                                format!("  \u{2191} Update to {}", c.latest)
+                            };
+                            (label, t.green, true)
                         } else {
-                            ("  \u{2713} Up to date".to_string(), t.comment, false)
+                            // Pin the version on "up to date" too so
+                            // users see WHAT they're up to date at.
+                            let label = if !c.current.is_empty() {
+                                format!("  \u{2713} {}", c.current)
+                            } else {
+                                "  \u{2713} Up to date".to_string()
+                            };
+                            (label, t.comment, false)
                         }
                     })
             } else {
