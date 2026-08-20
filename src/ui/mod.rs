@@ -4351,28 +4351,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(prov_fg).bg(bg),
                 ));
             }
-            // 2026-08-08 (renamed 2026-08-19, task #1055) — Ready chip.
-            // Interim source is `marketplace::ready_ids()`; eventual
-            // source is `ready = true` in each integration's own
-            // manifest so community authors can hide their in-progress
-            // crates. Also (as of #1055) the render loop above HIDES
-            // App entries with `ready = false` — this chip only ever
-            // paints when an entry survived that gate. Sits after the
-            // Official/Community chip.
-            //
-            // 2026-08-18 (R8-D-critic HIGH) — glyph + color differ from
-            // Official so the two chips are visually distinguishable at
-            // a glance. Star (yellow) reads as "author-vouched ready
-            // badge"; checkmark green stayed on Official
-            // (provenance-as-verifiable-truth). Prior render was two
-            // adjacent `✓` chips in identical green — indistinguishable
-            // as separate concepts.
-            if entry.ready {
-                name_spans.push(Span::styled(
-                    "  ★ Ready".to_string(),
-                    Style::default().fg(t.yellow).bg(bg),
-                ));
-            }
+            // 2026-08-19 (user feedback) — Ready badge dropped. Since
+            // the Ready gate above hides unready App entries entirely
+            // (they show only on the InDev tab), every row on the
+            // Marketplace tab is ready by construction. The badge was
+            // just visual noise on every single row. If the app-manifest-
+            // level `ready` bit ever lands (#1055 follow-up), community
+            // authors' unready entries surface elsewhere, not here.
             // 2026-08-15 — `[Private]` chip for CargoGit installs
             // (github_monorepo_apps source). Tells the user "this
             // isn't on crates.io — cargo will shell to git; make
