@@ -105,16 +105,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
     } else {
         for (i, account) in accounts.iter().enumerate() {
             let usage = &account.usage;
-            // Header shape: `── <name> ✎ · <email> · <org> · (active) ──`.
-            // Pencil is a discrete Span so we can pin the hitrect to
-            // its cell. Email + org come from Anthropic's OAuth
-            // `/api/oauth/profile` endpoint (best-effort populate on
-            // each fetch — `None` when the endpoint returns 404 or
-            // the token can't authenticate). When both `None` the
-            // header collapses to just `── <name> ✎ · (active) ──`.
-            let prefix = format!("── {} ", account.name);
-            let prefix_cells = prefix.chars().count() as u16;
-            let pencil = "\u{F040}"; // nf-fa-pencil — safer than F02EC across the Nerd Font builds we ship against
+            // #1103 f/u (2026-08-20) — active-account visual cues:
+            //   (A) `(active)` tail becomes a green bold pill.
+            //   (B) Left gutter accent bar (1 col `┃`) painted
+            //       alongside every row in the account's block —
+            //       green for active, dim for inactive. Together
+            //       they answer "which one is active" at a glance
+            //       and give clear vertical section boundaries.
+            let is_active = active_name_now.as_deref() == Some(account.name.as_str());
+            let gutter_style = if is_active {
+                Style::default().fg(t.green).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.bg_darker)
+            };
+            // #1103 f/u2 (2026-08-20) — heavier accent bar. `▌` (left
+            // half-block) renders as a solid pixel column vs the
+            // narrow line `┃` gave us; feels like a proper design-
+            // system gutter, not a text glyph.
+            let gutter_span = || Span::styled("▌ ", gutter_style);
+            // Helper: wrap a Line so every row in this account's
+            // block is prefixed with the gutter span. Consumes the
+            // input Line's spans and re-emits them after the gutter.
+            let with_gutter = |line: Line<'static>| -> Line<'static> {
+                let mut spans: Vec<Span<'static>> = vec![gutter_span()];
+                spans.extend(line.spans);
+                Line::from(spans)
+            };
+            // #1103 f/u2 (2026-08-20) — dropped the `── … ──` decoration
+            // (visual noise, not structure) and moved the `(active)`
+            // pill to the LEFT (right after the gutter) so the green
+            // gutter + green (active) pill sit adjacent — much
+            // punchier signal than a far-right label. Header shape:
+            //   active:   `▌ (active) <name> ✎ · <email> · <org>`
+            //   inactive: `▌ <name> ✎ · <email> · <org>`
+            let pencil = "\u{F040}"; // nf-fa-pencil
             // Build the identity middle-piece — `· email · org`,
             // any/all optional. Rendered in comment tone so it reads
             // as metadata not part of the header structure.
@@ -127,87 +151,97 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                 identity.push_str(" · ");
                 identity.push_str(org);
             }
-            let tail = if active_name_now.as_deref() == Some(account.name.as_str()) {
-                " · (active) ──".to_string()
-            } else {
-                " ──".to_string()
-            };
             let header_row_idx = rows.len();
-            rows.push(Line::from(vec![
-                Span::styled(
-                    prefix,
-                    Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
-                ),
-                // Pencil chip — subtly de-emphasized (comment tone
-                // + no bold) so it reads as an affordance, not part
-                // of the name. Hover-tinting would be nice; deferred
-                // to a follow-up.
-                Span::styled(pencil.to_string(), Style::default().fg(t.comment)),
-                Span::styled(identity, Style::default().fg(t.comment)),
-                Span::styled(tail, Style::default().fg(t.fg).add_modifier(Modifier::BOLD)),
-            ]));
+            let mut header_spans: Vec<Span<'static>> = vec![gutter_span()];
+            // Cumulative cell offset used to pin the pencil hitrect.
+            // Starts at 2 (gutter `▌ ` is 2 cells).
+            let mut cursor_cells: u16 = 2;
+            if is_active {
+                let pill = "(active) ";
+                header_spans.push(Span::styled(
+                    pill.to_string(),
+                    Style::default().fg(t.green).add_modifier(Modifier::BOLD),
+                ));
+                cursor_cells += pill.chars().count() as u16;
+            }
+            let name = format!("{} ", account.name);
+            let name_cells = name.chars().count() as u16;
+            header_spans.push(Span::styled(
+                name,
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+            ));
+            cursor_cells += name_cells;
+            let prefix_cells = cursor_cells;
+            header_spans.push(Span::styled(
+                pencil.to_string(),
+                Style::default().fg(t.comment),
+            ));
+            header_spans.push(Span::styled(identity, Style::default().fg(t.comment)));
+            rows.push(Line::from(header_spans));
             pencil_meta.push((header_row_idx, prefix_cells, account.name.clone()));
-            rows.push(Line::from(""));
+            rows.push(with_gutter(Line::from("")));
 
             // Session
-            rows.push(Line::from(Span::styled(
+            rows.push(with_gutter(Line::from(Span::styled(
                 "Current session".to_string(),
                 Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
-            )));
-            rows.push(bar_row(usage.percent, bar_w, &t));
-            rows.push(reset_row(usage.resets_at, &t));
-            rows.push(Line::from(""));
+            ))));
+            rows.push(with_gutter(bar_row(usage.percent, bar_w, &t)));
+            rows.push(with_gutter(reset_row(usage.resets_at, &t)));
+            rows.push(with_gutter(Line::from("")));
 
             // Weekly (all models)
-            rows.push(Line::from(Span::styled(
+            rows.push(with_gutter(Line::from(Span::styled(
                 "Current week (all models)".to_string(),
                 Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
-            )));
-            rows.push(bar_row(usage.weekly_percent, bar_w, &t));
-            rows.push(reset_row_weekly(usage.weekly_resets_at, &t));
-            rows.push(Line::from(""));
+            ))));
+            rows.push(with_gutter(bar_row(usage.weekly_percent, bar_w, &t)));
+            rows.push(with_gutter(reset_row_weekly(usage.weekly_resets_at, &t)));
+            rows.push(with_gutter(Line::from("")));
 
             // Per-model scoped limits (e.g. Fable)
             for scoped in &usage.scoped_limits {
-                rows.push(Line::from(Span::styled(
+                rows.push(with_gutter(Line::from(Span::styled(
                     format!("Current week ({})", scoped.model_display_name),
                     Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
-                )));
-                rows.push(bar_row(scoped.percent, bar_w, &t));
+                ))));
+                rows.push(with_gutter(bar_row(scoped.percent, bar_w, &t)));
                 if scoped.resets_at > 0 {
-                    rows.push(reset_row_weekly(scoped.resets_at, &t));
+                    rows.push(with_gutter(reset_row_weekly(scoped.resets_at, &t)));
                 }
-                rows.push(Line::from(""));
+                rows.push(with_gutter(Line::from("")));
             }
 
             // Retry-after — surfaced when Anthropic told THIS account
             // to back off.
             if usage.retry_after_at > now {
                 let remaining = usage.retry_after_at - now;
-                rows.push(Line::from(Span::styled(
+                rows.push(with_gutter(Line::from(Span::styled(
                     format!("  Anthropic asked us to retry in {}s (429)", remaining),
                     Style::default().fg(t.yellow),
-                )));
-                rows.push(Line::from(""));
+                ))));
+                rows.push(with_gutter(Line::from("")));
             }
 
             // Per-account empty state / stale-data hint
             if usage.percent == 0 && usage.weekly_percent == 0 && usage.scoped_limits.is_empty() {
-                rows.push(Line::from(Span::styled(
+                rows.push(with_gutter(Line::from(Span::styled(
                     match usage.last_error {
                         Some(ref e) => format!("no data yet · last error: {e}"),
                         None => "fetching…".to_string(),
                     },
                     Style::default().fg(t.comment),
-                )));
+                ))));
             } else if let Some(ref e) = usage.last_error {
-                rows.push(Line::from(Span::styled(
+                rows.push(with_gutter(Line::from(Span::styled(
                     format!("  last fetch error: {e}"),
                     Style::default().fg(t.red),
-                )));
+                ))));
             }
 
-            // Blank separator between accounts (skip after the last)
+            // Blank separator between accounts (skip after the last).
+            // Bare Line (no gutter) so the gap reads cleanly between
+            // one account's gutter and the next.
             if i + 1 < accounts.len() {
                 rows.push(Line::from(""));
             }

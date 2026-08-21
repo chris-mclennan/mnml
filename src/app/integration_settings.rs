@@ -110,7 +110,7 @@ impl App {
     /// env var AND whose stored `[auth_values]` value is non-empty,
     /// pair `env_fallback → stored value`. Fields with no
     /// env_fallback are skipped — those are pane-only values the
-    /// sibling would have to read from the manifest directly.
+    /// integration would have to read from the manifest directly.
     ///
     /// Skipping empty values means a user who cleared a field in
     /// the pane falls back to their shell's export (if any) rather
@@ -124,9 +124,9 @@ impl App {
         // integration's auth-values that name an env_fallback".
         // Rationale: many integrations share env conventions
         // (jira's Fix Versions view reads $BITBUCKET_ACCESS_TOKEN
-        // that the bitbucket sibling configures; git tools read
-        // $GITHUB_TOKEN that the github sibling configures). Without
-        // cross-integration sharing, each sibling that consumes a
+        // that the bitbucket integration configures; git tools read
+        // $GITHUB_TOKEN that the github integration configures). Without
+        // cross-integration sharing, each integration that consumes a
         // "foreign" env var had to redeclare it in its own [[auth]]
         // (bad UX — user re-enters the same token twice).
         //
@@ -215,7 +215,7 @@ impl App {
     /// contrast to `integration_auth_env`. Rationale: auth_env's
     /// cross-share is gated by `AuthField.env_fallback` — a
     /// declared, conventional env-var name (`$BITBUCKET_ACCESS_TOKEN`)
-    /// that other siblings are documented to consume. `override_env`
+    /// that other integrations are documented to consume. `override_env`
     /// has no such convention — keys are arbitrary — so cross-sharing
     /// would leak, say, a jira `[env]` block into every other
     /// integration's Pty spawn (including external-tool launchers
@@ -258,6 +258,34 @@ impl App {
             .ok()
             .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
             .and_then(|v| v.get("auth_values").cloned());
+        // #1103 f/u (2026-08-20) — false-positive guard fix. Many
+        // pre-`[auth]` integrations (mnml-tracker-jira, mnml-forge-*)
+        // persist their credentials in their OWN
+        // `~/.config/<binary>.toml` (+ sometimes a
+        // `~/.config/<binary>/token` sidecar), not in mnml's
+        // `[auth_values]` block. Before this fix, clicking the
+        // integration's chip fired the Configure pane every time — user
+        // hits "why is mnml asking me to set up Jira, I've been
+        // using it for months?".
+        //
+        // Heuristic: if the integration's canonical self-managed config
+        // file exists AND is non-empty, treat auth as satisfied
+        // regardless of mnml's `[auth_values]`. mnml can't parse
+        // each integration's config schema, so the presence check is
+        // the best we can do without a manifest-level opt-out
+        // (follow-up: add `[auth] self_configured = true` to the
+        // manifest schema for a stronger signal).
+        if let Some(binary) = manifest.binary.as_deref() {
+            let basename = binary.rsplit('/').next().unwrap_or(binary);
+            if let Some(home) = std::env::var_os("HOME") {
+                let config_toml = std::path::Path::new(&home)
+                    .join(".config")
+                    .join(format!("{basename}.toml"));
+                if config_toml.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                    return false;
+                }
+            }
+        }
         required.iter().any(|field| {
             let has_stored = stored
                 .as_ref()
@@ -320,6 +348,68 @@ impl App {
     /// `id` is the integration manifest id.
     pub fn accept_integration_configure(&mut self, id: &str) {
         self.open_integration_settings(id);
+    }
+
+    /// #1103 f/u7 (2026-08-20) — spawn `<binary> --diag` for the
+    /// given integration id. Resolves the manifest's binary, opens
+    /// a Pty pane, and runs the diag subcommand. If the integration
+    /// has no binary, toasts an explanation and no-ops. Called by:
+    ///   - chip context menu → "Run diagnostics"
+    ///   - palette command `integrations.diag`
+    ///   - picker → `open_integration_diag_picker` (2+ installed)
+    pub fn run_integration_diag(&mut self, integration_id: &str) {
+        let Some(binary) = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == integration_id)
+            .and_then(|m| m.binary.clone())
+        else {
+            self.toast(format!(
+                "integration `{integration_id}` has no binary — nothing to diagnose"
+            ));
+            return;
+        };
+        self.run_ex_command(&format!("term {binary} --diag"));
+        self.toast(format!("running diagnostics for `{integration_id}`…"));
+    }
+
+    /// Palette-command entry: enumerate every installed integration
+    /// that declares a binary. If none, toast; if one, run its
+    /// `--diag` directly; if many, open a picker.
+    pub fn open_integration_diag_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let matches: Vec<(String, String, String)> = self
+            .integration_manifests
+            .iter()
+            .filter(|m| m.binary.is_some())
+            .map(|m| {
+                let subtitle = m
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| m.binary.clone().unwrap_or_default());
+                (m.id.clone(), m.label.clone(), subtitle)
+            })
+            .collect();
+        match matches.len() {
+            0 => self.toast("No installed integration has a binary to diagnose."),
+            1 => self.run_integration_diag(&matches[0].0),
+            _ => {
+                let items: Vec<PickerItem> = matches
+                    .into_iter()
+                    .map(|(id, label, subtitle)| PickerItem::new(&id, label, subtitle))
+                    .collect();
+                self.open_picker(Picker::new(
+                    PickerKind::IntegrationDiag,
+                    "Run diagnostics — pick an integration",
+                    items,
+                ));
+            }
+        }
+    }
+
+    /// Picker-accept handler for `PickerKind::IntegrationDiag`.
+    pub fn accept_integration_diag(&mut self, id: &str) {
+        self.run_integration_diag(id);
     }
 
     /// Persist the current values to the manifest's TOML under

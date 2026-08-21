@@ -234,14 +234,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 }
             }
         };
-        // 2026-07-30 — was a per-row loop calling render_widget
-        // for a single-cell paragraph, TAB_H times. For 8 sessions
-        // × ~5 rows that's 40 tiny widgets per frame just for the
-        // accent bar. Collapsed to one Block covering all rows.
+        // #1103 f/u2 (2026-08-20) — thinner accent bar. Was a
+        // solid Block bg (full 1-cell wide) making the Sessions
+        // gutter noticeably thicker than the Claude Usage /
+        // activity-bar `▌` half-block. Standardized on `▌`
+        // system-wide for "this row is active/selected". Rendered
+        // as 4 stacked lines in a single Paragraph — one widget
+        // per session, no per-row loop.
+        //
+        // #1103 f/u3 (2026-08-20) — the accent renders at col 0 of
+        // the sessions panel (`area.x`) with `▌` filling the LEFT
+        // half of that cell. Content rows below start at `area.x
+        // + 1`, so no overpaint.
+        //
+        // User feedback (2026-08-20 continuation): once the accent
+        // narrowed from a full-cell solid block to the `▌` half-
+        // block, the residual half-cell gap to the activity bar's
+        // own `▌` read as visually crowded. Shift the accent one
+        // cell right (into what was the content's leading pad col)
+        // so a full DARK column sits between the two `▌`s. Content
+        // rows keep their `area.x + 1` origin — same as before, so
+        // the content just paints ON TOP of the same column the
+        // accent now occupies, with the accent cells serving as the
+        // implicit leading pad for each row. Sessions panel width
+        // stays the same.
+        let accent_lines: Vec<Line<'static>> = (0..TAB_H)
+            .map(|_| Line::from(Span::styled("▌", Style::default().fg(accent_color).bg(bg))))
+            .collect();
         frame.render_widget(
-            Block::default().style(Style::default().bg(accent_color)),
+            Paragraph::new(accent_lines),
             Rect {
-                x: area.x,
+                x: area.x + 1,
                 y,
                 width: 1,
                 height: TAB_H,
@@ -270,7 +293,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         });
         let unread = s.unread_bytes();
         let is_pinned = app.sessions_pinned.contains(&pid);
-        let mut name_spans = vec![Span::styled("  ", Style::default().bg(bg))];
+        // #1103 f/u4 (2026-08-20) — was `"  "` (2 spaces). After the
+        // accent moved from area.x → area.x+1 to gain visual breathing
+        // room from the activity bar, the row content shifted right
+        // by 1 col too — stacking with the 2-space leading pad meant
+        // "Claude Code" started 4 cells from the accent instead of 2.
+        // Drop to a single space so the visual gap between the green
+        // `▌` and the row text matches what it was before the shift.
+        let mut name_spans = vec![Span::styled(" ", Style::default().bg(bg))];
         if is_pinned {
             let pin_glyph = if !app.config.ui.ascii_icons {
                 "\u{F0403} "
@@ -309,9 +339,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(name_spans)),
             Rect {
-                x: area.x + 1,
+                x: area.x + 2,
                 y,
-                width: area.width - 1,
+                width: area.width.saturating_sub(2),
                 height: 1,
             },
         );
@@ -357,8 +387,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let pty_pid_opt = if s.is_exited() { None } else { s.pid() };
         for (row_off, line_text) in summary_lines.iter().enumerate().take(3) {
             let truncated = truncate_to_row(line_text);
+            // #1103 f/u4 (2026-08-20) — leading pad reduced from `"  "`
+            // to `" "` to match the name row post-accent-shift.
             let mut row_spans = vec![
-                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(truncated, Style::default().fg(summary_color).bg(bg)),
             ];
             // Ticket chip: append after the FIRST summary line only
@@ -372,9 +404,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 row_spans.push(Span::styled(ticket, Style::default().fg(t.cyan).bg(bg)));
             }
             let row_rect = Rect {
-                x: area.x + 1,
+                x: area.x + 2,
                 y: y + 1 + row_off as u16,
-                width: area.width - 1,
+                width: area.width.saturating_sub(2),
                 height: 1,
             };
             frame.render_widget(Paragraph::new(Line::from(row_spans)), row_rect);
@@ -389,8 +421,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .collect::<Vec<_>>()
                     .join(" ");
                 let chip_w = chip_text.chars().count() as u16;
-                let row2_x = area.x + 1;
-                let row2_w = area.width - 1;
+                let row2_x = area.x + 2;
+                let row2_w = area.width.saturating_sub(2);
                 if row2_w > chip_w + 6 {
                     let chip_rect = Rect {
                         x: row2_x + row2_w - chip_w - 1,
@@ -518,8 +550,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 new_rect,
             );
         }
+        // #1103 f/u4 (2026-08-20) — 3-space leading pad here vs 2
+        // before, to align the `+` with the `C` in the "Claude Code"
+        // row above (which now sits at area.x + 3 after the accent
+        // shifted right by 1 to make room for the sessions gutter).
         let line = Line::from(vec![
-            Span::styled("  ", Style::default().bg(chip_bg)),
+            Span::styled("   ", Style::default().bg(chip_bg)),
             Span::styled(
                 "+ New session",
                 Style::default()
