@@ -46,6 +46,107 @@ Sibling repo goes at `mnml-tracker-github` alongside the jira +
 linear ones. Integration manifest registers `<leader>ig` chord for
 "GitHub Issues: open". First-party family entry, not community.
 
+## Search / Find
+
+### Unified Telescope-style picker framework
+**Status:** design 2026-08-20 — highest-leverage of the search
+beef-up thread. Today we have several disjoint pickers that don't
+share code or UI: Ctrl+P (files, `PickerKind::File`), Ctrl+Shift+P
+(commands, `PickerKind::Command`), Find activity-bar section
+(grep, `App::search_*`), plus ~15 contextual pickers
+(`PickerKind::*` in `src/picker.rs`). Each has its own render,
+its own filter behavior, its own keybinds. NvChad users expect
+Telescope: one overlay, live preview pane on the right, fuzzy
+match, and cross-pivot (files → symbols → hits → def) with a
+single API surface.
+
+**Visual parity is a hard requirement.** The overlay should
+LOOK like Telescope so telescope users feel at home the moment
+they open it — same layout (filter+list on the left, preview on
+the right), same border/color idiom, same status footer (result
+count + source name + shortcut hints), same prompt-prefix
+chevron. Recognition matters more than novelty here.
+
+Shape:
+  - New `src/picker/framework.rs` — a `PickerSource` trait:
+    `fn query(&mut self, q: &str) -> Vec<PickerRow>` +
+    `fn preview(&self, row: &PickerRow) -> PreviewContent`
+    (rendered file excerpt, chunk of grep hit context, command
+    help text, …).
+  - Single overlay renderer: left = filter input + result list,
+    right = preview pane (togglable, ratio persisted per source).
+  - Migrate the 15+ `PickerKind` variants one at a time to the
+    new source trait; keep the old path working during migration.
+  - Cross-pivot chord: from any picker, `Tab` cycles the source
+    (files → commands → grep → symbols → …) without losing the
+    current query. This is the Telescope killer feature.
+  - Fuzzy matcher: `nucleo` or `fuzzy-matcher` (already used?
+    check). Rank by match quality + recency + pinned.
+
+Not planned v1: multi-select in every picker (only where it
+already exists — file picker for open-many); live filter debounce
+(matter-of-taste; start with fire-on-Enter for grep-shape, live
+for list-shape).
+
+### Find section upgrades
+**Status:** related to unified-picker but stands alone. Current
+Find (activity-bar section) is fire-on-Enter grep with a single
+input row and a hit list. Missing what a Telescope / VS Code
+user expects:
+  - Live preview pane (rendered before the framework lands — the
+    Find section is the highest-value pilot).
+  - Filters: case-sensitive toggle, whole-word, regex, path glob
+    include/exclude (`--iglob`), file-type filter (`--type rs`).
+    Chip row above the input like VS Code's search sidebar.
+  - Search history dropdown (last 20 queries, up-arrow to cycle).
+  - "Search in selection" (visual-mode) — restrict grep to the
+    currently-selected buffer range.
+  - Replace-across-hits with preview: type a replacement, see
+    every hit's before/after inline, Space to toggle per-hit,
+    Ctrl+Enter to commit all.
+  - Multi-workspace grep already works; surface the workspace
+    each hit came from in the row label.
+
+### Palette search polish
+**Status:** works well today; small quality wins outstanding.
+  - Recent/favorites weighting: bump commands used in the last
+    N days to the top when the query is empty; persist a
+    per-workspace usage counter in `.mnml/palette-usage.json`.
+  - Pane-scoped suggestions: when the current pane is a `Pty` /
+    `IntegrationDetail` / `HTTP request` / …, boost commands
+    relevant to that pane kind (`term.*`, `integrations.*`,
+    `http.*`) above generic ones for empty-query state.
+  - Keybinding hint alignment: right-align the chord glyphs so
+    the eye can scan them as a column instead of chasing them
+    across variable-width names.
+  - Fuzzy match highlighting: bold the matched characters in
+    the row label so the user sees WHY a row matched.
+
+### AST-aware search (tree-sitter queries)
+**Status:** niche but powerful. Ripgrep + regex handles 90% of
+real searches; the remaining 10% is structural — "find all
+function definitions matching X", "find call sites of `foo()`",
+"find `impl` blocks for trait Y", "find TODO comments" (already
+partly covered by the TODOs panel).
+
+Shape:
+  - `src/search/ast.rs` — thin wrapper over the tree-sitter
+    query APIs already used by `highlight.rs` + `hover.rs`.
+    One query per (language, intent) pair, stored under
+    `assets/queries/<lang>/<intent>.scm` (Neovim / Helix's
+    convention).
+  - Palette command `search.ast_symbol` → picker of the
+    workspace's symbols (functions, structs, impls, traits) by
+    fuzzy name.
+  - Palette command `search.ast_calls_of` → prompt for symbol
+    name, list all call sites across the workspace.
+  - Not planned v1: full LSP-based rename or refactor —
+    tree-sitter queries are best-effort text-shape matches,
+    not semantic. Rename stays LSP's job.
+
+Deferred behind the framework + Find upgrades — those two are
+per-user-benefit universal; AST helps a subset.
+
 ## Other (uncategorized)
 
 ### Cloud agents list: compact vs standard view modes

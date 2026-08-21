@@ -32,3 +32,15 @@ findings/
 # `.mnml/findings/*.md` viewer in demo mode). Everything else under
 # `findings/` remains local.
 !demo/workspace/.mnml/findings/
+
+# Throwaway sibling-config HOME + token stubs generated at record
+# time by demo/tapes/hero.record.sh so the Jira / Bitbucket siblings
+# hit the mock server instead of the developer's real Atlassian.
+# Regenerated on every `./run.sh demo-record` — don't commit.
+demo/tapes/.sibling-home/
+demo/tapes/sibling-tokens/
+
+# Per-frame PNG output from tape recordings (~200KB × N frames).
+# Regenerated from the .cast files via the recording pipeline — not
+# a source artifact. The rendered .gif is what ships.
+demo/tapes/frames/
