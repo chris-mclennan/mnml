@@ -156,6 +156,11 @@ pub enum PickerKind {
     /// integrations declare [[auth]] fields. Phase 3 polish for
     /// task #892 (2026-08-11).
     IntegrationConfigure,
+    /// `id` = the manifest id of the integration to diagnose.
+    /// Accept ⇒ spawn `<binary> --diag` in a Pty pane. Opened by
+    /// `integrations.diag` palette command when 2+ installed
+    /// integrations expose a binary. #1103 f/u7 (2026-08-20).
+    IntegrationDiag,
     /// `id` = the row index (as a string) into
     /// [`crate::app::App::pending_captured_rows`]. Accept ⇒ open
     /// the row as a `.curl` text in a new editor pane (formatted
@@ -307,6 +312,12 @@ pub struct Picker {
     pub query: String,
     /// Indices into `items`, filtered + sorted (best match first).
     filtered: Vec<usize>,
+    /// #1113 (2026-08-20) — matched char indices (into each row's
+    /// `label`) parallel to `filtered`, so the renderer can bold
+    /// the characters the fuzzy match hit. Empty vec when the
+    /// query is empty (nothing to highlight). Kept in lock-step
+    /// with `filtered` — every mutation of one mutates the other.
+    filtered_hits: Vec<Vec<usize>>,
     /// Index into `filtered`.
     pub selected: usize,
     /// First visible row (the view keeps `selected` on screen).
@@ -327,6 +338,7 @@ impl Picker {
             items,
             query: String::new(),
             filtered: Vec::new(),
+            filtered_hits: Vec::new(),
             selected: 0,
             scroll: 0,
             grid_cols: 0,
@@ -342,12 +354,17 @@ impl Picker {
         // file picker to pin local-workspace files above
         // cross-workspace recents whose shorter labels would
         // otherwise out-score the local entries.
-        let mut scored: Vec<(u8, i64, usize)> = self
+        // #1113 (2026-08-20) — carry the matched-char indices through
+        // the sort so the renderer can bold-highlight them on the
+        // selected + non-selected rows. Was: fuzzy_match's second
+        // tuple element (`_`) got dropped after scoring; the renderer
+        // then had no way to know WHY a row matched.
+        let mut scored: Vec<(u8, i64, usize, Vec<usize>)> = self
             .items
             .iter()
             .enumerate()
             .filter_map(|(i, it)| {
-                fuzzy_match(&self.query, &it.label).map(|(s, _)| (it.priority, s, i))
+                fuzzy_match(&self.query, &it.label).map(|(s, hits)| (it.priority, s, i, hits))
             })
             .collect();
         scored.sort_by(|a, b| {
@@ -355,9 +372,21 @@ impl Picker {
                 .then(b.1.cmp(&a.1)) // score desc
                 .then(a.2.cmp(&b.2)) // index asc
         });
-        self.filtered = scored.into_iter().map(|(_, _, i)| i).collect();
+        self.filtered_hits = scored.iter().map(|t| t.3.clone()).collect();
+        self.filtered = scored.into_iter().map(|(_, _, i, _)| i).collect();
         self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
         self.scroll = 0;
+    }
+
+    /// #1113 (2026-08-20) — matched char indices for the row at
+    /// visible position `row` (i.e. `filtered[row]`). Empty when
+    /// the query is empty. Used by the renderer to bold-highlight
+    /// exactly the characters the fuzzy match hit.
+    pub fn matched_indices(&self, row: usize) -> &[usize] {
+        self.filtered_hits
+            .get(row)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn items_view(&self) -> impl Iterator<Item = &PickerItem> {
@@ -468,6 +497,37 @@ mod tests {
         pk.backspace();
         pk.backspace();
         assert_eq!(pk.len(), 3);
+    }
+
+    /// #1113 (2026-08-20) — the renderer relies on `matched_indices`
+    /// to bold the fuzzy-match hits per row. Regression guard: after
+    /// refilter, the indices returned map into the row's `label`,
+    /// point at case-insensitive character positions the query hit,
+    /// and stay in lock-step order with `filtered`.
+    #[test]
+    fn matched_indices_return_hits_per_visible_row() {
+        let mut pk = p();
+        pk.type_char('s');
+        pk.type_char('a');
+        pk.type_char('v');
+        assert_eq!(pk.selected_item().unwrap().id, "file.save");
+        let hits = pk.matched_indices(0);
+        assert_eq!(hits.len(), 3, "expected 3 matched chars for 'sav'");
+        let label: Vec<char> = pk.selected_item().unwrap().label.chars().collect();
+        for &i in hits {
+            assert!(
+                label[i].eq_ignore_ascii_case(&'s')
+                    || label[i].eq_ignore_ascii_case(&'a')
+                    || label[i].eq_ignore_ascii_case(&'v'),
+                "index {i} points at {:?} which isn't in the needle",
+                label[i]
+            );
+        }
+        // Empty query → no hits.
+        pk.backspace();
+        pk.backspace();
+        pk.backspace();
+        assert!(pk.matched_indices(0).is_empty());
     }
 
     #[test]

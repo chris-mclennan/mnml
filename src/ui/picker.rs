@@ -161,11 +161,49 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         if is_sel {
             label_style = label_style.add_modifier(Modifier::BOLD);
         }
-        let mut spans = vec![
-            Span::styled(marker, Style::default().fg(theme::cur().blue).bg(bg)),
-            Span::styled(label, label_style),
-            Span::styled(" ".repeat(gap), Style::default().bg(bg)),
-        ];
+        // #1113 (2026-08-20) — split the label into per-char spans
+        // so the fuzzy-match hits paint bold+cyan while everything
+        // else keeps the base style. Matched indices are into the
+        // ORIGINAL label — intersect with the visible-truncated
+        // range so a wide row that got clipped doesn't out-index.
+        // Empty hits (no query, or picker kind without match data)
+        // fall through to a single-span label — same visual as
+        // before this change.
+        let hits = picker.matched_indices(row);
+        let hit_style = Style::default()
+            .fg(theme::cur().cyan)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD);
+        let mut spans: Vec<Span> = Vec::with_capacity(2 + label.chars().count() + 2);
+        spans.push(Span::styled(
+            marker,
+            Style::default().fg(theme::cur().blue).bg(bg),
+        ));
+        if hits.is_empty() {
+            spans.push(Span::styled(label, label_style));
+        } else {
+            let hit_set: std::collections::HashSet<usize> = hits.iter().copied().collect();
+            let mut run = String::new();
+            let mut run_hit = false;
+            for (idx, ch) in label.chars().enumerate() {
+                let is_hit = hit_set.contains(&idx);
+                if is_hit != run_hit && !run.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut run),
+                        if run_hit { hit_style } else { label_style },
+                    ));
+                }
+                run_hit = is_hit;
+                run.push(ch);
+            }
+            if !run.is_empty() {
+                spans.push(Span::styled(
+                    run,
+                    if run_hit { hit_style } else { label_style },
+                ));
+            }
+        }
+        spans.push(Span::styled(" ".repeat(gap), Style::default().bg(bg)));
         if dw > 0 {
             spans.push(Span::styled(
                 format!("{detail} "),
