@@ -183,6 +183,30 @@ impl App {
             "Split up",
             MenuAction::SplitTabInto(id, DropZone::Top),
         ));
+        // #906 slice C (2026-08-20) — offer "Move to bottom panel"
+        // for pane kinds that render with a right-panel-style draw
+        // fn (Outline / Diagnostics / IntegrationDetail /
+        // ClaudeUsage / CodexUsage / Tests / Grep). Other kinds hit
+        // the "not hostable yet" fallback in draw_bottom_panel, so
+        // hide the item rather than lead users to a dead-end.
+        let hostable = matches!(
+            self.panes.get(id),
+            Some(
+                Pane::Outline(_)
+                    | Pane::Diagnostics(_)
+                    | Pane::IntegrationDetail(_)
+                    | Pane::ClaudeUsage(_)
+                    | Pane::CodexUsage(_)
+                    | Pane::Tests(_)
+                    | Pane::Grep(_)
+            )
+        );
+        if hostable {
+            items.push(MenuItem::new(
+                "Move to bottom panel",
+                MenuAction::HostInBottomPanel(id),
+            ));
+        }
         // Claude / Codex / shell tabs can be renamed from here too.
         // mouse-round-7 SEV-3 2026-07-12 — plus the terminal-native
         // Restart (kill+respawn) / Clear (Ctrl+L) / Interrupt (Ctrl+C)
