@@ -8574,6 +8574,24 @@ impl App {
                 ));
             }
         }
+        // #1045 f/u (2026-08-21) — forward the chevron/triangle pref
+        // via `profile.env` instead of round-tripping through process
+        // env. Was: settings.rs called `unsafe std::env::set_var`
+        // whenever the user toggled the pref, but by then background
+        // workers were already spawning child processes and their
+        // fork/exec reads global `environ` — the exact edition-2024
+        // hazard `set_var` is marked unsafe for. Reading a shared
+        // config field is race-free.
+        if !profile
+            .env
+            .iter()
+            .any(|(k, _)| k == "MNML_EXPAND_INDICATOR")
+        {
+            profile.env.push((
+                "MNML_EXPAND_INDICATOR".to_string(),
+                self.config.ui.expand_indicator.clone(),
+            ));
+        }
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {

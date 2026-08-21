@@ -283,8 +283,6 @@ impl App {
         }
     }
 
-    /// Drain worker replies from any pending launcher-install
-    /// fetches. Called each tick. Successful installs refresh the
     /// Audit + repair `mnml-*` integration binaries that PATH resolves to
     /// a copy OTHER than `~/.cargo/bin/`. This is the root of the
     /// "why does my Amplify label keep reverting to the old one" bug:

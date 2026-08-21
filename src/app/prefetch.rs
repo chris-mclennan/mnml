@@ -61,11 +61,13 @@ pub fn prefetch_cache_path(integration_id: &str, prefetch_id: &str) -> Option<Pa
     prefetch_dir().map(|d| d.join(format!("{integration_id}-{prefetch_id}.json")))
 }
 
-/// One work item the App fans out to the worker fleet. Fields
-/// beyond `stagger_secs` are captured for the worker-thread body
-/// (not yet wired) — kept as owned strings so the worker moves
-/// them across the thread boundary. Suppress dead-code lint until
-/// that wiring lands.
+/// One work item the App fans out to the worker fleet. All fields
+/// are read by `run_prefetch_worker` (in the `#[cfg(not(test))]`
+/// build). Under `#[cfg(test)]`, `spawn_prefetch_worker` is a no-op
+/// stub that ignores `job` — so every field appears unused to
+/// clippy in the test build. `#[allow(dead_code)]` here suppresses
+/// the test-build lint without hiding real unused-field regressions
+/// in the prod path (those still show up under `cargo build`).
 #[allow(dead_code)]
 struct PrefetchJob {
     integration_id: String,

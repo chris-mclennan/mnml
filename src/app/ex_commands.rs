@@ -1687,6 +1687,16 @@ impl App {
                     // without threading manifest context.
                     let cmdline = rest.trim();
                     let first = cmdline.split_whitespace().next().unwrap_or("term");
+                    // #1099 f/u v3 (2026-08-21) — take() the integration
+                    // hint at the TOP of the handler, before the dedup
+                    // early return. Was: hint was `.take()`en further
+                    // down after chip lookup, but the "already open,
+                    // just focus" path returned before that ran. Result:
+                    // a second chip click for the same integration left
+                    // the hint stashed on App, and the next unrelated
+                    // hand-typed `:term <cmd>` inherited it and got
+                    // mis-iconed with the stale integration's identity.
+                    let hinted = self.pending_term_integration_hint.take();
                     // 2026-07-03 — if a Pty pane is already running
                     // this exact cmdline (e.g. the user clicked the
                     // Amplify chip a second time), focus it instead
@@ -1748,10 +1758,9 @@ impl App {
                     // fire, statusline segment click, keybind) set
                     // the hint on App just before invoking us, use
                     // THAT integration's chip verbatim — no
-                    // guessing at exact-cmdline or binary. Consume
-                    // the hint immediately so the next `:term` (if
-                    // any) doesn't inherit stale state.
-                    let hinted = self.pending_term_integration_hint.take();
+                    // guessing at exact-cmdline or binary. The hint
+                    // is `.take()`en above (before the dedup early
+                    // return) — see #1099 f/u v3.
                     let hinted_chip = hinted.as_deref().and_then(|id| {
                         self.config
                             .ui

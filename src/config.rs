@@ -2660,18 +2660,13 @@ impl Config {
                 self.ui.expand_indicator = normalized;
             }
         }
-        // #1045 (2026-08-20) — publish the setting to our process env
-        // so every child pty (integrations) inherits it via
-        // `MNML_EXPAND_INDICATOR`. See `pty_pane.rs::spawn`.
-        //
-        // SAFETY: `std::env::set_var` is unsafe as of Rust edition
-        // 2024 due to global-mutable-state hazards on non-glibc
-        // platforms. We touch it only here (config load) + at the
-        // settings-mutator write site, both single-threaded early-
-        // paint contexts before any child spawn or reader.
-        unsafe {
-            std::env::set_var("MNML_EXPAND_INDICATOR", &self.ui.expand_indicator);
-        }
+        // #1045 f/u (2026-08-21) — no env-var side-effect at config
+        // load either. Pty spawn reads `self.config.ui.expand_indicator`
+        // directly and stamps it on `profile.env` (see
+        // `App::open_pty_dir`). Was: touching `unsafe std::env::set_var`
+        // as global mutable state, which is unsound once background
+        // threads start fork/exec — even at "startup" the reqwest /
+        // ai-usage threads spawn before every possible Pty spawn.
         if let Some(h) = raw.ui.hover_help_height {
             // Clamp to sane bounds — below 3 breaks the title+body
             // layout, above 20 crowds the tree.
