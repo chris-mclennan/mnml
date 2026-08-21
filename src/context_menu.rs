@@ -106,6 +106,13 @@ pub enum MenuAction {
     /// the current value; accept writes to
     /// `<workspace>/.mnml/integrations/<id>.toml`.
     SetIntegrationLauncher(String),
+    /// #1103 f/u7 (2026-08-20) — spawn `<binary> --diag` as a Pty
+    /// pane. Every integration that follows the mnml-bridge SDK
+    /// contract supports the `--diag` subcommand; the output is a
+    /// human-readable auth / config / runtime tree. Payload is the
+    /// integration id — mnml resolves it to `manifest.binary` and
+    /// dispatches via `:term <binary> --diag`.
+    RunIntegrationDiag(String),
     /// #1102 (2026-08-20) — reorder a dynamic statusline segment
     /// in `[ui] statusline_segment_order`. Payload: (segment_id,
     /// delta) where `delta = -1` moves left, `+1` moves right. The
@@ -301,6 +308,12 @@ pub enum MenuAction {
     /// new half. Direction is the DropZone (Left/Right/Top/Bottom).
     /// Used by tab right-click "Split Right / Down / Left / Up".
     SplitTabInto(PaneId, crate::app::tab_drop::DropZone),
+    /// #906 slice C (2026-08-20) — dock the pane at `PaneId` into
+    /// the bottom panel. Used by tab right-click "Move to bottom
+    /// panel". Only offered when the pane kind has a right-panel-
+    /// style draw fn — see the `hostable` guard in
+    /// `open_tab_context_menu`.
+    HostInBottomPanel(PaneId),
     /// Open the CloudAgentRun detail pane for a row at `idx` in
     /// `cloud_agents_rows`. Used by the managed-agent right-click
     /// menu's "View details" entry.

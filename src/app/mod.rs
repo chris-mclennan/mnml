@@ -70,6 +70,7 @@ pub(crate) mod integration_updates;
 mod marketplace_methods;
 mod notify_methods;
 mod playwright;
+pub(crate) mod prefetch;
 mod pty_methods;
 mod scm;
 mod session;
@@ -779,6 +780,42 @@ struct SavedSession {
     /// Persist the `view.toggle_hidden` choice. `None` ⇒ use the launch default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_show_hidden: Option<bool>,
+    /// #1101 (2026-08-20) — active activity-bar section (Explorer /
+    /// Find / Git / …). Stored as the section's kebab-case name so
+    /// the enum can be reordered without breaking older session
+    /// files. `None` ⇒ default to Explorer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_section: Option<String>,
+    /// #1101 (2026-08-20) — full-screen mode (task #1096) toggled
+    /// via F11-style command; user who quit while zoomed expects to
+    /// come back zoomed. Only serialized when true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fullscreen_mode: Option<bool>,
+    /// #1101 (2026-08-20) — bottom panel state (task #906 Phase 1).
+    /// Mirrors the right-panel triplet. `bottom_panel_panes` isn't
+    /// persisted (PaneIds don't survive a restart); when the panel
+    /// re-opens empty the user re-routes panes into it manually.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bottom_panel_visible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bottom_panel_height: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bottom_panel_active_idx: Option<usize>,
+    /// #1101 (2026-08-20) — palette `★` recents (task #1113).
+    /// Capped at 50 on save. Empty ⇒ absent field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recent_commands: Option<Vec<String>>,
+    /// #1112 (2026-08-20) — search-section flag toggles + MRU query
+    /// history. Only serialized when at least one flag is on or
+    /// history is non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_case_sensitive: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_whole_word: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_regex: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_history: Option<Vec<String>>,
     /// Per-extra-workspace state (parallel to `App::extra_workspaces` by
     /// index). Restored by name match — a workspace renamed between
     /// sessions silently drops its persisted state.
@@ -1094,16 +1131,47 @@ pub(crate) fn grep_workspace(
     workspace: &std::path::Path,
     query: &str,
 ) -> (Vec<crate::grep_pane::GrepHit>, &'static str) {
+    grep_workspace_with_flags(workspace, query, GrepFlags::default())
+}
+
+/// #1112 (2026-08-20) — Search-section flags plumbed through to
+/// ripgrep. Each toggle maps to a specific `rg` flag; ordering
+/// matches the palette-chip render order.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct GrepFlags {
+    /// Off = `--smart-case` (rg default that upgrades on any
+    /// uppercase char in the query — what most users want). On =
+    /// `--case-sensitive`, no folding.
+    pub case_sensitive: bool,
+    /// `--word-regexp` — the query must match on word boundaries.
+    pub whole_word: bool,
+    /// Without this we pass `--fixed-strings` so regex metachars in
+    /// the query mean themselves. With it, rg parses the query as
+    /// its usual PCRE-ish regex.
+    pub regex: bool,
+}
+
+pub(crate) fn grep_workspace_with_flags(
+    workspace: &std::path::Path,
+    query: &str,
+    flags: GrepFlags,
+) -> (Vec<crate::grep_pane::GrepHit>, &'static str) {
     use crate::grep_pane::parse_rg_vimgrep;
     use std::process::Command;
-    let rg_out = Command::new("rg")
-        .arg("--vimgrep")
-        .arg("--no-heading")
-        .arg("--smart-case")
-        .arg(query)
-        .arg(".")
-        .current_dir(workspace)
-        .output();
+    let mut rg = Command::new("rg");
+    rg.arg("--vimgrep").arg("--no-heading");
+    if flags.case_sensitive {
+        rg.arg("--case-sensitive");
+    } else {
+        rg.arg("--smart-case");
+    }
+    if flags.whole_word {
+        rg.arg("--word-regexp");
+    }
+    if !flags.regex {
+        rg.arg("--fixed-strings");
+    }
+    let rg_out = rg.arg(query).arg(".").current_dir(workspace).output();
     let rg_spawned = rg_out.is_ok();
     if let Ok(o) = &rg_out
         && o.status.success()
@@ -1669,7 +1737,7 @@ pub enum ActivitySection {
     /// pane. v1 = read-only list; v2 = right-click menu (archive
     /// / delete / mark reviewed).
     Findings,
-    /// A manifest-registered Mount sibling — the u16 indexes
+    /// A manifest-registered Mount integration — the u16 indexes
     /// into `App::mount_manifests`. Icon, color, tooltip, and
     /// binary come from the manifest. Manifest mounts render
     /// in the activity bar after the builtin sections.
@@ -1964,7 +2032,7 @@ pub struct PaneRects {
     pub right_panel_empty_test: Option<Rect>,
     /// `+` chip just after the user's integration icons in the
     /// palette bar's gap area. Click → `integrations.add`
-    /// (opens the discovery overlay so the user can add a sibling).
+    /// (opens the discovery overlay so the user can add an integration).
     pub palette_add_integration_button: Option<Rect>,
     pub palette_back_button: Option<Rect>,
     /// Forward button (`→`) in the palette top-bar — `buffer.next`.
@@ -1997,6 +2065,11 @@ pub struct PaneRects {
     /// Click → opens that file at its line/col via
     /// `App::search_section_open_hit`. Cleared + rebuilt every draw.
     pub search_section_hit_rects: Vec<(Rect, usize)>,
+    /// #1112 f/u (2026-08-21) — three toggle chips (case / word /
+    /// regex) rendered inline in the search-section header row.
+    /// Char is `c` / `w` / `r`. Click dispatches to the matching
+    /// palette command so the state flip + toast + rerun all fire.
+    pub search_section_flag_rects: Vec<(Rect, char)>,
     /// `> INTEGRATIONS` rail-section header — clickable toggle that
     /// flips `App.integration_section_expanded` (same pattern as
     /// `tree_toggle` / `git_section_toggle`).
@@ -2234,9 +2307,9 @@ pub struct PaneRects {
     /// through and the only close path was Ctrl+Shift+J.
     pub bottom_panel_close: Option<Rect>,
     /// 2026-07-09 user request — `+ Add integration` chip at the
-    /// bottom of the Integrations panel. Click → sibling install
+    /// bottom of the Integrations panel. Click → integration install
     /// picker. Prior to this the flow was
-    /// `:sibling.install` palette-only, which is undiscoverable.
+    /// `:integration.install` palette-only, which is undiscoverable.
     pub integrations_add_chip: Option<Rect>,
     /// 2026-07-31 — `Pane::IntegrationDetail` button rects. Each
     /// entry is `(rect, pane_id, button_idx)` where `button_idx`
@@ -3279,7 +3352,7 @@ pub struct BlockInsertState {
     pub append: bool,
 }
 
-/// One additional workspace surfaced as a sibling section in the rail
+/// One additional workspace surfaced as a integration section in the rail
 /// alongside the primary launched workspace. Each carries its own
 /// gitignore-aware [`Tree`] plus the expand/collapse state for the section
 /// header. Repos discovered under `root` get unioned into [`App::repos`].
@@ -3489,7 +3562,7 @@ pub enum SegmentSide {
     Right,
 }
 
-/// A sibling-authored statusline segment. Kept simple: the render
+/// A integration-authored statusline segment. Kept simple: the render
 /// pass reads the current `text` and computes width against
 /// [min_width, max_width]. When space is tight (competing
 /// segments overflow the available lane), lower-priority segments
@@ -3542,7 +3615,7 @@ pub enum ProgressStatus {
 /// One in-flight progress notification. Rendered above the toast
 /// stack with an animated Braille spinner (or a final-status
 /// glyph after `progress_end`). Keyed by external `id` so the
-/// sibling can call `progress_update` with the same id to nudge
+/// integration can call `progress_update` with the same id to nudge
 /// the label / percentage.
 #[derive(Debug, Clone)]
 pub struct ProgressItem {
@@ -3590,7 +3663,7 @@ pub struct App {
     /// user isn't surprised by a stale zoom on the new tab.
     pub zoomed_leaf: Option<PaneId>,
     pub tree: Tree,
-    /// Additional workspace trees rendered as sibling sections below the
+    /// Additional workspace trees rendered as integration sections below the
     /// primary `> WORKSPACE-NAME` section in the rail. Each entry comes from
     /// a `[[workspaces]]` config entry. The primary workspace itself isn't
     /// in this list — it's [`Self::workspace`] + [`Self::tree`]. Repos
@@ -3696,13 +3769,13 @@ pub struct App {
     /// tree + integrations + git). Toggled via the 4-cell vertical
     /// strip on the far left of the rail.
     pub active_section: ActivitySection,
-    /// Manifest-registered Mount siblings discovered at startup.
+    /// Manifest-registered Mount integrations discovered at startup.
     /// One entry per `mnml.toml` under
     /// `<ws>/.mnml/mounts/` + `~/.config/mnml/mounts/`. Rendered
     /// as extra activity-bar icons after the builtins. Indexed
     /// by `ActivitySection::Mount(u16)`.
     pub mount_manifests: Vec<crate::mount_manifest::MountManifest>,
-    /// Manifest-registered integration siblings discovered at
+    /// Manifest-registered integrations discovered at
     /// startup. One entry per `<id>.toml` under
     /// `<ws>/.mnml/integrations/` + `~/.config/mnml/integrations/`.
     /// Chips are merged into `config.ui.integration_icons` and
@@ -3710,7 +3783,19 @@ pub struct App {
     /// kept so `integrations.refresh` can re-scan without
     /// restart.
     pub integration_manifests: Vec<crate::integration_manifest::IntegrationManifest>,
-    /// 2026-07-31 — sibling-icons SDK. Discovered SVGs under
+    /// #1102 f/u (2026-08-20) — authoritative "current version" per
+    /// integration binary, resolved by invoking `<binary> --version` at
+    /// manifest-load time and parsing the last whitespace-separated
+    /// token (clap's default format: `mnml-forge-bitbucket 0.3.22`).
+    /// Keyed by binary basename (multiple integrations can share one
+    /// binary — bitbucket_prs + bitbucket_pipelines both run
+    /// mnml-forge-bitbucket). Manifest's `version =` field becomes a
+    /// fallback hint only; this cache is the source of truth for the
+    /// Installed row + detail-page byline. Populated by
+    /// `refresh_binary_version_cache`, cleared + repopulated after
+    /// `refresh_integration_manifests` and `apply_integration_update`.
+    pub binary_version_cache: std::collections::HashMap<String, String>,
+    /// 2026-07-31 — integration-icons SDK. Discovered SVGs under
     /// `~/.config/mnml/glyphs/` populated at startup + on
     /// `integrations.refresh`. `Vec<(id, absolute_path)>`, sorted
     /// stably by id. The parallel [`Self::integration_glyph_codepoints`]
@@ -3724,7 +3809,7 @@ pub struct App {
     pub integration_glyph_codepoints: std::collections::HashMap<String, u32>,
     /// Notification badges on activity-bar sections — keyed by
     /// the section's serialized id (e.g. `"agents"`, `"cloud_agents"`,
-    /// manifest mount id). Set by siblings via the
+    /// manifest mount id). Set by integrations via the
     /// `set-activity-badge` IPC command. `count = 0` clears
     /// (we remove the key on zero to keep the map tidy).
     pub activity_badges: std::collections::HashMap<String, u32>,
@@ -3776,6 +3861,15 @@ pub struct App {
     /// the unit + e2e suites don't stack un-joined worker threads
     /// (matches the `spawn_coverage_s3_syncer` gating pattern).
     pub integration_updates_waker: Option<crate::app::integration_updates::UpdateWaker>,
+    /// #993 step 2b (2026-08-20) — background tick for auto-update
+    /// firing. Records the last wall-clock at which `tick_auto_updates`
+    /// evaluated the plan, so the check runs at most once per
+    /// `AUTO_UPDATE_TICK_INTERVAL_SECS` regardless of how many
+    /// event-loop iterations occur between. `None` until the first
+    /// tick fires. In test builds the tick is a no-op (same reason as
+    /// the update-check worker gating above — avoid stacking
+    /// long-running side-effects in unit runs).
+    pub last_auto_update_tick_at: Option<std::time::Instant>,
     /// 2026-08-06 — README cache for the integration-detail pane.
     /// Keyed by integration id. `Loading` = worker spawned but not
     /// yet delivered. `Text` = fetched body. `NotFound` = fetch
@@ -3855,6 +3949,29 @@ pub struct App {
     /// dispatch in `tui.rs` routes printables into the query buffer
     /// instead of the editor / overlay.
     pub search_input_focused: bool,
+    /// #1112 (2026-08-20) — Search section flags. Wired into the
+    /// ripgrep invocation via `grep_workspace_with_flags`; toggled
+    /// by chips rendered in the search-section toolbar. Session-
+    /// persisted so a user who prefers regex mode keeps it across
+    /// restarts (via `search_flags` in SavedSession).
+    ///
+    /// `case_sensitive`: swaps `--smart-case` for `--case-sensitive`
+    /// (default off = smart-case, which is what most users want).
+    /// `whole_word`: adds `--word-regexp`.
+    /// `regex`: without this, ripgrep treats the query as a fixed
+    /// string (`--fixed-strings`).
+    pub search_case_sensitive: bool,
+    pub search_whole_word: bool,
+    pub search_regex: bool,
+    /// #1112 (2026-08-20) — MRU of past queries. Up/Down inside the
+    /// input cycles it. Capped at 20. Deduped on push. Session-
+    /// persisted so history survives a restart.
+    pub search_history: Vec<String>,
+    /// Index into `search_history` when navigating with Up/Down.
+    /// `None` = not navigating; `Some(i)` = current position (0 =
+    /// most recent). Reset on any input mutation other than history
+    /// nav so a fresh Up walks from the top again.
+    pub search_history_cursor: Option<usize>,
     /// Git activity-bar section: inline commit-message buffer + focus.
     /// Submit (Ctrl+Enter or the [ Commit ] button) calls
     /// `crate::git::commit::commit` against the active repo. Cleared
@@ -4212,7 +4329,7 @@ pub struct App {
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
     /// Independent of [`Self::tree_visible`] (which controls the rail itself,
-    /// `Ctrl+B`). Future sibling sections (OUTLINE, TIMELINE, …) would each
+    /// `Ctrl+B`). Future integration sections (OUTLINE, TIMELINE, …) would each
     /// own their own expanded flag here.
     pub tree_root_expanded: bool,
     /// The persistent `GIT` section in the rail — local branches + worktrees,
@@ -4246,7 +4363,7 @@ pub struct App {
     pub last_image_paints: Vec<(crate::layout::PaneId, ratatui::layout::Rect)>,
     /// Cross-host PR cache — populated by the `pr.picker` palette
     /// command (which fans out to every installed `mnml-forge-*`
-    /// sibling via their `--list-prs --json` headless mode). Read
+    /// integration via their `--list-prs --json` headless mode). Read
     /// by [`Self::refresh_rail_pulls`] to populate the rail's
     /// "Open PRs" subsection. `None` until first refresh; stale
     /// after `ScmPrCache::MAX_AGE` (5 min) and refreshed lazily.
@@ -4344,13 +4461,13 @@ pub struct App {
     /// Keyed by external `id`; a repeat `toast_persistent(id, …)`
     /// with the same id updates the entry in place.
     pub persistent_toasts: Vec<ToastEntry>,
-    /// In-flight progress notifications from siblings. Rendered
+    /// In-flight progress notifications from integrations. Rendered
     /// above the toast stack with an animated Braille spinner.
     /// Keyed by external `id` so `progress_update` and
     /// `progress_end` can find the item. Auto-purged
     /// PROGRESS_END_FADE after finishing.
     pub progress_items: Vec<ProgressItem>,
-    /// Sibling-authored statusline segments. Hybrid packing at
+    /// Integration-authored statusline segments. Hybrid packing at
     /// render time: sorted by priority desc, allocated their
     /// `max_width` while budget allows, dropped when the remaining
     /// budget < `min_width`. Left- and right-side segments compete
@@ -4384,10 +4501,15 @@ pub struct App {
     /// `MAX_POLL_SECS=3600` (one hour) until they wake naturally on
     /// the next sleep-cycle. Cleared on re-init.
     pub statusline_segment_worker_shutdowns: Vec<std::sync::mpsc::Sender<()>>,
+    /// #1117 (2026-08-21) — sibling of the above for the prefetch
+    /// worker fleet. Same shape / same lifecycle — cleared on
+    /// integration manifest re-merge to drop the previous
+    /// generation of workers.
+    pub prefetch_worker_shutdowns: Vec<std::sync::mpsc::Sender<()>>,
     /// Ids currently written to `dynamic_segments` by the
     /// manifest-segment render pass. Lets us CLEAR only what we
     /// own (never a segment set by an IPC `statusline_set_segment`
-    /// call from a sibling) when an integration is uninstalled or
+    /// call from an integration) when an integration is uninstalled or
     /// disabled between ticks.
     pub statusline_segment_managed_ids: std::collections::HashSet<String>,
     /// OS notifications queued this tick — drained + emitted as
@@ -4422,7 +4544,7 @@ pub struct App {
     /// without needing to thread Result types through every handler
     /// closure.
     ///
-    /// Bug-hunt SEV-3 fix 2026-06-07: `forge.open_lambda` + siblings
+    /// Bug-hunt SEV-3 fix 2026-06-07: `forge.open_lambda` + integrations
     /// used to report `ok=true` even when the underlying `:term`
     /// failed (binary not on PATH); headless callers + plugin
     /// authors couldn't tell.
@@ -5462,6 +5584,16 @@ pub struct App {
     pub dynamic_commands: Vec<crate::command::DynCommand>,
     /// Plugin-command ids invoked since the IPC layer last drained them.
     pending_plugin_invocations: Vec<String>,
+    /// #1099 f/u (2026-08-20) — rigid chip-to-tab link. Set by
+    /// `run_dynamic_command` right before it forwards a manifest-
+    /// registered command's `ex_run` (a `:term ...` line) into the
+    /// ex-command handler; consumed + cleared by the `:term`
+    /// handler when it stamps the pty profile. Replaces the
+    /// pre-existing heuristic that scanned `integration_icons`
+    /// for a chip whose command string matched by binary, which
+    /// picked whichever chip enumerated first when several chips
+    /// share one binary (`bitbucket_prs` / `bitbucket_pipelines`).
+    pub pending_term_integration_hint: Option<String>,
     /// LSP client subsystem — one server subprocess per (project-root, language),
     /// feeding diagnostics + go-to-def/hover results back through `tick`.
     pub lsp: crate::lsp::LspManager,
@@ -5572,7 +5704,7 @@ impl App {
         {
             tree.expand_only([active.path.clone()]);
         }
-        // `[[workspaces]]` — additional roots shown as sibling sections in
+        // `[[workspaces]]` — additional roots shown as integration sections in
         // the rail. Each gets its own gitignore-aware tree + its own repo
         // discovery (results appended to the flat `repos` list above, so
         // the active-repo machinery is unchanged). Missing / unreadable
@@ -5599,7 +5731,7 @@ impl App {
             let mut t = Tree::open(&root);
             let mut found = crate::git::repos::discover_repos(&root);
             // Same multi-repo collapse rule as the primary workspace — when
-            // an extra root contains multiple sibling repos, only the first
+            // an extra root contains multiple integration repos, only the first
             // (alphabetical) stays expanded by default.
             if found.len() > 1
                 && let Some(first) = found.first()
@@ -5691,6 +5823,7 @@ impl App {
             active_section: ActivitySection::Explorer,
             mount_manifests,
             integration_manifests,
+            binary_version_cache: std::collections::HashMap::new(),
             integration_glyph_svgs: Vec::new(),
             integration_glyph_codepoints: std::collections::HashMap::new(),
             activity_badges: std::collections::HashMap::new(),
@@ -5701,6 +5834,7 @@ impl App {
             launcher_install_pending: Vec::new(),
             integration_updates: integration_updates_map,
             integration_updates_waker: integration_updates_waker_init,
+            last_auto_update_tick_at: None,
             readme_cache: std::collections::HashMap::new(),
             readme_pending: Vec::new(),
             ai_usage_claude_accounts: Vec::new(),
@@ -5721,6 +5855,11 @@ impl App {
             search_selected: 0,
             search_scroll: 0,
             search_input_focused: false,
+            search_case_sensitive: false,
+            search_whole_word: false,
+            search_regex: false,
+            search_history: Vec::new(),
+            search_history_cursor: None,
             git_section_commit_buffer: String::new(),
             git_section_commit_focused: false,
             tree_width,
@@ -5954,6 +6093,7 @@ impl App {
             statusline_segments_tx: None,
             statusline_segments_rx: None,
             statusline_segment_worker_shutdowns: Vec::new(),
+            prefetch_worker_shutdowns: Vec::new(),
             statusline_segment_managed_ids: std::collections::HashSet::new(),
             pending_os_notifications: Vec::new(),
             notify_last_fired: std::collections::HashMap::new(),
@@ -6132,6 +6272,7 @@ impl App {
             pending_tool_confirm: None,
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
+            pending_term_integration_hint: None,
             lsp,
             test_history,
         }
@@ -6143,7 +6284,7 @@ impl App {
     /// again by the `integrations.refresh` palette command.
     ///
     /// Precedence (post 2026-08-01 config flip):
-    ///   sibling manifest > built-in default > user's order/enabled prefs
+    ///   integration manifest > built-in default > user's order/enabled prefs
     ///
     /// Every existing `IntegrationIcon` slot with a matching manifest
     /// id gets overwritten wholesale EXCEPT the two user-preference
@@ -6153,15 +6294,15 @@ impl App {
     pub fn merge_integration_manifests(&mut self) {
         for m in &self.integration_manifests {
             let Some(chip) = &m.chip else { continue };
-            // 2026-07-31 — sibling-icons SDK. Three-tier resolution:
+            // 2026-07-31 — integration-icons SDK. Three-tier resolution:
             //
-            //  1. Explicit `chip.glyph` always wins — a sibling that
+            //  1. Explicit `chip.glyph` always wins — an integration that
             //     also picks a Nerd Font glyph overrides its own
             //     SVG/codepoint assignment.
             //  2. `chip.glyph_svg` + an assignment from the bake
             //     discovery pass — the codepoint mnml assigned to
-            //     the baked SVG. Used by siblings that ship an SVG.
-            //  3. `chip.glyph_codepoint` verbatim — for siblings
+            //     the baked SVG. Used by integrations that ship an SVG.
+            //  3. `chip.glyph_codepoint` verbatim — for integrations
             //     that declare "assign me this codepoint" without
             //     shipping an SVG (the codepoint must already
             //     resolve via a routed font). Was missing before
@@ -6226,7 +6367,7 @@ impl App {
                 in_palette_bar: chip.in_palette_bar,
                 // A later manifest re-scan can re-apply/override.
                 // 2026-07-31 — detail-pane metadata piped through
-                // from the sibling manifest so `Pane::IntegrationDetail`
+                // from the integration manifest so `Pane::IntegrationDetail`
                 // can render description / links / command list without
                 // a second `IntegrationManifest` lookup.
                 description: m.description.clone(),
@@ -6234,7 +6375,20 @@ impl App {
                 docs: m.docs.clone(),
                 repository: m.repository.clone(),
                 author: m.author.clone(),
-                version: m.version.clone(),
+                // #1102 f/u (2026-08-20) — prefer the live
+                // `<binary> --version` result (populated by
+                // `refresh_binary_version_cache`) so the detail
+                // byline reflects the actual installed binary,
+                // not whatever the manifest was stamped with at
+                // install time.
+                version: m
+                    .binary
+                    .as_deref()
+                    .and_then(|b| {
+                        let basename = b.rsplit('/').next().unwrap_or(b);
+                        self.binary_version_cache.get(basename).cloned()
+                    })
+                    .or_else(|| m.version.clone()),
                 commands: m
                     .commands
                     .iter()
@@ -6244,10 +6398,10 @@ impl App {
                     })
                     .collect(),
             };
-            // 2026-08-01 — always merge sibling-owned fields.
+            // 2026-08-01 — always merge integration-owned fields.
             // Preserve `enabled` + `in_palette_bar` from the
             // existing slot (those are user prefs, everything else
-            // is sibling-authored default). The former
+            // is integration-authored default). The former
             // `manifest_can_override` gate was retired 2026-08-03
             // alongside its dead-field deletion — user config is
             // slim-only after the precedence flip in
@@ -6266,8 +6420,8 @@ impl App {
                     // regenerates the file from the Rust default plus
                     // the toggle values every time the chip is
                     // enabled/disabled). For those, the manifest wins.
-                    // For sibling manifests, preserve the slot's user-
-                    // set enabled / in_palette_bar so the sibling
+                    // For integration manifests, preserve the slot's user-
+                    // set enabled / in_palette_bar so the integration
                     // author's default can't clobber later user prefs.
                     //
                     // Without this discriminator, built-in chips reset
@@ -6308,10 +6462,11 @@ impl App {
             .integration_manifests
             .iter()
             .flat_map(|m| {
+                let owner = m.id.clone();
                 m.commands
                     .iter()
                     .filter(|c| !static_ids.contains(c.id.as_str()))
-                    .map(|c| crate::command::DynCommand {
+                    .map(move |c| crate::command::DynCommand {
                         id: c.id.clone(),
                         title: c.title.clone(),
                         group: c
@@ -6320,6 +6475,7 @@ impl App {
                             .unwrap_or_else(|| "integrations".to_string()),
                         keys: c.keys.clone(),
                         ex_run: Some(c.run.clone()),
+                        owner_integration_id: Some(owner.clone()),
                     })
             })
             .collect();
@@ -6329,11 +6485,11 @@ impl App {
     }
 
     /// Consuming helper — used by `App::new` to fold the manifest
-    /// merge into the constructor. Also runs the sibling-glyph
+    /// merge into the constructor. Also runs the integration-glyph
     /// discovery pass BEFORE the merge so
     /// `merge_integration_manifests` can fill the `IntegrationIcon.glyph`
     /// field from the assigned codepoint when the manifest opted
-    /// into the sibling-icons SDK (`chip.glyph_svg` set, `chip.glyph`
+    /// into the integration-icons SDK (`chip.glyph_svg` set, `chip.glyph`
     /// empty).
     fn with_integration_manifests_merged(mut self) -> Self {
         // 2026-08-06 — stage `[ui] terminal_glyph_svg` (if any)
@@ -6349,6 +6505,11 @@ impl App {
         if purged > 0 {
             eprintln!("mnml: cleaned up {purged} baked pending-glyph SVG(s)");
         }
+        // #1102 f/u (2026-08-20) — populate live-version cache BEFORE
+        // merge so the resulting `IntegrationIcon.version` reflects the
+        // actual installed binary from cold start (not just after the
+        // first `integrations.refresh`).
+        self.refresh_binary_version_cache();
         self.merge_integration_manifests();
         // 2026-08-17 — spawn one background poll thread per
         // manifest-declared `[[values_sources]]` block, gated on
@@ -6357,6 +6518,10 @@ impl App {
         // `integrations.refresh` calls this again after re-merging
         // and drops the old channel to signal workers to exit.
         self.start_statusline_segment_workers();
+        // #1117 (2026-08-21) — kick off the prefetch fleet
+        // alongside statusline segments. Same install-gate + jitter
+        // convention; see src/app/prefetch.rs.
+        self.start_prefetch_workers();
         // 2026-08-01 (P4b) — populate marketplace entries from the
         // on-disk cache so the Marketplace tab has something to
         // render on cold start. Passive: no network I/O here — the
@@ -6780,14 +6945,20 @@ impl App {
             return true;
         }
         // Manifest-registered commands carry an ex-command line.
-        // Dispatch locally so the sibling doesn't need to be
+        // Dispatch locally so the integration doesn't need to be
         // running to answer the invocation.
-        let ex_run = self
+        let (ex_run, owner) = self
             .dynamic_commands
             .iter()
             .find(|c| c.id == id)
-            .and_then(|c| c.ex_run.clone());
+            .map(|c| (c.ex_run.clone(), c.owner_integration_id.clone()))
+            .unwrap_or((None, None));
         if let Some(cmdline) = ex_run {
+            // #1099 f/u (2026-08-20) — stamp the rigid owner-
+            // integration hint so the `:term` handler binds the
+            // pty tab's icon + label to the declaring manifest,
+            // not to whichever chip's binary matches first.
+            self.pending_term_integration_hint = owner;
             // 2026-07-03 — for `:term <binary>` dispatched from
             // an integration chip (rail click, chord, palette
             // fire), if a Pty pane hosting that exact binary is
@@ -6873,7 +7044,7 @@ impl App {
     fn set_theme_silent(&mut self, name: &str) -> Option<String> {
         let t = crate::ui::theme::set(name)?;
         // Keep the canonical `current-theme.toml` in sync so the family
-        // (mixr, mnml-* siblings) retints to match within a tick.
+        // (mixr, mnml-* integrations) retints to match within a tick.
         crate::ui::theme::write_current(&t);
         self.config.ui.theme = t.name.to_string();
         for pane in &mut self.panes {
@@ -6884,7 +7055,7 @@ impl App {
         Some(t.name.to_string())
     }
     // `cross_nav_pr_to_pipeline` removed after the 2026-06 SCM split
-    // — all four SCM hosts moved to mnml-forge-* siblings, and the
+    // — all four SCM hosts moved to mnml-forge-* integrations, and the
     // cross-host PR picker that called this method is gone too.
 
     /// Re-walk the workspace and rebuild `App.repos`. Useful when a repo was
@@ -7038,7 +7209,7 @@ impl App {
         }
         if was_at_cap {
             // mouse-hunter v3 SEV-2 J — toast on silent displace so
-            // the user knows their last open dropped a sibling.
+            // the user knows their last open dropped an integration.
             self.toast("right panel full — closed oldest tab");
         }
         self.right_panel_panes.push(pid);
@@ -8316,7 +8487,7 @@ impl App {
     }
 
     /// Bridge env — injected into every Pty spawned by mnml so
-    /// sibling tools (and any subprocess) can locate the host's
+    /// integration tools (and any subprocess) can locate the host's
     /// workspace / theme / IPC channel without parsing argv.
     /// Used by the Bridge tier-1 integration (see Mount/Bridge
     /// architecture notes).
@@ -8341,7 +8512,7 @@ impl App {
         mut profile: crate::pty_pane::BinaryProfile,
         dir: crate::layout::SplitDir,
     ) {
-        // Inject the bridge env vars BEFORE spawning so siblings see
+        // Inject the bridge env vars BEFORE spawning so integrations see
         // them on startup. Profile.env wins on key collision — caller
         // can override if needed.
         let bridge = self.bridge_env();
@@ -8353,7 +8524,7 @@ impl App {
         // Phase 2E — inject per-integration auth values as env vars,
         // using the manifest's [[auth]].env_fallback names. Lets a
         // user save `bot_token = "xoxb-..."` in the Settings pane
-        // and have the sibling see it as `$SLACK_BOT_TOKEN` at spawn
+        // and have the integration see it as `$SLACK_BOT_TOKEN` at spawn
         // time without reading mnml's [auth_values] itself.
         //
         // Precedence: `Command::envs` overrides inherited process env
@@ -8384,6 +8555,24 @@ impl App {
                     profile.env.push((k, v));
                 }
             }
+            // #1117 (2026-08-21) — prefetch cache handoff. If this
+            // integration declared a [[prefetch]] block matching the
+            // launch's --only <kind> arg, and mnml's background
+            // worker has produced a cache file, stamp its path via
+            // `MNML_PREFETCH_CACHE_FILE`. The integration reads that
+            // env on startup, does a freshness check, and hydrates
+            // from JSON to skip its first API round-trip.
+            if let Some(path) = self.prefetch_cache_for_launch(&integ_id, &profile.args)
+                && !profile
+                    .env
+                    .iter()
+                    .any(|(k, _)| k == "MNML_PREFETCH_CACHE_FILE")
+            {
+                profile.env.push((
+                    "MNML_PREFETCH_CACHE_FILE".to_string(),
+                    path.to_string_lossy().into_owned(),
+                ));
+            }
         }
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.
@@ -8409,7 +8598,7 @@ impl App {
         }
     }
 
-    /// Prompt for a binary name + open it as a hosted-sibling
+    /// Prompt for a binary name + open it as a hosted-integration
     /// Mount pane. Used by the `mount.open` palette command. The
     /// binary must implement the `mnml-bridge` Mount protocol
     /// (read `MNML_MOUNT_SOCKET`, connect, stream Frames).
@@ -8452,7 +8641,7 @@ impl App {
     /// Set or clear an activity-bar notification badge. `count = 0`
     /// removes the key (so the renderer's `.contains_key` check
     /// can short-circuit). Called by the `set-activity-badge`
-    /// IPC command — sibling tools surface queue depths,
+    /// IPC command — integration tools surface queue depths,
     /// action-needed counts, etc. this way.
     pub fn set_activity_badge(&mut self, section: String, count: u32) {
         if count == 0 {
@@ -10159,6 +10348,51 @@ impl App {
     /// pressed Esc / N / clicked Cancel).
     pub fn dismiss_pending_confirm(&mut self) {
         self.pending_confirm = None;
+    }
+
+    /// #993 step 2b (2026-08-20). Periodic background firing of the
+    /// auto-update plan. Runs at most once per
+    /// `AUTO_UPDATE_TICK_INTERVAL_SECS` (4h). Uses the same planner
+    /// + apply path the palette command does, minus the toast noise
+    /// — a background tick shouldn't spam the user when nothing is
+    /// eligible. Firing is still fully gated by:
+    ///   - per-integration `auto_update_override` (right-click toggle)
+    ///     OR global `[integrations] auto_update_{cargo,git}`
+    ///   - the 24h `AUTO_UPDATE_RATE_CAP_SECS` per integration
+    /// Skipped in test builds so the suite doesn't spawn cargo.
+    pub fn tick_auto_updates(&mut self) {
+        if cfg!(test) {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let due = self
+            .last_auto_update_tick_at
+            .map(|t| {
+                now.duration_since(t)
+                    >= std::time::Duration::from_secs(
+                        crate::app::integration_updates::AUTO_UPDATE_TICK_INTERVAL_SECS,
+                    )
+            })
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.last_auto_update_tick_at = Some(now);
+        // Reuse the manual-command logic verbatim by dispatching the
+        // palette command. The command handler already handles the
+        // empty-plan case with a toast — quiet the tick's version by
+        // short-circuiting when the plan will be empty (no per-int
+        // override set true AND both global toggles false).
+        let has_global =
+            self.config.integrations.auto_update_cargo || self.config.integrations.auto_update_git;
+        let has_per_int_optin = self
+            .integration_manifests
+            .iter()
+            .any(|m| matches!(m.auto_update_override, Some(true)));
+        if !has_global && !has_per_int_optin {
+            return;
+        }
+        crate::command::run("integrations.fire_auto_updates_now", self);
     }
 
     /// #25 v3 — idle refresh of the Claude Agents prefetch cache.

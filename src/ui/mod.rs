@@ -577,8 +577,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 findings_panel::draw(frame, app, content_area);
             }
             crate::app::ActivitySection::Mount(idx) => {
-                // Rail content for a manifest-mounted sibling is
-                // intentionally minimal in slice 3 — the sibling's
+                // Rail content for a manifest-mounted integration is
+                // intentionally minimal in slice 3 — the integration's
                 // real UI is the Pane::Mount in the editor body,
                 // not in the rail. We surface the manifest name +
                 // a "Re-open" hint so the user can re-spawn if
@@ -2195,7 +2195,7 @@ fn paint_integration_chips_in_gap(
     use ratatui::widgets::Paragraph;
     // Even with no integrations configured, paint the `+` chip
     // so the user has a discoverable entry point. The discovery
-    // overlay starts empty until they add their first sibling.
+    // overlay starts empty until they add their first integration.
     app.rects.palette_add_integration_button = None;
     // Start integrations flush with the workspace chip's right
     // edge (no leading margin) per user request — keeps the
@@ -2313,7 +2313,7 @@ fn paint_integration_chips_in_gap(
         x = x.saturating_add(chip_stride);
     }
     // `+` chip — opens the integrations discovery overlay so the
-    // user can add another sibling without leaving the palette
+    // user can add another integration without leaving the palette
     // bar. Always painted (as long as the gap had room reserved
     // for it via plus_w above).
     // qa-feature 2026-07-01 — user asked to remove the top `+`
@@ -2396,23 +2396,90 @@ fn draw_bottom_panel(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         app.rects.bottom_panel_close = None;
     }
-    // Body — empty-state hint. Later: hosted pane render.
-    if hosted == 0 && area.height >= 3 {
-        let body_area = Rect {
+    // Body: either the empty-state hint OR the active hosted pane
+    // rendered via the same per-kind draw fns the right panel uses
+    // (design mirror — see the `active_pane` match block in
+    // `draw` above). #906 slice C (2026-08-20).
+    if area.height < 3 {
+        return;
+    }
+    let body_area = Rect {
+        x: area.x,
+        y: area.y + 1,
+        width: area.width,
+        height: area.height.saturating_sub(1),
+    };
+    if hosted == 0 {
+        let hint_area = Rect {
             x: area.x + 2,
             y: area.y + 2,
             width: area.width.saturating_sub(4),
             height: area.height.saturating_sub(3),
         };
-        let hint = "The bottom panel is empty. Docking a pane here \
-                    isn't wired yet.\n\n\
+        let hint = "Bottom panel is empty. Right-click a pane tab \
+                    → \"Move to bottom panel\", or run the palette \
+                    command `view.host_active_in_bottom_panel`.\n\n\
                     Ctrl+Shift+J hides this panel.";
         frame.render_widget(
             Paragraph::new(hint)
                 .style(Style::default().fg(t.comment).bg(bg))
                 .wrap(ratatui::widgets::Wrap { trim: false }),
-            body_area,
+            hint_area,
         );
+        return;
+    }
+    // Active tab from `bottom_panel_active_idx`, clamped to bounds.
+    let active_idx = app.bottom_panel_active_idx.min(hosted - 1);
+    let Some(pid) = app
+        .bottom_panel_panes
+        .get(active_idx)
+        .copied()
+        .filter(|id| app.panes.get(*id).is_some())
+    else {
+        return;
+    };
+    let focused = app.active == Some(pid);
+    match app.panes.get(pid) {
+        Some(crate::pane::Pane::Outline(_)) => {
+            outline_view::draw(frame, app, pid, body_area, focused);
+        }
+        Some(crate::pane::Pane::Diagnostics(_)) => {
+            diagnostics_view::draw(frame, app, pid, body_area, focused);
+        }
+        Some(crate::pane::Pane::IntegrationDetail(_)) => {
+            integration_detail_view::draw(frame, app, pid, body_area, focused);
+        }
+        Some(crate::pane::Pane::ClaudeUsage(_)) => {
+            claude_usage_view::draw(frame, app, pid, body_area, focused);
+        }
+        Some(crate::pane::Pane::CodexUsage(_)) => {
+            codex_usage_view::draw(frame, app, pid, body_area, focused);
+        }
+        Some(crate::pane::Pane::Tests(_)) => {
+            tests_view::draw(frame, app, pid, body_area, focused);
+        }
+        Some(crate::pane::Pane::Grep(_)) => {
+            grep_view::draw(frame, app, pid, body_area, focused);
+        }
+        _ => {
+            // Kinds without a right-panel-style draw fn (Editor,
+            // Pty, Request, …) aren't wired for host-in-bottom-panel
+            // yet — surface why so the user isn't confused by a
+            // blank body.
+            let msg = "This pane kind isn't hostable in the bottom panel yet.";
+            let msg_area = Rect {
+                x: body_area.x + 2,
+                y: body_area.y + 1,
+                width: body_area.width.saturating_sub(4),
+                height: body_area.height.saturating_sub(1),
+            };
+            frame.render_widget(
+                Paragraph::new(msg)
+                    .style(Style::default().fg(t.comment).bg(bg))
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
+                msg_area,
+            );
+        }
     }
 }
 
@@ -3137,10 +3204,23 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let bg = t.bg_darker;
     app.rects.search_section_hit_rects.clear();
+    app.rects.search_section_flag_rects.clear();
     frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
     if area.height < 2 || area.width < 8 {
         return;
     }
+    // Header row = "SEARCH" title on the left + three flag chips
+    // (case / whole-word / regex) right-aligned. #1112 f/u
+    // (2026-08-21). Each chip is 3 cells wide (` X `); active
+    // chip inverts fg/bg. Register hit rects so click dispatches
+    // to the palette command. When the row is too narrow to fit
+    // all three chips, skip them silently (title stays visible).
+    let header_row = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
     frame.render_widget(
         Paragraph::new(ratatui::text::Line::from(" SEARCH")).style(
             Style::default()
@@ -3148,13 +3228,41 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        },
+        header_row,
     );
+    // Right-align the chip cluster. Total width = 3*3 + 2 gaps = 11.
+    // Only render when the title has enough breathing room.
+    const CHIP_W: u16 = 3;
+    const CHIP_GAP: u16 = 0;
+    let cluster_w: u16 = 3 * CHIP_W + 2 * CHIP_GAP;
+    let title_reserve: u16 = 8; // " SEARCH" + 1 cell of gap
+    if area.width >= title_reserve + cluster_w {
+        let mut cx = area.x + area.width - cluster_w;
+        for (ch, on, label) in [
+            ('c', app.search_case_sensitive, "Aa"),
+            ('w', app.search_whole_word, "\\b"),
+            ('r', app.search_regex, ".*"),
+        ] {
+            let chip_rect = Rect {
+                x: cx,
+                y: area.y,
+                width: CHIP_W,
+                height: 1,
+            };
+            let (fg, chip_bg, mods) = if on {
+                (t.bg, t.yellow, Modifier::BOLD)
+            } else {
+                (t.comment, bg, Modifier::empty())
+            };
+            frame.render_widget(
+                Paragraph::new(format!(" {label}"))
+                    .style(Style::default().fg(fg).bg(chip_bg).add_modifier(mods)),
+                chip_rect,
+            );
+            app.rects.search_section_flag_rects.push((chip_rect, ch));
+            cx += CHIP_W + CHIP_GAP;
+        }
+    }
     let input_y = area.y + 2;
     if input_y >= area.y + area.height {
         return;
@@ -3995,17 +4103,31 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         // discovery time). Then consult the background update-check
         // cache: if `latest > current`, append `→ <latest>  [ Update ]`
         // as a clickable chip that fires the same `apply_integration_update`
-        // path as the right-click menu. Non-sibling built-ins (browser /
+        // path as the right-click menu. Non-integration built-ins (browser /
         // claude_code / codex / http / search / …) have no manifest so
         // render nothing. Cache-miss just shows `<current>` with no arrow.
         let crate_id = crate::integration_detect::integration_binary_for_command(&icon.command)
             .map(|s| s.to_string())
             .unwrap_or_else(|| icon.id.clone());
+        // #1102 f/u (2026-08-20) — prefer the LIVE `<binary> --version`
+        // result (in `binary_version_cache`, keyed by binary basename)
+        // over the on-disk manifest's `version =` field. The manifest
+        // version can go stale when the integration binary is upgraded via
+        // `cargo install --force` without re-running `--install`; the
+        // live query is source-of-truth.
         let installed_version: Option<String> = app
             .integration_manifests
             .iter()
             .find(|m| m.id == icon.id)
-            .and_then(|m| m.version.clone());
+            .and_then(|m| {
+                m.binary
+                    .as_deref()
+                    .and_then(|b| {
+                        let basename = b.rsplit('/').next().unwrap_or(b);
+                        app.binary_version_cache.get(basename).cloned()
+                    })
+                    .or_else(|| m.version.clone())
+            });
         // Three-state:
         //   Some(Ok(())) — known latest, matches current → "(Current)"
         //   Some(Err(latest)) — known latest, newer than current → arrow + Update chip
@@ -4102,7 +4224,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         // 2026-08-08 — user asked to show the clean `<id>.open` form
-        // instead of the raw `:term …` shell command for sibling
+        // instead of the raw `:term …` shell command for integration
         // integrations. `icon.command` still holds the raw string
         // because the "Add to activity bar" flow gates on the
         // `:term ` prefix; only the DISPLAY changes here.
@@ -5073,7 +5195,7 @@ fn paint_ai_placeholder_card(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Pick a `(glyph, color)` for any pane kind — duplicates the
 /// dispatch in `bufferline::draw` but kept inline here so the
 /// per-leaf tab strip doesn't need a public API on bufferline.
-/// Rich Pty icon: sibling-integration branded glyph when the pane's
+/// Rich Pty icon: integration branded glyph when the pane's
 /// profile.label matches a configured integration (Claude Code /
 /// Codex / mnml-forge-bitbucket / …), animated Claude spinner when
 /// Claude is thinking, breathing color when Codex is thinking. Falls
@@ -5094,7 +5216,7 @@ fn pty_icon(
     // Only falls through to the label heuristic (below) for panes
     // that weren't launched via a chip (raw `:term`, restored
     // sessions with no stamped id, etc.).
-    let sibling_glyph = if let Some(id) = &s.profile.integration_id {
+    let integration_glyph = if let Some(id) = &s.profile.integration_id {
         app.config
             .ui
             .integration_icons
@@ -5167,9 +5289,9 @@ fn pty_icon(
         .unwrap_or_else(|| "\u{ea85}".to_string());
     // 2026-08-08 — the "animated ✳ shows blue instead of Claude orange"
     // report. The `(None, Some(g), _)` arm falls to `tt.teal` (blue-ish)
-    // when the sibling lookup missed for a Claude Pty — happens when
+    // when the integration lookup missed for a Claude Pty — happens when
     // the integration slot's `color` didn't parse. Same-shape backstop
-    // for the resolved-sibling path: force coral when the pane's
+    // for the resolved-integration path: force coral when the pane's
     // integration_id is claude_code, so the animation reads as Claude's
     // brand regardless of manifest state.
     // 2026-08-08 — single source of truth for the Claude brand color
@@ -5183,9 +5305,9 @@ fn pty_icon(
         .integration_id
         .as_deref()
         .is_some_and(|id| id == "claude_code");
-    match (sibling_glyph, spinner, codex_thinking) {
+    match (integration_glyph, spinner, codex_thinking) {
         (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
-        // Spinner + sibling → use sibling color; but if this is a Claude
+        // Spinner + integration → use integration color; but if this is a Claude
         // pane, override any stale/mis-parsed slot color with the brand
         // hex directly. Add a trailing space so the narrow dingbat char
         // (✳ ✢ ✶ ✻ ✽) doesn't sit tight against the label.

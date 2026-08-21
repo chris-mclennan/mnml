@@ -58,6 +58,16 @@ pub struct DynCommand {
     /// `None`, invocation queues an event for the plugin to react.
     #[allow(dead_code)]
     pub ex_run: Option<String>,
+    /// #1099 f/u (2026-08-20) — id of the integration manifest that
+    /// owns this command. Populated when `merge_integration_manifests`
+    /// registers a manifest's `[[commands]]` block. Used by the
+    /// `:term` handler to source the tab icon + label from the
+    /// declaring manifest instead of guessing via binary-match on
+    /// `integration_icons`. Rigid link, not a heuristic: click →
+    /// command id → owner integration → chip. Set by the dispatcher
+    /// on `app.pending_term_integration` right before running the
+    /// ex_run; cleared once consumed by `:term`.
+    pub owner_integration_id: Option<String>,
 }
 
 pub struct Registry {
@@ -379,6 +389,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "integrations",
             keys: &[],
             run: |app| app.open_integration_configure_picker(),
+        },
+        Command {
+            id: "integrations.diag",
+            title: "Run diagnostics on an integration… (auth + config probe)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_integration_diag_picker(),
         },
         Command {
             id: "view.help",
@@ -882,6 +899,52 @@ fn builtin_commands() -> Vec<Command> {
             group: "find",
             keys: &[],
             run: |app| app.open_grep_replace_prompt(),
+        },
+        // #1112 (2026-08-20) — Search-section flag toggles. Rerun
+        // the current query after each so the results reflect the
+        // mode change immediately.
+        Command {
+            id: "search.toggle_case_sensitive",
+            title: "Search: toggle case-sensitive (default: smart-case)",
+            group: "search",
+            keys: &[],
+            run: |app| {
+                app.search_section_toggle_case_sensitive();
+                app.toast(format!(
+                    "search: case-sensitive {}",
+                    if app.search_case_sensitive {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                ));
+            },
+        },
+        Command {
+            id: "search.toggle_whole_word",
+            title: "Search: toggle whole-word matching",
+            group: "search",
+            keys: &[],
+            run: |app| {
+                app.search_section_toggle_whole_word();
+                app.toast(format!(
+                    "search: whole-word {}",
+                    if app.search_whole_word { "on" } else { "off" }
+                ));
+            },
+        },
+        Command {
+            id: "search.toggle_regex",
+            title: "Search: toggle regex (default: fixed-strings)",
+            group: "search",
+            keys: &[],
+            run: |app| {
+                app.search_section_toggle_regex();
+                app.toast(format!(
+                    "search: regex {}",
+                    if app.search_regex { "on" } else { "off" }
+                ));
+            },
         },
         Command {
             id: "find.clear",
@@ -1420,7 +1483,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.toggle_zoom",
             title: "Toggle maximize (zoom this pane full-frame)",
             group: "view",
-            keys: &["<leader>zz"],
+            // vim `<leader>zz` — space-separated tokens is the format
+            // `parse_key_seq` accepts (was `<leader>zz` as one token
+            // which the parser can't split; startup logged a "chord
+            // ignored" warn every restart).
+            keys: &["space z z"],
             run: |app| app.toggle_zoom_active_leaf(),
         },
         Command {
@@ -1764,7 +1831,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "integrations.audit_shadowed_binaries",
-            title: "Integrations: audit + fix shadowed sibling binaries (PATH order)",
+            title: "Integrations: audit + fix shadowed integration binaries (PATH order)",
             group: "integrations",
             keys: &[],
             run: |app| app.audit_shadowed_binaries(),
@@ -1907,6 +1974,41 @@ fn builtin_commands() -> Vec<Command> {
                         app.focus = crate::focus::Focus::Pane;
                     }
                 }
+            },
+        },
+        // #906 slice C (2026-08-20) — move the active pane INTO
+        // the bottom panel. No-op when nothing is active. Opens the
+        // panel if hidden. Idempotent: hosting an already-hosted
+        // pane just re-focuses it. Only pane kinds with a
+        // right-panel-style draw fn actually render inside the body
+        // (Outline / Diagnostics / IntegrationDetail / ClaudeUsage
+        // / CodexUsage / Tests / Grep); other kinds get a
+        // "not hostable yet" message in the body.
+        Command {
+            id: "view.host_active_in_bottom_panel",
+            title: "View: dock active pane into bottom panel",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let Some(pid) = app.active else {
+                    app.toast("no active pane to dock");
+                    return;
+                };
+                if app.bottom_panel_panes.contains(&pid) {
+                    app.bottom_panel_active_idx = app
+                        .bottom_panel_panes
+                        .iter()
+                        .position(|p| *p == pid)
+                        .unwrap_or(0);
+                    app.bottom_panel_visible = true;
+                    app.focus = crate::focus::Focus::BottomPanel;
+                    return;
+                }
+                app.bottom_panel_panes.push(pid);
+                app.bottom_panel_active_idx = app.bottom_panel_panes.len() - 1;
+                app.bottom_panel_visible = true;
+                app.focus = crate::focus::Focus::BottomPanel;
+                app.toast("docked to bottom panel");
             },
         },
         Command {
@@ -5806,10 +5908,25 @@ fn builtin_commands() -> Vec<Command> {
                     Ok(g) => g.clone(),
                     Err(e) => e.into_inner().clone(),
                 };
+                // #1109 (2026-08-20): key the overrides map by the
+                // crate id (binary basename), because `plan_auto_updates`
+                // looks up `overrides.get(&check.id)` and `check.id` is
+                // the CRATE id, not the manifest id. Keying by manifest.id
+                // (e.g. `jira_work`) never matched `mnml-tracker-jira`
+                // and the per-integration override silently no-op'd. Fall
+                // back to manifest.id for launcher-only manifests with
+                // no binary (browser, codex, claude_code).
                 let overrides: std::collections::HashMap<String, Option<bool>> = app
                     .integration_manifests
                     .iter()
-                    .map(|m| (m.id.clone(), m.auto_update_override))
+                    .map(|m| {
+                        let key = m
+                            .binary
+                            .as_deref()
+                            .map(|b| b.rsplit('/').next().unwrap_or(b).to_string())
+                            .unwrap_or_else(|| m.id.clone());
+                        (key, m.auto_update_override)
+                    })
                     .collect();
                 let mut attempts = crate::app::integration_updates::load_last_attempts();
                 let plans = crate::app::integration_updates::plan_auto_updates(

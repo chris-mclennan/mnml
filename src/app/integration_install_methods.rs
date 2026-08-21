@@ -24,15 +24,20 @@ impl App {
     /// Refresh the integration manifest list — re-scans both dirs
     /// and re-merges chips + commands. Called by the
     /// `integrations.refresh` palette command; also fires
-    /// implicitly after a sibling's `--install` writes a new
+    /// implicitly after an integration's `--install` writes a new
     /// manifest file (user runs the palette command to pick up
     /// the change without restarting mnml).
     pub fn refresh_integration_manifests(&mut self) {
         self.integration_manifests = crate::integration_manifest::load_all(&self.workspace);
-        // 2026-07-31 — re-run sibling-glyph discovery FIRST so any
+        // 2026-07-31 — re-run integration-glyph discovery FIRST so any
         // newly-installed SVG in ~/.config/mnml/glyphs/ shows up
         // before the merge pass fills IntegrationIcon.glyph.
         self.discover_integration_glyphs();
+        // #1102 f/u (2026-08-20) — refresh the binary → version
+        // cache BEFORE merge so `IntegrationIcon.version` picks up
+        // the live `<binary> --version` result. Ordering matters:
+        // merge reads from the cache to populate the icon field.
+        self.refresh_binary_version_cache();
         self.merge_integration_manifests();
         // 2026-08-17 — re-spawn statusline-segment workers after
         // the manifest re-scan so newly-added or removed
@@ -40,23 +45,103 @@ impl App {
         // restart. Dropping the old sender inside `start_…`
         // signals in-flight workers to exit on their next send.
         self.start_statusline_segment_workers();
+        // #1117 (2026-08-21) — refresh the prefetch fleet on
+        // manifest re-scan so newly-added or removed
+        // `[[prefetch]]` entries take effect without a restart.
+        self.start_prefetch_workers();
         // R9 api-workflow SEV-3 — users hitting the palette
         // `integrations.refresh` reasonably expect ALL on-disk
         // scanned state to be re-read, not just integration
         // manifests. HTTP panel's MOCKS section reads
         // `http_panel_mocks_cache` which was only rebuilt via the
         // separate `http.refresh` command or a full restart, so a
-        // fresh `.mock.json` created by a sibling didn't appear.
+        // fresh `.mock.json` created by an integration didn't appear.
         // Piggyback on this palette-level refresh.
         self.http_panel_refresh();
         self.toast(format!(
-            "integrations: {} manifest(s) loaded ({} sibling glyph(s))",
+            "integrations: {} manifest(s) loaded ({} integration glyph(s))",
             self.integration_manifests.len(),
             self.integration_glyph_svgs.len(),
         ));
     }
 
-    /// Spawn a hosted sibling as a `Pane::Mount`. Called by the
+    /// #1102 f/u (2026-08-20) — resolve `<binary> --version` for
+    /// every unique integration binary declared across the loaded
+    /// manifests, keyed by binary basename. Clap's default
+    /// `--version` format is `<name> <version>` (single line);
+    /// we take the LAST whitespace-separated token so leading
+    /// hyphenated names (`mnml-forge-bitbucket`) don't confuse
+    /// the parse.
+    ///
+    /// Runs synchronously — each `--version` call is a cheap
+    /// process spawn on an already-installed binary. On my box a
+    /// full 15-integration sweep is <200ms. Called after
+    /// manifest re-scan + post-install; NOT on every render.
+    /// A binary that fails to spawn or exits non-zero silently
+    /// drops out of the cache and the manifest's `version` field
+    /// takes over as the byline fallback.
+    pub fn refresh_binary_version_cache(&mut self) {
+        use std::collections::HashSet;
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut fresh: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let binaries: Vec<String> = self
+            .integration_manifests
+            .iter()
+            .filter_map(|m| m.binary.clone())
+            .collect();
+        for binary in binaries {
+            let basename = binary.rsplit('/').next().unwrap_or(&binary).to_string();
+            if !seen.insert(basename.clone()) {
+                continue;
+            }
+            let Ok(mut child) = Command::new(&binary)
+                .arg("--version")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null())
+                .spawn()
+            else {
+                continue;
+            };
+            // Cheap poll-with-deadline — clap's --version prints
+            // to stdout and exits immediately; anything taking
+            // more than 500ms is misbehaving.
+            let deadline = std::time::Instant::now() + Duration::from_millis(500);
+            let mut finished = false;
+            while std::time::Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        finished = true;
+                        break;
+                    }
+                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+            if !finished {
+                let _ = child.kill();
+                let _ = child.wait();
+                continue;
+            }
+            let Ok(output) = child.wait_with_output() else {
+                continue;
+            };
+            if !output.status.success() {
+                continue;
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(tok) = stdout.split_whitespace().next_back()
+                && !tok.is_empty()
+            {
+                fresh.insert(basename, tok.to_string());
+            }
+        }
+        self.binary_version_cache = fresh;
+    }
+
+    /// Spawn a hosted integration as a `Pane::Mount`. Called by the
     /// MountBinary prompt's accept handler.
     pub fn open_mount(&mut self, binary: &str) {
         let label = binary.rsplit('/').next().unwrap_or(binary).to_string();
@@ -71,7 +156,7 @@ impl App {
     }
 
     /// Full form — accepts extra CLI args to hand to the mount
-    /// binary. Used by manifest mounts whose sibling needs flags
+    /// binary. Used by manifest mounts whose integration needs flags
     /// (e.g. `mnml-forge-bitbucket --only prs`). 2026-07-20.
     pub fn open_mount_with_args(&mut self, binary: &str, label: &str, args: &[String]) {
         let geometry = mnml_bridge::Geometry { cols: 80, rows: 24 };

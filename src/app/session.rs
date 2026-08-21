@@ -114,6 +114,37 @@ impl App {
                     .collect(),
             ),
             tree_show_hidden: Some(self.tree.show_hidden),
+            // #1101 (2026-08-20) — new session-restore surfaces.
+            // ActivitySection variants with a payload (LauncherIcon,
+            // Mount) reference an index into a per-launch config
+            // vector that can shift between runs; only unit variants
+            // round-trip cleanly. Payload variants fall through to
+            // the default (Explorer) on next start — safer than
+            // restoring a stale index.
+            active_section: match self.active_section {
+                ActivitySection::LauncherIcon(_) | ActivitySection::Mount(_) => None,
+                other => Some(format!("{other:?}").to_ascii_lowercase()),
+            },
+            fullscreen_mode: Some(self.fullscreen_mode).filter(|v| *v),
+            bottom_panel_visible: Some(self.bottom_panel_visible).filter(|v| *v),
+            bottom_panel_height: self
+                .bottom_panel_visible
+                .then_some(self.bottom_panel_height),
+            bottom_panel_active_idx: (self.bottom_panel_visible
+                && self.bottom_panel_active_idx > 0)
+                .then_some(self.bottom_panel_active_idx),
+            recent_commands: {
+                let cap: Vec<String> = self.recent_commands.iter().take(50).cloned().collect();
+                if cap.is_empty() { None } else { Some(cap) }
+            },
+            // #1112 (2026-08-20) — search-section persistence.
+            search_case_sensitive: Some(self.search_case_sensitive).filter(|v| *v),
+            search_whole_word: Some(self.search_whole_word).filter(|v| *v),
+            search_regex: Some(self.search_regex).filter(|v| *v),
+            search_history: {
+                let cap: Vec<String> = self.search_history.iter().take(20).cloned().collect();
+                if cap.is_empty() { None } else { Some(cap) }
+            },
             extra_workspaces: self
                 .extra_workspaces
                 .iter()
@@ -492,6 +523,57 @@ impl App {
             self.tree.show_hidden = v;
             self.tree.refresh();
         }
+        // #1101 (2026-08-20) — restore active activity-bar section,
+        // fullscreen, bottom panel, palette recents. Unknown /
+        // renamed sections silently fall back to Explorer.
+        if let Some(name) = saved.active_section.as_deref() {
+            let s = match name {
+                "explorer" => Some(ActivitySection::Explorer),
+                "search" => Some(ActivitySection::Search),
+                "git" => Some(ActivitySection::Git),
+                "debug" => Some(ActivitySection::Debug),
+                "integrations" => Some(ActivitySection::Integrations),
+                "sessions" => Some(ActivitySection::Sessions),
+                "agents" => Some(ActivitySection::Agents),
+                "cloudagents" => Some(ActivitySection::CloudAgents),
+                "http" => Some(ActivitySection::Http),
+                "notes" => Some(ActivitySection::Notes),
+                "todos" => Some(ActivitySection::Todos),
+                "findings" => Some(ActivitySection::Findings),
+                _ => None,
+            };
+            if let Some(sec) = s {
+                self.active_section = sec;
+            }
+        }
+        if saved.fullscreen_mode.unwrap_or(false) {
+            self.fullscreen_mode = true;
+        }
+        if saved.bottom_panel_visible.unwrap_or(false) {
+            self.bottom_panel_visible = true;
+            if let Some(h) = saved.bottom_panel_height {
+                self.bottom_panel_height = h.clamp(3, 60);
+            }
+            if let Some(idx) = saved.bottom_panel_active_idx {
+                self.bottom_panel_active_idx = idx;
+            }
+        }
+        if let Some(cmds) = saved.recent_commands {
+            self.recent_commands = cmds;
+        }
+        // #1112 (2026-08-20) — restore search-section flags + history.
+        if saved.search_case_sensitive.unwrap_or(false) {
+            self.search_case_sensitive = true;
+        }
+        if saved.search_whole_word.unwrap_or(false) {
+            self.search_whole_word = true;
+        }
+        if saved.search_regex.unwrap_or(false) {
+            self.search_regex = true;
+        }
+        if let Some(hist) = saved.search_history {
+            self.search_history = hist;
+        }
         // Restore extra-workspace state (matched by name — renames lose
         // their previous state silently).
         for s in saved.extra_workspaces {
@@ -690,7 +772,7 @@ impl App {
         }
         // SCM/CI pane view-mode + collapse state.
         // (GH / GL / AZ view-mode + collapsed state all moved to
-        // mnml-forge-* siblings in 2026-06.)
+        // mnml-forge-* integrations in 2026-06.)
         // Harpoon slots — restore up to 9 (silently drop any extras a
         // hand-edited session.json might carry).
         for (i, slot) in saved.harpoon.into_iter().take(9).enumerate() {

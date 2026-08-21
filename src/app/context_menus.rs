@@ -570,11 +570,27 @@ impl App {
         // #1088 (2026-08-19) — per-integration auto-update opt-in.
         // Resolve the current effective flag from any existing
         // override file so the label reflects the actual state.
-        // Toggle writes to `<id>.override.toml`.
+        // Toggle writes to `<crate_id>.override.toml`.
+        //
+        // #1109 (2026-08-20): the write path uses `crate_id` (binary
+        // basename) as the file key, so the read side must match on
+        // manifest.binary basename OR manifest.id. Matching purely on
+        // manifest.id was stale for multi-manifest crates (e.g. every
+        // Jira icon shares binary `mnml-tracker-jira` but has its own
+        // manifest.id like `jira_work`) — the override was written,
+        // silently dropped in the merge, and this lookup returned
+        // false, showing the toggle as OFF right after the toast said
+        // it flipped ON.
         let auto_update_on = self
             .integration_manifests
             .iter()
-            .find(|m| m.id == id)
+            .find(|m| {
+                m.id == id
+                    || m.binary
+                        .as_deref()
+                        .map(|b| b.rsplit('/').next().unwrap_or(b) == crate_id)
+                        .unwrap_or(false)
+            })
             .and_then(|m| m.auto_update_override)
             .unwrap_or(false);
         let auto_update_label = if auto_update_on {
@@ -623,10 +639,25 @@ impl App {
                 MenuAction::ConfigureIntegration(id.clone()),
             ));
         }
+        // #1103 f/u7 (2026-08-20) — "Run diagnostics" surfaces on
+        // every integration whose manifest declares a binary. Runs
+        // `<binary> --diag` in a Pty pane; the human-readable
+        // output covers auth resolution + config summary + a live
+        // auth probe. Universal debugging entry point.
+        let has_binary = self
+            .integration_manifests
+            .iter()
+            .any(|m| m.id == id && m.binary.is_some());
+        if has_binary {
+            items.push(MenuItem::new(
+                "Run diagnostics",
+                MenuAction::RunIntegrationDiag(id.clone()),
+            ));
+        }
         // v0.2.0 — per-workspace launcher-script override for
         // integrations that spawn a binary. Only surfaced on
         // built-ins where mnml chooses the exe (claude_code /
-        // codex); sibling integrations already control their own
+        // codex); integration integrations already control their own
         // spawn via `binary = "..."` in the manifest, so the
         // wrapper isn't useful for them.
         if id == "claude_code" || id == "codex" {
@@ -1957,6 +1988,27 @@ impl App {
             SplitTabInto(src, zone) => {
                 self.split_tab_into(src, zone);
             }
+            HostInBottomPanel(pid) => {
+                // #906 slice C (2026-08-20). Mirrors the palette
+                // command `view.host_active_in_bottom_panel` but
+                // targets the tab that was right-clicked, not the
+                // currently-active pane. Idempotent: re-hosting an
+                // already-hosted pane just refocuses it.
+                if self.bottom_panel_panes.contains(&pid) {
+                    self.bottom_panel_active_idx = self
+                        .bottom_panel_panes
+                        .iter()
+                        .position(|p| *p == pid)
+                        .unwrap_or(0);
+                } else {
+                    self.bottom_panel_panes.push(pid);
+                    self.bottom_panel_active_idx = self.bottom_panel_panes.len() - 1;
+                }
+                self.bottom_panel_visible = true;
+                self.active = Some(pid);
+                self.focus = crate::focus::Focus::BottomPanel;
+                self.toast("docked to bottom panel");
+            }
             StopManagedSession(session_id) => {
                 let tx = self.cloud_run_msg_tx.clone();
                 let sid = session_id.clone();
@@ -2003,6 +2055,9 @@ impl App {
             }
             ConfigureIntegration(id) => {
                 self.open_integration_settings(&id);
+            }
+            RunIntegrationDiag(id) => {
+                self.run_integration_diag(&id);
             }
             ShowIntegrationDetails(id) => {
                 self.open_integration_detail_pane(&id);
