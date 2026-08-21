@@ -186,7 +186,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // frames when their host panel wasn't the active section. Every
     // fix we've shipped for that class of bug patched one panel at a
     // time; move the activity-bar check ABOVE all the other cascade
-    // arms so no stale sibling-panel rect can ever shadow the icon
+    // arms so no stale integration-panel rect can ever shadow the icon
     // strip. Small blast radius — the activity bar is a 4-column
     // sliver and its icons are ONLY there.
     if let Some(&(_, section)) = app
@@ -1236,7 +1236,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // GitHub launcher entries (async, doesn't block the tick).
     // Installed: re-scan `<ws>/.mnml/integrations/` and
     // `~/.config/mnml/integrations/` so a manifest just-written by
-    // a sibling `<name> --install` surfaces immediately.
+    // an integration `<name> --install` surfaces immediately.
     if let Some(rect) = app.rects.integrations_tab_refresh
         && crate::app::dispatch::contains(rect, x, y)
     {
@@ -1858,7 +1858,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // Dynamic statusline segments — both manifest-declared
     // `[[statusline_segments]]` chips (see
     // `src/app/statusline_segments.rs`) and IPC-driven segments
-    // set via a sibling's `statusline_set_segment` call. Both use
+    // set via an integration's `statusline_set_segment` call. Both use
     // the same `DynamicSegment.click_command` field so a click
     // fires whichever palette command the source declared.
     // 2026-08-17 (data-driven statusline chips).
@@ -2112,7 +2112,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // (activity-bar icons + gear are handled near the top of the
-    // cascade now — 2026-07-19 — to keep stale sibling-panel rects
+    // cascade now — 2026-07-19 — to keep stale integration-panel rects
     // from ever shadowing them.)
     // Search activity-bar section result rows — click → open
     // the hit's file at its line:col. Checked before tree
@@ -2125,6 +2125,25 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         app.search_section_open_hit(idx);
+        return;
+    }
+    // #1112 f/u (2026-08-21) — Search section flag chips: click
+    // toggles + re-runs the current query. Dispatches through the
+    // palette command so state flip, toast, and rerun all happen
+    // atomically (no drift with the keyboard entry path).
+    if let Some(&(_, ch)) = app
+        .rects
+        .search_section_flag_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let cmd = match ch {
+            'c' => "search.toggle_case_sensitive",
+            'w' => "search.toggle_whole_word",
+            'r' => "search.toggle_regex",
+            _ => return,
+        };
+        let _ = crate::command::run(cmd, app);
         return;
     }
     // File-tree toolbar icons (row 0 of the rail). Check BEFORE

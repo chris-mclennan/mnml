@@ -180,7 +180,7 @@ impl App {
     /// Fuzzy picker over `.svg` files reachable from mnml — the
     /// active workspace tree PLUS every extra workspace, common
     /// mnml source-tree locations under `~/Projects/mnml*/` (so a
-    /// user driving from a sibling workspace can still pick the
+    /// user driving from a integration workspace can still pick the
     /// shipped SVGs), plus `~/Downloads` and `~/Desktop` for
     /// ad-hoc imports. 2026-07-19 — first version was scoped to
     /// just `self.workspace` and turned up 0 matches when the
@@ -298,7 +298,7 @@ impl App {
             }
         }
         // 3. Common mnml source-tree locations. Catches SVGs shipped
-        //    with mnml or in a sibling worktree when the user's
+        //    with mnml or in a integration worktree when the user's
         //    active workspace is unrelated.
         if let Some(home) = std::env::var_os("HOME") {
             let projects = PathBuf::from(home).join("Projects");
@@ -615,6 +615,31 @@ impl App {
                 }
             });
         }
+        // #1113 (2026-08-20) — pane-scoped boost. Bump commands whose
+        // id starts with the active pane's namespace to `priority = 1`
+        // so they surface above the generic pool when the query is
+        // empty AND rank higher on ties for a non-empty query (the
+        // picker's sort is priority desc → score desc → index asc).
+        // Recents-on-top from the block above still win because their
+        // items already got sorted into positions 0..N and the picker
+        // sort uses index-asc as the final tiebreaker at equal
+        // priority + score. So the effective order for empty query
+        // becomes: recents > pane-scoped > everything-else.
+        let namespaces: &[&str] = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(crate::pane::Pane::Pty(_)) => &["term.", "pty.", "session."],
+            Some(crate::pane::Pane::Editor(_)) => &["editor.", "buffer.", "lsp.", "vim."],
+            Some(crate::pane::Pane::Request(_)) => &["http.", "chain."],
+            Some(crate::pane::Pane::Diff(_)) => &["diff.", "git."],
+            Some(crate::pane::Pane::MdPreview(_)) => &["md.", "editor."],
+            _ => &[],
+        };
+        if !namespaces.is_empty() {
+            for item in items.iter_mut() {
+                if namespaces.iter().any(|ns| item.id.starts_with(ns)) {
+                    item.priority = item.priority.max(1);
+                }
+            }
+        }
         self.open_picker(Picker::new(PickerKind::Commands, "Command palette", items));
     }
 
@@ -650,7 +675,7 @@ impl App {
 
     /// Tab on a picker — picker-kind-specific "secondary accept".
     /// `OpenPullRequests`: cross-nav from a PR to its pipeline/build
-    /// via the matching `mnml-forge-*` sibling's
+    /// via the matching `mnml-forge-*` integration's
     /// `--find-pipeline-for-pr --json` headless mode.
     pub fn picker_accept_secondary(&mut self) {
         let Some(picker) = self.picker.as_ref() else {
@@ -662,7 +687,7 @@ impl App {
         match picker.kind {
             PickerKind::OpenPullRequests => {
                 // Take the picker so we close the overlay before the
-                // (potentially-1s) sibling shellout — keeps the UI
+                // (potentially-1s) integration shellout — keeps the UI
                 // responsive while we look up the pipeline URL.
                 self.picker = None;
                 self.accept_pr_picker_secondary(&item.id);
@@ -969,6 +994,10 @@ impl App {
                 let id = item.id.clone();
                 self.accept_integration_configure(&id);
             }
+            PickerKind::IntegrationDiag => {
+                let id = item.id.clone();
+                self.accept_integration_diag(&id);
+            }
             PickerKind::CapturedRows => {
                 if let Ok(idx) = item.id.parse::<usize>()
                     && let Some(row) = self.pending_captured_rows.get(idx).cloned()
@@ -1035,7 +1064,7 @@ impl App {
                 // unconditionally on accept, so a single mouse
                 // click fast-forwarded the current branch onto
                 // whatever was clicked — no confirm gate while
-                // sibling pickers (delete_branch, worktree_remove)
+                // integration pickers (delete_branch, worktree_remove)
                 // do gate. Now mirrors those: stash the branch
                 // name + open a confirm prompt typed-`merge`.
                 self.pending_merge_source = Some(item.id.clone());
@@ -2203,7 +2232,7 @@ mod picker_tests {
     use super::*;
 
     // Cross-host PR picker removed after the 2026-06 SCM split —
-    // per-host happy-path tests live in each forge sibling's own repo.
+    // per-host happy-path tests live in each forge integration's own repo.
 
     #[test]
     fn open_repo_picker_no_op_when_single() {

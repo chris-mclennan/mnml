@@ -359,6 +359,17 @@ pub(crate) fn handle_search_section_key(app: &mut App, key: KeyEvent) {
             }
             return;
         }
+        // #1112 (2026-08-20) — Alt+Up/Alt+Down walks the MRU query
+        // history (VS Code parity). Preserves the older behavior:
+        // bare Up/Down still moves the results-list selection.
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.search_section_history_step(-1);
+            return;
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.search_section_history_step(1);
+            return;
+        }
         KeyCode::Up if !ctrl => {
             app.search_section_select(-1);
             return;
@@ -946,11 +957,25 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
                         // query prompt but the prompt itself + the
                         // downstream `workspace/symbol` reply can
                         // both be slow / empty on unwarmed LSPs. Add
-                        // the sibling toast so the pair behaves the
+                        // the integration toast so the pair behaves the
                         // same way.
                         app.close_picker();
                         app.toast("workspace symbols: fetching…");
                         crate::command::run("lsp.workspace_symbols", app);
+                        return;
+                    }
+                    // R8 audit follow-up (2026-08-20) — `?` on an
+                    // empty file-picker query surfaces the other
+                    // prefixes as a single toast. Simpler than a
+                    // dedicated help pane and matches how VS Code's
+                    // quick-open `?` behaves. Toast lands over the
+                    // picker; the picker itself stays open so the
+                    // user can type the prefix they just learned
+                    // about.
+                    '?' => {
+                        app.toast(
+                            "picker prefixes:  >  commands  ·  @  file symbols  ·  #  workspace symbols",
+                        );
                         return;
                     }
                     _ => {}

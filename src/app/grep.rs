@@ -33,11 +33,70 @@ impl App {
         }
         // #polish 2026-07-07 — same scoping fix as run_workspace_grep
         // (SEV-2 #3). Search panel now current-workspace-only.
-        let (hits, used) = crate::app::grep_workspace(&self.workspace, &q);
+        // #1112 (2026-08-20) — pass the section's flag toggles
+        // through to ripgrep.
+        let flags = crate::app::GrepFlags {
+            case_sensitive: self.search_case_sensitive,
+            whole_word: self.search_whole_word,
+            regex: self.search_regex,
+        };
+        let (hits, used) = crate::app::grep_workspace_with_flags(&self.workspace, &q, flags);
         self.search_hits = hits;
         self.search_used = used;
         self.search_selected = 0;
         self.search_scroll = 0;
+        // #1112 (2026-08-20) — push into MRU history dedup'd. The
+        // Up/Down input keys walk this list.
+        self.search_history.retain(|s| s != &q);
+        self.search_history.insert(0, q);
+        if self.search_history.len() > 20 {
+            self.search_history.truncate(20);
+        }
+        self.search_history_cursor = None;
+    }
+
+    /// #1112 (2026-08-20) — Flag toggles. Firing any of these
+    /// re-runs the current query so the results reflect the new
+    /// mode immediately.
+    pub fn search_section_toggle_case_sensitive(&mut self) {
+        self.search_case_sensitive = !self.search_case_sensitive;
+        self.search_section_run();
+    }
+    pub fn search_section_toggle_whole_word(&mut self) {
+        self.search_whole_word = !self.search_whole_word;
+        self.search_section_run();
+    }
+    pub fn search_section_toggle_regex(&mut self) {
+        self.search_regex = !self.search_regex;
+        self.search_section_run();
+    }
+
+    /// #1112 (2026-08-20) — Up/Down inside the input walks the MRU
+    /// query list. Delta -1 = older (Up), +1 = newer (Down). Bounds:
+    /// Up past the end sticks at the oldest entry; Down past the
+    /// front clears the cursor and restores whatever was typed.
+    /// (This differs from a strict shell history — we don't preserve
+    /// the pre-navigation buffer separately; the user re-types if
+    /// they wanted it back.)
+    pub fn search_section_history_step(&mut self, delta: isize) {
+        if self.search_history.is_empty() {
+            return;
+        }
+        let len = self.search_history.len() as isize;
+        let new_idx: isize = match self.search_history_cursor {
+            None if delta < 0 => 0,
+            None => return, // Down with no cursor: no-op
+            Some(i) => (i as isize + delta).clamp(-1, len - 1),
+        };
+        if new_idx < 0 {
+            self.search_history_cursor = None;
+            self.search_query.clear();
+            self.search_cursor = 0;
+        } else {
+            self.search_history_cursor = Some(new_idx as usize);
+            self.search_query = self.search_history[new_idx as usize].clone();
+            self.search_cursor = self.search_query.chars().count();
+        }
     }
 
     /// Move selection in the inline results list by `delta` (positive
@@ -112,7 +171,7 @@ impl App {
         // #polish 2026-07-07 (vscode-user SEV-2 #3) — do NOT scan
         // extra_workspaces. Was: grep results from every registered
         // `[[workspaces]]` entry, so 4 workspace-local matches
-        // drowned in 2000+ from unrelated sibling repos. Scope to
+        // drowned in 2000+ from unrelated integration repos. Scope to
         // the current workspace — matches VS Code's Ctrl+Shift+F
         // convention.
         let (hits, used) = grep_workspace(&self.workspace, &q);
