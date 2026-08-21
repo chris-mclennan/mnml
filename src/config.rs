@@ -26,13 +26,13 @@ use serde::Deserialize;
 /// stale `<id>.toml` or `[[ui.integration_icon]]` entry left over
 /// from an older mnml release stops appearing after one restart.
 ///
-/// Safety: these ids are known-retired. Every current sibling that
+/// Safety: these ids are known-retired. Every current integration that
 /// might collide (e.g. `mnml-msg-slack` writes `slack_channels` +
 /// `slack_boards`; `mnml-forge-bitbucket` writes
 /// `bitbucket_pipelines` + `bitbucket_prs`) uses DIFFERENT ids, and
-/// the affected siblings themselves treat these as legacy/predecessor
+/// the affected integrations themselves treat these as legacy/predecessor
 /// ids they clean up on install. Verified 2026-08-16 against the
-/// sibling install sources.
+/// integration install sources.
 const DEAD_INTEGRATION_IDS: &[&str] = &["bitbucket", "linear", "gitlab", "cypress", "slack"];
 
 #[derive(Debug, Clone)]
@@ -2659,6 +2659,18 @@ impl Config {
             if matches!(normalized.as_str(), "chevron" | "triangle") {
                 self.ui.expand_indicator = normalized;
             }
+        }
+        // #1045 (2026-08-20) — publish the setting to our process env
+        // so every child pty (integrations) inherits it via
+        // `MNML_EXPAND_INDICATOR`. See `pty_pane.rs::spawn`.
+        //
+        // SAFETY: `std::env::set_var` is unsafe as of Rust edition
+        // 2024 due to global-mutable-state hazards on non-glibc
+        // platforms. We touch it only here (config load) + at the
+        // settings-mutator write site, both single-threaded early-
+        // paint contexts before any child spawn or reader.
+        unsafe {
+            std::env::set_var("MNML_EXPAND_INDICATOR", &self.ui.expand_indicator);
         }
         if let Some(h) = raw.ui.hover_help_height {
             // Clamp to sane bounds — below 3 breaks the title+body

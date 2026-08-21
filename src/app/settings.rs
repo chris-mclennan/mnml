@@ -901,6 +901,13 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             let new = if opt_idx == 1 { "triangle" } else { "chevron" };
             let changed = cfg.ui.expand_indicator != new;
             cfg.ui.expand_indicator = new.to_string();
+            // #1045 (2026-08-20) — re-publish to env so new pty
+            // children pick up the toggle. Existing children keep
+            // the old value; they'd need a restart to re-read.
+            // SAFETY: see Config::apply_raw for the same call site.
+            unsafe {
+                std::env::set_var("MNML_EXPAND_INDICATOR", &cfg.ui.expand_indicator);
+            }
             changed
         }
         "ui.preferred_music_app" => {

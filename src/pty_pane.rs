@@ -485,6 +485,18 @@ impl PtySession {
         // already draws pane borders). User asked for this on
         // amplify + bitbucket panes so the in-mnml view is flush.
         cmd.env("MNML_PANE", "1");
+        // #1045 (2026-08-20) — forward mnml's chevron/triangle
+        // preference so integrations paint their expand indicators
+        // with the same shape. mnml sets the env var on its OWN
+        // process (see `App::sync_expand_indicator_env` — called on
+        // startup and on runtime toggle), which every Pty child
+        // inherits naturally. Fall back to "chevron" (the mnml
+        // default) if not set. Integrations read this on startup
+        // and swap their bake-in `▶/▼` triangles for `›/⌄`
+        // chevrons — see mnml-forge-bitbucket / mnml-tracker-jira.
+        if let Ok(v) = std::env::var("MNML_EXPAND_INDICATOR") {
+            cmd.env("MNML_EXPAND_INDICATOR", v);
+        }
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }
