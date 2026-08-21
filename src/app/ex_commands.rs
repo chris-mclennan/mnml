@@ -1676,7 +1676,7 @@ impl App {
                     //
                     // Tab-label derivation (2026-07-03):
                     //   - `:term mnml-aws-amplify` → `amplify` (strip
-                    //     the `mnml-<category>-` prefix so sibling
+                    //     the `mnml-<category>-` prefix so integration
                     //     integrations show their family name, not
                     //     the noisy `mnml-aws-amplify` binary path).
                     //   - `:term npm run dev` → `npm` (first word).
@@ -1729,33 +1729,6 @@ impl App {
                         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
                         None => String::new(),
                     };
-                    // If the caller passed `--only <family>`, append
-                    // it title-cased so the two split chips each get
-                    // a distinct tab title ("Bitbucket - Pull
-                    // Requests" vs "Bitbucket - Pipelines").
-                    if let Some(pos) = cmdline.find("--only ") {
-                        let after = &cmdline[pos + "--only ".len()..];
-                        let family = after.split_whitespace().next().unwrap_or("");
-                        // 2026-07-25 — Jira split values added
-                        // (work / fix-versions / boards). Was only
-                        // handling Bitbucket's family names, so the
-                        // three Jira split chips all rendered as
-                        // plain "Jira" in the tab. Both hyphen and
-                        // underscore accepted — matches TabFamily's
-                        // CLI parser.
-                        let suffix = match family {
-                            "prs" | "pull_requests" => Some("Pull Requests"),
-                            "pipelines" => Some("Pipelines"),
-                            "branches" => Some("Branches"),
-                            "work" | "jira_work" => Some("Work"),
-                            "fix-versions" | "fix_versions" | "fix_version" => Some("Fix Versions"),
-                            "boards" | "jira_boards" => Some("Boards"),
-                            _ => None,
-                        };
-                        if let Some(s) = suffix {
-                            label = format!("{label} {s}");
-                        }
-                    }
                     let ws = self.active_workspace_path().to_path_buf();
                     // 2026-07-19 — deterministic tab-icon: stamp
                     // the integration id (if any chip's `command`
@@ -1769,26 +1742,67 @@ impl App {
                     // outer match), so we reconstruct both forms.
                     let ex_term_form = format!(":term {}", cmdline);
                     let term_form = format!("term {}", cmdline);
-                    let integration_match = self
-                        .config
-                        .ui
-                        .integration_icons
-                        .iter()
-                        .find(|ic| {
-                            ic.command == ex_term_form
-                                || ic.command == term_form
-                                || ic.command == cmdline
-                        })
+                    // #1099 f/u v2 (2026-08-20) — RIGID chip binding
+                    // via `pending_term_integration_hint`. When a
+                    // dynamic command dispatch (chip click, palette
+                    // fire, statusline segment click, keybind) set
+                    // the hint on App just before invoking us, use
+                    // THAT integration's chip verbatim — no
+                    // guessing at exact-cmdline or binary. Consume
+                    // the hint immediately so the next `:term` (if
+                    // any) doesn't inherit stale state.
+                    let hinted = self.pending_term_integration_hint.take();
+                    let hinted_chip = hinted.as_deref().and_then(|id| {
+                        self.config
+                            .ui
+                            .integration_icons
+                            .iter()
+                            .find(|ic| ic.id == id)
+                    });
+                    // Exact-string match on the chip's command is
+                    // the second-tier source-of-truth (e.g. a chip
+                    // clicked directly from the palette bar / rail
+                    // that didn't go through run_dynamic_command).
+                    let exact = self.config.ui.integration_icons.iter().find(|ic| {
+                        ic.command == ex_term_form
+                            || ic.command == term_form
+                            || ic.command == cmdline
+                    });
+                    let is_exact_match = hinted_chip.is_some() || exact.is_some();
+                    let integration_match = hinted_chip
+                        .or(exact)
                         .map(|ic| (ic.id.clone(), ic.label.clone()));
                     // If the ex-command matches an integration chip
-                    // AND that chip carries a `tooltip`, use the
-                    // tooltip as the tab label — that's the chip's
-                    // human-facing name (e.g. "EventBridge
-                    // Schedules", "Bitbucket Pull Requests"). Beats
-                    // the binary-name derivation which produced
-                    // "Eventbridge".
+                    // AND that chip carries a `label`, use it as the
+                    // tab label — that's the chip's human-facing name
+                    // (e.g. "Bitbucket PRs"). Beats the binary-name
+                    // derivation which produced "Bitbucket".
                     if let Some((_, Some(tt))) = &integration_match {
                         label = tt.clone();
+                    }
+                    // If the caller passed `--only <family>` and we
+                    // fell back to a BINARY match (not exact), the
+                    // label came from a peer chip — append a variant
+                    // suffix so tabs stay visually distinct
+                    // ("Bitbucket PRs" vs "Bitbucket PRs · Mine").
+                    // Skipped on exact-match because the chip's own
+                    // label already reflects its variant.
+                    if !is_exact_match && let Some(pos) = cmdline.find("--only ") {
+                        let after = &cmdline[pos + "--only ".len()..];
+                        let family = after.split_whitespace().next().unwrap_or("");
+                        let suffix = match family {
+                            "prs-mine" | "pull_requests_mine" => Some("Mine"),
+                            "prs" | "pull_requests" => Some("Pull Requests"),
+                            "pipelines" => Some("Pipelines"),
+                            "branches" => Some("Branches"),
+                            "work" | "jira_work" => Some("Work"),
+                            "fix-versions" | "fix_versions" | "fix_version" => Some("Fix Versions"),
+                            "boards" | "jira_boards" => Some("Boards"),
+                            _ => None,
+                        };
+                        if let Some(s) = suffix {
+                            label = format!("{label} · {s}");
+                        }
                     }
                     let mut prof = crate::pty_pane::BinaryProfile::task(&label, cmdline, ws);
                     if let Some((id, _)) = integration_match {
@@ -3337,7 +3351,7 @@ impl App {
                 // `git.commit_staged_changes`; etc. Fuzzy-resolving
                 // *any* vim canonical name is a footgun — a user
                 // typing a reflexive vim command should get "unknown"
-                // (recoverable) rather than a sibling action firing
+                // (recoverable) rather than an integration action firing
                 // by name-collision. If mnml grows a real implementation
                 // for one of these, add it as an explicit arm above
                 // (which shadows this list).
