@@ -1992,7 +1992,7 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // `f` / `F` walk between the commit's changed files
             // without going back to the right detail panel. Routed
             // through `App::diff_jump_file` which already knows how
-            // to re-open the embedded diff against a sibling file.
+            // to re-open the embedded diff against an integration file.
             if matches!(key.code, KeyCode::Char('f')) {
                 app.diff_jump_file(true);
                 return;
@@ -2271,6 +2271,26 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             if key.code == KeyCode::Esc {
                 app.focus_tree();
             }
+            return;
+        }
+        // #1076 f/u (2026-08-21) — user re-reported: "still can't use
+        // Ctrl+W to close Jira Work tab, and others." Root cause:
+        // when the user is in VIM mode, the global Ctrl+W intercept
+        // in `handle_key_event` skips (Ctrl+W is vim's window-nav
+        // prefix) and this Pty branch forwards Ctrl+W to the child.
+        // Integration TUIs (mnml-tracker-jira / -forge-bitbucket / …)
+        // don't use Ctrl+W internally, so it's just eaten.
+        //
+        // Reserve Ctrl+W on integration Pty panes (identified by
+        // `profile.integration_id`) as "close pane" in BOTH input
+        // styles — same behavior as any editor tab or Claude Usage
+        // pane. Shell Pty (`integration_id = None`) still forwards
+        // Ctrl+W to the child so bash's word-erase keeps working.
+        if key.code == KeyCode::Char('w')
+            && key.modifiers == KeyModifiers::CONTROL
+            && s.profile.integration_id.is_some()
+        {
+            app.close_active_pane();
             return;
         }
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -2619,7 +2639,7 @@ fn handle_diff_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> b
                 d.cursor = 0;
             }
             KeyCode::End | KeyCode::Char('G') => d.scroll = usize::MAX,
-            // `w` toggles wrap (sibling chord to the `[Wrap]` toolbar
+            // `w` toggles wrap (integration chord to the `[Wrap]` toolbar
             // button). Pref updated below after the borrow on `d`.
             KeyCode::Char('w') => d.wrap = !d.wrap,
             // `v` cycles view modes Hunk → Inline → Split → Hunk
