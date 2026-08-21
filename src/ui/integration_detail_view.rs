@@ -821,7 +821,7 @@ pub(crate) fn build_actionable_with_marketplace(
             });
         }
         // Uninstall — only meaningful for non-built-ins (i.e.
-        // things a sibling manifest or the user added). For
+        // things a integration manifest or the user added). For
         // built-ins Removing == "remove from your rail", which
         // is a valid action too, so we always surface it.
         buttons.push(DetailButton {
@@ -836,7 +836,7 @@ pub(crate) fn build_actionable_with_marketplace(
                 action: DetailAction::BakeGlyph(cp as u32),
             });
         }
-        // Refresh — palette command; useful when a sibling was
+        // Refresh — palette command; useful when an integration was
         // just installed on disk and the user wants to pick up
         // the new manifest without restarting mnml.
         buttons.push(DetailButton {
@@ -849,7 +849,7 @@ pub(crate) fn build_actionable_with_marketplace(
             action: DetailAction::OpenManifest(id.to_string()),
         });
         // Copy id — everyday convenience for pasting into a
-        // chord binding / palette command / sibling install
+        // chord binding / palette command / integration install
         // script.
         buttons.push(DetailButton {
             label: "Copy id".to_string(),

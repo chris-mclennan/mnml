@@ -316,7 +316,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 ),
                 ActivitySection::Integrations => (
                     "click: Integrations rail",
-                    Some("browser / mixr / sibling tools · + to add"),
+                    Some("browser / mixr / integration tools · + to add"),
                 ),
                 ActivitySection::Sessions => (
                     "click: Sessions rail",
@@ -611,7 +611,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             Some((
                 rect,
                 "add integration".into(),
-                Some("click: discovery overlay (siblings + custom)".into()),
+                Some("click: discovery overlay (integrations + custom)".into()),
             ))
         }
         HoverChip::RightPanelTab(pid) => {

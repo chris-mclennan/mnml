@@ -258,7 +258,7 @@ pub enum IpcCommand {
         id: String,
         status: crate::app::ProgressStatus,
     },
-    /// Bridge tier-2: insert or update a sibling statusline
+    /// Bridge tier-2: insert or update a integration statusline
     /// segment. Repeat with same id updates in place.
     StatuslineSetSegment {
         id: String,
@@ -270,7 +270,7 @@ pub enum IpcCommand {
         min_width: u16,
         max_width: u16,
     },
-    /// Bridge tier-2: remove a sibling statusline segment.
+    /// Bridge tier-2: remove a integration statusline segment.
     StatuslineClearSegment { id: String },
     /// Bridge tier-2: fire a notification. Always shows an
     /// in-app toast at the given level; also queues an OS
@@ -286,7 +286,7 @@ pub enum IpcCommand {
     /// Bridge tier-2: spawn a new Pty pane running `command` in
     /// `cwd` (defaults to the workspace). The first element of
     /// `command` is the executable; the rest are args. Used by
-    /// siblings to dispatch follow-on work (run a test, tail a
+    /// integrations to dispatch follow-on work (run a test, tail a
     /// log) into a fresh mnml pane instead of as a detached child
     /// the user can't see.
     OpenPty {
@@ -296,7 +296,7 @@ pub enum IpcCommand {
     /// Bridge tier-2: set a notification badge on an activity-bar
     /// section. `section` is either a builtin section name
     /// (`"agents"`, `"cloud_agents"`, etc.) or a manifest-registered
-    /// Mount id. `count = 0` clears the badge. Used by siblings
+    /// Mount id. `count = 0` clears the badge. Used by integrations
     /// that want to surface a queue depth, action-needed count,
     /// etc. without taking focus.
     SetActivityBadge { section: String, count: u32 },
@@ -843,6 +843,7 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 group: group.clone(),
                 keys: keys.clone(),
                 ex_run: None,
+                owner_integration_id: None,
             });
             json_event(&[
                 ("event", "command_registered"),

@@ -606,7 +606,7 @@ pub enum HoverChip {
     StatuslineCoverage,
     /// A dynamic statusline chip declared by an integration
     /// manifest's `[[statusline_segments]]` block (or by an IPC
-    /// `statusline_set_segment` call from a running sibling). The
+    /// `statusline_set_segment` call from a running integration). The
     /// `usize` indexes `PaneRects::statusline_segment_hits` — a
     /// per-frame vec of `(Rect, segment_id)` populated by
     /// `ui::statusline::draw`. Click routes to the segment's

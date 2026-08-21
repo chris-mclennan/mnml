@@ -1,5 +1,5 @@
 //! Background-thread runner for `git push` / `pull` / `fetch` /
-//! `cherry-pick`. Same pattern as the sibling crates' loader-thread
+//! `cherry-pick`. Same pattern as the integration crates' loader-thread
 //! refactor (slack/teams/gmail/mandrill/buttondown/docker async
 //! migrations earlier today): the App sends a job + drains results
 //! in `tick()`, so a slow remote / credential-prompt / SSH key

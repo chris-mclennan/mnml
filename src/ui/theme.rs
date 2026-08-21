@@ -357,7 +357,7 @@ pub fn color_from_slot(name: &str, t: &Theme) -> ratatui::style::Color {
         // `[1..3]`/`[3..5]`/`[5..7]` slices assume single-byte ASCII.
         // A crafted 7-byte string with a multi-byte UTF-8 char straddling
         // a cut point (e.g. `"#12中4"`) would panic on `is_char_boundary`
-        // — user-editable via the sibling TOML, called every frame from
+        // — user-editable via the integration TOML, called every frame from
         // the render thread. Use `get(..)` (returns None on non-boundary)
         // + `is_ascii_hexdigit` gate for defence-in-depth.
         hex if hex.starts_with('#') && hex.len() == 7 => {
@@ -476,7 +476,7 @@ pub fn detect_system_dark() -> bool {
 
 /// Path to the canonical "current theme" file — `~/.config/mnml/current-theme.toml`
 /// (respecting `$XDG_CONFIG_HOME`). This is the family's single source of truth:
-/// [`write_current`] keeps it in sync with mnml's active theme, and every sibling
+/// [`write_current`] keeps it in sync with mnml's active theme, and every integration
 /// (mixr, the `mnml-*` integrations) reads it to follow mnml's colours.
 pub fn current_theme_path() -> Option<std::path::PathBuf> {
     if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
@@ -510,14 +510,14 @@ fn hex(c: Color) -> String {
 
 /// Serialise `t` to the `[base_30]` + `[base_16]` TOML shape mnml itself parses
 /// ([`parse_theme`]). The key names match the NvChad base_30 schema so any
-/// consumer — mnml's own parser, a sibling's `theme.rs` — reads the colours
+/// consumer — mnml's own parser, an integration's `theme.rs` — reads the colours
 /// it expects. `comment` (the dim role) is emitted under both `light_grey`
 /// and `grey_fg2` so loaders keying off either find it.
 pub fn to_toml(t: &Theme) -> String {
     let mut s = String::with_capacity(1024);
     s.push_str(
         "# Written by mnml — the resolved active theme. Family apps (mixr,\n\
-         # mnml-* siblings) read this to follow mnml's colours. Regenerated on\n\
+         # mnml-* integrations) read this to follow mnml's colours. Regenerated on\n\
          # launch and on every theme switch; do not hand-edit.\n",
     );
     s.push_str(&format!("name = \"{}\"\n\n[base_30]\n", t.name));
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn to_toml_round_trips_through_the_parser() {
         // The canonical file mnml writes must read back identically through
-        // its own parser — that's the contract every sibling relies on.
+        // its own parser — that's the contract every integration relies on.
         let src = onedark();
         let toml = to_toml(&src);
         let back = parse_theme("onedark", &toml).expect("written theme re-parses");

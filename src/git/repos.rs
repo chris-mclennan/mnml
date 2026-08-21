@@ -1,7 +1,7 @@
 //! Multi-repo workspace discovery.
 //!
 //! A "workspace" can contain multiple git repos (e.g. a `~/Projects` folder
-//! with several sibling repo dirs). `discover_repos` walks the workspace
+//! with several integration repo dirs). `discover_repos` walks the workspace
 //! looking for `.git/` markers (capped at a small depth to avoid
 //! pathological perf on huge trees), returning a sorted list of repo roots.
 //!

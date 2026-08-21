@@ -83,7 +83,7 @@ impl App {
         if let Some(prefix) = meta.as_ref().and_then(|m| m.s3_artifact_prefix.clone()) {
             // Split `s3://bucket/key/prefix/` → bucket + prefix
             // so we can hand them to mnml-fs-s3 as separate
-            // CLI args (the sibling expects `--bucket` and
+            // CLI args (the integration expects `--bucket` and
             // `--prefix` rather than a single s3:// URL).
             let stripped = prefix.strip_prefix("s3://").unwrap_or(&prefix);
             let (bucket, key_prefix) = match stripped.split_once('/') {
@@ -122,7 +122,7 @@ impl App {
         self.context_menu = Some(ContextMenu::new(None, anchor, items));
     }
 
-    /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
+    /// Spawn the `mnml-aws-cloudwatch-logs` integration tool in a Pty
     /// pane. Friendly error toast when the binary isn't on PATH.
     pub fn open_cloudwatch_pane(&mut self, log_group: &str, filter: &str, label: &str) {
         if !binary_on_path("mnml-aws-cloudwatch-logs") {
@@ -150,7 +150,7 @@ impl App {
         self.toast(format!("tailing {log_group} · filter={filter}"));
     }
 
-    /// Spawn the `mnml-fs-s3` sibling tool in a Pty pane,
+    /// Spawn the `mnml-fs-s3` integration tool in a Pty pane,
     /// pre-filtered to `bucket` + `prefix`. Friendly error toast
     /// when the binary isn't on PATH.
     pub fn open_s3_pane(&mut self, bucket: &str, prefix: &str, label: &str) {

@@ -1,5 +1,5 @@
 //! App methods for the cross-host PR picker (`pr.picker`) and the
-//! Tab → pipeline cross-nav. Fans out to `mnml-forge-*` siblings
+//! Tab → pipeline cross-nav. Fans out to `mnml-forge-*` integrations
 //! via [`crate::scm`].
 
 use crate::app::App;
@@ -15,12 +15,12 @@ const US: char = '\x1F';
 
 impl App {
     /// `pr.picker` palette command — opens a fuzzy picker over every
-    /// open PR/MR across all configured `mnml-forge-*` siblings.
+    /// open PR/MR across all configured `mnml-forge-*` integrations.
     /// Enter on a row opens the PR URL; Tab on a row jumps to the
     /// matching pipeline/build (host-specific cross-nav).
     ///
     /// First call (or stale cache) blocks ~1-3 seconds while the
-    /// siblings answer; subsequent calls within 5 minutes use the
+    /// integrations answer; subsequent calls within 5 minutes use the
     /// cache. The user can force a refresh with `pr.refresh`.
     pub fn open_pr_picker(&mut self) {
         let fresh = self
@@ -33,7 +33,7 @@ impl App {
             // of a brief block. The background-fetch path (when the
             // cache is non-empty but stale) lives in
             // `kick_off_scm_pr_refresh`.
-            self.toast("loading PRs from forge siblings…");
+            self.toast("loading PRs from forge integrations…");
             self.scm_pr_cache = Some(scm::aggregate_all());
         }
         let Some(cache) = self.scm_pr_cache.as_ref() else {
@@ -42,7 +42,7 @@ impl App {
         if cache.prs.is_empty() {
             if cache.errors.is_empty() {
                 self.toast(
-                    "no open PRs across installed forge siblings (mnml-forge-bitbucket / github / gitlab / azdevops)",
+                    "no open PRs across installed forge integrations (mnml-forge-bitbucket / github / gitlab / azdevops)",
                 );
             } else {
                 let summary = cache
@@ -59,7 +59,7 @@ impl App {
         let mut title = format!("Open PRs ({})", cache.prs.len());
         if !cache.errors.is_empty() {
             title.push_str(&format!(
-                " · {} sibling errors (Esc to dismiss)",
+                " · {} integration errors (Esc to dismiss)",
                 cache.errors.len()
             ));
         }
@@ -80,7 +80,7 @@ impl App {
             let _ = tx.send(cache);
         });
         self.scm_pr_pending = Some(rx);
-        self.toast("refreshing PRs across forge siblings…");
+        self.toast("refreshing PRs across forge integrations…");
     }
 
     /// Drain `scm_pr_pending` from the main `tick`. Called every
@@ -95,7 +95,7 @@ impl App {
                 self.scm_pr_cache = Some(cache);
                 self.scm_pr_pending = None;
                 self.refresh_rail_pulls();
-                self.toast(format!("PRs refreshed: {n} across forge siblings"));
+                self.toast(format!("PRs refreshed: {n} across forge integrations"));
                 true
             }
             Err(mpsc::TryRecvError::Empty) => false,
@@ -115,7 +115,7 @@ impl App {
     }
 
     /// Cross-nav handler for `PickerKind::OpenPullRequests` Tab:
-    /// unpack the host/owner/repo/branch, ask the matching sibling
+    /// unpack the host/owner/repo/branch, ask the matching integration
     /// to look up the pipeline URL, open in browser.
     ///
     /// Synchronous (~1 sec) — we're already in a picker-accept

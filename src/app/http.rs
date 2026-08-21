@@ -2765,7 +2765,7 @@ impl App {
             .unwrap_or("")
             .to_ascii_lowercase();
         // qa-5th 2026-06-29 SEV-2: was `"http" | "rest"` — silently
-        // rejected .curl files. The sibling guards at lines 2328
+        // rejected .curl files. The integration guards at lines 2328
         // and 2919 (the send-request paths) include "curl" too.
         // For consistency, accept all three; the empty-blocks toast
         // below handles the single-block .curl case gracefully.
@@ -3400,7 +3400,7 @@ impl App {
                 return;
             }
         };
-        // http-2nd SEV-2: multi-block .http files share the sibling
+        // http-2nd SEV-2: multi-block .http files share the integration
         // path so block A's mock overwrote block B's. Use per-block
         // path when a named block is the source.
         let mock_path =
@@ -3465,7 +3465,7 @@ impl App {
     }
 
     /// Sidebar-triggered mock replay — replay `path` directly (skips
-    /// the sibling-path lookup that `http_replay_active_request_from_mock`
+    /// the integration-path lookup that `http_replay_active_request_from_mock`
     /// does). Opens a fresh Request pane if none is active.
     pub fn http_replay_mock_from_path(&mut self, path: &std::path::Path) {
         let mock = match crate::http::mock::load(path) {
@@ -4453,7 +4453,7 @@ impl App {
 
     /// Allocate a job id, ensure the result channel exists, spawn the worker.
     /// `source_path` (the request's `.curl` / `.http` source file, if any)
-    /// is threaded through so the worker can resolve a sibling
+    /// is threaded through so the worker can resolve an integration
     /// `*.schema.json` and validate the response body.
     fn spawn_http_job(
         &mut self,

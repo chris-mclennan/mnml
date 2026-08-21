@@ -1,7 +1,7 @@
 //! Pluggable "now playing" — the data behind the statusline miniplayer.
 //!
 //! mnml shows what an external player is playing; the *source* of that
-//! info is pluggable, so the sibling `mixr` DJ app today and the macOS
+//! info is pluggable, so the integration `mixr` DJ app today and the macOS
 //! Music / Spotify apps both feed the same statusline chip. Adding a
 //! source = a new sub-module + one arm in [`poll`].
 //!
@@ -43,7 +43,7 @@ pub struct NowPlaying {
 /// `"macos"`. Defaults to `Auto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// The sibling mixr DJ app (`~/.mixr/quick.txt`).
+    /// The integration mixr DJ app (`~/.mixr/quick.txt`).
     Mixr,
     /// macOS Music / Spotify via AppleScript.
     Macos,

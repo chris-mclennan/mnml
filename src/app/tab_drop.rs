@@ -56,7 +56,7 @@ impl App {
             // onto the visible pane (the only pane in single-leaf
             // layouts). Center is a no-op; edges mean "split this
             // leaf and put src in the new half" — split_tab_into
-            // already does that (finds a sibling tab, splices).
+            // already does that (finds an integration tab, splices).
             if matches!(zone, DropZone::Center) {
                 return;
             }
@@ -262,7 +262,7 @@ impl App {
     }
 
     pub fn split_tab_into(&mut self, src: PaneId, zone: DropZone) {
-        // First try: a sibling tab in the same leaf (the
+        // First try: an integration tab in the same leaf (the
         // common case — splice_pane_at handles it cleanly).
         if let Some(target) = self
             .layout()
@@ -292,7 +292,7 @@ impl App {
             // Bring the orphan into src's leaf as a tab, then run
             // the normal split path. That way the orphan ends up
             // in the original leaf's spot and src goes into the
-            // new half — same shape as the sibling case.
+            // new half — same shape as the integration case.
             if let Some((_active, tabs)) = self.layout_mut().leaf_containing_mut(src) {
                 tabs.insert(0, orphan); // before src
             }

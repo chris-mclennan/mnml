@@ -578,7 +578,7 @@ impl App {
         // of this fn passed just the filter set, which meant a
         // selective rebake (e.g. tuning F1E00 size while iterating)
         // wiped every other baked glyph: custom user glyphs (ghostty
-        // terminal), all sibling-baked AWS/GCP glyphs, everything.
+        // terminal), all integration-baked AWS/GCP glyphs, everything.
         // Fix: seed `resolved` from `glyph_meta.toml` (the record of
         // every glyph ever baked into the font) so the output always
         // includes them, then override any filter-matched entries

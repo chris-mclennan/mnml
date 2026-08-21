@@ -1814,7 +1814,7 @@ impl App {
     ///
     /// Cache is populated by `pr.picker` / `pr.refresh` — see
     /// [`App::open_pr_picker`]. This method is a pure projection: it
-    /// never spawns a sibling itself. To get fresh data, the user
+    /// never spawns an integration itself. To get fresh data, the user
     /// runs `pr.picker` or `pr.refresh`.
     pub fn refresh_rail_pulls(&mut self) {
         use crate::git::rail::PullRow;
@@ -2225,7 +2225,7 @@ impl App {
 
     /// `:git.worktree_add` — prompt for a path (where to create
     /// the worktree), then prompt for a branch name to check out.
-    /// Convenience for "park this branch in a sibling worktree
+    /// Convenience for "park this branch in a integration worktree
     /// without touching my current one."
     pub fn open_worktree_add_prompt(&mut self) {
         self.prompt = Some(crate::prompt::Prompt::new(

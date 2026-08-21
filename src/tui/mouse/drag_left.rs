@@ -78,7 +78,7 @@ pub(super) fn handle_drag_left(app: &mut App, x: u16, y: u16) {
     // Bufferline (file-tab) drag — update visuals only.
     // Reorder + drop-to-pane both happen on mouse-UP. Doing
     // them on Drag caused thrash with 2+ tabs: hovering over
-    // a sibling tab fired swap_bufferline_tabs, the cursor
+    // an integration tab fired swap_bufferline_tabs, the cursor
     // ended up over the now-moved source, swap fired again,
     // and so on. Moving the swap to mouse-up makes drag-to-
     // pane-body work cleanly regardless of how many tabs.

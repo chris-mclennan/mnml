@@ -331,7 +331,7 @@ impl App {
         }
         // 2026-08-07 — protect the first-party built-ins from an
         // accidental uninstall. Browser / Claude Code / Codex / http
-        // ship in mnml core; there's no `<sibling> --install` to
+        // ship in mnml core; there's no `<integration> --install` to
         // re-run to bring them back. User can still Disable via
         // right-click → Disable (hides the chip but keeps the
         // manifest). This is the same guard the settings pane
@@ -365,7 +365,7 @@ impl App {
     }
 
     /// Uninstall the integration with the given id — full round-trip
-    /// with `install_launcher_from_url` / `<sibling> --install`:
+    /// with `install_launcher_from_url` / `<integration> --install`:
     ///
     /// 1. Delete the installed manifest at
     ///    `~/.config/mnml/integrations/<id>.toml` (if present).
@@ -398,7 +398,7 @@ impl App {
         {
             let _ = std::fs::remove_file(&override_path);
         }
-        // Step 1.5: purge sibling-icons SDK state for this id —
+        // Step 1.5: purge integration-icons SDK state for this id —
         // `~/.config/mnml/glyphs/<id>.svg` and its assignments.toml
         // entry. Non-fatal if either is missing (most integrations
         // don't ship SVG glyphs). Reviewer 2026-08-03 W#3.
@@ -967,7 +967,7 @@ pub fn builtin_default_icon(id: &str) -> Option<crate::config::IntegrationIcon> 
 }
 
 /// Write a full `<id>.toml` authorial manifest for a user-created
-/// integration (AddCustom mode). No sibling exists upstream, so the
+/// integration (AddCustom mode). No integration exists upstream, so the
 /// file is the canonical source, not an override. `binary` is left
 /// unset so the manifest is treated as a launcher; the `command`
 /// field is emitted as a single palette-command entry the chip
@@ -1360,7 +1360,7 @@ fn append_integration_icon_blocks(existing: &str, icons: &[IntegrationIcon]) -> 
     out.push_str("# 2026-08-01 — slim entries. Only `enabled` +\n");
     out.push_str("# `in_palette_bar` (and file order) come from here now;\n");
     out.push_str("# glyph / label / command / color / fallback / description\n");
-    out.push_str("# all read from the sibling's installed manifest (or a\n");
+    out.push_str("# all read from the integration's installed manifest (or a\n");
     out.push_str("# built-in default in mnml core). This section is rewritten\n");
     out.push_str("# in place on every right-click toggle. Any fields you add\n");
     out.push_str("# by hand will get dropped on next save — add an override\n");

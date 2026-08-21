@@ -168,7 +168,7 @@ impl App {
     /// it. `browser.open` (rail chip default) skips the prompt and
     /// goes straight to `about:blank`. Multiple browser panes can
     /// coexist; each gets its own CDP worker + (in
-    /// `workspace` / `shared` modes) a per-pane sibling profile dir.
+    /// `workspace` / `shared` modes) a per-pane integration profile dir.
     pub fn open_browser_prompt(&mut self) {
         // Empty seed — the prompt UI paints a dimmed "https://example.com"
         // placeholder that clears on the first keystroke, mirroring
@@ -198,7 +198,7 @@ impl App {
 
     /// Same as [`Self::chrome_profile_dir`] but tagged with `pane_index`
     /// — when another browser pane is already running, the second + later
-    /// opens land in a sibling dir (`-1`, `-2`, …) so Chrome doesn't refuse
+    /// opens land in an integration dir (`-1`, `-2`, …) so Chrome doesn't refuse
     /// to start against a `--user-data-dir` that already has a process
     /// holding the lock. `pane_index == 0` ⇒ no suffix (the first / only
     /// pane keeps the existing single-pane path).
@@ -298,7 +298,7 @@ impl App {
     /// Launch Chrome on `url` over CDP and open a `Pane::Browser` (split below).
     /// Multiple browser panes can coexist — each gets its own CDP worker +
     /// per-pane channels. The second + later panes (in `workspace` /
-    /// `shared` profile modes) land in a sibling `chrome-profile-N` dir so
+    /// `shared` profile modes) land in an integration `chrome-profile-N` dir so
     /// Chrome doesn't refuse to start against an already-locked user-data-dir.
     pub fn open_browser(&mut self, url: &str) {
         // qa-feature 2026-07-02 — upfront Chrome availability check.

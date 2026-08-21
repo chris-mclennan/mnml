@@ -178,7 +178,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // event should reach it via an SGR mouse report instead of
     // being intercepted by mnml's own handlers (dock menu,
     // focus, scrollback). This unblocks click / right-click /
-    // wheel inside every mouse-aware sibling (mnml-aws-amplify
+    // wheel inside every mouse-aware integration (mnml-aws-amplify
     // and friends).
     // Left-click on a Pty pane WITHOUT mouse-tracking → arm a
     // drag-select. Origin cell captured in pane-relative coords
@@ -227,25 +227,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // 2026-07-19 — menu-open wins over Pty mouse-forwarding. If a
     // context menu is up (e.g. the `+` tab "Create…" menu) and the
     // click lands over a Pty pane whose child has enabled mouse
-    // tracking, previously the click was forwarded to the sibling
+    // tracking, previously the click was forwarded to the integration
     // and never reached the menu-dismiss branch below — the menu
     // stayed open. User report: "when i open a menu and click away
     // menu should close, this one does not". Let the menu handler
     // run first (accepts the click on an item, or cancels).
     // 2026-07-20 — same guard for tab-drag. If the user grabbed a
     // tab and is now dragging over an integration Pty pane, the
-    // sibling's mouse tracking would swallow the drag events and
+    // integration's mouse tracking would swallow the drag events and
     // the release wouldn't split — user report: "can we allow
     // integration tabs to be moved around like we did for file
     // tabs".
     // Any active drag/menu takes precedence over Pty forwarding —
-    // the sibling's mouse tracking would otherwise swallow the
+    // the integration's mouse tracking would otherwise swallow the
     // in-progress gesture. Covers context menus, tab-drag, tree-drag,
     // tab-page-chip drag, and dock-widget drag. User report
     // 2026-07-20: "once i open an integration, i can then no
     // longer drag files" — tree_drag/bufferline_drag_tab were
     // getting stomped mid-drag when the cursor passed over the
-    // sibling's pane body.
+    // integration's pane body.
     let is_any_drag_active = app.context_menu.is_some()
         || app.rects.bufferline_drag_tab.is_some()
         || app.tree_drag.is_some()
@@ -253,7 +253,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         || app.dock_drag_id.is_some()
         // 2026-07-21 — same class of bug as tab-drag: without
         // these, dragging a split divider BACK into a Pty pane's
-        // area (to shrink it) let the sibling swallow the drag
+        // area (to shrink it) let the integration swallow the drag
         // events, so dividers could only grow the Pty pane, not
         // shrink it. Scrollbar / tree-edge / right-panel-edge /
         // rail-section drags all have the same shape.
@@ -275,7 +275,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // pane whose child has mouse tracking (AWS CodeBuild); the
     // Pty-forward path below fired first and swallowed the click.
     // Any modal prompt / overlay / picker owns clicks over the
-    // sibling — the sibling can't focus a control that's covered.
+    // integration — the integration can't focus a control that's covered.
     let modal_wants_click =
         app.prompt.is_some() || app.picker.is_some() || app.context_menu.is_some();
     let pty_tracking_hit: Option<(Rect, usize)> = if is_any_drag_active || modal_wants_click {
@@ -411,7 +411,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     // 2026-06-27 — CloudAgentRun pane: click on a URL row opens
     // it in the system browser; click on an artifact row opens
-    // the s3 sibling pointed at that key. Hit rects come from
+    // the s3 integration pointed at that key. Hit rects come from
     // `cloud_agent_run_view::draw`.
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
         && let Some((_, pane_id, hit)) = app
@@ -434,7 +434,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             CloudAgentRunHit::Artifact(key) => {
                 // S3 key shape: s3://bucket/path/to/file
-                // The s3 sibling browses by bucket+prefix; here we
+                // The s3 integration browses by bucket+prefix; here we
                 // open it scoped to the parent prefix of the key so
                 // the user lands at the right folder.
                 let stripped = key.strip_prefix("s3://").unwrap_or(&key);

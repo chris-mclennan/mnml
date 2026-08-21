@@ -1543,7 +1543,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             // AWS CodeBuild + LogTail wheel-scroll moved to
             // mnml-aws-codebuild; pipeline-log + SCM wheel-scroll
-            // moved to the mnml-forge-* siblings.
+            // moved to the mnml-forge-* integrations.
             Some(Pane::Cheatsheet(c)) => {
                 if delta < 0 {
                     c.move_up();
@@ -1625,7 +1625,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 }
             }
             Some(Pane::Mount(m)) => {
-                // Forward as a scroll event — sibling decides what
+                // Forward as a scroll event — integration decides what
                 // to do with it (scroll a list, change a chart, …).
                 m.send_input(mnml_bridge::InputEvent::Scroll {
                     col: 0,
@@ -1919,7 +1919,7 @@ pub(crate) fn handle_scm_row_click(
         return;
     }
     // SCM/CI pane click dispatch moved with the panes themselves to
-    // their standalone mnml-forge-* sibling binaries.
+    // their standalone mnml-forge-* integration binaries.
     let _ = (app, pane_id);
 }
 

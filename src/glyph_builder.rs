@@ -673,7 +673,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     // so those chips lost their glyphs. Better to keep the SVGs
     // baked into mnml core since only a handful of launcher tools
     // ever need a mnml-owned codepoint. (dynamodb stays out — it's
-    // owned by the mnml-db sibling which DOES ship its own SVG.)
+    // owned by the mnml-db integration which DOES ship its own SVG.)
     //
     // DevTool range (F2000-F20FF) — used to bake btop/htop/iftop
     // PUA glyphs before launchers switched to the real Nerd Fonts
@@ -691,7 +691,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         // 0.75 / 0.28) were tuned for the tall-narrow spark and
         // rendered the new shape as an oddly-warped blob.
         // Fresh values: square aspect (1.4/1.4 slightly larger than
-        // cell so the glyph reads on par with sibling codicons),
+        // cell so the glyph reads on par with integration codicons),
         // dead-center anchor.
         name: "ai-claude-spark",
         svg_relpath: "assets/glyphs/ai/claude-spark.svg",

@@ -159,7 +159,7 @@ impl App {
         // qa-7th multilang SEV-2 2026-06-30 — was walking from
         // self.workspace, which fails in a monorepo where
         // package.json lives only under packages/<app>/. Match
-        // the sibling runners (run_package_manager_command at
+        // the integration runners (run_package_manager_command at
         // playwright.rs:407) and walk from the active editor's
         // directory first.
         let start_dir = self
@@ -673,7 +673,7 @@ impl App {
 /// fix). The workspace boundary was added 2026-07-06 after
 /// multilang-dev-user SEV-2 flagged that a workspace with no
 /// inner manifest but a stray ancestor manifest (e.g. `~/package.json`,
-/// a sibling scratch project) would silently escape and run the
+/// a integration scratch project) would silently escape and run the
 /// command in the wrong directory.
 pub fn find_manifest_dir(
     start: &std::path::Path,
@@ -706,7 +706,7 @@ mod playwright_tests {
     fn find_manifest_dir_stops_at_workspace_root() {
         // Regression for multilang-dev-user 2026-07-06 SEV-2 —
         // `find_manifest_dir` used to walk the FULL path to `/`,
-        // silently picking up a `~/package.json` or a sibling
+        // silently picking up a `~/package.json` or an integration
         // scratch project's manifest and running commands there.
         // Now it stops at the workspace boundary.
         let outer = tempfile::tempdir().unwrap();

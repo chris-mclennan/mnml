@@ -1485,7 +1485,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         // config-only). Codepoint for the glyph builder is the
         // PUA slot each AI kind uses (F8B0 / F8B1); the builder
         // lets users nudge width/height/center to fix baseline
-        // drift against sibling codicons.
+        // drift against integration codicons.
         // 2026-08-07 — dropped the `Show Claude only / Show Codex
         // only / Show both / Hide these icons` submenu. AI chip
         // visibility is now controlled per-chip through the

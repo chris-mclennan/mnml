@@ -1,6 +1,6 @@
 //! Toasts (transient, stack, persistent), progress bars, dynamic
 //! statusline segments, and OS-level notifications (OSC 9 / 777).
-//! This is the SDK surface siblings write to via `mnml-bridge`.
+//! This is the SDK surface integrations write to via `mnml-bridge`.
 //!
 //! Extracted from `app/mod.rs` (file-split refactor — Task #963).
 //! Pure non-destructive move; no API change.
@@ -156,7 +156,7 @@ impl App {
         });
     }
 
-    /// Insert or update a sibling statusline segment. Keyed by
+    /// Insert or update a integration statusline segment. Keyed by
     /// `id`; repeat calls with the same id update the entry in
     /// place. Rendered on the next paint.
     #[allow(clippy::too_many_arguments)]
@@ -172,7 +172,7 @@ impl App {
         max_width: u16,
     ) {
         // Delegate to the tooltip-aware setter with tooltip=None so
-        // existing sibling IPC callers stay call-compatible while
+        // existing integration IPC callers stay call-compatible while
         // the manifest-driven poll pipeline can pass a real tooltip.
         self.statusline_set_segment_full(
             id,
@@ -232,7 +232,7 @@ impl App {
         }
     }
 
-    /// Remove a sibling statusline segment by id.
+    /// Remove a integration statusline segment by id.
     pub fn statusline_clear_segment(&mut self, id: &str) {
         self.dynamic_segments.retain(|s| s.id != id);
     }

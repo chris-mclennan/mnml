@@ -1,5 +1,5 @@
 //! `integrations.audit_glyphs` — read-only diagnostic that surfaces
-//! the three drift classes the 2026-08-09 sibling audit named:
+//! the three drift classes the 2026-08-09 integration audit named:
 //!
 //! 1. **Manifest glyph won't render** — the `chip.glyph` codepoint on
 //!    an installed integration falls outside ghostty's
@@ -100,7 +100,7 @@ pub fn is_routed(cp: u32, ranges: &[GhosttyRange]) -> bool {
 ///
 /// Cosmetic drift today (the runtime uses whichever row was last
 /// inserted); load-bearing on the next re-install if the row-order
-/// disagrees with the sibling's declared id.
+/// disagrees with the integration's declared id.
 pub fn find_alias_duplicates(assignments: &[(String, u32)]) -> Vec<(u32, Vec<String>)> {
     let mut by_cp: HashMap<u32, Vec<String>> = HashMap::new();
     for (id, cp) in assignments {
@@ -404,7 +404,7 @@ fn write_report(workspace: &std::path::Path, f: &AuditFindings) -> Option<PathBu
         body.push_str("| Manifest id | Codepoint | Label | Fix |\n|---|---|---|---|\n");
         for u in &f.unrenderable {
             body.push_str(&format!(
-                "| `{}` | U+{:04X} | {} | Swap the sibling's `chip.glyph` to a codepoint in ghostty's routed range (F0001-F1AFF for MDI, E5FA-E8FF for codicon/DevIcons) OR ship an SVG for baking. |\n",
+                "| `{}` | U+{:04X} | {} | Swap the integration's `chip.glyph` to a codepoint in ghostty's routed range (F0001-F1AFF for MDI, E5FA-E8FF for codicon/DevIcons) OR ship an SVG for baking. |\n",
                 u.manifest_id, u.codepoint, u.label
             ));
         }

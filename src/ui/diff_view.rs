@@ -1071,7 +1071,7 @@ pub fn render_split(
 }
 
 /// 1-cell scrollbar — `bg2` track + `comment` thumb. No change
-/// markers (those live in the sibling `draw_change_strip` column to
+/// markers (those live in the integration `draw_change_strip` column to
 /// the left). Skipped when `area.height == 0`.
 fn draw_diff_scrollbar(
     frame: &mut Frame,

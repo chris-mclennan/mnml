@@ -1390,7 +1390,7 @@ impl App {
 /// with thousands of findings shouldn't produce a Vec that dwarfs the
 /// panel viewport. Skips any `README.md` at the root so the shipped
 /// index file doesn't clutter the row list. Matches the size-cap
-/// idiom in the sibling `walk_for_http` / `walk_for_todos` walkers.
+/// idiom in the integration `walk_for_http` / `walk_for_todos` walkers.
 fn walk_findings(dir: &std::path::Path, depth: usize, out: &mut Vec<std::path::PathBuf>) {
     if depth > 4 || out.len() > 500 {
         return;

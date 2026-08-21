@@ -573,7 +573,7 @@ fn render_curl(
                     })?;
                 let mut visited: HashSet<String> = HashSet::new();
                 let mut synthesized = synth_example_edge(schema, spec, &mut visited, 0, "", edge);
-                // Tier 3 — coherence pass: sync sibling fields
+                // Tier 3 — coherence pass: sync integration fields
                 // (email ← firstName+lastName, updatedAt ← createdAt
                 // + 30min, total ← amount * quantity, etc.) before
                 // serialization + normalize.
@@ -1156,7 +1156,7 @@ pub(crate) fn coherence_pass(v: &mut Value) {
             for (_, child) in obj.iter_mut() {
                 coherence_pass(child);
             }
-            // Snapshot sibling values by lowercased key as owned data
+            // Snapshot integration values by lowercased key as owned data
             // so the mutable-borrow window on `obj` below stays
             // clean. This runs once per object; the pass is small.
             let keys: Vec<String> = obj.keys().cloned().collect();

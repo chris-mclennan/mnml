@@ -173,7 +173,7 @@ pub struct ShadowedBinary {
 
 /// Walk `$PATH`, find every `mnml-*` binary that resolves to a copy
 /// OTHER than the one in `~/.cargo/bin/`. These are the shadowing
-/// culprits — a `<sibling> --install` invocation will run the stale
+/// culprits — a `<integration> --install` invocation will run the stale
 /// copy instead of the fresh one just installed by `cargo install`.
 /// Result ordered by name for stable rendering.
 ///

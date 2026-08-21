@@ -199,7 +199,7 @@ fn maybe_reexec_for_sandbox() {
 /// Called before creating a new sandbox tempdir so `/tmp` doesn't
 /// accumulate dead sessions (exec-based self-redirect can't rely on
 /// process-exit cleanup). Any dir with mtime older than 6h is
-/// removed; younger ones (possibly a live sibling session) are
+/// removed; younger ones (possibly a live integration session) are
 /// left alone. Best-effort — errors are swallowed.
 fn gc_stale_sandbox_tempdirs() {
     const STALE_SECS: u64 = 6 * 3600;
@@ -327,7 +327,7 @@ fn resolve_demo_workspace() -> Result<PathBuf, String> {
         _ => true,
     };
     if refresh {
-        // Atomic-swap: build into a sibling dir, then rename over the
+        // Atomic-swap: build into an integration dir, then rename over the
         // live cache. Prevents a second concurrent `--demo` launch
         // from copying into a directory a first instance is reading
         // (torn files, remove_dir_all pulling files from under it).
@@ -672,7 +672,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // `mnml-*` integrations — can follow mnml's colours from one source of truth.
     mnml::ui::theme::write_current(&mnml::ui::theme::cur());
 
-    // Inject demo-mode sibling env vars BEFORE App::new (which triggers
+    // Inject demo-mode integration env vars BEFORE App::new (which triggers
     // maybe_refresh_marketplace_on_startup + other background threads
     // that call reqwest, which reads proxy env vars concurrently). Doing
     // set_var here — single-threaded, no snapshots taken yet — sidesteps

@@ -1,4 +1,4 @@
-//! Render the body of a `Pane::Mount` — stamps the sibling's
+//! Render the body of a `Pane::Mount` — stamps the integration's
 //! latest `Frame` into mnml's ratatui buffer.
 
 use mnml_bridge::{Cell, RgbOrIndex, modifier};
@@ -14,7 +14,7 @@ use crate::mount::MountSession;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, session: &mut MountSession, area: Rect) {
-    // Tell the sibling about size changes before we render this frame.
+    // Tell the integration about size changes before we render this frame.
     session.resize(mnml_bridge::Geometry {
         cols: area.width,
         rows: area.height,
@@ -26,7 +26,7 @@ pub fn draw(frame: &mut Frame, session: &mut MountSession, area: Rect) {
         // — the user can close the pane or restart it.
         let t = theme::cur();
         let label = format!(
-            " {} · sibling disconnected (press q to close the pane) ",
+            " {} · integration disconnected (press q to close the pane) ",
             session.label
         );
         let line = Line::from(vec![Span::styled(
@@ -50,8 +50,8 @@ pub fn draw(frame: &mut Frame, session: &mut MountSession, area: Rect) {
         return;
     };
 
-    // Stamp each cell of the sibling's frame into the ratatui buffer.
-    // We clip to the rendered area in case the sibling sent a frame
+    // Stamp each cell of the integration's frame into the ratatui buffer.
+    // We clip to the rendered area in case the integration sent a frame
     // sized for a stale geometry.
     let buf = frame.buffer_mut();
     let max_row = (area.height as usize).min(cells.len());

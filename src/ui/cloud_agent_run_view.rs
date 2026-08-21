@@ -21,7 +21,7 @@ use crate::ui::theme;
 pub enum CloudAgentRunHit {
     /// External URL — opened in the system browser.
     Url(String),
-    /// An S3 artifact key — opened via the s3 sibling.
+    /// An S3 artifact key — opened via the s3 integration.
     Artifact(String),
     /// Manual refresh — re-spawn the log + artifact fetchers.
     Refresh,

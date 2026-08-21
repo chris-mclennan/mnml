@@ -1,4 +1,4 @@
-//! Marketplace tab: async fetch of sibling launchers/apps from
+//! Marketplace tab: async fetch of integration launchers/apps from
 //! configured sources, per-source drain into `marketplace_entries`,
 //! and the install/uninstall flow. Includes the launcher-download
 //! worker (`install_launcher_from_url`) and its per-tick drain
@@ -231,7 +231,7 @@ impl App {
     ///
     /// - **App** (`InstallSpec::Cargo`) — spawn `cargo install <name>`
     ///   as a Pty pane so the user sees compile output. On success,
-    ///   the sibling's own `--install` subcommand handles manifest
+    ///   the integration's own `--install` subcommand handles manifest
     ///   registration; user runs it manually after cargo finishes.
     /// - **Launcher** (`InstallSpec::LauncherToml`) — download the
     ///   TOML via blocking HTTP + write to
@@ -285,7 +285,7 @@ impl App {
         match &entry.install {
             crate::marketplace::InstallSpec::Cargo { name } => {
                 self.toast(format!("installing {name}…"));
-                // 2026-08-06 — auto-chain the sibling's own
+                // 2026-08-06 — auto-chain the integration's own
                 // `--install` subcommand so the marketplace click is
                 // truly one-step (dialog → cargo → chip visible).
                 // Was: user had to `<binary> --install` manually
@@ -306,7 +306,7 @@ impl App {
                 // cargo silently skips whenever the binary is already
                 // installed at any version — so a marketplace click
                 // that means "upgrade to latest" turns into a no-op
-                // and the sibling's OLD --install runs, writing stale
+                // and the integration's OLD --install runs, writing stale
                 // labels + missing SVGs. --force always installs the
                 // newest published version.
                 //

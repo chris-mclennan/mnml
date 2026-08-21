@@ -788,7 +788,7 @@ pub fn paint_right_cluster(
             // #polish 2026-07-06 — reserve 1 cell for the dirty
             // marker regardless of state so chip widths stay
             // stable. Was: dirty added `●` prefix inline, shifting
-            // sibling chips 1 cell every time the marker flipped.
+            // integration chips 1 cell every time the marker flipped.
             //
             // 2026-08-18 (#1020) — dropped the leading space. Was
             // ` {marker}{digit} ` (4 cells for 1-digit tab); adjacent

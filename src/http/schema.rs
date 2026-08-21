@@ -62,7 +62,7 @@ impl SchemaResult {
     }
 }
 
-/// Look for a sibling `<stem>.schema.json` next to the request file.
+/// Look for an integration `<stem>.schema.json` next to the request file.
 /// Tries two stem forms — see module docs.
 pub fn resolve_sidecar(source_path: &Path) -> Option<PathBuf> {
     let parent = source_path.parent()?;

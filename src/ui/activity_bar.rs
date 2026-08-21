@@ -5,13 +5,13 @@
 //!
 //! Every section ships live content: Explorer (file tree), Search
 //! (ripgrep), Git (branch + worktrees), Debug (DAP), Integrations
-//! (installed sibling chips), Sessions (open Pty tabs), Agents
+//! (installed integration chips), Sessions (open Pty tabs), Agents
 //! (Claude/Codex dashboard), Cloud Agents (ECS runner), HTTP
 //! (`.http` / `.curl` files), Notes (`.mnml/notes/*.md`), TODOs
 //! (workspace grep for TODO/FIXME/HACK), Findings
 //! (`.mnml/findings/*.md`). Plus LauncherIcon (pinned integration
 //! chip) and Mount (integration-owned side panel) that individual
-//! sibling repos add via the marketplace flow.
+//! integration repos add via the marketplace flow.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -135,7 +135,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         frame.render_widget(Paragraph::new(Line::from(glyph)).style(style), glyph_rect);
         // Notification badge — small orange dot or digit on the
-        // right edge of the icon row when a sibling has set one
+        // right edge of the icon row when an integration has set one
         // via the `set-activity-badge` IPC command. Goal: surface
         // queue depth / action-needed counts without taking focus.
         let badge_count = section

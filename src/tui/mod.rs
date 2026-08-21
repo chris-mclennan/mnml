@@ -2771,8 +2771,8 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // (breaking reverse-history-search); Ctrl+N/P fired autocomplete
     // move (breaking readline history); Ctrl+F fired
     // `find.find` (breaking readline forward-char). These are the
-    // 6 chords a shell user hits within seconds of dropping into a
-    // sibling. Sits above dispatch_chord_chain so the key falls
+    // 6 chords a shell user hits within seconds of dropping into an
+    // integration. Sits above dispatch_chord_chain so the key falls
     // through to the focused-Pty handler naturally.
     //
     // Exceptions:

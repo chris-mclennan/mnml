@@ -276,7 +276,7 @@ fn activity_bar_section_copy(
             title: "Integrations".into(),
             body: "Installed integration list on top, Marketplace tab below. Each \
                    installed row shows its chip glyph + label; right-click to \
-                   configure / uninstall / open sibling settings pane."
+                   configure / uninstall / open integration settings pane."
                 .into(),
             try_it: vec![PaletteLink::new(
                 "view.activity_integrations",
@@ -417,7 +417,7 @@ fn statusline_segment_copy(app: &App, idx: usize) -> Option<InfoViewCopy> {
     let d = app.dynamic_segments.iter().find(|d| &d.id == seg_id)?;
     let title = format!("Sibling chip · {}", d.id);
     let body = format!(
-        "A statusline chip set at runtime by a sibling via the mnml-bridge \
+        "A statusline chip set at runtime by an integration via the mnml-bridge \
          `statusline_set_segment` API (id `{}`).",
         d.id
     );
@@ -812,7 +812,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // src: src/ui/palette_bar.rs — top-row integration chip
         IntegrationIcon(_) => Some(InfoViewCopy {
             title: "Integration chip".into(),
-            body: "A sibling integration in the top-row palette bar (browser, \
+            body: "An integration integration in the top-row palette bar (browser, \
                    Slack, etc.). Left-click to open its pane; right-click for \
                    remove / disable / configure."
                 .into(),
@@ -891,7 +891,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         PaletteAddIntegration => Some(InfoViewCopy {
             title: "Add integration".into(),
             body: "Opens the integrations Marketplace so you can enable a \
-                   sibling tool (browser, Slack, AWS, …) as a chip in this bar. \
+                   integration tool (browser, Slack, AWS, …) as a chip in this bar. \
                    Right-click any installed chip later to disable or remove it."
                 .into(),
             try_it: vec![PaletteLink::new(
@@ -1866,7 +1866,7 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         IntegrationsTabRefresh => Some(InfoViewCopy {
             title: "Integrations — refresh".into(),
             body: "Rescan the integrations directory + the hosted marketplace \
-                   catalog. Picks up freshly-installed siblings and drops \
+                   catalog. Picks up freshly-installed integrations and drops \
                    uninstalled ones."
                 .into(),
             try_it: vec![PaletteLink::new(

@@ -285,12 +285,12 @@ impl App {
 
     /// Drain worker replies from any pending launcher-install
     /// fetches. Called each tick. Successful installs refresh the
-    /// Audit + repair `mnml-*` sibling binaries that PATH resolves to
+    /// Audit + repair `mnml-*` integration binaries that PATH resolves to
     /// a copy OTHER than `~/.cargo/bin/`. This is the root of the
     /// "why does my Amplify label keep reverting to the old one" bug:
     /// `cargo install --force` writes to `~/.cargo/bin/`, but a stale
     /// peer in (say) `~/.local/bin/` earlier in PATH silently wins on
-    /// the follow-up `<sibling> --install` — the stale binary writes
+    /// the follow-up `<integration> --install` — the stale binary writes
     /// its old manifest and everyone's confused.
     ///
     /// Repair strategy: move each shadowing copy to
@@ -301,7 +301,7 @@ impl App {
     pub fn audit_shadowed_binaries(&mut self) {
         let hits = crate::integration_detect::find_shadowed_binaries();
         if hits.is_empty() {
-            self.toast("no shadowed sibling binaries detected");
+            self.toast("no shadowed integration binaries detected");
             return;
         }
         let dest_root = crate::data_root::data_root()
@@ -327,7 +327,7 @@ impl App {
         crate::integration_detect::clear_cache();
         if errors.is_empty() {
             self.toast(format!(
-                "moved {moved} shadowed sibling binaries → {}",
+                "moved {moved} shadowed integration binaries → {}",
                 dest_root.display()
             ));
         } else {

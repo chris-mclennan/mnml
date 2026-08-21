@@ -3,7 +3,7 @@
 //! Queries two kinds of external sources to build the "installable
 //! things" list shown in mnml's Integrations panel Marketplace tab:
 //!
-//! 1. **Apps** — compiled siblings on crates.io tagged with the
+//! 1. **Apps** — compiled integrations on crates.io tagged with the
 //!    `mnml-integration` keyword. Anyone can publish. Discovery is
 //!    fully public — mnml doesn't gate what appears.
 //! 2. **Launchers** — TOML descriptors under a configured GitHub
@@ -13,7 +13,7 @@
 //!
 //! ## Design
 //!
-//! - **Blocking fetch on a background thread.** Matches the sibling
+//! - **Blocking fetch on a background thread.** Matches the integration
 //!   loader pattern (`mpsc` channel, main loop polls). Kept out of
 //!   this module — this file only exposes synchronous fetch helpers
 //!   that a caller wraps in `thread::spawn`.
@@ -109,7 +109,7 @@ pub struct MarketplaceEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketplaceKind {
-    /// Compiled sibling with its own binary. Install via `cargo install`.
+    /// Compiled integration with its own binary. Install via `cargo install`.
     App,
     /// TOML descriptor. Install by downloading the file to
     /// `~/.config/mnml/integrations/<id>.toml`.
@@ -190,7 +190,7 @@ pub fn ready_ids() -> &'static [&'static str] {
         // 2026-08-19 (#1062) — `mnml-msg-slack` removed from the
         // ready set: still WIP (threads unfinished, canvases tab
         // was mislabeled "Slack Boards" until 0.1.4). Reinstate
-        // when the sibling ships end-to-end + user confirms.
+        // when the integration ships end-to-end + user confirms.
         // 2026-08-19 (#1090) — `mnml-forge-github` removed too.
         // User: "not ready, only in development tab should show
         // this one". Also surfaced an install "Error:" message on
@@ -293,7 +293,7 @@ pub fn default_sources() -> Vec<Source> {
         },
         // 2026-08-19 (#1055) — the crates.io keyword source only
         // finds crates whose Cargo.toml sets `keywords =
-        // ["mnml-integration"]`. Most siblings never opted into that,
+        // ["mnml-integration"]`. Most integrations never opted into that,
         // so mnml-tracker-jira and friends were invisible in the
         // marketplace even after being installed. The monorepo apps
         // folder catches everything else — but the render layer
@@ -810,7 +810,7 @@ fn days_since_epoch(year: i64, month: u32, day: u32) -> Option<i64> {
 // ── HTTP fetch — blocking, one function per source type ──────────
 //
 // Callers wrap these in `thread::spawn` if they need async delivery
-// (see the amplify sibling for the pattern). The functions are
+// (see the amplify integration for the pattern). The functions are
 // blocking on purpose: unit-testable, cacheable, no runtime dep.
 
 /// Standard mnml User-Agent for outbound HTTP. GitHub rejects
@@ -969,7 +969,7 @@ mod tests {
         assert!(matches!(s[0], Source::CratesKeyword { .. }));
         assert!(matches!(s[1], Source::GithubLauncherFolder { .. }));
         // #1055 — third source: the monorepo apps folder. Necessary
-        // because most siblings' Cargo.toml never opted into the
+        // because most integrations' Cargo.toml never opted into the
         // `mnml-integration` keyword the crates.io source searches
         // for. Render-time Ready gate keeps this from surfacing the
         // half-baked experiments in that folder.
