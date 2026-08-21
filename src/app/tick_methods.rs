@@ -36,7 +36,7 @@ impl App {
             }
             if let crate::pane::Pane::Mount(m) = p {
                 // Drain pending frames from the mount worker
-                // thread + detect sibling exit. Render reads
+                // thread + detect integration exit. Render reads
                 // `latest_frame` set here.
                 m.pump();
             }
@@ -175,6 +175,9 @@ impl App {
         self.expire_progress_items();
         self.tick_pending_undo();
         self.tick_claude_agents_prefetch();
+        // #993 step 2b (2026-08-20) — background auto-update firing.
+        // Short-circuits when no opt-in is set (global OR per-integration).
+        self.tick_auto_updates();
     }
 
     /// Lines of viewport drift before [`Self::refresh_scroll_semantic_tokens`]

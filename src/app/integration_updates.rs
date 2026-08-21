@@ -166,6 +166,15 @@ pub fn plan_auto_updates(
 /// per 24h; a broken upstream can't hammer the user's shell all day.
 pub const AUTO_UPDATE_RATE_CAP_SECS: u64 = 24 * 60 * 60;
 
+/// #993 step 2b (2026-08-20). How often the app-side ticker re-evaluates
+/// the auto-update plan. 4 hours by default — chosen small enough that a
+/// long-running mnml session picks up fresh releases within a work day,
+/// large enough that the check itself (which walks the manifest list +
+/// reads the last-attempts JSON) is a negligible drop in the ambient
+/// event-loop cost. The per-integration rate cap above still gates the
+/// actual `cargo install`, so a faster tick can't hammer anything.
+pub const AUTO_UPDATE_TICK_INTERVAL_SECS: u64 = 4 * 60 * 60;
+
 /// One entry in the planner's output — the "we should try to update
 /// this now" verdict. Consumed by the worker in step 2b to build the
 /// actual `cargo install` command.
