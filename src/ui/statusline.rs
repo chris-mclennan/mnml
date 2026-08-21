@@ -232,7 +232,7 @@ impl Seg {
     }
 }
 
-/// Cap of columns dynamic sibling segments can consume on either
+/// Cap of columns dynamic integration segments can consume on either
 /// side of the statusline (per side). At least 20 cells always
 /// available; scales with terminal width up to `total / 3`.
 fn dynamic_lane_budget(total_width: usize) -> usize {
@@ -351,7 +351,6 @@ fn format_tokens(n: u64) -> String {
 
 fn seg_from_dynamic(rd: &RenderedDynamicSegment) -> Seg {
     let t = theme::cur();
-    let fg = t.bg_darker; // dark text on colored chip
     let bg = match rd.color.as_deref() {
         Some("red") => t.red,
         Some("orange") => t.orange,
@@ -364,9 +363,56 @@ fn seg_from_dynamic(rd: &RenderedDynamicSegment) -> Seg {
         Some("pink") => t.pink,
         Some("magenta") => t.purple,
         Some("comment") => t.comment,
+        // 2026-08-20 — accept `#RRGGBB` / `#RGB` so integration
+        // manifests can pin a brand color (Bitbucket's rose,
+        // etc.) without waiting for a theme-key addition.
+        Some(s) if s.starts_with('#') => parse_hex_color(s).unwrap_or(t.comment),
         _ => t.comment,
     };
+    // 2026-08-20 — auto-pick fg for readable contrast. Dark bgs
+    // (Jira brand blue #1B5DCF, blue theme key, purple) need white
+    // text; light bgs (green, yellow, orange, cyan, pink) keep the
+    // dark text. Rec.601 luma with a 0.5 cutoff — tuned once
+    // against the existing chip palette.
+    let fg = if is_dark_bg(bg) { t.fg } else { t.bg_darker };
     Seg::new(rd.text.clone(), fg, bg)
+}
+
+fn is_dark_bg(c: ratatui::style::Color) -> bool {
+    use ratatui::style::Color;
+    let (r, g, b) = match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        // Theme keys resolve to Rgb variants at construction
+        // time; anything else (Indexed, named ANSI) is
+        // unreachable in this pipeline but default to "light"
+        // so it keeps the historical dark-fg-on-colored-chip
+        // rendering.
+        _ => return false,
+    };
+    let luma = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+    luma < 128.0
+}
+
+fn parse_hex_color(s: &str) -> Option<ratatui::style::Color> {
+    let hex = s.trim_start_matches('#');
+    let (r, g, b) = match hex.len() {
+        6 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+        ),
+        3 => {
+            let expand = |c: char| c.to_digit(16).map(|d| (d * 17) as u8);
+            let mut it = hex.chars();
+            (
+                expand(it.next()?)?,
+                expand(it.next()?)?,
+                expand(it.next()?)?,
+            )
+        }
+        _ => return None,
+    };
+    Some(ratatui::style::Color::Rgb(r, g, b))
 }
 
 /// Shorten `s` so its char count is at most `target_cols`. Appends
@@ -633,12 +679,12 @@ fn render_single_account_chip(
     // percent so the user sees when the window opens back up:
     // "24%⟳3h 62%⟳4d".
     let session_r = if show_reset {
-        format_reset_suffix(u.resets_at)
+        format_reset_suffix(u.resets_at, "5h")
     } else {
         String::new()
     };
     let weekly_r = if show_reset {
-        format_reset_suffix(u.weekly_resets_at)
+        format_reset_suffix(u.weekly_resets_at, "7d")
     } else {
         String::new()
     };
@@ -708,9 +754,19 @@ fn render_single_account_chip(
 ///   <60m        → ` <n>m`
 ///   <24h        → ` <n>h`
 ///   otherwise   → ` <n>d`
-fn format_reset_suffix(resets_at: u64) -> String {
+fn format_reset_suffix(resets_at: u64, window_fallback: &str) -> String {
+    // #1077 f/u (2026-08-21) — user re-reported that a 0% cell still
+    // hides the countdown. Root cause: Anthropic's API returns
+    // `resets_at: 0` for a window the user hasn't consumed yet
+    // (rolling 5h/weekly window doesn't "start" until first message).
+    // Was: empty string → the whole chip goes quiet at 0%.
+    // Now: fall back to the window's nominal duration (`5h` / `7d`)
+    // so the user always sees the maximum time-until-reset. This is
+    // honest — an untouched window will roll over within that span
+    // even if it stays untouched — and it means "0% no reset" never
+    // renders as bare "0%" again.
     if resets_at == 0 {
-        return String::new();
+        return format!(" {window_fallback}");
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -718,7 +774,7 @@ fn format_reset_suffix(resets_at: u64) -> String {
         .unwrap_or(0);
     let remaining = resets_at.saturating_sub(now);
     if remaining == 0 {
-        return String::new();
+        return format!(" {window_fallback}");
     }
     if remaining < 60 {
         " <1m".to_string()
@@ -776,7 +832,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             | EditingMode::Normal
     );
     let mut left: Vec<Seg> = Vec::new();
-    // Sibling-authored dynamic segments (hybrid packing: sort by
+    // Integration-authored dynamic segments (hybrid packing: sort by
     // priority desc, allocate max_width while budget allows, drop
     // lower-priority when full). Left-lane segments go here so
     // they render right after the mode chip.
@@ -836,7 +892,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         left.push(Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold());
     }
     let mode_seg_end = left.len(); // exclusive
-    // Append left-lane dynamic segments (from sibling
+    // Append left-lane dynamic segments (from integration
     // `statusline_set_segment` calls) right after the mode chip.
     // Track (left_seg_index, segment_id) so we can register hover
     // / click hitrects after `render_left` computes the on-screen
@@ -993,10 +1049,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
-    // Sibling-authored right-lane dynamic segments (packed by
+    // Integration-authored right-lane dynamic segments (packed by
     // priority, dropped if overflow). Rendered leftmost on the
     // right lane so they don't push the builtin chips off screen
-    // — losing a sibling segment is better than losing line/col.
+    // — losing a integration segment is better than losing line/col.
     let dyn_right = collect_dynamic_segments(
         &app.dynamic_segments,
         SegmentSide::Right,
@@ -2192,7 +2248,7 @@ fn format_byte_size(bytes: usize) -> String {
 /// the current default set in `src/marketplace.rs::catalog_lookup`.
 /// A future glyph swap only needs to update the integration
 /// manifest (`~/.config/mnml/integrations/tattle_coverage.toml`) or
-/// the sibling's `install.rs` — the statusline chip picks it up
+/// the integration's `install.rs` — the statusline chip picks it up
 /// automatically, no more triple-source drift.
 fn coverage_glyph(app: &crate::app::App) -> String {
     const FALLBACK: &str = "\u{F437}";
