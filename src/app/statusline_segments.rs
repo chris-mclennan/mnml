@@ -14,7 +14,7 @@
 //! ## Zero domain knowledge in mnml core
 //!
 //! Nothing in this module hardcodes an integration id. Bitbucket,
-//! Jira, and any future sibling all declare their chips through
+//! Jira, and any future integration all declare their chips through
 //! the same schema. The only mnml-core work is: read the manifest,
 //! poll the command, substitute the template, register the chip.
 //!
@@ -50,7 +50,7 @@ use crate::integration_manifest::{IntegrationManifest, StatuslineSegment};
 
 /// Default poll interval when a manifest doesn't set one.
 pub const DEFAULT_POLL_SECS: u64 = 300;
-/// Clamp floor — polling faster than this hammers the sibling
+/// Clamp floor — polling faster than this hammers the integration
 /// binary for no benefit. 30s is already generous for a statusline
 /// chip whose users mostly care about "did the number move".
 pub const MIN_POLL_SECS: u64 = 30;
@@ -179,10 +179,20 @@ impl App {
         self.statusline_segments_tx = Some(tx.clone());
         self.statusline_segments_rx = Some(rx);
 
-        for (id, command, interval) in sources {
+        // #1117 (2026-08-21) — stagger worker startup so N sources
+        // don't all hammer their APIs on the same second (both cold
+        // start AND every subsequent interval boundary). 2s per
+        // source index → 4 sources cold-start over ~6s and their
+        // schedules stay offset forever after (poll #2 at
+        // stagger+interval, etc). Fine for UX (chip populates within
+        // ~a second either way) and much friendlier to Atlassian
+        // rate limits — this is the whole point of the "staggered
+        // polling" ask the prefetch design was scoped from.
+        for (index, (id, command, interval)) in sources.into_iter().enumerate() {
             let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
             self.statusline_segment_worker_shutdowns.push(shutdown_tx);
-            spawn_worker(id, command, interval, tx.clone(), shutdown_rx);
+            let stagger_secs = (index as u64 * 2).min(30);
+            spawn_worker(id, command, interval, stagger_secs, tx.clone(), shutdown_rx);
         }
     }
 
@@ -321,7 +331,7 @@ impl App {
     /// `config.ui.integration_icons`. Missing icon slot → false
     /// (a manifest whose merge into config was skipped for any
     /// reason shouldn't advertise chips either).
-    fn integration_chip_enabled(&self, integration_id: &str) -> bool {
+    pub(crate) fn integration_chip_enabled(&self, integration_id: &str) -> bool {
         self.config
             .ui
             .integration_icons
@@ -384,10 +394,29 @@ fn render_segment_text(
             "comment".to_string(),
             Some("waiting for first poll".to_string()),
         ),
-        Some(snap) if snap.last_error.is_some() => (
+        // Errored WITHOUT a prior successful fetch — nothing to
+        // show but the alarm, so render red-! + explain in tooltip.
+        Some(snap) if snap.last_error.is_some() && snap.updated_at == 0 => (
             format!("{} !", seg.glyph.trim()),
             "red".to_string(),
             snap.last_error.clone().map(|e| format!("last error: {e}")),
+        ),
+        // Errored but we DO have a prior successful fetch — show
+        // the last-known value dimmed to yellow (stale), not a red
+        // alarm. Clears back to normal on the next successful poll.
+        // Was: bright red-! that made users think something was
+        // catastrophically broken when it was just a transient
+        // hiccup between polls.
+        Some(snap) if snap.last_error.is_some() => (
+            format!(
+                "{} {}",
+                seg.glyph.trim(),
+                substitute_template(&seg.format, &snap.values)
+            ),
+            "yellow".to_string(),
+            snap.last_error
+                .clone()
+                .map(|e| format!("stale — last poll failed: {e}")),
         ),
         Some(snap) => (
             format!(
@@ -461,7 +490,7 @@ fn format_value(v: &Value) -> String {
 /// First whitespace-delimited token in `command`, PATH-resolved
 /// like [`crate::integration_manifest::binary_on_path`]. Returns
 /// false if the command is empty or the binary isn't found.
-fn binary_from_command_on_path(command: &str) -> bool {
+pub(crate) fn binary_from_command_on_path(command: &str) -> bool {
     let Some(bin) = command.split_whitespace().next() else {
         return false;
     };
@@ -508,12 +537,22 @@ fn spawn_worker(
     source_id: String,
     command: String,
     interval_secs: u64,
+    stagger_secs: u64,
     tx: Sender<SourceUpdate>,
     shutdown_rx: std::sync::mpsc::Receiver<()>,
 ) {
     std::thread::Builder::new()
         .name(format!("mnml-statusline-{source_id}"))
-        .spawn(move || run_worker(source_id, command, interval_secs, tx, shutdown_rx))
+        .spawn(move || {
+            run_worker(
+                source_id,
+                command,
+                interval_secs,
+                stagger_secs,
+                tx,
+                shutdown_rx,
+            )
+        })
         .ok();
 }
 
@@ -522,6 +561,7 @@ fn spawn_worker(
     _source_id: String,
     _command: String,
     _interval_secs: u64,
+    _stagger_secs: u64,
     _tx: Sender<SourceUpdate>,
     _shutdown_rx: std::sync::mpsc::Receiver<()>,
 ) {
@@ -534,9 +574,19 @@ fn run_worker(
     source_id: String,
     command: String,
     interval_secs: u64,
+    stagger_secs: u64,
     tx: Sender<SourceUpdate>,
     shutdown_rx: std::sync::mpsc::Receiver<()>,
 ) {
+    // #1117 (2026-08-21) — initial stagger before first poll.
+    // Same interruptible-sleep shape as the between-polls wait so
+    // shutdown fires immediately even during the startup delay.
+    if stagger_secs > 0 {
+        match shutdown_rx.recv_timeout(Duration::from_secs(stagger_secs)) {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
     loop {
         let result = run_poll_once(&command);
         if tx
@@ -712,6 +762,7 @@ mod tests {
             notifications: None,
             requires: None,
             auth: vec![],
+            prefetch: vec![],
             source_path: PathBuf::new(),
             override_env: HashMap::new(),
             override_auth_values: HashMap::new(),

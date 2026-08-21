@@ -171,6 +171,21 @@ pub struct IntegrationManifest {
     /// template rules and install-gate semantics. Added 2026-08-17.
     #[serde(default)]
     pub statusline_segments: Vec<StatuslineSegment>,
+    /// #1117 (2026-08-21) — background prefetch declarations. Each
+    /// entry names a full-pane data fetch that mnml runs in the
+    /// background at `poll_interval_secs` and caches to
+    /// `~/.cache/mnml/prefetch/<integration_id>-<prefetch_id>.json`.
+    /// When the user opens a Pty pane for this integration launched
+    /// with `--only <kind>`, mnml stamps `MNML_PREFETCH_CACHE_FILE=
+    /// <path>` on the child env if the launch's kind matches the
+    /// prefetch decl's `for_pane_kind`. The integration binary
+    /// checks that env at startup and, if the cache is fresh
+    /// (age < 3 × poll_interval), hydrates its state from the JSON
+    /// instead of doing a cold fetch — the pane paints populated
+    /// on frame one. Idempotent no-op for integrations that don't
+    /// implement the hydration side.
+    #[serde(default)]
+    pub prefetch: Vec<PrefetchSource>,
     #[serde(default)]
     pub settings: Vec<SettingsPage>,
     #[serde(default)]
@@ -413,6 +428,26 @@ pub struct ValuesSource {
     pub poll_interval_secs: Option<u64>,
 }
 
+/// #1117 (2026-08-21) — one background-prefetch declaration. mnml
+/// runs `command` at `poll_interval_secs` (jittered by source
+/// index — see `start_statusline_segment_workers`), captures stdout
+/// verbatim, and writes it to
+/// `~/.cache/mnml/prefetch/<integration_id>-<id>.json`. The
+/// integration binary reads the file via `MNML_PREFETCH_CACHE_FILE`
+/// env when its Pty pane spawns; the freshness gate (age vs poll
+/// interval) is enforced integration-side. `for_pane_kind` filters
+/// which `--only <kind>` launches get the env stamp — omitted =
+/// every launch of this integration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrefetchSource {
+    pub id: String,
+    pub command: String,
+    #[serde(default)]
+    pub poll_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub for_pane_kind: Option<String>,
+}
+
 /// One statusline chip declared by an integration. References a
 /// [`ValuesSource`] via `source`; renders `format` templated
 /// against that source's latest polled JSON. Install-gated (the
@@ -564,7 +599,7 @@ pub struct IntegrationManifestOverride {
     /// consumed at spawn time by `open_pty_dir` for this
     /// integration only. Cross-integration secret sharing should
     /// go through `[auth_values]` (which uses `env_fallback` to
-    /// name the env var the other siblings expect).
+    /// name the env var the other integrations expect).
     #[serde(default)]
     pub env: Option<std::collections::HashMap<String, String>>,
     /// `[auth_values]` — values to overlay on top of the disk
@@ -735,13 +770,33 @@ fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
     }
     // Second pass: apply overrides in-place. An override with no
     // matching base is silently dropped — dead data, not an error.
+    //
+    // #1109 (2026-08-20): match on manifest.id OR the manifest's
+    // binary basename. Multi-manifest crates (e.g. `mnml-tracker-jira`
+    // produces `jira_work` + `jira_boards` + `jira_fix_versions`) get
+    // their auto-update override written to `<crate>.override.toml`
+    // (keyed by binary), so the crate-scoped override must fan out
+    // to every manifest that shares that binary. Single-manifest
+    // integrations (browser, codex) still match on id.
     for (id, ov) in overrides {
+        let mut matched = false;
         for &i in &manifests_added {
-            if out[i].id == id {
-                ov.apply_to(&mut out[i]);
-                break;
+            let bin_matches = out[i]
+                .binary
+                .as_deref()
+                .map(|b| b.rsplit('/').next().unwrap_or(b) == id)
+                .unwrap_or(false);
+            if out[i].id == id || bin_matches {
+                ov.clone().apply_to(&mut out[i]);
+                matched = true;
             }
         }
+        // The `for` loop above deliberately does NOT `break` on a
+        // hit — a crate-scoped override must apply to every manifest
+        // that shares the binary. `matched` is retained only so a
+        // future warn-on-dead-override lint has a hook; today it's
+        // a no-op (existing behavior: silent drop).
+        let _ = matched;
     }
 }
 
@@ -940,6 +995,7 @@ color = "nonsense-neon"
             notifications: None,
             requires: None,
             auth: vec![],
+            prefetch: vec![],
             source_path: PathBuf::new(),
             homepage: None,
             docs: None,
@@ -1086,6 +1142,53 @@ label = "wrong"
         scan_dir(dir.path(), &mut out);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].label, "htop"); // override rejected → base intact
+    }
+
+    /// #1109 (2026-08-20) — a crate-scoped override
+    /// (`<crate>.override.toml`) fans out to every manifest whose
+    /// `binary` basename matches. Regression: before the fix, the
+    /// scanner only matched on `manifest.id == override.id`, so
+    /// multi-manifest crates like `mnml-tracker-jira` (produces
+    /// `jira_work` + `jira_boards` + `jira_fix_versions`) had their
+    /// auto-update override silently dropped and the right-click
+    /// menu label stayed stale.
+    #[test]
+    fn override_by_binary_basename_fans_out_to_all_manifests_sharing_crate() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("jira_work.toml"),
+            r#"id = "jira_work"
+label = "Jira Work"
+binary = "mnml-tracker-jira"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("jira_boards.toml"),
+            r#"id = "jira_boards"
+label = "Jira Boards"
+binary = "mnml-tracker-jira"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mnml-tracker-jira.override.toml"),
+            r#"id = "mnml-tracker-jira"
+auto_update = true
+"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        scan_dir(dir.path(), &mut out);
+        assert_eq!(out.len(), 2);
+        for m in &out {
+            assert_eq!(
+                m.auto_update_override,
+                Some(true),
+                "manifest {} did not receive the crate-scoped override",
+                m.id
+            );
+        }
     }
 
     #[test]

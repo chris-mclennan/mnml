@@ -2240,6 +2240,7 @@ mod tests {
             }),
             requires: None,
             auth: vec![],
+            prefetch: vec![],
             source_path: std::path::PathBuf::new(),
             homepage: None,
             docs: None,
