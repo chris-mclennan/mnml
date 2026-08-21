@@ -48,7 +48,7 @@ struct AssignmentFile {
     entries: Vec<Assignment>,
 }
 
-/// Directory holding sibling-shipped SVGs. Still read by discover()
+/// Directory holding integration-shipped SVGs. Still read by discover()
 /// for the current-generation `install_integration` copy-based flow;
 /// slated for removal in the bake-on-install redesign (mnml-bridge
 /// 0.5) which drops the disk SVGs entirely.
@@ -136,7 +136,7 @@ fn save_assignments(file: &AssignmentFile) {
     // `amplify`) and its family-qualified peer (e.g. `mnml-aws-amplify`)
     // point at the SAME codepoint, keep only the family-qualified one.
     // The short id is a legacy alias from the pre-Integration-SDK era —
-    // sibling siblings register under their crate name now, and
+    // integrations register under their crate name now, and
     // leaving both in the ledger is what surfaced in the R6
     // Amplify-icon confusion (audit 2026-08-09).
     let deduped = dedupe_aliases(file);
@@ -193,7 +193,7 @@ fn dedupe_aliases(file: &AssignmentFile) -> AssignmentFile {
     AssignmentFile { entries: keep }
 }
 
-/// #853 — uninstall cleanup for the sibling-icons SDK's on-disk
+/// #853 — uninstall cleanup for the integration-icons SDK's on-disk
 /// state. Deletes `~/.cache/mnml/pending-glyphs/<id>.svg` (if present)
 /// AND drops the matching entry from `assignments.toml` (if any).
 /// Leaves everything else in the assignments file untouched.
@@ -242,7 +242,7 @@ pub(crate) fn purge_integration_glyph_state(id: &str) -> (bool, bool) {
 /// Walk `dir` for `*.svg` files. Returns a stably-sorted vector of
 /// `(id, absolute_svg_path)` where `id` is the file stem.
 /// Assignments-file entries with matching ids get their codepoints
-/// re-used; new ids get the next free slot in the sibling PUA range
+/// re-used; new ids get the next free slot in the integration PUA range
 /// (deterministic — sorted-by-id order).
 pub(crate) fn discover(
     dir: &Path,
@@ -313,7 +313,7 @@ pub(crate) fn discover(
             out.insert(id.clone(), cp);
             continue;
         }
-        // Assign a fresh slot from the sibling PUA range. Linear
+        // Assign a fresh slot from the integration PUA range. Linear
         // scan — the range is 256 slots, cheap.
         let mut assigned: Option<u32> = None;
         for cp in INTEGRATION_RANGE_START..=INTEGRATION_RANGE_END {
@@ -325,7 +325,7 @@ pub(crate) fn discover(
         }
         let Some(cp) = assigned else {
             eprintln!(
-                "mnml: sibling glyph range U+{:04X}-U+{:04X} exhausted; \
+                "mnml: integration glyph range U+{:04X}-U+{:04X} exhausted; \
                  dropping {id}",
                 INTEGRATION_RANGE_START, INTEGRATION_RANGE_END
             );
@@ -382,11 +382,24 @@ impl App {
         };
         let _ = std::fs::create_dir_all(&pending);
         let dst = pending.join("terminal.svg");
-        // Skip re-copy when the pending file is already fresh.
+        // Skip re-copy when the font already has a bake newer than
+        // the source SVG. On macOS `std::fs::copy` preserves the
+        // source mtime (COPYFILE_ALL), so comparing dst-vs-src is a
+        // no-op: dst would always inherit src's older mtime, get
+        // purged by `purge_baked_pending_glyphs` on the same startup
+        // (font > svg → delete), and we'd re-stage next launch — a
+        // "cleaned up 1 baked pending-glyph SVG" toast every restart
+        // forever. Gate on src-vs-FONT instead: if the font is newer
+        // than the user's SVG, that codepoint is already baked in;
+        // only stage when the user has actually touched the source.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let font = std::path::PathBuf::from(&home).join("Library/Fonts/MnmlSymbols.ttf");
         let src_mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-        let dst_mtime = std::fs::metadata(&dst).and_then(|m| m.modified()).ok();
-        if let (Some(s), Some(d)) = (src_mtime, dst_mtime)
-            && s <= d
+        let font_mtime = std::fs::metadata(&font).and_then(|m| m.modified()).ok();
+        if let (Some(s), Some(f)) = (src_mtime, font_mtime)
+            && s <= f
         {
             return;
         }
@@ -444,7 +457,7 @@ impl App {
             // "browser", "claude_code"). Meta names them
             // "sibling-<id>" for integrations, "ai-<slug>" for the
             // baked AI spark glyphs (F1E00/F1E01). Only reconcile the
-            // sibling-prefixed ones — the ai- ones are rendered via
+            // integration-prefixed ones — the ai- ones are rendered via
             // hardcoded codepoints in theme.rs, not the HashMap.
             let Some(id) = entry.name.strip_prefix("sibling-") else {
                 continue;
@@ -518,22 +531,22 @@ impl App {
         deleted
     }
 
-    /// Bake every discovered sibling SVG into MnmlSymbols.ttf in
+    /// Bake every discovered integration SVG into MnmlSymbols.ttf in
     /// one fontforge invocation. Mirrors the shape of
     /// `bake_builtin_glyphs_matching` (per-glyph args passed as
     /// `--glyph SVG:CP:NAME:width=…:…`). No-op with a toast when
-    /// no sibling SVGs have been discovered.
+    /// no integration SVGs have been discovered.
     ///
     /// Wired to the `integrations.bake_integration_glyphs` palette
     /// command. Not auto-invoked at startup — fontforge is a heavy
     /// dependency and firing it every launch would be user-hostile.
     pub fn bake_integration_glyphs(&mut self) {
         if self.integration_glyph_svgs.is_empty() {
-            self.toast("bake sibling glyphs: no SVGs in ~/.cache/mnml/pending-glyphs/");
+            self.toast("bake integration glyphs: no SVGs in ~/.cache/mnml/pending-glyphs/");
             return;
         }
         let Some(home) = std::env::var_os("HOME") else {
-            self.toast("bake sibling glyphs: $HOME unset");
+            self.toast("bake integration glyphs: $HOME unset");
             return;
         };
         let home = PathBuf::from(home);
@@ -559,7 +572,7 @@ impl App {
             }) {
             Some(p) => p,
             None => {
-                self.toast("bake sibling glyphs: build_mnml_symbols.py not found");
+                self.toast("bake integration glyphs: build_mnml_symbols.py not found");
                 return;
             }
         };
@@ -575,11 +588,11 @@ impl App {
         let mut baked = 0usize;
         for (id, svg_path) in &self.integration_glyph_svgs {
             let Some(cp) = self.integration_glyph_codepoints.get(id).copied() else {
-                eprintln!("mnml: sibling glyph {id} has no codepoint; skipping");
+                eprintln!("mnml: integration glyph {id} has no codepoint; skipping");
                 continue;
             };
             // Default transform tuning — matches the AWS defaults
-            // used by the built-in bake path. Per-sibling overrides
+            // used by the built-in bake path. Per-integration overrides
             // are a v2 nicety (would need a `[glyph]` sub-table in
             // the manifest); v1 assumes AWS-shaped square SVGs.
             // 2026-08-06 — terminal glyph (custom SVG for the H/V
@@ -608,7 +621,7 @@ impl App {
                 center_x_frac,
             ));
             // Persist per-bake metadata so the "edit existing" flow
-            // in the glyph builder picks up the sibling SVG on
+            // in the glyph builder picks up the integration SVG on
             // demand.
             crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
                 codepoint: format!("{cp:04X}"),
@@ -622,11 +635,11 @@ impl App {
             baked += 1;
         }
         if baked == 0 {
-            self.toast("bake sibling glyphs: nothing to bake (codepoints missing)");
+            self.toast("bake integration glyphs: nothing to bake (codepoints missing)");
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
-            label: format!("bake sibling glyphs ({baked})"),
+            label: format!("bake integration glyphs ({baked})"),
             exe: "fontforge".to_string(),
             args,
             cwd: None,
@@ -636,7 +649,7 @@ impl App {
         };
         self.open_pty(profile);
         self.toast(format!(
-            "baking {baked} sibling glyph(s) · restart terminal after fontforge exits"
+            "baking {baked} integration glyph(s) · restart terminal after fontforge exits"
         ));
     }
 }
@@ -828,7 +841,7 @@ mod tests {
         let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
         let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
-        // Seed two sibling glyphs; discover assigns codepoints.
+        // Seed two integration glyphs; discover assigns codepoints.
         write_svg(&dir, "victim.svg");
         write_svg(&dir, "keeper.svg");
         let (_svgs, assignments) = discover(&dir, &HashMap::new());
@@ -876,7 +889,7 @@ mod tests {
     }
 
     /// #863 — a matching `glyph_meta.toml` entry for the assigned
-    /// codepoint is dropped when the sibling is purged. Guards against
+    /// codepoint is dropped when the integration is purged. Guards against
     /// zombie meta entries piling up over install/uninstall cycles.
     #[test]
     fn purge_integration_glyph_state_drops_matching_glyph_meta_entry() {
@@ -884,7 +897,7 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // Same ubuntu-CI XDG flake as the sibling test above (see
+        // Same ubuntu-CI XDG flake as the integration test above (see
         // daa0aa16). `glyph_builder::meta_path()` reaches
         // `user_config_path()` which consults `$XDG_CONFIG_HOME`
         // before `$HOME`; a stray XDG value on GH runners routes
