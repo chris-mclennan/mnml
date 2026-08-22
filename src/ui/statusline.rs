@@ -1584,6 +1584,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         right.push(Seg::new(format!("{NF_FFWD} "), chip_fg, chip_bg));
         let track_idx = right.len();
         right.push(Seg::new(format!("{shown} "), chip_fg, chip_bg));
+        // 1-cell breather between the music transport cluster and the
+        // next chip (#1122) — otherwise the colored track chip abuts
+        // the LSP/clock chip with no visual gap.
+        right.push(Seg::new(
+            " ".to_string(),
+            theme::cur().fg,
+            theme::cur().statusline,
+        ));
         (Some(play_idx), Some(ffwd_idx), track_idx)
     } else {
         // 2026-08-22 — idle cluster: [brand logo] [play_box].
@@ -1623,6 +1631,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             format!("{} ", NF_PLAY_BOX), // nf-md-play_box_outline
             chip_fg,
             chip_bg,
+        ));
+        // 1-cell breather so the idle chip (brand + play_box) doesn't
+        // abut the next statusline chip with no visual gap (#1122).
+        right.push(Seg::new(
+            " ".to_string(),
+            theme::cur().fg,
+            theme::cur().statusline,
         ));
         music_action_seg_idx = Some(play_idx);
         (None, None, brand_idx)

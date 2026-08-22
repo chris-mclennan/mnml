@@ -3534,16 +3534,21 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // lighter than the surrounding bg, and a leading-space cell reads
     // as an unpainted-looking sliver between the panel edge and the
     // "I"/"M". Dropping the leading space makes the pill hug the
-    // character; trailing space stays as inter-tab separation.
-    let full_installed = format!("Installed ({installed_count}) ");
-    let full_marketplace = format!("Marketplace ({marketplace_count}) ");
-    let compact_installed = format!("Inst ({installed_count}) ");
-    let compact_marketplace = format!("Mkt ({marketplace_count}) ");
+    // character.
+    // 2026-08-22 (#1121) — trailing space also dropped: the active-tab
+    // paragraph fills its rect with bg2, so a trailing space extended
+    // the highlight 1 cell past the last letter. Labels are now tight
+    // (no leading OR trailing space); inter-tab separation is handled
+    // by a +1 x-offset when placing the next tab's rect.
+    let full_installed = format!("Installed ({installed_count})");
+    let full_marketplace = format!("Marketplace ({marketplace_count})");
+    let compact_installed = format!("Inst ({installed_count})");
+    let compact_marketplace = format!("Mkt ({marketplace_count})");
     // 2026-08-07 nvchad-r1 SEV-2: still-clipping refresh at width ≤22.
     // Add a THIRD compactness tier that drops the parenthesized counts,
     // so refresh stays visible down to ~15-cell widths.
-    let tiny_installed = "Inst ".to_string();
-    let tiny_marketplace = "Mkt ".to_string();
+    let tiny_installed = "Inst".to_string();
+    let tiny_marketplace = "Mkt".to_string();
     // 2026-08-19 (#1056) — In-Development tab. Config-gated
     // (`[marketplace] show_dev_tab = true`) so regular users don't see
     // the extra tab. Label is a single Nerd Font glyph (nf-fa-dev at
@@ -3556,18 +3561,27 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .filter(|e| matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready)
         .count();
-    let in_dev_label = format!("\u{EEF4} ({in_dev_count}) ");
+    let in_dev_label = format!("\u{EEF4} ({in_dev_count})");
     let in_dev_w_usize = if show_dev_tab {
         in_dev_label.chars().count()
     } else {
         0
     };
-    let full_total =
-        full_installed.chars().count() + full_marketplace.chars().count() + in_dev_w_usize;
-    let compact_total =
-        compact_installed.chars().count() + compact_marketplace.chars().count() + in_dev_w_usize;
-    let tiny_total =
-        tiny_installed.chars().count() + tiny_marketplace.chars().count() + in_dev_w_usize;
+    // 1-cell inter-tab separator between each visible tab (#1121). Two
+    // tabs → 1 gap; three (with in-dev) → 2 gaps.
+    let inter_tab_gap: usize = if show_dev_tab { 2 } else { 1 };
+    let full_total = full_installed.chars().count()
+        + full_marketplace.chars().count()
+        + in_dev_w_usize
+        + inter_tab_gap;
+    let compact_total = compact_installed.chars().count()
+        + compact_marketplace.chars().count()
+        + in_dev_w_usize
+        + inter_tab_gap;
+    let tiny_total = tiny_installed.chars().count()
+        + tiny_marketplace.chars().count()
+        + in_dev_w_usize
+        + inter_tab_gap;
     // Refresh chip is 3 chars (" ⟳ "). Priority ladder: prefer showing
     // refresh over long labels since refresh is a frequent action and
     // Inst/Mkt reads unambiguously.
@@ -3614,10 +3628,12 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         width: installed_w.min(strip_max_w),
         height: 1,
     };
+    // +1 for the inter-tab separator cell (#1121 — labels no longer
+    // carry their own trailing space, so the gap is placed here).
     let marketplace_rect = Rect {
-        x: strip_start_x + installed_w,
+        x: strip_start_x + installed_w + 1,
         y: area.y + 1,
-        width: marketplace_w.min(strip_max_w.saturating_sub(installed_w)),
+        width: marketplace_w.min(strip_max_w.saturating_sub(installed_w + 1)),
         height: 1,
     };
     let tab_style = |active: bool| {
@@ -3650,10 +3666,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // tab is actually visible.
     if show_dev_tab {
         let in_dev_w = in_dev_label.chars().count() as u16;
+        // +2 for two inter-tab separators (installed→marketplace,
+        // marketplace→in-dev). Matches the `inter_tab_gap = 2` used in
+        // the tier-width totals above.
         let in_dev_rect = Rect {
-            x: strip_start_x + installed_w + marketplace_w,
+            x: strip_start_x + installed_w + marketplace_w + 2,
             y: area.y + 1,
-            width: in_dev_w.min(strip_max_w.saturating_sub(installed_w + marketplace_w)),
+            width: in_dev_w.min(strip_max_w.saturating_sub(installed_w + marketplace_w + 2)),
             height: 1,
         };
         frame.render_widget(
