@@ -141,8 +141,8 @@ portable-pty = "0.8"
 # 2026-08-03: renamed from `mnml-vt` / `mnml-vt-sys` to
 # `mnml-libghostty-vt` / `mnml-libghostty-vt-sys` so the crate name
 # advertises what it wraps (mirrors `openssl-sys`, `libz-sys`, etc.).
-libghostty-vt = { package = "mnml-libghostty-vt", path = "crates/mnml-libghostty-vt", version = "0.2.1" }
-libghostty-vt-sys = { package = "mnml-libghostty-vt-sys", path = "crates/mnml-libghostty-vt-sys", version = "0.2.1" }
+libghostty-vt = { package = "mnml-libghostty-vt", path = "crates/mnml-libghostty-vt", version = "0.2.2" }
+libghostty-vt-sys = { package = "mnml-libghostty-vt-sys", path = "crates/mnml-libghostty-vt-sys", version = "0.2.2" }
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-ruby = "0.23.1"

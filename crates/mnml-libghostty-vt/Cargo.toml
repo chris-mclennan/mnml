@@ -1,6 +1,6 @@
 [package]
 name = "mnml-libghostty-vt"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["Chris McLennan"]
 license = "MIT OR Apache-2.0"
@@ -13,7 +13,7 @@ name = "libghostty_vt"
 path = "src/lib.rs"
 
 [dependencies]
-mnml-libghostty-vt-sys = { path = "../mnml-libghostty-vt-sys", version = "0.2.1" }
+mnml-libghostty-vt-sys = { path = "../mnml-libghostty-vt-sys", version = "0.2.2" }
 
 [features]
 default = []

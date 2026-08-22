@@ -77,7 +77,16 @@ See **[FEATURES.md](FEATURES.md)** for the complete, organised inventory.
 cargo install mnml-rs        # the crate is mnml-rs; the binary it installs is `mnml`
 ```
 
-Or grab a build from the [releases page](https://github.com/chris-mclennan/mnml/releases).
+`cargo install` compiles from source and needs [Zig](https://ziglang.org/) 0.16.0
++ `git` on PATH so `mnml-libghostty-vt-sys` can build Ghostty's VT lib
+(`brew install zig` / `scoop install zig` / `snap install zig --classic --edge`).
+The build script emits a helpful message if either tool is missing.
+
+Prefer prebuilt binaries — no toolchain needed:
+
+- **Homebrew** (macOS / Linux): `brew install chris-mclennan/tap/mnml`
+- **Scoop** (Windows): `scoop install mnml`
+- **Direct download**: [releases page](https://github.com/chris-mclennan/mnml/releases)
 
 A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and
 powerline glyphs. Without one, pass `--ascii` (or set `[ui] ascii_icons = true`)

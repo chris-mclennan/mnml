@@ -14,7 +14,7 @@ masks the mnml-prefixed package name via a workspace alias in its
 `Cargo.toml`:
 
 ```toml
-libghostty-vt = { package = "mnml-libghostty-vt", path = "crates/mnml-libghostty-vt", version = "0.2.1" }
+libghostty-vt = { package = "mnml-libghostty-vt", path = "crates/mnml-libghostty-vt", version = "0.2.2" }
 ```
 
 Downstream consumers reaching for this crate directly still write
