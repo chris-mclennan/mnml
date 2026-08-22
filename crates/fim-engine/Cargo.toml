@@ -1,18 +1,25 @@
 [package]
-name = "fim-engine"
-version = "0.1.0"
+name = "mnml-fim-engine"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
-description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle, in-process and offline."
+description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle, in-process and offline. Powers mnml's local ghost-text."
 authors = ["Chris McLennan"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/chris-mclennan/fim-engine"
-homepage = "https://github.com/chris-mclennan/fim-engine"
-documentation = "https://docs.rs/fim-engine"
+repository = "https://github.com/chris-mclennan/mnml"
+homepage = "https://github.com/chris-mclennan/mnml"
+documentation = "https://docs.rs/mnml-fim-engine"
 readme = "README.md"
 keywords = ["completion", "llm", "candle", "inference", "fim"]
 categories = ["development-tools", "text-processing"]
 exclude = [".local/", ".claude/", ".github/"]
+
+# Keep the Rust-side lib identifier as `fim_engine` so consumers can still
+# `use fim_engine::…` without touching any code. Only the crates.io package
+# name changes — the crate joins the `mnml-*` family branding on crates.io.
+[lib]
+name = "fim_engine"
+path = "src/lib.rs"
 
 [features]
 # GPU inference via Apple Metal — ~10x faster than CPU for the 1.5B
