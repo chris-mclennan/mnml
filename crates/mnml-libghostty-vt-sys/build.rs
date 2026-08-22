@@ -66,18 +66,16 @@ const GHOSTTY_COMMIT: &str = "6837d7027f226355db661e8215a3ad24ffaf4eb5";
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    // Workspace root is two levels up: crates/mnml-libghostty-vt-sys/ → workspace root.
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root two levels above crate manifest");
-    let vendor_include = workspace_root.join("vendor/libghostty-vt/include");
+    // Vendored headers live inside the crate directory (not at workspace
+    // root) so the crates.io tarball is self-contained — a downstream
+    // `cargo install` builds against these headers directly.
+    let vendor_include = manifest_dir.join("vendor/include");
     let vt_h = vendor_include.join("ghostty/vt.h");
 
     if !vt_h.exists() {
         panic!(
             "vendored vt.h not found at {}. Re-vendor the ghostty headers \
-             matching GHOSTTY_COMMIT (see vendor/libghostty-vt/README.md).",
+             matching GHOSTTY_COMMIT (see crates/mnml-libghostty-vt-sys/vendor/README.md).",
             vt_h.display()
         );
     }
