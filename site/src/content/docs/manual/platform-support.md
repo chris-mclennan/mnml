@@ -44,7 +44,7 @@ The `-sys` crate has two link paths, both compiled in by default so the build "j
 - **`source-build`** (default) — git-clones ghostty at a pinned commit into `OUT_DIR` and runs `zig build`. Adds 2–5 minutes to a cold build; subsequent builds hit the `zig-cache` + cargo incremental cache and are fast.
 - **`pkg-config`** — resolves `libghostty-vt-static` via `PKG_CONFIG_PATH`. Present so a future prebuilt setup can plug in without touching the crate; currently a no-op because no `.pc` ships in the tree. Downstream users who bring their own prebuilt can still opt in.
 
-The vendored headers under `vendor/libghostty-vt/include/ghostty/` are re-generated whenever the pinned commit moves, so bindgen output and link ABI stay lock-step.
+The vendored headers under `crates/mnml-libghostty-vt-sys/vendor/include/ghostty/` are re-generated whenever the pinned commit moves, so bindgen output and link ABI stay lock-step.
 
 ## Building from source
 

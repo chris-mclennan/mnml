@@ -61,9 +61,10 @@ const GHOSTTY_REPO: &str = "https://github.com/ghostty-org/ghostty.git";
 // hash both times, meaning nothing in the 14-commit `fdbf9ff → a887df42`
 // delta touched the crash path.
 //
-// Re-sync vendored headers under `vendor/libghostty-vt/include/` when
-// bumping this constant (see vendor README's "Regenerating headers"
-// section).
+// Re-sync vendored headers under `vendor/include/` (inside this crate)
+// when bumping this constant — see the workspace-root
+// vendor/libghostty-vt/README.md "Regenerating headers" section for the
+// exact commands.
 const GHOSTTY_COMMIT: &str = "6837d7027f226355db661e8215a3ad24ffaf4eb5";
 
 fn main() {
