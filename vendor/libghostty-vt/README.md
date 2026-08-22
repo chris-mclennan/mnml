@@ -1,11 +1,16 @@
-# vendored libghostty-vt (headers only)
+# vendored libghostty-vt (build scripts + retired prebuilt notes)
 
-Just the C headers under `include/ghostty/` remain here — the `.a` files +
-pkg-config plumbing were retired 2026-08-02 when the pinned ghostty commit
-bumped past the 0.2.1 pin and the 0.1.0-dev prebuilts on GitHub Releases
-went stale against the new headers. Same day, the pin bumped again to
-origin/main HEAD to pick up the July 25-26 upstream Windows static-lib
-linking fixes (ghostty PRs #13452, #13473) — those require zig 0.16.0.
+**Note (2026-08-22):** the C headers moved into the sys crate for
+crates.io self-containment — they now live at
+`crates/mnml-libghostty-vt-sys/vendor/include/`. Only the historical
+build/prebuilt scripts + this README remain at the workspace root.
+
+The `.a` files + pkg-config plumbing were retired 2026-08-02 when the
+pinned ghostty commit bumped past the 0.2.1 pin and the 0.1.0-dev
+prebuilts on GitHub Releases went stale against the new headers. Same
+day, the pin bumped again to origin/main HEAD to pick up the July 25-26
+upstream Windows static-lib linking fixes (ghostty PRs #13452, #13473)
+— those require zig 0.16.0.
 
 ## How the library gets built now
 
@@ -22,12 +27,14 @@ cross-built prebuilts here.
 ## Regenerating headers
 
 Whenever `GHOSTTY_COMMIT` bumps in `crates/mnml-libghostty-vt-sys/build.rs`, re-sync
-the headers so bindgen sees the same shape as the compiled `.a`:
+the headers so bindgen sees the same shape as the compiled `.a`. The
+headers live inside the sys crate — regen writes into the crate's
+`vendor/include/`, not the workspace-root `vendor/libghostty-vt/`:
 
     git clone --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git /tmp/g
     (cd /tmp/g && git checkout <new-commit> -- include/ghostty/)
-    rm -rf vendor/libghostty-vt/include/ghostty
-    cp -R /tmp/g/include/ghostty vendor/libghostty-vt/include/
+    rm -rf crates/mnml-libghostty-vt-sys/vendor/include/ghostty
+    cp -R /tmp/g/include/ghostty crates/mnml-libghostty-vt-sys/vendor/include/
 
 ## Bringing prebuilts back (if needed)
 

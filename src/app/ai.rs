@@ -2949,7 +2949,17 @@ pub(crate) fn mixr_beatport_authed() -> bool {
         return false;
     };
     std::fs::read_to_string(home.join(".mixr").join("auth.json"))
-        .map(|s| s.contains("\"access_token\""))
+        .map(|s| {
+            // Match the presence AND non-empty non-null value of the token,
+            // not just the key — mirrors the empty-list guard in
+            // `mixr_has_favorite_genres` below. Skips the `--play` path
+            // if mixr wrote `"access_token":""` or `"access_token":null`
+            // after a logout that left the key in place.
+            let compact: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+            compact.contains("\"access_token\":\"")
+                && !compact.contains("\"access_token\":\"\"")
+                && !compact.contains("\"access_token\":null")
+        })
         .unwrap_or(false)
 }
 

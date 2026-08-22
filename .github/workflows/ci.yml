@@ -31,9 +31,10 @@ jobs:
           path: mnml
 
       # 2026-08-02 — pkg-config prebuilt path retired (stale against the
-      # newer ghostty commit under `vendor/libghostty-vt/include/`). All
-      # three targets now go through mnml-libghostty-vt-sys's `source-build`
-      # fallback: git-clone ghostty at the pinned commit + `zig build`.
+      # newer ghostty commit under crates/mnml-libghostty-vt-sys/vendor/
+      # include/). All three targets now go through mnml-libghostty-vt-sys's
+      # `source-build` fallback: git-clone ghostty at the pinned commit +
+      # `zig build`.
       # Adds ~2-5 min to first-time builds; Swatinem/rust-cache below
       # keeps subsequent runs warm.
       - name: Install zig 0.16.0

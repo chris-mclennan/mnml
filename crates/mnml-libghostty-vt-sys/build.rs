@@ -26,18 +26,20 @@
 //! # Bindings
 //!
 //! Bindings are always generated against the vendored headers under
-//! `vendor/libghostty-vt/include/ghostty/`. That header set matches the
-//! ABI of the prebuilt `.a` files under `vendor/libghostty-vt/lib-*`.
-//! When we bump [`GHOSTTY_COMMIT`], the vendored headers get re-vendored
-//! from the same commit so bindgen + link ABI stay in lock-step.
+//! `vendor/include/ghostty/` (inside this crate so the crates.io tarball
+//! is self-contained). That header set matches the ABI of any prebuilt
+//! `.a` we might ship in the future. When we bump [`GHOSTTY_COMMIT`], the
+//! vendored headers get re-vendored from the same commit so bindgen + link
+//! ABI stay in lock-step — see the workspace-root
+//! `vendor/libghostty-vt/README.md` for the regen recipe.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The upstream ghostty commit our source-build path checks out. Also
-/// the commit the vendored headers under `vendor/libghostty-vt/include/`
-/// come from — bindgen and link ABI must match.
+/// the commit the vendored headers under `vendor/include/` (inside this
+/// crate) come from — bindgen and link ABI must match.
 const GHOSTTY_REPO: &str = "https://github.com/ghostty-org/ghostty.git";
 // 2026-08-02 bumped from `a887df42` (0.2.1) to origin/main HEAD after
 // research turned up specific upstream Windows fixes that landed between

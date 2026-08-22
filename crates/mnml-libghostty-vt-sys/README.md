@@ -1,8 +1,9 @@
 # mnml-libghostty-vt-sys
 
 Raw FFI bindings to Ghostty's [libghostty-vt] C ABI, generated at build time
-by `bindgen` against vendored headers under `vendor/libghostty-vt/include/`
-(relative to the mnml workspace root).
+by `bindgen` against vendored headers under `vendor/include/` (inside this
+crate — self-contained for crates.io consumers, no reach-up to a workspace
+root).
 
 This crate exists so mnml owns its Ghostty binding surface directly against
 Ghostty's official C headers, rather than depending on a third-party
