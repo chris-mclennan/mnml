@@ -6321,6 +6321,74 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
+        // 2026-08-22 — one-tap start: play a random Beatport chart
+        // from a random favorited genre. Bound to the play-glyph
+        // click on the statusline music chip; the label click still
+        // uses `mixr.show` to just open the browser.
+        Command {
+            id: "mixr.play_now",
+            title: "Mixr: start a random Beatport chart from a favorited genre",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_mixr_and_play(),
+        },
+        // 2026-08-22 — three-way preferred-music-app switcher.
+        // Persists `[ui] preferred_music_app` to config so the idle
+        // music chip switches identity (Beatport lime / Spotify green
+        // / Apple Music red) + the play-glyph routes to the right
+        // start-playing action (Beatport chart / system playpause).
+        Command {
+            id: "mixr.set_preferred_mixr",
+            title: "Music: prefer mixr (Beatport)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                app.config.ui.preferred_music_app = "mixr".to_string();
+                let _ = crate::app::discovery::persist_ui_string("preferred_music_app", "mixr");
+                app.toast("preferred: mixr (Beatport)");
+            },
+        },
+        Command {
+            id: "mixr.set_preferred_music",
+            title: "Music: prefer Apple Music",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                app.config.ui.preferred_music_app = "music".to_string();
+                let _ = crate::app::discovery::persist_ui_string("preferred_music_app", "music");
+                app.toast("preferred: Music");
+            },
+        },
+        Command {
+            id: "mixr.set_preferred_spotify",
+            title: "Music: prefer Spotify",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                app.config.ui.preferred_music_app = "spotify".to_string();
+                let _ = crate::app::discovery::persist_ui_string("preferred_music_app", "spotify");
+                app.toast("preferred: Spotify");
+            },
+        },
+        // Read-only status probe: right-click menu uses this to
+        // show whether Beatport is authed. Toasting is the action
+        // when the row is chosen — no toggle, just diagnostic.
+        Command {
+            id: "mixr.show_auth_status",
+            title: "Mixr: report Beatport auth status",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                let authed = crate::app::ai::mixr_beatport_authed();
+                let favs = crate::app::ai::mixr_has_favorite_genres();
+                let msg = match (authed, favs) {
+                    (true, true) => "Beatport: signed in · favorites set",
+                    (true, false) => "Beatport: signed in · no favorites",
+                    (false, _) => "Beatport: not signed in",
+                };
+                app.toast(msg);
+            },
+        },
         Command {
             id: "browser.open",
             title: "Browser: open Chrome (CDP) — console / nav / eval",

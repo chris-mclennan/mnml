@@ -1233,10 +1233,44 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         && crate::app::dispatch::contains(r, x, y)
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let mut items = vec![MenuItem::new("Open mixr", MenuAction::Command("mixr.show"))];
-        // qa-8th design MED-4 2026-06-30 — was 1-item menu that
-        // just duplicated the left-click action. Add Copy-track
-        // when something's playing so right-click feels useful.
+        // 2026-08-22 — menu shape:
+        //   Row 1: Beatport auth status (● signed in / ○ not) —
+        //           clicking toasts the same string, non-destructive.
+        //   Row 2: Play a random chart (same as play-glyph click).
+        //   Row 3: Open mixr (same as label click).
+        //   Row 4: Copy track title (only when a track is playing).
+        // The auto-play toggle from the previous menu was retired
+        // once the chip split into [play] [label] — the play-glyph
+        // IS the toggle-equivalent.
+        let authed = crate::app::ai::mixr_beatport_authed();
+        let favs = crate::app::ai::mixr_has_favorite_genres();
+        let auth_label = match (authed, favs) {
+            (true, true) => "● Beatport: signed in · favorites set",
+            (true, false) => "● Beatport: signed in · no favorites",
+            (false, _) => "○ Beatport: not signed in",
+        };
+        // 2026-08-22 — three-way preferred-app switcher rows. Radio-
+        // style: `(●)` on the current pick, `( )` on the others. The
+        // idle chip + play-glyph action follow this choice.
+        let cur = app.config.ui.preferred_music_app.as_str();
+        let mark = |v: &str| if cur == v { "(●)" } else { "( )" };
+        let mut items = vec![
+            MenuItem::new(auth_label, MenuAction::Command("mixr.show_auth_status")),
+            MenuItem::new(
+                format!("{} mixr (Beatport)", mark("mixr")),
+                MenuAction::Command("mixr.set_preferred_mixr"),
+            ),
+            MenuItem::new(
+                format!("{} Music", mark("music")),
+                MenuAction::Command("mixr.set_preferred_music"),
+            ),
+            MenuItem::new(
+                format!("{} Spotify", mark("spotify")),
+                MenuAction::Command("mixr.set_preferred_spotify"),
+            ),
+            MenuItem::new("Play random chart", MenuAction::Command("mixr.play_now")),
+            MenuItem::new("Open mixr", MenuAction::Command("mixr.show")),
+        ];
         if let Some(np) = app.now_playing.as_ref()
             && !np.track.is_empty()
         {

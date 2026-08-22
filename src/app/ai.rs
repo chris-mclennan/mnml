@@ -1028,7 +1028,41 @@ impl App {
     /// Open the family DJ app `mixr` as a Pty pane. Reuses an
     /// existing mixr pty if one's already open; otherwise spawns a
     /// fresh one in a horizontal split (same shape as Codex).
+    ///
+    /// 2026-08-21 — source-aware startup: if Beatport is authed AND
+    /// `~/.mixr/config.toml` has `favorite_genres` non-empty, spawn
+    /// with `--play` (mixr queues a random chart from a random
+    /// favorited genre). Otherwise spawn `--dashboard --panel browse`
+    /// so the user lands on the minibrowser and can pick their own
+    /// path. Local-library shuffle-by-genre isn't wired in mixr yet
+    /// — once it is, we can add a third branch here without changing
+    /// the chip surface.
     pub fn open_mixr(&mut self) {
+        self.open_mixr_with_args(vec![
+            "--dashboard".into(),
+            "--panel".into(),
+            "browse".into(),
+        ]);
+    }
+
+    /// 2026-08-22 — one-tap "play a random chart from a random
+    /// favorited genre" flow, fired by the play-glyph next to the
+    /// music chip. When Beatport isn't authed OR favorites is empty,
+    /// falls back to plain browser (mixr's --play already handles
+    /// empty favorites by picking `default_genre`, but we still need
+    /// an auth check so the user isn't confused by silent no-ops).
+    pub fn open_mixr_and_play(&mut self) {
+        let can_play = mixr_beatport_authed();
+        let args = if can_play {
+            vec!["--play".into(), "--panel".into(), "browse".into()]
+        } else {
+            self.toast("mixr: sign in to Beatport first — opening browser");
+            vec!["--dashboard".into(), "--panel".into(), "browse".into()]
+        };
+        self.open_mixr_with_args(args);
+    }
+
+    fn open_mixr_with_args(&mut self, args: Vec<String>) {
         let existing = self.panes.iter().position(|p| match p {
             Pane::Pty(s) => s.profile.label.starts_with("mixr"),
             _ => false,
@@ -1038,7 +1072,7 @@ impl App {
             return;
         }
         self.open_pty_dir(
-            crate::pty_pane::BinaryProfile::mixr(self.workspace.clone()),
+            crate::pty_pane::BinaryProfile::mixr(self.workspace.clone(), args),
             crate::layout::SplitDir::Horizontal,
         );
     }
@@ -2897,6 +2931,38 @@ fn build_equal_row(items: Vec<crate::layout::Layout>) -> crate::layout::Layout {
             }
         }
     }
+}
+
+/// Pick the argv mixr should launch with. See `App::open_mixr` for
+/// the design rationale (Beatport-authed + favorites → one-click
+/// play a chart; otherwise open on minibrowser).
+///
+/// Read heuristically — we don't parse the whole TOML/JSON, just
+/// substring-check. Cheap and safe when the files are absent or
+/// malformed (both branches return the fallback args).
+/// True when Beatport is authed AND `favoriteGenres` in mixr's config
+/// is non-empty — the precondition for `--play` to actually queue
+/// something. Both files live under `~/.mixr/`; missing/malformed
+/// treated as false (fall through to plain --dashboard).
+pub(crate) fn mixr_beatport_authed() -> bool {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return false;
+    };
+    std::fs::read_to_string(home.join(".mixr").join("auth.json"))
+        .map(|s| s.contains("\"access_token\""))
+        .unwrap_or(false)
+}
+
+pub(crate) fn mixr_has_favorite_genres() -> bool {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return false;
+    };
+    std::fs::read_to_string(home.join(".mixr").join("config.json"))
+        .map(|s| {
+            let compact: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+            compact.contains("\"favoriteGenres\":[") && !compact.contains("\"favoriteGenres\":[]")
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

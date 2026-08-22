@@ -305,15 +305,17 @@ impl BinaryProfile {
         }
     }
 
-    /// `mixr` — the integration TUI DJ app (`~/Projects/mixr`). Launches with
-    /// `--dashboard` so it lands directly on the controller view (skipping the
-    /// browser); the user can press `v` in mixr to cycle through its Panel
-    /// layouts to fit mnml's split.
-    pub fn mixr(workspace: PathBuf) -> Self {
+    /// `mixr` — the integration TUI DJ app (`~/Projects/mixr`). Args
+    /// come from `App::open_mixr`'s source-aware click dispatch:
+    ///   - Beatport authed + `favorite_genres` non-empty → `["--play"]`
+    ///     (mixr queues a random chart from a random favorited genre)
+    ///   - Otherwise → `["--dashboard", "--panel", "browse"]` (opens
+    ///     on the minibrowser so the user can pick their own path)
+    pub fn mixr(workspace: PathBuf, args: Vec<String>) -> Self {
         BinaryProfile {
             label: "mixr".to_string(),
             exe: "mixr".to_string(),
-            args: vec!["--dashboard".to_string()],
+            args,
             cwd: Some(workspace),
             env: Vec::new(),
             session_id: None,

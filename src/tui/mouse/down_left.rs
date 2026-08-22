@@ -1986,6 +1986,27 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     //                   (`ui.preferred_music_app`), opening
     //                   Music / Spotify or the mixr panel
     //                   based on the Settings pick.
+    // 2026-08-22 — idle-state play-glyph chip: one-tap start-playing.
+    // Bound to `mixr.play_now` (spawns `mixr --play --panel browse`
+    // when Beatport-authed; falls back to a browser-only open with
+    // a "sign in first" toast otherwise). Checked BEFORE the label
+    // chip so the split rects behave as two distinct clicks.
+    if let Some(r) = app.rects.statusline_music_action_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        // Only mixr backs a play-a-chart flow today; Music/Spotify
+        // idle clicks still fire below via the label chip. Route
+        // through the command dispatcher so palette / chord users
+        // get the same behavior.
+        match app.config.ui.preferred_music_app.as_str() {
+            "music" => send_macos_player("Music", "playpause"),
+            "spotify" => send_macos_player("Spotify", "playpause"),
+            _ => {
+                command::run("mixr.play_now", app);
+            }
+        }
+        return;
+    }
     if let Some(r) = app.rects.statusline_mixr_chip
         && crate::app::dispatch::contains(r, x, y)
     {

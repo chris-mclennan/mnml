@@ -2529,6 +2529,13 @@ pub struct PaneRects {
     /// cmdline + accepts.
     pub cmdline_popup_items: Vec<(Rect, usize)>,
     pub statusline_mixr_chip: Option<Rect>,
+    /// 2026-08-22 — one-tap "start playing" chip in the IDLE music-
+    /// cluster (a play-glyph sitting to the left of the source label).
+    /// Click → `mixr.play_now` (Beatport-authed random-chart flow);
+    /// falls back to opening mixr on the browser if not authed. `None`
+    /// when the cluster is in its playing form (transport controls
+    /// take over that rect via `statusline_mixr_play_chip`).
+    pub statusline_music_action_chip: Option<Rect>,
     /// Play / pause control sitting to the LEFT of the track text
     /// when something's playing. Click is source-aware:
     /// mixr → `mixr --command pause`; Apple Music / Spotify →

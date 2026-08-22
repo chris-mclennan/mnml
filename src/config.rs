@@ -932,6 +932,18 @@ pub struct UiConfig {
     /// ```
     pub preferred_music_app: String,
 
+    /// 2026-08-22 — when true (default), clicking the mnml mixr
+    /// statusline chip auto-loads a random chart from a random
+    /// favorited genre (Beatport-authed users) instead of just
+    /// opening the mixr browser. Toggled via the mixr-chip
+    /// right-click menu.
+    ///
+    /// ```toml
+    /// [ui]
+    /// mixr_auto_play_on_open = false
+    /// ```
+    pub mixr_auto_play_on_open: bool,
+
     /// Directory whose immediate subdirectories are eligible
     /// project-roots — used by the startup picker as one-click
     /// rows alongside `[[workspaces]]` entries. Tilde-expanded
@@ -1439,6 +1451,7 @@ impl Default for Config {
                 // read — no prompt fires.
                 now_playing_source: "mixr".to_string(),
                 preferred_music_app: "mixr".to_string(),
+                mixr_auto_play_on_open: default_mixr_auto_play(),
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
                 bufferline_diag_style: "count".to_string(),
@@ -1618,6 +1631,10 @@ enum RawMarketplaceSource {
 
 fn default_apps_dir() -> String {
     "apps".to_string()
+}
+
+fn default_mixr_auto_play() -> bool {
+    true
 }
 
 impl RawMarketplaceSource {
@@ -1902,6 +1919,9 @@ struct RawUi {
     /// See [`UiConfig::preferred_music_app`].
     #[serde(default)]
     preferred_music_app: Option<String>,
+    /// See [`UiConfig::mixr_auto_play_on_open`].
+    #[serde(default)]
+    mixr_auto_play_on_open: Option<bool>,
     /// Default projects folder for the startup picker. Tilde-expanded
     /// at config load. See [`UiConfig::projects_dir`].
     #[serde(default)]
@@ -2635,6 +2655,9 @@ impl Config {
             if matches!(normalized.as_str(), "mixr" | "music" | "spotify") {
                 self.ui.preferred_music_app = normalized;
             }
+        }
+        if let Some(b) = raw.ui.mixr_auto_play_on_open {
+            self.ui.mixr_auto_play_on_open = b;
         }
         if let Some(s) = raw.ui.menu_bar {
             let normalized = s.trim().to_ascii_lowercase();

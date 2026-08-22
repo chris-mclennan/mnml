@@ -1510,9 +1510,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Nerd-font codepoints — basic Unicode ⏸/▶/⏭ rendered as
     // invisible glyphs in mnml's font-fallback chain on the user's
     // setup (reported 2026-06-17).
-    const NF_PLAY: char = '\u{f04b}'; // nf-fa-play
-    const NF_PAUSE: char = '\u{f04c}'; // nf-fa-pause
-    const NF_FFWD: char = '\u{f051}'; // nf-fa-step-forward
+    // 2026-08-22 — full md-family transport glyphs.
+    //   NF_PLAY_BOX  = idle chip, boxed play button (reads as "start")
+    //   NF_PLAY      = transport, paused-but-loaded state
+    //   NF_PAUSE     = transport, currently playing
+    //   NF_SKIP_NEXT = transport, next track
+    const NF_PLAY_BOX: char = '\u{F040E}'; // nf-md-play_box_outline
+    const NF_PLAY: char = '\u{F040A}'; // nf-md-play
+    const NF_PAUSE: char = '\u{F03E4}'; // nf-md-pause
+    const NF_FFWD: char = '\u{F04AD}'; // nf-md-skip_next
     let mixr_is_source = app
         .now_playing
         .as_ref()
@@ -1528,19 +1534,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .as_ref()
         .map(|np| np.playing)
         .unwrap_or(false);
+    // 2026-08-22 — extra seg-idx for the IDLE-state play-chip.
+    // Distinct from `mixr_play_seg_idx` (transport play/pause when a
+    // track's loaded) so the click dispatcher can tell them apart.
+    let mut music_action_seg_idx: Option<usize> = None;
     let (mixr_play_seg_idx, mixr_ffwd_seg_idx, mixr_seg_idx) = if has_track_loaded {
-        // Three-segment transport cluster.
+        // Three-segment transport cluster. Source-aware colors so the
+        // brand identity carries into the playing state — was flat
+        // purple/bg2 pre-2026-08-22, now mirrors the idle chip's
+        // Beatport-lime / Spotify-green / Apple-Music-red scheme.
         let np = app
             .now_playing
             .as_ref()
             .expect("guarded by has_track_loaded");
-        // Combine artist + title when the source separates them.
-        // Mixr bakes "Artist - Title" into `track` and uses `detail`
-        // for bpm, so its `track` already reads well by itself. macOS
-        // Music / Spotify keep title in `track` and artist in
-        // `detail` — join them as `Artist - Title` so the chip shows
-        // both. Falls back to bare `track` for any source that
-        // leaves `detail` empty.
         let raw = if mixr_is_source || np.detail.is_empty() {
             np.track.clone()
         } else {
@@ -1555,47 +1561,71 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             clean
         };
+        // Match the idle-state palette by actual playing source (not
+        // preferred), so a Music track shown while `preferred = mixr`
+        // still reads as red-and-white.
+        let src_lower = np.source.to_ascii_lowercase();
+        let (chip_fg, chip_bg) = match src_lower.as_str() {
+            "spotify" => (Color::Rgb(0x00, 0x00, 0x00), Color::Rgb(0x1D, 0xB9, 0x54)),
+            "music" => (Color::Rgb(0xFF, 0xFF, 0xFF), Color::Rgb(0xFA, 0x24, 0x3C)),
+            _ => (
+                Color::Rgb(0x00, 0x00, 0x00),
+                Color::Rgb(0xA6, 0xE2, 0x2E), // Beatport lime (mixr)
+            ),
+        };
         let glyph = if track_is_playing { NF_PAUSE } else { NF_PLAY };
-        // Play / pause segment.
+        // Play / pause segment keeps both pads; ffwd + track drop
+        // their leading pad so the transport cluster reads as
+        // "▶ ⏭ Track" (one cell between each) not "▶  ⏭  Track"
+        // (trailing-of-prev + leading-of-next doubling up).
         let play_idx = right.len();
-        right.push(Seg::new(
-            format!(" {glyph} "),
-            theme::cur().purple,
-            theme::cur().bg2,
-        ));
-        // Ffwd segment.
+        right.push(Seg::new(format!(" {glyph} "), chip_fg, chip_bg));
         let ffwd_idx = right.len();
-        right.push(Seg::new(
-            format!(" {NF_FFWD} "),
-            theme::cur().purple,
-            theme::cur().bg2,
-        ));
-        // Track text segment.
+        right.push(Seg::new(format!("{NF_FFWD} "), chip_fg, chip_bg));
         let track_idx = right.len();
-        right.push(Seg::new(
-            format!(" {shown} "),
-            theme::cur().purple,
-            theme::cur().bg2,
-        ));
+        right.push(Seg::new(format!("{shown} "), chip_fg, chip_bg));
         (Some(play_idx), Some(ffwd_idx), track_idx)
     } else {
-        // Idle: single `♪ <preferred>` chip. Click activates whichever
-        // music app the user picked in Settings (`ui.preferred_music_app`
-        // — default `mixr`). Lets a user who lives in Spotify see "♪
-        // spotify" and tap to open it, instead of the chip always
-        // showing mixr.
-        let label = match app.config.ui.preferred_music_app.as_str() {
-            "music" => " ♪ music ",
-            "spotify" => " ♪ spotify ",
-            _ => " ♪ mixr ",
+        // 2026-08-22 — idle cluster: [brand logo] [play_box].
+        // Label text dropped; source identity carried by the logo
+        // + chip bg color. Two separate Seg pushes so each glyph
+        // keeps its intrinsic cell size (packing into one segment
+        // shrank both). Order is logo-then-play so the play button
+        // sits on the right — reads like "open this / press this".
+        //   Brand chip : source logo — click opens the app browser
+        //   Play chip  : play_box (F040E) — click starts playing
+        let source = app.config.ui.preferred_music_app.as_str();
+        let (source_glyph, chip_bg, chip_fg) = match source {
+            "spotify" => (
+                '\u{F1BC}',                   // nf-fa-spotify
+                Color::Rgb(0x1D, 0xB9, 0x54), // Spotify green
+                Color::Rgb(0x00, 0x00, 0x00),
+            ),
+            "music" => (
+                '\u{E711}',                   // nf-fa-apple
+                Color::Rgb(0xFA, 0x24, 0x3C), // Apple Music red
+                Color::Rgb(0xFF, 0xFF, 0xFF),
+            ),
+            _ => (
+                '\u{F1F00}',                  // mnml-baked Beatport B
+                Color::Rgb(0xA6, 0xE2, 0x2E), // Beatport lime (mixr)
+                Color::Rgb(0x00, 0x00, 0x00),
+            ),
         };
-        let idx = right.len();
+        // Brand keeps its own leading + trailing pad; play drops
+        // the leading space so the two segments meet at a single
+        // cell of air (was two, from trailing-of-brand + leading-
+        // of-play doubling up).
+        let brand_idx = right.len();
+        right.push(Seg::new(format!(" {} ", source_glyph), chip_fg, chip_bg));
+        let play_idx = right.len();
         right.push(Seg::new(
-            label.to_string(),
-            theme::cur().comment,
-            theme::cur().bg2,
+            format!("{} ", NF_PLAY_BOX), // nf-md-play_box_outline
+            chip_fg,
+            chip_bg,
         ));
-        (None, None, idx)
+        music_action_seg_idx = Some(play_idx);
+        (None, None, brand_idx)
     };
     // Suppress unused-var warning when `mixr_is_source` falls out of
     // use — it's used by the click dispatcher to pick mixr vs
@@ -1611,6 +1641,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_workspace_chip = None;
     app.rects.statusline_clock_chip = None;
     app.rects.statusline_mixr_chip = None;
+    app.rects.statusline_music_action_chip = None;
     app.rects.statusline_mixr_play_chip = None;
     app.rects.statusline_mixr_ffwd_chip = None;
     app.rects.statusline_lsp_chip = None;
@@ -1815,11 +1846,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         ws_name.to_string()
     };
+    // 2026-08-22 — dropped the workspace chip's leading pad: the
+    // clock already has a trailing bg2 pad, and stacking a second
+    // leading pad on the workspace bg3 made the visual gap between
+    // "10:00" and the folder glyph read as ~2 cells (the right side
+    // of the clock looked much airier than the left). Keeps the
+    // trailing pad so the workspace doesn't touch whatever comes
+    // after it.
     let folder_glyph = if nerd { "\u{f07b}" } else { "" };
     let workspace_seg_idx: Option<usize> = Some(right.len());
     right.push(
         Seg::new(
-            format!(" {folder_glyph} {label_text} "),
+            format!("{folder_glyph} {label_text} "),
             theme::cur().blue,
             theme::cur().bg3,
         )
@@ -1907,6 +1945,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         })
     };
     app.rects.statusline_mixr_chip = to_rect(Some(mixr_seg_idx), &right_rects);
+    app.rects.statusline_music_action_chip = to_rect(music_action_seg_idx, &right_rects);
     app.rects.statusline_mixr_play_chip = to_rect(mixr_play_seg_idx, &right_rects);
     app.rects.statusline_mixr_ffwd_chip = to_rect(mixr_ffwd_seg_idx, &right_rects);
     app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);

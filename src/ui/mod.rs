@@ -3529,15 +3529,21 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // Marketplace│"). Compress: drop the label word when short on
     // width, keep just the count. `(N) Installed` reads unambiguously
     // even without both words in the strip.
-    let full_installed = format!(" Installed ({installed_count}) ");
-    let full_marketplace = format!(" Marketplace ({marketplace_count}) ");
-    let compact_installed = format!(" Inst ({installed_count}) ");
-    let compact_marketplace = format!(" Mkt ({marketplace_count}) ");
+    // 2026-08-22 — labels start with the first letter (not a leading
+    // space). The active-tab pill uses bg2 which paints one cell
+    // lighter than the surrounding bg, and a leading-space cell reads
+    // as an unpainted-looking sliver between the panel edge and the
+    // "I"/"M". Dropping the leading space makes the pill hug the
+    // character; trailing space stays as inter-tab separation.
+    let full_installed = format!("Installed ({installed_count}) ");
+    let full_marketplace = format!("Marketplace ({marketplace_count}) ");
+    let compact_installed = format!("Inst ({installed_count}) ");
+    let compact_marketplace = format!("Mkt ({marketplace_count}) ");
     // 2026-08-07 nvchad-r1 SEV-2: still-clipping refresh at width ≤22.
     // Add a THIRD compactness tier that drops the parenthesized counts,
     // so refresh stays visible down to ~15-cell widths.
-    let tiny_installed = " Inst ".to_string();
-    let tiny_marketplace = " Mkt ".to_string();
+    let tiny_installed = "Inst ".to_string();
+    let tiny_marketplace = "Mkt ".to_string();
     // 2026-08-19 (#1056) — In-Development tab. Config-gated
     // (`[marketplace] show_dev_tab = true`) so regular users don't see
     // the extra tab. Label is a single Nerd Font glyph (nf-fa-dev at
@@ -3550,7 +3556,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .filter(|e| matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready)
         .count();
-    let in_dev_label = format!(" \u{EEF4} ({in_dev_count}) ");
+    let in_dev_label = format!("\u{EEF4} ({in_dev_count}) ");
     let in_dev_w_usize = if show_dev_tab {
         in_dev_label.chars().count()
     } else {
@@ -3595,16 +3601,23 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let _ = use_compact; // retained for downstream readability
     let installed_w = installed_label.chars().count() as u16;
     let marketplace_w = marketplace_label.chars().count() as u16;
+    // 2026-08-22 — 1-cell gutter on the left so the active-tab pill's
+    // dark bg doesn't run right up against (or bleed into) the
+    // activity-bar column. Same shift is applied to marketplace +
+    // in-dev tabs below so the whole strip starts at column area.x+1.
+    let gutter: u16 = 1;
+    let strip_start_x = area.x.saturating_add(gutter);
+    let strip_max_w = area.width.saturating_sub(gutter);
     let installed_rect = Rect {
-        x: area.x,
+        x: strip_start_x,
         y: area.y + 1,
-        width: installed_w.min(area.width),
+        width: installed_w.min(strip_max_w),
         height: 1,
     };
     let marketplace_rect = Rect {
-        x: area.x + installed_w,
+        x: strip_start_x + installed_w,
         y: area.y + 1,
-        width: marketplace_w.min(area.width.saturating_sub(installed_w)),
+        width: marketplace_w.min(strip_max_w.saturating_sub(installed_w)),
         height: 1,
     };
     let tab_style = |active: bool| {
@@ -3638,9 +3651,9 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     if show_dev_tab {
         let in_dev_w = in_dev_label.chars().count() as u16;
         let in_dev_rect = Rect {
-            x: area.x + installed_w + marketplace_w,
+            x: strip_start_x + installed_w + marketplace_w,
             y: area.y + 1,
-            width: in_dev_w.min(area.width.saturating_sub(installed_w + marketplace_w)),
+            width: in_dev_w.min(strip_max_w.saturating_sub(installed_w + marketplace_w)),
             height: 1,
         };
         frame.render_widget(

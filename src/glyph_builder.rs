@@ -767,6 +767,28 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         center_frac: 0.36,
         center_x_frac: 0.5,
     },
+    // 2026-08-22 — Music source brand glyphs at F1F00/F1F01 (SaaS
+    // range per icon_catalog.rs). Used by the mnml music/statusline
+    // chip to identify which streaming service backs the currently-
+    // active player (mixr↔Beatport, Music, Spotify uses nf-fa-spotify
+    // F1BC direct). Chip bg color also switches per source so the
+    // brand identity is legible without reading the label.
+    BuiltinGlyph {
+        codepoint: 0xF1F00,
+        name: "music-beatport",
+        svg_relpath: "assets/glyphs/music/beatport.svg",
+        // 175x175 viewBox with the B icon roughly centered; render
+        // at 1x cell so the circular mark sits inside the chip cell.
+        width_frac: 1.0,
+        height_frac: 1.0,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
+    // F1F01 slot abandoned twice: (a) an eighth-note-in-rounded-
+    // square that read as "generic music" not "Apple", (b) a hand-
+    // drawn apple silhouette that rendered as a broken boxy shape
+    // through fontforge. Both replaced by the native nf-fa-apple
+    // (E711) — the mnml statusline uses that codepoint direct.
 ];
 
 /// SVGs embedded into the binary so the AI-glyph bake path
@@ -805,6 +827,13 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
     (
         "assets/glyphs/ai/spinner/spinner-e.svg",
         include_bytes!("../assets/glyphs/ai/spinner/spinner-e.svg"),
+    ),
+    // Music source brand glyphs (2026-08-22). Only Beatport needs
+    // a baked codepoint; Apple Music uses nf-fa-apple E711 and
+    // Spotify uses nf-fa-spotify F1BC (both native, no bake).
+    (
+        "assets/glyphs/music/beatport.svg",
+        include_bytes!("../assets/glyphs/music/beatport.svg"),
     ),
     // assets/glyphs/dev/{btop,htop,iftop}.svg — removed 2026-08-06
     // together with their BUILTIN_GLYPHS entries. Launchers now use

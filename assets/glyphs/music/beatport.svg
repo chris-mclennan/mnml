@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Beatport B icon — the standalone circular logo that sits to the left of
+  the "beatport" wordmark in Beatport-Black-Logo.svg. Extracted for use as
+  a monochrome font glyph (baked into MnmlSymbols.ttf) so the mnml mixr
+  statusline chip can identify Beatport as the active source.
+
+  Source: Beatport-Black-Logo.svg (Adobe Illustrator export, 1920x1080).
+  The wordmark's 8 letter-shape paths are discarded; only the icon's
+  compound path (with the small hole above the disc) survives.
+
+  ViewBox tightened to the icon's bounding box + a small padding so it
+  renders full-cell in a font glyph.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="565 415 175 175">
+  <path d="M715.4,539.8c0,28.1-22.5,50.8-51.1,50.8c-28.5,0-50.8-22.2-50.8-50.8c0-13.5,5.1-25.4,13.3-34.4l-34.5,34.4l-18.1-18
+    l38.9-38.4c5.3-5.3,8-12.1,8-19.6v-48.1h25.5v48.1c0,14.8-5.3,27.3-15.5,37.5l-1.1,1.1c9-8.2,21.3-13.2,34.4-13.2
+    C693.3,489.3,715.4,512.1,715.4,539.8L715.4,539.8z M692.3,539.8c0-15.1-12.6-27.3-28-27.3c-15.4,0-27.7,12.8-27.7,27.3
+    c0,14.5,12.3,27.6,27.7,27.6C679.8,567.4,692.3,554.4,692.3,539.8z"/>
+</svg>
