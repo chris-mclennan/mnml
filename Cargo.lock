@@ -2206,14 +2206,14 @@ dependencies = [
 
 [[package]]
 name = "mnml-libghostty-vt"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "mnml-libghostty-vt-sys",
 ]
 
 [[package]]
 name = "mnml-libghostty-vt-sys"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bindgen",
  "pkg-config",
@@ -2221,7 +2221,7 @@ dependencies = [
 
 [[package]]
 name = "mnml-rs"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "arboard",
  "base64 0.22.1",

@@ -10,6 +10,14 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.14](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.13...mnml-rs-v0.2.14) - 2026-08-22
+
+### Fixed
+
+- *(ui)* reviewer follow-up on 72f95de0 — gate mixr spacer + narrow tab-strip width
+- *(ui)* #1121 tab highlight overhang + #1122 statusline music-chip breather
+- *(ci+docs)* release-plz@v0 tag gone + stale post-move header path refs + mixr auth check hardening
+
 ## [0.2.13] - 2026-08-19
 
 Marketplace + auto-update polish release. 52 commits over ~10 days
