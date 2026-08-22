@@ -26,17 +26,22 @@ exclude = [
     ".local/",
     ".claude/",
     ".github/",
-    "assets/",
+    # 1.2 MiB demo gif that lives at assets/demo.gif — README-facing only,
+    # not referenced by any include_bytes!/include_str! in src/.
+    "assets/demo.gif",
     "run.sh",
     # ~400 KiB of e2e .test fixtures + per-pane integration tests — useful
     # for repo contributors via the GitHub source tree, not for crates.io
     # consumers (they'd need the workspace setup anyway).
     "tests/e2e/",
-    # Note: examples/*.rs all ship — Cargo auto-discovers them, and
-    # excluding individual files just orphans the cargo-publish warnings.
-    # The 12 examples (~60 KB total: 7 external-API smokes + 3 highlight
-    # benches + plugins/insert-timestamp.sh) double as documentation-by-
-    # example for crates.io / docs.rs readers; the cost is trivial.
+    # Note: assets/glyphs/ IS included — glyph_builder.rs embeds the
+    # SVGs via `include_bytes!("../assets/glyphs/…")`, so excluding them
+    # breaks the crates.io build. examples/*.rs all ship — Cargo
+    # auto-discovers them, and excluding individual files just orphans
+    # the cargo-publish warnings. The 12 examples (~60 KB total: 7
+    # external-API smokes + 3 highlight benches + plugins/insert-
+    # timestamp.sh) double as documentation-by-example for crates.io /
+    # docs.rs readers; the cost is trivial.
 ]
 
 [lib]
