@@ -3586,7 +3586,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // refresh over long labels since refresh is a frequent action and
     // Inst/Mkt reads unambiguously.
     let refresh_w_usize: usize = 3;
-    let width_usize = area.width as usize;
+    // 1-cell left gutter (defined below). Subtract it from the tier
+    // decision's width budget so the rightmost tab can't overrun into
+    // the refresh chip at exact-fit widths (reviewer catch on 72f95de0).
+    let width_usize = area.width.saturating_sub(1) as usize;
     #[derive(Clone, Copy)]
     enum Tier {
         Full,

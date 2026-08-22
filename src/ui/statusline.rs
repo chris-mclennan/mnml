@@ -1585,13 +1585,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let track_idx = right.len();
         right.push(Seg::new(format!("{shown} "), chip_fg, chip_bg));
         // 1-cell breather between the music transport cluster and the
-        // next chip (#1122) — otherwise the colored track chip abuts
-        // the LSP/clock chip with no visual gap.
-        right.push(Seg::new(
-            " ".to_string(),
-            theme::cur().fg,
-            theme::cur().statusline,
-        ));
+        // next chip (#1122) — only in ascii-icons mode, where nothing
+        // else visually separates two adjacent colored chips. In
+        // powerline mode the arrow transition already draws a PL_LEFT
+        // glyph between differing-bg segs, so a bare spacer here would
+        // just create a second arrow around a blank cell (busier, not
+        // cleaner — reviewer catch on 72f95de0).
+        if !arrows {
+            right.push(Seg::new(
+                " ".to_string(),
+                theme::cur().fg,
+                theme::cur().statusline,
+            ));
+        }
         (Some(play_idx), Some(ffwd_idx), track_idx)
     } else {
         // 2026-08-22 — idle cluster: [brand logo] [play_box].
@@ -1632,13 +1638,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             chip_fg,
             chip_bg,
         ));
-        // 1-cell breather so the idle chip (brand + play_box) doesn't
-        // abut the next statusline chip with no visual gap (#1122).
-        right.push(Seg::new(
-            " ".to_string(),
-            theme::cur().fg,
-            theme::cur().statusline,
-        ));
+        // ascii-only breather — see the playing-branch comment above.
+        if !arrows {
+            right.push(Seg::new(
+                " ".to_string(),
+                theme::cur().fg,
+                theme::cur().statusline,
+            ));
+        }
         music_action_seg_idx = Some(play_idx);
         (None, None, brand_idx)
     };
