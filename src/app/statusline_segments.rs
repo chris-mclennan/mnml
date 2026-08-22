@@ -784,10 +784,12 @@ mod tests {
             "expected waiting placeholder, got {text:?}"
         );
         assert_eq!(color, "comment");
-        // Error → red !.
+        // Error with NO prior successful fetch → red !.
+        // updated_at=0 selects the alarm arm; updated_at>0 would fall
+        // through to the yellow-stale arm (see below).
         let snap = ValuesSnapshot {
             values: HashMap::new(),
-            updated_at: 100,
+            updated_at: 0,
             last_error: Some("boom".into()),
         };
         let (text, color, extra) = render_segment_text(&seg, Some(&snap), &m);
