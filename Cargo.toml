@@ -34,6 +34,16 @@ exclude = [
     # for repo contributors via the GitHub source tree, not for crates.io
     # consumers (they'd need the workspace setup anyway).
     "tests/e2e/",
+    # Starlight docs site — ~12 MiB of screenshots, animated tapes, and
+    # generated content that only makes sense against the site's Astro
+    # toolchain. crates.io consumers never touch this; live version is
+    # at the URL in the README.
+    "site/",
+    # Demo VHS/asciicinema scripts + rendered casts — dev/CI only, used
+    # to regenerate the animated tapes under site/. ~700 KiB.
+    "demo/",
+    # Tape review reports — .mnml/tape-reviews/*.md are dev-only notes.
+    ".mnml/",
     # Note: assets/glyphs/ IS included — glyph_builder.rs embeds the
     # SVGs via `include_bytes!("../assets/glyphs/…")`, so excluding them
     # breaks the crates.io build. examples/*.rs all ship — Cargo
