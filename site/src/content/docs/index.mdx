@@ -63,7 +63,7 @@ Short per-feature tapes for the surfaces the hero above only glances at:
 
 mnml is a terminal IDE that takes NvChad's aesthetic — file-tree rail, tabline, powerline statusline, Nerd-Font devicons, tree-sitter highlighting — and marries it to VSCode's discoverability — command palette, activity bar, right-click menus, mouse-first chrome, and a modeless keymap that doesn't hide anything behind a modifier. Under both surfaces sits one design decision: **a pluggable input layer.** Vim modal editing and the modeless standard keymap are both first-class, both fully remappable, and swappable at runtime. The editor, buffer, and render layers never branch on which one is active.
 
-Install with `brew install chris-mclennan/tap/mnml` on macOS, `winget install mnml` on Windows, `cargo install mnml-rs` anywhere Rust runs — or grab the portable tarball for your platform.
+Install with `brew install chris-mclennan/tap/mnml` on macOS, `scoop install mnml` or `winget install mnml` on Windows, `cargo install mnml-rs` anywhere Rust runs (needs zig 0.16.0 + git on PATH — the build script emits a helpful error if either is missing) — or grab the portable tarball for your platform.
 
 <CardGrid stagger>
   <Card title="Two editing modes, one codebase" icon="setting">
@@ -85,7 +85,7 @@ Install with `brew install chris-mclennan/tap/mnml` on macOS, `winget install mn
     Send `.http` / `.curl` / `.rest` files with `{{variable}}` templating + environments + pre / post-request scripts. Editable form-style request pane (method / URL / headers / body), re-send, copy-as-curl. Request chains (`.chain.json`). OpenAPI / Swagger → `.curl` stub discovery. CLI mode: `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`.
   </Card>
   <Card title="Browser + CDP capture" icon="external">
-    Launch Chrome over DevTools Protocol as a `Pane::Browser` — live console, filtered network log, DOM tree with live highlight, cookies, web storage, performance panel. Capture full-page or per-node screenshots, print-to-PDF, snapshot diffs, device emulation, multi-target, headless support.
+    Launch Chrome over DevTools Protocol as a browser pane — live console, filtered network log, DOM tree with live highlight, cookies, web storage, performance panel. Capture full-page or per-node screenshots, print-to-PDF, snapshot diffs, device emulation, multi-target, headless support.
   </Card>
   <Card title="Debugging (DAP)" icon="warning">
     Debug Adapter Protocol client — launch or attach, breakpoints (conditional, hit-count, exception), step controls, call-stack pane, variables tree with set-variable, watch expressions, REPL pane with lazy-expand. Reverse-debugging where the adapter supports it.
@@ -101,6 +101,9 @@ Install with `brew install chris-mclennan/tap/mnml` on macOS, `winget install mn
   </Card>
   <Card title="Headless + scriptable" icon="seti:bash">
     `mnml --headless` renders to a virtual screen driven over a file-IPC channel (`command` in, `screen.txt` / `status.json` / `events.jsonl` out) — same `App` and draw path as the terminal UI. Out-of-process plugins over that channel can register commands that appear in the palette and resolve as keybindings. `:term <binary>` opens any TUI binary as a Pty pane.
+  </Card>
+  <Card title="Integration SDK — ~40 siblings on crates.io" icon="add-document">
+    Every non-core tool ships as its own crate. Jira / Bitbucket / GitHub / Slack / Teams / Docker / an AWS suite (Amplify, CodeBuild, CloudWatch, Cognito, DynamoDB, ECR, ECS, EventBridge, Lambda, RDS, Redshift, SNS, SQS) / a database driver family / more. Each installs with `<integration> --install`, declares its config via a `[[auth]]` schema, hot-refreshes at runtime, and is auto-updatable. Build your own with `mnml-bridge` (the wire protocol) + a couple hundred lines of Rust.
   </Card>
 </CardGrid>
 
@@ -121,9 +124,10 @@ The manual goes deep on each surface — what's there, how to drive it, the keym
 
 ## The family
 
-mnml is one of two small Rust tools by Chris McLennan. They share design language and run perfectly well standalone in any terminal.
+mnml is one of three small Rust tools by Chris McLennan. They share design language and run perfectly well standalone in any terminal.
 
 - **mnml** — this IDE.
 - **[mixr](https://mixr.sh)** — a terminal DJ rig. Opens as a Pty pane inside mnml via `mixr.show`.
+- **[fim-engine](https://crates.io/crates/mnml-fim-engine)** — the local fill-in-the-middle code-completion crate that powers mnml's offline ghost-text (quantized qwen2.5-coder via candle, no API key).
 
 [See the family page →](/family/)

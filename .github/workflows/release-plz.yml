@@ -50,6 +50,17 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # mnml-libghostty-vt-sys's build.rs source-builds libghostty-vt via
+      # `zig build` and fails fast (require_tool_or_die) if zig isn't on
+      # PATH. release-plz's publish step runs `cargo publish --dry-run` on
+      # each crate, which invokes build.rs. Without zig here, the sys
+      # crate's verify step aborts before reaching crates.io. Matches
+      # ci.yml's setup step.
+      - name: Install zig 0.16.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
       - name: Run release-plz
         uses: release-plz/action@v0.5.131
         with:
@@ -73,6 +84,17 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # mnml-libghostty-vt-sys's build.rs source-builds libghostty-vt via
+      # `zig build` and fails fast (require_tool_or_die) if zig isn't on
+      # PATH. release-plz's publish step runs `cargo publish --dry-run` on
+      # each crate, which invokes build.rs. Without zig here, the sys
+      # crate's verify step aborts before reaching crates.io. Matches
+      # ci.yml's setup step.
+      - name: Install zig 0.16.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Run release-plz
         uses: release-plz/action@v0.5.131
