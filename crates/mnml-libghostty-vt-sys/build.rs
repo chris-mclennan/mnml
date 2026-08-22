@@ -186,6 +186,9 @@ fn source_build() {
     // Where's the ghostty source? Env override wins; otherwise clone.
     let ghostty_dir = match env::var("GHOSTTY_SOURCE_DIR") {
         Ok(dir) => {
+            // Env override — user supplied their own checkout, we just need
+            // zig itself. Don't require git.
+            require_tool_or_die("zig", ZIG_MISSING_HELP);
             let p = PathBuf::from(dir);
             assert!(
                 p.join("build.zig").exists(),
@@ -194,7 +197,14 @@ fn source_build() {
             );
             p
         }
-        Err(_) => fetch_ghostty(&out_dir),
+        Err(_) => {
+            // Default path — need both git (to clone ghostty) and zig
+            // (to build it). Check both up front so cargo install prints
+            // one clear error instead of a raw "No such file or directory".
+            require_tool_or_die("zig", ZIG_MISSING_HELP);
+            require_tool_or_die("git", GIT_MISSING_HELP);
+            fetch_ghostty(&out_dir)
+        }
     };
 
     let install_prefix = out_dir.join("ghostty-install");
@@ -494,6 +504,66 @@ fn run(mut command: Command, context: &str) {
         .unwrap_or_else(|e| panic!("failed to execute {context}: {e}"));
     assert!(status.success(), "{context} failed with status {status}");
 }
+
+/// Verify a build tool is on PATH; panic with a formatted install-help
+/// message if not. Checks whether the binary can be spawned — a spawn
+/// Err (ENOENT) means the tool isn't on PATH; a non-zero exit code
+/// means it's there and complained about the args, which is fine for
+/// our purposes. Different tools want different flags for their
+/// version subcommand (zig wants `version` — no dashes — while git
+/// wants `--version`), so probing for existence is more portable
+/// than trying to run any particular subcommand.
+///
+/// This runs before any zig/git invocation so `cargo install mnml-rs`
+/// on a machine without the prereqs prints one clear error instead of
+/// a cryptic "No such file or directory (os error 2)" from deep inside
+/// the source-build path.
+#[cfg(feature = "source-build")]
+fn require_tool_or_die(tool: &str, help: &str) {
+    let present = Command::new(tool).arg("--version").output().is_ok();
+    if !present {
+        // Emit as a cargo:warning first so the message is unmissable in
+        // the cargo-install output, then panic to actually fail the build.
+        println!("cargo:warning=mnml-libghostty-vt-sys: `{tool}` not found on PATH");
+        panic!("\n\n{help}\n");
+    }
+}
+
+#[cfg(feature = "source-build")]
+const ZIG_MISSING_HELP: &str = "\
+mnml-libghostty-vt-sys requires the Zig compiler (0.16.0) to build.
+
+Install it:
+  macOS:   brew install zig
+  Linux:   snap install zig --classic --edge
+  Windows: scoop install zig
+  Any OS:  download from https://ziglang.org/download/ and put it on PATH
+
+Then re-run: cargo install mnml-rs
+
+If you already have a libghostty-vt.a built elsewhere, set PKG_CONFIG_PATH
+to point at a directory containing libghostty-vt.pc and this build will
+use it instead of source-building. Local ghostty checkout? Set
+GHOSTTY_SOURCE_DIR=/path/to/ghostty.
+
+Or install mnml via one of the prebuilt channels which don't need zig:
+  brew install chris-mclennan/tap/mnml         (macOS / Linux)
+  scoop install mnml                            (Windows)
+  https://github.com/chris-mclennan/mnml/releases  (all platforms)";
+
+#[cfg(feature = "source-build")]
+const GIT_MISSING_HELP: &str = "\
+mnml-libghostty-vt-sys requires `git` on PATH to clone ghostty's source
+during the build. Install git via your package manager:
+
+  macOS:   brew install git       (or xcode-select --install)
+  Linux:   apt install git         (or your distro's equivalent)
+  Windows: winget install Git.Git  (or scoop install git)
+
+Then re-run: cargo install mnml-rs
+
+Already have a ghostty checkout locally? Point at it with
+GHOSTTY_SOURCE_DIR=/path/to/ghostty to skip the clone entirely.";
 
 fn generate_bindings(vt_h: &Path, vendor_include: &Path) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

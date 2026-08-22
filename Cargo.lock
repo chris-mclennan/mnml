@@ -989,17 +989,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fim-engine"
-version = "0.1.0"
-dependencies = [
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "reqwest",
- "tokenizers",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2205,6 +2194,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnml-fim-engine"
+version = "0.1.1"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "reqwest",
+ "tokenizers",
+]
+
+[[package]]
 name = "mnml-libghostty-vt"
 version = "0.2.1"
 dependencies = [
@@ -2225,11 +2225,11 @@ version = "0.2.13"
 dependencies = [
  "arboard",
  "base64 0.22.1",
- "fim-engine",
  "ignore",
  "image",
  "jsonschema",
  "mnml-bridge",
+ "mnml-fim-engine",
  "mnml-libghostty-vt",
  "mnml-libghostty-vt-sys",
  "portable-pty",
