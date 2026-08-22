@@ -5122,7 +5122,7 @@ impl Editor {
         // Then find the pair whose range contains the cursor (or the cursor
         // exactly on a quote — vim picks the pair you're on).
         let cur = self.cursor;
-        for pair in quotes.chunks_exact(2) {
+        for pair in quotes.as_chunks::<2>().0 {
             let (a, b) = (pair[0], pair[1]);
             if cur >= a && cur <= b {
                 return Some((a, b));

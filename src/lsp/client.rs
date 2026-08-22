@@ -2255,7 +2255,7 @@ pub(crate) fn parse_semantic_tokens_from_raw(
     let mut out = Vec::with_capacity(data.len() / 5);
     let mut line: u32 = 0;
     let mut start: u32 = 0;
-    for chunk in data.chunks_exact(5) {
+    for chunk in data.as_chunks::<5>().0 {
         let delta_line = chunk[0];
         let delta_start = chunk[1];
         let length = chunk[2];
