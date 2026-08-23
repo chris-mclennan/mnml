@@ -1210,17 +1210,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         //    subtler tier indicator (bold on numeric range, or a
         //    tiny leading colored dot) if the status info is missed.
         let claude_bg = theme::brand_color_for_builtin("claude_code").unwrap_or(t.orange);
-        // #1139 (2026-08-22) — always dark-on-coral, no exceptions.
-        // Previously the em-dash / error branch (tier_range = None)
-        // used `tier_fg` — which for the error case is `t.red`. In
-        // onedark that's `#e06c75` (a pink-red) and it sat on the
-        // Anthropic coral `#D16D51`, producing a pink-on-orange
-        // pairing users reported as "very hard to read". The `!`
-        // in the "—!" fallback already communicates the error
-        // state; the color-coding it lost was low-signal on this
-        // brand-colored pill anyway (same reasoning the numeric
-        // branch already used — see 2026-08-18 note above).
-        let base_fg = t.bg_darker;
+        // #1139 (2026-08-22) — always near-black-on-coral, no
+        // exceptions. Previously the em-dash / error branch used
+        // `tier_fg` (t.red = pink #e06c75 in onedark), giving the
+        // "pink on orange" pairing users reported. The first pass
+        // of this fix used `t.bg_darker` — which works on dark
+        // themes but INVERTS on light themes (one_light's
+        // `darker_black` is #efeff0, near-white), producing a new
+        // ~3:1 contrast bug scoped to light-theme users. Since
+        // `claude_bg` is a fixed brand color independent of the
+        // theme, the readable-fg is also fixed: a near-black
+        // literal, not a theme slot. Codex sidesteps this because
+        // its chip bg is `t.cyan` (theme-relative) — Claude is
+        // the odd one out with a hardcoded brand bg.
+        let base_fg = ratatui::style::Color::Rgb(0x1A, 0x1A, 0x1A);
         let mut seg = Seg::new(claude_render.text, base_fg, claude_bg);
         let (u_start, u_end) = claude_render.underline;
         seg = seg.underline_range(u_start, u_end);
