@@ -630,6 +630,12 @@ impl Default for GitGraphConfig {
     }
 }
 
+/// Clamp bounds for `EditorConfig::chord_timeout_ms`. Enforced at
+/// every entry point (config-file merge, `:set`, Settings row) so a
+/// hand-edited TOML can't wedge the chord dispatcher with a 0-ms or
+/// 6-hour timeout.
+pub const CHORD_TIMEOUT_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=5000;
+
 #[derive(Debug, Clone)]
 pub struct EditorConfig {
     /// `"vim"` or `"standard"`. Anything else falls back to `"standard"` at handler-make time.
@@ -708,7 +714,8 @@ pub struct EditorConfig {
     /// How long to wait after a partial chord for the next key before
     /// firing the chord's fallback (typically opening the whichkey
     /// overlay). Vim's `timeoutlen` — default 500ms (NvChad convention).
-    /// Bumped up if you type multi-key chords slowly.
+    /// Bumped up if you type multi-key chords slowly. Bounded by
+    /// [`CHORD_TIMEOUT_MS_RANGE`] everywhere it's set.
     pub chord_timeout_ms: u64,
     /// Whether the mouse wheel + scrollbar drag also drag the cursor along.
     /// `"auto"` (default) picks per `input_style`: vim ⇒ cursor follows the
@@ -2383,7 +2390,10 @@ impl Config {
             self.editor.ensure_trailing_newline = v;
         }
         if let Some(v) = raw.editor.chord_timeout_ms {
-            self.editor.chord_timeout_ms = v.clamp(100, 5000);
+            self.editor.chord_timeout_ms = v.clamp(
+                *CHORD_TIMEOUT_MS_RANGE.start(),
+                *CHORD_TIMEOUT_MS_RANGE.end(),
+            );
         }
         if let Some(v) = raw.editor.wheel_moves_cursor {
             // Validate at merge time so a typo doesn't silently behave
