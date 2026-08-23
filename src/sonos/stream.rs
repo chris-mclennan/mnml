@@ -1,3 +1,10 @@
+// 2026-08-22 — everything in this file except `Session::start`'s
+// non-macOS Err-stub is macOS-only. On Linux + Windows CI those
+// helpers become dead code and clippy `-D warnings` fails the run
+// (broke `main` overnight on 32613577355). Silence dead_code on
+// non-macOS builds file-wide rather than sprinkle 7 attrs.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 //! Sending *this Mac's* audio to a Sonos, without AirPlay.
 //!
 //! macOS 26 has no programmatic way to pick an AirPlay target: the
