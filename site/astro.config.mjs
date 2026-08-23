@@ -115,6 +115,7 @@ export default defineConfig({
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'First-launch wizard', slug: 'manual/first-launch' },
             { label: 'Platform support', slug: 'manual/platform-support' },
+            { label: 'Running mnml over SSH', slug: 'manual/remote-ssh' },
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'Statusline, gutter & F1 help', slug: 'manual/statusline-chrome' },
             { label: 'Dock widgets', slug: 'manual/dock-widgets' },
