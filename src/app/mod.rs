@@ -8953,8 +8953,16 @@ impl App {
             // (API) into one list — both are "cloud agents."
             let (mut cloud_rows, meta) =
                 crate::ecs_runner::collect_cloud_rows_with_meta(&cloud_agents_config);
-            let managed = crate::anthropic_api::collect_managed_agent_rows();
-            cloud_rows.extend(managed);
+            // Anthropic Managed Agents API — costs ANTHROPIC_API_KEY
+            // dollars on every hit (metered). Only fire when the user
+            // has cloud_agents configured at all; otherwise a
+            // fire-and-forget 30s poller silently burns ~$60/quarter
+            // in metered `list_sessions` calls for a feature the user
+            // isn't even using. #1160 (2026-08-23).
+            if cloud_agents_config.is_enabled() {
+                let managed = crate::anthropic_api::collect_managed_agent_rows();
+                cloud_rows.extend(managed);
+            }
             let _ = tx.send((local_rows, cloud_rows, meta));
         });
         self.agents_panel_rx = Some(rx);
