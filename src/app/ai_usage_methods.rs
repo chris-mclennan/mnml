@@ -289,10 +289,19 @@ impl App {
             return;
         };
         match rx.try_recv() {
-            Ok(Ok(token)) => {
-                self.keychain_claude_refresh_token = token;
+            Ok(Ok(Some(rt))) => {
+                self.keychain_claude_refresh_token = Some(rt);
                 self.keychain_active_watch = None;
                 self.restamp_claude_active_flags();
+            }
+            Ok(Ok(None)) => {
+                // Keychain returned a blob but it had no refresh
+                // token (plain-string token, or unfamiliar shape).
+                // Leave the cache alone — a transient parse miss
+                // shouldn't wipe a last-known-good match and force
+                // the config-flag fallback (which was the bug that
+                // motivated this whole autodetect path).
+                self.keychain_active_watch = None;
             }
             Ok(Err(_)) => {
                 // Keychain lookup failed — leave the cache alone so
@@ -319,12 +328,23 @@ impl App {
         self.keychain_active_watch = Some(crate::ai_usage::spawn_keychain_active_refresh_token());
     }
 
-    /// The account name whose on-disk token file's refreshToken
-    /// matches the current Keychain blob's refreshToken, or `None`
-    /// when no cache is populated or no account matches. Reads all
-    /// per-account token files (small, ≤4KB each, N ≤ ~5) — called
-    /// once per `drain_ai_usage`, not per-render.
+    /// The autodetected active account name (Keychain refresh-token
+    /// match). Cheap O(1) getter reading `cached_autodetected_...`,
+    /// safe to call per-render. The cache is refreshed by
+    /// `restamp_claude_active_flags` when the Keychain worker returns
+    /// OR the account list is mutated. `None` when no cache is
+    /// populated (Keychain not yet read, non-macOS, no match).
     pub fn autodetected_active_claude_account_name(&self) -> Option<String> {
+        self.cached_autodetected_claude_account.clone()
+    }
+
+    /// Recompute the autodetect result from the current Keychain cache
+    /// + per-account on-disk token files. This IS the disk-read pass —
+    /// callers should invoke it only when state changes (Keychain
+    /// worker returns, account list mutated), never per-render. The
+    /// getter [`Self::autodetected_active_claude_account_name`] reads
+    /// the cache field instead.
+    fn recompute_autodetected_claude_account(&self) -> Option<String> {
         let keychain_rt = self.keychain_claude_refresh_token.as_deref()?;
         for account in self.config.claude_accounts() {
             let token_path = account.resolved_token_path();
@@ -341,8 +361,10 @@ impl App {
     /// using the current autodetect state. Called after the Keychain
     /// worker returns so the panel + statusline reflect the new active
     /// account without waiting for the next per-account fetch cycle.
+    /// Also refreshes the render-hot-path cache.
     pub fn restamp_claude_active_flags(&mut self) {
-        let autodetected = self.autodetected_active_claude_account_name();
+        let autodetected = self.recompute_autodetected_claude_account();
+        self.cached_autodetected_claude_account = autodetected.clone();
         let active_names: std::collections::HashSet<String> = if let Some(name) = autodetected {
             std::iter::once(name).collect()
         } else {

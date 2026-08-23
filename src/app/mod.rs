@@ -3935,6 +3935,13 @@ pub struct App {
     /// Receiver for the background worker that reads the Keychain to
     /// populate `keychain_claude_refresh_token`. Drained per-tick.
     pub keychain_active_watch: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
+    /// Resolved autodetect result — recomputed by
+    /// `restamp_claude_active_flags` when the Keychain cache or
+    /// account list changes, then read O(1) by every render (the
+    /// statusline chip + Claude Usage panel both render this per
+    /// frame). Prevents the reader from re-reading each account's
+    /// on-disk token file at render time.
+    pub cached_autodetected_claude_account: Option<String>,
     /// Unix seconds of the last refresh spawn — throttles the
     /// per-tick "should I refresh again" check to at most once per
     /// 5 min. Used by the Codex fetcher and by the (rare) "no
@@ -5900,6 +5907,7 @@ impl App {
             pending_keychain_fetch: None,
             keychain_claude_refresh_token: None,
             keychain_active_watch: None,
+            cached_autodetected_claude_account: None,
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
             ai_usage_claude_last_refresh_at: std::collections::HashMap::new(),
