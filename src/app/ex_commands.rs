@@ -3476,10 +3476,19 @@ impl App {
                     "vnoremap",
                     "xnoremap",
                     "cnoremap",
-                    // `changes` / `jumps` / `marks` / `reg` all have
-                    // explicit arms above that shadow this list — kept
-                    // out of it so an accidental future removal of an
-                    // arm doesn't silently route to the cheatsheet.
+                    // `changes` / `jumps` / `marks` / `reg` / `registers`
+                    // have explicit arms above that shadow this list —
+                    // kept HERE as defense-in-depth so an accidental
+                    // future arm removal falls through to the cheatsheet
+                    // fallback rather than fuzzy-matching an unrelated
+                    // command (the original bug that motivated the
+                    // list: `:changes` resolving to
+                    // `git.commit_staged_changes`).
+                    "changes",
+                    "jumps",
+                    "marks",
+                    "reg",
+                    "registers",
                     "buffers",
                     "ls",
                     "files",
