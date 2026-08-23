@@ -361,25 +361,60 @@ if command -v ffmpeg >/dev/null 2>&1; then
   fi
   if [[ "$duration" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
      && awk "BEGIN{exit !($duration > 0.5)}"; then
-    # Emit 8 frames at t = 5%, 15%, 30%, 45%, 60%, 75%, 88%, 97%
+    # Emit 8 frames at t = 5%, 15%, 30%, 45%, 60%, 75%, 88%, 95%
     # of duration. The uneven spacing skews slightly toward the
     # middle-and-end (where the composite hero shots typically
     # land) so the review sample reflects "what viewers actually
     # remember" from the tape.
-    pcts=(0.05 0.15 0.30 0.45 0.60 0.75 0.88 0.97)
+    #
+    # #1072 (2026-08-22) — was 97% and the 8th frame silently
+    # dropped when -ss landed within the GIF's final decode
+    # window (ffmpeg 6+ input-side seek can't produce a frame
+    # past the last keyframe on some GIF encodings — no error,
+    # no PNG written). Pull the last sample point in to 95% and
+    # ADD a hard verify that every expected PNG landed; the
+    # awk-driven t clamp for the last sample keeps it >=200ms
+    # before EOF as a belt-and-suspenders.
+    pcts=(0.05 0.15 0.30 0.45 0.60 0.75 0.88 0.95)
     i=1
+    missing=0
     for p in "${pcts[@]}"; do
-      t="$(awk "BEGIN{printf \"%.3f\", $duration * $p}")"
+      t="$(awk "BEGIN{
+        want = $duration * $p
+        cap  = $duration - 0.2
+        if (want > cap) want = cap
+        if (want < 0)   want = 0
+        printf \"%.3f\", want
+      }")"
+      out="$(printf '%s/frame_%03d.png' "$FRAMES_DIR" "$i")"
       # -ss BEFORE -i does input-side seek (fast); -frames:v 1
       # emits one PNG. Suppress ffmpeg banner + stderr progress.
       ffmpeg -y -loglevel error \
         -ss "$t" -i "$GIF_OUT" \
         -frames:v 1 \
-        "$(printf '%s/frame_%03d.png' "$FRAMES_DIR" "$i")"
+        "$out" || true
+      # Verify the PNG actually landed. On silent-drop we retry
+      # with input-side seek REPLACED by output-side seek
+      # (`-i $GIF -ss $t`), which decodes from t=0 up to $t.
+      # Slower but reliable — ffmpeg fully materializes the
+      # frame instead of trying to jump past a keyframe.
+      if [ ! -s "$out" ]; then
+        ffmpeg -y -loglevel error \
+          -i "$GIF_OUT" -ss "$t" \
+          -frames:v 1 \
+          "$out" || true
+      fi
+      if [ ! -s "$out" ]; then
+        echo "  ⚠️  frame_$(printf '%03d' "$i").png at ${p}% did not render"
+        missing=$(( missing + 1 ))
+      fi
       i=$(( i + 1 ))
     done
     n_frames="$(ls "$FRAMES_DIR"/frame_*.png 2>/dev/null | wc -l | tr -d ' ')"
-    echo "  frames        $FRAMES_DIR ($n_frames PNGs @ 5/15/30/45/60/75/88/97% of ${duration}s)"
+    echo "  frames        $FRAMES_DIR ($n_frames PNGs @ 5/15/30/45/60/75/88/95% of ${duration}s)"
+    if [ "$missing" -gt 0 ]; then
+      echo "  ⚠️  $missing frame(s) missing — review will be incomplete"
+    fi
   else
     echo "[demo-record] could not read GIF duration — skipping frame extraction"
   fi
