@@ -1369,6 +1369,15 @@ fn derive_bitbucket_slug(repo_path: &std::path::Path) -> Option<String> {
 /// toast side of this (surface the URL in the UI too) needs an
 /// App handle and is filed as a follow-up.
 pub fn open_url_external(url: &str) {
+    // Reviewer fix (2026-08-23): the OSC 52 path opens `/dev/tty`,
+    // which doesn't exist on Windows — Win32-OpenSSH sets
+    // `SSH_CONNECTION` too, so a naive `is_ssh_session()` branch
+    // there falls into a silent no-op (no browser, no toast,
+    // nothing). Gate the OSC 52 shortcut on unix; on Windows fall
+    // through to the shellout (a Win32-OpenSSH session is rare
+    // enough that the wrong-machine open is a smaller regression
+    // than "nothing happens").
+    #[cfg(unix)]
     if is_ssh_session() {
         best_effort_osc52_copy(url);
         return;
@@ -1407,6 +1416,11 @@ pub fn is_ssh_session() -> bool {
 /// and copy the payload into the user's local system clipboard.
 /// Terminals that don't honor OSC 52 silently ignore the
 /// sequence — no visual artifact. Best-effort; errors dropped.
+///
+/// Unix-only: `/dev/tty` is a POSIX-ism. Windows callers fall
+/// back to the shellout above; see the reviewer note on
+/// `open_url_external`.
+#[cfg(unix)]
 fn best_effort_osc52_copy(url: &str) {
     use std::io::Write;
     let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") else {
@@ -1420,6 +1434,7 @@ fn best_effort_osc52_copy(url: &str) {
     let _ = tty.write_all(seq.as_bytes());
 }
 
+#[cfg(any(unix, test))]
 fn osc52_base64(input: &[u8]) -> String {
     const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
@@ -1599,6 +1614,16 @@ fn upsert_claude_account(
 }
 
 fn open_path_external(path: &std::path::Path) {
+    // Same SSH concern as `open_url_external` (task #1168, reviewer
+    // pass on 4cb2a793): on a remote host `xdg-open` would fire on
+    // the SERVER, not the SSH client. Copy the absolute path to the
+    // local clipboard via OSC 52 so the user can paste it into
+    // whatever they'd have used locally (Finder, an editor, etc.).
+    #[cfg(unix)]
+    if is_ssh_session() {
+        best_effort_osc52_copy(&path.display().to_string());
+        return;
+    }
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
     } else if cfg!(target_os = "windows") {
