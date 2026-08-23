@@ -448,13 +448,26 @@ pub fn draw_pane(
             // same file line as the row above, not a separate line.
             // #polish 2026-07-06 — was blank; visually indistinct
             // from a real short line above it.
-            let glyph = if app.config.ui.ascii_icons {
-                "~"
+            //
+            // pre-push reviewer 2026-08-23: when [ui] line_numbers
+            // = false, `num_w = 0`, so the old `format!("{}{glyph} ",
+            // " ".repeat(num_w.saturating_sub(1)))` produced a
+            // 2-char prefix instead of the `num_w + 1 = 1` char
+            // every other branch honors. No room for a
+            // continuation indicator inside a 1-cell gutter;
+            // collapse to a bare space to keep every row's text
+            // column aligned with `text_x`.
+            if num_w == 0 {
+                " ".to_string()
             } else {
-                "\u{21AA}"
-            };
-            let pad = num_w.saturating_sub(1);
-            format!("{}{glyph} ", " ".repeat(pad))
+                let glyph = if app.config.ui.ascii_icons {
+                    "~"
+                } else {
+                    "\u{21AA}"
+                };
+                let pad = num_w.saturating_sub(1);
+                format!("{}{glyph} ", " ".repeat(pad))
+            }
         } else if blame_on {
             match buf.blame.as_ref().and_then(|v| v.get(line_no)) {
                 Some(bl) => format!("{} ", bl.label(num_w)),
