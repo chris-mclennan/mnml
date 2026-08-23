@@ -4537,10 +4537,9 @@ impl App {
             .or_else(|| rest.strip_prefix("tm="))
         {
             if let Ok(n) = v.trim().parse::<u64>() {
-                use crate::config::CHORD_TIMEOUT_MS_RANGE;
                 let clamped = n.clamp(
-                    *CHORD_TIMEOUT_MS_RANGE.start(),
-                    *CHORD_TIMEOUT_MS_RANGE.end(),
+                    *crate::config::CHORD_TIMEOUT_MS_RANGE.start(),
+                    *crate::config::CHORD_TIMEOUT_MS_RANGE.end(),
                 );
                 self.config.editor.chord_timeout_ms = clamped;
                 let _ =

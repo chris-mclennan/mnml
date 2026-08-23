@@ -640,20 +640,17 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     // Chord chain timeout — how long to wait after a partial chord for
     // the next key. Vim `timeoutlen`. Bounds from CHORD_TIMEOUT_MS_RANGE;
     // step 100.
-    {
-        use crate::config::CHORD_TIMEOUT_MS_RANGE;
-        out.push(SettingItem::Number(NumberRow {
-            key: "editor.chord_timeout_ms",
-            label: "Chord timeout (whichkey wait)",
-            value: cfg.editor.chord_timeout_ms as i32,
-            min: *CHORD_TIMEOUT_MS_RANGE.start() as i32,
-            max: *CHORD_TIMEOUT_MS_RANGE.end() as i32,
-            step: 100,
-            default: d.editor.chord_timeout_ms as i32,
-            unit: " ms",
-            modified: cfg.editor.chord_timeout_ms != d.editor.chord_timeout_ms,
-        }));
-    }
+    out.push(SettingItem::Number(NumberRow {
+        key: "editor.chord_timeout_ms",
+        label: "Chord timeout (whichkey wait)",
+        value: cfg.editor.chord_timeout_ms as i32,
+        min: *crate::config::CHORD_TIMEOUT_MS_RANGE.start() as i32,
+        max: *crate::config::CHORD_TIMEOUT_MS_RANGE.end() as i32,
+        step: 100,
+        default: d.editor.chord_timeout_ms as i32,
+        unit: " ms",
+        modified: cfg.editor.chord_timeout_ms != d.editor.chord_timeout_ms,
+    }));
 
     // 2026-06-30 — git_graph.lane_spacing: 0..=4; step 1.
     out.push(SettingItem::Number(NumberRow {
@@ -1094,9 +1091,8 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
             changed
         }
         "editor.chord_timeout_ms" => {
-            use crate::config::CHORD_TIMEOUT_MS_RANGE;
-            let lo = *CHORD_TIMEOUT_MS_RANGE.start() as i32;
-            let hi = *CHORD_TIMEOUT_MS_RANGE.end() as i32;
+            let lo = *crate::config::CHORD_TIMEOUT_MS_RANGE.start() as i32;
+            let hi = *crate::config::CHORD_TIMEOUT_MS_RANGE.end() as i32;
             let new = value.clamp(lo, hi) as u64;
             let changed = cfg.editor.chord_timeout_ms != new;
             cfg.editor.chord_timeout_ms = new;
