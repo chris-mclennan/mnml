@@ -2042,6 +2042,15 @@ impl Editor {
                     if self.undo.len() > target_len {
                         self.undo.truncate(target_len);
                     }
+                    // Task #1172 (2026-08-23) — reviewer flag on
+                    // ac89187c. Mirror `Editor::atomic_undo`: reset
+                    // `in_insert_run` AFTER the loop too, not just
+                    // before. If the last inner op took the deleted-
+                    // selection path (task #1148's new branch) it
+                    // would leave `in_insert_run = true`, causing an
+                    // unrelated `InsertChar` that follows the group
+                    // to wrongly coalesce onto the group's checkpoint.
+                    self.in_insert_run = false;
                 } else {
                     for _ in 0..n {
                         self.apply_one((*inner).clone(), vp, clip, out);
@@ -2066,6 +2075,8 @@ impl Editor {
                 if self.undo.len() > target_len {
                     self.undo.truncate(target_len);
                 }
+                // Task #1172 — same reset-after fix as Repeat above.
+                self.in_insert_run = false;
             }
 
             // ── motion ──
@@ -5477,6 +5488,49 @@ mod tests {
         e.anchor = Some(5);
         e.apply(EditOp::InsertNewline, 10, &mut c);
         assert_eq!(e.text(), "\n world");
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "hello world");
+    }
+
+    /// Task #1172 — Atomic/Repeat groups must reset `in_insert_run`
+    /// AFTER their loop, not just before. If the last inner op of
+    /// an Atomic group is an InsertChar that takes #1148's new
+    /// "deleted" branch, `in_insert_run = true` leaks out; an
+    /// InsertChar that follows immediately (no intervening motion)
+    /// would then wrongly coalesce onto the group's already-collapsed
+    /// single checkpoint. Fix: reset `in_insert_run` after the loop
+    /// in both Atomic and Repeat arms.
+    #[test]
+    fn atomic_group_ending_in_deleted_insert_does_not_leak_insert_run() {
+        let (mut e, mut c) = ed("hello world");
+        // Atomic([SelectRange(0,5), InsertChar('X')]) — last inner
+        // op is InsertChar over the selection created by SelectRange.
+        // Group collapses to ONE undo entry (atomic semantics).
+        e.apply(
+            EditOp::Atomic(vec![
+                EditOp::SetCursorByte(5),
+                EditOp::SelectStart,
+                EditOp::SetCursorByte(0),
+                EditOp::InsertChar('X'),
+            ]),
+            10,
+            &mut c,
+        );
+        assert_eq!(e.text(), "X world");
+        // Now an INDEPENDENT InsertChar. Must start its own
+        // checkpoint, not coalesce onto the Atomic's entry. Test:
+        // one Undo reverts ONLY the 'Y' — leaves "X world".
+        e.apply(EditOp::InsertChar('Y'), 10, &mut c);
+        // Cursor was at 1 (right after the X) so Y lands right of it.
+        assert_eq!(e.text(), "XY world");
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(
+            e.text(),
+            "X world",
+            "InsertChar after Atomic must start a new checkpoint, not \
+             ride the collapsed group entry"
+        );
+        // A second Undo reverts the Atomic group.
         e.apply(EditOp::Undo, 10, &mut c);
         assert_eq!(e.text(), "hello world");
     }
