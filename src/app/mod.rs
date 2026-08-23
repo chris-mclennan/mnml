@@ -8927,23 +8927,32 @@ impl App {
     }
 
     pub fn refresh_agents_panel_if_due(&mut self) {
-        // 2 min — the rail is a heads-up display, not a live tail.
-        // The full Pane::ClaudeAgents has its own faster refresh
-        // tick when the user opens it. #1161 (2026-08-23) — bumped
-        // from 30s. The Cloud Agents half of this refresh shells
-        // out to `aws dynamodb scan` (unbounded, subprocess spawn
-        // ~200-500ms + server-side scan cost), which stalls the
-        // worker each pass. Cloud runs change on the minute-to-hour
-        // scale, not seconds — the extra latency isn't visible to
-        // the user, and it stops the rail refresh from being a
-        // constant load on both the AWS side and the mnml side.
-        const AGENTS_PANEL_REFRESH: std::time::Duration = std::time::Duration::from_secs(120);
+        // 30s for LOCAL Claude/Codex rail rows (filesystem-only
+        // scan — cheap, session-state badges want fast feedback).
+        // 2 min for CLOUD rows when `[cloud_agents]` is configured
+        // (the `aws dynamodb scan` subprocess spawn + server-side
+        // scan cost dominate the worker each pass — running that
+        // every 30s is what motivated #1161). Same worker refreshes
+        // both, so we pick the shorter interval only when the cloud
+        // half is a no-op.
+        //
+        // #1161 f/u (2026-08-23) — was a single 120s bump that
+        // silently dragged local badges to 2-minute staleness for
+        // users with no cloud_agents config, for zero AWS benefit.
+        const AGENTS_PANEL_REFRESH_LOCAL: std::time::Duration = std::time::Duration::from_secs(30);
+        const AGENTS_PANEL_REFRESH_CLOUD: std::time::Duration = std::time::Duration::from_secs(120);
+        let cloud_enabled = self.config.cloud_agents.is_enabled();
+        let refresh_interval = if cloud_enabled {
+            AGENTS_PANEL_REFRESH_CLOUD
+        } else {
+            AGENTS_PANEL_REFRESH_LOCAL
+        };
         if self.agents_panel_rx.is_some() {
             return; // a refresh is already in flight
         }
         let due = self
             .agents_panel_built_at
-            .map(|t| t.elapsed() >= AGENTS_PANEL_REFRESH)
+            .map(|t| t.elapsed() >= refresh_interval)
             .unwrap_or(true);
         if !due {
             return;

@@ -54,7 +54,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // Triggers the same worker that builds local agents — cheap on
-    // most frames; the actual scan runs every 30s.
+    // most frames; the actual refresh cadence is set in
+    // `App::refresh_agents_panel_if_due` (30s local / 2min when
+    // cloud_agents is configured, since this section's DynamoDB
+    // scan is the expensive half).
     app.refresh_agents_panel_if_due();
 
     app.rects.cloud_agents_rows.clear();

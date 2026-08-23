@@ -54,8 +54,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // Cheap-on-most-frames; only fires the actual scan every
-    // ~5s.
+    // Cheap-on-most-frames; the actual refresh cadence is set in
+    // `App::refresh_agents_panel_if_due` (30s local / 2min when
+    // cloud_agents is configured).
     app.refresh_agents_panel_if_due();
 
     app.rects.agents_panel_rows.clear();
