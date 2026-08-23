@@ -2518,6 +2518,22 @@ impl VimInputHandler {
                     effective_code,
                     KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Char('$') | KeyCode::End
                 );
+                // R11 nvchad-user 2026-08-23 — on an empty line, `$`
+                // stays at col 0 and MoveRight past EOL crosses the
+                // newline into the next line. Under yank that
+                // captured `"\n"` (paste later split the neighbor);
+                // under delete/change it would merge lines. Real vim
+                // `y$`/`d$`/`c$` on an empty line is a no-op. Guard
+                // here so every $-inclusive operator recovers.
+                let empty_dollar = matches!(effective_code, KeyCode::Char('$') | KeyCode::End)
+                    && ctx.line_len == 0;
+                if empty_dollar {
+                    self.reset_pending();
+                    if matches!(op, PendingOp::Change) {
+                        self.mode = VimMode::Insert;
+                    }
+                    return InputResult::Ops(vec![]);
+                }
                 if inclusive {
                     ops.push(MoveRight);
                 }
@@ -2526,6 +2542,13 @@ impl VimInputHandler {
                     PendingOp::Yank => {
                         ops.push(YankSelection);
                         ops.push(SelectClear);
+                        // R11 nvchad-user 2026-08-23 — vim's `y`
+                        // operator preserves the cursor (unlike `d`
+                        // and `c` which end at the operation site).
+                        // Was: cursor drifted to the motion
+                        // endpoint (e.g. `y$` left cursor at
+                        // EOL+1). Restore to the pre-yank byte.
+                        ops.push(SetCursorByte(ctx.cursor));
                     }
                     PendingOp::Change => {
                         ops.push(ReplaceSelection(String::new()));
@@ -3017,17 +3040,29 @@ impl VimInputHandler {
                 // Neovim default (v0.6+, inherited by NvChad): `Y = y$`
                 // — yank to end of line, symmetric with `D` and `C`.
                 // Was mapped to `yy` (vim 6.x linewise) — corrected per
-                // nvchad-parity audit 2026-08-22 (#1142). Rebuilt from
-                // the SelectStart + MoveLineLastChar + MoveRight (for
-                // inclusive) + YankSelection + SelectClear shape the
-                // motion path already uses for `y$`.
+                // nvchad-parity audit 2026-08-22 (#1142).
+                //
+                // R11 nvchad-user 2026-08-23 double-catch on the first
+                // draft:
+                // - Empty-line yank crossed the newline (`MoveRight`
+                //   past EOL landed in the next line), so `Y` on a
+                //   blank line captured `"\n"` and a follow-up `p`
+                //   split the next line. Guard on `ctx.line_len == 0`:
+                //   real vim `y$` on empty is a no-op.
+                // - Non-empty `Y` moved the cursor to EOL+1; vim's
+                //   `y` operator preserves the cursor. Restore via
+                //   `SetCursorByte(ctx.cursor)` after the yank.
                 self.reset_pending();
+                if ctx.line_len == 0 {
+                    return InputResult::Ops(vec![]);
+                }
                 InputResult::Ops(vec![
                     SelectStart,
                     MoveLineLastChar,
                     MoveRight,
                     YankSelection,
                     SelectClear,
+                    SetCursorByte(ctx.cursor),
                 ])
             }
             // paste / undo / redo
