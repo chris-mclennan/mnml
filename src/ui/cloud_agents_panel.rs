@@ -252,12 +252,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.cloud_agents_change_defaults_chip = Some(chip_rect);
         y += 2;
     } else if !has_defaults && y < area.y + area.height {
-        // First-run path — wizard CTA. User feedback 2026-08-23:
-        // the `+` glyph must sit in the same column as the mag glass
-        // on the filter row above (both at `area.x + 1`), so the
-        // left edge of the two rows lines up visually. Drop the
-        // leading space and anchor the button at `area.x + 1`.
-        let btn = "+ New Cloud Run ";
+        // First-run path — wizard CTA. User feedback 2026-08-23
+        // (two rounds): the button's LEFT EDGE lines up 1 cell right
+        // of where it started, and the button keeps its inner
+        // padding — a bg-styled leading space before the `+` so the
+        // chip reads like the "+ New session" / "+ from Palette"
+        // pair on the local Sessions panel. Net: button at
+        // `area.x + 1`, text still `" + New Cloud Run "` with the
+        // leading pad space.
+        let btn = " + New Cloud Run ";
         let bw = btn.chars().count() as u16;
         let btn_rect = Rect {
             x: area.x + 1,
