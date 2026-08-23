@@ -461,6 +461,16 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         cfg.ui.auto_md_preview,
         d.ui.auto_md_preview,
     ));
+    // R11 vscode-keyboard SEV-3 (2026-08-23) — the R10 F9
+    // patch shipped a `[ui] tree_preview_on_arrow` knob but
+    // no Settings row for it, so users who read the release
+    // notes still had to hand-edit config.toml.
+    out.push(bool_row(
+        "ui.tree_preview_on_arrow",
+        "Tree preview on arrow-nav",
+        cfg.ui.tree_preview_on_arrow,
+        d.ui.tree_preview_on_arrow,
+    ));
 
     // Picker position — center vs top.
     let picker_idx = if cfg.ui.picker_position == "top" {
@@ -905,6 +915,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.highlight_todo_keywords" => set_bool(&mut cfg.ui.highlight_todo_keywords, opt_idx),
         "ui.always_show_fold_arrows" => set_bool(&mut cfg.ui.always_show_fold_arrows, opt_idx),
         "ui.auto_md_preview" => set_bool(&mut cfg.ui.auto_md_preview, opt_idx),
+        "ui.tree_preview_on_arrow" => set_bool(&mut cfg.ui.tree_preview_on_arrow, opt_idx),
         "ui.picker_position" => {
             let new = if opt_idx == 1 { "top" } else { "center" };
             let changed = cfg.ui.picker_position != new;
@@ -1180,6 +1191,11 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             b(cfg.ui.always_show_fold_arrows),
         )],
         "ui.auto_md_preview" => vec![("ui", "auto_md_preview", b(cfg.ui.auto_md_preview))],
+        "ui.tree_preview_on_arrow" => vec![(
+            "ui",
+            "tree_preview_on_arrow",
+            b(cfg.ui.tree_preview_on_arrow),
+        )],
         // ── ui (string) ──
         "ui.picker_position" => vec![("ui", "picker_position", q(&cfg.ui.picker_position))],
         "ui.now_playing_source" => {

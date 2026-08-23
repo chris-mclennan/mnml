@@ -26,8 +26,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         Style::default().fg(t.bg3)
     };
+    // R11 vscode-keyboard SEV-3 (2026-08-23) — was
+    // `term.scratch_toggle`, an internal palette command id
+    // that reads as gibberish on the mode chip. Ctrl+` DOES
+    // close the strip from the focused state (the scratch
+    // handler intercepts at tui/mod.rs:2164). Use the chord
+    // both users see and remember; command ids belong in
+    // the palette, not in mode strips.
     let title = if scratch.focused {
-        " scratch · Esc blurs · `term.scratch_toggle` closes "
+        " scratch · Esc blurs · Ctrl+` closes "
     } else {
         " scratch · Ctrl+` refocus · Ctrl+` again closes "
     };
