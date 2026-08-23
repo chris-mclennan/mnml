@@ -289,6 +289,70 @@ impl App {
         });
     }
 
+    /// Vim `[m` / `]m` — jump to the previous / next method start.
+    /// Unlike [`jump_section`] which requires a top-level `fn` / `class`
+    /// at column 0, this walks symbols from [`crate::regex_outline`]
+    /// filtered to function / method kinds — so an indented `def foo`
+    /// inside a class OR an `impl` block's inner methods qualify.
+    /// Fires the big-jump nav hook so `Ctrl+O` returns.
+    pub fn jump_method(&mut self, forward: bool) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let cur_row = b.editor.row_col().0;
+        let ext = b
+            .path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        if ext.is_empty() {
+            self.toast(if forward {
+                "]m — unknown language"
+            } else {
+                "[m — unknown language"
+            });
+            return;
+        }
+        let text = b.editor.text().to_string();
+        let symbols = crate::regex_outline::extract_symbols(&text, &ext);
+        let is_method_kind = |k: &str| {
+            matches!(
+                k,
+                "fn" | "function" | "method" | "def" | "func" | "constructor"
+            )
+        };
+        let target: Option<u32> = if forward {
+            symbols
+                .iter()
+                .find(|s| is_method_kind(s.kind) && (s.line as usize) > cur_row)
+                .map(|s| s.line)
+        } else {
+            symbols
+                .iter()
+                .rev()
+                .find(|s| is_method_kind(s.kind) && (s.line as usize) < cur_row)
+                .map(|s| s.line)
+        };
+        match target {
+            Some(row) => {
+                let np = self.current_nav_point();
+                if let Some(b) = self.active_editor_mut() {
+                    b.editor.place_cursor(row as usize, 0);
+                }
+                if let Some(np) = np {
+                    self.record_within_file_jump(np);
+                }
+            }
+            None => self.toast(if forward {
+                "]m — no method forward"
+            } else {
+                "[m — no method back"
+            }),
+        }
+    }
+
     /// `zj` — jump the cursor to the start of the next fold (relative
     /// to current row). No-op when there are no folds after the cursor.
     /// nvchad-round-7 SEV-3 2026-07-11.

@@ -1913,6 +1913,9 @@ impl VimInputHandler {
                     // a scope). `[]` = end of prev section.
                     KeyCode::Char('[') => "editor.section_prev_start",
                     KeyCode::Char(']') => "editor.section_prev_end",
+                    // `[m` = prev method start (any-indent function /
+                    // method / def). Complements `[[` (top-level only).
+                    KeyCode::Char('m') => "editor.method_prev",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
@@ -1927,6 +1930,7 @@ impl VimInputHandler {
                     // `]]` = next section, `][` = end of next section.
                     KeyCode::Char(']') => "editor.section_next_start",
                     KeyCode::Char('[') => "editor.section_next_end",
+                    KeyCode::Char('m') => "editor.method_next",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));

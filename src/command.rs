@@ -1281,6 +1281,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.jump_section(false, true),
         },
         Command {
+            id: "editor.method_next",
+            title: "Jump to next method (vim `]m`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.jump_method(true),
+        },
+        Command {
+            id: "editor.method_prev",
+            title: "Jump to previous method (vim `[m`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.jump_method(false),
+        },
+        Command {
             id: "editor.fold_selection",
             title: "Fold the visual selection (`zf` in Visual)",
             group: "editor",
