@@ -6,7 +6,7 @@
 pub mod chord;
 pub mod handlers;
 pub mod mouse;
-pub use chord::{CHORD_CHAIN_TIMEOUT_MS, dispatch_chord_chain, tick_chord_chain};
+pub use chord::{chord_timeout_ms, dispatch_chord_chain, tick_chord_chain};
 use handlers::overlay::{
     handle_git_section_commit_key, handle_glyph_builder_key, handle_help_overlay_key,
     handle_integration_edit_key, handle_picker_key, handle_prompt_key, handle_search_section_key,
@@ -176,7 +176,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
         let frame_start = std::time::Instant::now();
         app.tick();
         // Chord-chain timeout — fires the pending fallback (if any)
-        // when the user pauses past `CHORD_CHAIN_TIMEOUT_MS`. Must run
+        // when the user pauses past `chord_timeout_ms`. Must run
         // every frame regardless of redraw so a dangling prefix
         // doesn't sit forever after the user gives up.
         tick_chord_chain(app);

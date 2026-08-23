@@ -637,6 +637,20 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: cfg.editor.tab_width != d.editor.tab_width,
     }));
 
+    // Chord chain timeout — how long to wait after a partial chord for
+    // the next key. Vim `timeoutlen`. 100..=5000; step 100.
+    out.push(SettingItem::Number(NumberRow {
+        key: "editor.chord_timeout_ms",
+        label: "Chord timeout (whichkey wait)",
+        value: cfg.editor.chord_timeout_ms as i32,
+        min: 100,
+        max: 5000,
+        step: 100,
+        default: d.editor.chord_timeout_ms as i32,
+        unit: " ms",
+        modified: cfg.editor.chord_timeout_ms != d.editor.chord_timeout_ms,
+    }));
+
     // 2026-06-30 — git_graph.lane_spacing: 0..=4; step 1.
     out.push(SettingItem::Number(NumberRow {
         key: "git_graph.lane_spacing",
@@ -1075,6 +1089,12 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
             cfg.editor.tab_width = new;
             changed
         }
+        "editor.chord_timeout_ms" => {
+            let new = value.clamp(100, 5000) as u64;
+            let changed = cfg.editor.chord_timeout_ms != new;
+            cfg.editor.chord_timeout_ms = new;
+            changed
+        }
         "ui.color_column" => {
             let new = value.max(0) as usize;
             let changed = cfg.ui.color_column != new;
@@ -1260,6 +1280,11 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             q(&cfg.editor.wheel_moves_cursor),
         )],
         "editor.tab_width" => vec![("editor", "tab_width", cfg.editor.tab_width.to_string())],
+        "editor.chord_timeout_ms" => vec![(
+            "editor",
+            "chord_timeout_ms",
+            cfg.editor.chord_timeout_ms.to_string(),
+        )],
         "editor.trim_trailing_ws_on_save" => vec![(
             "editor",
             "trim_trailing_ws_on_save",
@@ -2035,6 +2060,32 @@ mod tests {
         // clamps, but apply guards against bad usage).
         apply_number_setting(&mut cfg, "ui.scrolloff", -3);
         assert_eq!(cfg.ui.scrolloff, 0);
+    }
+
+    #[test]
+    fn chord_timeout_ms_applies_and_clamps() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.editor.chord_timeout_ms, 500);
+        assert!(apply_number_setting(
+            &mut cfg,
+            "editor.chord_timeout_ms",
+            750
+        ));
+        assert_eq!(cfg.editor.chord_timeout_ms, 750);
+        // Below floor clamps to 100.
+        assert!(apply_number_setting(
+            &mut cfg,
+            "editor.chord_timeout_ms",
+            20
+        ));
+        assert_eq!(cfg.editor.chord_timeout_ms, 100);
+        // Above ceiling clamps to 5000.
+        assert!(apply_number_setting(
+            &mut cfg,
+            "editor.chord_timeout_ms",
+            99999
+        ));
+        assert_eq!(cfg.editor.chord_timeout_ms, 5000);
     }
 
     #[test]

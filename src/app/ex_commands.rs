@@ -4531,6 +4531,20 @@ impl App {
             } else {
                 self.toast(format!(":set text_width={v} — not a number"));
             }
+        } else if let Some(v) = rest
+            .strip_prefix("chord_timeout_ms=")
+            .or_else(|| rest.strip_prefix("timeoutlen="))
+            .or_else(|| rest.strip_prefix("tm="))
+        {
+            if let Ok(n) = v.trim().parse::<u64>() {
+                let clamped = n.clamp(100, 5000);
+                self.config.editor.chord_timeout_ms = clamped;
+                let _ =
+                    crate::app::discovery::persist_editor_int("chord_timeout_ms", clamped as i64);
+                self.toast(format!("chord_timeout_ms: {clamped}"));
+            } else {
+                self.toast(format!(":set chord_timeout_ms={v} — not a number"));
+            }
         } else if matches!(opt, "endofline" | "eol") {
             self.config.editor.ensure_trailing_newline = true;
             self.toast("ensure_trailing_newline: on");

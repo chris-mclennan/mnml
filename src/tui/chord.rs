@@ -14,10 +14,13 @@ use crate::app::App;
 use crate::command;
 
 /// Vim's `timeoutlen` analogue — how long to wait for the next key
-/// in a chord chain before giving up. `g:timeoutlen` defaults to
-/// 1000ms in vim; VS Code uses a roughly comparable window. Could
-/// become a config knob.
-pub const CHORD_CHAIN_TIMEOUT_MS: u64 = 1000;
+/// in a chord chain before giving up. Defaults to 500ms (NvChad
+/// convention — vim's default is 1000ms). Configurable via `[editor]
+/// chord_timeout_ms`; read per-dispatch so runtime toggles take effect
+/// on the next chord without a restart.
+pub fn chord_timeout_ms(app: &App) -> u64 {
+    app.config.editor.chord_timeout_ms
+}
 
 /// Maintains the App's `pending_chord_seq` + deadline + fallback.
 /// Drives the vim-style `timeoutlen` semantics:
@@ -53,16 +56,14 @@ pub fn dispatch_chord_chain(app: &mut App, key: KeyEvent) -> bool {
             let fb = fallback.to_owned();
             app.pending_chord_fallback = Some(fb);
             app.pending_chord_deadline = Some(
-                std::time::Instant::now()
-                    + std::time::Duration::from_millis(CHORD_CHAIN_TIMEOUT_MS),
+                std::time::Instant::now() + std::time::Duration::from_millis(chord_timeout_ms(app)),
             );
             true
         }
         SeqResolution::Pending => {
             app.pending_chord_fallback = None;
             app.pending_chord_deadline = Some(
-                std::time::Instant::now()
-                    + std::time::Duration::from_millis(CHORD_CHAIN_TIMEOUT_MS),
+                std::time::Instant::now() + std::time::Duration::from_millis(chord_timeout_ms(app)),
             );
             true
         }
@@ -127,14 +128,14 @@ pub fn dispatch_chord_chain(app: &mut App, key: KeyEvent) -> bool {
                     app.pending_chord_fallback = Some(fb);
                     app.pending_chord_deadline = Some(
                         std::time::Instant::now()
-                            + std::time::Duration::from_millis(CHORD_CHAIN_TIMEOUT_MS),
+                            + std::time::Duration::from_millis(chord_timeout_ms(app)),
                     );
                     true
                 }
                 SeqResolution::Pending => {
                     app.pending_chord_deadline = Some(
                         std::time::Instant::now()
-                            + std::time::Duration::from_millis(CHORD_CHAIN_TIMEOUT_MS),
+                            + std::time::Duration::from_millis(chord_timeout_ms(app)),
                     );
                     true
                 }

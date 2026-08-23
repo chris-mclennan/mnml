@@ -705,6 +705,11 @@ pub struct EditorConfig {
     /// `[editor] ensure_trailing_newline = false` for files that need a
     /// strictly-no-trailing-newline format.
     pub ensure_trailing_newline: bool,
+    /// How long to wait after a partial chord for the next key before
+    /// firing the chord's fallback (typically opening the whichkey
+    /// overlay). Vim's `timeoutlen` — default 500ms (NvChad convention).
+    /// Bumped up if you type multi-key chords slowly.
+    pub chord_timeout_ms: u64,
     /// Whether the mouse wheel + scrollbar drag also drag the cursor along.
     /// `"auto"` (default) picks per `input_style`: vim ⇒ cursor follows the
     /// viewport (matches `Ctrl+E`/`Ctrl+Y` vim canon); standard ⇒ viewport
@@ -1373,6 +1378,7 @@ impl Default for Config {
                 code_lens: true,
                 text_width: 80,
                 ensure_trailing_newline: true,
+                chord_timeout_ms: 500,
                 wheel_moves_cursor: "auto".to_string(),
             },
             ui: UiConfig {
@@ -1938,6 +1944,7 @@ struct RawEditor {
     code_lens: Option<bool>,
     text_width: Option<usize>,
     ensure_trailing_newline: Option<bool>,
+    chord_timeout_ms: Option<u64>,
     wheel_moves_cursor: Option<String>,
 }
 
@@ -2374,6 +2381,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.ensure_trailing_newline {
             self.editor.ensure_trailing_newline = v;
+        }
+        if let Some(v) = raw.editor.chord_timeout_ms {
+            self.editor.chord_timeout_ms = v.clamp(100, 5000);
         }
         if let Some(v) = raw.editor.wheel_moves_cursor {
             // Validate at merge time so a typo doesn't silently behave

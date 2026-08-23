@@ -1132,6 +1132,11 @@ pub fn persist_editor_bool(key: &'static str, value: bool) -> Result<std::path::
     persist_config_scalar("editor", key, value.to_string())
 }
 
+/// `[editor] KEY = <value>` (int). TOML integer literal.
+pub fn persist_editor_int(key: &'static str, value: i64) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("editor", key, value.to_string())
+}
+
 /// `[editor] KEY = "value"` (string). Used by `set_input_style` so
 /// swapping vim ↔ standard from a running mnml survives restart.
 pub fn persist_editor_string(key: &'static str, value: &str) -> Result<std::path::PathBuf, String> {
