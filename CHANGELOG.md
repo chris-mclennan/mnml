@@ -10,6 +10,83 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.15](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.14...mnml-rs-v0.2.15) - 2026-08-22
+
+Sonos + Pty-identity release, on top of a same-day 0.2.14 CI-repair
+bump. Headline: **mnml now sees your Sonos household and can route
+this Mac's audio to it**, either via Music.app's AirPlay picker
+(cold-capable, Music.app-audio-only) or via a BlackHole → ffmpeg →
+UPnP loopback stream (any app's audio). A single constant-width
+statusline chip carries the destination + state; the tooltip and
+Info View carry the room, track, and volume.
+
+### Added
+
+- **Sonos speaker chip on the statusline** (`c92eacd0`) — new
+  `src/sonos/` subsystem (SOAP / discovery / ops / stream /
+  airplay / coreaudio) plus `src/app/sonos.rs`. Cluster next to
+  the music chips: one constant-width `[󰓃]` destination chip with
+  state carried by color (teal streaming / white playing / dim
+  idle). Room / track / volume all live in the hover tooltip +
+  Info View, drawn above the strip so nothing shifts. Config
+  `[sonos]` (`enabled` / `host` / `room` / `poll_secs` /
+  `prefer_airplay` / `chip_label`), `:set sonos` ex-commands,
+  Settings **Sonos** section, 16 `sonos.*` palette commands,
+  and a full manual page at `site/src/content/docs/manual/sonos.md`.
+  Discovery is one SSDP `M-SEARCH` + `GetZoneGroupState`; the
+  chip renders nothing when no household answers. All network
+  work is on a worker thread behind a Cmd/Snapshot channel pair —
+  the render loop never waits on a speaker. Transport goes to
+  the group *coordinator*; volume/mute to the named room.
+- **Two audio-send paths.** `audio.airplay_music` hands
+  Music.app to any AirPlay receiver (Apple TV / HomePod / another
+  Mac — no Sonos required) via Music.app's scriptable
+  `current AirPlay devices`. For everything else, the
+  Sonos-specific loopback stream routes `system output →
+  BlackHole → ffmpeg mp3 → mnml HTTP → x-rincon-mp3radio://`,
+  restoring your prior default output on stop. `src/sonos/
+  coreaudio.rs` is hand-rolled CoreAudio FFI (no `coreaudio-sys`
+  dep) for the default-output switch. macOS-only.
+- **Pty pane identity strip** (#1133, `52a703c9`) — every Pty
+  pane grows a 1-col brand-color strip on its left edge so a
+  wall of terminal panes is instantly distinguishable at a
+  glance.
+
+### Fixed
+
+- **Ctrl+W on exited Pty pane now actually closes it** (#1131,
+  `07e6da95`) — the pane's footer hint has always promised this;
+  the exited-Pty key handler was swallowing Ctrl+W. Now it
+  closes the pane as advertised.
+- **Sonos chip no longer re-flows the statusline on hover**
+  (`7e99ee61`) — the right lane is right-aligned, so any width
+  change slid every neighbouring chip. Hover expansion is now
+  opt-in via `[sonos] chip_label = never | hover | always`
+  (default `never`), and even in `hover` mode the expansion
+  grows LEFTWARD so a pointer inside the cluster stays inside it.
+- **Beatport lime darkened for fg-on-white** (#1138, `818be1ff`)
+  — the mixr music-source chip's Beatport branch was unreadable
+  against the pale-white idle background. Spotify + Apple were
+  left as-is (contrast already OK).
+- **Sessions "New session" gutter fixed + mixr idle chip speaker
+  color corrected** (#1137 / #1138, `09df5e6a` + `eb89a008`) —
+  the initial #1138 fix touched the wrong site (mixr) before the
+  follow-up moved it to the sonos idle chip where the real bug
+  was; recorded here for archaeology.
+- **Pink-on-orange Claude chip** (#1139, `a71352e5`) — the
+  em-dash branch of the Claude chip painted pink text on the
+  coral background it shares with the numeric branch. Now the
+  em-dash branch paints dark-on-coral to match.
+
+### Changed
+
+- **CI: `release-plz-release` job now has `zig` on PATH** (#1128,
+  `78a07d50`) + **cargo publish runs with `--allow-dirty`**
+  (`a640789f`) so the ghostty-vt build.rs clone doesn't trip the
+  release-plz clean-tree check.
+- **About page audit fixes** (#1128 tail, `78a07d50`) — stale
+  paths + wording sweep across the About surface.
+
 ## [0.2.14](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.13...mnml-rs-v0.2.14) - 2026-08-22
 
 ### Fixed
