@@ -1609,21 +1609,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         //   Brand chip : source logo — click opens the app browser
         //   Play chip  : play_box (F040E) — click starts playing
         let source = app.config.ui.preferred_music_app.as_str();
-        let (source_glyph, chip_bg, chip_fg) = match source {
+        // Two colors per source: `chip_bg` for the play_box seg's
+        // background, and `glyph_on_white_fg` for the brand glyph
+        // when it renders on a white cell (#1138). Beatport's lime
+        // is too light (~luma 187) to read on white; use a darker
+        // shade (~luma 92) for the fg-on-white case while keeping
+        // the lime for chip-bg uses. Spotify green + Apple red are
+        // already dark enough — pass through.
+        let (source_glyph, chip_bg, chip_fg, glyph_on_white_fg) = match source {
             "spotify" => (
                 '\u{F1BC}',                   // nf-fa-spotify
                 Color::Rgb(0x1D, 0xB9, 0x54), // Spotify green
                 Color::Rgb(0x00, 0x00, 0x00),
+                Color::Rgb(0x1D, 0xB9, 0x54), // same green — readable on white
             ),
             "music" => (
                 '\u{E711}',                   // nf-fa-apple
                 Color::Rgb(0xFA, 0x24, 0x3C), // Apple Music red
                 Color::Rgb(0xFF, 0xFF, 0xFF),
+                Color::Rgb(0xFA, 0x24, 0x3C), // same red — readable on white
             ),
             _ => (
                 '\u{F1F00}',                  // mnml-baked Beatport B
-                Color::Rgb(0xA6, 0xE2, 0x2E), // Beatport lime (mixr)
+                Color::Rgb(0xA6, 0xE2, 0x2E), // Beatport lime (chip bg)
                 Color::Rgb(0x00, 0x00, 0x00),
+                Color::Rgb(0x4A, 0x6D, 0x0E), // darker lime for fg-on-white
             ),
         };
         // #1138 — brand glyph gets a WHITE inner cell (same visual
@@ -1635,7 +1645,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let brand_idx = right.len();
         right.push(Seg::new(
             format!(" {} ", source_glyph),
-            chip_bg, // brand color as fg (glyph paints in source tint)
+            glyph_on_white_fg, // brand glyph painted in source tint (darkened where needed)
             Color::Rgb(0xFF, 0xFF, 0xFF),
         ));
         let play_idx = right.len();
