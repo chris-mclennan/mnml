@@ -2734,25 +2734,28 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // reasoning as the existing round-10 Ctrl+F fix (vim.rs side).
     let vim_reserves_key = {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let vim_mode = app.editing_mode();
         let vim_normal_or_visual = matches!(
-            app.editing_mode(),
+            vim_mode,
             crate::input::EditingMode::Normal
                 | crate::input::EditingMode::Visual
                 | crate::input::EditingMode::VisualLine
                 | crate::input::EditingMode::VisualBlock
         );
-        vim_normal_or_visual
+        // R13 nvchad SEV-2 2026-08-23 — insert-mode Ctrl+O is vim's
+        // canonical "one-shot normal command" chord (`Ctrl+O h`
+        // moves left without leaving Insert). The global keymap
+        // owns `Ctrl+O = picker.files`; without a per-key insert-
+        // mode bypass here the chord chain fires the picker instead
+        // of falling through to the vim handler.
+        let vim_insert = matches!(vim_mode, crate::input::EditingMode::Insert);
+        let normal_reserved = vim_normal_or_visual
             && ctrl
             && !key.modifiers.contains(KeyModifiers::ALT)
             // R7 nvchad SEV-2 2026-08-09 — extended from `b`/`B`
             // (page-back) to also include `o`/`O`/`i`. Vim owns:
             //   Ctrl+B / Ctrl+F — page back/forward
             //   Ctrl+O / Ctrl+I — jumplist back/forward
-            // Without this bypass, the global keymap fires
-            // `picker.files` (Ctrl+O bound in command.rs:2550) and
-            // Ctrl+I is a no-op even though vim.rs at :2717 returns
-            // `AppCommand::RunCommand("nav.back")` for Ctrl+O — dead
-            // code because chord_chain got there first.
             && matches!(
                 key.code,
                 KeyCode::Char('b')
@@ -2761,15 +2764,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     | KeyCode::Char('O')
                     | KeyCode::Char('i')
                     | KeyCode::Char('I')
-                    // R10 nvchad SEV-3 — Ctrl+W is vim's window-
-                    // prefix chord (Ctrl+W h/j/k/l/w/q ...).
-                    // Standard mode's `Ctrl+W = buffer.close` used
-                    // to win globally; now vim keeps ownership of
-                    // Ctrl+W so the chord chain reaches
-                    // handle_normal's Ctrl+W arm.
+                    // R10 nvchad SEV-3 — Ctrl+W window-prefix.
                     | KeyCode::Char('w')
                     | KeyCode::Char('W')
-            )
+            );
+        let insert_reserved = vim_insert
+            && ctrl
+            && !key.modifiers.contains(KeyModifiers::ALT)
+            && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O'));
+        normal_reserved || insert_reserved
     };
 
     // keyboard-round-14 SEV-2 2026-07-16 — when a Pty pane is

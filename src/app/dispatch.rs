@@ -235,9 +235,33 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
             app.macro_toggle();
         }
         MacroReplayFrom { reg, count } => {
-            for _ in 0..count.max(1) {
+            // R13 nvchad SEV-2 2026-08-23 — vim's `99@a` aborts
+            // when a motion inside the macro can't make progress
+            // (typically at BOF/EOF), so a user typing a big count
+            // "just in case" doesn't corrupt the buffer past the
+            // last real line. Detect no-progress by snapshotting
+            // `(text.len(), cursor)` before each iteration and
+            // aborting when neither moved.
+            let n = count.max(1);
+            let mut prev_snapshot: Option<(usize, usize)> = None;
+            for _ in 0..n {
+                let snap_before = app
+                    .active_editor()
+                    .map(|b| (b.editor.text().len(), b.editor.cursor()));
+                if let Some(prev) = prev_snapshot
+                    && snap_before == Some(prev)
+                {
+                    // Two consecutive iterations with identical
+                    // pre-state ⇒ the macro's motion / edit is a
+                    // no-op at this position. Abort the count loop
+                    // instead of grinding through the remaining
+                    // (count - iter) iterations. Silent — vim's
+                    // own abort is silent too.
+                    break;
+                }
                 app.set_pending_macro_register(reg);
                 app.macro_replay();
+                prev_snapshot = snap_before;
             }
         }
         BlockInsertStart { append } => app.block_insert_start(append),
