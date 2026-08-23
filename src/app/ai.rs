@@ -1060,7 +1060,23 @@ impl App {
     /// falls back to plain browser (mixr's --play already handles
     /// empty favorites by picking `default_genre`, but we still need
     /// an auth check so the user isn't confused by silent no-ops).
+    ///
+    /// #1135 (2026-08-22) — when mixr is ALREADY running, the plain
+    /// dedup path just refocuses it and drops the --play intent on
+    /// the floor: the user clicked "Play random chart" and got a
+    /// no-op. Fix: reveal + toast a specific message so the click
+    /// isn't silent. Fully wiring "queue a chart in the running
+    /// instance" needs a mixr-side stdin/IPC protocol — tracked
+    /// separately; this at least kills the silent-no-op complaint.
     pub fn open_mixr_and_play(&mut self) {
+        if let Some(id) = self.find_mixr_pty() {
+            self.reveal_pane(id);
+            self.toast(
+                "mixr is already running — press `b` there + Enter to queue a chart, \
+                 or close mixr first (Ctrl+W) and click Play random chart again",
+            );
+            return;
+        }
         let can_play = mixr_beatport_authed();
         let args = if can_play {
             vec!["--play".into(), "--panel".into(), "browse".into()]
@@ -1071,12 +1087,19 @@ impl App {
         self.open_mixr_with_args(args);
     }
 
-    fn open_mixr_with_args(&mut self, args: Vec<String>) {
-        let existing = self.panes.iter().position(|p| match p {
+    /// #1135 helper — id of the running mixr Pty pane, if any.
+    /// Shared by open_mixr_with_args (dedup + refocus) and
+    /// open_mixr_and_play (dedup + explanatory toast so the intent
+    /// isn't silently dropped).
+    fn find_mixr_pty(&self) -> Option<PaneId> {
+        self.panes.iter().position(|p| match p {
             Pane::Pty(s) => s.profile.label.starts_with("mixr"),
             _ => false,
-        });
-        if let Some(id) = existing {
+        })
+    }
+
+    fn open_mixr_with_args(&mut self, args: Vec<String>) {
+        if let Some(id) = self.find_mixr_pty() {
             self.reveal_pane(id);
             return;
         }
