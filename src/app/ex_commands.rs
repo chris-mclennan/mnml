@@ -2883,10 +2883,12 @@ impl App {
             // first. Capped to 10 entries each side so the toast stays
             // readable.
             "jumps" => self.ex_jumps(rest),
-            // `:changes` — vim's changelist for the active editor. Prints
-            // one line per mutation position (most-recent last, matching
-            // vim), rendered into a persistent toast so the user can scan
-            // it without it fading.
+            // `:changes` — vim's changelist for the active editor. Opens
+            // a scratch buffer (matching `:Messages!` — a toast can't
+            // hold multi-line payloads; `toast_stack::draw_toast_box`
+            // renders the whole string as one flat Span and truncates
+            // at ~60 chars) with one row per mutation position,
+            // most-recent last (vim's canonical order).
             "changes" => {
                 let Some(b) = self.active_editor() else {
                     self.toast(":changes — no active editor");
@@ -2896,15 +2898,15 @@ impl App {
                     self.toast(":changes — none recorded");
                     return;
                 }
-                let mut lines: Vec<String> = vec!["change  line  col".to_string()];
                 let n = b.editor.change_list.len();
+                let mut lines: Vec<String> = vec!["change  line  col".to_string()];
                 for (i, (row, col)) in b.editor.change_list.iter().enumerate() {
                     // vim's format: distance-from-current in the leftmost
                     // column (older = larger positive), then line + col.
                     let dist = n - i - 1;
                     lines.push(format!("{:>6}  {:>4}  {:>3}", dist, row + 1, col + 1));
                 }
-                self.toast_persistent("ex:changes", lines.join("\n"), crate::app::ToastLevel::Info);
+                self.open_scratch_with_text("[changes]".into(), lines.join("\n"));
             }
             // `:wn` / `:wnext` — write the current buffer + jump to next.
             // `:wp` / `:wprev` — write + jump to prev.
