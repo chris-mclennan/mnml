@@ -963,6 +963,18 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.clear_find(),
         },
+        // #1142 reviewer f/u — vim's Esc-in-Normal wants BOTH the
+        // highlight drop AND the multi-cursor collapse in one
+        // dispatch. Folding both into find.clear silently changed
+        // palette + :noh semantics; extracting to a dedicated
+        // command keeps clear_find pure.
+        Command {
+            id: "find.clear_and_deselect",
+            title: "Find: clear highlights + drop extra cursors",
+            group: "find",
+            keys: &[],
+            run: |app| app.clear_find_and_deselect(),
+        },
         Command {
             id: "editor.goto_line",
             title: "Go to line… (1-based)",

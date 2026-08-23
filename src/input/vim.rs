@@ -3207,17 +3207,11 @@ impl VimInputHandler {
             KeyCode::Esc => {
                 self.reset_pending();
                 // NvChad + Neovim: Esc in Normal clears search highlight
-                // in addition to dropping multi-cursors. Users hit `/foo`
-                // → n → n → Esc expecting the highlight to disappear
-                // without typing `:noh<CR>`. Previously only ClearExtraCursors
-                // fired (nvchad-parity audit 2026-08-22, #1142).
-                //
-                // App::clear_find now folds ClearExtraCursors into
-                // itself (see app/mod.rs::clear_find), so one App
-                // command does both jobs — safe when no search is
-                // active (no-op on `find`), and safe when no extras
-                // exist (no-op on `extra_cursors`).
-                InputResult::App(AppCommand::RunCommand("find.clear".into()))
+                // in addition to dropping multi-cursors (#1142). Uses
+                // the dedicated `find.clear_and_deselect` command so
+                // `:noh` and palette "Find: clear highlights" stay pure
+                // — vim Esc is the only surface that wants both.
+                InputResult::App(AppCommand::RunCommand("find.clear_and_deselect".into()))
             }
             _ => {
                 self.reset_pending();

@@ -9859,16 +9859,23 @@ impl App {
         }
     }
 
-    /// `find.clear` (Esc when find is the only active overlay) — drop the matches.
-    ///
-    /// #1142 (2026-08-22, nvchad-parity SEV-1) — also drop any extra
-    /// multi-cursors on the active buffer. Esc in vim Normal now fires
-    /// `find.clear` (was ClearExtraCursors); folding the multi-cursor
-    /// clear into this command keeps both behaviors reachable in one
-    /// dispatch. Palette-level `find.clear` callers get a mild
-    /// side-effect (extra cursors also disappear); that's fine —
-    /// they're already clearing ephemeral overlays.
+    /// `find.clear` (palette "Find: clear highlights", `:noh`) — drop the matches.
+    /// Extra cursors are preserved so callers like `:noh` don't
+    /// silently deselect a live multi-cursor session (#1142 reviewer
+    /// pointed out this scope creep — see clear_find_and_deselect
+    /// below for the vim-Esc-only combo).
     pub fn clear_find(&mut self) {
+        if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.find = None;
+        }
+    }
+
+    /// `find.clear_and_deselect` — vim Esc's "back to one cursor +
+    /// no highlight" gesture. Combines clear_find + drop
+    /// extra_cursors. #1142 (nvchad-parity SEV-1) — was folded into
+    /// clear_find; extracted after reviewer flag so palette
+    /// "Find: clear highlights" + `:noh` don't clobber multi-cursors.
+    pub fn clear_find_and_deselect(&mut self) {
         if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
             b.find = None;
             b.editor.extra_cursors.clear();
