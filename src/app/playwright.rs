@@ -311,10 +311,35 @@ impl App {
             ));
             return;
         }
+        // R15 multilang-dev SEV-2 (2026-08-23) — always shell out
+        // to bare `pytest`, which resolves against PATH. On the
+        // most common Python project shape (`python -m venv .venv`
+        // at the project root) the workspace's own venv wins only
+        // if the user manually activated it before launching mnml;
+        // otherwise the SYSTEM pytest silently ran against the
+        // wrong dependency set with no toast. Fix: prefer, in order:
+        //   1. `<root>/.venv/bin/pytest` (POSIX venv)
+        //   2. `<root>/.venv/Scripts/pytest.exe` (Windows venv)
+        //   3. `<root>/venv/bin/pytest` (older non-hidden name)
+        //   4. bare `pytest` (previous behavior — PATH resolve)
+        // Each fallback is skipped when the candidate file doesn't
+        // exist so the shell doesn't error on a non-existent path.
+        let venv_pytest = {
+            let candidates = [
+                root.join(".venv").join("bin").join("pytest"),
+                root.join(".venv").join("Scripts").join("pytest.exe"),
+                root.join("venv").join("bin").join("pytest"),
+            ];
+            candidates.into_iter().find(|p| p.exists())
+        };
+        let bin = match venv_pytest.as_deref() {
+            Some(p) => p.display().to_string(),
+            None => "pytest".to_string(),
+        };
         let cmdline = if args.is_empty() {
-            "pytest".to_string()
+            bin.clone()
         } else {
-            format!("pytest {args}")
+            format!("{bin} {args}")
         };
         let label = cmdline.clone();
         let profile = crate::pty_pane::BinaryProfile::task(&label, &cmdline, root);
