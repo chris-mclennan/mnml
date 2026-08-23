@@ -4513,4 +4513,46 @@ mod tests {
             InputResult::App(AppCommand::SetMark('A'))
         ));
     }
+
+    // R11 vscode-keyboard reviewer follow-up 2026-08-23 —
+    // pin every arm of the Tab/BackTab/Shift-Tab/Ctrl-Tab/
+    // Ctrl-Shift-Tab family so a third regression on this
+    // exact match block gets caught in CI. The arm order has
+    // now flip-flopped across two consecutive reviewer rounds
+    // (R10 nvchad-user 2026-08-22 → R11 vscode-keyboard
+    // 2026-08-23).
+    #[test]
+    fn normal_tab_family_routes() {
+        let expected = [
+            (
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+                "buffer.next",
+            ),
+            (
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT),
+                "buffer.prev",
+            ),
+            (
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
+                "nav.forward",
+            ),
+            (
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                "buffer.prev",
+            ),
+            (
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
+                "buffer.prev",
+            ),
+        ];
+        for (key, want) in expected {
+            let mut v = h();
+            match v.handle_key(key, &ctx()) {
+                InputResult::App(AppCommand::RunCommand(id)) => {
+                    assert_eq!(id, want, "arm for {key:?}");
+                }
+                _ => panic!("{key:?} → expected RunCommand({want}), got a different InputResult"),
+            }
+        }
+    }
 }

@@ -596,4 +596,34 @@ mod tests {
             "priority 2 must beat the higher-scoring priority 1 cross-workspace item"
         );
     }
+
+    /// R11 vscode-keyboard SEV-2 (2026-08-23) — pin the
+    /// palette's empty-query ordering after the #1113 hard-
+    /// tier regression was replaced with `score_bonus`.
+    /// Recents (score_bonus 50) must still beat pane-scoped
+    /// (score_bonus 20), and both must beat everything-else
+    /// (score_bonus 0). A prior draft used the same value
+    /// for both, which broke recents-first at empty query.
+    #[test]
+    fn score_bonus_tiers_recents_beat_pane_scoped_beat_generic() {
+        let items = vec![
+            // Everything else — no bonus.
+            PickerItem::new("app.quit", "Quit mnml", "ctrl+q"),
+            // Pane-scoped (namespace bump = +20).
+            PickerItem::new("editor.stats", "Editor stats", "").with_score_bonus(20),
+            // Recent (recents bump = +50), also pane-scoped
+            // (order-safe max — stays at 50, not double-
+            // counted).
+            PickerItem::new("editor.insert_last_cmdline", "Insert last cmdline", "")
+                .with_score_bonus(50),
+        ];
+        let pk = Picker::new(PickerKind::Commands, "Commands", items);
+        // Empty query — all fuzzy scores are 0, ordering
+        // collapses to score_bonus desc.
+        let top = pk.selected_item().unwrap();
+        assert_eq!(
+            top.id, "editor.insert_last_cmdline",
+            "recents (50) must beat pane-scoped (20) and generic (0)"
+        );
+    }
 }
