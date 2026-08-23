@@ -9072,7 +9072,14 @@ impl App {
         // users with no cloud_agents config, for zero AWS benefit.
         const AGENTS_PANEL_REFRESH_LOCAL: std::time::Duration = std::time::Duration::from_secs(30);
         const AGENTS_PANEL_REFRESH_CLOUD: std::time::Duration = std::time::Duration::from_secs(120);
-        let cloud_enabled = self.config.cloud_agents.is_enabled();
+        // R15 design-critic (2026-08-23) — the cadence gate now
+        // asks "is EITHER cloud backend on?" instead of just "is
+        // ECS on?". A Managed-Agents-only user pays the slower
+        // 2-min cadence for their cloud path; before this fix
+        // they got 30s cadence but the managed poll was silently
+        // gated off entirely (see the split inside the worker
+        // below).
+        let cloud_enabled = self.config.cloud_agents.any_cloud_source_enabled();
         let refresh_interval = if cloud_enabled {
             AGENTS_PANEL_REFRESH_CLOUD
         } else {
@@ -9101,12 +9108,15 @@ impl App {
             let (mut cloud_rows, meta) =
                 crate::ecs_runner::collect_cloud_rows_with_meta(&cloud_agents_config);
             // Anthropic Managed Agents API — costs ANTHROPIC_API_KEY
-            // dollars on every hit (metered). Only fire when the user
-            // has cloud_agents configured at all; otherwise a
-            // fire-and-forget 30s poller silently burns ~$60/quarter
-            // in metered `list_sessions` calls for a feature the user
-            // isn't even using. #1160 (2026-08-23).
-            if cloud_agents_config.is_enabled() {
+            // dollars on every hit (metered). Gated on the explicit
+            // `[cloud_agents] managed_agents_enabled` opt-in so a
+            // stray ANTHROPIC_API_KEY never silently burns
+            // ~$60/quarter (#1160 canary property preserved).
+            // R15 design-critic 2026-08-23 — was previously gated
+            // on `is_enabled()` (ECS-only), which meant Managed-
+            // Agents-only users had wizard entry but zero panel
+            // rows. The two backends now have independent toggles.
+            if cloud_agents_config.managed_agents_enabled {
                 let managed = crate::anthropic_api::collect_managed_agent_rows();
                 cloud_rows.extend(managed);
             }

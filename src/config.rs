@@ -256,14 +256,38 @@ pub struct CloudAgentsConfig {
     /// Display fallback used when a run row has no ticket id
     /// (e.g. `"acme"`). Cosmetic. Empty → `"cloud"`.
     pub default_workspace_label: String,
+    /// Opt-in for the Anthropic Managed Agents polling path
+    /// (`anthropic_api::collect_managed_agent_rows` — metered per
+    /// call, canary-logged via #1160). Defaults to false so a
+    /// misconfigured `ANTHROPIC_API_KEY` never silently burns
+    /// pay-per-token credits. R15 design-critic (2026-08-23)
+    /// flagged the previous wiring: the polling gate was tied to
+    /// `is_enabled()` (ECS `region` + `runs_table`), so a
+    /// Managed-Agents-only user could fire sessions from the
+    /// wizard but never see them in the panel — the AWS-flavored
+    /// empty state stayed forever.
+    ///
+    /// Config: `[cloud_agents] managed_agents_enabled = true`.
+    pub managed_agents_enabled: bool,
 }
 
 impl CloudAgentsConfig {
     /// True when the required minimum for scanning is set —
-    /// region + runs_table. When false, cloud-agents features
-    /// (rail rows, wizard entry, trigger) are all no-ops.
+    /// region + runs_table. When false, ECS cloud-agents features
+    /// (rail rows, wizard entry, trigger) are all no-ops. Note
+    /// this is ECS-specific — the Anthropic Managed Agents half
+    /// has its own toggle (`managed_agents_enabled`).
     pub fn is_enabled(&self) -> bool {
         !self.effective_region().is_empty() && !self.runs_table.is_empty()
+    }
+
+    /// True when EITHER cloud-agents backend should be polled —
+    /// ECS (from `is_enabled`) OR the Anthropic Managed Agents
+    /// path (from the explicit `managed_agents_enabled` opt-in).
+    /// Used by the panel refresh scheduler to decide whether the
+    /// slower cloud cadence applies. R15 design-critic 2026-08-23.
+    pub fn any_cloud_source_enabled(&self) -> bool {
+        self.is_enabled() || self.managed_agents_enabled
     }
 
     /// Env-then-config lookup for region. Env: `MNML_CLOUD_AGENTS_REGION`.
@@ -1918,6 +1942,8 @@ struct RawCloudAgents {
     s3_artifacts_bucket: Option<String>,
     #[serde(default)]
     default_workspace_label: Option<String>,
+    #[serde(default)]
+    managed_agents_enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -3224,6 +3250,9 @@ impl Config {
         }
         if let Some(v) = raw.cloud_agents.default_workspace_label {
             self.cloud_agents.default_workspace_label = v;
+        }
+        if let Some(v) = raw.cloud_agents.managed_agents_enabled {
+            self.cloud_agents.managed_agents_enabled = v;
         }
     }
 }
