@@ -82,12 +82,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
     // flags stale for up to the poll interval (~5 min). Reading
     // config here means the `(active)` tail label always tracks the
     // *current* selection.
-    let active_name_now: Option<String> = app
-        .config
-        .claude_accounts()
-        .into_iter()
-        .find(|a| a.active)
-        .map(|a| a.name);
+    // #1150 f/u (2026-08-23) — autodetect from the live Claude Code
+    // Keychain blob first (matches which account is CURRENTLY the
+    // Claude Code CLI login). Falls back to the manual `active = true`
+    // config flag when autodetect has no answer yet (Keychain worker
+    // hasn't returned, non-macOS, no configured account matches).
+    let active_name_now: Option<String> =
+        app.autodetected_active_claude_account_name().or_else(|| {
+            app.config
+                .claude_accounts()
+                .into_iter()
+                .find(|a| a.active)
+                .map(|a| a.name)
+        });
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

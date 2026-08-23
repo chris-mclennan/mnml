@@ -60,6 +60,12 @@ impl App {
         if !claude_enabled {
             return;
         }
+        // #1150 f/u (2026-08-23) — kick the autodetect worker on the
+        // same cadence as the per-account fetches. The Keychain lookup
+        // is threaded (`security find-generic-password` can prompt)
+        // so this only enqueues; the result gets drained by
+        // `drain_keychain_active_watch`.
+        self.kick_keychain_active_refresh();
         let configured = self.config.claude_accounts();
         let configured_names: std::collections::HashSet<String> =
             configured.iter().map(|a| a.name.clone()).collect();
@@ -109,15 +115,18 @@ impl App {
     /// rendering. `None` when nothing has been fetched yet.
     /// Task #944.
     pub fn active_claude_account(&self) -> Option<&crate::ai_usage::ClaudeAccountUsage> {
-        // Prefer whatever the config currently marks active. Fall
-        // back to the first entry so a snapshot exists even if the
-        // config was edited between fetch + render.
-        let active_name: Option<String> = self
-            .config
-            .claude_accounts()
-            .into_iter()
-            .find(|a| a.active)
-            .map(|a| a.name);
+        // #1150 f/u (2026-08-23) — autodetect (Keychain refresh-token
+        // match) wins over the manual `active = true` config flag,
+        // then falls back to the first entry so a snapshot exists
+        // even if the config was edited between fetch + render.
+        let active_name: Option<String> =
+            self.autodetected_active_claude_account_name().or_else(|| {
+                self.config
+                    .claude_accounts()
+                    .into_iter()
+                    .find(|a| a.active)
+                    .map(|a| a.name)
+            });
         if let Some(name) = active_name.as_ref()
             && let Some(hit) = self
                 .ai_usage_claude_accounts
@@ -141,13 +150,25 @@ impl App {
         // Task #944 — per-account error handling mirrors the
         // pre-multi-account semantics (zero percentages, keep the
         // slot so the pane empty-state + chip surface the failure).
-        let active_names: std::collections::HashSet<String> = self
-            .config
-            .claude_accounts()
-            .into_iter()
-            .filter(|a| a.active)
-            .map(|a| a.name)
-            .collect();
+        // #1150 f/u (2026-08-23) — autodetect which configured
+        // account is the LIVE Claude Code CLI login by comparing the
+        // Keychain's refresh token against each account's on-disk
+        // token file. Falls back to the manual `active = true`
+        // config flag when the Keychain isn't available or no account
+        // matches (unlinked yet, tokens rotated, non-macOS, etc.) —
+        // which was the pre-fix behavior and drifted whenever a user
+        // switched Claude Code accounts without editing config.toml.
+        let autodetected: Option<String> = self.autodetected_active_claude_account_name();
+        let active_names: std::collections::HashSet<String> = if let Some(name) = autodetected {
+            std::iter::once(name).collect()
+        } else {
+            self.config
+                .claude_accounts()
+                .into_iter()
+                .filter(|a| a.active)
+                .map(|a| a.name)
+                .collect()
+        };
         let now_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -253,6 +274,87 @@ impl App {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.pending_keychain_fetch = None;
             }
+        }
+    }
+
+    /// #1150 f/u (2026-08-23) — per-tick drain for the autodetect
+    /// worker (`spawn_keychain_active_refresh_token`). Success caches
+    /// the parsed refresh token; failure clears the cache so the
+    /// config-flag fallback resumes. Any success ALSO restamps the
+    /// existing account list's `is_active` flags right away so the
+    /// UI catches the new active account without waiting for the
+    /// next usage-drain cycle.
+    pub fn drain_keychain_active_watch(&mut self) {
+        let Some(rx) = &self.keychain_active_watch else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(token)) => {
+                self.keychain_claude_refresh_token = token;
+                self.keychain_active_watch = None;
+                self.restamp_claude_active_flags();
+            }
+            Ok(Err(_)) => {
+                // Keychain lookup failed — leave the cache alone so
+                // the previous known active account keeps rendering,
+                // and fall back to the config flag if there wasn't
+                // one. Deliberate silence: this fetch fires often
+                // enough that a toast on every failure would spam.
+                self.keychain_active_watch = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.keychain_active_watch = None;
+            }
+        }
+    }
+
+    /// Spawn the autodetect worker if one isn't already in flight.
+    /// Called from `App::maybe_refresh_ai_usage` on the same cadence
+    /// as the per-account usage refresh, plus once at startup.
+    pub fn kick_keychain_active_refresh(&mut self) {
+        if self.keychain_active_watch.is_some() {
+            return;
+        }
+        self.keychain_active_watch = Some(crate::ai_usage::spawn_keychain_active_refresh_token());
+    }
+
+    /// The account name whose on-disk token file's refreshToken
+    /// matches the current Keychain blob's refreshToken, or `None`
+    /// when no cache is populated or no account matches. Reads all
+    /// per-account token files (small, ≤4KB each, N ≤ ~5) — called
+    /// once per `drain_ai_usage`, not per-render.
+    pub fn autodetected_active_claude_account_name(&self) -> Option<String> {
+        let keychain_rt = self.keychain_claude_refresh_token.as_deref()?;
+        for account in self.config.claude_accounts() {
+            let token_path = account.resolved_token_path();
+            if let Some(disk_rt) = crate::ai_usage::read_refresh_token_from_path(&token_path)
+                && disk_rt == keychain_rt
+            {
+                return Some(account.name);
+            }
+        }
+        None
+    }
+
+    /// Reapply `is_active` to every entry in `ai_usage_claude_accounts`
+    /// using the current autodetect state. Called after the Keychain
+    /// worker returns so the panel + statusline reflect the new active
+    /// account without waiting for the next per-account fetch cycle.
+    pub fn restamp_claude_active_flags(&mut self) {
+        let autodetected = self.autodetected_active_claude_account_name();
+        let active_names: std::collections::HashSet<String> = if let Some(name) = autodetected {
+            std::iter::once(name).collect()
+        } else {
+            self.config
+                .claude_accounts()
+                .into_iter()
+                .filter(|a| a.active)
+                .map(|a| a.name)
+                .collect()
+        };
+        for acc in self.ai_usage_claude_accounts.iter_mut() {
+            acc.is_active = active_names.contains(&acc.name);
         }
     }
 

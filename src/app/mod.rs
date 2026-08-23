@@ -3922,6 +3922,19 @@ pub struct App {
     /// find-generic-password` doesn't freeze the TUI event loop.
     /// Result is a JSON blob (Ok) or a human-readable error string.
     pub pending_keychain_fetch: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// #1150 f/u (2026-08-23) — autodetected "which Claude account is
+    /// the live Claude Code CLI login." Parsed refresh-token pulled
+    /// from the current Keychain blob (`Claude Code-credentials`).
+    /// The per-account `is_active` flag prefers a match against this
+    /// over the manual `[[ai.claude.accounts]] active = true` config
+    /// flag — which was the pre-fix behavior and drifted whenever a
+    /// user switched Claude Code accounts without touching mnml's
+    /// config.toml. Refreshed by `spawn_keychain_active_refresh_token`
+    /// on startup + every `refresh_claude_usage` kick.
+    pub keychain_claude_refresh_token: Option<String>,
+    /// Receiver for the background worker that reads the Keychain to
+    /// populate `keychain_claude_refresh_token`. Drained per-tick.
+    pub keychain_active_watch: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
     /// Unix seconds of the last refresh spawn — throttles the
     /// per-tick "should I refresh again" check to at most once per
     /// 5 min. Used by the Codex fetcher and by the (rare) "no
@@ -5885,6 +5898,8 @@ impl App {
             ai_usage_codex: None,
             ai_usage_pending_claude_accounts: Vec::new(),
             pending_keychain_fetch: None,
+            keychain_claude_refresh_token: None,
+            keychain_active_watch: None,
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
             ai_usage_claude_last_refresh_at: std::collections::HashMap::new(),

@@ -394,6 +394,52 @@ pub fn spawn_keychain_claude_token() -> mpsc::Receiver<Result<String, String>> {
     rx
 }
 
+/// #1150 (2026-08-23) — spawn a background reader that pulls the
+/// current Claude Code Keychain blob and returns just its refresh
+/// token. Used to autodetect which configured account is the LIVE
+/// Claude Code CLI login — the manual `active = true` config flag
+/// drifted whenever a user switched Claude Code accounts without
+/// touching mnml's config.toml.
+///
+/// Threaded because `security find-generic-password` can prompt for
+/// permission (macOS) and blocks the calling thread until the user
+/// clicks Allow. `Ok(None)` = Keychain returned a plain-string token
+/// (no refreshToken to compare against); `Err` = tool failure. Both
+/// leave the caller's cache untouched.
+pub fn spawn_keychain_active_refresh_token() -> mpsc::Receiver<Result<Option<String>, String>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = match std::process::Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if raw.is_empty() {
+                    Err("keychain returned empty — is Claude Code auth'd?".to_string())
+                } else {
+                    Ok(parse_refresh_token_from_blob(&raw))
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(format!(
+                    "keychain lookup failed: {}",
+                    stderr.trim().lines().next().unwrap_or("unknown error")
+                ))
+            }
+            Err(e) => Err(format!("could not run `security`: {e}")),
+        };
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 /// Spawn a worker thread to fetch Claude usage from Anthropic's
 /// undocumented OAuth-usage endpoint. Returns immediately with a
 /// Receiver — poll via `try_recv()` in a per-tick drain. Emits Err
@@ -461,6 +507,35 @@ pub fn fetch_claude_account_blocking(
         .map_err(|e| FetchErr::new(format!("read token {}: {e}", token_path.display())))?;
     let token = parse_token_blob(&raw).ok_or_else(|| FetchErr::new("not linked"))?;
     fetch_claude_with_token(&token, Some(token_path))
+}
+
+/// Public sibling of [`read_refresh_token_at`] — parses a Keychain
+/// blob string (JSON with `claudeAiOauth.refreshToken`) and returns
+/// the refresh token. Used by mnml's autodetect-active-account logic:
+/// the Keychain's refresh token is a stable identity for "which
+/// Claude Code account is currently logged in" (unlike accessToken,
+/// which rotates hourly). Returns `None` for a plain-string token or
+/// any JSON without a refreshToken. #1150 (2026-08-23).
+pub fn parse_refresh_token_from_blob(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if !s.starts_with('{') {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(s).ok()?;
+    let inner = v.get("claudeAiOauth").unwrap_or(&v);
+    inner
+        .get("refreshToken")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Read `token_path` and extract its refresh token, if any. Public
+/// sibling of the private [`read_refresh_token_at`] for the same
+/// autodetect flow. #1150 (2026-08-23).
+pub fn read_refresh_token_from_path(token_path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(token_path).ok()?;
+    parse_refresh_token_from_blob(&raw)
 }
 
 /// Extract a bearer access token from either a plain `sk-ant-…`
