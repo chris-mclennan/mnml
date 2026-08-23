@@ -2641,19 +2641,41 @@ impl Editor {
             NormalizeLinewiseSelection => {
                 // Widen a live selection so it spans the FULL lines
                 // it touches. Direction-normalizing: after this op
-                // `anchor = line_start(min_line)`, `cursor =
-                // line_end(max_line)`. Makes downstream
+                // `anchor = line_start(min_line)`, `cursor` lands
+                // one byte past the '\n' terminator of `max_line`
+                // (or at `line_end(max_line)` when `max_line` is
+                // the last line of the buffer). Makes downstream
                 // `for_each_selected_line` / `YankSelectionLinewise`
                 // symmetric across upward vs downward V-mode
-                // selections. R12 vscode-reviewer follow-up
-                // 2026-08-23. No-op without a selection.
+                // selections AND across content vs blank last lines.
+                // R12 vscode-reviewer follow-up 2026-08-23 + blank-
+                // line follow-up (a blank `hi_line` had
+                // line_end==line_start, which re-tripped the
+                // `hi == line_start(hi_line)` clip and silently
+                // excluded the blank line from indent + yank).
+                // No-op without a selection.
                 if let Some(a) = self.anchor {
                     let lo = a.min(self.cursor);
                     let hi = a.max(self.cursor);
                     let lo_line = self.text[..lo].bytes().filter(|&b| b == b'\n').count();
                     let hi_line = self.text[..hi].bytes().filter(|&b| b == b'\n').count();
+                    let end_byte = self.line_end(hi_line);
+                    // Push past the '\n' when there IS a trailing
+                    // '\n' (i.e., hi_line isn't the last line's
+                    // no-trailing-newline case). That keeps `hi >
+                    // line_start(hi_line)` even when `hi_line` is
+                    // blank (line_end == line_start).
+                    // `for_each_selected_line` still reads `ll =
+                    // hi_line` because its own clip fires on the
+                    // recomputed `hi_line+1` and drops back to
+                    // `hi_line`.
+                    let hi_byte = if end_byte < self.text.len() {
+                        end_byte + 1
+                    } else {
+                        end_byte
+                    };
                     self.anchor = Some(self.line_start(lo_line));
-                    self.cursor = self.line_end(hi_line);
+                    self.cursor = hi_byte;
                     self.goal_col = None;
                 }
             }
@@ -5649,6 +5671,46 @@ mod tests {
         e.apply(NormalizeLinewiseSelection, 10, &mut c);
         e.apply(Indent, 10, &mut c);
         assert_eq!(e.text(), "    one\n    two\n    three\n");
+    }
+
+    /// R12 reviewer-follow-up-2 2026-08-23 — a blank line at
+    /// `hi_line` used to re-trip the `for_each_selected_line` clip
+    /// because `line_end == line_start` on empty lines, so `hi ==
+    /// line_start(hi_line)` after `NormalizeLinewiseSelection`.
+    /// The fix advances `hi` past the blank line's `\n` (when the
+    /// blank isn't at EOF) so the clip fires on `hi_line + 1` and
+    /// backs off to include the blank line's original position.
+    /// Repro: `foo\n\nbar`, `V` on line 0, `j` to blank line 1,
+    /// `>` — expect all lines that were visually highlighted
+    /// (lines 0 and 1) to indent.
+    #[test]
+    fn visual_line_indent_includes_blank_last_line() {
+        let (mut e, mut c) = ed("foo\n\nbar");
+        // Cursor at line 0 col 0, then V + j = anchor=0, cursor
+        // clamps to line 1 (blank, col 0 = byte 4).
+        e.apply(SelectLine, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(NormalizeLinewiseSelection, 10, &mut c);
+        e.apply(Indent, 10, &mut c);
+        // Line 1 is empty; Indent inserts 4 spaces at line_start(1),
+        // which pushes line 1 to `    ` (4 spaces). Line 0 gets its
+        // own 4-space indent. Line 2 (`bar`) is untouched — outside
+        // the selection.
+        assert_eq!(e.text(), "    foo\n    \nbar");
+    }
+
+    /// Same class, mirror for `<`: outdent a selection that ends on
+    /// a blank line — the blank line should be included in the
+    /// range (harmless no-op for the blank, but must not clip line
+    /// 0's outdent).
+    #[test]
+    fn visual_line_outdent_includes_blank_last_line() {
+        let (mut e, mut c) = ed("    foo\n\nbar");
+        e.apply(SelectLine, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(NormalizeLinewiseSelection, 10, &mut c);
+        e.apply(Outdent, 10, &mut c);
+        assert_eq!(e.text(), "foo\n\nbar");
     }
 
     /// R12 reviewer follow-up 2026-08-23 — mirror for outdent.
