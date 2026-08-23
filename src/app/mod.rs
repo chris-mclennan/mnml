@@ -3942,6 +3942,14 @@ pub struct App {
     /// frame). Prevents the reader from re-reading each account's
     /// on-disk token file at render time.
     pub cached_autodetected_claude_account: Option<String>,
+    /// Unix seconds of the last `spawn_keychain_active_refresh_token`
+    /// kick. Throttles the autodetect worker to the same 5-min cadence
+    /// as the per-account fetches — without it,
+    /// `kick_keychain_active_refresh` would fire from every
+    /// `maybe_refresh_ai_usage`, which runs on every tick (~120ms
+    /// idle / ~40ms with a pty), spawning a `security find-generic-
+    /// password` subprocess ~500x/minute forever.
+    pub keychain_active_last_kick_at: u64,
     /// Unix seconds of the last refresh spawn — throttles the
     /// per-tick "should I refresh again" check to at most once per
     /// 5 min. Used by the Codex fetcher and by the (rare) "no
@@ -5908,6 +5916,7 @@ impl App {
             keychain_claude_refresh_token: None,
             keychain_active_watch: None,
             cached_autodetected_claude_account: None,
+            keychain_active_last_kick_at: 0,
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
             ai_usage_claude_last_refresh_at: std::collections::HashMap::new(),

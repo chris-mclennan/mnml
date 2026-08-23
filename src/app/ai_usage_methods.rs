@@ -7,6 +7,13 @@
 
 use super::*;
 
+/// Minimum interval between `spawn_keychain_active_refresh_token`
+/// spawns. Matches the per-account fetcher's 5-min cadence so account
+/// switches propagate within roughly one refresh cycle. Kicked from
+/// `App::maybe_refresh_ai_usage` (per-tick) but gated by
+/// `keychain_active_last_kick_at`.
+const KEYCHAIN_ACTIVE_REFRESH_SECS: u64 = 5 * 60;
+
 impl App {
     /// AI usage meter — kick off background fetches if it's been
     /// >5 min since the last spawn AND no fetch is currently in
@@ -318,13 +325,25 @@ impl App {
         }
     }
 
-    /// Spawn the autodetect worker if one isn't already in flight.
-    /// Called from `App::maybe_refresh_ai_usage` on the same cadence
-    /// as the per-account usage refresh, plus once at startup.
+    /// Spawn the autodetect worker if one isn't already in flight
+    /// AND at least [`KEYCHAIN_ACTIVE_REFRESH_SECS`] have elapsed
+    /// since the last kick. Called from `App::maybe_refresh_ai_usage`
+    /// on every tick — the timestamp gate keeps mnml from spawning
+    /// `security find-generic-password` at tick cadence (~120ms idle,
+    /// ~40ms with a pty). Fires the first fetch immediately on
+    /// startup because `keychain_active_last_kick_at` starts at 0.
     pub fn kick_keychain_active_refresh(&mut self) {
         if self.keychain_active_watch.is_some() {
             return;
         }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if now.saturating_sub(self.keychain_active_last_kick_at) < KEYCHAIN_ACTIVE_REFRESH_SECS {
+            return;
+        }
+        self.keychain_active_last_kick_at = now;
         self.keychain_active_watch = Some(crate::ai_usage::spawn_keychain_active_refresh_token());
     }
 
