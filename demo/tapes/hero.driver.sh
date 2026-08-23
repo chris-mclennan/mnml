@@ -78,11 +78,17 @@ wait_ms 1400
 
 # ── 2. activity-bar sweep ────────────────────────────────────────
 # Frame ~2: each section swap shows a different info-panel copy at
-# the bottom. Compressed timing vs prior 12s sweep — density.
-run "view.activity_http";          wait_ms 1400
-run "view.activity_integrations";  wait_ms 1600
-run "view.activity_agents";        wait_ms 1400
+# the bottom. Order follows the canonical top-to-bottom rail
+# ordering (see ActivitySection::all in src/app/mod.rs) so viewers
+# see the sections in the same order they'd walk in the real UI:
+# Explorer → Git → Integrations → Sessions → Agents → Http → Notes.
+# #1061 (2026-08-22) — was Http-first which was arbitrary and read
+# as random when compared to the rail on screen.
 run "view.activity_git";           wait_ms 1300
+run "view.activity_integrations";  wait_ms 1600
+run "view.activity_sessions";      wait_ms 1200
+run "view.activity_agents";        wait_ms 1400
+run "view.activity_http";          wait_ms 1400
 run "view.activity_notes";         wait_ms 1000
 run "view.activity_explorer";      wait_ms 600
 
