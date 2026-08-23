@@ -177,21 +177,14 @@ key "down"; wait_ms 400
 key "escape"
 wait_ms 700
 
-# ── 9. Right cluster — Claude usage ticker + coverage + mixr ─────
-# Dwell here long enough for the wall-clock-driven tickers to visibly
-# rotate. Both the coverage chip (F↔C, 4s period) and the Claude usage
-# ticker (per-account, 4s period) advance while we sit. ~12s total
-# gives ~3 rotations — viewers register the animation without it
-# feeling like dead air.
-#
-# Frame ~8: coverage/mixr/claude cluster mid-rotation
-#
-# We drive a slow cursor nudge in the current editor so the chip
-# refresh cadence stays live (mnml's redraw is idle-throttled;
-# without input it can coalesce paints). Each cursor keystroke
-# forces a fresh draw, and the chip's ticker index re-samples
-# system time on every render.
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+# ── 9. Right cluster ticker — one rotation ───────────────────────
+# #1074 (2026-08-22) — cut from 12s → 3s. Was 12 iterations of
+# cursor-nudge to let the coverage F↔C + Claude ticker rotate
+# ~3 times, which read as dead air after the previous chip-tour
+# beat (#1140) already put every chip on-screen with its help
+# card. One rotation (~4s) is enough to show tickers move; the
+# viewer has already seen everything static a few beats ago.
+for _ in 1 2 3; do
   key "left"; wait_ms 500
   key "right"; wait_ms 500
 done
