@@ -53,8 +53,10 @@ wait_ms() { local ms="$1"; awk "BEGIN{system(\"sleep \" $ms/1000)}"; }
 # t=14.4  4  picker         Ctrl+P fuzzy pick → store.ts
 # t=18.0  5  which-key      Ctrl+K leader menu dwell
 # t=21.0  6  ghost-text     seed a ghost suggestion → Tab accepts
-# t=25.5  7  hover-help     dwell over the palette chips so info-view populates
-# t=29.5  8  settings       overlay + row nav
+# t=25.5  7  statusline     chip tour — 10 hovers × 1.4s each so the
+#                              Info View cycles through each chip's help
+#                              (#1140, added 2026-08-22)
+# t=39.5  8  settings       overlay + row nav
 # t=33.5  9  right cluster  claude usage ticker + coverage + mixr — multi-cycle dwell
 # t=45.5 10  split right    view.split_right + open notes.http
 # t=49.0 11  terminal       term.shell_bottom + run 2 commands
@@ -134,17 +136,30 @@ wait_ms 1800
 key "tab"
 wait_ms 1300
 
-# ── 7. Hover-help info panel ─────────────────────────────────────
-# Hover the coverage chip in the statusline (right cluster). The
-# info panel below picks up a targeted copy card. Coordinates are
-# approximate — the info-view surfaces "Coverage" whenever the
-# hover lands on any statusline pill in that region.
+# ── 7. Statusline chip tour ──────────────────────────────────────
+# The statusline (row 34 on 140×36 geometry) carries a lot for
+# such a thin strip — mode, buffer state, ghost-text backend,
+# Jira / Bitbucket counts, Claude + Codex usage, coverage, mixr
+# transport, Sonos destination, LSP diagnostics, clock. #1140:
+# dwell over each chip cluster so the Info View below populates
+# with a new hover-help card at each stop. Coordinates are
+# calibrated for the default 140-col layout — each `hover` lands
+# on a chip in the right lane. ~1.4s per stop, ~14s total.
 #
-# Frame ~7: info panel populated with a chip's help copy
-hover 105 34
-wait_ms 2000
-hover 118 34
-wait_ms 1800
+# Frame ~7: info panel cycles through chip help cards.
+#
+# LEFT lane (mode + buffer):
+hover 4 34;   wait_ms 1400  # mode chip (NORMAL / INSERT)
+hover 18 34;  wait_ms 1400  # buffer name + dirty marker
+# RIGHT lane (walking right to left along the powerline):
+hover 130 34; wait_ms 1400  # clock
+hover 122 34; wait_ms 1400  # Sonos destination
+hover 114 34; wait_ms 1400  # mixr transport + brand
+hover 106 34; wait_ms 1400  # coverage F%/C% cycler
+hover 98 34;  wait_ms 1400  # Claude AI usage sparkline + urgency
+hover 90 34;  wait_ms 1400  # Codex tokens
+hover 82 34;  wait_ms 1400  # Bitbucket PRs count
+hover 74 34;  wait_ms 1400  # Jira Work count
 
 # ── 8. settings overlay ──────────────────────────────────────────
 run "view.settings"
