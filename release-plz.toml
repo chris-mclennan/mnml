@@ -13,3 +13,19 @@
 # release-plz's own git checks stay authoritative; skip cargo's
 # redundant check with allow_dirty.
 publish_allow_dirty = true
+
+# 2026-08-22 — sibling crates (mnml-libghostty-vt, -sys) don't ship
+# end-user binaries; only mnml-rs does. When release-plz creates a
+# GitHub release for a sibling AFTER the mnml-rs release, the sibling
+# hijacks the "Latest" label — which points /releases/latest/download/
+# at the sibling's tarball with none of the mnml-rs binary URLs the
+# site + installer expect. Result: site smoke fails, curl-install
+# scripts break. Disable the GitHub-release step for the two library
+# siblings entirely; the crates.io publish still fires.
+[[package]]
+name = "mnml-libghostty-vt"
+git_release_enable = false
+
+[[package]]
+name = "mnml-libghostty-vt-sys"
+git_release_enable = false
