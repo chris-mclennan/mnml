@@ -2268,6 +2268,16 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
     }
     if let Some(Pane::Pty(s)) = app.panes.get_mut(i) {
         if s.is_exited() {
+            // #1131 — the footer hint literally reads "Ctrl+W to
+            // close", but the exited branch was swallowing every
+            // key except Esc. Handle Ctrl+W here too so the hint
+            // matches reality across every Pty variant (integration
+            // panes, ad-hoc `:term <cmd>` panes, `--install` builds
+            // that finish and want a one-key exit).
+            if key.code == KeyCode::Char('w') && key.modifiers == KeyModifiers::CONTROL {
+                app.close_active_pane();
+                return;
+            }
             if key.code == KeyCode::Esc {
                 app.focus_tree();
             }
