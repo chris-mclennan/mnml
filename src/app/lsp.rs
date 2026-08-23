@@ -1893,6 +1893,7 @@ impl App {
                     label: it.name.clone(),
                     detail,
                     priority: 0,
+                    score_bonus: 0,
                 }
             })
             .collect();

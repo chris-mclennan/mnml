@@ -2280,9 +2280,15 @@ impl App {
                 crate::app::ActivitySection::Agents => {
                     self.agents_panel_filter_focused = true;
                 }
-                crate::app::ActivitySection::Http => {
-                    self.http_panel_filter_focused = true;
-                }
+                // R11 vscode-keyboard SEV-2 (2026-08-23) —
+                // Http was auto-arming its filter here, but
+                // entering the HTTP activity ALSO opens a
+                // Request pane (below in this fn) which steals
+                // Focus::Pane. The filter flag was set, but
+                // typing landed in the pane's URL field instead
+                // of `/`. HTTP's "top thing you type" is a URL,
+                // not a filter — leave HTTP unarmed so the
+                // pane's own focus wins.
                 crate::app::ActivitySection::Notes => {
                     self.notes_panel_filter_focused = true;
                 }

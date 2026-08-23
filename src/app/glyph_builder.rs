@@ -723,6 +723,7 @@ impl App {
             label: "󰉦  Choose from library".to_string(),
             detail: "browse all glyphs".to_string(),
             priority: 0,
+            score_bonus: 0,
         }];
         // Edit current — always offered when there IS a current glyph.
         // For shipped/user-baked glyphs, opens the tuning panel with
@@ -763,6 +764,7 @@ impl App {
                 label,
                 detail,
                 priority: 0,
+                score_bonus: 0,
             });
         }
         items.push(PickerItem {
@@ -770,6 +772,7 @@ impl App {
             label: "  Create custom glyph…".to_string(),
             detail: "bake an SVG at a fresh codepoint".to_string(),
             priority: 0,
+            score_bonus: 0,
         });
         let picker = Picker::new(PickerKind::GlyphAction, "Glyph action", items);
         self.open_picker(picker);

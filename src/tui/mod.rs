@@ -2138,6 +2138,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         // said `[Ctrl+S] save` and did nothing. Skip the interceptor
         // so the overlay handler sees the chord.
         && app.integration_settings.is_none()
+        // R11 vscode-keyboard SEV-2 (2026-08-23) — the `Ctrl+K
+        // Ctrl+S` keymap chord (opens keys.edit) was being shadowed
+        // by this interceptor: after `Ctrl+K` the chord chain
+        // was pending, and the bare `Ctrl+S` step fired save
+        // instead of resolving the sequence. Skip when a chord
+        // chain is mid-flight so `dispatch_chord_chain` sees the
+        // second key. Same gate shape as vim_reserves_key /
+        // pty_reserves_key elsewhere in this file.
+        && app.pending_chord_seq.is_empty()
     {
         // Anything in flight that would have consumed the chord
         // (palette / prompt / settings) is still alive afterwards;

@@ -282,21 +282,35 @@ pub enum PickerKind {
     SonosAirPlayTargets,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PickerItem {
     pub id: String,
     /// The text shown and fuzzy-matched against.
     pub label: String,
     /// A right-aligned, dimmed hint (a keybinding, a directory, …).
     pub detail: String,
-    /// vscode-user 3rd 2026-06-29 SEV-2: tie-breaker that beats
-    /// fuzzy-score asymmetries. The file picker uses this to
-    /// pin current-workspace files above cross-workspace recents
-    /// even when the latter have shorter (and thus higher-scoring)
+    /// vscode-user 3rd 2026-06-29 SEV-2: hard tier that ALWAYS
+    /// beats fuzzy-score. The file picker uses this to pin
+    /// current-workspace files above cross-workspace recents even
+    /// when the latter have shorter (and thus higher-scoring)
     /// labels like `lib.rs` vs `src/lib.rs`. Sort order in
     /// `refilter` is (priority desc, score desc, index asc).
-    /// Default 0; higher = more preferred.
+    /// Default 0; higher = more preferred. When you just want a
+    /// nudge that still lets a genuinely-better match win, use
+    /// `score_bonus` instead — see R11 vscode-keyboard SEV-2
+    /// #1113 regression for what happens when the palette uses
+    /// priority for a "prefer these ids" hint.
     pub priority: u8,
+    /// R11 vscode-keyboard SEV-2 (2026-08-23) — additive fuzzy-
+    /// score bonus for "prefer this row for ties" without the
+    /// always-wins semantics of `priority`. Applied in `refilter`
+    /// as `score += score_bonus` before the (priority, score)
+    /// sort. The palette uses this to nudge pane-scoped commands
+    /// (`editor.*` in an Editor pane, `http.*` in a Request
+    /// pane) up the list on ties without hijacking clearly-
+    /// unrelated queries. Default 0; typical bump ~20 (fuzzy
+    /// scores range from ~30 to ~500).
+    pub score_bonus: i64,
 }
 
 impl PickerItem {
@@ -306,10 +320,15 @@ impl PickerItem {
             label: label.into(),
             detail: detail.into(),
             priority: 0,
+            score_bonus: 0,
         }
     }
     pub fn with_priority(mut self, priority: u8) -> Self {
         self.priority = priority;
+        self
+    }
+    pub fn with_score_bonus(mut self, bonus: i64) -> Self {
+        self.score_bonus = bonus;
         self
     }
 }
@@ -374,7 +393,8 @@ impl Picker {
             .iter()
             .enumerate()
             .filter_map(|(i, it)| {
-                fuzzy_match(&self.query, &it.label).map(|(s, hits)| (it.priority, s, i, hits))
+                fuzzy_match(&self.query, &it.label)
+                    .map(|(s, hits)| (it.priority, s + it.score_bonus, i, hits))
             })
             .collect();
         scored.sort_by(|a, b| {

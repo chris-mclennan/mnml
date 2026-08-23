@@ -634,9 +634,22 @@ impl App {
             _ => &[],
         };
         if !namespaces.is_empty() {
+            // R11 vscode-keyboard SEV-2 (2026-08-23) — was
+            // `item.priority = item.priority.max(1)`, which is a
+            // hard tier that ALWAYS beats fuzzy score. Effect:
+            // typing `save file` in an Editor pane picked
+            // `lsp.diagnostics_severity_filter_cycle` (an
+            // `lsp.*` id with a low-but-positive score) over
+            // `file.save` (a 341-score bull's-eye). Switch to
+            // a `+20` score bump so pane-scoped commands still
+            // surface first at empty-query and still win on
+            // ties, but a genuinely-better match elsewhere in
+            // the tree can beat them. Fuzzy scores range ~30-
+            // ~500; 20 is enough to break same-family ties
+            // without derailing cross-family queries.
             for item in items.iter_mut() {
                 if namespaces.iter().any(|ns| item.id.starts_with(ns)) {
-                    item.priority = item.priority.max(1);
+                    item.score_bonus = item.score_bonus.max(20);
                 }
             }
         }
@@ -1217,6 +1230,7 @@ impl App {
                     label: format!("{} ({state}) — {}", ic.id, label),
                     detail: ic.command.clone(),
                     priority: 0,
+                    score_bonus: 0,
                 }
             })
             .collect();
@@ -1267,6 +1281,7 @@ impl App {
                 label: "+ Create custom glyph (SVG → font)".to_string(),
                 detail: "opens glyph builder".to_string(),
                 priority: 2,
+                score_bonus: 0,
             });
         }
 
@@ -1285,6 +1300,7 @@ impl App {
                 label: format!("{ch}  {}  [{}]", e.name, e.category),
                 detail: format!("\\u{{{cp:04X}}}"),
                 priority: 1,
+                score_bonus: 0,
             });
         }
 
@@ -1324,6 +1340,7 @@ impl App {
                     label: format!("{ch} U+{cp:04X}"),
                     detail: format!("\\u{{{cp:04X}}}"),
                     priority: 0,
+                    score_bonus: 0,
                 });
             }
         }

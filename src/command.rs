@@ -2966,7 +2966,14 @@ fn builtin_commands() -> Vec<Command> {
             title: "Previous buffer (positional)",
             group: "buffer",
             // R13 vscode-keyboard SEV-3 K-3 2026-08-15 — same as buffer.next.
-            keys: &["ctrl+pageup", "ctrl+alt+left"],
+            // R11 vscode-keyboard SEV-2 (2026-08-23) — also
+            // bind `ctrl+shift+tab`, the VS Code muscle-memory
+            // "previous tab" chord. Was: unbound and fell
+            // through to editor Tab-insertion, silently
+            // dirtying the buffer with a `\t`. `ctrl+tab`
+            // (buffer.next / MRU swap) already covered forward
+            // — this closes the reverse gap.
+            keys: &["ctrl+pageup", "ctrl+alt+left", "ctrl+shift+tab"],
             run: |app| app.prev_buffer(),
         },
         Command {
