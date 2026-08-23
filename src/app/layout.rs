@@ -2204,6 +2204,14 @@ impl App {
         if !self.tree_visible {
             self.tree_visible = true;
         }
+        // #1146 (R10 vscode-keyboard F6, 2026-08-22) — captured
+        // BEFORE the reset block below clears any filter-focused
+        // flags; used AFTER `active_section = section` to arm the
+        // new section's filter for keyboard-only users (VS Code
+        // Ctrl+Shift+X shape). Set only on a fresh entry so an
+        // idempotent re-click doesn't steal focus from a user
+        // already typing on the panel.
+        let entering_new_section = self.active_section != section;
         let entering_search = section == crate::app::ActivitySection::Search;
         let leaving_search =
             self.active_section == crate::app::ActivitySection::Search && !entering_search;
@@ -2254,6 +2262,35 @@ impl App {
             self.search_input_focused = true;
         } else if leaving_search {
             self.search_input_focused = false;
+        }
+        // #1146 (R10 vscode-keyboard F6, 2026-08-22) — VS Code's
+        // Ctrl+Shift+X focuses the Extensions view + its search
+        // input in one chord. Same shape for every activity chord
+        // family that ships a `/` filter: entering the section
+        // should arm the filter so the next keystroke lands there
+        // without an intermediate click.
+        if entering_new_section {
+            match section {
+                crate::app::ActivitySection::Integrations => {
+                    self.integrations_panel_filter_focused = true;
+                }
+                crate::app::ActivitySection::Sessions => {
+                    self.sessions_panel_filter_focused = true;
+                }
+                crate::app::ActivitySection::Agents => {
+                    self.agents_panel_filter_focused = true;
+                }
+                crate::app::ActivitySection::Http => {
+                    self.http_panel_filter_focused = true;
+                }
+                crate::app::ActivitySection::Notes => {
+                    self.notes_panel_filter_focused = true;
+                }
+                crate::app::ActivitySection::Todos => {
+                    self.todos_panel_filter_focused = true;
+                }
+                _ => {}
+            }
         }
         // qa-feature 2026-06-30 — leaving the Git activity section
         // auto-closes any open GitGraph panes so the editor area

@@ -29,7 +29,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let title = if scratch.focused {
         " scratch · Esc blurs · `term.scratch_toggle` closes "
     } else {
-        " scratch · click to focus · `term.scratch_toggle` closes "
+        " scratch · Ctrl+` refocus · Ctrl+` again closes "
     };
     let block = Block::default()
         .borders(Borders::TOP)

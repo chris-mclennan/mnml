@@ -2598,7 +2598,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "keys.edit",
             title: "Customize keybindings (opens [keys.standard] in config.toml)",
             group: "file",
-            keys: &[],
+            // #1146 (R10 vscode-keyboard F5) — VS Code's canonical
+            // Ctrl+K Ctrl+S. Was unbound; users hit the chord and
+            // Ctrl+K opened whichkey, Ctrl+S saved the file (or
+            // dropped as no-leader-mapping).
+            keys: &["ctrl+k ctrl+s"],
             run: |app| app.open_keys_config(),
         },
         Command {

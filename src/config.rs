@@ -792,6 +792,14 @@ pub struct UiConfig {
     /// Paint matched `()[]{}` brackets in cycling depth colors. `:set rainbow`
     /// / `:set norainbow`. Off by default.
     pub bracket_rainbow: bool,
+    /// #1146 (R10 vscode-keyboard F9, 2026-08-22) — VS Code
+    /// convention: arrow keys in the file tree move the SELECTION
+    /// only; Enter/Space opens the focused file. mnml's default is
+    /// the opposite (arrow keys "preview-open" every file the
+    /// cursor lands on) which pollutes the tab bar during
+    /// exploration. On by default so the existing behavior sticks
+    /// for users who like it; set `false` to match VS Code.
+    pub tree_preview_on_arrow: bool,
     /// Master switch for tree-sitter syntax highlighting. `true` (default)
     /// runs the highlighter as usual; `false` paints all editor text in
     /// the theme's foreground color. `:syntax on` / `:syntax off` toggles
@@ -1374,6 +1382,7 @@ impl Default for Config {
                 show_whitespace: false,
                 syntax: true,
                 bracket_rainbow: false,
+                tree_preview_on_arrow: true,
                 scrollbar: true,
                 highlight_trailing_ws: false,
                 clock: true,
@@ -1939,6 +1948,7 @@ struct RawUi {
     show_whitespace: Option<bool>,
     syntax: Option<bool>,
     bracket_rainbow: Option<bool>,
+    tree_preview_on_arrow: Option<bool>,
     scrollbar: Option<bool>,
     highlight_trailing_ws: Option<bool>,
     clock: Option<bool>,
@@ -2412,6 +2422,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.bracket_rainbow {
             self.ui.bracket_rainbow = v;
+        }
+        if let Some(v) = raw.ui.tree_preview_on_arrow {
+            self.ui.tree_preview_on_arrow = v;
         }
         if let Some(v) = raw.ui.scrollbar {
             self.ui.scrollbar = v;

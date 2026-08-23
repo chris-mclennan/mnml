@@ -221,6 +221,12 @@ fn preview_selected_tree_file(app: &mut App) {
     if app.config.editor.input_style != "standard" {
         return;
     }
+    // #1146 (R10 vscode-keyboard F9, 2026-08-22) — VS Code
+    // convention: arrows move selection only; Enter opens. Users
+    // who prefer that flip `[ui] tree_preview_on_arrow = false`.
+    if !app.config.ui.tree_preview_on_arrow {
+        return;
+    }
     let selected: Option<std::path::PathBuf> = if let Some(ws_idx) = app.focused_extra_ws {
         app.extra_workspaces
             .get(ws_idx)
