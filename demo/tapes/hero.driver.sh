@@ -151,29 +151,32 @@ run "file.save"
 wait_ms 400
 
 # ── 7. Statusline chip tour ──────────────────────────────────────
-# The statusline (row 34 on 140×36 geometry) carries a lot for
-# such a thin strip — mode, buffer state, ghost-text backend,
-# Jira / Bitbucket counts, Claude + Codex usage, coverage, mixr
-# transport, Sonos destination, LSP diagnostics, clock. #1140:
-# dwell over each chip cluster so the Info View below populates
-# with a new hover-help card at each stop. Coordinates are
-# calibrated for the default 140-col layout — each `hover` lands
-# on a chip in the right lane. ~1.4s per stop, ~14s total.
+# The statusline (bottom row) carries a lot for such a thin strip
+# — mode, buffer state, ghost-text backend, Jira / Bitbucket
+# counts, Claude + Codex usage, coverage, mixr transport, Sonos
+# destination, LSP diagnostics, clock. #1140: dwell over each chip
+# cluster so the Info View below populates with a new hover-help
+# card at each stop.
+#
+# Coordinates are calibrated for the 160-col × 42-row default
+# geometry (#1057). Statusline sits on row 40 (last row). Right
+# lane extends from ~col 155 (clock) walking left, ~8 cells per
+# chip cluster.
 #
 # Frame ~7: info panel cycles through chip help cards.
 #
 # LEFT lane (mode + buffer):
-hover 4 34;   wait_ms 1400  # mode chip (NORMAL / INSERT)
-hover 18 34;  wait_ms 1400  # buffer name + dirty marker
+hover 4  40; wait_ms 1400  # mode chip (NORMAL / INSERT)
+hover 18 40; wait_ms 1400  # buffer name + dirty marker
 # RIGHT lane (walking right to left along the powerline):
-hover 130 34; wait_ms 1400  # clock
-hover 122 34; wait_ms 1400  # Sonos destination
-hover 114 34; wait_ms 1400  # mixr transport + brand
-hover 106 34; wait_ms 1400  # coverage F%/C% cycler
-hover 98 34;  wait_ms 1400  # Claude AI usage sparkline + urgency
-hover 90 34;  wait_ms 1400  # Codex tokens
-hover 82 34;  wait_ms 1400  # Bitbucket PRs count
-hover 74 34;  wait_ms 1400  # Jira Work count
+hover 154 40; wait_ms 1400  # clock
+hover 146 40; wait_ms 1400  # Sonos destination
+hover 138 40; wait_ms 1400  # mixr transport + brand
+hover 130 40; wait_ms 1400  # coverage F%/C% cycler
+hover 122 40; wait_ms 1400  # Claude AI usage sparkline + urgency
+hover 114 40; wait_ms 1400  # Codex tokens
+hover 106 40; wait_ms 1400  # Bitbucket PRs count
+hover 98  40; wait_ms 1400  # Jira Work count
 
 # ── 8. settings overlay ──────────────────────────────────────────
 run "view.settings"

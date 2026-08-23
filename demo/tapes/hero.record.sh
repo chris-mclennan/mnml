@@ -42,11 +42,19 @@ fi
 # reads as awkwardly wide on both the mnml.sh hero + README. 140x36
 # lands ~1960x820 ≈ 2.4:1 (still wide but not letterbox-flat) and
 # keeps enough room for the split-pane climax to be legible.
-COLS="${MNML_DEMO_COLS:-140}"
-ROWS="${MNML_DEMO_ROWS:-36}"
+# #1057 (2026-08-22) — user asked to "zoom out one level" so more
+# chrome fits at once. Bumped 140→160, 36→42 (still ~2.4:1 with the
+# +2 font bump below), which restores tooltip-comfort width for the
+# statusline chip-tour beat + the split-pane climax without going
+# back to the 180x46 letterbox.
+COLS="${MNML_DEMO_COLS:-160}"
+ROWS="${MNML_DEMO_ROWS:-42}"
 
 # Font size for agg. 14px keeps a 1600x900 GIF sane in file size
-# while staying legible for a hero splash.
+# while staying legible for a hero splash. Kept at 14 for the new
+# 160x42 geometry (#1057) — the "zoom out one level" ask is about
+# fitting more content per frame, not making text bigger; a bigger
+# font would defeat the purpose.
 FONT_SIZE="${MNML_DEMO_FONT_SIZE:-14}"
 
 CAST="$TAPE_DIR/${TAPE_NAME}.cast"
