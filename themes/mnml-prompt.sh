@@ -75,11 +75,22 @@ _mnml_bg() {
 }
 _mnml_reset="${_mnml_lb}"$'\033[0m'"${_mnml_rb}"
 
-# Powerline + nerd-font glyphs.
-_mnml_sep=$''      #  — right-pointing solid arrow (segment end)
-_mnml_sep_r=$''    #  — left-pointing solid arrow (right-side seg)
-_mnml_branch=$''   #  — branch
-_mnml_arrow='❯'
+# Powerline + nerd-font glyphs. `MNML_PROMPT_ASCII=1` swaps to
+# standalone-Unicode equivalents for demos + hosts without a
+# Nerd Font (#1073, 2026-08-22 — was rendering as box glyphs
+# on ttyd/asciinema recordings whose fonts don't ship the
+# nerd-font private-use range).
+if [ "${MNML_PROMPT_ASCII:-0}" = "1" ]; then
+    _mnml_sep='│'
+    _mnml_sep_r='│'
+    _mnml_branch='⎇'
+    _mnml_arrow='>'
+else
+    _mnml_sep=$'\ue0b0'      #  — right-pointing solid arrow (segment end)
+    _mnml_sep_r=$'\ue0b2'    #  — left-pointing solid arrow (right-side seg)
+    _mnml_branch=$'\ue0a0'   #  — branch
+    _mnml_arrow='❯'
+fi
 
 # --- Segment builders -------------------------------------------------------
 _mnml_seg_cwd() {

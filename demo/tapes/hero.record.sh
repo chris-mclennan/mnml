@@ -159,6 +159,14 @@ set -euo pipefail
 export MNML_DEMO_WORKSPACE="$REPO/demo/workspace"
 export MNML_DEMO_SIBLING_HOME="$DEMO_SIBLING_HOME"
 
+# #1073 (2026-08-22) — force the ASCII prompt fallback so the
+# terminal beat renders cleanly under asciinema+agg. The default
+# powerline prompt uses U+E0B0/U+E0A0 (Nerd Font private-use
+# range) which the recording font doesn't ship, so the arrows
+# render as box glyphs. Prompt reads mnml-themed either way;
+# ASCII fallback is just cosmetic (│ vs the powerline arrow).
+export MNML_PROMPT_ASCII=1
+
 # Demo integration env vars — inherited by any Pty pane mnml
 # spawns (via :term / open-pty IPC), so the jira / bitbucket
 # / github siblings hit the mock server on localhost:7071
