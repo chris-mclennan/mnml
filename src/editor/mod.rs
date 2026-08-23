@@ -1956,9 +1956,17 @@ impl Editor {
         };
         let keep_goal_col = op_preserves_goal_col(&op);
         // Skip changelist push for Undo/Redo — vim's `:changes` only
-        // records *user edits*, not history hops through them. Move
-        // this flag out here since `op` is consumed by `apply_one`.
-        let is_undo_or_redo = matches!(op, EditOp::Undo | EditOp::Redo);
+        // records *user edits*, not history hops through them.
+        // Also match `Repeat(N, Undo)` / `Repeat(N, Redo)` since vim's
+        // `3u` / `4<C-r>` are dispatched as a single Repeat wrapping
+        // the inner op (see `input::vim::repeated`), not N separate
+        // apply calls. Atomic — a bag of arbitrary ops — is not
+        // undo-only so we don't peek inside it.
+        let is_undo_or_redo = match &op {
+            EditOp::Undo | EditOp::Redo => true,
+            EditOp::Repeat(_, inner) => matches!(**inner, EditOp::Undo | EditOp::Redo),
+            _ => false,
+        };
         // Anything that isn't a typed character ends the coalescing undo run, so
         // a motion between two typing bursts splits them into separate undo steps.
         if !op_is_insert_char(&op) {
@@ -5494,6 +5502,26 @@ mod tests {
         e.apply(EditOp::ReplaceCharAtCursor('X'), 10, &mut c);
         assert_eq!(e.text(), "Xbc");
         assert_eq!(e.change_list, vec![(0, 0)]);
+    }
+
+    /// Reviewer follow-up 2 — vim's counted `3u` reaches `apply()` as
+    /// `Repeat(3, Undo)`, NOT three separate `apply(Undo)` calls (see
+    /// `input::vim::repeated`). The naive `matches!(op, Undo | Redo)`
+    /// check misses the Repeat wrapper, so a counted undo would still
+    /// dirty the changelist. Guard the fix.
+    #[test]
+    fn change_list_ignores_repeat_wrapped_undo() {
+        let (mut e, mut c) = ed("abc");
+        // Two edits so counted undo has something to walk back.
+        e.apply(EditOp::InsertChar('X'), 10, &mut c);
+        e.apply(EditOp::InsertChar('Y'), 10, &mut c);
+        let after_edits = e.change_list.clone();
+        // `2u` — Repeat(2, Undo). Must not grow the list.
+        e.apply(EditOp::Repeat(2, Box::new(EditOp::Undo)), 10, &mut c);
+        assert_eq!(
+            e.change_list, after_edits,
+            "Repeat(N, Undo) grew changelist"
+        );
     }
 
     /// Reviewer follow-up — undo/redo hops must not push new entries.

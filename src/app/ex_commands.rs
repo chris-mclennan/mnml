@@ -3476,11 +3476,10 @@ impl App {
                     "vnoremap",
                     "xnoremap",
                     "cnoremap",
-                    "changes",
-                    "jumps",
-                    "marks",
-                    "reg",
-                    "registers",
+                    // `changes` / `jumps` / `marks` / `reg` all have
+                    // explicit arms above that shadow this list — kept
+                    // out of it so an accidental future removal of an
+                    // arm doesn't silently route to the cheatsheet.
                     "buffers",
                     "ls",
                     "files",
