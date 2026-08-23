@@ -4323,25 +4323,17 @@ impl App {
                 ));
                 self.tree.refresh();
                 // R14 api-workflow SEV-2 (2026-08-23) — sibling
-                // `sync_check` opens its trace as a scratch pane;
-                // `sync` used to drop it on the floor via `_trace`,
-                // which meant any per-source skip / fetch error was
-                // undiagnosable from the UI. Surface the same
-                // trace when total == 0 (nothing wrote, so the
-                // user needs the reason) OR when the trace contains
-                // any "error" / "skipping" line. Keeps the happy
-                // path clean (a normal all-succeeded run just
-                // toasts) but never silently discards diagnostic
-                // detail on partial failure.
-                let needs_surfacing = total == 0
-                    || trace.lines().any(|l| {
-                        l.contains(": error")
-                            || l.contains(": skipping")
-                            || l.contains(": no matches")
-                    });
-                if needs_surfacing {
-                    self.open_scratch_with_text("[sync]".to_string(), trace);
-                }
+                // `sync_check` unconditionally opens its trace as a
+                // scratch pane; `sync` used to drop it on the floor
+                // via `_trace`, which meant any per-source
+                // skip / fetch error was undiagnosable from the UI.
+                // Mirror the sibling exactly — always surface. A
+                // reviewer earlier caught that gating on trace-line
+                // substrings would silently drop partial-failure
+                // detail when the failure-line format drifted from
+                // the heuristic; simpler + always-correct to just
+                // open the pane the sibling command opens.
+                self.open_scratch_with_text("[sync]".to_string(), trace);
             }
             Ok(Err(e)) => {
                 self.http_sync_rx = None;
