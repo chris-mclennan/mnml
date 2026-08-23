@@ -861,6 +861,13 @@ struct SavedSession {
     /// Claude session (`ai.session_picker`) re-applies its name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pty_session_names: Vec<(String, String)>,
+    /// #1184 (2026-08-23) — every Claude Code Pty open at quit time,
+    /// captured for auto-resume on next launch. On load, mnml spawns
+    /// `claude --resume <session_id>` for each and re-attaches the
+    /// display name + accent color so the workspace comes back in the
+    /// state the user left it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claude_sessions: Vec<SavedClaudeSession>,
     /// Corner-pinned dock widgets. Persisted as-is — the layout
     /// survives restart so the user's familiar dock arrangement
     /// comes back. `next_id` is stashed separately so the
@@ -1016,6 +1023,22 @@ struct SavedNavPoint {
     path: String,
     row: usize,
     col: usize,
+}
+
+/// #1184 (2026-08-23) — a Claude Code Pty session captured at quit
+/// time so mnml can `claude --resume <session_id>` it on next launch,
+/// re-attaching the user's display name + auto/user accent color.
+/// Skipped for shell / Codex / non-resumable Ptys — those don't have
+/// a `session_id` that Claude Code understands.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedClaudeSession {
+    session_id: String,
+    /// Serialize-nullable so old session.json files without these
+    /// fields deserialize cleanly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accent_color: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -2396,6 +2419,11 @@ pub struct PaneRects {
     /// The scrollable content area of the agents panel (below the fixed
     /// header rows) — used to route wheel events to `agents_panel_scroll`.
     pub agents_panel_area: Option<Rect>,
+    /// #1184 (2026-08-23) — sessions rail hit-area. Wheel routing
+    /// checks this rect so scroll notches inside the rail bump
+    /// `sessions_panel_scroll` instead of stealing to the tree
+    /// underneath.
+    pub sessions_panel_area: Option<Rect>,
     /// qa-feature 2026-07-01 — Integrations panel area (for wheel scroll routing).
     pub integrations_panel_area: Option<Rect>,
     /// qa-feature 2026-07-01 — clickable close button on a pty pane's
@@ -3325,6 +3353,7 @@ impl PaneRects {
         self.todos_panel_filter_input = None;
         // Sessions panel.
         self.sessions_panel_filter_input = None;
+        self.sessions_panel_area = None;
         // Agents (Claude Code / Codex) panel.
         self.agents_panel_rows.clear();
         self.agents_panel_workspace_headers.clear();
@@ -5011,6 +5040,12 @@ pub struct App {
     pub todos_panel_cursor: usize,
     pub notes_panel_cursor: usize,
     pub sessions_panel_cursor: usize,
+    /// #1184 (2026-08-23) — first visible row in the sessions rail.
+    /// User hit "can only reliably load 9 or so Claudes in total,
+    /// its not scrolling down on left panel and some are out of
+    /// view". Draw path clamps to number of rows the area can
+    /// fit; wheel + `sessions.scroll_*` commands mutate this.
+    pub sessions_panel_scroll: usize,
     /// Top-row scroll offset for the agents panel's content list (the
     /// session rows scroll; the filter + `+ New session` header stays put).
     /// Clamped to the content height each render.
@@ -6179,6 +6214,7 @@ impl App {
             todos_panel_cursor: 0,
             notes_panel_cursor: 0,
             sessions_panel_cursor: 0,
+            sessions_panel_scroll: 0,
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_scroll_installed: 0,
@@ -8700,6 +8736,47 @@ impl App {
         }
     }
 
+    /// #1179 (2026-08-23) — auto-assign an explicit accent color to
+    /// every new Claude Code session so the sessions-rail row and the
+    /// pane's accent bar + tab strip can never fall through to
+    /// different "no color set" fallbacks and disagree (task #1178
+    /// f/u — reported this same session as "green bar on the left but
+    /// orange for the pane"). The FIRST Claude Code session gets
+    /// `"orange"` (the brand default), so a solo-Claude user still
+    /// sees the Anthropic look everywhere; subsequent spawns cycle
+    /// through a distinct palette so a user juggling several can tell
+    /// them apart at a glance. Skips when:
+    ///   - the session isn't Claude Code (integration_id mismatch);
+    ///   - the caller already set `accent_color` (session restore,
+    ///     explicit override — respect it).
+    /// Counts EXISTING Claude Code Pty sessions in `self.panes` at
+    /// call time (before this one is pushed) to pick the palette index.
+    fn assign_auto_accent_color(&self, s: &mut crate::pty_pane::PtySession) {
+        if s.accent_color.is_some() {
+            return;
+        }
+        if s.profile.integration_id.as_deref() != Some("claude_code") {
+            return;
+        }
+        let existing: usize = self
+            .panes
+            .iter()
+            .filter(|p| match p {
+                crate::pane::Pane::Pty(sess) => {
+                    sess.profile.integration_id.as_deref() == Some("claude_code")
+                }
+                _ => false,
+            })
+            .count();
+        // Palette is `crate::ui::session_color::PALETTE` — single
+        // source of truth (task #1181 f/u, 2026-08-23) so the auto
+        // cycle, the right-click menu, and every color resolver
+        // stay in lockstep.
+        let palette = crate::ui::session_color::PALETTE;
+        let idx = existing % palette.len();
+        s.accent_color = Some(palette[idx].to_string());
+    }
+
     pub fn open_pty(&mut self, profile: crate::pty_pane::BinaryProfile) {
         // Default: stacked below — matches the "open a small shell at
         // the bottom" muscle memory most pty cases want.
@@ -8817,6 +8894,7 @@ impl App {
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
             Ok(mut s) => {
                 self.apply_saved_pty_name(&mut s);
+                self.assign_auto_accent_color(&mut s);
                 let pane = Pane::Pty(s);
                 match self.active {
                     Some(cur) => {

@@ -61,6 +61,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.git_graph_repo_switch = None;
 
     let mut y = area.y;
+    // ── "GIT" caps header (2026-08-23) — activity-bar panels each
+    // carry a caps-name header (SESSIONS / FINDINGS / TODOS / …).
+    // Git was the odd panel out, jumping straight into the repo
+    // pill; user asked for parity.
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(
+                "GIT",
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        },
+    );
+    y += 1;
     let snap = app.git.snapshot().clone();
     // Lower-cased filter for case-insensitive substring matching
     // throughout the palette.
@@ -183,11 +206,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         //   focused-empty   → "type to filter…"
         // Consistent verbiage across every activity-bar section.
         let filter_text = if app.git_palette_filter.is_empty() {
-            if focused {
-                "type to filter\u{2026}".to_string()
-            } else {
-                "/ filter".to_string()
-            }
+            crate::ui::filter_placeholder::for_state(focused).to_string()
         } else {
             app.git_palette_filter.clone()
         };

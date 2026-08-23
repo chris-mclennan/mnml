@@ -266,6 +266,7 @@ impl App {
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
             Ok(mut s) => {
                 self.apply_saved_pty_name(&mut s);
+                self.assign_auto_accent_color(&mut s);
                 self.panes.push(Pane::Pty(s));
                 let new_id = self.panes.len() - 1;
                 // Re-point every leaf that shows `strip_owner` to the new

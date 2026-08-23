@@ -1964,7 +1964,20 @@ fn builtin_commands() -> Vec<Command> {
                 let on = !app.config.ui.hover_help;
                 app.config.ui.hover_help = on;
                 let _ = crate::app::discovery::persist_ui_bool("hover_help", on);
-                app.toast(format!("hover-help {}", if on { "on" } else { "off" }));
+                // 2026-08-23 (user feedback) — user reported the info
+                // panel "went missing" with no memory of turning it
+                // off; the previous 2-word toast ("hover-help off")
+                // flashed too briefly to notice, and the persisted
+                // change was invisible after the toast cleared. Give
+                // the OFF case a discoverable recovery hint so the
+                // user always knows how to reverse it.
+                if on {
+                    app.toast("hover-help: on");
+                } else {
+                    app.toast(
+                        "hover-help: off — Settings → UI (or `:set hoverhelp`) to bring it back",
+                    );
+                }
             },
         },
         Command {
@@ -6502,6 +6515,31 @@ fn builtin_commands() -> Vec<Command> {
             group: "ai",
             keys: &[],
             run: |app| app.open_claude_code_new(),
+        },
+        // #1181 (2026-08-23) — batch spawn from the sessions rail's
+        // "+ New session" right-click menu. Each variant loops the
+        // solo spawn N times so layout logic + auto-color + prefetch
+        // env all run identically to a single click.
+        Command {
+            id: "ai.claude_code_new_x2",
+            title: "AI: open 2 new Claude Code sessions",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_batch(2),
+        },
+        Command {
+            id: "ai.claude_code_new_x4",
+            title: "AI: open 4 new Claude Code sessions",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_batch(4),
+        },
+        Command {
+            id: "ai.claude_code_new_x8",
+            title: "AI: open 8 new Claude Code sessions",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_batch(8),
         },
         Command {
             id: "ai.codex",

@@ -82,11 +82,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         .map(|s| s.filter.clone())
         .unwrap_or_default();
     let filter_display = if filter_text.is_empty() {
-        if filter_focused {
-            "type to filter…".to_string()
-        } else {
-            "/ filter".to_string()
-        }
+        crate::ui::filter_placeholder::for_state(filter_focused).to_string()
     } else {
         filter_text.clone()
     };

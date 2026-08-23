@@ -164,7 +164,7 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         };
         let cursor = if open.filter_focused { "│" } else { "" };
         let empty_hint = if open.filter.is_empty() && open.filter_focused {
-            "type to filter…"
+            crate::ui::filter_placeholder::FOCUSED
         } else {
             ""
         };

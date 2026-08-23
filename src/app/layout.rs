@@ -229,7 +229,9 @@ impl App {
 
     /// Right-click menu for a tab in a pty pane's own tab strip
     /// (Claude / Codex / shell session): Rename → the session-name
-    /// prompt; Close → close that session.
+    /// prompt; Color: … → set per-session accent (task #1178 f/u,
+    /// 2026-08-23 user ask — mirrors the sessions-rail menu so the
+    /// two entry points don't diverge); Close → close that session.
     pub fn open_pty_tab_context_menu(&mut self, id: PaneId, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let is_claude = matches!(
@@ -251,6 +253,8 @@ impl App {
                 MenuAction::Command("ai.claude_code_new"),
             ));
         }
+        // Same list rendered on the sessions-rail row — share via helper.
+        items.extend(super::session_pane_methods::session_color_menu_items(id));
         items.push(MenuItem::new("Close", MenuAction::CloseTab(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }

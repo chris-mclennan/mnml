@@ -804,6 +804,51 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         d.editor.breadcrumb,
     ));
 
+    // ── AI ────────────────────────────────────────────────────────
+    // 2026-08-23 — task #1176. User expected to find the ghost-text
+    // toggle under Settings but searched for "ghost" (misses) and
+    // "inline" (only "Inline markdown rendering" surfaces). Give it
+    // an explicit section + a friendlier label than the raw config
+    // key. `cfg.ai` is a raw `toml::Value` (validated late), so both
+    // rows read/write through the same free-form table the ex-cmd
+    // and picker already touch — no typed field involved.
+    out.push(SettingItem::Section("AI"));
+    let ai_inline_on = cfg
+        .ai
+        .get("inline_suggestions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    out.push(bool_row(
+        "ai.inline_suggestions",
+        "Ghost-text inline suggestions",
+        ai_inline_on,
+        true, // default is on since task #974
+    ));
+    let backend_str = cfg
+        .ai
+        .get("suggest_backend")
+        .and_then(|v| v.as_str())
+        .unwrap_or("claude-code");
+    let backend_idx = match backend_str {
+        "claude-code" => 0,
+        "claude-api" => 1,
+        "local" => 2,
+        "off" => 3,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "ai.suggest_backend",
+        label: "Ghost-text backend",
+        options: vec![
+            "claude-code".into(),
+            "claude-api".into(),
+            "local".into(),
+            "off".into(),
+        ],
+        current_idx: backend_idx,
+        modified: backend_idx != 0,
+    }));
+
     // ── Browser ────────────────────────────────────────────────────
     out.push(SettingItem::Section("Browser"));
     out.push(bool_row(
@@ -1036,6 +1081,62 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "editor.breadcrumb" => set_bool(&mut cfg.editor.breadcrumb, opt_idx),
         "browser.autocapture_to_log" => set_bool(&mut cfg.browser.autocapture_to_log, opt_idx),
         "session.restore" => set_bool(&mut cfg.session.restore, opt_idx),
+        // task #1176 — `cfg.ai` is a raw `toml::Value` table (validated
+        // late by the AI track). Same read/write path as the ex-cmd
+        // + picker; both keys are workspace-persisted below.
+        "ai.inline_suggestions" => {
+            let new = opt_idx == 0;
+            let cur = cfg
+                .ai
+                .get("inline_suggestions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if cur == new {
+                return false;
+            }
+            if !cfg.ai.is_table() {
+                cfg.ai = toml::Value::Table(toml::value::Table::new());
+            }
+            if let Some(t) = cfg.ai.as_table_mut() {
+                t.insert("inline_suggestions".to_string(), toml::Value::Boolean(new));
+            }
+            true
+        }
+        "ai.suggest_backend" => {
+            let new = match opt_idx {
+                1 => "claude-api",
+                2 => "local",
+                3 => "off",
+                _ => "claude-code",
+            };
+            let cur = cfg
+                .ai
+                .get("suggest_backend")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude-code");
+            if cur == new {
+                return false;
+            }
+            if !cfg.ai.is_table() {
+                cfg.ai = toml::Value::Table(toml::value::Table::new());
+            }
+            if let Some(t) = cfg.ai.as_table_mut() {
+                t.insert(
+                    "suggest_backend".to_string(),
+                    toml::Value::String(new.to_string()),
+                );
+                // Off = disable inline suggestions at the same time so
+                // the two rows stay coherent (mirrors the picker's
+                // accept_suggest_backend path).
+                if new == "off" {
+                    t.insert(
+                        "inline_suggestions".to_string(),
+                        toml::Value::Boolean(false),
+                    );
+                }
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -1308,6 +1409,35 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             b(cfg.browser.autocapture_to_log),
         )],
         "session.restore" => vec![("session", "restore", b(cfg.session.restore))],
+        // task #1176 — read the current value straight off cfg.ai (a
+        // raw toml table) so persist mirrors what apply_setting wrote.
+        "ai.inline_suggestions" => {
+            let cur = cfg
+                .ai
+                .get("inline_suggestions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            vec![("ai", "inline_suggestions", b(cur))]
+        }
+        "ai.suggest_backend" => {
+            let cur = cfg
+                .ai
+                .get("suggest_backend")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude-code")
+                .to_string();
+            let inline = cfg
+                .ai
+                .get("inline_suggestions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            // When backend flips to off, apply_setting also clears
+            // inline_suggestions — persist the pair together.
+            vec![
+                ("ai", "suggest_backend", q(&cur)),
+                ("ai", "inline_suggestions", b(inline)),
+            ]
+        }
         // Global / unknown — handled elsewhere or not persisted here.
         _ => Vec::new(),
     }

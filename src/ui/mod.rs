@@ -25,6 +25,8 @@ pub mod ai_view;
 pub mod claude_usage_view;
 pub mod codex_usage_view;
 pub mod design_tokens;
+pub mod filter_placeholder;
+pub mod session_color;
 pub mod spend_report_view;
 pub mod usage_time;
 
@@ -3775,11 +3777,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let search_glyph = if nerd { "\u{f002}" } else { "/" };
     let filter_focused = app.integrations_panel_filter_focused;
     let filter_display = if app.integrations_panel_filter.is_empty() {
-        if filter_focused {
-            "type to filter…".to_string()
-        } else {
-            "/ filter".to_string()
-        }
+        crate::ui::filter_placeholder::for_state(filter_focused).to_string()
     } else {
         app.integrations_panel_filter.clone()
     };
@@ -5340,7 +5338,18 @@ fn pty_icon(
         .integration_id
         .as_deref()
         .is_some_and(|id| id == "claude_code");
-    match (integration_glyph, spinner, codex_thinking) {
+    // #1178 (2026-08-23) — per-session accent override wins. When the
+    // user right-clicks a sessions-rail row and picks a color, that
+    // choice needs to propagate to the top-bar Pty tab too, or the
+    // rail-strip color and the tab-icon color diverge (rail flipped
+    // blue, tab stayed brand-orange). Same name → color lookup as
+    // sessions_panel.rs. Codex-thinking's animated grey-white breath
+    // still wins so the "is it working" cue isn't lost.
+    let user_accent = s
+        .accent_color
+        .as_deref()
+        .and_then(|n| crate::ui::session_color::resolve(n, &tt));
+    let (glyph, color) = match (integration_glyph, spinner, codex_thinking) {
         (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
         // Spinner + integration → use integration color; but if this is a Claude
         // pane, override any stale/mis-parsed slot color with the brand
@@ -5378,7 +5387,17 @@ fn pty_icon(
             },
             ratatui::style::Color::White,
         ),
-    }
+    };
+    // #1178 (2026-08-23) — apply the user override AFTER the match so
+    // spinner/animation paths still color the character (grey-white
+    // breath still shows on Codex; Claude's spinner just picks up the
+    // user color instead of coral). Skip on codex-thinking so its
+    // signature breath isn't smothered.
+    let final_color = match (user_accent, codex_thinking) {
+        (Some(c), false) => c,
+        _ => color,
+    };
+    (glyph, final_color)
 }
 
 /// Codex uses a color-breath animation on `•`. Faithful port of

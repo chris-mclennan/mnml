@@ -902,6 +902,7 @@ impl App {
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
             Ok(mut s) => {
                 self.apply_saved_pty_name(&mut s);
+                self.assign_auto_accent_color(&mut s);
                 self.panes.push(Pane::Pty(s));
                 Some(self.panes.len() - 1)
             }
@@ -910,6 +911,62 @@ impl App {
                 None
             }
         }
+    }
+
+    /// #1181 (2026-08-23) — batch-spawn `n` new Claude Code sessions.
+    /// Reached via right-click on the sessions rail's "+ New session"
+    /// chip, which offers ×2 / ×4 / ×8 for spinning up a cluster of
+    /// Claudes in one shot.
+    ///
+    /// #1184 f/u (2026-08-23) — enforces `CLAUDE_PER_SCREEN_CAP = 8`
+    /// on the CURRENT desktop tab (a "screen" in user terms). Once
+    /// the current tab already hosts 8 Claudes we open a fresh tab
+    /// via `tab_new(None)` and continue spawning there — grid layout
+    /// stays legible instead of falling through to endless horizontal
+    /// splits past N=8. Each spawn still goes through
+    /// `open_claude_code_new` so 2×2 / grid grow / auto-color / env
+    /// injection all match a single click.
+    pub fn open_claude_code_new_batch(&mut self, n: usize) {
+        const CAP: usize = 8;
+        let mut spawned = 0;
+        let mut screens_opened = 0;
+        for _ in 0..n {
+            if self.count_claude_on_active_layout() >= CAP {
+                self.tab_new(None);
+                screens_opened += 1;
+            }
+            self.open_claude_code_new();
+            spawned += 1;
+        }
+        if spawned > 1 {
+            if screens_opened > 0 {
+                self.toast(format!(
+                    "opened {spawned} Claude sessions across {} screens",
+                    screens_opened + 1
+                ));
+            } else {
+                self.toast(format!("opened {spawned} Claude sessions"));
+            }
+        }
+    }
+
+    /// Count Claude Code sessions currently living in the ACTIVE
+    /// desktop tab's layout tree. Used by `open_claude_code_new_batch`
+    /// to enforce the 8-per-screen soft cap.
+    pub(super) fn count_claude_on_active_layout(&self) -> usize {
+        let layout = self.layout();
+        self.panes
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| {
+                layout.contains(*i)
+                    && matches!(
+                        p,
+                        crate::pane::Pane::Pty(s)
+                            if s.profile.integration_id.as_deref() == Some("claude_code")
+                    )
+            })
+            .count()
     }
 
     /// Place a fresh Claude Code pane in a specific half of the
@@ -1007,6 +1064,7 @@ impl App {
         let new_id = match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
             Ok(mut s) => {
                 self.apply_saved_pty_name(&mut s);
+                self.assign_auto_accent_color(&mut s);
                 self.panes.push(Pane::Pty(s));
                 self.panes.len() - 1
             }

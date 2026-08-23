@@ -598,8 +598,8 @@ pub fn right_cluster_width(app: &App) -> u16 {
             w += 2;
         }
     }
-    // theme toggle pill + ` × ` window close
-    w += 4 + 3;
+    // theme toggle pill (3, #1189) + ` × ` window close (3)
+    w += 3 + 3;
     w
 }
 
@@ -631,8 +631,8 @@ pub fn pick_cluster_mode(
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
 /// and per-tab-page chips.
 pub fn compact_cluster_width(app: &App) -> u16 {
-    // ` + ` (3) + theme toggle pill (4) + ` × ` (3)
-    let mut w: u16 = 3 + 4 + 3;
+    // ` + ` (3) + theme toggle pill (3, #1189) + ` × ` (3)
+    let mut w: u16 = 3 + 3 + 3;
     // 2026-08-01 — compact mode now shows numbered chips + close
     // on active when there are 2+ tab pages (user asked). Reserve
     // that width so the picker knows compact is wider than the
@@ -875,7 +875,13 @@ pub fn paint_right_cluster(
             .theme_toggle
             .as_deref()
             .is_some_and(|alt| theme::cur().name.eq_ignore_ascii_case(alt));
-        spans.push(Span::styled(" ", Style::default().bg(t.bg2)));
+        // #1189 (2026-08-23) — was ` ●━ ` (4 cells with leading pad),
+        // but the neighbor chip on the left (`+` or a tab-page chip)
+        // already carries a trailing space of the same `bg2` bg. Two
+        // padded cells between the two glyphs read as one dead cell
+        // of gap. Drop the leading pad; keep the trailing so this
+        // chip still separates from the ` × ` on its right (3 cells
+        // now, and the click-rect width below matches).
         if on_alt {
             spans.push(Span::styled(
                 "\u{2501}",
@@ -899,10 +905,10 @@ pub fn paint_right_cluster(
         app.rects.bufferline_theme_toggle = Some(Rect {
             x: cluster_x,
             y: area.y,
-            width: 4,
+            width: 3,
             height: 1,
         });
-        cluster_x += 4;
+        cluster_x += 3;
     }
     // Window close (always present — Minimal still keeps it).
     spans.push(Span::styled(

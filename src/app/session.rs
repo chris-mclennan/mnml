@@ -206,6 +206,28 @@ impl App {
                 }
                 m.into_iter().collect()
             },
+            claude_sessions: {
+                // #1184 (2026-08-23) — snapshot every open Claude Code
+                // Pty so the next launch can `--resume` each one and
+                // restore the user's cluster without a manual step.
+                // Skip non-Claude Ptys (Codex, bare shells) — they
+                // have no `--resume` protocol to hook into.
+                self.panes
+                    .iter()
+                    .filter_map(|p| match p {
+                        Pane::Pty(s)
+                            if s.profile.integration_id.as_deref() == Some("claude_code") =>
+                        {
+                            s.profile.session_id.clone().map(|sid| SavedClaudeSession {
+                                session_id: sid,
+                                display_name: s.display_name.clone(),
+                                accent_color: s.accent_color.clone(),
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            },
             macros: self
                 .macro_buffer
                 .iter()
@@ -816,6 +838,46 @@ impl App {
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
             self.reveal_pane(p);
+        }
+        // #1184 (2026-08-23) — auto-resume every Claude Code session
+        // that was open at quit time. Each spawn goes through the
+        // normal `open_claude_code_new` layout path (grid growth,
+        // per-screen cap via the batch helper) with a `--resume
+        // <session_id>` profile so the Claude subprocess picks up
+        // where it left off. Display name + user/auto accent color
+        // are re-attached after the pane materializes.
+        //
+        // Sessions restore into the CURRENTLY active desktop tab —
+        // multi-tab layouts still restore their editor panes on
+        // whichever tab they were saved on, but Claude Ptys land
+        // together on the active screen. Batch spawn's 8-per-screen
+        // cap kicks in and pushes overflow to fresh tabs.
+        for saved_cc in saved.claude_sessions {
+            let mut profile = crate::pty_pane::BinaryProfile::claude_code_resume(
+                self.workspace.clone(),
+                saved_cc.session_id.clone(),
+            );
+            // Bridge env injection is done by open_pty_dir; here we
+            // just carry over any workspace-scoped display-name we
+            // held onto (saved_pty_session_names already got it too).
+            // 8-per-screen cap for restore parity with batch spawn.
+            if self.count_claude_on_active_layout() >= 8 {
+                self.tab_new(None);
+            }
+            profile.session_id = Some(saved_cc.session_id.clone());
+            self.open_pty_dir(profile, crate::layout::SplitDir::Horizontal);
+            // Stamp display_name + accent_color onto the freshly
+            // pushed pane. The just-opened pane is `self.active`.
+            if let Some(pid) = self.active
+                && let Some(crate::pane::Pane::Pty(s)) = self.panes.get_mut(pid)
+            {
+                if saved_cc.display_name.is_some() {
+                    s.display_name = saved_cc.display_name.clone();
+                }
+                if saved_cc.accent_color.is_some() {
+                    s.accent_color = saved_cc.accent_color.clone();
+                }
+            }
         }
     }
 }

@@ -8,6 +8,35 @@
 
 use super::*;
 
+/// Shared "Color: …" menu items for right-click on a Pty session —
+/// referenced by BOTH the sessions-rail context menu and the pty
+/// tab-strip context menu at the top of a pane (task #1178 f/u,
+/// 2026-08-23 user ask: "you can also do this in sessions … be
+/// consistent"). Keep the two menus wired to the same list so a
+/// color added here shows up in both surfaces without hunt-and-
+/// pecking through two files.
+pub(crate) fn session_color_menu_items(pane_id: usize) -> Vec<crate::context_menu::MenuItem> {
+    use crate::context_menu::{MenuAction, MenuItem};
+    // Drive both the label and the SessionSetColor payload off the
+    // shared PALETTE — menu order = auto-cycle order = list order,
+    // and adding a color is a one-line edit in session_color.rs.
+    let colors = crate::ui::session_color::PALETTE;
+    let mut items: Vec<MenuItem> = colors
+        .iter()
+        .map(|&name| {
+            MenuItem::new(
+                crate::ui::session_color::menu_label(name),
+                MenuAction::SessionSetColor(pane_id, name),
+            )
+        })
+        .collect();
+    items.push(MenuItem::new(
+        "Color: None",
+        MenuAction::SessionSetColor(pane_id, "none"),
+    ));
+    items
+}
+
 impl App {
     /// Build + open the sessions-panel context menu for one
     /// Pty pane (right-click on a session tab).
@@ -109,14 +138,18 @@ impl App {
     }
 
     /// 2026-08-11 — kebab menu for the Ableton-style hover-help panel.
-    /// Anchored below the `⋮` glyph in the title bar. Sole item today
-    /// is a destructive-red `Close` that runs `view.toggle_hover_help`;
-    /// more items (`About the info box…`, panel-scoped settings) can
-    /// join without touching the click plumbing.
+    /// Anchored below the `⋮` glyph in the title bar.
+    ///
+    /// 2026-08-23 (user feedback) — was labeled "Close", which reads as
+    /// "hide this one time" and misled users into globally-disabling
+    /// the whole feature by persisting `[ui] hover_help = false` to
+    /// their config. Item is now "Turn off info panel (Settings →
+    /// UI to bring back)" so the consequence is legible before the
+    /// click. Same underlying command; only the label changed.
     pub fn open_hover_help_kebab_menu(&mut self, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let items = vec![MenuItem::destructive(
-            "Close",
+            "Turn off info panel (Settings → UI to bring back)",
             MenuAction::Command("view.toggle_hover_help"),
         )];
         self.context_menu = Some(ContextMenu::new(None, anchor, items));
@@ -195,7 +228,7 @@ impl App {
             crate::app::SessionsSortMode::Auto => "✓ Auto sort",
             crate::app::SessionsSortMode::Manual => "Auto sort",
         };
-        let items = vec![
+        let mut items = vec![
             MenuItem::new(pin_label, MenuAction::SessionTogglePin(pane_id)),
             MenuItem::new("Move up", MenuAction::SessionMoveUp(pane_id)),
             MenuItem::new("Move down", MenuAction::SessionMoveDown(pane_id)),
@@ -203,27 +236,28 @@ impl App {
             MenuItem::new("Move to bottom", MenuAction::SessionMoveToBottom(pane_id)),
             MenuItem::new(sort_auto_label, MenuAction::SessionSortAuto),
             MenuItem::new("Rename…", MenuAction::SessionRename(pane_id)),
-            MenuItem::new(
-                "Color: Green",
-                MenuAction::SessionSetColor(pane_id, "green"),
-            ),
-            MenuItem::new("Color: Blue", MenuAction::SessionSetColor(pane_id, "blue")),
-            MenuItem::new(
-                "Color: Yellow",
-                MenuAction::SessionSetColor(pane_id, "yellow"),
-            ),
-            MenuItem::new(
-                "Color: Orange",
-                MenuAction::SessionSetColor(pane_id, "orange"),
-            ),
-            MenuItem::new("Color: Red", MenuAction::SessionSetColor(pane_id, "red")),
-            MenuItem::new(
-                "Color: Purple",
-                MenuAction::SessionSetColor(pane_id, "purple"),
-            ),
-            MenuItem::new("Color: Cyan", MenuAction::SessionSetColor(pane_id, "cyan")),
-            MenuItem::new("Color: None", MenuAction::SessionSetColor(pane_id, "none")),
-            MenuItem::new("Close session", MenuAction::SessionClose(pane_id)),
+        ];
+        items.extend(session_color_menu_items(pane_id));
+        items.push(MenuItem::new(
+            "Close session",
+            MenuAction::SessionClose(pane_id),
+        ));
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// #1181 (2026-08-23) — right-click on the sessions rail's
+    /// "+ New session" chip. Left-click still fires a single spawn;
+    /// this menu is the shortcut for "give me a cluster" (×2 / ×4 /
+    /// ×8) so users can fan out parallel Claudes without clicking
+    /// the chip 8 times.
+    pub fn open_new_session_batch_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = Some("New Claude sessions".to_string());
+        let items = vec![
+            MenuItem::new("New session", MenuAction::Command("ai.claude_code_new")),
+            MenuItem::new("Open ×2", MenuAction::Command("ai.claude_code_new_x2")),
+            MenuItem::new("Open ×4", MenuAction::Command("ai.claude_code_new_x4")),
+            MenuItem::new("Open ×8", MenuAction::Command("ai.claude_code_new_x8")),
         ];
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }
@@ -320,14 +354,58 @@ impl App {
         self.open_rename_session_prompt();
     }
 
-    /// Set the accent color of a specific Pty pane. `"none"`
-    /// clears back to the default active color.
+    /// Set the accent color of a specific Pty pane. `"none"` clears
+    /// the override so #1179's auto-assign can re-compute this
+    /// session's palette slot on the fly (rather than leaving it
+    /// `None`, which would fall through to different fallbacks in
+    /// the rail vs. the pane and break color consistency —
+    /// task #1178 f/u, 2026-08-23).
     pub fn set_session_color(&mut self, pane_id: usize, color: &'static str) {
+        // Take (idx, prev_color) so we can splice the auto-assign back
+        // in without holding a mut borrow across the second call.
+        if !matches!(self.panes.get(pane_id), Some(crate::pane::Pane::Pty(_))) {
+            return;
+        }
         if let Some(crate::pane::Pane::Pty(s)) = self.panes.get_mut(pane_id) {
-            s.accent_color = match color {
-                "none" | "" => None,
-                other => Some(other.to_string()),
-            };
+            match color {
+                "none" | "" => {
+                    s.accent_color = None;
+                }
+                other => {
+                    s.accent_color = Some(other.to_string());
+                    return;
+                }
+            }
+        }
+        // On "none" for a Claude Code pane: re-derive this pane's
+        // auto slot. Detached the mutation from the count-scan above
+        // so we're not borrowing self.panes both ways at once.
+        //
+        // The count filter EXCLUDES this pane so its palette index
+        // matches "how many other Claude sessions exist before me".
+        let is_claude = matches!(
+            self.panes.get(pane_id),
+            Some(crate::pane::Pane::Pty(s)) if s.profile.integration_id.as_deref() == Some("claude_code")
+        );
+        if !is_claude {
+            return;
+        }
+        let position: usize = self
+            .panes
+            .iter()
+            .enumerate()
+            .take(pane_id)
+            .filter(|(_, p)| match p {
+                crate::pane::Pane::Pty(sess) => {
+                    sess.profile.integration_id.as_deref() == Some("claude_code")
+                }
+                _ => false,
+            })
+            .count();
+        let palette = crate::ui::session_color::PALETTE;
+        let idx = position % palette.len();
+        if let Some(crate::pane::Pane::Pty(s)) = self.panes.get_mut(pane_id) {
+            s.accent_color = Some(palette[idx].to_string());
         }
     }
 

@@ -93,6 +93,15 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_session_tab_context_menu(pid, (x, y));
         return;
     }
+    // Right-click on the "+ New session" chip → batch-spawn menu
+    // (task #1181 f/u, 2026-08-23) — user asked: "right click on
+    // new session and it should offer x2 or x4 or x8".
+    if let Some(r) = app.rects.session_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_new_session_batch_menu((x, y));
+        return;
+    }
     // Right-click on a dock widget (body, title, or kebab)
     // → open the kebab menu anchored at the click. Same
     // menu as the `⋮` glyph; gives power users a faster

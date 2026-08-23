@@ -3353,13 +3353,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // `ActivitySection::Sessions` is active). Click →
     // focus that Pty pane. Also arms a drag — mouse-up
     // over another tab swaps them.
+    //
+    // #1184 (2026-08-23) — route through `reveal_pane` so a
+    // rail click on a Claude living in another desktop tab
+    // (layout page) flips to that layout instead of silently
+    // no-oping. `reveal_pane` handles the cross-layout switch
+    // + `remember_active_for_tab` bookkeeping.
     if let Some(&(_, pid)) = app
         .rects
         .session_tabs
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        app.active = Some(pid);
+        app.reveal_pane(pid);
         app.focus_pane();
         app.session_drag_pid = Some(pid);
         return;

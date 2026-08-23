@@ -214,19 +214,34 @@ pub fn draw(
 }
 
 /// #1133 helper — pick the brand color for a Pty pane's identity
-/// strip. Built-in ids (`claude_code`, `codex`) get the hardcoded
-/// brand override; other ids consult the loaded integration
-/// manifest's `chip.color`. Panes with no integration_id (bare
-/// shells / `:term`) return `None` so the accent bar is skipped.
+/// strip. Precedence:
+///   1. Per-session user override (`s.accent_color`) — set via
+///      right-click "Change color" on the sessions rail (task
+///      #1178 2026-08-23: keep pane accent + tab strip in lockstep
+///      with the sessions-rail row for the same session).
+///   2. Built-in brand id (`claude_code`, `codex`) — hardcoded.
+///   3. Loaded integration manifest's `chip.color`.
+/// Panes with no integration_id (bare shells / `:term`) return
+/// `None` so the accent bar is skipped.
 fn accent_color_for_pty(app: &App, pane_id: PaneId) -> Option<Color> {
-    let id = match app.panes.get(pane_id)? {
-        Pane::Pty(s) => s.profile.integration_id.as_deref()?,
+    let t = theme::cur();
+    let session = match app.panes.get(pane_id)? {
+        Pane::Pty(s) => s,
         _ => return None,
     };
+    // Precedence 1 — user override wins over everything else. Same
+    // name → color lookup the sessions rail + tab strip use, kept in
+    // `crate::ui::session_color` as a single source of truth.
+    if let Some(name) = session.accent_color.as_deref()
+        && let Some(c) = crate::ui::session_color::resolve(name, &t)
+    {
+        return Some(c);
+    }
+    // Precedence 2/3 — brand/manifest lookup on the pane's integration id.
+    let id = session.profile.integration_id.as_deref()?;
     if let Some(c) = theme::brand_color_for_builtin(id) {
         return Some(c);
     }
-    let t = theme::cur();
     let manifest = app.integration_manifests.iter().find(|m| m.id == id)?;
     let chip = manifest.chip.as_ref()?;
     Some(theme::color_from_slot(&chip.color, &t))

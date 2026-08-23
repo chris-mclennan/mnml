@@ -38,6 +38,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.session_tabs.clear();
     app.rects.session_new_chip = None;
     app.rects.sessions_panel_filter_input = None;
+    // #1184 (2026-08-23) — expose full rail area for wheel routing.
+    app.rects.sessions_panel_area = Some(area);
 
     // Collect Pty panes first so the header can show the filtered
     // count. Index in `app.panes` doubles as the focus target for
@@ -130,11 +132,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 t.fg
             };
             let display = if app.sessions_panel_filter.is_empty() {
-                if focused {
-                    "type to filter\u{2026}".to_string()
-                } else {
-                    "/ filter".to_string()
-                }
+                crate::ui::filter_placeholder::for_state(focused).to_string()
             } else {
                 app.sessions_panel_filter.clone()
             };
@@ -159,6 +157,64 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     let mut y = area.y + 3;
+
+    // #1188 (2026-08-23) — "+ New session" chip lives above the
+    // rows now, not below. User ask: when the list scrolls past the
+    // panel height, the chip is unreachable at the bottom; putting
+    // it right under the filter row keeps it a fixed keystroke away
+    // (mirrors the Agents rail chip placement). The cursor slot for
+    // this chip is still "past the last session" (pty_indices.len())
+    // so keyboard navigation feels the same — end-of-list → chip.
+    let cursor_on_new_chip_preview =
+        app.sessions_panel_cursor.min(pty_indices.len()) == pty_indices.len();
+    if y < area.y + area.height {
+        // #1188 f/u (2026-08-23) — chip width fits the label instead
+        // of stretching the full rail width. Content is
+        // ` + New session ` (1 leading pad + 13 label + 1 trailing
+        // pad) = 15 cells. User ask: "should stop 1 char after the n
+        // in session". Rest of the row is transparent bg so the
+        // chip reads as a discrete button, not a full-width bar.
+        let label = "+ New session";
+        let chip_w = (label.chars().count() as u16) + 2; // pad on both sides
+        let avail = area.width.saturating_sub(1);
+        let new_rect = Rect {
+            x: area.x + 1,
+            y,
+            width: chip_w.min(avail),
+            height: 1,
+        };
+        let chip_bg = if cursor_on_new_chip_preview {
+            t.bg2
+        } else {
+            bg
+        };
+        let chip_fg = if cursor_on_new_chip_preview {
+            t.fg
+        } else {
+            t.comment
+        };
+        if cursor_on_new_chip_preview {
+            frame.render_widget(
+                Paragraph::new(" ".repeat(new_rect.width as usize))
+                    .style(Style::default().bg(chip_bg)),
+                new_rect,
+            );
+        }
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(chip_bg)),
+            Span::styled(
+                label,
+                Style::default()
+                    .fg(chip_fg)
+                    .bg(chip_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ", Style::default().bg(chip_bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), new_rect);
+        app.rects.session_new_chip = Some(new_rect);
+        y += 2; // chip row + 1-row breathing space before the list
+    }
 
     if pty_indices.is_empty() {
         let msg = if !filter_lc.is_empty() {
@@ -194,7 +250,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.sessions_panel_cursor = clamped_cursor;
     let cursor_on_new_chip = clamped_cursor == pty_indices.len();
     let active_pid = app.active;
-    for (row_i, &pid) in pty_indices.iter().enumerate() {
+    // #1184 (2026-08-23) — window the rows we render so a workspace
+    // with 12+ Claude sessions doesn't just clip them off. Reserve
+    // `TAB_H + 1` rows at the bottom for the "+ New session" chip.
+    let rows_area = (area.y + area.height).saturating_sub(y);
+    let max_visible = (rows_area / TAB_H).saturating_sub(1).max(1) as usize;
+    // Auto-follow the keyboard cursor when it moves off the current
+    // window (arrow-nav feels broken if the row you're moving to is
+    // clipped). If the cursor is on the "+ New session" chip, keep
+    // whatever scroll the user last set — the chip renders below the
+    // rows regardless of window offset.
+    if !cursor_on_new_chip {
+        if clamped_cursor < app.sessions_panel_scroll {
+            app.sessions_panel_scroll = clamped_cursor;
+        } else if clamped_cursor >= app.sessions_panel_scroll + max_visible {
+            app.sessions_panel_scroll = clamped_cursor + 1 - max_visible;
+        }
+    }
+    // Clamp scroll so we never leave blank rows above the last page
+    // (e.g. the user closed a session that was in the last window).
+    let max_scroll = pty_indices.len().saturating_sub(max_visible);
+    if app.sessions_panel_scroll > max_scroll {
+        app.sessions_panel_scroll = max_scroll;
+    }
+    let scroll = app.sessions_panel_scroll;
+    // The trailing `y += 1` inside this loop is intentional — it advances
+    // past the current row so the NEXT iteration's `y + TAB_H > area.y +
+    // area.height` guard sees the correct position. Clippy's dead-store
+    // warning fires only on the final iteration where nothing reads `y`
+    // after; suppressed since restructuring for that one iteration would
+    // hurt readability.
+    #[allow(unused_assignments)]
+    for (row_i, &pid) in pty_indices.iter().enumerate().skip(scroll) {
         if y + TAB_H > area.y + area.height {
             break;
         }
@@ -216,15 +303,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // 1-cell accent on the left edge: user-set color always
         // wins; then keyboard-cursor cyan; then active green;
         // else transparent.
-        let accent_color = match s.accent_color.as_deref() {
-            Some("green") => t.green,
-            Some("blue") => t.blue,
-            Some("yellow") => t.yellow,
-            Some("orange") => t.orange,
-            Some("red") => t.red,
-            Some("purple") => t.purple,
-            Some("cyan") => t.cyan,
-            _ => {
+        let accent_color = s
+            .accent_color
+            .as_deref()
+            .and_then(|n| crate::ui::session_color::resolve(n, &t))
+            .unwrap_or_else(|| {
                 if is_cursored && app.focus == crate::focus::Focus::Tree {
                     t.cyan
                 } else if is_active {
@@ -232,8 +315,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     bg
                 }
-            }
-        };
+            });
         // #1103 f/u2 (2026-08-20) — thinner accent bar. Was a
         // solid Block bg (full 1-cell wide) making the Sessions
         // gutter noticeably thicker than the Claude Usage /
@@ -521,53 +603,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             );
             y += 1;
         }
-        y += 1;
+        // Trailing spacer — dead-store on the final render pass but
+        // documents "reserve one row of padding after EXTERNAL if
+        // anything renders below". Explicit `let _ = y;` uses the
+        // value so clippy stays quiet without an `#[allow]`.
+        let _ = y;
     }
 
-    // `+ New session` row — last interactive row at the bottom
-    // of the panel. Click → spawn a Claude Code pane (the most
-    // common single-click case). A future picker could let the
-    // user pick Claude / Codex / shell here.
-    //
-    // KB-08 2026-07-30 — cursor can land on this chip via ↓ past
-    // the last session (or immediately in the empty state). Paint
-    // an accent background when cursored so it reads as "focused"
-    // and Enter matches expectation.
-    if y < area.y + area.height {
-        // #1137 — shift the chip rect +1 cell right (breathing room
-        // from the activity-bar column, matches the Integrations tab
-        // strip gutter from #1121) and shrink the in-chip leading pad
-        // from 3 spaces to 1 so the "+ New session" text lands 1 cell
-        // LEFT of where it used to render (net: rect +1, text -1).
-        let new_rect = Rect {
-            x: area.x + 1,
-            y,
-            width: area.width.saturating_sub(1),
-            height: 1,
-        };
-        let chip_bg = if cursor_on_new_chip { t.bg2 } else { bg };
-        let chip_fg = if cursor_on_new_chip { t.fg } else { t.comment };
-        // Paint the bg first so the highlight fills the whole row.
-        if cursor_on_new_chip {
-            frame.render_widget(
-                Paragraph::new(" ".repeat(new_rect.width as usize))
-                    .style(Style::default().bg(chip_bg)),
-                new_rect,
-            );
-        }
-        let line = Line::from(vec![
-            Span::styled(" ", Style::default().bg(chip_bg)),
-            Span::styled(
-                "+ New session",
-                Style::default()
-                    .fg(chip_fg)
-                    .bg(chip_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(line), new_rect);
-        app.rects.session_new_chip = Some(new_rect);
-    }
     // Hover-tooltip content lives in `ui::tooltip::describe`
     // (`HoverChip::SessionsTab`) — enhanced to show the branch,
     // cwd, and grid lines. Painting a separate floating card

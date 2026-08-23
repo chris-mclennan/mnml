@@ -126,11 +126,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             t.fg
         };
         let display = if app.agents_panel_filter.is_empty() {
-            if focused {
-                "type to filter…".to_string()
-            } else {
-                "/ filter".to_string()
-            }
+            crate::ui::filter_placeholder::for_state(focused).to_string()
         } else {
             app.agents_panel_filter.clone()
         };

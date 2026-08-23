@@ -1181,6 +1181,24 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
+    // #1184 (2026-08-23) — wheel over the sessions rail → scroll
+    // its content list. Same pattern as the agents rail below;
+    // gate on the active section so the (stale) tree rect can't
+    // shadow us. The render clamps the offset to visible-rows.
+    if app.active_section == crate::app::ActivitySection::Sessions
+        && let Some(ar) = app.rects.sessions_panel_area
+        && contains(ar, x, y)
+    {
+        let d = list_scroll_clamp(delta);
+        if d < 0 {
+            app.sessions_panel_scroll = app
+                .sessions_panel_scroll
+                .saturating_sub(d.unsigned_abs() as usize);
+        } else {
+            app.sessions_panel_scroll = app.sessions_panel_scroll.saturating_add(d as usize);
+        }
+        return;
+    }
     // Wheel over the agents rail panel → scroll its content list. Checked
     // first + gated on the active section so the (stale) tree rect, which
     // overlaps the same rail region, can't shadow it. The render clamps the
