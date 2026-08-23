@@ -66,7 +66,21 @@ pub fn load(workspace: &Path) -> Result<Option<Vec<Source>>, String> {
             eprintln!("mnml http sync: source `{name}` missing 'url' — skipping");
             continue;
         };
-        let url = url.to_string();
+        // R14 api-workflow SEV-2 (2026-08-23) — a local-file `url`
+        // (no scheme, e.g. `openapi/petstore.yaml`) was passed
+        // through untouched to `discover::run`, which then resolved
+        // it against the process CWD. Any launch of mnml from
+        // outside the workspace root (fairly common — the standard
+        // `./run.sh` idiom) silently wrote 0 stubs. Match the
+        // sibling `out` field's handling: absolute paths pass
+        // through, http(s) URLs pass through, everything else is
+        // workspace-relative.
+        let url =
+            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with('/') {
+                url.to_string()
+            } else {
+                workspace.join(url).display().to_string()
+            };
         // `out` is a path relative to the workspace, or absolute.
         // Falls back to `.rqst/requests/<name>` for parity with rqst.
         let out_path = v
