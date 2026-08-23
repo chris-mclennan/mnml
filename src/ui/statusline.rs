@@ -1609,31 +1609,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         //   Brand chip : source logo — click opens the app browser
         //   Play chip  : play_box (F040E) — click starts playing
         let source = app.config.ui.preferred_music_app.as_str();
-        // Two colors per source: `chip_bg` for the play_box seg's
-        // background, and `glyph_on_white_fg` for the brand glyph
-        // when it renders on a white cell (#1138). Beatport's lime
-        // is too light (~luma 187) to read on white; use a darker
-        // shade (~luma 92) for the fg-on-white case while keeping
-        // the lime for chip-bg uses. Spotify green + Apple red are
-        // already dark enough — pass through.
-        let (source_glyph, chip_bg, chip_fg, glyph_on_white_fg) = match source {
+        let (source_glyph, chip_bg, chip_fg) = match source {
             "spotify" => (
                 '\u{F1BC}',                   // nf-fa-spotify
                 Color::Rgb(0x1D, 0xB9, 0x54), // Spotify green
                 Color::Rgb(0x00, 0x00, 0x00),
-                Color::Rgb(0x1D, 0xB9, 0x54), // same green — readable on white
             ),
             "music" => (
                 '\u{E711}',                   // nf-fa-apple
                 Color::Rgb(0xFA, 0x24, 0x3C), // Apple Music red
                 Color::Rgb(0xFF, 0xFF, 0xFF),
-                Color::Rgb(0xFA, 0x24, 0x3C), // same red — readable on white
             ),
             _ => (
                 '\u{F1F00}',                  // mnml-baked Beatport B
-                Color::Rgb(0xA6, 0xE2, 0x2E), // Beatport lime (chip bg)
+                Color::Rgb(0xA6, 0xE2, 0x2E), // Beatport lime (mixr)
                 Color::Rgb(0x00, 0x00, 0x00),
-                Color::Rgb(0x4A, 0x6D, 0x0E), // darker lime for fg-on-white
             ),
         };
         // #1138 — brand glyph gets a WHITE inner cell (same visual
@@ -1642,12 +1632,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // chip's tinted background. The play_box segment keeps the
         // source-colored bg for identity — logo-on-white / play-on-
         // color mirrors the playing state's two-tier framing.
+        // Brand keeps its own leading + trailing pad; play drops
+        // the leading space so the two segments meet at a single
+        // cell of air (was two, from trailing-of-brand + leading-
+        // of-play doubling up).
         let brand_idx = right.len();
-        right.push(Seg::new(
-            format!(" {} ", source_glyph),
-            glyph_on_white_fg, // brand glyph painted in source tint (darkened where needed)
-            Color::Rgb(0xFF, 0xFF, 0xFF),
-        ));
+        right.push(Seg::new(format!(" {} ", source_glyph), chip_fg, chip_bg));
         let play_idx = right.len();
         right.push(Seg::new(
             format!("{} ", NF_PLAY_BOX), // nf-md-play_box_outline
@@ -1711,18 +1701,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         const NF_SPEAKER: char = '\u{F04C3}';
         // Sonos's own black-on-white identity, deliberately not another
         // brand hue — the music cluster next door already owns lime /
-        // green / red. Three states, carried by color rather than a
-        // second glyph:
+        // green / red. Two states, carried by color:
         //   teal  — mnml is streaming this Mac's audio here (the one
         //           state worth spotting from across the room)
-        //   white — the speaker is playing something
-        //   dim   — idle, same comment-on-bg2 treatment the clock uses
+        //   white — everything else. Playing and idle both render on
+        //           the off-white pill; idle just gets a muted fg
+        //           tint so the speaker still reads as "not active"
+        //           without going dark (per-user 2026-08-23 — the
+        //           dim comment-on-bg2 was too invisible).
         let (chip_fg, chip_bg) = if app.sonos.streaming {
             (Color::Rgb(0x00, 0x00, 0x00), theme::cur().teal)
         } else if app.sonos.state.is_playing() {
             (Color::Rgb(0x10, 0x10, 0x10), Color::Rgb(0xE6, 0xE6, 0xE6))
         } else {
-            (theme::cur().comment, theme::cur().bg2)
+            (Color::Rgb(0x60, 0x60, 0x60), Color::Rgb(0xE6, 0xE6, 0xE6))
         };
         let brand = if nerd {
             NF_SPEAKER.to_string()
