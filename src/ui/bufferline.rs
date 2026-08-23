@@ -223,6 +223,14 @@ pub fn tab_chip_spans(
     // is_hovered, so dirty inactive tabs stayed at the orange dot
     // and required focus-then-close — exactly the "quick dismiss"
     // case the hover fix was written for.
+    // R12 vscode-mouse SEV-2 2026-08-23 — non-active/non-hovered
+    // non-dirty tabs used to paint " " (a plain space) so users had
+    // no visible × on background tabs. Middle-click DID close them,
+    // but the affordance was invisible. Now paint the close glyph
+    // dim so it reads as "you can click here to close"; active +
+    // hover states brighten it further. Dirty stays as the orange
+    // ● dot (that badge doubles as unsaved-changes signal — hover
+    // still upgrades it to × for a one-click close).
     let (badge, badge_fg_active, badge_fg_inactive) = if inputs.is_pinned {
         (pin_glyph.to_string(), t.yellow, t.yellow)
     } else if inputs.is_active {
@@ -234,7 +242,7 @@ pub fn tab_chip_spans(
     } else if inputs.is_dirty {
         ("●".to_string(), t.orange, t.orange)
     } else {
-        (" ".to_string(), t.grey_fg, t.grey)
+        (close_glyph.to_string(), t.grey, t.grey)
     };
     let skip_icon = inputs.glyph.is_empty();
     // Design-critic 2026-07-08 HIGH: `inputs.name` from real
@@ -374,7 +382,14 @@ pub fn paint_tab_chip(
     // "activate the tab" instead of closing. `buffer.close`'s
     // existing unsaved-changes confirm flow makes registering the
     // rect safe. Pinned tabs stay opt-out (explicit unpin verb).
-    let close = if (inputs.is_active || inputs.is_hovered) && !inputs.is_pinned && painted_w >= 2 {
+    // R12 vscode-mouse SEV-2 2026-08-23 — was gated on
+    // `is_active || is_hovered`, so background tabs had no visible
+    // `×` and closing them required (a) middle-click (undocumented
+    // affordance) or (b) two clicks (activate + close). VS Code /
+    // Chrome / every mouse-driven tabbed UI paints the `×` on
+    // every tab; hover styling still distinguishes. Pinned tabs
+    // stay opt-out (need an explicit unpin verb before close).
+    let close = if !inputs.is_pinned && painted_w >= 2 {
         Some(Rect {
             x: chip_rect.x + chip_rect.width - 2,
             y: chip_rect.y,
@@ -1277,17 +1292,18 @@ mod tests {
     }
 
     #[test]
-    fn chip_inactive_reads_glyph_name_and_blank_badge() {
+    fn chip_inactive_reads_glyph_name_and_dim_close_glyph() {
         let (spans, w) = tab_chip_spans(&base_inputs(), theme::cur().bg_darker, 40, true)
             .expect("chip should paint");
         let text = spans_to_text(&spans);
         assert!(text.contains("R"), "icon glyph missing: {text:?}");
         assert!(text.contains("file.rs"), "name missing: {text:?}");
-        // ` R  file.rs   ` — trailing space is the "blank badge"
-        // for inactive-clean chips.
+        // R12 vscode-mouse SEV-2 2026-08-23 — was ` R  file.rs   `
+        // with a blank trailing badge; now paints a dim close glyph
+        // so mouse users see the affordance without hover.
         assert!(
-            text.trim_end().ends_with("file.rs"),
-            "trailing badge should be blank space: {text:?}"
+            text.contains('\u{F0156}'),
+            "inactive chip should render close glyph (dim): {text:?}"
         );
         assert_eq!(
             w,
@@ -1483,11 +1499,12 @@ mod tests {
     fn chip_paint_registers_close_rect_only_for_active_or_hovered_unpinned() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        // design-round-4 issue 8 2026-07-14 — dirty tabs now DO get
-        // a close rect (× reveals on hover, unsaved-changes confirm
-        // fires downstream). Pinned tabs still opt out.
+        // R12 vscode-mouse SEV-2 2026-08-23 — inactive non-hovered
+        // tabs now DO get a close rect (chrome / VS Code convention:
+        // every unpinned tab is closable in one click). Only pinned
+        // tabs stay opt-out.
         let cases: Vec<(TabChipInputs, bool, &str)> = vec![
-            (base_inputs(), false, "inactive-not-hovered"),
+            (base_inputs(), true, "inactive-not-hovered"),
             (
                 TabChipInputs {
                     is_active: true,

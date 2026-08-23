@@ -614,6 +614,67 @@ impl App {
         self.toast("response body copied");
     }
 
+    /// Copy the active Request pane's Timeline table as text. R12
+    /// vscode-mouse SEV-2 2026-08-23 — was falling back to
+    /// `http_copy_response_body` (mis-toast + wrong data). Now emits
+    /// a two-line summary: `Wait   Nms\nReceive  Nms\nTotal  Nms`.
+    pub fn http_copy_response_timeline(&mut self) {
+        let Some(cur) = self.active else { return };
+        let timing = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                crate::request_pane::RunState::Done(r) => r.timing,
+                crate::request_pane::RunState::Streaming(r) => r.timing,
+                _ => {
+                    self.toast("copy: no timeline yet — wait for the response");
+                    return;
+                }
+            },
+            _ => return,
+        };
+        let wait_ms = timing.wait.as_millis();
+        let receive_ms = timing.receive.as_millis();
+        let total_ms = wait_ms + receive_ms;
+        let text = format!("Wait     {wait_ms}ms\nReceive  {receive_ms}ms\nTotal    {total_ms}ms");
+        self.clipboard.set(text, false);
+        self.toast("timeline copied");
+    }
+
+    /// Copy the active Request pane's Tests summary — one line per
+    /// assertion, prefixed with ✓ / ✗. R12 vscode-mouse SEV-2
+    /// 2026-08-23.
+    pub fn http_copy_response_tests(&mut self) {
+        let Some(cur) = self.active else { return };
+        let assertions = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                crate::request_pane::RunState::Done(r) => r.assertions.clone(),
+                crate::request_pane::RunState::Streaming(r) => r.assertions.clone(),
+                _ => {
+                    self.toast("copy: no tests yet — wait for the response");
+                    return;
+                }
+            },
+            _ => return,
+        };
+        if assertions.is_empty() {
+            self.toast("copy: no assertions in this request");
+            return;
+        }
+        let text: String = assertions
+            .iter()
+            .map(|a| {
+                let mark = if a.passed { '✓' } else { '✗' };
+                match &a.detail {
+                    Some(d) if !d.is_empty() => format!("{mark} {}  — {d}", a.label),
+                    _ => format!("{mark} {}", a.label),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let n_passed = assertions.iter().filter(|a| a.passed).count();
+        self.clipboard.set(text, false);
+        self.toast(format!("{n_passed}/{} assertions copied", assertions.len()));
+    }
+
     /// Copy the active Request pane's response headers to the
     /// clipboard, one per line as `Name: value`. Same shape as
     /// `http_copy_response_body` but for the header pane.

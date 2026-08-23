@@ -435,14 +435,26 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             ResponseTab::Timeline => (
                 "Response Timeline",
-                vec![MenuItem::new(
-                    "Diff last two responses",
-                    MenuAction::Command("http.diff_last_two"),
-                )],
+                vec![
+                    MenuItem::new(
+                        "Copy timeline",
+                        MenuAction::Command("http.copy_response_timeline"),
+                    ),
+                    MenuItem::new(
+                        "Diff last two responses",
+                        MenuAction::Command("http.diff_last_two"),
+                    ),
+                ],
             ),
             ResponseTab::Tests => (
                 "Response Tests",
-                vec![MenuItem::new("Re-run", MenuAction::Command("http.send"))],
+                vec![
+                    MenuItem::new(
+                        "Copy tests summary",
+                        MenuAction::Command("http.copy_response_tests"),
+                    ),
+                    MenuItem::new("Re-run", MenuAction::Command("http.send")),
+                ],
             ),
         };
         app.context_menu = Some(ContextMenu::new(Some(title.to_string()), (x, y), items));

@@ -837,15 +837,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         } else {
             crate::request_pane::ResponseTab::Body
         };
+        // R12 vscode-mouse SEV-2 2026-08-23 — Timeline / Tests
+        // used to silently fall back to Body copy + a lying
+        // `response body copied` toast. Route each tab to its own
+        // handler.
         match tab {
-            crate::request_pane::ResponseTab::Headers => {
-                app.http_copy_response_headers();
-            }
-            // Body / Timeline / Tests all fall back to Body for now
-            // — the "copy timeline" / "copy tests" flavors aren't a
-            // documented product, and Body is what a user hitting
-            // copy on them most likely wants.
-            _ => app.http_copy_response_body(),
+            crate::request_pane::ResponseTab::Body => app.http_copy_response_body(),
+            crate::request_pane::ResponseTab::Headers => app.http_copy_response_headers(),
+            crate::request_pane::ResponseTab::Timeline => app.http_copy_response_timeline(),
+            crate::request_pane::ResponseTab::Tests => app.http_copy_response_tests(),
         }
         return;
     }

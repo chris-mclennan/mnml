@@ -5835,6 +5835,24 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.http_copy_response_headers(),
         },
+        // R12 vscode-mouse SEV-2 + SEV-3 2026-08-23 — per-tab copy
+        // commands so the Response `copy` chip on Timeline/Tests
+        // no longer silently copies Body, and so the sub-tab
+        // right-click menus can offer a Copy affordance.
+        Command {
+            id: "http.copy_response_timeline",
+            title: "HTTP: copy the response timeline (wait / receive / total)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_copy_response_timeline(),
+        },
+        Command {
+            id: "http.copy_response_tests",
+            title: "HTTP: copy the response assertions summary",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_copy_response_tests(),
+        },
         Command {
             id: "cloud_agents.view_compact",
             title: "Cloud Agents: compact row density",
