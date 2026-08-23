@@ -112,8 +112,33 @@ impl App {
             self.now_playing_marquee_offset = 0;
             return;
         }
-        // Re-compose the same label the statusline builds so
-        // "changed?" tracks the same string the user sees.
+        // Cheap change-detection first: source + track + detail
+        // is a superset of what composes `clean`, so a hash-equal
+        // triple can't yield a different composed label. Only
+        // rebuild the composed string when one of the inputs
+        // actually differs — reviewer catch on 894bd231 (avoids
+        // per-tick alloc on the hot path when the track hasn't
+        // changed).
+        let np_key = format!("{}\x1f{}\x1f{}", np.source, np.detail, np.track);
+        if np_key != self.now_playing_marquee_prev_text {
+            self.now_playing_marquee_prev_text = np_key;
+            self.now_playing_marquee_offset = 0;
+            self.now_playing_marquee_last_tick = None;
+            return;
+        }
+        // Same track as last tick — pace the offset off the
+        // 300ms wall-clock, no string work.
+        let now = std::time::Instant::now();
+        let due = match self.now_playing_marquee_last_tick {
+            Some(t) => now.duration_since(t) >= std::time::Duration::from_millis(300),
+            None => true,
+        };
+        if !due {
+            return;
+        }
+        // Due — now we DO need `clean` for the loop-len math.
+        // Rebuild + skip when the label fits in the 28-char
+        // window (nothing to scroll).
         let mixr_is_source = np.source.eq_ignore_ascii_case("mixr");
         let raw = if mixr_is_source || np.detail.is_empty() {
             np.track.clone()
@@ -121,15 +146,6 @@ impl App {
             format!("{} - {}", np.detail, np.track)
         };
         let clean = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        if clean != self.now_playing_marquee_prev_text {
-            self.now_playing_marquee_prev_text = clean.clone();
-            self.now_playing_marquee_offset = 0;
-            self.now_playing_marquee_last_tick = None;
-            return;
-        }
-        // Only scroll when the label overflows the 28-char
-        // window (matches the truncate threshold in the
-        // statusline).
         if clean.chars().count() <= 28 {
             self.now_playing_marquee_offset = 0;
             return;
@@ -138,14 +154,7 @@ impl App {
         // shows a visual break instead of the tail-of-line
         // colliding with head-of-line.
         let loop_len = clean.chars().count() + 3;
-        let now = std::time::Instant::now();
-        let due = match self.now_playing_marquee_last_tick {
-            Some(t) => now.duration_since(t) >= std::time::Duration::from_millis(300),
-            None => true,
-        };
-        if due {
-            self.now_playing_marquee_offset = (self.now_playing_marquee_offset + 1) % loop_len;
-            self.now_playing_marquee_last_tick = Some(now);
-        }
+        self.now_playing_marquee_offset = (self.now_playing_marquee_offset + 1) % loop_len;
+        self.now_playing_marquee_last_tick = Some(now);
     }
 }

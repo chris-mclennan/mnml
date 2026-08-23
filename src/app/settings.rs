@@ -471,6 +471,14 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         cfg.ui.tree_preview_on_arrow,
         d.ui.tree_preview_on_arrow,
     ));
+    // #1151 (2026-08-23) — user request, ship Settings row
+    // with the config knob per house convention.
+    out.push(bool_row(
+        "ui.now_playing_marquee",
+        "Marquee/autoscroll now-playing track label",
+        cfg.ui.now_playing_marquee,
+        d.ui.now_playing_marquee,
+    ));
 
     // Picker position — center vs top.
     let picker_idx = if cfg.ui.picker_position == "top" {
@@ -916,6 +924,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.always_show_fold_arrows" => set_bool(&mut cfg.ui.always_show_fold_arrows, opt_idx),
         "ui.auto_md_preview" => set_bool(&mut cfg.ui.auto_md_preview, opt_idx),
         "ui.tree_preview_on_arrow" => set_bool(&mut cfg.ui.tree_preview_on_arrow, opt_idx),
+        "ui.now_playing_marquee" => set_bool(&mut cfg.ui.now_playing_marquee, opt_idx),
         "ui.picker_position" => {
             let new = if opt_idx == 1 { "top" } else { "center" };
             let changed = cfg.ui.picker_position != new;
@@ -1196,6 +1205,9 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             "tree_preview_on_arrow",
             b(cfg.ui.tree_preview_on_arrow),
         )],
+        "ui.now_playing_marquee" => {
+            vec![("ui", "now_playing_marquee", b(cfg.ui.now_playing_marquee))]
+        }
         // ── ui (string) ──
         "ui.picker_position" => vec![("ui", "picker_position", q(&cfg.ui.picker_position))],
         "ui.now_playing_source" => {
