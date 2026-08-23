@@ -67,6 +67,38 @@ pub fn draw(
             height: area.height - 1,
         };
     }
+    // #1133 (2026-08-22) — per-pane identity strip. A 1-col accent
+    // bar painted on the left edge of the pty body, colored by the
+    // owning integration's brand. Same idea as the claude-usage
+    // view's account gutter — glanceable "which pane belongs to
+    // which tool" without reading the tab label. Only drawn for
+    // Pty panes with an `integration_id` (Claude Code, Codex, mixr,
+    // integration-launched tasks); bare shells skip it so a
+    // terminal pane isn't visually claimed by anything.
+    let accent = accent_color_for_pty(app, pane_id);
+    if let Some(color) = accent
+        && grid_area.width >= 2
+    {
+        let bar = Rect {
+            x: grid_area.x,
+            y: grid_area.y,
+            width: 1,
+            height: grid_area.height,
+        };
+        let buf = frame.buffer_mut();
+        let bar_style = Style::default().fg(color).bg(theme::cur().bg_dark);
+        for r in 0..bar.height {
+            let cell = &mut buf[(bar.x, bar.y + r)];
+            cell.set_symbol("▌");
+            cell.set_style(bar_style);
+        }
+        grid_area = Rect {
+            x: grid_area.x + 1,
+            y: grid_area.y,
+            width: grid_area.width - 1,
+            height: grid_area.height,
+        };
+    }
     let area = grid_area;
     let Some(Pane::Pty(session)) = app.panes.get_mut(pane_id) else {
         return None;
@@ -179,6 +211,25 @@ pub fn draw(
         return Some((cx, cy));
     }
     None
+}
+
+/// #1133 helper — pick the brand color for a Pty pane's identity
+/// strip. Built-in ids (`claude_code`, `codex`) get the hardcoded
+/// brand override; other ids consult the loaded integration
+/// manifest's `chip.color`. Panes with no integration_id (bare
+/// shells / `:term`) return `None` so the accent bar is skipped.
+fn accent_color_for_pty(app: &App, pane_id: PaneId) -> Option<Color> {
+    let id = match app.panes.get(pane_id)? {
+        Pane::Pty(s) => s.profile.integration_id.as_deref()?,
+        _ => return None,
+    };
+    if let Some(c) = theme::brand_color_for_builtin(id) {
+        return Some(c);
+    }
+    let t = theme::cur();
+    let manifest = app.integration_manifests.iter().find(|m| m.id == id)?;
+    let chip = manifest.chip.as_ref()?;
+    Some(theme::color_from_slot(&chip.color, &t))
 }
 
 /// Paint the pty-session tab strip into `strip` (1 row). Lists every
