@@ -3683,15 +3683,43 @@ fn draw_response(
                     // Max-Age, Secure, HttpOnly, SameSite are the
                     // meaningful ones — everything else just falls
                     // through as a bare "; attr" chip).
-                    let cookies: Vec<parse_set_cookie::ParsedCookie> = r
+                    let all_cookies: Vec<parse_set_cookie::ParsedCookie> = r
                         .headers
                         .iter()
                         .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
                         .map(|(_, v)| parse_set_cookie::parse(v))
                         .collect();
-                    if cookies.is_empty() {
+                    // Sibling-parity with the Headers tab's `/` filter
+                    // (task #1171). Match against name / value /
+                    // attribute names + values, case-insensitive.
+                    let cookies: Vec<&parse_set_cookie::ParsedCookie> = if q_lower.is_empty() {
+                        all_cookies.iter().collect()
+                    } else {
+                        all_cookies
+                            .iter()
+                            .filter(|c| {
+                                c.name.to_lowercase().contains(&q_lower)
+                                    || c.value.to_lowercase().contains(&q_lower)
+                                    || c.attrs.iter().any(|a| {
+                                        a.name.to_lowercase().contains(&q_lower)
+                                            || a.value.to_lowercase().contains(&q_lower)
+                                    })
+                            })
+                            .collect()
+                    };
+                    if all_cookies.is_empty() {
                         rows.push(plain(
                             "  (no cookies set by this response)".to_string(),
+                            Style::default().fg(t.comment).bg(t.bg_dark),
+                        ));
+                        return;
+                    }
+                    if cookies.is_empty() {
+                        rows.push(plain(
+                            format!(
+                                "  (no cookies match /{q_lower} — {} in response)",
+                                all_cookies.len()
+                            ),
                             Style::default().fg(t.comment).bg(t.bg_dark),
                         ));
                         return;
@@ -4178,7 +4206,7 @@ pub mod parse_set_cookie {
         let mut parts = raw.split(';');
         let first = parts.next().unwrap_or("").trim();
         let (name, value) = match first.split_once('=') {
-            Some((n, v)) => (n.trim().to_string(), v.trim().to_string()),
+            Some((n, v)) => (n.trim().to_string(), unquote(v.trim()).to_string()),
             None => (first.to_string(), String::new()),
         };
         let attrs = parts
@@ -4198,6 +4226,19 @@ pub mod parse_set_cookie {
             .filter(|a| !a.name.is_empty())
             .collect();
         ParsedCookie { name, value, attrs }
+    }
+
+    /// Strip a matching pair of DQUOTEs from `s`, if any. RFC 6265
+    /// permits `name="value"`; a strict server will emit the quotes
+    /// literally and the raw display shows `"abc"`. Non-matching
+    /// pairs (a lone leading or trailing quote) pass through
+    /// unchanged. Task #1171 (2026-08-23) polish follow-up.
+    fn unquote(s: &str) -> &str {
+        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+            &s[1..s.len() - 1]
+        } else {
+            s
+        }
     }
 
     #[cfg(test)]
@@ -4250,6 +4291,17 @@ pub mod parse_set_cookie {
             assert_eq!(c.name, "token");
             assert_eq!(c.value, "abc.def=");
             assert_eq!(c.attrs.len(), 1);
+        }
+
+        #[test]
+        fn strips_dquote_wrapper_from_value() {
+            let c = parse("q=\"abc 123\"; Path=/");
+            assert_eq!(c.name, "q");
+            assert_eq!(c.value, "abc 123");
+            let lone_leading = parse("q=\"unbalanced");
+            assert_eq!(lone_leading.value, "\"unbalanced");
+            let lone_trailing = parse("q=unbalanced\"");
+            assert_eq!(lone_trailing.value, "unbalanced\"");
         }
     }
 }
