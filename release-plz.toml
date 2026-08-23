@@ -1,0 +1,15 @@
+# release-plz configuration
+# https://release-plz.dev/docs/config
+
+[workspace]
+# `mnml-libghostty-vt-sys`'s build.rs clones the ghostty source into
+# target/…/ghostty-src during its verify step. Those files live under
+# target/ (gitignored on-disk) but `cargo publish`'s cleanliness check
+# still flags them as uncommitted from the repo root, producing:
+#
+#   error: N files in the working directory contain changes that were
+#          not yet committed into git
+#
+# release-plz's own git checks stay authoritative; skip cargo's
+# redundant check with allow_dirty.
+publish_allow_dirty = true
