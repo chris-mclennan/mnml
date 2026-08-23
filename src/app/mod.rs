@@ -9878,7 +9878,13 @@ impl App {
     pub fn clear_find_and_deselect(&mut self) {
         if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
             b.find = None;
-            b.editor.extra_cursors.clear();
+            // R10 nvchad-user SEV-1 (2026-08-22) — must clear BOTH
+            // extra_cursors and extra_anchors together. Clearing
+            // only cursors left the two vectors out of sync, then
+            // the very next multi-cursor motion (e.g. `l` after
+            // Esc) tripped `replace_extra_positions`'s
+            // debug_assert_eq!(len, anchors.len()) and panicked.
+            b.editor.clear_extra_cursors();
         }
     }
 

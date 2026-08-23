@@ -2698,6 +2698,12 @@ mod layout_tests {
         // Previously any of these could persist across a section
         // switch, silently capturing keystrokes intended for the
         // now-active panel (or a picker / editor).
+        //
+        // #1146 (R10 vscode-keyboard F6, 2026-08-22) added a
+        // deliberate exception: the DESTINATION section's own
+        // filter flag is re-armed after the reset so `/` on the
+        // new panel lands in its filter without an extra click.
+        // Every *other* section's flag still clears.
         let (_d, mut app) = app_with_files();
         app.http_panel_filter_focused = true;
         app.todos_panel_filter_focused = true;
@@ -2710,7 +2716,8 @@ mod layout_tests {
         app.git_palette_filter_focused = true;
         app.set_activity_section(crate::app::ActivitySection::Todos);
         assert!(!app.http_panel_filter_focused);
-        assert!(!app.todos_panel_filter_focused);
+        // Todos = destination, re-armed by the F6 auto-arm.
+        assert!(app.todos_panel_filter_focused);
         assert!(!app.notes_panel_filter_focused);
         assert!(!app.sessions_panel_filter_focused);
         assert!(!app.agents_panel_filter_focused);

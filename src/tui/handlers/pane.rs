@@ -1471,14 +1471,14 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         c.selected = 0;
                     }
                 } else {
-                    // keyboard-round-11 SEV-2 F1 2026-07-14 — was
-                    // `focus_tree()`, which mirrored the pre-round-9
-                    // Problems-Esc bug: focus flipped to TREE but the
-                    // Cheatsheet body stayed in the editor area with
-                    // no visible action. `focus_pane_or_tree` returns
-                    // to the last editor pane when one exists, tree
-                    // as fallback — matching the Problems fix.
-                    app.focus_pane_or_tree();
+                    // R10 nvchad-user SEV-3 (2026-08-22) — was
+                    // `app.focus_pane_or_tree()`, which just shifted
+                    // focus off the Cheatsheet but left the pane
+                    // open. NvChad's `<leader>?` cheatsheet is a
+                    // floating window that Esc dismisses; a
+                    // Cheatsheet pane with no undo state is safe to
+                    // close on Esc. `<leader>?` re-opens it.
+                    app.close_pane(i);
                 }
             }
             _ => {}

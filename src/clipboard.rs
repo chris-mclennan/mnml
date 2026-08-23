@@ -31,6 +31,13 @@ pub struct Clipboard {
     /// `EditOp::SetRegisterHint` which the vim handler emits before
     /// yank/paste/delete. Consumed (reset) on the first set/text call.
     pending_register: Option<char>,
+    /// True once the unnamed register has been written by an in-mnml
+    /// op (yank / delete / set / push_delete). Before that, `p` may
+    /// fall back to the OS clipboard (cold-start paste-from-browser).
+    /// After that, mnml's register is authoritative — an explicit `Y`
+    /// on an empty line yields empty, not stale browser text. R10
+    /// nvchad-user SEV-3 (2026-08-22).
+    register_owned: bool,
 }
 
 impl Default for Clipboard {
@@ -48,6 +55,7 @@ impl Clipboard {
             sys: arboard::Clipboard::new().ok(),
             named: HashMap::new(),
             pending_register: None,
+            register_owned: false,
         }
     }
 
@@ -61,6 +69,7 @@ impl Clipboard {
             sys: None,
             named: HashMap::new(),
             pending_register: None,
+            register_owned: false,
         }
     }
 
@@ -130,6 +139,7 @@ impl Clipboard {
                 self.register = text;
                 self.register_linewise = linewise;
                 self.effective_linewise = linewise;
+                self.register_owned = true;
                 if let Some(sys) = self.sys.as_mut() {
                     let _ = sys.set_text(self.register.clone());
                 }
@@ -190,11 +200,32 @@ impl Clipboard {
                 self.effective_linewise = false;
                 String::new()
             }
-            // '+' and None ⇒ system / unnamed
-            _ => {
+            // '+' — explicit system-clipboard read. Always defers
+            // to the OS, ignoring the in-mnml register.
+            Some('+') => {
                 if let Some(sys) = self.sys.as_mut()
                     && let Ok(t) = sys.get_text()
-                    && t != self.register
+                {
+                    self.effective_linewise = false;
+                    return t;
+                }
+                self.effective_linewise = false;
+                String::new()
+            }
+            // None ⇒ unnamed. Two paths:
+            //   (a) `register_owned == false` — no in-mnml op has
+            //       written the register yet. Cold-start paste-
+            //       from-browser: fall back to the OS clipboard.
+            //   (b) `register_owned == true` — mnml owns the
+            //       register. Return it as-is. R10 nvchad-user
+            //       SEV-3 (2026-08-22) — was: "OS clipboard wins
+            //       when it differs", which silently pasted stale
+            //       browser text after an explicit `Y` on an
+            //       empty line cleared the register to "".
+            _ => {
+                if !self.register_owned
+                    && let Some(sys) = self.sys.as_mut()
+                    && let Ok(t) = sys.get_text()
                 {
                     self.effective_linewise = false;
                     return t;

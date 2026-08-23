@@ -460,6 +460,16 @@ pub fn draw_pane(
                 Some(bl) => format!("{} ", bl.label(num_w)),
                 None => format!("{} ", " ".repeat(num_w)),
             }
+        } else if !nums_on {
+            // R10 nvchad-user SEV-1 (2026-08-22) — was:
+            // `format!("{:>num_w$} ", line_no + 1)` unconditionally.
+            // With num_w=0, the `>0` width still emits the digit
+            // (`"1 "`, `"2 "`, …) so `[ui] line_numbers = false` /
+            // <leader>n only trimmed the leading padding — the
+            // gutter shrank but the digits stayed visible. Empty
+            // string here so the whole column collapses to just
+            // the trailing sign column + space (managed elsewhere).
+            String::new()
         } else if relnum && !is_cur {
             format!("{:>num_w$} ", line_no.abs_diff(cur_row))
         } else {

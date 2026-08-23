@@ -2830,13 +2830,22 @@ impl VimInputHandler {
             // nvchad-parity audit 2026-08-22 (#1142) called out this
             // divergence as a daily-hit break. Ctrl+I keeps
             // jumplist-forward; bare Tab now walks buffers.
-            KeyCode::Tab if !ctrl => {
+            // R10 nvchad-user SEV-2 (2026-08-22): some terminals send
+            // Shift+Tab as `KeyCode::Tab` + SHIFT modifier rather than
+            // `KeyCode::BackTab`. The bare `Tab if !ctrl` arm below
+            // would then swallow it and route to `buffer.next` — the
+            // opposite of what the user pressed. Guard SHIFT first.
+            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("buffer.next".into()))
+                InputResult::App(AppCommand::RunCommand("buffer.prev".into()))
             }
             KeyCode::Tab if ctrl => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("nav.forward".into()))
+            }
+            KeyCode::Tab => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("buffer.next".into()))
             }
             KeyCode::BackTab => {
                 self.reset_pending();
