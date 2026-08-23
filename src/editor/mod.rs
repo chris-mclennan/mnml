@@ -3006,8 +3006,24 @@ impl Editor {
 
             // ── text mutation ──
             InsertChar(c) => {
-                self.delete_selection_if_any(out);
-                self.checkpoint_insert_run();
+                // R10 vscode-keyboard F2 (task #1148, 2026-08-23) —
+                // when there's a selection to delete, `delete_selection_if_any`
+                // already pushes a pre-state checkpoint. Following it
+                // with a second `checkpoint_insert_run` created TWO
+                // undo entries per keystroke — one Ctrl+Z left the
+                // buffer in a between-state (selection gone but nothing
+                // typed) that never existed as a user edit. VS Code
+                // coalesces; matching that: when we JUST deleted, ride
+                // the delete's checkpoint and start the insert-run
+                // already-armed so this char and follow-on chars
+                // coalesce into that one undo entry.
+                let deleted = self.delete_selection_if_any(out);
+                if deleted {
+                    self.redo.clear();
+                    self.in_insert_run = true;
+                } else {
+                    self.checkpoint_insert_run();
+                }
                 if !self.extra_cursors.is_empty() {
                     // Multi-cursor insert: insert `c` at every cursor and
                     // advance each by char_len. Auto-pair is skipped here
@@ -3072,8 +3088,14 @@ impl Editor {
                 if s.is_empty() {
                     return;
                 }
-                self.delete_selection_if_any(out);
-                self.checkpoint();
+                // See InsertChar above (task #1148). Same coalescing
+                // fix for the paste / snippet / multi-char route.
+                let deleted = self.delete_selection_if_any(out);
+                if deleted {
+                    self.redo.clear();
+                } else {
+                    self.checkpoint();
+                }
                 if !self.extra_cursors.is_empty() {
                     self.multi_insert_str(&s);
                     out.buffer_changed = true;
@@ -3084,8 +3106,14 @@ impl Editor {
                 out.buffer_changed = true;
             }
             InsertNewline => {
-                self.delete_selection_if_any(out);
-                self.checkpoint();
+                // Task #1148 — same delete-selection-then-insert
+                // coalescing fix as InsertChar / InsertStr above.
+                let deleted = self.delete_selection_if_any(out);
+                if deleted {
+                    self.redo.clear();
+                } else {
+                    self.checkpoint();
+                }
                 if !self.extra_cursors.is_empty() {
                     // Multi-cursor newline — insert `\n` at every cursor.
                     // Auto-indent is skipped (per-cursor indent introspection
@@ -5385,6 +5413,57 @@ mod tests {
         e.apply(EditOp::Paste, 10, &mut c);
         assert_eq!(e.text(), "REPLACED world");
         // ONE undo restores everything.
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "hello world");
+    }
+
+    /// R10 vscode-keyboard F2 (task #1148, 2026-08-23) — multi-cursor
+    /// type-over-selection was TWO undo entries (one for delete, one
+    /// for insert), so a single Ctrl+Z left the buffer in a between-
+    /// state that never existed as a user edit. Fix rides the delete's
+    /// checkpoint so both fold into ONE undo entry. Same coalescing
+    /// pattern the sibling `paste_over_selection_undoes_atomically`
+    /// covers for Paste; this locks it in for the multi-cursor type
+    /// path (InsertChar) too.
+    #[test]
+    fn multi_cursor_type_over_selection_undoes_atomically() {
+        let (mut e, mut c) = ed("foo bar foo baz");
+        e.cursor = 1;
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+        assert_eq!(e.extra_cursors.len(), 1);
+        e.apply(EditOp::InsertChar('X'), 10, &mut c);
+        assert_eq!(e.text(), "X bar X baz");
+        // ONE undo restores the original buffer. Pre-fix: buffer was
+        // " bar  baz" (both foos deleted, no X) after one undo, and
+        // required a second Ctrl+Z to restore.
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "foo bar foo baz");
+    }
+
+    /// R10 vscode-keyboard F2 companion — the same coalescing must
+    /// hold for the plain single-cursor case (select-and-type).
+    #[test]
+    fn single_cursor_type_over_selection_undoes_atomically() {
+        let (mut e, mut c) = ed("hello world");
+        e.cursor = 0;
+        e.anchor = Some(5);
+        e.apply(EditOp::InsertChar('Y'), 10, &mut c);
+        assert_eq!(e.text(), "Y world");
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "hello world");
+    }
+
+    /// R10 vscode-keyboard F2 companion — InsertStr (paste of a
+    /// literal string, or a snippet expansion) over a selection
+    /// must also coalesce into ONE undo entry.
+    #[test]
+    fn insert_str_over_selection_undoes_atomically() {
+        let (mut e, mut c) = ed("hello world");
+        e.cursor = 0;
+        e.anchor = Some(5);
+        e.apply(EditOp::InsertStr("HELLO".to_string()), 10, &mut c);
+        assert_eq!(e.text(), "HELLO world");
         e.apply(EditOp::Undo, 10, &mut c);
         assert_eq!(e.text(), "hello world");
     }
