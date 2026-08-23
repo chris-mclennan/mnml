@@ -4580,6 +4580,21 @@ pub struct App {
     /// loop only, so no `osascript` subprocess spawns under headless /
     /// e2e. `tick` drains it into `now_playing`.
     pub now_playing_rx: Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
+    /// #1151 (2026-08-23) — marquee/autoscroll offset for the
+    /// now-playing chip label. Advanced in `tick()` when
+    /// `[ui] now_playing_marquee` is on and the label
+    /// overflows the 28-char window. Reset to 0 whenever the
+    /// track text changes. Only carries state between ticks
+    /// — the actual slice happens in `ui::statusline`.
+    pub now_playing_marquee_offset: usize,
+    /// Wall-clock timestamp of the last marquee offset
+    /// advance. Used to pace the scroll at ~3 chars/sec
+    /// (300ms per char) regardless of poll cadence.
+    pub now_playing_marquee_last_tick: Option<std::time::Instant>,
+    /// Track text the offset was computed against; when the
+    /// poller swaps in a different track, we reset the offset
+    /// so the new label starts from the beginning.
+    pub now_playing_marquee_prev_text: String,
     /// Latest Sonos snapshot — rooms, transport, volume — refreshed off
     /// the render path by the `sonos` worker thread. Default (no
     /// players) until the first poll lands; the chip hides itself in
@@ -6134,6 +6149,9 @@ impl App {
             clock_show_utc: false,
             now_playing: None,
             now_playing_rx: None,
+            now_playing_marquee_offset: 0,
+            now_playing_marquee_last_tick: None,
+            now_playing_marquee_prev_text: String::new(),
             sonos: crate::sonos::Snapshot::default(),
             sonos_tx: None,
             sonos_rx: None,

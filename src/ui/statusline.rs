@@ -1515,10 +1515,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             format!("{} - {}", np.detail, np.track)
         };
         let clean = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        // Truncate at 28 chars (+ 1 for the `…`) — bounded so a long
-        // title + artist can't push the clock + LSP chips off the
-        // strip.
-        let shown: String = if clean.chars().count() > 28 {
+        // Truncate at 28 chars — bounded so a long title + artist
+        // can't push the clock + LSP chips off the strip.
+        //
+        // #1151 (2026-08-23) — when `[ui] now_playing_marquee` is
+        // on and the label overflows, slice a scrolling window
+        // using `app.now_playing_marquee_offset` (advanced by
+        // `App::tick_now_playing_marquee` at ~3.3 chars/sec).
+        // The loop pads with 3 spaces of gap so the wrap reads as
+        // a visible break instead of head-of-line colliding with
+        // tail-of-line. When the knob is off, keep the hard-
+        // truncate + `…` (backwards-compatible default).
+        let overflows = clean.chars().count() > 28;
+        let shown: String = if overflows && app.config.ui.now_playing_marquee {
+            let gap = "   ";
+            let padded_chars: Vec<char> = clean.chars().chain(gap.chars()).collect();
+            let loop_len = padded_chars.len();
+            let off = app.now_playing_marquee_offset % loop_len;
+            (0..28)
+                .map(|i| padded_chars[(off + i) % loop_len])
+                .collect()
+        } else if overflows {
             clean.chars().take(28).chain(std::iter::once('…')).collect()
         } else {
             clean

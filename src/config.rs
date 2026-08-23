@@ -980,6 +980,18 @@ pub struct UiConfig {
     /// now_playing_source = "mixr"
     /// ```
     pub now_playing_source: String,
+    /// Marquee/autoscroll the now-playing track label on the
+    /// statusline when it exceeds the 28-char window. Off by
+    /// default — a hard truncate at 28 chars + `…` reads
+    /// still; the autoscroll is opt-in for users who want to
+    /// see full titles without hovering the tooltip.
+    /// User request 2026-08-22 (see [[user-request-log]]).
+    ///
+    /// ```toml
+    /// [ui]
+    /// now_playing_marquee = true
+    /// ```
+    pub now_playing_marquee: bool,
     /// Preferred default music app — what the statusline `♪` chip
     /// activates on click when nothing is currently playing. When a
     /// source IS playing, the chip activates that source's app
@@ -1513,6 +1525,7 @@ impl Default for Config {
                 // = "macos"` or `= "auto"`. mixr is a cheap file
                 // read — no prompt fires.
                 now_playing_source: "mixr".to_string(),
+                now_playing_marquee: false,
                 preferred_music_app: "mixr".to_string(),
                 mixr_auto_play_on_open: default_mixr_auto_play(),
                 projects_dir: String::new(),
@@ -1993,6 +2006,9 @@ struct RawUi {
     /// See [`UiConfig::now_playing_source`].
     #[serde(default)]
     now_playing_source: Option<String>,
+    /// See [`UiConfig::now_playing_marquee`].
+    #[serde(default)]
+    now_playing_marquee: Option<bool>,
     /// Preferred default music app — `"mixr"` / `"music"` / `"spotify"`.
     /// See [`UiConfig::preferred_music_app`].
     #[serde(default)]
@@ -2730,6 +2746,9 @@ impl Config {
             if matches!(normalized.as_str(), "auto" | "mixr" | "macos") {
                 self.ui.now_playing_source = normalized;
             }
+        }
+        if let Some(b) = raw.ui.now_playing_marquee {
+            self.ui.now_playing_marquee = b;
         }
         if let Some(s) = raw.ui.preferred_music_app {
             let normalized = s.trim().to_ascii_lowercase();

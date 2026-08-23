@@ -80,6 +80,7 @@ impl App {
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();
+        self.tick_now_playing_marquee();
         self.drain_sonos();
         self.drain_http_jobs();
         self.drain_sse_jobs();

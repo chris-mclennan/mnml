@@ -90,4 +90,62 @@ impl App {
         }
         new
     }
+
+    /// #1151 (2026-08-23) — marquee/autoscroll for the now-
+    /// playing track label. When `[ui] now_playing_marquee`
+    /// is on and the current label overflows the 28-char
+    /// display window, advance the offset by 1 char every
+    /// 300ms (~3.3 chars/sec — comfortable read speed). The
+    /// statusline chip does the actual slice; this method
+    /// just paces the offset. No-op when the knob is off,
+    /// nothing is playing, or the label fits.
+    pub(super) fn tick_now_playing_marquee(&mut self) {
+        if !self.config.ui.now_playing_marquee {
+            self.now_playing_marquee_offset = 0;
+            return;
+        }
+        let Some(np) = self.now_playing.as_ref() else {
+            self.now_playing_marquee_offset = 0;
+            return;
+        };
+        if np.track.is_empty() {
+            self.now_playing_marquee_offset = 0;
+            return;
+        }
+        // Re-compose the same label the statusline builds so
+        // "changed?" tracks the same string the user sees.
+        let mixr_is_source = np.source.eq_ignore_ascii_case("mixr");
+        let raw = if mixr_is_source || np.detail.is_empty() {
+            np.track.clone()
+        } else {
+            format!("{} - {}", np.detail, np.track)
+        };
+        let clean = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        if clean != self.now_playing_marquee_prev_text {
+            self.now_playing_marquee_prev_text = clean.clone();
+            self.now_playing_marquee_offset = 0;
+            self.now_playing_marquee_last_tick = None;
+            return;
+        }
+        // Only scroll when the label overflows the 28-char
+        // window (matches the truncate threshold in the
+        // statusline).
+        if clean.chars().count() <= 28 {
+            self.now_playing_marquee_offset = 0;
+            return;
+        }
+        // Loop length = text_chars + 3-char gap so the wrap
+        // shows a visual break instead of the tail-of-line
+        // colliding with head-of-line.
+        let loop_len = clean.chars().count() + 3;
+        let now = std::time::Instant::now();
+        let due = match self.now_playing_marquee_last_tick {
+            Some(t) => now.duration_since(t) >= std::time::Duration::from_millis(300),
+            None => true,
+        };
+        if due {
+            self.now_playing_marquee_offset = (self.now_playing_marquee_offset + 1) % loop_len;
+            self.now_playing_marquee_last_tick = Some(now);
+        }
+    }
 }
