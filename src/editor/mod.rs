@@ -1955,6 +1955,10 @@ impl Editor {
             None
         };
         let keep_goal_col = op_preserves_goal_col(&op);
+        // Skip changelist push for Undo/Redo — vim's `:changes` only
+        // records *user edits*, not history hops through them. Move
+        // this flag out here since `op` is consumed by `apply_one`.
+        let is_undo_or_redo = matches!(op, EditOp::Undo | EditOp::Redo);
         // Anything that isn't a typed character ends the coalescing undo run, so
         // a motion between two typing bursts splits them into separate undo steps.
         if !op_is_insert_char(&op) {
@@ -1964,12 +1968,12 @@ impl Editor {
         self.apply_one(op, viewport_rows, clip, &mut out);
         out.cursor_moved |= self.cursor != before_cursor;
         out.buffer_changed |= self.text.len() != before_len;
-        // Changelist bookkeeping for vim's `:changes`. We record on
-        // length-change rather than "op was a mutation" so a same-length
-        // rewrite (e.g. `TransformSelectionCase`) can still register —
-        // there we fall through to the else branch below on buffer_changed
-        // stays false, which matches vim: same-len ops don't push either.
-        if self.text.len() != before_len {
+        // Changelist bookkeeping for vim's `:changes`. Push on any real
+        // mutation — including same-length rewrites like case-toggle
+        // (`~`), `r<char>`, and `:s/foo/bar/` where old/new have equal
+        // byte length. Undo/Redo hops are excluded: vim moves the
+        // changelist index through them without mutating list contents.
+        if out.buffer_changed && !is_undo_or_redo {
             self.record_change();
         }
         // Goal column tracks horizontal intent; vertical motions deliberately keep it.
@@ -5475,6 +5479,39 @@ mod tests {
         assert_eq!(e.change_list.len(), 2);
         assert_eq!(e.change_list[0], (0, 2));
         assert_eq!(e.change_list[1].0, 2);
+    }
+
+    /// Reviewer follow-up on the initial `:changes` commit — the
+    /// `text.len() != before_len` gate silently dropped same-length
+    /// mutations (`r<c>` at cursor, `:s/foo/bar/` where old/new are
+    /// equal-length). Fix uses `out.buffer_changed` which every
+    /// mutating arm sets independently of length.
+    #[test]
+    fn change_list_records_same_length_mutations() {
+        let (mut e, mut c) = ed("abc");
+        assert!(e.change_list.is_empty());
+        // `r<X>` at cursor — same byte length, mutation.
+        e.apply(EditOp::ReplaceCharAtCursor('X'), 10, &mut c);
+        assert_eq!(e.text(), "Xbc");
+        assert_eq!(e.change_list, vec![(0, 0)]);
+    }
+
+    /// Reviewer follow-up — undo/redo hops must not push new entries.
+    /// Vim moves the changelist *index* through them without mutating
+    /// contents. The change_list should be identical before and after
+    /// an undo/redo cycle.
+    #[test]
+    fn change_list_ignores_undo_and_redo() {
+        let (mut e, mut c) = ed("abc");
+        e.apply(EditOp::InsertChar('X'), 10, &mut c);
+        let after_edit = e.change_list.clone();
+        assert_eq!(after_edit.len(), 1);
+        // Undo — changelist unchanged.
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.change_list, after_edit, "Undo grew changelist");
+        // Redo — changelist unchanged.
+        e.apply(EditOp::Redo, 10, &mut c);
+        assert_eq!(e.change_list, after_edit, "Redo grew changelist");
     }
 
     #[test]
