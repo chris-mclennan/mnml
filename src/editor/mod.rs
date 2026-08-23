@@ -4187,7 +4187,15 @@ impl Editor {
                     let insert_at = if eol < self.text.len() { eol + 1 } else { eol };
                     let mut payload = s.clone();
                     if eol >= self.text.len() && !self.text.is_empty() {
-                        payload = format!("\n{}", s.trim_end_matches('\n'));
+                        // R12 nvchad reviewer-round-3 2026-08-23 —
+                        // was `trim_end_matches('\n')` which stripped
+                        // ALL trailing newlines. That silently dropped
+                        // trailing blank lines from a linewise yank
+                        // (e.g. `foo\n\n` payload from a `Vjy` where
+                        // the last selected line is blank). Strip
+                        // exactly one — the yank's own terminator.
+                        let trimmed = s.strip_suffix('\n').unwrap_or(&s);
+                        payload = format!("\n{trimmed}");
                     }
                     self.text.insert_str(insert_at, &payload);
                     self.cursor = if eol < self.text.len() {
@@ -4251,7 +4259,15 @@ impl Editor {
                     let insert_at = if eol < self.text.len() { eol + 1 } else { eol };
                     let mut payload = s.clone();
                     if eol >= self.text.len() && !self.text.is_empty() {
-                        payload = format!("\n{}", s.trim_end_matches('\n'));
+                        // R12 nvchad reviewer-round-3 2026-08-23 —
+                        // was `trim_end_matches('\n')` which stripped
+                        // ALL trailing newlines. That silently dropped
+                        // trailing blank lines from a linewise yank
+                        // (e.g. `foo\n\n` payload from a `Vjy` where
+                        // the last selected line is blank). Strip
+                        // exactly one — the yank's own terminator.
+                        let trimmed = s.strip_suffix('\n').unwrap_or(&s);
+                        payload = format!("\n{trimmed}");
                     }
                     self.text.insert_str(insert_at, &payload);
                     // gp: cursor at END of pasted block (vim convention).
@@ -5697,6 +5713,39 @@ mod tests {
         // own 4-space indent. Line 2 (`bar`) is untouched — outside
         // the selection.
         assert_eq!(e.text(), "    foo\n    \nbar");
+    }
+
+    /// R12 nvchad reviewer-round-3 2026-08-23 — `PasteAfter` at
+    /// end-of-buffer used to `trim_end_matches('\n')` on the yank
+    /// payload, stripping ALL trailing newlines. That silently
+    /// dropped blank trailing lines from a linewise yank (only
+    /// reachable AFTER the `NormalizeLinewiseSelection` fix let
+    /// blank lines get yanked in the first place). Strip only the
+    /// yank's own terminator, not any additional blank lines it
+    /// intentionally carries.
+    ///
+    /// Repro: `foo\n\n` (line 0 = "foo", line 1 = blank). yank
+    /// linewise all lines, then `p` at EOF — expected the blank
+    /// line to survive in the paste. Before the fix, both trailing
+    /// `\n`s were stripped so the paste added only `\nfoo` (no
+    /// blank).
+    #[test]
+    fn paste_after_at_eof_preserves_trailing_blank_line_in_yank() {
+        use crate::clipboard::Clipboard;
+        let mut clip = Clipboard::detached();
+        // Yank a linewise payload that ends in `\n\n` (foo line +
+        // a trailing blank line, terminator included).
+        clip.set_yank("foo\n\n".to_string(), true);
+        // Buffer with NO trailing newline so `eol >= text.len()`
+        // fires and we exercise the EOF branch of PasteAfter.
+        let (mut e, _c) = ed("bar");
+        e.cursor = 0; // on line 0
+        e.apply(PasteAfter, 10, &mut clip);
+        // Expected paste at EOF: leading `\n` (to end line 0),
+        // then the payload with exactly ONE trailing `\n`
+        // stripped (the yank's own terminator) — the blank line
+        // survives. Result: "bar\nfoo\n" (bar, foo, blank).
+        assert_eq!(e.text(), "bar\nfoo\n");
     }
 
     /// Same class, mirror for `<`: outdent a selection that ends on
