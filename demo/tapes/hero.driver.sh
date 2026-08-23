@@ -206,7 +206,7 @@ type "ls src"
 wait_ms 200
 key "enter"
 wait_ms 1200
-type "cat package.json 2>/dev/null || echo hero.demo"
+type "cat package.json"
 wait_ms 200
 key "enter"
 wait_ms 1300
