@@ -900,7 +900,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "find.grep",
             title: "Find in files — grep workspace (rg / git grep) → results pane",
             group: "find",
-            keys: &["ctrl+shift+f"],
+            // R10 nvchad-user SEV-3 (2026-08-22): `<leader>fg` is
+            // the NvChad muscle-memory for telescope live-grep;
+            // bind at the keymap layer so it fires without
+            // whichkey-overlay latency.
+            keys: &["ctrl+shift+f", "space f g"],
             run: |app| app.open_grep_prompt(),
         },
         Command {
@@ -2798,7 +2802,12 @@ fn builtin_commands() -> Vec<Command> {
             id: "picker.buffers",
             title: "Switch buffer…",
             group: "go",
-            keys: &[],
+            // R10 nvchad-user SEV-3 (2026-08-22): `<leader>fb` is a
+            // daily-hit chord in NvChad; whichkey overlay latency
+            // was hiding the chord chain from users typing at
+            // normal cadence. Bind directly at the keymap layer
+            // (same pattern as `space f f` for picker.files).
+            keys: &["space f b"],
             run: |app| app.open_buffer_picker(),
         },
         Command {
