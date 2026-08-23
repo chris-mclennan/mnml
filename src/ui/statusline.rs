@@ -620,19 +620,16 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     (text, color)
 }
 
-/// #1038 — render result for a Claude account chip. `text` is the
-/// fully-formed chip label. `tier_fg` colors the numeric status
-/// portion `[tier_range]` when set; the rest of the chip uses the
-/// caller's base fg on the chip's brand bg. `tier_range` is the
-/// char range covering the % + optional reset suffix (typically
-/// everything after the glyph and any letter prefix, before the
-/// trailing space). When `tier_range` is `None`, the whole chip
-/// gets `tier_fg` — used for the error / never-fetched em-dash
-/// states where there's no distinct status element to color.
+/// #1038 → #1139 — render result for a Claude account chip.
+/// `text` is the fully-formed chip label. Pre-#1139 this also
+/// carried `tier_fg` + `tier_range` so the numeric % could pick up
+/// green/yellow/red on top of the coral brand pill; #1139 dropped
+/// them after the em-dash / error branch was routed through them
+/// and produced an unreadable pink-on-orange chip. If a higher-
+/// contrast tier signal is added later (bold, mini-pill, or
+/// leading dot), it belongs back on this struct.
 struct ClaudeChipResult {
     text: String,
-    tier_fg: ratatui::style::Color,
-    tier_range: Option<(usize, usize)>,
 }
 
 /// Render a single account's usage as a chip. Shared by the
@@ -648,7 +645,7 @@ fn render_single_account_chip(
     mode: &str,
     letter_prefix: &str,
     show_reset: bool,
-    t: &theme::Theme,
+    _t: &theme::Theme,
 ) -> ClaudeChipResult {
     let prefix = if letter_prefix.is_empty() {
         String::new()
@@ -659,16 +656,12 @@ fn render_single_account_chip(
         // R5 keyboard SEV-3 2026-08-08 — differentiate errors from 0%.
         return ClaudeChipResult {
             text: format!(" \u{F1E00} {prefix}—! "),
-            tier_fg: t.red,
-            tier_range: None,
         };
     }
     if u.fetched_at == 0 {
         // Never fetched — no signal yet.
         return ClaudeChipResult {
             text: format!(" \u{F1E00} {prefix}— "),
-            tier_fg: t.comment,
-            tier_range: None,
         };
     }
     // Successful fetch. Render per mode; tier color reflects the
@@ -688,42 +681,15 @@ fn render_single_account_chip(
     } else {
         String::new()
     };
-    let (label, tier_pct) = match mode {
-        "weekly" => (
-            format!(" \u{F1E00} {prefix}{}%{} ", u.weekly_percent, weekly_r),
-            u.weekly_percent,
+    let label = match mode {
+        "weekly" => format!(" \u{F1E00} {prefix}{}%{} ", u.weekly_percent, weekly_r),
+        "both" => format!(
+            " \u{F1E00} {prefix}{}%{} {}%{} ",
+            u.percent, session_r, u.weekly_percent, weekly_r
         ),
-        "both" => (
-            format!(
-                " \u{F1E00} {prefix}{}%{} {}%{} ",
-                u.percent, session_r, u.weekly_percent, weekly_r
-            ),
-            u.percent.max(u.weekly_percent),
-        ),
-        _ => (
-            format!(" \u{F1E00} {prefix}{}%{} ", u.percent, session_r),
-            u.percent,
-        ),
+        _ => format!(" \u{F1E00} {prefix}{}%{} ", u.percent, session_r),
     };
-    // Compute the tier range = span of the numeric status element.
-    // Layout is ` <glyph> [prefix]<numbers> ` — char 0 is the
-    // leading space, char 1 is the glyph, char 2 is the space
-    // after the glyph, chars 3..3+prefix_cols are the letter
-    // prefix, then numbers to the last non-space char.
-    let cols = label.chars().count();
-    let prefix_cols = prefix.chars().count();
-    let numeric_start = 3 + prefix_cols;
-    let numeric_end = cols.saturating_sub(1); // strip trailing space
-    let tier_range = if numeric_end > numeric_start {
-        Some((numeric_start, numeric_end))
-    } else {
-        None
-    };
-    ClaudeChipResult {
-        text: label,
-        tier_fg: tier_color(tier_pct, t),
-        tier_range,
-    }
+    ClaudeChipResult { text: label }
 }
 
 /// #1012 (2026-08-18) — format the time remaining until `resets_at`
@@ -1159,25 +1125,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // fg_range. Two neighbor chips no longer fuse when both hit
         // the same tier — bg differs by chip identity, powerline
         // arrows stay visible.
+        // #1139 (2026-08-22) — tier_fg + tier_range dropped: after
+        // the em-dash branch stopped painting tier_fg on the coral
+        // pill, nothing reads either field. The underline (for the
+        // active-account letter in Ticker mode) is the only local
+        // that survives.
         struct ClaudeRender {
             text: String,
-            tier_fg: Color,
-            tier_range: Option<(usize, usize)>,
             underline: (usize, usize),
         }
         let claude_render: ClaudeRender = match multi_mode {
             crate::config::ClaudeMultiMode::Compact => {
-                let (text, tier_fg) = render_claude_chip_all_accounts(app, &t);
-                // Compact chip is `<glyph> Pe 40% · Wo 62% · Co 12%` —
-                // the whole numeric block is worth coloring. Span from
-                // after `<space><glyph><space>` (char 3) to before the
-                // trailing space.
-                let cols = text.chars().count();
-                let tier_range = if cols > 4 { Some((3, cols - 1)) } else { None };
+                let (text, _tier_fg) = render_claude_chip_all_accounts(app, &t);
                 ClaudeRender {
                     text,
-                    tier_fg,
-                    tier_range,
                     underline: (0, 0),
                 }
             }
@@ -1203,13 +1164,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .find(|a| a.active)
                     .map(|a| a.name);
                 let is_active = active_name.as_deref() == Some(acc.name.as_str());
-                // #1012 f/u — active-account letter (char 3..4) gets
-                // an underline; tier_range covers the numbers after.
                 let underline = if is_active { (3, 4) } else { (0, 0) };
                 ClaudeRender {
                     text: res.text,
-                    tier_fg: res.tier_fg,
-                    tier_range: res.tier_range,
                     underline,
                 }
             }
@@ -1221,15 +1178,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                         let res = render_single_account_chip(u, mode, "", show_reset, &t);
                         ClaudeRender {
                             text: res.text,
-                            tier_fg: res.tier_fg,
-                            tier_range: res.tier_range,
                             underline: (0, 0),
                         }
                     }
                     None => ClaudeRender {
                         text: " \u{F1E00} … ".to_string(),
-                        tier_fg: t.comment,
-                        tier_range: None,
                         underline: (0, 0),
                     },
                 }
@@ -1257,11 +1210,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         //    subtler tier indicator (bold on numeric range, or a
         //    tiny leading colored dot) if the status info is missed.
         let claude_bg = theme::brand_color_for_builtin("claude_code").unwrap_or(t.orange);
-        let base_fg = if claude_render.tier_range.is_none() {
-            claude_render.tier_fg
-        } else {
-            t.bg_darker
-        };
+        // #1139 (2026-08-22) — always dark-on-coral, no exceptions.
+        // Previously the em-dash / error branch (tier_range = None)
+        // used `tier_fg` — which for the error case is `t.red`. In
+        // onedark that's `#e06c75` (a pink-red) and it sat on the
+        // Anthropic coral `#D16D51`, producing a pink-on-orange
+        // pairing users reported as "very hard to read". The `!`
+        // in the "—!" fallback already communicates the error
+        // state; the color-coding it lost was low-signal on this
+        // brand-colored pill anyway (same reasoning the numeric
+        // branch already used — see 2026-08-18 note above).
+        let base_fg = t.bg_darker;
         let mut seg = Seg::new(claude_render.text, base_fg, claude_bg);
         let (u_start, u_end) = claude_render.underline;
         seg = seg.underline_range(u_start, u_end);
