@@ -115,6 +115,62 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Sonos speaker chip + two ways to send Mac audio (2026-08-22).**
+New `src/sonos/` subsystem (`soap` / `discovery` / `ops` / `stream` /
+`airplay` / `coreaudio`) plus `src/app/sonos.rs`. Statusline cluster on the
+right lane, next to the music cluster: collapsed to a single `[󰓃]`
+destination chip at rest, growing `[⏸] [⏭] [Room · Track]` on hover
+(`[sonos] chip_label` = hover|always|never). State is carried by color
+— teal streaming / white playing / dim idle. Transport is hover-only
+on purpose: the music cluster's play/pause sits one chip away and two
+adjacent ones read as a duplicate, though they aren't (that drives the
+*player*, this drives the *speaker* — the only thing that works when
+the Sonos plays its own source with no Mac player involved). Expansion grows LEFTWARD — the lane is
+right-aligned, so a pointer inside the cluster stays inside it;
+growing rightward would shove the hovered chip out from under the
+cursor and oscillate. Click targets: speaker glyph = send this Mac's audio, transport = play/skip,
+label = room picker, right-click = everything (volume, mute, favorites,
+grouping, re-scan, hide). Discovery is one SSDP `M-SEARCH` +
+`GetZoneGroupState`; satellites (bonded Sub / surrounds) are excluded
+from the room list, and the chip renders nothing when no household
+answers. All network work is on a worker thread behind a
+Cmd/Snapshot channel pair — the render loop never waits on a speaker.
+Transport goes to the group *coordinator*; volume/mute to the named
+room.
+
+**Why two audio paths, and the macOS 26 finding behind it.** AirPlay
+target selection is not reachable from an app on macOS 26: Sound
+settings lists only CoreAudio devices, an AirPlay target isn't one
+until already connected, and Control Center (the sole picker) exposes
+an *empty* accessibility tree — verified live, `windows=1` with zero
+children. No CLI exists either. So: (a) Music.app has a scriptable
+`current AirPlay devices` property, giving a real, cold-capable AirPlay
+hand-off for Music.app's own audio; (b) everything else goes out as
+`system output → BlackHole loopback → ffmpeg mp3 → mnml HTTP →
+x-rincon-mp3radio://`, with the previous output device restored on
+stop. `src/sonos/coreaudio.rs` is hand-rolled CoreAudio FFI (no
+`coreaudio-sys` dep) for the default-output switch. Note for later: a
+CoreAudio device literally named "AirPlay" *does* appear while an
+AirPlay session is live, so a device switcher could toggle mid-session
+— but never connect cold. ScreenCaptureKit is the driver-free upgrade
+path for the capture half.
+
+Scope split: the chip + transport + grouping are Sonos-specific
+(port-1400 UPnP); `audio.airplay_music` is NOT (it hands Music.app to
+any AirPlay receiver — Apple TV / HomePod / AirPlay TV / another Mac,
+no Sonos required), hence the `audio.*` group; the loopback stream IS
+Sonos-specific because it works by telling a speaker to fetch a URL.
+
+Config `[sonos]` (`enabled` / `host` / `room` / `poll_secs` /
+`prefer_airplay`), `:set sonos`, a Settings **Sonos** section, 16
+`sonos.*` palette commands, 4 hover-help/Info-View entries, and
+`site/src/content/docs/manual/sonos.md`. 44 new tests (SOAP envelopes,
+topology parse incl. satellite exclusion + double-escaped payloads,
+AirPlay's `NOT_IMPLEMENTED` metadata fallback, favorite
+container-vs-stream routing, ffmpeg device-index parse, live CoreAudio
+enumeration, app-level status/picker behavior).
+
+
 
 **First-launch wizard + per-integration auth SDK shipped
 (2026-08-11).** Task #870 + #892 both landed end-to-end as a

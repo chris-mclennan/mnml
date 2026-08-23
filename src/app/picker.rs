@@ -705,6 +705,9 @@ impl App {
         };
         match picker.kind {
             PickerKind::Files | PickerKind::Recent => self.open_path(Path::new(&item.id)),
+            PickerKind::SonosRooms => self.sonos_select_room(&item.id),
+            PickerKind::SonosFavorites => self.sonos_play_favorite(&item.id),
+            PickerKind::SonosAirPlayTargets => self.sonos_send_music_to(&item.id),
             PickerKind::GlyphBuilderSvg => {
                 // Route the picked path into the glyph builder's
                 // svg_path field. Preserves the current focused_field

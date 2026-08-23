@@ -3293,6 +3293,155 @@ fn builtin_commands() -> Vec<Command> {
                 app.toast("clock: hidden (`:set clock` to restore)");
             },
         },
+        // Sonos speaker chip (2026-08-22). Own group so the `?` help
+        // overlay renders one coherent section rather than scattering
+        // these through the 133-item "view" list.
+        Command {
+            id: "sonos.play_pause",
+            title: "Sonos: play / pause the active room",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_play_pause(),
+        },
+        Command {
+            id: "sonos.next",
+            title: "Sonos: next track",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_send(crate::sonos::Cmd::Next),
+        },
+        Command {
+            id: "sonos.previous",
+            title: "Sonos: previous track",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_send(crate::sonos::Cmd::Previous),
+        },
+        Command {
+            id: "sonos.volume_up",
+            title: "Sonos: volume +5",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_volume(5),
+        },
+        Command {
+            id: "sonos.volume_down",
+            title: "Sonos: volume −5",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_volume(-5),
+        },
+        Command {
+            id: "sonos.mute",
+            title: "Sonos: toggle mute",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_send(crate::sonos::Cmd::ToggleMute),
+        },
+        Command {
+            id: "sonos.rooms",
+            title: "Sonos: pick room…",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_pick_room(),
+        },
+        Command {
+            id: "sonos.favorites",
+            title: "Sonos: play a favorite…",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_pick_favorite(),
+        },
+        Command {
+            id: "sonos.reload_favorites",
+            title: "Sonos: reload the favorites list",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_reload_favorites(),
+        },
+        Command {
+            id: "sonos.group_all",
+            title: "Sonos: group every room onto this one",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_send(crate::sonos::Cmd::JoinAll),
+        },
+        Command {
+            id: "sonos.ungroup",
+            title: "Sonos: drop this room out of its group",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_send(crate::sonos::Cmd::Unjoin),
+        },
+        // The headline action: get this Mac's audio onto the speaker.
+        // Native AirPlay when Music.app is the source, loopback stream
+        // otherwise — see `App::sonos_toggle_mac_audio`.
+        Command {
+            id: "sonos.stream_mac_audio",
+            title: "Sonos: send this Mac's audio to the speaker (toggle)",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_toggle_mac_audio(),
+        },
+        Command {
+            // Not Sonos-specific: this lists every AirPlay receiver
+            // Music.app can see — an Apple TV, a HomePod, an AirPlay
+            // television, another Mac. Grouped under `audio.*` so the
+            // palette doesn't imply a Sonos is required.
+            id: "audio.airplay_music",
+            title: "Audio: send Music.app to an AirPlay destination…",
+            group: "audio",
+            keys: &[],
+            run: |app| app.sonos_pick_airplay_target(),
+        },
+        // The way back if mnml was killed mid-stream: the system output
+        // is still pointed at the loopback device and the Mac sounds
+        // dead. Nothing else on the machine explains that.
+        Command {
+            id: "audio.restore_output",
+            title: "Audio: put this Mac's output back on its own speakers",
+            group: "audio",
+            keys: &[],
+            run: |app| app.sonos_restore_output(),
+        },
+        Command {
+            id: "sonos.copy_track",
+            title: "Sonos: copy what's playing to the clipboard",
+            group: "sonos",
+            keys: &[],
+            run: |app| app.sonos_copy_track(),
+        },
+        Command {
+            id: "sonos.status",
+            title: "Sonos: report room / track / volume",
+            group: "sonos",
+            keys: &[],
+            run: |app| {
+                let line = app.sonos_status_line();
+                app.toast(line);
+            },
+        },
+        Command {
+            id: "sonos.refresh",
+            title: "Sonos: re-scan the network for speakers",
+            group: "sonos",
+            keys: &[],
+            run: |app| {
+                app.sonos_send(crate::sonos::Cmd::Rediscover);
+                app.toast("sonos: re-scanning…");
+            },
+        },
+        Command {
+            id: "sonos.hide",
+            title: "Sonos: hide the statusline speaker chip",
+            group: "sonos",
+            keys: &[],
+            run: |app| {
+                app.config.sonos.enabled = false;
+                let _ = crate::app::discovery::persist_sonos_bool("enabled", false);
+                app.toast("sonos: chip hidden (`:set sonos` to restore)");
+            },
+        },
         Command {
             id: "theme.pick",
             title: "Pick theme…",
@@ -6303,6 +6452,37 @@ fn builtin_commands() -> Vec<Command> {
             group: "ai",
             keys: &[],
             run: |app| app.open_mixr(),
+        },
+        // #1130 — per-section palette commands. Each opens mixr with
+        // `--dashboard --panel <section>`, matching mixr's four
+        // PanelSection variants (see mixr/src/tui/dashboard.rs).
+        Command {
+            id: "mixr.show_queue",
+            title: "Mixr: open queue view",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_mixr_panel("queue"),
+        },
+        Command {
+            id: "mixr.show_history",
+            title: "Mixr: open history view",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_mixr_panel("history"),
+        },
+        Command {
+            id: "mixr.show_browse",
+            title: "Mixr: open browse view",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_mixr_panel("browse"),
+        },
+        Command {
+            id: "mixr.show_log",
+            title: "Mixr: open log view",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_mixr_panel("log"),
         },
         Command {
             id: "mixr.copy_track",

@@ -1938,6 +1938,37 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         });
         return;
     }
+    // Sonos cluster (2026-08-22). Checked before the music cluster
+    // because the two sit adjacent on the right lane.
+    //   speaker glyph → send / stop sending this Mac's audio (the
+    //                   headline action; AirPlay when Music.app is the
+    //                   source, loopback stream otherwise)
+    //   play / next   → transport on the active room
+    //   Room · Track  → room picker
+    if let Some(r) = app.rects.statusline_sonos_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.sonos_toggle_mac_audio();
+        return;
+    }
+    if let Some(r) = app.rects.statusline_sonos_play_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.sonos_play_pause();
+        return;
+    }
+    if let Some(r) = app.rects.statusline_sonos_next_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.sonos_send(crate::sonos::Cmd::Next);
+        return;
+    }
+    if let Some(r) = app.rects.statusline_sonos_label_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.sonos_pick_room();
+        return;
+    }
     // Play / pause control — source-aware: mixr → pause IPC,
     // Apple Music / Spotify → AppleScript `playpause`. Checked
     // before the track-text chip because the three sit

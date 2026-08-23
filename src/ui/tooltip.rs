@@ -789,6 +789,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.statusline_mixr_ffwd_chip?;
             Some((rect, "skip track".into(), None))
         }
+        HoverChip::StatuslineSonos => {
+            let rect = app.rects.statusline_sonos_chip?;
+            let hint = if app.sonos.streaming {
+                "click: stop sending this Mac's audio"
+            } else {
+                "click: send this Mac's audio here"
+            };
+            Some((rect, app.sonos_status_line(), Some(hint.into())))
+        }
+        HoverChip::StatuslineSonosPlay => {
+            let rect = app.rects.statusline_sonos_play_chip?;
+            Some((rect, "play / pause the speaker".into(), None))
+        }
+        HoverChip::StatuslineSonosNext => {
+            let rect = app.rects.statusline_sonos_next_chip?;
+            Some((rect, "skip track on the speaker".into(), None))
+        }
+        HoverChip::StatuslineSonosLabel => {
+            let rect = app.rects.statusline_sonos_label_chip?;
+            Some((
+                rect,
+                app.sonos_status_line(),
+                Some("click: pick room · right-click: everything else".into()),
+            ))
+        }
         HoverChip::StatuslineTestChip => {
             let rect = app.rects.statusline_test_chip?;
             Some((

@@ -270,6 +270,16 @@ pub enum PickerKind {
     /// `http_import_*_from_clipboard`. Opened by the
     /// `↓ Import…` chip at the bottom of the HTTP sidebar.
     HttpImport,
+    /// `id` = a Sonos player `uuid`. Accept ⇒ point the speaker chip at
+    /// that room (and persist it as the startup default).
+    SonosRooms,
+    /// `id` = an index into `App::sonos.favorites`. Accept ⇒ play that
+    /// favorite on the active room.
+    SonosFavorites,
+    /// `id` = a Music.app AirPlay destination name. Accept ⇒ route
+    /// Music.app's output there. macOS only — it's the one native
+    /// AirPlay hand-off macOS 26 still exposes.
+    SonosAirPlayTargets,
 }
 
 #[derive(Debug, Clone)]

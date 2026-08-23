@@ -66,6 +66,8 @@ pub struct Config {
     pub http: HttpConfig,
     /// `[ws]` — WebSocket runtime knobs for `:ws.connect`.
     pub ws: WsConfig,
+    /// `[sonos]` — the statusline speaker chip. See [`SonosConfig`].
+    pub sonos: SonosConfig,
     /// `[git_graph]` — visual tuning of the git graph pane.
     pub git_graph: GitGraphConfig,
     /// `[tasks.<name>]` — named shell commands openable in a pty pane (`task.run`).
@@ -557,6 +559,52 @@ impl Default for WsConfig {
             subprotocols: Vec::new(),
             ping_interval_secs: 30,
             reconnect_max_attempts: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SonosConfig {
+    /// `[sonos] enabled = true` — master switch for the speaker chip.
+    /// On by default: discovery is one local SSDP broadcast, and with
+    /// no household on the network the chip renders nothing at all, so
+    /// there is nothing to opt out of unless you want the broadcast
+    /// gone too.
+    pub enabled: bool,
+    /// `[sonos] host = "192.168.1.131"` — talk to this player directly
+    /// and skip SSDP. For networks that filter multicast (guest VLANs,
+    /// some mesh routers) where discovery would otherwise find nothing.
+    pub host: Option<String>,
+    /// `[sonos] room = "Living Room"` — which room the chip points at
+    /// on startup, by name (case-insensitive). Unset ⇒ the first group
+    /// coordinator found. Changing rooms at runtime persists here.
+    pub room: Option<String>,
+    /// `[sonos] poll_secs = 3` — how often to refresh transport state.
+    /// Clamped to 1-60; the chip is a status line, not a VU meter.
+    pub poll_secs: u32,
+    /// `[sonos] chip_label = "hover"` — how much of the cluster shows.
+    /// `"hover"` (default) keeps the statusline tight: speaker + play
+    /// only, with `Room · Track` (and the skip button) appearing while
+    /// the pointer is on the cluster. `"always"` pins the label open;
+    /// `"never"` keeps it collapsed and leaves the detail to the hover
+    /// tooltip and the Info View panel.
+    pub chip_label: String,
+    /// `[sonos] prefer_airplay = true` — when Music.app is the thing
+    /// playing, hand it over with native AirPlay (no transcoding, no
+    /// added latency) instead of the loopback stream. Only affects the
+    /// Music.app case; everything else has no AirPlay route on macOS 26.
+    pub prefer_airplay: bool,
+}
+
+impl Default for SonosConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            host: None,
+            room: None,
+            poll_secs: 3,
+            chip_label: "hover".to_string(),
+            prefer_airplay: true,
         }
     }
 }
@@ -1496,6 +1544,7 @@ impl Default for Config {
             tools: toml::Value::Table(Default::default()),
             http: HttpConfig::default(),
             ws: WsConfig::default(),
+            sonos: SonosConfig::default(),
             git_graph: GitGraphConfig::default(),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
@@ -1540,6 +1589,8 @@ struct RawConfig {
     http: RawHttp,
     #[serde(default)]
     ws: RawWs,
+    #[serde(default)]
+    sonos: RawSonos,
     #[serde(default)]
     git_graph: RawGitGraph,
     #[serde(default)]
@@ -1721,6 +1772,17 @@ struct RawWs {
     subprotocols: Option<Vec<String>>,
     ping_interval_secs: Option<u32>,
     reconnect_max_attempts: Option<u32>,
+}
+
+/// `[sonos]` raw table (2026-08-22).
+#[derive(Debug, Default, Deserialize)]
+struct RawSonos {
+    enabled: Option<bool>,
+    chip_label: Option<String>,
+    host: Option<String>,
+    room: Option<String>,
+    poll_secs: Option<u32>,
+    prefer_airplay: Option<bool>,
 }
 
 /// `[git_graph]` raw table (qa-feature 2026-06-30).
@@ -2828,6 +2890,34 @@ impl Config {
         }
         if let Some(v) = raw.ws.reconnect_max_attempts {
             self.ws.reconnect_max_attempts = v;
+        }
+        if let Some(v) = raw.sonos.enabled {
+            self.sonos.enabled = v;
+        }
+        // Blank string ⇒ "unset", so clearing the key in a workspace
+        // config falls back to discovery rather than pinning "".
+        if let Some(h) = raw.sonos.host {
+            let h = h.trim().to_string();
+            self.sonos.host = if h.is_empty() { None } else { Some(h) };
+        }
+        if let Some(r) = raw.sonos.room {
+            let r = r.trim().to_string();
+            self.sonos.room = if r.is_empty() { None } else { Some(r) };
+        }
+        if let Some(v) = raw.sonos.poll_secs {
+            self.sonos.poll_secs = v.clamp(1, 60);
+        }
+        // Unknown values fall back to the default rather than
+        // disabling the label outright — a typo shouldn't silently
+        // hide UI.
+        if let Some(v) = raw.sonos.chip_label {
+            let v = v.trim().to_ascii_lowercase();
+            if matches!(v.as_str(), "hover" | "always" | "never") {
+                self.sonos.chip_label = v;
+            }
+        }
+        if let Some(v) = raw.sonos.prefer_airplay {
+            self.sonos.prefer_airplay = v;
         }
         if let Some(rs) = raw.git_graph.lane_spacing {
             self.git_graph.lane_spacing = rs.min(4);

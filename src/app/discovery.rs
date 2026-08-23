@@ -1050,6 +1050,19 @@ pub fn persist_ui_int(key: &'static str, value: i64) -> Result<std::path::PathBu
     persist_config_scalar("ui", key, value.to_string())
 }
 
+/// `[sonos] KEY = "<value>"` — the speaker chip's room / pinned host.
+/// Written when the user picks a room, so the choice survives restart.
+pub fn persist_sonos_string(key: &'static str, value: &str) -> Result<std::path::PathBuf, String> {
+    let esc = value.replace('\\', r"\\").replace('"', "\\\"");
+    persist_config_scalar("sonos", key, format!("\"{esc}\""))
+}
+
+/// `[sonos] KEY = <bool>` — the chip's own enable switch and the
+/// prefer-AirPlay preference.
+pub fn persist_sonos_bool(key: &'static str, value: bool) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("sonos", key, value.to_string())
+}
+
 /// `[marketplace] KEY = <bool>`. Used by the "Show In-Development
 /// tab" toggle so a user's per-session choice survives restart.
 /// 2026-08-19 (#1056).

@@ -752,6 +752,69 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineSonos
+        StatuslineSonos => Some(InfoViewCopy {
+            title: "Sonos speaker".into(),
+            body: "Points at one room in your Sonos household, found by an SSDP \
+                   broadcast on the local network — no account and no cloud \
+                   round-trip. Click to send this Mac's audio to that room; \
+                   right-click for transport, volume, favorites and grouping. \
+                   The cluster stays collapsed until you hover it, then shows \
+                   the room and what's playing."
+                .into(),
+            aside: Some(
+                "macOS 26 exposes no way to pick a system AirPlay target, so \
+                 mnml routes around it: Music.app is handed over with real \
+                 AirPlay, everything else is streamed to the speaker as \
+                 internet radio (which needs a loopback device and adds a \
+                 couple of seconds of delay)."
+                    .into(),
+            ),
+            try_it: vec![
+                PaletteLink::new("sonos.stream_mac_audio", "Send this Mac's audio"),
+                PaletteLink::new("sonos.status", "What's playing?"),
+            ],
+            docs: Some("https://mnml.sh/manual/sonos/".into()),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineSonosPlay
+        StatuslineSonosPlay => Some(InfoViewCopy {
+            title: "Sonos play / pause".into(),
+            body: "Plays or pauses the room the chip points at. Sent to the \
+                   group's coordinator, so it controls every speaker grouped \
+                   with it, not just the one named on the chip."
+                .into(),
+            try_it: vec![PaletteLink::new("sonos.play_pause", "Play / pause")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineSonosNext
+        StatuslineSonosNext => Some(InfoViewCopy {
+            title: "Sonos skip".into(),
+            body: "Advances to the next track in the room's queue.".into(),
+            aside: Some(
+                "Only drawn for a queue. A TV, line-in, AirPlay or radio source \
+                 has nothing to skip to, so the button is left out rather than \
+                 drawn and dead."
+                    .into(),
+            ),
+            try_it: vec![PaletteLink::new("sonos.next", "Next track")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineSonosLabel
+        StatuslineSonosLabel => Some(InfoViewCopy {
+            title: "Sonos room and track".into(),
+            body: "The room being controlled, and what it is playing. Sources \
+                   that report no metadata — AirPlay, TV, line-in — show the \
+                   source's own name instead of a track. Click to switch rooms; \
+                   the choice is remembered for next launch."
+                .into(),
+            try_it: vec![
+                PaletteLink::new("sonos.rooms", "Pick room"),
+                PaletteLink::new("sonos.favorites", "Play a favorite"),
+            ],
+            docs: Some("https://mnml.sh/manual/sonos/".into()),
+            ..Default::default()
+        }),
         // src: src/ui/tooltip.rs::HoverChip::StatuslineTestChip
         StatuslineTestChip => Some(InfoViewCopy {
             title: "Test-run status".into(),

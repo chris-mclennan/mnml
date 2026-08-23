@@ -780,6 +780,41 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         d.browser.autocapture_to_log,
     ));
 
+    // ── Sonos ───────────────────────────────────────────────────────
+    out.push(SettingItem::Section("Sonos"));
+    out.push(bool_row(
+        "sonos.enabled",
+        "Statusline speaker chip",
+        cfg.sonos.enabled,
+        d.sonos.enabled,
+    ));
+    // How much of the Sonos cluster stays on screen. Collapsed by
+    // default because the statusline lane is scarce and the detail is
+    // one hover away.
+    let label_idx = match cfg.sonos.chip_label.as_str() {
+        "always" => 1,
+        "never" => 2,
+        _ => 0,
+    };
+    let label_default_idx = match d.sonos.chip_label.as_str() {
+        "always" => 1,
+        "never" => 2,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "sonos.chip_label",
+        label: "Show room · track on the chip",
+        options: vec!["hover".into(), "always".into(), "never".into()],
+        current_idx: label_idx,
+        modified: label_idx != label_default_idx,
+    }));
+    out.push(bool_row(
+        "sonos.prefer_airplay",
+        "Hand Music.app over with AirPlay (else stream)",
+        cfg.sonos.prefer_airplay,
+        d.sonos.prefer_airplay,
+    ));
+
     // ── Session ─────────────────────────────────────────────────────
     out.push(SettingItem::Section("Session"));
     out.push(bool_row(
@@ -848,6 +883,18 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.right_panel_visible" => set_bool(&mut cfg.ui.right_panel_visible, opt_idx),
         "ui.highlight_trailing_ws" => set_bool(&mut cfg.ui.highlight_trailing_ws, opt_idx),
         "ui.clock" => set_bool(&mut cfg.ui.clock, opt_idx),
+        "sonos.enabled" => set_bool(&mut cfg.sonos.enabled, opt_idx),
+        "sonos.chip_label" => {
+            let new = match opt_idx {
+                1 => "always",
+                2 => "never",
+                _ => "hover",
+            };
+            let changed = cfg.sonos.chip_label != new;
+            cfg.sonos.chip_label = new.to_string();
+            changed
+        }
+        "sonos.prefer_airplay" => set_bool(&mut cfg.sonos.prefer_airplay, opt_idx),
         "ui.stress_meter" => set_bool(&mut cfg.ui.stress_meter, opt_idx),
         "ui.highlight_word_under_cursor" => {
             set_bool(&mut cfg.ui.highlight_word_under_cursor, opt_idx)
@@ -1109,6 +1156,9 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             b(cfg.ui.highlight_trailing_ws),
         )],
         "ui.clock" => vec![("ui", "clock", b(cfg.ui.clock))],
+        "sonos.enabled" => vec![("sonos", "enabled", b(cfg.sonos.enabled))],
+        "sonos.chip_label" => vec![("sonos", "chip_label", q(&cfg.sonos.chip_label))],
+        "sonos.prefer_airplay" => vec![("sonos", "prefer_airplay", b(cfg.sonos.prefer_airplay))],
         "ui.highlight_word_under_cursor" => vec![(
             "ui",
             "highlight_word_under_cursor",

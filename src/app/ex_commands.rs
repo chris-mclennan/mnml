@@ -1820,6 +1820,54 @@ impl App {
                     self.open_pty(prof);
                 }
             }
+            // `:spawn <cmd>` — fire-and-forget: spawn `cmd` as a detached
+            // OS process in the active workspace, then return. Unlike
+            // `:term`, no Pty pane is created and no output is captured
+            // — used by GUI launchers (`code`, `cursor`, `chrome`, etc.)
+            // whose CLI returns after popping their window, which would
+            // otherwise leave an empty Pty pane behind. Shell-parsed via
+            // `$SHELL -c` so quotes and paths-with-spaces work the same
+            // way `:term` handles them. Task #1124.
+            "spawn" => {
+                let cmdline = rest.trim();
+                if cmdline.is_empty() {
+                    self.toast(":spawn — need a command");
+                    return;
+                }
+                let ws = self.active_workspace_path().to_path_buf();
+                // Shell dispatch — mirrors `BinaryProfile::task` /
+                // `:term`. On unix it's `$SHELL -c "<cmdline>"` (or
+                // /bin/sh when SHELL is unset); on Windows we use
+                // cmd.exe's `/c` form. Kept inline so `:spawn` doesn't
+                // reach into pty_pane for a private helper.
+                #[cfg(windows)]
+                let (shell, flag) = ("cmd.exe".to_string(), "/c");
+                #[cfg(not(windows))]
+                let (shell, flag) = (
+                    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
+                    "-c",
+                );
+                match std::process::Command::new(&shell)
+                    .args([flag, cmdline])
+                    .current_dir(&ws)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(_child) => {
+                        // Best-effort acknowledgement so a mouse click
+                        // never feels dead. Kept short to avoid crowding
+                        // the toast stack when the user fires several
+                        // launcher chips in a row.
+                        let first = cmdline.split_whitespace().next().unwrap_or(cmdline);
+                        self.toast(format!("launched {first}"));
+                    }
+                    Err(e) => {
+                        self.toast(format!("spawn failed: {e}"));
+                    }
+                }
+            }
             // `:version` — toast the build sha (formerly the bottom-right
             // statusline chip).
             "version" | "ver" => {
@@ -4695,6 +4743,22 @@ impl App {
                 "clock: {}",
                 if self.config.ui.clock { "on" } else { "off" }
             ));
+        } else if matches!(opt, "sonos" | "nosonos" | "sonos!" | "invsonos") {
+            // The speaker chip's master switch. Enabling starts the
+            // worker there and then, so `:set sonos` shows the chip
+            // without a restart (the worker is a no-op if it's already
+            // running).
+            self.config.sonos.enabled = match opt {
+                "sonos" => true,
+                "nosonos" => false,
+                _ => !self.config.sonos.enabled,
+            };
+            let on = self.config.sonos.enabled;
+            let _ = crate::app::discovery::persist_sonos_bool("enabled", on);
+            if on {
+                self.start_sonos_worker();
+            }
+            self.toast(format!("sonos: {}", if on { "on" } else { "off" }));
         } else if matches!(opt, "codelens") {
             self.config.editor.code_lens = true;
             self.toast("code lens: on");
@@ -5347,6 +5411,52 @@ mod ex_commands_tests {
         assert!(
             manifest_msgs.iter().all(|m| !m.contains("unknown")),
             "manifest ':version' should NOT toast 'unknown command'; log tail = {manifest_msgs:?}"
+        );
+    }
+
+    /// `:spawn` fires a detached process (no Pty), toasts on
+    /// success, does NOT create a Pane. Task #1124. Uses `true` on
+    /// unix / `cmd /c exit 0` on windows — a command guaranteed to
+    /// exist so the test doesn't flake on environment.
+    #[test]
+    fn spawn_ex_command_does_not_open_pane_and_toasts_on_success() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let panes_before = app.panes.len();
+        let msgs_before = app.message_log.len();
+
+        // `true` is a POSIX builtin that always exists and exits 0
+        // — /bin/sh -c "true" completes near-instantly. On Windows
+        // `cmd /c exit 0` fills the same role.
+        #[cfg(windows)]
+        app.run_ex_command("spawn cmd /c exit 0");
+        #[cfg(not(windows))]
+        app.run_ex_command("spawn true");
+
+        // No Pty pane should have been opened.
+        assert_eq!(app.panes.len(), panes_before, ":spawn must NOT open a pane");
+        // A toast should have been emitted — either the "launched"
+        // acknowledgement or a "spawn failed" (fine either way for
+        // the "no pane" invariant; toasted feedback is the contract).
+        let msgs: Vec<_> = app.message_log[msgs_before..].to_vec();
+        assert!(
+            !msgs.is_empty(),
+            ":spawn must emit a toast for feedback; log tail = {msgs:?}"
+        );
+    }
+
+    /// Bare `:spawn` (no cmdline) toasts a "need a command" hint
+    /// and does not panic.
+    #[test]
+    fn spawn_without_args_toasts_hint() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let before = app.message_log.len();
+        app.run_ex_command("spawn");
+        let msgs: Vec<_> = app.message_log[before..].to_vec();
+        assert!(
+            msgs.iter().any(|m| m.contains("need a command")),
+            ":spawn with no args should toast a hint; log tail = {msgs:?}"
         );
     }
 }

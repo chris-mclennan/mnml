@@ -1653,6 +1653,117 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // use — it's used by the click dispatcher to pick mixr vs
     // AppleScript routing, but the render side doesn't need it.
     let _ = mixr_is_source;
+    // Sonos speaker cluster (2026-08-22) — `[speaker] [play]`, growing
+    // to `[speaker] [play] [next] [Room · Track]` while the pointer is
+    // on it. Hidden entirely when `[sonos] enabled = false` or when
+    // discovery found no household, so a machine with no Sonos on the
+    // network sees nothing rather than a dead chip.
+    //
+    // Collapsed-by-default because the statusline is a scarce lane and
+    // the room/track detail is already one hover away in the tooltip
+    // and the Info View panel. Expansion is safe from flicker only
+    // because this lane is right-aligned: the cluster grows leftward,
+    // so a pointer inside it stays inside it. Growing rightward would
+    // shove the hovered chip out from under the cursor and oscillate.
+    let mut sonos_seg_idx: Option<usize> = None;
+    let mut sonos_play_seg_idx: Option<usize> = None;
+    let mut sonos_next_seg_idx: Option<usize> = None;
+    let mut sonos_label_seg_idx: Option<usize> = None;
+    if app.config.sonos.enabled && app.sonos.found() {
+        let hovered = matches!(
+            app.hover_chip,
+            Some((
+                crate::HoverChip::StatuslineSonos
+                    | crate::HoverChip::StatuslineSonosPlay
+                    | crate::HoverChip::StatuslineSonosNext
+                    | crate::HoverChip::StatuslineSonosLabel,
+                _
+            ))
+        );
+        let expanded = match app.config.sonos.chip_label.as_str() {
+            "always" => true,
+            "never" => false,
+            // "hover" (the default) and anything unrecognised.
+            _ => hovered,
+        };
+        // nf-md-speaker. Chosen over the volume glyphs because this
+        // chip is a *destination*, not a level control.
+        const NF_SPEAKER: char = '\u{F04C3}';
+        // Sonos's own black-on-white identity, deliberately not another
+        // brand hue — the music cluster next door already owns lime /
+        // green / red. Three states, carried by color rather than a
+        // second glyph:
+        //   teal  — mnml is streaming this Mac's audio here (the one
+        //           state worth spotting from across the room)
+        //   white — the speaker is playing something
+        //   dim   — idle, same comment-on-bg2 treatment the clock uses
+        let (chip_fg, chip_bg) = if app.sonos.streaming {
+            (Color::Rgb(0x00, 0x00, 0x00), theme::cur().teal)
+        } else if app.sonos.state.is_playing() {
+            (Color::Rgb(0x10, 0x10, 0x10), Color::Rgb(0xE6, 0xE6, 0xE6))
+        } else {
+            (theme::cur().comment, theme::cur().bg2)
+        };
+        let brand = if nerd {
+            NF_SPEAKER.to_string()
+        } else {
+            "SONOS".to_string()
+        };
+        sonos_seg_idx = Some(right.len());
+        right.push(Seg::new(format!(" {brand} "), chip_fg, chip_bg));
+        // Play / pause is expanded-only, deliberately. At rest the music
+        // cluster's transport sits one chip away, and two adjacent
+        // play/pause buttons read as a duplicate even though they aren't
+        // one: that one drives the *player* (mixr / Music / Spotify),
+        // this one drives the *speaker* — which is the only control that
+        // works when the Sonos is playing its own source (radio, TV,
+        // Spotify Connect) with no Mac player in the picture. So it
+        // stays reachable on hover and in the right-click menu, without
+        // sitting on the strip pretending to be a second copy of its
+        // neighbour.
+        if expanded {
+            let glyph = if app.sonos.state.is_playing() {
+                NF_PAUSE
+            } else {
+                NF_PLAY
+            };
+            sonos_play_seg_idx = Some(right.len());
+            right.push(Seg::new(format!("{glyph} "), chip_fg, chip_bg));
+        }
+        // Skip only exists for sources that *can* skip, and only in the
+        // expanded form. A TV, line-in, AirPlay or radio stream would
+        // just make Sonos return an error, so the button isn't drawn
+        // rather than drawn-and-dead.
+        if expanded && matches!(app.sonos.track.source, crate::sonos::SourceKind::Queue) {
+            sonos_next_seg_idx = Some(right.len());
+            right.push(Seg::new(format!("{NF_FFWD} "), chip_fg, chip_bg));
+        }
+        if expanded {
+            // Room · what's on. Muted is called out here rather than
+            // with a third glyph — one less thing to decode at a glance.
+            let mute = if app.sonos.muted { "muted · " } else { "" };
+            let raw = format!("{}{} · {}", mute, app.sonos.room(), app.sonos.now_line());
+            let clean = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+            // Same 28-char ceiling the music chip uses, so a long
+            // artist/title can't push the clock + LSP chips off the
+            // strip.
+            let shown: String = if clean.chars().count() > 28 {
+                clean.chars().take(28).chain(std::iter::once('…')).collect()
+            } else {
+                clean
+            };
+            sonos_label_seg_idx = Some(right.len());
+            right.push(Seg::new(format!("{shown} "), chip_fg, chip_bg));
+        }
+        // ascii-only breather — see the music cluster's comment above.
+        if !arrows {
+            right.push(Seg::new(
+                " ".to_string(),
+                theme::cur().fg,
+                theme::cur().statusline,
+            ));
+        }
+    }
     let mut clock_seg_idx: Option<usize> = None;
     let mut stress_seg_idx: Option<usize> = None;
     let mut lsp_seg_idx: Option<usize> = None;
@@ -1666,6 +1777,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_music_action_chip = None;
     app.rects.statusline_mixr_play_chip = None;
     app.rects.statusline_mixr_ffwd_chip = None;
+    app.rects.statusline_sonos_chip = None;
+    app.rects.statusline_sonos_play_chip = None;
+    app.rects.statusline_sonos_next_chip = None;
+    app.rects.statusline_sonos_label_chip = None;
     app.rects.statusline_lsp_chip = None;
     app.rects.statusline_wrap_chip = None;
     app.rects.statusline_autosave_chip = None;
@@ -1970,6 +2085,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_music_action_chip = to_rect(music_action_seg_idx, &right_rects);
     app.rects.statusline_mixr_play_chip = to_rect(mixr_play_seg_idx, &right_rects);
     app.rects.statusline_mixr_ffwd_chip = to_rect(mixr_ffwd_seg_idx, &right_rects);
+    app.rects.statusline_sonos_chip = to_rect(sonos_seg_idx, &right_rects);
+    app.rects.statusline_sonos_play_chip = to_rect(sonos_play_seg_idx, &right_rects);
+    app.rects.statusline_sonos_next_chip = to_rect(sonos_next_seg_idx, &right_rects);
+    app.rects.statusline_sonos_label_chip = to_rect(sonos_label_seg_idx, &right_rects);
     app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);
     app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
     app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);
@@ -2339,6 +2458,114 @@ mod tests {
         // 1 MiB and up.
         assert_eq!(format_byte_size(1024 * 1024), "1.0M");
         assert_eq!(format_byte_size(20 * 1024 * 1024), "20M");
+    }
+
+    /// Render the statusline with a fake Sonos household and return the
+    /// row as text. `hovering` simulates the pointer resting on the
+    /// speaker chip.
+    fn sonos_render(chip_label: &str, hovering: bool) -> (String, App) {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.sonos.chip_label = chip_label.to_string();
+        app.sonos.players = vec![crate::sonos::Player {
+            uuid: "RINCON_A".into(),
+            room: "Living Room".into(),
+            host: "10.0.0.9".into(),
+            coordinator: "RINCON_A".into(),
+            airplay: true,
+        }];
+        app.sonos.active = Some("RINCON_A".into());
+        app.sonos.track = crate::sonos::TrackInfo {
+            artist: "Burial".into(),
+            title: "Archangel".into(),
+            ..Default::default()
+        };
+        if hovering {
+            app.hover_chip = Some((crate::HoverChip::StatuslineSonos, std::time::Instant::now()));
+        }
+        let mut term = Terminal::new(TestBackend::new(200, 1)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let row: String = {
+            let buf = term.backend().buffer();
+            (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect()
+        };
+        (row, app)
+    }
+
+    /// Just the rendered row, for the label assertions.
+    fn sonos_statusline(chip_label: &str, hovering: bool) -> String {
+        sonos_render(chip_label, hovering).0
+    }
+
+    /// The chip stays collapsed until hovered, so it costs two cells of
+    /// a scarce lane instead of thirty.
+    #[test]
+    fn sonos_chip_is_collapsed_until_hovered() {
+        let collapsed = sonos_statusline("hover", false);
+        assert!(
+            !collapsed.contains("Living Room"),
+            "collapsed chip should not spend the lane on a label: {collapsed:?}"
+        );
+        let expanded = sonos_statusline("hover", true);
+        assert!(
+            expanded.contains("Living Room"),
+            "hovering should reveal room + track: {expanded:?}"
+        );
+        // Truncated at the same 28-char ceiling the music chip uses, so
+        // the tail of a long title is elided rather than pushing the
+        // clock off the strip.
+        assert!(expanded.contains("Burial"), "{expanded:?}");
+        assert!(expanded.contains('…'), "long labels elide: {expanded:?}");
+    }
+
+    /// At rest the cluster is a single destination chip. Its transport
+    /// lives on hover so it can't read as a duplicate of the music
+    /// cluster's play/pause sitting one chip away.
+    #[test]
+    fn sonos_transport_is_hover_only() {
+        let (_, collapsed) = sonos_render("hover", false);
+        assert!(
+            collapsed.rects.statusline_sonos_chip.is_some(),
+            "speaker shows"
+        );
+        assert!(
+            collapsed.rects.statusline_sonos_play_chip.is_none(),
+            "no second play/pause on the strip at rest"
+        );
+        let (_, hovered) = sonos_render("hover", true);
+        assert!(
+            hovered.rects.statusline_sonos_play_chip.is_some(),
+            "hover reveals the speaker's own transport"
+        );
+    }
+
+    #[test]
+    fn sonos_chip_label_modes_override_hover() {
+        // "always" shows the label with no pointer anywhere near it.
+        assert!(sonos_statusline("always", false).contains("Living Room"));
+        // "never" keeps it collapsed even under the pointer.
+        assert!(!sonos_statusline("never", true).contains("Living Room"));
+    }
+
+    /// No household ⇒ no chip at all, hover or not. A machine with no
+    /// Sonos must not carry dead furniture.
+    #[test]
+    fn sonos_chip_absent_without_a_household() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.sonos.chip_label = "always".to_string();
+        let mut term = Terminal::new(TestBackend::new(200, 1)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(!row.contains("Sonos"), "{row:?}");
+        assert!(app.rects.statusline_sonos_chip.is_none());
     }
 
     /// Render-assertion: with an editor open, the statusline's right

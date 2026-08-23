@@ -1038,11 +1038,20 @@ impl App {
     /// — once it is, we can add a third branch here without changing
     /// the chip surface.
     pub fn open_mixr(&mut self) {
-        self.open_mixr_with_args(vec![
-            "--dashboard".into(),
-            "--panel".into(),
-            "browse".into(),
-        ]);
+        self.open_mixr_panel("browse");
+    }
+
+    /// Open mixr's dashboard focused on a specific panel section —
+    /// `queue` / `history` / `browse` / `log` (the four `PanelSection`
+    /// variants in mixr's src/tui/dashboard.rs). Called from the
+    /// palette commands `mixr.show_queue` / `_history` / `_browse` /
+    /// `_log` and from the mixr chip's right-click "Show" menu items.
+    /// If mixr is already open, re-focus rather than spawning a
+    /// second copy (the panel section that displays is whatever
+    /// mixr's own last-active state was — we don't currently send a
+    /// live switch command via IPC).
+    pub fn open_mixr_panel(&mut self, section: &str) {
+        self.open_mixr_with_args(vec!["--dashboard".into(), "--panel".into(), section.into()]);
     }
 
     /// 2026-08-22 — one-tap "play a random chart from a random

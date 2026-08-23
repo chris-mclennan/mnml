@@ -1225,6 +1225,118 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_segment_context_menu(idx, (x, y));
         return;
     }
+    // Sonos cluster right-click — every action the chip can take, in
+    // one place, since three of the four click targets are glyphs.
+    // Checked before the mixr chip: the clusters are adjacent.
+    if [
+        app.rects.statusline_sonos_chip,
+        app.rects.statusline_sonos_play_chip,
+        app.rects.statusline_sonos_next_chip,
+        app.rects.statusline_sonos_label_chip,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|r| crate::app::dispatch::contains(r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        // Row 1 is a status read-out, not an action — same idiom as the
+        // mixr menu's Beatport row.
+        let status = app.sonos_status_line();
+        let stream_label = if app.sonos.streaming {
+            "Stop sending this Mac's audio"
+        } else {
+            "Send this Mac's audio here"
+        };
+        let mut items = vec![
+            MenuItem::new(status, MenuAction::Command("sonos.status")),
+            MenuItem::new(stream_label, MenuAction::Command("sonos.stream_mac_audio")),
+            MenuItem::new(
+                "Send Music.app here (AirPlay)…",
+                MenuAction::Command("audio.airplay_music"),
+            ),
+            MenuItem::new(
+                if app.sonos.state.is_playing() {
+                    "Pause"
+                } else {
+                    "Play"
+                },
+                MenuAction::Command("sonos.play_pause"),
+            ),
+        ];
+        // Skip rows only for a source that can actually skip — matching
+        // the chip, which hides the glyph for TV / AirPlay / line-in.
+        if matches!(app.sonos.track.source, crate::sonos::SourceKind::Queue) {
+            items.push(MenuItem::new(
+                "Next track",
+                MenuAction::Command("sonos.next"),
+            ));
+            items.push(MenuItem::new(
+                "Previous track",
+                MenuAction::Command("sonos.previous"),
+            ));
+        }
+        items.push(MenuItem::new(
+            format!("Volume + (now {})", app.sonos.volume),
+            MenuAction::Command("sonos.volume_up"),
+        ));
+        items.push(MenuItem::new(
+            "Volume −",
+            MenuAction::Command("sonos.volume_down"),
+        ));
+        items.push(MenuItem::new(
+            if app.sonos.muted { "Unmute" } else { "Mute" },
+            MenuAction::Command("sonos.mute"),
+        ));
+        items.push(MenuItem::new(
+            "Favorites…",
+            MenuAction::Command("sonos.favorites"),
+        ));
+        // Room switching / grouping only earn their rows in a household
+        // that actually has more than one room.
+        if app.sonos.players.len() > 1 {
+            items.push(MenuItem::new("Room…", MenuAction::Command("sonos.rooms")));
+            items.push(MenuItem::new(
+                "Group all rooms here",
+                MenuAction::Command("sonos.group_all"),
+            ));
+            items.push(MenuItem::new(
+                "Ungroup this room",
+                MenuAction::Command("sonos.ungroup"),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Copy what's playing",
+            MenuAction::Command("sonos.copy_track"),
+        ));
+        // Only worth a row when the output is actually parked on the
+        // loopback device — otherwise it's a fix for a problem the user
+        // doesn't have.
+        #[cfg(target_os = "macos")]
+        if crate::sonos::coreaudio::default_output().is_some_and(|d| {
+            d.name
+                .to_ascii_lowercase()
+                .contains(crate::sonos::stream::LOOPBACK_NAME)
+        }) {
+            items.push(MenuItem::new(
+                "Put my audio back on this Mac",
+                MenuAction::Command("audio.restore_output"),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Re-scan for speakers",
+            MenuAction::Command("sonos.refresh"),
+        ));
+        items.push(MenuItem::new(
+            "Hide chip",
+            MenuAction::Command("sonos.hide"),
+        ));
+        app.context_menu = Some(ContextMenu::new(
+            Some(app.sonos.room().to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     // qa-6th mouse SEV-3 2026-06-29: mixr chip on the statusline
     // had a left-click action (mixr.show) but no right-click menu
     // and no hover tooltip — felt like a black box. Added a small
@@ -1270,6 +1382,14 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             MenuItem::new("Play random chart", MenuAction::Command("mixr.play_now")),
             MenuItem::new("Open mixr", MenuAction::Command("mixr.show")),
+            // #1130 — per-section shortcuts to mixr's four PanelSection
+            // views. Browse is redundant with "Open mixr" (which
+            // already targets browse) but keeping it in the list for
+            // symmetry — matches what users see in mixr's own cycle.
+            MenuItem::new("Show: Queue", MenuAction::Command("mixr.show_queue")),
+            MenuItem::new("Show: History", MenuAction::Command("mixr.show_history")),
+            MenuItem::new("Show: Browse", MenuAction::Command("mixr.show_browse")),
+            MenuItem::new("Show: Log", MenuAction::Command("mixr.show_log")),
         ];
         if let Some(np) = app.now_playing.as_ref()
             && !np.track.is_empty()

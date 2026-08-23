@@ -57,6 +57,7 @@ mod now_playing;
 mod picker;
 mod portable;
 mod reset;
+mod sonos;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
 pub(crate) mod cmdline_methods;
@@ -2536,6 +2537,16 @@ pub struct PaneRects {
     /// when the cluster is in its playing form (transport controls
     /// take over that rect via `statusline_mixr_play_chip`).
     pub statusline_music_action_chip: Option<Rect>,
+    /// Sonos cluster hitrects: the speaker (brand) chip, its
+    /// play/pause button, and its skip button. `None` when the chip is
+    /// disabled, no household was found, or the chip fell off a narrow
+    /// statusline.
+    pub statusline_sonos_chip: Option<Rect>,
+    pub statusline_sonos_play_chip: Option<Rect>,
+    pub statusline_sonos_next_chip: Option<Rect>,
+    /// The `Room · Track` half of the Sonos cluster — click routes to
+    /// the room picker.
+    pub statusline_sonos_label_chip: Option<Rect>,
     /// Play / pause control sitting to the LEFT of the track text
     /// when something's playing. Click is source-aware:
     /// mixr → `mixr --command pause`; Apple Music / Spotify →
@@ -4569,6 +4580,17 @@ pub struct App {
     /// loop only, so no `osascript` subprocess spawns under headless /
     /// e2e. `tick` drains it into `now_playing`.
     pub now_playing_rx: Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
+    /// Latest Sonos snapshot — rooms, transport, volume — refreshed off
+    /// the render path by the `sonos` worker thread. Default (no
+    /// players) until the first poll lands; the chip hides itself in
+    /// that state so a Sonos-less network shows no dead furniture.
+    pub sonos: crate::sonos::Snapshot,
+    /// Command channel to the `sonos` worker. `Some` once
+    /// `start_sonos_worker` has run — the real terminal loop only, so
+    /// headless / e2e never touch the network.
+    pub sonos_tx: Option<std::sync::mpsc::Sender<crate::sonos::Cmd>>,
+    /// Snapshot channel from the `sonos` worker; `tick` drains it.
+    pub sonos_rx: Option<std::sync::mpsc::Receiver<crate::sonos::Snapshot>>,
     /// Last time the now-playing poller returned a non-empty
     /// mixr-source track. Drives the stickiness layer in
     /// `drain_now_playing` so the statusline chip doesn't flicker
@@ -6112,6 +6134,9 @@ impl App {
             clock_show_utc: false,
             now_playing: None,
             now_playing_rx: None,
+            sonos: crate::sonos::Snapshot::default(),
+            sonos_tx: None,
+            sonos_rx: None,
             last_mixr_track_at: None,
             http_sync_rx: None,
             http_sync_check_rx: None,

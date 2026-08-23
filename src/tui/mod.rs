@@ -166,6 +166,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     // Background now-playing poller for the statusline miniplayer —
     // real terminal loop only (headless / e2e skip it).
     app.start_now_playing_poller();
+    app.start_sonos_worker();
 
     // 2026-07-29 — IPC dump throttle bookkeeping. See the block
     // near the dump call for rationale.

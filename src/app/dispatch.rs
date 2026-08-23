@@ -870,6 +870,26 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineMixrFfwd);
     }
+    if let Some(r) = app.rects.statusline_sonos_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineSonos);
+    }
+    if let Some(r) = app.rects.statusline_sonos_play_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineSonosPlay);
+    }
+    if let Some(r) = app.rects.statusline_sonos_next_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineSonosNext);
+    }
+    if let Some(r) = app.rects.statusline_sonos_label_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineSonosLabel);
+    }
     if let Some(r) = app.rects.statusline_test_chip
         && contains(r, x, y)
     {

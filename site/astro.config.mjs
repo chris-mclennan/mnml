@@ -118,6 +118,7 @@ export default defineConfig({
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'Statusline, gutter & F1 help', slug: 'manual/statusline-chrome' },
             { label: 'Dock widgets', slug: 'manual/dock-widgets' },
+            { label: 'Sonos', slug: 'manual/sonos' },
             { label: 'Coming from NvChad', slug: 'manual/coming-from-nvchad' },
             { label: 'Coming from VS Code', slug: 'manual/coming-from-vscode' },
             { label: 'Cheatsheet — NvChad chord map', slug: 'manual/cheatsheet-nvchad' },

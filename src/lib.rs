@@ -34,6 +34,9 @@ pub mod auth;
 pub mod cookie_jar;
 pub mod cookies;
 pub mod jwt;
+/// Sonos speakers — statusline chip, UPnP control, and the two ways
+/// a Mac can send it audio (Music.app AirPlay, or a local stream).
+pub mod sonos;
 pub mod sse;
 pub mod websocket;
 // `mod aws` was split out to the standalone mnml-aws-codebuild
@@ -425,6 +428,16 @@ pub enum HoverChip {
     StatuslineMixrPlay,
     /// Statusline fast-forward chip (mixr controls).
     StatuslineMixrFfwd,
+    /// Statusline Sonos speaker (brand) chip — click sends this Mac's
+    /// audio to the room.
+    StatuslineSonos,
+    /// Statusline Sonos play / pause chip.
+    StatuslineSonosPlay,
+    /// Statusline Sonos skip chip.
+    StatuslineSonosNext,
+    /// Statusline Sonos `Room · Track` label — click opens the room
+    /// picker.
+    StatuslineSonosLabel,
     /// Statusline test-runner chip — click focuses test output.
     StatuslineTestChip,
     /// qa-feature 2026-06-30 — a specific cell in the GitGraph
