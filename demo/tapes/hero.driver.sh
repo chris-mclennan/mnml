@@ -141,6 +141,14 @@ ghost "state: Store): Store {\\n  return { ...state, items: [] };\\n}"
 wait_ms 1800
 key "tab"
 wait_ms 1300
+# #1071 (2026-08-22) — save store.ts before we split later. Prior
+# flow left the buffer dirty; view.split_right (beat 10) then
+# fired an "unsaved changes — save with :w" toast that clipped
+# over the split animation. Save here + the mode chip flips
+# clean, statusline reads correctly, and no toast interrupts
+# the split beat.
+run "file.save"
+wait_ms 400
 
 # ── 7. Statusline chip tour ──────────────────────────────────────
 # The statusline (row 34 on 140×36 geometry) carries a lot for
