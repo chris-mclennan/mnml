@@ -3894,6 +3894,11 @@ pub struct App {
     /// 2026-08-07 — Findings file cache (mirrors notes cache).
     pub findings_panel_files_cache: Vec<std::path::PathBuf>,
     pub findings_panel_scanned_once: bool,
+    /// 2026-08-23 (user ask) — `/`-filter for the Findings panel,
+    /// mirroring the Notes / TODOs / Sessions / HTTP idiom. Matches
+    /// case-insensitively on the row's rendered relative name.
+    pub findings_panel_filter: String,
+    pub findings_panel_filter_focused: bool,
     /// qa-feature 2026-07-01 — stable position for the primary
     /// in the unified workspace visual list (primary + extras
     /// share one position space). Starts at 0. Promoting an
@@ -6230,6 +6235,8 @@ impl App {
             notes_panel_scanned_once: false,
             findings_panel_files_cache: Vec::new(),
             findings_panel_scanned_once: false,
+            findings_panel_filter: String::new(),
+            findings_panel_filter_focused: false,
             primary_position: 0,
             git_rail,
             image_protocol: crate::image::detect_protocol(),

@@ -1601,6 +1601,60 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    // Findings rail filter (2026-08-23 user ask) — mirrors the
+    // TODOs block above verbatim. Findings is a workspace-scoped
+    // *.md archive; the filter matches on the row's rendered
+    // relative name.
+    if !app.findings_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Findings
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && let KeyCode::Char('/') = key.code
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.findings_panel_filter_focused = true;
+        return;
+    }
+    if app.findings_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Findings
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
+        match key.code {
+            KeyCode::Esc => {
+                app.findings_panel_filter.clear();
+                app.findings_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Enter => {
+                app.findings_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.findings_panel_filter.push(c);
+                return;
+            }
+            _ => {
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.findings_panel_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
+        }
+    }
     // Row nav on TODOs / Notes / Sessions when the panel has
     // focus and the filter isn't focused. Mirrors the HTTP
     // panel's j/k/arrow/Enter handling. vscode-user-keyboard

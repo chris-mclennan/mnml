@@ -176,8 +176,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             t.fg
         };
+        // 2026-08-23 user ask — normalize filter placeholder to
+        // the two-state pattern used by http/agents/todos/notes/
+        // sessions/findings/integrations/menu-bar/settings:
+        //   unfocused-empty → "/ filter"
+        //   focused-empty   → "type to filter…"
+        // Consistent verbiage across every activity-bar section.
         let filter_text = if app.git_palette_filter.is_empty() {
-            "Filter…".to_string()
+            if focused {
+                "type to filter\u{2026}".to_string()
+            } else {
+                "/ filter".to_string()
+            }
         } else {
             app.git_palette_filter.clone()
         };

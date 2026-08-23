@@ -125,8 +125,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             t.fg
         };
+        // 2026-08-23 user ask — normalize placeholder to the
+        // two-state family idiom used by the sibling activity
+        // panels. The field-specific hint (ticket / runId /
+        // state) moves into the focused-empty line so it still
+        // guides new users without breaking the visual pattern.
         let display = if app.cloud_agents_filter.is_empty() {
-            "Filter ticket / runId / state…".to_string()
+            if focused {
+                "type to filter (ticket / runId / state)\u{2026}".to_string()
+            } else {
+                "/ filter".to_string()
+            }
         } else {
             app.cloud_agents_filter.clone()
         };

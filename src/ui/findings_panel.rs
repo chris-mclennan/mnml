@@ -37,11 +37,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         app.findings_panel_refresh();
     }
     let all_files = app.findings_panel_files_cache.clone();
-    // No dedicated filter state (v1) — reuse the panel's own filter
-    // buffer if we add one later. For now, always show everything.
-    let files: Vec<std::path::PathBuf> = all_files.clone();
+    // 2026-08-23 (user ask) — apply the `/` filter against each
+    // file's rendered relative name (same string the row shows),
+    // case-insensitive. Empty filter passes everything through.
+    let root = findings_dir(&app.workspace);
+    let filter_lc = app.findings_panel_filter.to_ascii_lowercase();
+    let files: Vec<std::path::PathBuf> = all_files
+        .iter()
+        .filter(|p| {
+            if filter_lc.is_empty() {
+                return true;
+            }
+            let rel = p.strip_prefix(&root).unwrap_or(p);
+            let name = rel.with_extension("").to_string_lossy().into_owned();
+            name.to_ascii_lowercase().contains(&filter_lc)
+        })
+        .cloned()
+        .collect();
 
-    // Header — "FINDINGS   (N)" — count is cheap + useful.
+    // Header — "FINDINGS   (N)" — count is cheap + useful. When
+    // the filter is active, show `M of N` (mirrors Notes / TODOs).
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
@@ -53,7 +68,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  ({})", files.len()),
+                if filter_lc.is_empty() {
+                    format!("  ({})", all_files.len())
+                } else {
+                    format!("  ({} of {})", files.len(), all_files.len())
+                },
                 Style::default()
                     .fg(t.comment)
                     .bg(bg)
@@ -68,12 +87,66 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
 
-    let mut y = area.y + 2;
+    // Filter row (row 1) — mirrors todos_panel exactly: chip bg,
+    // magnifier glyph, `/ filter` placeholder, `▏` cursor when
+    // focused, `type to filter…` placeholder while focused-empty.
+    {
+        let y_filter = area.y + 1;
+        if y_filter < area.y + area.height {
+            let focused = app.findings_panel_filter_focused;
+            let bg_chip = t.bg2;
+            let fg_chip = if app.findings_panel_filter.is_empty() && !focused {
+                t.comment
+            } else {
+                t.fg
+            };
+            let display = if app.findings_panel_filter.is_empty() {
+                if focused {
+                    "type to filter\u{2026}".to_string()
+                } else {
+                    "/ filter".to_string()
+                }
+            } else {
+                app.findings_panel_filter.clone()
+            };
+            let cursor = if focused { "\u{258F}" } else { " " };
+            let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
+            let line = Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+                Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
+                Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
+                Span::styled(" ", Style::default().bg(bg)),
+            ]);
+            let row_rect = Rect {
+                x: area.x,
+                y: y_filter,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(line), row_rect);
+            app.rects.findings_panel_filter_input = Some(row_rect);
+        }
+    }
+
+    let mut y = area.y + 3;
 
     if files.is_empty() {
+        // Distinguish "no files at all" from "filter matched nothing"
+        // so the user knows whether the filter is what's hiding rows.
+        let empty_msg = if filter_lc.is_empty() {
+            "No findings yet.".to_string()
+        } else {
+            format!(
+                "No findings match /{} — {} in workspace",
+                app.findings_panel_filter,
+                all_files.len()
+            )
+        };
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled("No findings yet.", Style::default().fg(t.comment).bg(bg)),
+            Span::styled(empty_msg, Style::default().fg(t.comment).bg(bg)),
         ]);
         frame.render_widget(
             Paragraph::new(empty),
@@ -112,10 +185,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    // Compute the findings root once so we can render paths relative
-    // to it — nested tester-round dirs (e.g. `2026-07-21-.../foo.md`)
-    // read as `round/foo` instead of losing all context to file_stem.
-    let root = findings_dir(&app.workspace);
+    // `root` computed above alongside the filter — reused here so
+    // nested tester-round dirs render `round/foo` instead of
+    // losing all context to file_stem.
     for path in files.iter().take(area.height.saturating_sub(3) as usize) {
         if y >= area.y + area.height {
             break;

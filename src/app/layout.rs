@@ -2249,6 +2249,9 @@ impl App {
             self.cloud_agents_filter_focused = false;
             self.cloud_run_prompt_focused = false;
             self.git_palette_filter_focused = false;
+            // 2026-08-23 — Findings gained a `/` filter row (user
+            // ask); clear its focus flag with the sibling panels.
+            self.findings_panel_filter_focused = false;
             // Also snap focus back to Tree so `/` (and j/k nav)
             // on the newly-active panel land where the user
             // expects. HTTP auto-opens a Request pane and sets
