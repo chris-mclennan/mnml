@@ -506,6 +506,14 @@ impl VimInputHandler {
         matches!(
             op,
             YankLine
+                // R14 nvchad-user SEV-2 (2026-08-23) — `yy` was
+                // refactored to emit `YankLinesCount(1)` instead
+                // of `YankLine`, but this predicate wasn't updated.
+                // Result: `"ayy` didn't populate register `a` —
+                // the pending `"<reg>` hint was silently dropped
+                // because `YankLinesCount` didn't count as "touches
+                // clipboard".
+                | YankLinesCount(_)
                 | YankSelection
                 | YankBlock
                 | PasteAfter
