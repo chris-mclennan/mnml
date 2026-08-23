@@ -1577,6 +1577,13 @@ impl VimInputHandler {
                     PendingOp::Yank => {
                         ops.push(YankSelection);
                         ops.push(SelectClear);
+                        // #1153 reviewer follow-up 2026-08-23 —
+                        // `yf<c>` / `yt<c>` / `yF<c>` / `yT<c>`:
+                        // FindCharOnLine lands the cursor past the
+                        // target (inclusive), so without a restore
+                        // the cursor drifts to the yank endpoint.
+                        // Vim's `y` preserves the cursor.
+                        ops.push(SetCursorByte(ctx.cursor));
                     }
                     PendingOp::Change => {
                         ops.push(ReplaceSelection(String::new()));
@@ -1767,6 +1774,12 @@ impl VimInputHandler {
                     PendingOp::Yank => {
                         ops.push(YankSelection);
                         ops.push(SelectClear);
+                        // #1153 reviewer follow-up 2026-08-23 —
+                        // text-object yanks `yiw` / `yaw` / `yip` /
+                        // `yi(` etc. also drifted; Select* text-
+                        // object ops leave the cursor at the object's
+                        // end. Restore for vim's `y`-preserves-cursor.
+                        ops.push(SetCursorByte(ctx.cursor));
                     }
                     PendingOp::Change => {
                         ops.push(ReplaceSelection(String::new()));
