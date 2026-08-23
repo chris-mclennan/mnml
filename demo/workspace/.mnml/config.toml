@@ -8,3 +8,32 @@ breadcrumb = true
 # playing. Global default is already `false`, but the user's own config
 # might have it on; this per-workspace override wins.
 stress_meter = false
+
+# #1068 (2026-08-22) — the H/V split cluster paints the Claude Code +
+# Codex chips only when the corresponding integration_icon is enabled.
+# `tab_bar_ai_icon = "both"` alone isn't enough — the count comes from
+# integration_icons. Pin both enabled so the demo hero's top-right
+# cluster consistently shows ghostty + Claude + Codex + H + V (was
+# missing the two AI chips on developer machines without those icons
+# in their global config).
+tab_bar_ai_icon = "both"
+
+[[ui.integration_icons]]
+id = "claude_code"
+glyph = "0"
+fallback = "*"
+command = "ai.claude_code_new"
+color = "#D16D51"
+label = "Claude Code"
+enabled = true
+in_palette_bar = false
+
+[[ui.integration_icons]]
+id = "codex"
+glyph = "1"
+fallback = "C"
+command = "ai.codex_new"
+color = "cyan"
+label = "Codex"
+enabled = true
+in_palette_bar = false
