@@ -1974,9 +1974,12 @@ fn builtin_commands() -> Vec<Command> {
                 if on {
                     app.toast("hover-help: on");
                 } else {
-                    app.toast(
-                        "hover-help: off — Settings → UI (or `:set hoverhelp`) to bring it back",
-                    );
+                    // R15 vscode-keyboard K-06 (2026-08-23) — the
+                    // longer "Settings → UI (or `:set hoverhelp`) to
+                    // bring it back" wording clipped at ~62 cells so
+                    // the recovery hint was lost. Kept the essential
+                    // signal + shortest legible recovery command.
+                    app.toast("hover-help: off — `:set hoverhelp` to restore");
                 }
             },
         },

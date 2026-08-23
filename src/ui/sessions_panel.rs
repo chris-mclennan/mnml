@@ -178,8 +178,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // (mirrors the Agents rail chip placement). The cursor slot for
     // this chip is still "past the last session" (pty_indices.len())
     // so keyboard navigation feels the same — end-of-list → chip.
-    let cursor_on_new_chip_preview =
-        app.sessions_panel_cursor.min(pty_indices.len()) == pty_indices.len();
+    // R15 vscode-keyboard K-03 (2026-08-23) — chip lives at cursor
+    // slot 0 (visually FIRST after #1188). Sessions occupy 1..=n.
+    // Was: chip at slot n (past-last), which made ↓↓↓↓ walk off the
+    // last visible session and the highlight visually jump UP to the
+    // chip — surprising to keyboard users.
+    let cursor_on_new_chip_preview = app.sessions_panel_cursor == 0;
     if y < area.y + area.height {
         // #1188 f/u (2026-08-23) — chip width fits the label instead
         // of stretching the full rail width. Content is
@@ -254,14 +258,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 2;
     }
 
-    // Clamp the cursor to the filtered list PLUS ONE extra slot
-    // for the `+ New session` chip at the bottom (KB-08 fix
-    // 2026-07-30). Cursor value == pty_indices.len() means "on the
-    // New session chip"; the chip highlight + activation check
-    // below reads that same value.
+    // Cursor valid range: 0..=pty_indices.len(). Slot 0 = chip
+    // (rendered at top since #1188). Slots 1..=n = sessions rows
+    // in visible order. K-03 fix (2026-08-23) — cursor was clamped
+    // to pty_indices.len() with chip == last slot; that broke ↓ nav
+    // once the chip moved to the top.
     let clamped_cursor = app.sessions_panel_cursor.min(pty_indices.len());
     app.sessions_panel_cursor = clamped_cursor;
-    let cursor_on_new_chip = clamped_cursor == pty_indices.len();
+    let _cursor_on_new_chip = clamped_cursor == 0;
+    // Session row index = cursor - 1 (chip absorbs slot 0). Only
+    // valid when cursor > 0; the render loop below uses this to
+    // decide which row draws the cursor highlight.
+    let cursor_session_idx = clamped_cursor.checked_sub(1);
     let active_pid = app.active;
     // #1184 (2026-08-23) — window the rows we render so a workspace
     // with 12+ Claude sessions doesn't just clip them off. Reserve
@@ -273,11 +281,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // clipped). If the cursor is on the "+ New session" chip, keep
     // whatever scroll the user last set — the chip renders below the
     // rows regardless of window offset.
-    if !cursor_on_new_chip {
-        if clamped_cursor < app.sessions_panel_scroll {
-            app.sessions_panel_scroll = clamped_cursor;
-        } else if clamped_cursor >= app.sessions_panel_scroll + max_visible {
-            app.sessions_panel_scroll = clamped_cursor + 1 - max_visible;
+    if let Some(idx) = cursor_session_idx {
+        if idx < app.sessions_panel_scroll {
+            app.sessions_panel_scroll = idx;
+        } else if idx >= app.sessions_panel_scroll + max_visible {
+            app.sessions_panel_scroll = idx + 1 - max_visible;
         }
     }
     // Clamp scroll so we never leave blank rows above the last page
@@ -305,7 +313,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let Pane::Pty(s) = pane else { continue };
 
         let is_active = active_pid == Some(pid);
-        let is_cursored = row_i == clamped_cursor;
+        let is_cursored = cursor_session_idx == Some(row_i);
         let tab_rect = Rect {
             x: area.x,
             y,

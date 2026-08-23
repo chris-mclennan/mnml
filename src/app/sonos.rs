@@ -220,6 +220,20 @@ impl App {
                 Err(e) => self.toast(format!("sonos: AirPlay hand-off failed ({e}) — streaming")),
             }
         }
+        // 2026-08-23 (user report) — pre-flight the loopback driver
+        // BEFORE firing the stream. Without BlackHole the worker
+        // errors out and the user sees a one-line toast that clips
+        // before they can read the install command. Toast the exact
+        // brew line here (long-form + no truncation, since it's the
+        // whole payload the user needs) so the failure path is
+        // legible on the FIRST click, not the fifth. The stream fn
+        // still checks — this is a UX shortcut, not the source of
+        // truth.
+        #[cfg(target_os = "macos")]
+        if crate::sonos::coreaudio::find_output(crate::sonos::stream::LOOPBACK_NAME).is_none() {
+            self.toast(format!("sonos: {}", crate::sonos::stream::INSTALL_HINT));
+            return;
+        }
         let room = self.sonos.room().to_string();
         self.sonos_send(Cmd::StartMacStream);
         self.toast(format!("sonos: streaming this Mac → {room}"));

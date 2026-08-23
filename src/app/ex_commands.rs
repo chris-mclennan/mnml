@@ -4638,7 +4638,7 @@ impl App {
             // command's recovery-hint toast so both surfaces spell out
             // how to bring it back. Also normalize the dash-vs-underscore
             // wording to "hover-help" (matches the palette command).
-            self.toast("hover-help: off — Settings → UI (or `:set hoverhelp`) to bring it back");
+            self.toast("hover-help: off — `:set hoverhelp` to restore");
         } else if matches!(opt, "hovertooltip" | "hover_tooltip" | "ht") {
             self.config.ui.hover_tooltip = true;
             let _ = crate::app::discovery::persist_ui_bool("hover_tooltip", true);

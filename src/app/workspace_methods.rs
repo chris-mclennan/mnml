@@ -927,12 +927,15 @@ impl App {
             .collect()
     }
 
+    /// Cursor slot 0 = the "+ New session" chip (visually FIRST as of
+    /// #1188). Slots 1..=n = the n AI session rows below it. Was:
+    /// slots 0..n-1 = sessions, n = chip; but #1188 moved the chip to
+    /// the top of the panel and left the cursor slot at the bottom,
+    /// so `↓↓↓↓` walked off the last row and the highlight jumped
+    /// visually UP to the chip (R15 vscode-keyboard K-03).
     pub fn sessions_panel_cursor_down(&mut self) {
-        // vscode-user-keyboard 2026-07-30 KB-08 — extend cursor range
-        // by 1 so ↓ reaches the `+ New session` chip at the bottom.
-        // Empty state: cursor 0 = the chip (only interactive row).
         let n = self.sessions_filtered_ids().len();
-        let max = n; // valid range: 0..=n, where n = "on + New session"
+        let max = n; // valid range: 0..=n, chip at 0
         self.sessions_panel_cursor = (self.sessions_panel_cursor + 1).min(max);
     }
 
@@ -941,15 +944,16 @@ impl App {
     }
 
     pub fn sessions_panel_activate(&mut self) {
-        let ids = self.sessions_filtered_ids();
-        // Cursor past the last session = the `+ New session` chip.
-        // Mirrors the mouse-click path (down_left.rs). Empty state
-        // starts here so Enter immediately spawns.
-        if self.sessions_panel_cursor >= ids.len() {
+        // Cursor 0 = chip → spawn a new Claude. Slots 1..=n =
+        // sessions → focus session[i-1]. Empty state (n=0) → chip is
+        // the only slot, so Enter always spawns.
+        if self.sessions_panel_cursor == 0 {
             crate::command::run("ai.claude_code_new", self);
             return;
         }
-        if let Some(pid) = ids.into_iter().nth(self.sessions_panel_cursor) {
+        let ids = self.sessions_filtered_ids();
+        let idx = self.sessions_panel_cursor.saturating_sub(1);
+        if let Some(pid) = ids.into_iter().nth(idx) {
             self.reveal_pane(pid);
         }
     }
