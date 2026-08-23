@@ -3357,7 +3357,7 @@ impl VimInputHandler {
         }
     }
 
-    fn handle_visual(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+    fn handle_visual(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
         use EditOp::*;
         let linewise = self.mode == VimMode::VisualLine;
 
@@ -3376,6 +3376,38 @@ impl VimInputHandler {
                     }
                     // `gv` in Visual is a no-op (selection already live).
                     KeyCode::Char('v') => InputResult::Consumed,
+                    // `gn` / `gN` in Visual — vim canonical: EXTEND the
+                    // current selection to include the next / prev
+                    // match (anchor preserved, cursor moves to the far
+                    // end). Distinct from Normal-mode `gn` which starts
+                    // a fresh selection. R13 nvchad SEV-3 follow-up
+                    // (2026-08-23).
+                    KeyCode::Char(c @ ('n' | 'N')) => {
+                        let forward = c == 'n';
+                        let range = if forward {
+                            ctx.next_find_match
+                        } else {
+                            ctx.prev_find_match
+                        };
+                        let Some((start, end)) = range else {
+                            let cmd = if forward {
+                                "find.select_match_forward"
+                            } else {
+                                "find.select_match_backward"
+                            };
+                            return InputResult::App(AppCommand::RunCommand(cmd.into()));
+                        };
+                        // Cursor lands at the far end of the match; the
+                        // existing anchor stays put so selection grows
+                        // rather than restarts. Forward = end-inclusive;
+                        // backward = start.
+                        let target = if forward {
+                            end.saturating_sub(1).max(start)
+                        } else {
+                            start
+                        };
+                        InputResult::Ops(vec![SetCursorByte(target)])
+                    }
                     // Other `g`-prefixes fall through silently.
                     _ => InputResult::Consumed,
                 };
