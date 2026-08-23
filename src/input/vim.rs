@@ -1423,12 +1423,38 @@ impl VimInputHandler {
                             }
                             return InputResult::Ops(ops);
                         }
-                        let cmd = if forward {
-                            "find.select_match_forward"
+                        // Standalone `gn` / `gN` — vim canonical: enter
+                        // Visual mode with the next / prev match selected.
+                        // `<Esc>` returns to Normal; a subsequent `.`
+                        // (in operator form via `cgn`) can then repeat.
+                        // R13 nvchad SEV-3 2026-08-23 — previously routed
+                        // to `find.select_match_forward` which set the
+                        // selection but left the handler in Normal, so
+                        // subsequent visual chords (`o`, `>`, `y`) fell
+                        // through as motions. Match the operator arm's
+                        // range compute so both paths agree; when no
+                        // cache is warm (no `/pattern` yet), fall back
+                        // to the App command which toasts a helpful
+                        // "gn — no active find" message.
+                        let range = if forward {
+                            ctx.next_find_match
                         } else {
-                            "find.select_match_backward"
+                            ctx.prev_find_match
                         };
-                        InputResult::App(AppCommand::RunCommand(cmd.into()))
+                        let Some((start, end)) = range else {
+                            let cmd = if forward {
+                                "find.select_match_forward"
+                            } else {
+                                "find.select_match_backward"
+                            };
+                            return InputResult::App(AppCommand::RunCommand(cmd.into()));
+                        };
+                        self.mode = VimMode::Visual;
+                        InputResult::Ops(vec![
+                            SetCursorByte(start),
+                            SelectStart,
+                            SetCursorByte(end.saturating_sub(1).max(start)),
+                        ])
                     }
                     // `ga` — show character info as a toast (decimal + hex).
                     KeyCode::Char('a') => {
@@ -4210,6 +4236,48 @@ mod tests {
             InputResult::Ops(v) => v,
             _ => panic!("expected Ops"),
         }
+    }
+
+    /// R13 nvchad SEV-3 (2026-08-23) — standalone `gn` in Normal mode
+    /// must enter Visual mode with the next match selected. Previously
+    /// routed to the App-side `find.select_match_forward` command
+    /// which set the selection bytes but left the handler in Normal,
+    /// so a follow-up visual chord (`o`, `y`, `>`) fell through as a
+    /// motion instead of extending the selection.
+    #[test]
+    fn standalone_gn_enters_visual_with_next_match_selected() {
+        let mut v = h();
+        let mut c = ctx();
+        // Simulate a live find state: match at bytes 4..7 (e.g. "foo"
+        // in "abc foo bar"), cursor at buffer start.
+        c.next_find_match = Some((4, 7));
+        let r = v.handle_key(k('g'), &c);
+        assert!(matches!(r, InputResult::Consumed));
+        let r = v.handle_key(k('n'), &c);
+        let out = ops(r);
+        assert_eq!(
+            out,
+            vec![
+                EditOp::SetCursorByte(4),
+                EditOp::SelectStart,
+                EditOp::SetCursorByte(6), // vim visual is inclusive at end
+            ]
+        );
+        assert_eq!(v.mode(), EditingMode::Visual);
+    }
+
+    /// Standalone `gN` — backward variant, same visual-entry contract.
+    #[test]
+    fn standalone_gn_backward_enters_visual() {
+        let mut v = h();
+        let mut c = ctx();
+        c.prev_find_match = Some((10, 13));
+        v.handle_key(k('g'), &c);
+        let out = ops(v.handle_key(k('N'), &c));
+        assert_eq!(out[0], EditOp::SetCursorByte(10));
+        assert_eq!(out[1], EditOp::SelectStart);
+        assert_eq!(out[2], EditOp::SetCursorByte(12));
+        assert_eq!(v.mode(), EditingMode::Visual);
     }
 
     #[test]
