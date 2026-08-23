@@ -112,6 +112,18 @@ impl App {
         self.pending_macro_register = Some(reg);
     }
 
+    /// vim `@:` — replay the most recently executed `:` command.
+    /// Reads from `ex_history` (the same list `q:` displays).
+    /// Toasts + no-ops when no ex-command has been run yet.
+    /// R13 nvchad SEV-3 2026-08-23.
+    pub fn vim_replay_last_ex(&mut self) {
+        let Some(last) = self.ex_history.last().cloned() else {
+            self.toast("no previous :cmdline command");
+            return;
+        };
+        self.run_ex_command(&last);
+    }
+
     /// vim `.` — re-feed the last recorded change through the
     /// dispatcher. Sets `is_replaying_dot = true` so the replay
     /// doesn't re-record itself or recurse on a nested `.` inside

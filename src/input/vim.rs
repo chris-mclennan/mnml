@@ -1993,6 +1993,16 @@ impl VimInputHandler {
                     if c.is_ascii_lowercase() {
                         return InputResult::App(AppCommand::MacroReplayFrom { reg: c, count });
                     }
+                    // R13 nvchad SEV-3 2026-08-23 — `@:` replays the
+                    // last `:` ex-command. Uses a dedicated app
+                    // command so mnml's ex-history stays the source
+                    // of truth (no need to re-record the keys of
+                    // the ex-command as a macro).
+                    if c == ':' {
+                        return InputResult::App(AppCommand::RunCommand(
+                            "vim.replay_last_ex".into(),
+                        ));
+                    }
                 }
                 return InputResult::Consumed;
             }
@@ -2938,6 +2948,15 @@ impl VimInputHandler {
                     self.prefix = Prefix::MacroRecordTarget;
                     InputResult::Consumed
                 }
+            }
+            // R13 nvchad SEV-3 2026-08-23 — vim's `Q` replays the last
+            // recorded macro (whichever register was last targeted).
+            // Neovim's default binding; mnml previously had `Q` fall
+            // through to the catch-all (silent no-op). `:q!` is still
+            // reachable via `ZQ` and `:q!` (see Prefix::Z at :1068).
+            KeyCode::Char('Q') => {
+                let count = self.count.take().unwrap_or(1).max(1);
+                InputResult::App(AppCommand::MacroReplayFrom { reg: '@', count })
             }
             KeyCode::Char('@') => {
                 self.prefix = Prefix::MacroReplayTarget;
@@ -4471,7 +4490,11 @@ mod tests {
     #[test]
     fn unknown_normal_key_is_ignored() {
         let mut v = h();
-        assert!(matches!(v.handle_key(k('Q'), &ctx()), InputResult::Ignored));
+        // R13 nvchad SEV-3 2026-08-23 — `Q` was ignored; now it's
+        // bound to `MacroReplayFrom { reg: '@' }` (vim's "replay
+        // last macro" semantic — neovim's default). Use a truly
+        // unbound key for this test.
+        assert!(matches!(v.handle_key(k('§'), &ctx()), InputResult::Ignored));
     }
 
     #[test]

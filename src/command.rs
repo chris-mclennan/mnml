@@ -3258,6 +3258,17 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.macro_replay(),
         },
+        // R13 nvchad SEV-3 2026-08-23 — vim's `@:` replays the
+        // most recently executed `:` command. Reads mnml's own
+        // ex_history so the two histories stay a single source
+        // of truth.
+        Command {
+            id: "vim.replay_last_ex",
+            title: "Vim: replay last :cmdline command (@:)",
+            group: "vim",
+            keys: &[],
+            run: |app| app.vim_replay_last_ex(),
+        },
         Command {
             id: "tree.refresh",
             title: "Refresh file tree",
