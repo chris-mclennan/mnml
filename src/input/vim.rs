@@ -2835,7 +2835,13 @@ impl VimInputHandler {
             // `KeyCode::BackTab`. The bare `Tab if !ctrl` arm below
             // would then swallow it and route to `buffer.next` — the
             // opposite of what the user pressed. Guard SHIFT first.
-            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            //
+            // pre-push reviewer 2026-08-23: also require `!ctrl` so
+            // `Ctrl+Shift+Tab` still lands on the ctrl arm's
+            // `nav.forward` instead of `buffer.prev` — the ctrl arm
+            // predates this SHIFT arm and both branches should
+            // remain reachable.
+            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) && !ctrl => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("buffer.prev".into()))
             }

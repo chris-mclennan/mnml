@@ -466,10 +466,18 @@ pub fn draw_pane(
             // With num_w=0, the `>0` width still emits the digit
             // (`"1 "`, `"2 "`, …) so `[ui] line_numbers = false` /
             // <leader>n only trimmed the leading padding — the
-            // gutter shrank but the digits stayed visible. Empty
-            // string here so the whole column collapses to just
-            // the trailing sign column + space (managed elsewhere).
-            String::new()
+            // gutter shrank but the digits stayed visible.
+            //
+            // pre-push reviewer 2026-08-23: first draft returned
+            // "" here, which broke the gutter-width invariant that
+            // every other branch honors (`num_w + 1` chars =
+            // "sign + 1 space"). Downstream cursor placement /
+            // click rects / scrollbar all read `text_x = area.x +
+            // gutter_w` where `gutter_w = num_w + 2`; a 0-char
+            // string here left every visible column 1 cell right
+            // of where clicks landed. Emit a single space so
+            // `num_w + 1 = 0 + 1` matches the invariant.
+            " ".to_string()
         } else if relnum && !is_cur {
             format!("{:>num_w$} ", line_no.abs_diff(cur_row))
         } else {
