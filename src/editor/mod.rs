@@ -846,7 +846,16 @@ pub struct Editor {
     /// after the cursor (`[ai] inline_suggestions`). `Tab` accepts it,
     /// any edit / cursor move clears it. Set by `App::drain_suggestions`.
     pub ghost_suggestion: Option<String>,
+    /// Vim `:changes` — `(row, col)` of each buffer mutation, most-recent
+    /// last. Capped at [`CHANGE_LIST_MAX`]. Consecutive edits to the same
+    /// line collapse into the latest position (matches vim). Every
+    /// buffer-mutating `apply` pushes the post-op cursor position.
+    pub change_list: Vec<(usize, usize)>,
 }
+
+/// Cap for [`Editor::change_list`] — vim's `:changes` shows the last ~100
+/// changes; we match. When the cap is hit the oldest entry is dropped.
+pub const CHANGE_LIST_MAX: usize = 100;
 
 impl Editor {
     pub fn new(text: impl Into<String>, tab_width: usize) -> Self {
@@ -870,6 +879,26 @@ impl Editor {
             extra_anchors: Vec::new(),
             language_ext: None,
             ghost_suggestion: None,
+            change_list: Vec::new(),
+        }
+    }
+
+    /// Push the current cursor position onto the changelist for `:changes`
+    /// / `g;` / `g,`. Called from `apply` when a mutating op landed. If
+    /// the last entry sits on the same line, replace it — vim collapses
+    /// consecutive edits to one line into the latest position so a run
+    /// of typed characters doesn't fill the list.
+    fn record_change(&mut self) {
+        let (row, col) = self.row_col();
+        if let Some(last) = self.change_list.last_mut()
+            && last.0 == row
+        {
+            *last = (row, col);
+            return;
+        }
+        self.change_list.push((row, col));
+        if self.change_list.len() > CHANGE_LIST_MAX {
+            self.change_list.remove(0);
         }
     }
 
@@ -1935,6 +1964,14 @@ impl Editor {
         self.apply_one(op, viewport_rows, clip, &mut out);
         out.cursor_moved |= self.cursor != before_cursor;
         out.buffer_changed |= self.text.len() != before_len;
+        // Changelist bookkeeping for vim's `:changes`. We record on
+        // length-change rather than "op was a mutation" so a same-length
+        // rewrite (e.g. `TransformSelectionCase`) can still register —
+        // there we fall through to the else branch below on buffer_changed
+        // stays false, which matches vim: same-len ops don't push either.
+        if self.text.len() != before_len {
+            self.record_change();
+        }
         // Goal column tracks horizontal intent; vertical motions deliberately keep it.
         if !keep_goal_col {
             self.goal_col = None;
@@ -5411,6 +5448,45 @@ mod tests {
         // — 'c'). Primary at 1. Multi-insert (descending order): 'X' at
         // 4 (before 'c') then at 1 (before 'b') → "aXbéXcédé".
         assert_eq!(e.text(), "aXbéXcédé");
+    }
+
+    /// R10 nvchad SEV-3 (`:changes` #1150) — every buffer-mutating
+    /// apply pushes onto the changelist; consecutive edits to the
+    /// same line collapse into the latest position. Non-mutating
+    /// motions never push. Cap at [`CHANGE_LIST_MAX`] is enforced.
+    #[test]
+    fn change_list_records_edits_and_dedups_per_line() {
+        let (mut e, mut c) = ed("aaa\nbbb\nccc\n");
+        // Cursor at start of line 0.
+        assert!(e.change_list.is_empty());
+        // Insert `x` at cursor — line 0 push.
+        e.apply(EditOp::InsertChar('x'), 10, &mut c);
+        assert_eq!(e.change_list, vec![(0, 1)]);
+        // Second insert on the same line collapses.
+        e.apply(EditOp::InsertChar('y'), 10, &mut c);
+        assert_eq!(e.change_list, vec![(0, 2)]);
+        // Pure motion — jump to line 2 — does NOT push (buffer
+        // unchanged).
+        e.apply(EditOp::MoveDown, 10, &mut c);
+        e.apply(EditOp::MoveDown, 10, &mut c);
+        assert_eq!(e.change_list, vec![(0, 2)]);
+        // Insert on line 2 pushes a fresh entry.
+        e.apply(EditOp::InsertChar('z'), 10, &mut c);
+        assert_eq!(e.change_list.len(), 2);
+        assert_eq!(e.change_list[0], (0, 2));
+        assert_eq!(e.change_list[1].0, 2);
+    }
+
+    #[test]
+    fn change_list_caps_at_max() {
+        let (mut e, mut c) = ed("");
+        // Alternate line to prevent same-line dedup — each Enter
+        // moves to a new row, each subsequent InsertChar pushes.
+        for _ in 0..(CHANGE_LIST_MAX + 20) {
+            e.apply(EditOp::InsertChar('a'), 10, &mut c);
+            e.apply(EditOp::InsertChar('\n'), 10, &mut c);
+        }
+        assert!(e.change_list.len() <= CHANGE_LIST_MAX);
     }
 
     /// Regression for the 2026-06-07 bug-hunt SEV-3 finding:

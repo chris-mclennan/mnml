@@ -2883,6 +2883,29 @@ impl App {
             // first. Capped to 10 entries each side so the toast stays
             // readable.
             "jumps" => self.ex_jumps(rest),
+            // `:changes` — vim's changelist for the active editor. Prints
+            // one line per mutation position (most-recent last, matching
+            // vim), rendered into a persistent toast so the user can scan
+            // it without it fading.
+            "changes" => {
+                let Some(b) = self.active_editor() else {
+                    self.toast(":changes — no active editor");
+                    return;
+                };
+                if b.editor.change_list.is_empty() {
+                    self.toast(":changes — none recorded");
+                    return;
+                }
+                let mut lines: Vec<String> = vec!["change  line  col".to_string()];
+                let n = b.editor.change_list.len();
+                for (i, (row, col)) in b.editor.change_list.iter().enumerate() {
+                    // vim's format: distance-from-current in the leftmost
+                    // column (older = larger positive), then line + col.
+                    let dist = n - i - 1;
+                    lines.push(format!("{:>6}  {:>4}  {:>3}", dist, row + 1, col + 1));
+                }
+                self.toast_persistent("ex:changes", lines.join("\n"), crate::app::ToastLevel::Info);
+            }
             // `:wn` / `:wnext` — write the current buffer + jump to next.
             // `:wp` / `:wprev` — write + jump to prev.
             "wn" | "wnext" => {
