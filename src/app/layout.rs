@@ -1469,6 +1469,24 @@ impl App {
         };
     }
 
+    /// R15 nvchad-user SEV-3 (2026-08-23) — programmatic tab-new for
+    /// callers that will populate the tab themselves. Same as
+    /// `tab_new(None)` but skips the placeholder scratch buffer — used
+    /// by `open_claude_code_new_batch` past the 8-per-screen cap so
+    /// the new tab isn't seeded with `[scratch]` alongside the Claudes.
+    /// The `tab_new(None)` path stays scratch-seeded for interactive
+    /// `:tabnew` (vim convention).
+    pub fn tab_new_empty(&mut self) {
+        self.remember_active_for_tab();
+        let insert_at = self.active_layout + 1;
+        self.layouts.insert(insert_at, Layout::Empty);
+        self.tab_actives.insert(insert_at, None);
+        self.active_layout = insert_at;
+        self.active = None;
+        // Deliberately no scratch buffer or toast — the immediately-
+        // following spawn will populate + toast.
+    }
+
     /// `:tabnew [path]` — open a fresh tab page after the active one.
     /// If `path` is already open in some other tab, switch to that
     /// tab instead of leaving an orphaned empty tab behind (mnml is

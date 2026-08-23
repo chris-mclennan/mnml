@@ -861,8 +861,10 @@ impl App {
             // just carry over any workspace-scoped display-name we
             // held onto (saved_pty_session_names already got it too).
             // 8-per-screen cap for restore parity with batch spawn.
+            // Use tab_new_empty() so restored Claudes don't share a
+            // fresh tab with a placeholder [scratch] pane.
             if self.count_claude_on_active_layout() >= 8 {
-                self.tab_new(None);
+                self.tab_new_empty();
             }
             profile.session_id = Some(saved_cc.session_id.clone());
             self.open_pty_dir(profile, crate::layout::SplitDir::Horizontal);

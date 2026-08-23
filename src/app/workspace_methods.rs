@@ -956,10 +956,18 @@ impl App {
 
     fn sessions_filtered_ids(&self) -> Vec<usize> {
         let f = self.sessions_panel_filter.to_ascii_lowercase();
+        // R15 nvchad-user SEV-2 (2026-08-23) — was
+        // `matches!(p, Pane::Pty(_))`, which counted every Pty
+        // including shells and integration tools. The panel view
+        // filters to `is_ai_session_pane` (Claude Code / Codex only),
+        // so `j`/`k` and `Enter` walked through invisible slots and
+        // Enter on the highlighted "+ New session" chip focused an
+        // unrelated shell instead of spawning a new Claude. Share
+        // the render-side predicate here so keyboard and mouse agree.
         self.panes
             .iter()
             .enumerate()
-            .filter_map(|(i, p)| matches!(p, crate::pane::Pane::Pty(_)).then_some(i))
+            .filter_map(|(i, p)| crate::ui::sessions_panel::is_ai_session_pane(p).then_some(i))
             .filter(|pid| {
                 if f.is_empty() {
                     return true;

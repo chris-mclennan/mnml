@@ -932,7 +932,12 @@ impl App {
         let mut screens_opened = 0;
         for _ in 0..n {
             if self.count_claude_on_active_layout() >= CAP {
-                self.tab_new(None);
+                // R15 nvchad-user SEV-3 (2026-08-23) — `tab_new(None)`
+                // seeds a [scratch] pane, which then hangs around
+                // alongside the batch of Claudes. `tab_new_empty()`
+                // skips the placeholder so the new tab is populated
+                // solely by our upcoming spawn.
+                self.tab_new_empty();
                 screens_opened += 1;
             }
             self.open_claude_code_new();

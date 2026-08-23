@@ -4630,11 +4630,15 @@ impl App {
         } else if matches!(opt, "hoverhelp" | "hover_help" | "hh") {
             self.config.ui.hover_help = true;
             let _ = crate::app::discovery::persist_ui_bool("hover_help", true);
-            self.toast("hover_help: on");
+            self.toast("hover-help: on");
         } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
             self.config.ui.hover_help = false;
             let _ = crate::app::discovery::persist_ui_bool("hover_help", false);
-            self.toast("hover_help: off");
+            // R15 nvchad-user SEV-3 (2026-08-23) — match the palette
+            // command's recovery-hint toast so both surfaces spell out
+            // how to bring it back. Also normalize the dash-vs-underscore
+            // wording to "hover-help" (matches the palette command).
+            self.toast("hover-help: off — Settings → UI (or `:set hoverhelp`) to bring it back");
         } else if matches!(opt, "hovertooltip" | "hover_tooltip" | "ht") {
             self.config.ui.hover_tooltip = true;
             let _ = crate::app::discovery::persist_ui_bool("hover_tooltip", true);
@@ -4643,6 +4647,40 @@ impl App {
             self.config.ui.hover_tooltip = false;
             let _ = crate::app::discovery::persist_ui_bool("hover_tooltip", false);
             self.toast("hover_tooltip: off");
+        } else if matches!(
+            opt,
+            "ghosttext" | "ghost_text" | "gt" | "inline_suggestions" | "inlinesuggestions"
+        ) {
+            // R15 nvchad-user SEV-3 (2026-08-23) — vim users expected
+            // `:set ghosttext` to work; only `ai.toggle_inline_suggestions`
+            // (palette) existed. Route through the same raw-toml
+            // writer the AI Settings row uses so persistence matches.
+            if !self.config.ai.is_table() {
+                self.config.ai = toml::Value::Table(toml::value::Table::new());
+            }
+            if let Some(t) = self.config.ai.as_table_mut() {
+                t.insert("inline_suggestions".to_string(), toml::Value::Boolean(true));
+            }
+            self.toast("ghost-text: on");
+        } else if matches!(
+            opt,
+            "noghosttext"
+                | "noghost_text"
+                | "nogt"
+                | "noinline_suggestions"
+                | "noinlinesuggestions"
+        ) {
+            if !self.config.ai.is_table() {
+                self.config.ai = toml::Value::Table(toml::value::Table::new());
+            }
+            if let Some(t) = self.config.ai.as_table_mut() {
+                t.insert(
+                    "inline_suggestions".to_string(),
+                    toml::Value::Boolean(false),
+                );
+            }
+            self.clear_ghost_suggestion();
+            self.toast("ghost-text: off");
         } else if matches!(opt, "wsdots" | "workspacedots" | "workspace_dots") {
             self.set_workspace_dots(true);
         } else if matches!(opt, "nowsdots" | "noworkspacedots" | "noworkspace_dots") {

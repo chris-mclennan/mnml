@@ -20,6 +20,35 @@ use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::theme;
 
+/// Does `p` count as a Sessions-panel row?
+///
+/// Sessions is the AI-agent panel — it lists Claude Code / Codex Ptys
+/// only. Bare shells, `:term` panes, and integration Ptys still show
+/// up in the bufferline as regular Pty tabs but don't clutter this
+/// view.
+///
+/// 2026-07-18 — was `exe basename == "claude"|"codex"`. That broke
+/// when workspaces set a per-workspace launcher script (e.g.
+/// `./bin/claude-multi.sh`) via the chip's "Set launcher script…"
+/// menu — the exe basename becomes `claude-multi.sh` and misses the
+/// match, so real Claude Code sessions vanish from this panel. Match
+/// against the stable BinaryProfile label instead — it's
+/// `"Claude Code"` / `"Claude Code (resumed)"` / `"Codex"` regardless
+/// of what wrapper the user runs it through.
+///
+/// 2026-08-23 (R15 nvchad-user SEV-2) — was inline inside `draw`.
+/// Lifted to a `pub` helper so `sessions_filtered_ids` in
+/// `workspace_methods.rs` can share the same predicate; the two paths
+/// disagreeing meant `j` walked invisible non-AI ptys and Enter on
+/// the highlighted "+ New session" chip focused a shell instead.
+pub fn is_ai_session_pane(p: &Pane) -> bool {
+    let Pane::Pty(s) = p else { return false };
+    matches!(
+        s.profile.label.as_str(),
+        "Claude Code" | "Claude Code (resumed)" | "Codex"
+    )
+}
+
 /// Height in rows for one session tab. 4 rows: name + 3 lines
 /// of session summary. Old row 2 (⎇ branch · cwd) still lives in
 /// the hover tooltip — user report 2026-07-18: "not sure line 2
@@ -54,22 +83,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // task launches are all excluded — they show up in the
     // bufferline as regular Pty tabs but don't clutter the AI
     // Sessions view.
-    fn is_ai_session_pane(p: &Pane) -> bool {
-        let Pane::Pty(s) = p else { return false };
-        // 2026-07-18 — was `exe basename == "claude"|"codex"`. That
-        // broke when workspaces set a per-workspace launcher script
-        // (`./bin/claude-multi.sh` etc.) via the chip's "Set launcher
-        // script…" menu — the exe basename becomes `claude-multi.sh`
-        // and misses the match, so real Claude Code sessions vanish
-        // from this panel. Match against the stable BinaryProfile
-        // label instead — it's `"claude code"` / `"claude code
-        // (resumed)"` / `"codex"` regardless of what wrapper the
-        // user runs it through.
-        matches!(
-            s.profile.label.as_str(),
-            "Claude Code" | "Claude Code (resumed)" | "Codex"
-        )
-    }
     let all_pty_indices: Vec<usize> = app
         .panes
         .iter()
