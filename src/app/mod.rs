@@ -7475,25 +7475,11 @@ impl App {
     /// Open the API-canary log as a scratch pane. Wired to
     /// `:ai.canary`. Task #1160 (2026-08-23) — surfaces the JSONL
     /// hit trail the user needs to trace an unexpected console
-    /// charge back to its callsite in mnml.
+    /// charge back to its callsite in mnml. `tail_log` caps the
+    /// read at 128 KB so a runaway log doesn't stall the render
+    /// thread on open (review of a8eb98ea).
     pub fn open_api_canary_log(&mut self) {
-        let path = crate::api_canary::log_path();
-        let body = match std::fs::read_to_string(&path) {
-            Ok(s) if !s.trim().is_empty() => s,
-            Ok(_) => format!(
-                "# api-canary — no hits recorded yet.\n\
-                 # Every read of $ANTHROPIC_API_KEY appends one line here.\n\
-                 # If this file stays empty, no code in mnml is firing the metered API.\n\
-                 # Log path: {}\n",
-                path.display()
-            ),
-            Err(e) => format!(
-                "# api-canary — could not read {}: {}\n\
-                 # (An empty log means no hits — this only fires when a callsite reads the env var.)\n",
-                path.display(),
-                e
-            ),
-        };
+        let body = crate::api_canary::tail_log();
         self.open_scratch_with_text("[api-canary]".to_string(), body);
     }
 
