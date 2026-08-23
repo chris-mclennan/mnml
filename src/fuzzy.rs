@@ -300,4 +300,37 @@ mod tests {
             "boundary_bonus test invariant must hold: {word_start} vs {mid_word}"
         );
     }
+
+    #[test]
+    fn probe_common_queries() {
+        for q in [
+            "new file",
+            "close file",
+            "save file",
+            "reload",
+            "commit",
+            "graph",
+            "diff",
+            "revert",
+            "hover",
+            "restart",
+            "config",
+        ] {
+            let scored: Vec<_> = crate::command::registry()
+                .all()
+                .iter()
+                .filter(|c| c.id != "palette")
+                .filter_map(|c| {
+                    let label = format!("{}  ·  {}  ·  {}", c.group, c.title, c.id);
+                    fuzzy_match(q, &label).map(|(s, _)| (s, c.id, label))
+                })
+                .collect();
+            let mut top = scored.clone();
+            top.sort_by_key(|t| std::cmp::Reverse(t.0));
+            eprintln!("\n=== query: {q} ===");
+            for (s, id, _) in top.iter().take(5) {
+                eprintln!("  {s}  {id}");
+            }
+        }
+    }
 }

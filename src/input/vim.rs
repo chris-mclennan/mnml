@@ -1379,6 +1379,13 @@ impl VimInputHandler {
                                 PendingOp::Yank => {
                                     ops.push(YankSelection);
                                     ops.push(SelectClear);
+                                    // #1153 reviewer follow-up
+                                    // 2026-08-23 — `ygn` / `ygN`:
+                                    // SetCursorByte(end) above lands
+                                    // cursor at the match end;
+                                    // restore for vim's
+                                    // y-preserves-cursor.
+                                    ops.push(SetCursorByte(ctx.cursor));
                                 }
                                 PendingOp::Change => {
                                     ops.push(ReplaceSelection(String::new()));
