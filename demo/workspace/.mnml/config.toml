@@ -1,0 +1,10 @@
+[editor]
+breadcrumb = true
+
+[ui]
+# #1060 (2026-08-22) — force the stress meter off for the demo hero.
+# The chip is a real feature, but on-screen during the demo it flickers
+# on a random cadence that pulls the eye away from whatever beat is
+# playing. Global default is already `false`, but the user's own config
+# might have it on; this per-workspace override wins.
+stress_meter = false
