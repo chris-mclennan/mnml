@@ -5487,6 +5487,36 @@ impl App {
             self.toast(format!("postman: mkdir {}: {e}", out_dir.display()));
             return;
         }
+        // R12 api-workflow SEV-3 (2026-08-23) — reconstruct a
+        // Postman v2.1 request URL from its structured fields
+        // when `raw` is absent. Best-effort: joins `host[]` with
+        // `.`, `path[]` with `/`, prepends `protocol://`. Returns
+        // None when neither host nor path is present.
+        fn postman_reconstruct_url(u: &serde_json::Value) -> Option<String> {
+            let protocol = u
+                .get("protocol")
+                .and_then(|p| p.as_str())
+                .unwrap_or("https");
+            let host = u.get("host").and_then(|h| h.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            });
+            let path = u.get("path").and_then(|p| p.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            });
+            match (host.as_deref(), path.as_deref()) {
+                (Some(h), Some(p)) if !h.is_empty() && !p.is_empty() => {
+                    Some(format!("{protocol}://{h}/{p}"))
+                }
+                (Some(h), _) if !h.is_empty() => Some(format!("{protocol}://{h}")),
+                _ => None,
+            }
+        }
         // Walk the (potentially nested) item tree. Each leaf has a
         // `request` field; each folder has its own `item` array.
         fn walk(
@@ -5495,6 +5525,7 @@ impl App {
             out_dir: &std::path::Path,
             counter: &mut usize,
             written: &mut usize,
+            skipped: &mut usize,
         ) {
             for item in items {
                 let name = item
@@ -5510,10 +5541,11 @@ impl App {
                     } else {
                         format!("{prefix}__{name}")
                     };
-                    walk(sub, &new_prefix, out_dir, counter, written);
+                    walk(sub, &new_prefix, out_dir, counter, written, skipped);
                     continue;
                 }
                 let Some(req) = item.get("request") else {
+                    *skipped += 1;
                     continue;
                 };
                 let method = req
@@ -5521,17 +5553,26 @@ impl App {
                     .and_then(|m| m.as_str())
                     .unwrap_or("GET")
                     .to_uppercase();
+                // R12 api-workflow SEV-3 (2026-08-23) — Postman v2.1
+                // also allows structured `url` objects that omit
+                // `raw` when `protocol`/`host`/`path` are populated
+                // (some exporters + hand-authored fixtures). Fall
+                // through to reconstruct `protocol://host.join('.')/
+                // path.join('/')` before giving up.
                 let url = req
                     .get("url")
                     .and_then(|u| match u {
                         serde_json::Value::String(s) => Some(s.clone()),
-                        serde_json::Value::Object(_) => {
-                            u.get("raw").and_then(|r| r.as_str()).map(str::to_string)
-                        }
+                        serde_json::Value::Object(_) => u
+                            .get("raw")
+                            .and_then(|r| r.as_str())
+                            .map(str::to_string)
+                            .or_else(|| postman_reconstruct_url(u)),
                         _ => None,
                     })
                     .unwrap_or_default();
                 if url.is_empty() {
+                    *skipped += 1;
                     continue;
                 }
                 let mut curl = format!("curl -X {method} '{url}'");
@@ -5565,16 +5606,35 @@ impl App {
                 let path = out_dir.join(format!("{stem}.curl"));
                 if std::fs::write(&path, curl).is_ok() {
                     *written += 1;
+                } else {
+                    *skipped += 1;
                 }
             }
         }
         let mut counter = 0usize;
         let mut written = 0usize;
-        walk(items, "", &out_dir, &mut counter, &mut written);
-        self.toast(format!(
-            "postman: wrote {written} curls → {}",
-            out_dir.display()
-        ));
+        let mut skipped = 0usize;
+        walk(
+            items,
+            "",
+            &out_dir,
+            &mut counter,
+            &mut written,
+            &mut skipped,
+        );
+        // R12 api-workflow SEV-3 (2026-08-23) — report both
+        // counts so silent-drop items are visible ("wrote 0
+        // curls" was ambiguous — could be an empty collection or
+        // could be every item hit the no-url skip path).
+        let msg = if skipped == 0 {
+            format!("postman: wrote {written} curls → {}", out_dir.display())
+        } else {
+            format!(
+                "postman: wrote {written} curls ({skipped} skipped — no url or write failure) → {}",
+                out_dir.display()
+            )
+        };
+        self.toast(msg);
     }
 
     /// `http.import_har` — read a HAR (HTTP Archive) from the

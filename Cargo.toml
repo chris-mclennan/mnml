@@ -106,6 +106,12 @@ serde = { version = "1", features = ["derive"] }
 # expect nor what hand-authored stubs use. See 2026-07-09
 # `discover` rqst-parity port.
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+# YAML round-trip for `mnml discover`. R12 api-workflow SEV-2
+# (2026-08-23): the manual documented YAML input but the code
+# only parsed JSON, giving 100% failure on the (OpenAPI-typical)
+# YAML case. `serde_norway` is the maintained fork of the
+# archived `serde_yaml` crate.
+serde_norway = "0.9"
 # System clipboard (best-effort; falls back to an internal register if unavailable).
 arboard = "3"
 # Signal handler for SIGTERM/SIGINT/SIGHUP — the IPC death certificate

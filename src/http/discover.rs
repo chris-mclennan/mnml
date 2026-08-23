@@ -78,7 +78,20 @@ pub fn run(opts: &Options) -> Result<(usize, usize), String> {
     } else {
         std::fs::read_to_string(&opts.spec).map_err(|e| format!("read {}: {e}", opts.spec))?
     };
-    let spec: Value = serde_json::from_str(&text).map_err(|e| format!("parse spec: {e}"))?;
+    // R12 api-workflow SEV-2 (2026-08-23): try JSON first (the
+    // fastest path, most CI-emitted specs), then YAML on parse
+    // failure. The manual has always promised YAML (OpenAPI's
+    // dominant on-disk form) but the parser was JSON-only,
+    // giving a 100% failure with an unhelpful "expected value
+    // at line 1 column 1" for the common case. `serde_norway`
+    // (`serde_yaml` maintained fork) parses to `serde_json::Value`
+    // directly.
+    let spec: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(json_err) => serde_norway::from_str(&text).map_err(|yaml_err| {
+            format!("parse spec: not valid JSON ({json_err}) and not valid YAML ({yaml_err})")
+        })?,
+    };
 
     let base_url = opts
         .base_url
