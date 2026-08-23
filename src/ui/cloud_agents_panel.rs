@@ -252,11 +252,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.cloud_agents_change_defaults_chip = Some(chip_rect);
         y += 2;
     } else if !has_defaults && y < area.y + area.height {
-        // First-run path — wizard CTA.
-        let btn = " + New Cloud Run ";
+        // First-run path — wizard CTA. User feedback 2026-08-23:
+        // the `+` glyph must sit in the same column as the mag glass
+        // on the filter row above (both at `area.x + 1`), so the
+        // left edge of the two rows lines up visually. Drop the
+        // leading space and anchor the button at `area.x + 1`.
+        let btn = "+ New Cloud Run ";
         let bw = btn.chars().count() as u16;
         let btn_rect = Rect {
-            x: area.x + 2,
+            x: area.x + 1,
             y,
             width: bw,
             height: 1,
