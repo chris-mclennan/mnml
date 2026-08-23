@@ -464,12 +464,22 @@ fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
     let bg = t.bg_dark;
     let summary: Vec<(&str, String)> = match app.panes.get(pane_id) {
         Some(Pane::NewCloudRunWizard(p)) => match p.runner {
+            // R15 design-critic HIGH-2 (2026-08-23) — `Flow` /
+            // `Env` / `Prompt` used to appear here as if the user
+            // had set them, but `trigger_run` (`src/ecs_runner_trigger.rs`)
+            // hardcodes `flow = "triage"` / `env = "prod"` and
+            // accepts no prompt at all. Every field except `Ticket`
+            // was cosmetic — the user's typed prompt was silently
+            // discarded. Trimming the Review down to what's
+            // actually plumbed through so the summary is honest.
+            // Filed follow-up: plumb these fields end-to-end so
+            // ECS runs match the flexibility the Managed-Agents
+            // path already has.
             CloudRunner::Ecs => vec![
                 ("Runner ", "ECS runner".to_string()),
                 ("Ticket ", p.qwe_ticket.clone()),
-                ("Flow   ", "triage (default)".to_string()),
-                ("Env    ", "prod (default)".to_string()),
-                ("Prompt ", p.prompt.clone()),
+                ("Flow   ", "triage (baked in — see #1174)".to_string()),
+                ("Env    ", "prod (baked in — see #1174)".to_string()),
             ],
             CloudRunner::ManagedAgents => {
                 let agent_desc = if p.managed_agent_create_new {
