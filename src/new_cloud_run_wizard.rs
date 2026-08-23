@@ -153,6 +153,11 @@ impl NewCloudRunWizardPane {
     }
 
     pub fn next_step(&mut self) -> bool {
+        // R15 design-critic HIGH-2 fast-follow (2026-08-23) —
+        // ECS runner's `trigger_run` doesn't take a prompt arg.
+        // Skip the Prompt step on that path: `QweTicket → Review`
+        // directly. Was `QweTicket → Prompt → Review` where the
+        // typed prompt was silently discarded on submit.
         let next = match self.step {
             CloudRunStep::Runner => match self.runner {
                 CloudRunner::ManagedAgents => CloudRunStep::ManagedAgent,
@@ -160,7 +165,10 @@ impl NewCloudRunWizardPane {
             },
             CloudRunStep::ManagedAgent => CloudRunStep::ManagedSandbox,
             CloudRunStep::ManagedSandbox => CloudRunStep::Prompt,
-            CloudRunStep::QweTicket => CloudRunStep::Prompt,
+            CloudRunStep::QweTicket => match self.runner {
+                CloudRunner::ManagedAgents => CloudRunStep::Prompt,
+                CloudRunner::Ecs => CloudRunStep::Review,
+            },
             CloudRunStep::Prompt => CloudRunStep::Review,
             CloudRunStep::Review => return false,
         };
@@ -179,7 +187,13 @@ impl NewCloudRunWizardPane {
                 CloudRunner::ManagedAgents => CloudRunStep::ManagedSandbox,
                 CloudRunner::Ecs => CloudRunStep::QweTicket,
             },
-            CloudRunStep::Review => CloudRunStep::Prompt,
+            // ECS skips the Prompt step now (see next_step above),
+            // so Back from Review lands on QweTicket for that
+            // path — not on a step the user never saw.
+            CloudRunStep::Review => match self.runner {
+                CloudRunner::ManagedAgents => CloudRunStep::Prompt,
+                CloudRunner::Ecs => CloudRunStep::QweTicket,
+            },
         };
         self.step = prev;
         self.focus_row = 0;

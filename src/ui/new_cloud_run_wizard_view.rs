@@ -181,7 +181,9 @@ fn step_content_rows(s: CloudRunStep) -> u16 {
         CloudRunStep::QweTicket => 3,
         // 1 hint + 1 blank + 1 input row
         CloudRunStep::Prompt => 3,
-        // 4-5 summary rows (ECS = 5, Managed = 4); use the max
+        // Both flows now emit 4 rows (Runner/Ticket/Flow/Env for
+        // ECS; Runner/Agent/Sandbox/Prompt for Managed). Kept at
+        // 5 as headroom in case a summary row is added later.
         CloudRunStep::Review => 5,
     }
 }
