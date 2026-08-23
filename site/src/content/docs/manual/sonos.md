@@ -6,17 +6,22 @@ description: A statusline speaker chip that controls your Sonos over its local A
 Sonos speakers run an open UPnP server on port 1400. No account, no cloud round-trip, no vendor SDK — transport, volume, favorites and grouping are all a plain HTTP POST away on your own network. mnml uses that to put a speaker chip on the statusline:
 
 ```
- 󰓃                                     ← at rest
- 󰓃  ⏸  ⏭  Living Room · Burial — Arch… ← pointer on the cluster
+ 󰓃          ← that's it. Same width, always.
 ```
 
-The statusline is a scarce lane, so at rest the cluster is a single destination chip, and it grows its transport and the room/track label while the pointer is on it.
+The cluster is one chip wide and stays that way. The right lane is right-aligned, so anything that changes the chip's width slides every chip beside it — and doing that on hover reads as the strip twitching whenever the mouse crosses it. Room, track, volume and state live in the hover tooltip and the Info View panel instead, both of which draw *above* the statusline and move nothing.
 
-The colour carries the state: **teal** while mnml is streaming this Mac's audio there, **white** while the speaker is playing something, **dim** while it's idle.
+The colour carries the state at a glance: **teal** while mnml is streaming this Mac's audio there, **white** while the speaker is playing something, **dim** while it's idle.
 
-Keeping play/pause on hover is deliberate. The music cluster's transport sits one chip away, and two adjacent play/pause buttons read as a duplicate — even though they aren't one. That one drives the *player* (mixr / Music / Spotify); this one drives the *speaker*, which is the only control that does anything when the Sonos is playing its own source (radio, TV, Spotify Connect) with no Mac player in the picture. `[sonos] chip_label` pins that: `"hover"` (default), `"always"`, or `"never"` — with `"never"` the detail still lives in the hover tooltip and the Info View panel.
+If you'd rather have the detail inline, `[sonos] chip_label` opts in:
 
-Expansion grows *leftward*, because the right lane is right-aligned. That matters: a cluster that grew rightward would shove the hovered chip out from under the cursor and oscillate.
+| Value | Behaviour |
+|---|---|
+| `"never"` | Default. One chip, constant width. |
+| `"hover"` | Grows `⏸ ⏭ Room · Track` while the pointer is on the cluster. Expansion grows *leftward* — the lane is right-aligned, so a pointer inside the cluster stays inside it. Growing rightward would shove the hovered chip out from under the cursor and oscillate. |
+| `"always"` | Pins the full row open at a constant width. |
+
+Note what the expanded form adds: the speaker's *own* play/pause. That is not a duplicate of the music cluster's transport one chip away — that one drives the **player** (mixr / Music / Spotify), this one drives the **speaker**, which is the only control that does anything when the Sonos is playing its own source (radio, TV, Spotify Connect) with no Mac player in the picture. Collapsed, the right-click menu is where it lives.
 
 Four click targets in one cluster:
 
@@ -27,7 +32,7 @@ Four click targets in one cluster:
 | `⏭` | Next track | The full menu |
 | `Room · Track` | Pick a room | The full menu |
 
-The transport, skip and label targets only exist while expanded. The skip glyph is additionally only drawn for a **queue**. A TV, line-in, AirPlay or radio source has nothing to skip to, so the button is left out rather than drawn and dead.
+The transport, skip and label targets exist only when `chip_label` expands the cluster; by default the speaker chip and the right-click menu are the whole surface. The skip glyph is additionally only drawn for a **queue**. A TV, line-in, AirPlay or radio source has nothing to skip to, so the button is left out rather than drawn and dead.
 
 ## What needs a Sonos, and what doesn't
 
@@ -162,7 +167,7 @@ enabled = true            # master switch for the chip
 host = "192.168.1.131"    # skip SSDP and talk to this player
 room = "Living Room"      # which room to start on
 poll_secs = 3             # transport refresh cadence (1-60)
-chip_label = "hover"      # room · track: hover | always | never
+chip_label = "never"      # room · track inline: never | hover | always
 prefer_airplay = true     # Music.app → AirPlay, not the stream
 ```
 

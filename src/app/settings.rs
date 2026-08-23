@@ -791,20 +791,17 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     // How much of the Sonos cluster stays on screen. Collapsed by
     // default because the statusline lane is scarce and the detail is
     // one hover away.
-    let label_idx = match cfg.sonos.chip_label.as_str() {
-        "always" => 1,
-        "never" => 2,
+    let chip_label_idx = |v: &str| match v {
+        "hover" => 1,
+        "always" => 2,
         _ => 0,
     };
-    let label_default_idx = match d.sonos.chip_label.as_str() {
-        "always" => 1,
-        "never" => 2,
-        _ => 0,
-    };
+    let label_idx = chip_label_idx(cfg.sonos.chip_label.as_str());
+    let label_default_idx = chip_label_idx(d.sonos.chip_label.as_str());
     out.push(SettingItem::Row(SettingRow {
         key: "sonos.chip_label",
         label: "Show room · track on the chip",
-        options: vec!["hover".into(), "always".into(), "never".into()],
+        options: vec!["never".into(), "hover".into(), "always".into()],
         current_idx: label_idx,
         modified: label_idx != label_default_idx,
     }));
@@ -886,9 +883,9 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "sonos.enabled" => set_bool(&mut cfg.sonos.enabled, opt_idx),
         "sonos.chip_label" => {
             let new = match opt_idx {
-                1 => "always",
-                2 => "never",
-                _ => "hover",
+                1 => "hover",
+                2 => "always",
+                _ => "never",
             };
             let changed = cfg.sonos.chip_label != new;
             cfg.sonos.chip_label = new.to_string();

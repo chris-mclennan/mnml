@@ -582,12 +582,18 @@ pub struct SonosConfig {
     /// `[sonos] poll_secs = 3` — how often to refresh transport state.
     /// Clamped to 1-60; the chip is a status line, not a VU meter.
     pub poll_secs: u32,
-    /// `[sonos] chip_label = "hover"` — how much of the cluster shows.
-    /// `"hover"` (default) keeps the statusline tight: speaker + play
-    /// only, with `Room · Track` (and the skip button) appearing while
-    /// the pointer is on the cluster. `"always"` pins the label open;
-    /// `"never"` keeps it collapsed and leaves the detail to the hover
-    /// tooltip and the Info View panel.
+    /// `[sonos] chip_label = "never"` — how much of the cluster shows.
+    ///
+    /// `"never"` (default) keeps the cluster a single speaker chip and
+    /// leaves room/track detail to the hover tooltip and the Info View
+    /// panel, which draw *above* the statusline. That matters: the right
+    /// lane is right-aligned, so anything that changes the cluster's
+    /// width re-flows every chip beside it. Pointer-triggered re-flow
+    /// reads as the strip twitching whenever the mouse crosses it
+    /// (user-reported 2026-08-22), so it is off by default.
+    ///
+    /// `"hover"` opts back into expanding while the pointer is on the
+    /// cluster; `"always"` pins the label open at a constant width.
     pub chip_label: String,
     /// `[sonos] prefer_airplay = true` — when Music.app is the thing
     /// playing, hand it over with native AirPlay (no transcoding, no
@@ -603,7 +609,7 @@ impl Default for SonosConfig {
             host: None,
             room: None,
             poll_secs: 3,
-            chip_label: "hover".to_string(),
+            chip_label: "never".to_string(),
             prefer_airplay: true,
         }
     }

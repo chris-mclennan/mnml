@@ -118,14 +118,17 @@ user might be mid-edit *inside mnml* on something untouched.
 **Sonos speaker chip + two ways to send Mac audio (2026-08-22).**
 New `src/sonos/` subsystem (`soap` / `discovery` / `ops` / `stream` /
 `airplay` / `coreaudio`) plus `src/app/sonos.rs`. Statusline cluster on the
-right lane, next to the music cluster: collapsed to a single `[󰓃]`
-destination chip at rest, growing `[⏸] [⏭] [Room · Track]` on hover
-(`[sonos] chip_label` = hover|always|never). State is carried by color
-— teal streaming / white playing / dim idle. Transport is hover-only
-on purpose: the music cluster's play/pause sits one chip away and two
-adjacent ones read as a duplicate, though they aren't (that drives the
-*player*, this drives the *speaker* — the only thing that works when
-the Sonos plays its own source with no Mac player involved). Expansion grows LEFTWARD — the lane is
+right lane, next to the music cluster: a single constant-width
+`[󰓃]` destination chip. State is carried by color — teal streaming /
+white playing / dim idle — and room/track/volume by the hover tooltip +
+Info View, which draw ABOVE the strip and move nothing. Hover-expansion
+was built first and reverted to opt-in the same session (`[sonos]
+chip_label` = never (default) | hover | always): the lane is
+right-aligned, so any width change slides every neighbouring chip, and
+pointer-triggered re-flow reads as the strip twitching. The expanded
+form's play/pause is NOT a duplicate of the music cluster's — that
+drives the *player*, this drives the *speaker*, the only thing that
+works when the Sonos plays its own source with no Mac player involved. Expansion grows LEFTWARD — the lane is
 right-aligned, so a pointer inside the cluster stays inside it;
 growing rightward would shove the hovered chip out from under the
 cursor and oscillate. Click targets: speaker glyph = send this Mac's audio, transport = play/skip,

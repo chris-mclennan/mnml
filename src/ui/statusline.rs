@@ -1653,18 +1653,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // use — it's used by the click dispatcher to pick mixr vs
     // AppleScript routing, but the render side doesn't need it.
     let _ = mixr_is_source;
-    // Sonos speaker cluster (2026-08-22) — `[speaker] [play]`, growing
-    // to `[speaker] [play] [next] [Room · Track]` while the pointer is
-    // on it. Hidden entirely when `[sonos] enabled = false` or when
-    // discovery found no household, so a machine with no Sonos on the
-    // network sees nothing rather than a dead chip.
+    // Sonos speaker cluster (2026-08-22) — a single `[speaker]` chip.
+    // Hidden entirely when `[sonos] enabled = false` or when discovery
+    // found no household, so a machine with no Sonos on the network sees
+    // nothing rather than a dead chip.
     //
-    // Collapsed-by-default because the statusline is a scarce lane and
-    // the room/track detail is already one hover away in the tooltip
-    // and the Info View panel. Expansion is safe from flicker only
-    // because this lane is right-aligned: the cluster grows leftward,
-    // so a pointer inside it stays inside it. Growing rightward would
-    // shove the hovered chip out from under the cursor and oscillate.
+    // Constant width by default: this lane is right-aligned, so any
+    // change to the cluster's width slides every chip beside it, and
+    // doing that on pointer-hover reads as the strip twitching whenever
+    // the mouse crosses it (user-reported 2026-08-22). Room/track detail
+    // lives in the hover tooltip and the Info View panel instead, both of
+    // which draw above the statusline and move nothing. `[sonos]
+    // chip_label = "hover" | "always"` opts back in — and when it does,
+    // the cluster grows LEFTWARD, which is what keeps hover-expansion
+    // from oscillating: a pointer inside the cluster stays inside it.
     let mut sonos_seg_idx: Option<usize> = None;
     let mut sonos_play_seg_idx: Option<usize> = None;
     let mut sonos_next_seg_idx: Option<usize> = None;
@@ -1682,9 +1684,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         let expanded = match app.config.sonos.chip_label.as_str() {
             "always" => true,
-            "never" => false,
-            // "hover" (the default) and anything unrecognised.
-            _ => hovered,
+            "hover" => hovered,
+            // "never" (the default) and anything unrecognised: the
+            // cluster keeps a constant width so the lane beside it never
+            // re-flows.
+            _ => false,
         };
         // nf-md-speaker. Chosen over the volume glyphs because this
         // chip is a *destination*, not a level control.
@@ -2521,8 +2525,62 @@ mod tests {
         assert!(expanded.contains('…'), "long labels elide: {expanded:?}");
     }
 
-    /// At rest the cluster is a single destination chip. Its transport
-    /// lives on hover so it can't read as a duplicate of the music
+    /// The default must not move the strip. Hovering the speaker chip
+    /// leaves the cluster exactly the width it was — detail belongs to
+    /// the tooltip, which draws above the statusline.
+    #[test]
+    fn sonos_chip_width_is_constant_by_default() {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        assert_eq!(
+            app.config.sonos.chip_label, "never",
+            "pointer-triggered re-flow must stay opt-in"
+        );
+
+        // Both renders come from the SAME app, so the comparison is of
+        // hover state alone — two apps would differ by tempdir name in
+        // the workspace chip.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut app = app;
+        app.sonos.players = vec![crate::sonos::Player {
+            uuid: "RINCON_A".into(),
+            room: "Living Room".into(),
+            host: "10.0.0.9".into(),
+            coordinator: "RINCON_A".into(),
+            airplay: true,
+        }];
+        app.sonos.active = Some("RINCON_A".into());
+        app.sonos.track = crate::sonos::TrackInfo {
+            artist: "Burial".into(),
+            title: "Archangel".into(),
+            ..Default::default()
+        };
+        let mut term = Terminal::new(TestBackend::new(200, 1)).unwrap();
+        let mut render = |app: &mut App| -> (String, Option<u16>) {
+            term.draw(|f| draw(f, app, f.area())).unwrap();
+            let buf = term.backend().buffer();
+            let row: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
+            (row, app.rects.statusline_sonos_chip.map(|r| r.width))
+        };
+
+        let (resting, resting_w) = render(&mut app);
+        app.hover_chip = Some((crate::HoverChip::StatuslineSonos, std::time::Instant::now()));
+        let (hovered, hovered_w) = render(&mut app);
+
+        assert_eq!(
+            resting_w, hovered_w,
+            "the chip must not resize under the pointer"
+        );
+        assert_eq!(
+            resting, hovered,
+            "the whole row must be identical hovered or not"
+        );
+        assert!(!resting.contains("Living Room"), "{resting:?}");
+    }
+
+    /// With `chip_label = "hover"` the transport is revealed on hover and
+    /// absent at rest, so it can't read as a duplicate of the music
     /// cluster's play/pause sitting one chip away.
     #[test]
     fn sonos_transport_is_hover_only() {
