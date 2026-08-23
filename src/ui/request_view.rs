@@ -1165,6 +1165,7 @@ pub fn draw(
             env_rect,
             &workspace,
             env_override.as_deref(),
+            app.config.http.default_env.as_deref(),
             &rp.request.url,
             t,
         );
@@ -2369,6 +2370,7 @@ fn draw_env_box(
     rect: Rect,
     workspace: &std::path::Path,
     env_override: Option<&str>,
+    config_default_env: Option<&str>,
     url: &str,
     t: theme::Theme,
 ) -> Option<Rect> {
@@ -2378,13 +2380,20 @@ fn draw_env_box(
     if inner.width == 0 || inner.height == 0 {
         return None;
     }
-    let envset = crate::http::template::EnvSet::select(workspace, env_override);
-    // NOTE: this env_button code path stays on the plain `select` — the
-    // env-chip label reflects the *runtime override* / MNML_ENV story
-    // (what the user has selected), not the config default. The
-    // draw_request_view path uses `select_with_config_default` for
-    // *var resolution* colouring so a config-default env still resolves
-    // `{{VAR}}` tokens as cyan.
+    // R11 api-workflow SEV-2 (2026-08-23): was `EnvSet::select`,
+    // which considered only the runtime override / MNML_ENV /
+    // legacy `.rqst/config` — a workspace `[http] default_env`
+    // was silently ignored here, so the chip showed `none ▾` +
+    // yellow-warning while everywhere else (Vars tab, URL var
+    // coloring, actual Send) correctly resolved against the
+    // config default. `select_with_config_default` is the same
+    // helper draw_request_view uses at line 896 — the chip now
+    // agrees with the pane.
+    let envset = crate::http::template::EnvSet::select_with_config_default(
+        workspace,
+        env_override,
+        config_default_env,
+    );
     let env_name = envset.name().map(str::to_string);
     let has_override = env_override.is_some();
     // #24 v2 — detect unresolved `{{VAR}}` refs in the URL to

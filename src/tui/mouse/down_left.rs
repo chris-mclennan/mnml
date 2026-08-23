@@ -821,11 +821,32 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_response_format_prompt();
         return;
     }
-    // Click on the "copy" chip → copy the response body.
+    // Click on the "copy" chip → copy whatever the active response
+    // sub-tab is currently showing. R11 api-workflow SEV-2
+    // (2026-08-23): was always `http_copy_response_body()`, so
+    // clicking copy while viewing the Headers tab silently copied
+    // the Body — the toast literally said "response body copied"
+    // even though headers were on screen. Route per sub-tab.
     if let Some(r) = app.rects.request_response_copy_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.http_copy_response_body();
+        let tab = if let Some(idx) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get(idx)
+        {
+            rp.response_tab
+        } else {
+            crate::request_pane::ResponseTab::Body
+        };
+        match tab {
+            crate::request_pane::ResponseTab::Headers => {
+                app.http_copy_response_headers();
+            }
+            // Body / Timeline / Tests all fall back to Body for now
+            // — the "copy timeline" / "copy tests" flavors aren't a
+            // documented product, and Body is what a user hitting
+            // copy on them most likely wants.
+            _ => app.http_copy_response_body(),
+        }
         return;
     }
     // Click on the "wrap" chip → toggle body wrap.
