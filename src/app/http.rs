@@ -595,23 +595,12 @@ impl App {
     }
 
     /// Copy the active Request pane's Done response body to the
-    /// system clipboard. No-op + toast when there's no response.
-    /// Same shape as `http.copy_curl` but for the response side.
+    /// system clipboard. R12 vscode-mouse SEV-3 2026-08-23 —
+    /// delegates to `copy_active_response_body` (the palette-side
+    /// handler) so the two entry points can't drift on empty /
+    /// failed / streaming toast wording.
     pub fn http_copy_response_body(&mut self) {
-        let Some(cur) = self.active else { return };
-        let body = match self.panes.get(cur) {
-            Some(Pane::Request(rp)) => match &rp.state {
-                crate::request_pane::RunState::Done(r) => r.body.clone(),
-                crate::request_pane::RunState::Streaming(r) => r.body.clone(),
-                _ => {
-                    self.toast("copy: no response body yet");
-                    return;
-                }
-            },
-            _ => return,
-        };
-        self.clipboard.set(body, false);
-        self.toast("response body copied");
+        self.copy_active_response_body();
     }
 
     /// Copy the active Request pane's Timeline table as text. R12

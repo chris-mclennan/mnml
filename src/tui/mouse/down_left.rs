@@ -1866,7 +1866,18 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.statusline_coverage_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        let _ = crate::command::run("tattle_coverage_ext.open", app);
+        // R12 vscode-mouse SEV-3 2026-08-23 — check the command
+        // exists (built-in or dynamic) before firing, so a user
+        // without `mnml-tattle-coverage` installed doesn't get the
+        // opaque `no such command: tattle_coverage_ext.open` toast.
+        let id = "tattle_coverage_ext.open";
+        let known = crate::command::registry().get(id).is_some()
+            || app.dynamic_commands.iter().any(|c| c.id == id);
+        if known {
+            let _ = crate::command::run(id, app);
+        } else {
+            app.toast("coverage integration not installed — right-click for options");
+        }
         return;
     }
     // Statusline mode chip → toggle input style (vim ↔ standard).
