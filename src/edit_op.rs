@@ -238,6 +238,16 @@ pub enum EditOp {
     /// (anchor still live) and BEFORE `SelectClear`. R12 nvchad SEV-2
     /// 2026-08-23.
     MoveCursorToSelectionStart,
+    /// Widen the current selection to cover the FULL lines it touches
+    /// (`anchor = line_start(min_line)`, `cursor = line_end(max_line)`,
+    /// with a `+1` inclusion so `for_each_selected_line`'s clip and
+    /// `YankSelectionLinewise`'s slice both cover the endpoint line).
+    /// Direction-preserving is NOT required — after this op cursor is
+    /// always the `hi` end, anchor is always the `lo` end. No-op when
+    /// no selection is live. Emitted by V-mode `>` / `<` / `y` so
+    /// upward selections (`V k >`) work the same as downward ones
+    /// (`V j >`). R12 vscode-reviewer follow-up 2026-08-23.
+    NormalizeLinewiseSelection,
     /// vim `f`/`F`/`t`/`T` — find char on the cursor's line. `forward=true`
     /// scans rightward, `forward=false` scans leftward. `before=true` (`t`/`T`)
     /// stops one cell before the match instead of on it. When `inclusive=true`
@@ -534,6 +544,7 @@ impl EditOp {
             | RestoreLastSelection
             | SwapAnchorCursor
             | MoveCursorToSelectionStart
+            | NormalizeLinewiseSelection
             | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove

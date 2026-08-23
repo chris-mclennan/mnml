@@ -2638,6 +2638,25 @@ impl Editor {
                     self.goal_col = None;
                 }
             }
+            NormalizeLinewiseSelection => {
+                // Widen a live selection so it spans the FULL lines
+                // it touches. Direction-normalizing: after this op
+                // `anchor = line_start(min_line)`, `cursor =
+                // line_end(max_line)`. Makes downstream
+                // `for_each_selected_line` / `YankSelectionLinewise`
+                // symmetric across upward vs downward V-mode
+                // selections. R12 vscode-reviewer follow-up
+                // 2026-08-23. No-op without a selection.
+                if let Some(a) = self.anchor {
+                    let lo = a.min(self.cursor);
+                    let hi = a.max(self.cursor);
+                    let lo_line = self.text[..lo].bytes().filter(|&b| b == b'\n').count();
+                    let hi_line = self.text[..hi].bytes().filter(|&b| b == b'\n').count();
+                    self.anchor = Some(self.line_start(lo_line));
+                    self.cursor = self.line_end(hi_line);
+                    self.goal_col = None;
+                }
+            }
             FindCharOnLine {
                 ch,
                 forward,
@@ -5585,48 +5604,63 @@ mod tests {
 
     /// R12 nvchad SEV-2 2026-08-23 — `V 2j >` on a 3-line buffer must
     /// indent ALL THREE lines (vim's `V` is inclusive on both
-    /// endpoints). Before the fix, `for_each_selected_line`'s
-    /// `hi == line_start(hi_line)` clipped the cursor line off, so
-    /// only lines 0-1 got indented. The vim handler now emits
-    /// `MoveLineEnd + Indent + SelectClear` so the selection's `hi`
-    /// lands past line_start of the cursor line and the clip
-    /// heuristic no longer trips.
+    /// endpoints). Reviewer follow-up: use
+    /// `NormalizeLinewiseSelection` (not `MoveLineEnd`) so upward
+    /// `V k >` also works — MoveLineEnd only widened the cursor
+    /// side of the selection, leaving upward selections still
+    /// clipped at the anchor line.
     #[test]
-    fn visual_line_indent_includes_cursor_line() {
+    fn visual_line_indent_downward_includes_cursor_line() {
         let (mut e, mut c) = ed("one\ntwo\nthree\n");
-        // Simulate `gg V j j MoveLineEnd Indent`: SelectLine (anchor=0,
-        // cursor stays at 0), MoveDown x2 puts cursor at line 2 col 0
-        // (byte 8), MoveLineEnd extends to line_end(2) = 13.
         e.apply(SelectLine, 10, &mut c);
         e.apply(MoveDown, 10, &mut c);
         e.apply(MoveDown, 10, &mut c);
-        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(NormalizeLinewiseSelection, 10, &mut c);
         e.apply(Indent, 10, &mut c);
         assert_eq!(e.text(), "    one\n    two\n    three\n");
     }
 
-    /// R12 nvchad SEV-2 2026-08-23 — `V j >` on a 3-line buffer indents
-    /// lines 0 AND 1 (both endpoints inclusive). Before the fix only
-    /// line 0 was indented.
+    /// Two-line downward `V j >` — both endpoints indent.
     #[test]
-    fn visual_line_indent_two_line_selection() {
+    fn visual_line_indent_two_line_downward() {
         let (mut e, mut c) = ed("one\ntwo\nthree\n");
         e.apply(SelectLine, 10, &mut c);
         e.apply(MoveDown, 10, &mut c);
-        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(NormalizeLinewiseSelection, 10, &mut c);
         e.apply(Indent, 10, &mut c);
         assert_eq!(e.text(), "    one\n    two\nthree\n");
     }
 
-    /// R12 nvchad SEV-2 2026-08-23 — visual `V j <` outdents both
-    /// endpoints (mirror of `>` fix).
+    /// R12 reviewer follow-up 2026-08-23 — upward `V k k >` on a
+    /// 3-line buffer (start at line 2, walk cursor UP to line 0)
+    /// must indent all three lines. Before
+    /// `NormalizeLinewiseSelection` the anchor stayed at line 2's
+    /// start byte and `for_each_selected_line` clipped it off, so
+    /// line 2 silently didn't indent — silent bad-behavior for the
+    /// upward-selection direction.
     #[test]
-    fn visual_line_outdent_includes_cursor_line() {
-        let (mut e, mut c) = ed("    one\n    two\n    three\n");
+    fn visual_line_indent_upward_includes_anchor_line() {
+        let (mut e, mut c) = ed("one\ntwo\nthree\n");
+        // Cursor at line 2 col 0.
+        e.cursor = 8;
         e.apply(SelectLine, 10, &mut c);
-        e.apply(MoveDown, 10, &mut c);
-        e.apply(MoveDown, 10, &mut c);
-        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(MoveUp, 10, &mut c);
+        e.apply(MoveUp, 10, &mut c);
+        e.apply(NormalizeLinewiseSelection, 10, &mut c);
+        e.apply(Indent, 10, &mut c);
+        assert_eq!(e.text(), "    one\n    two\n    three\n");
+    }
+
+    /// R12 reviewer follow-up 2026-08-23 — mirror for outdent.
+    #[test]
+    fn visual_line_outdent_upward_includes_anchor_line() {
+        let (mut e, mut c) = ed("    one\n    two\n    three\n");
+        // Cursor at start of "    three" (line 2 col 0 = byte 16).
+        e.cursor = 16;
+        e.apply(SelectLine, 10, &mut c);
+        e.apply(MoveUp, 10, &mut c);
+        e.apply(MoveUp, 10, &mut c);
+        e.apply(NormalizeLinewiseSelection, 10, &mut c);
         e.apply(Outdent, 10, &mut c);
         assert_eq!(e.text(), "one\ntwo\nthree\n");
     }

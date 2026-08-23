@@ -3599,9 +3599,16 @@ impl VimInputHandler {
                 // alive to compute `min`). Vim users' muscle memory —
                 // `Vjjjy` → `p` — was broken by cursor landing at
                 // the selection endpoint.
+                //
+                // R12 reviewer follow-up 2026-08-23 — `MoveLineEnd`
+                // alone only widened DOWNWARD `V j y` selections;
+                // upward `V k y` still saved an empty/wrong slice
+                // (anchor was `hi`, untouched). Use
+                // `NormalizeLinewiseSelection` instead, which fixes
+                // both endpoints regardless of direction.
                 if linewise {
                     InputResult::Ops(vec![
-                        MoveLineEnd,
+                        NormalizeLinewiseSelection,
                         YankSelectionLinewise,
                         MoveCursorToSelectionStart,
                         SelectClear,
@@ -3616,15 +3623,17 @@ impl VimInputHandler {
             }
             KeyCode::Char('>') => {
                 self.enter_normal();
-                // R12 nvchad SEV-2 2026-08-23 — for linewise V, extend
-                // cursor to line-end BEFORE Indent so
-                // `for_each_selected_line`'s `hi == line_start(hi_line)`
-                // clip doesn't drop the cursor line. Same pattern as
-                // the `y` arm above (see comment there). Vim's `V …
-                // >` is inclusive on both endpoints; without this,
-                // 3-line `V 2j >` only indented the middle line.
+                // R12 nvchad SEV-2 2026-08-23 — for linewise V,
+                // normalize the selection to span full lines BEFORE
+                // Indent so `for_each_selected_line`'s `hi ==
+                // line_start(hi_line)` clip doesn't drop the cursor
+                // line. Reviewer follow-up: use
+                // `NormalizeLinewiseSelection` (not `MoveLineEnd`)
+                // so upward `V k >` works the same as downward `V
+                // j >` — MoveLineEnd only widened the cursor side.
+                // Vim's `V … >` is inclusive on both endpoints.
                 if linewise {
-                    InputResult::Ops(vec![MoveLineEnd, Indent, SelectClear])
+                    InputResult::Ops(vec![NormalizeLinewiseSelection, Indent, SelectClear])
                 } else {
                     InputResult::Ops(vec![Indent, SelectClear])
                 }
@@ -3632,7 +3641,7 @@ impl VimInputHandler {
             KeyCode::Char('<') => {
                 self.enter_normal();
                 if linewise {
-                    InputResult::Ops(vec![MoveLineEnd, Outdent, SelectClear])
+                    InputResult::Ops(vec![NormalizeLinewiseSelection, Outdent, SelectClear])
                 } else {
                     InputResult::Ops(vec![Outdent, SelectClear])
                 }

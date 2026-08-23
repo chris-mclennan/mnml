@@ -245,7 +245,7 @@ impl App {
             self.toast(format!("write: cannot create {}: {e}", parent.display()));
             return;
         }
-        let Some(buf) = self.active_editor_mut() else {
+        let Some(buf) = self.active_editor() else {
             self.toast("no active editor");
             return;
         };

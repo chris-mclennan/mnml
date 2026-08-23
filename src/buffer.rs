@@ -71,6 +71,30 @@ impl FindState {
     }
 }
 
+/// Pure string form of `Buffer::apply_trim_trailing_ws` — strips
+/// trailing space/tab from every line, preserves the trailing `\n`
+/// (or its absence). Kept as a free fn so `Buffer::write_to` can
+/// run the same normalization against a temporary clone without
+/// mutating the in-memory buffer. R12 nvchad SEV-3 reviewer follow-up
+/// 2026-08-23.
+pub(crate) fn trim_trailing_ws_string(original: &str) -> String {
+    let mut out = String::with_capacity(original.len());
+    let trailing_nl = original.ends_with('\n');
+    let mut lines: Vec<&str> = original.split('\n').collect();
+    if trailing_nl {
+        // Skip the final empty "line after the last newline" so we
+        // don't re-add a newline below.
+        lines.pop();
+    }
+    for (i, line) in lines.iter().enumerate() {
+        out.push_str(line.trim_end_matches([' ', '\t']));
+        if i + 1 < lines.len() || trailing_nl {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// `find_all_ci_ascii`'s integration — literal, case-*sensitive*, non-overlapping.
 /// Same `(byte_start, byte_end)` shape. Used by smart-case search.
 pub fn find_all_case_sensitive(text: &str, query: &str) -> Vec<(usize, usize)> {
@@ -727,20 +751,24 @@ impl Buffer {
 
     /// Vim `:w <path>` — write the current text to `path` WITHOUT
     /// repointing the buffer. The buffer's own `path` + tab title +
-    /// dirty state are untouched. Runs `trim_trailing_ws` and
-    /// `ensure_trailing_newline` normalizers (a `:w path` is a real
-    /// save, so it should look the same on disk as a `:w` to the
-    /// buffer's own path). Errors propagate as `Err`. R12 nvchad
-    /// SEV-3 2026-08-23 — was routing through `save_as` which
-    /// silently renamed the buffer.
-    pub fn write_to(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+    /// dirty state are untouched, AND the in-memory editor is not
+    /// mutated (normalizers run against a clone of the text so a
+    /// `:w /tmp/snap.txt` on a file with trailing whitespace doesn't
+    /// silently trim the ORIGINAL buffer + push a stray undo entry).
+    /// Errors propagate as `Err`. R12 nvchad SEV-3 2026-08-23 (fix)
+    /// + reviewer follow-up (side-effect-free normalizers).
+    ///
+    /// `&self` — this method reads the editor state but does not
+    /// modify it.
+    pub fn write_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let mut text = self.editor.text().to_string();
         if self.trim_trailing_ws_on_save {
-            self.apply_trim_trailing_ws();
+            text = trim_trailing_ws_string(&text);
         }
-        if self.ensure_trailing_newline {
-            self.apply_ensure_trailing_newline();
+        if self.ensure_trailing_newline && !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
         }
-        std::fs::write(path, self.editor.text())
+        std::fs::write(path, text)
     }
 
     /// Append a single `\n` to the buffer if it doesn't already end with one
@@ -767,29 +795,8 @@ impl Buffer {
     /// No-op when nothing needs trimming.
     pub fn apply_trim_trailing_ws(&mut self) {
         let original = self.editor.text();
-        let mut out = String::with_capacity(original.len());
-        let mut changed = false;
-        let trailing_nl = original.ends_with('\n');
-        let lines: Vec<&str> = if trailing_nl {
-            // Skip the final empty "line after the last newline" so we don't
-            // re-add a newline below.
-            let mut v: Vec<&str> = original.split('\n').collect();
-            v.pop();
-            v
-        } else {
-            original.split('\n').collect()
-        };
-        for (i, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_end_matches([' ', '\t']);
-            if trimmed.len() != line.len() {
-                changed = true;
-            }
-            out.push_str(trimmed);
-            if i + 1 < lines.len() || trailing_nl {
-                out.push('\n');
-            }
-        }
-        if !changed {
+        let out = trim_trailing_ws_string(original);
+        if out.len() == original.len() {
             return;
         }
         let (row, col) = self.editor.row_col();
