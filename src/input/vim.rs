@@ -1450,10 +1450,17 @@ impl VimInputHandler {
                             return InputResult::App(AppCommand::RunCommand(cmd.into()));
                         };
                         self.mode = VimMode::Visual;
+                        // Cursor lands at `end` directly — mnml's Visual
+                        // selection is `[lo, hi)` half-open where `hi ==
+                        // cursor`, matching every other selection-builder
+                        // in this codebase (`SelectInnerWord`, the
+                        // op-pending `cgn`/`ygn` arm, etc.). Subtracting
+                        // 1 here would drop the match's last byte from
+                        // any subsequent `y`/`d`/`c`.
                         InputResult::Ops(vec![
                             SetCursorByte(start),
                             SelectStart,
-                            SetCursorByte(end.saturating_sub(1).max(start)),
+                            SetCursorByte(end),
                         ])
                     }
                     // `ga` — show character info as a toast (decimal + hex).
@@ -3399,13 +3406,15 @@ impl VimInputHandler {
                         };
                         // Cursor lands at the far end of the match; the
                         // existing anchor stays put so selection grows
-                        // rather than restarts. Forward = end-inclusive;
-                        // backward = start.
-                        let target = if forward {
-                            end.saturating_sub(1).max(start)
-                        } else {
-                            start
-                        };
+                        // rather than restarts. Forward = `end` directly
+                        // (mnml's Visual selection is `[lo, hi)`
+                        // half-open — see the standalone-Normal arm
+                        // above); backward = `start`. Note: if the
+                        // match wraps past the anchor, `Editor::selection`
+                        // renormalises with min/max so the highlighted
+                        // range flips direction rather than growing —
+                        // matches vim's single-anchor visual semantics.
+                        let target = if forward { end } else { start };
                         InputResult::Ops(vec![SetCursorByte(target)])
                     }
                     // Other `g`-prefixes fall through silently.
@@ -4287,18 +4296,43 @@ mod tests {
         assert!(matches!(r, InputResult::Consumed));
         let r = v.handle_key(k('n'), &c);
         let out = ops(r);
+        // Cursor lands at `end` directly: mnml's Visual selection is
+        // `[lo, hi)` half-open where `hi == cursor`. Subtracting 1
+        // would drop the match's last byte from a subsequent y/d/c.
         assert_eq!(
             out,
             vec![
                 EditOp::SetCursorByte(4),
                 EditOp::SelectStart,
-                EditOp::SetCursorByte(6), // vim visual is inclusive at end
+                EditOp::SetCursorByte(7),
             ]
         );
         assert_eq!(v.mode(), EditingMode::Visual);
     }
 
+    /// Reviewer-flagged: `gn` fired again from Visual mode must EXTEND
+    /// the existing selection (anchor preserved) rather than start
+    /// over. Emits only `SetCursorByte(end)` — no SelectStart — so
+    /// the anchor set by whatever entered Visual survives, and the
+    /// selection grows to include the newly matched span in full
+    /// (half-open [anchor, end)).
+    #[test]
+    fn visual_gn_extends_selection_without_resetting_anchor() {
+        let mut v = h();
+        v.mode = VimMode::Visual;
+        let mut c = ctx();
+        c.next_find_match = Some((25, 30));
+        v.handle_key(k('g'), &c);
+        let out = ops(v.handle_key(k('n'), &c));
+        // Only one op — cursor move; no SelectStart (which would
+        // reset the anchor).
+        assert_eq!(out, vec![EditOp::SetCursorByte(30)]);
+        assert_eq!(v.mode(), EditingMode::Visual);
+    }
+
     /// Standalone `gN` — backward variant, same visual-entry contract.
+    /// Backward form lands cursor at `start` (the match's low byte),
+    /// anchor at `end` (selection = [start, end)).
     #[test]
     fn standalone_gn_backward_enters_visual() {
         let mut v = h();
@@ -4308,7 +4342,7 @@ mod tests {
         let out = ops(v.handle_key(k('N'), &c));
         assert_eq!(out[0], EditOp::SetCursorByte(10));
         assert_eq!(out[1], EditOp::SelectStart);
-        assert_eq!(out[2], EditOp::SetCursorByte(12));
+        assert_eq!(out[2], EditOp::SetCursorByte(13));
         assert_eq!(v.mode(), EditingMode::Visual);
     }
 
