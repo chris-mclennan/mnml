@@ -151,7 +151,14 @@ impl App {
                 .to_string(),
             _ => self.last_grep_query.clone(),
         };
-        self.prompt = Some(crate::prompt::Prompt::seeded(
+        // R10 vscode-keyboard F8 (2026-08-22) — when the prompt
+        // reopens with a prefilled query (either from a live
+        // selection or from `last_grep_query`), pre-select the
+        // seed so the first keystroke replaces it. VS Code
+        // convention: reopened Ctrl+Shift+F highlights the last
+        // query. Was `Prompt::seeded` (no auto-select) — user
+        // typed `let` after reopen and got `printlnlet`.
+        self.prompt = Some(crate::prompt::Prompt::seeded_select_all(
             crate::prompt::PromptKind::Grep,
             "Grep workspace",
             seed,
@@ -192,6 +199,46 @@ impl App {
                 );
             } else {
                 self.toast(format!("{used}: no matches for {q:?}"));
+            }
+            // R10 vscode-keyboard F3 (2026-08-22) — also render
+            // the no-matches state IN the grep pane, not only as
+            // a toast. Narrow-terminal users (<120 cols) had the
+            // toast clip off the right of the statusline and saw
+            // no feedback that Ctrl+Shift+F fired. An empty
+            // Grep pane with "no matches" is the primary output
+            // surface — visible regardless of width, dismissed
+            // by Ctrl+W or Esc like any other pane.
+            if let Some(id) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_)))
+                && let Some(Pane::Grep(g)) = self.panes.get_mut(id)
+            {
+                *g = crate::grep_pane::GrepPane::new(q, used, Vec::new());
+                if let Some(idx) = self.right_panel_panes.iter().position(|&pid| pid == id) {
+                    self.right_panel_active_idx = idx;
+                } else {
+                    self.reveal_pane(id);
+                }
+                return;
+            }
+            let pane = Pane::Grep(crate::grep_pane::GrepPane::new(q, used, Vec::new()));
+            if self.right_panel_visible {
+                self.panes.push(pane);
+                let new_id = self.panes.len() - 1;
+                self.right_panel_push(new_id);
+            } else {
+                match self.active {
+                    Some(cur) => {
+                        let new_id =
+                            self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                        self.active = Some(new_id);
+                    }
+                    None => {
+                        self.panes.push(pane);
+                        let id = self.panes.len() - 1;
+                        *self.layout_mut() = Layout::leaf(id);
+                        self.active = Some(id);
+                    }
+                }
+                self.focus = Focus::Pane;
             }
             return;
         }

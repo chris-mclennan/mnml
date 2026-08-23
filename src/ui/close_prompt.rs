@@ -18,17 +18,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     app.rects.close_prompt_buttons.clear();
 
     // Buttons: Save (only if the buffer has a path), Discard, Cancel.
-    // Use plain labels — the bg-color box treatment below already
-    // signals "clickable button", and the bracket-mnemonic look
-    // (` [S]ave `) was reading as text instead.
-    // vscode-mouse-2026-06-10 SEV-3 #5. The keyboard hotkey is
-    // surfaced as an underline on the first letter (drawn below).
+    // Bracket-mnemonic form so keyboard-only users see the hotkey
+    // without having to read the underline (some terminals /
+    // recording pipelines strip UNDERLINED). R10 vscode-keyboard
+    // F7 (2026-08-22): tester saw no advertised keyboard
+    // affordance and had to try random letters to find s/d/esc.
+    // The bracket looks like text but paired with the bg-color
+    // box treatment below it reads as "S/D/C are the shortcuts".
+    // The underline is still applied to the letter INSIDE the
+    // brackets — belt-and-braces on terminals that DO render
+    // underline.
     let mut buttons: Vec<(&str, u8)> = Vec::new();
     if has_path {
-        buttons.push(("  Save  ", 0));
+        buttons.push(("  [S]ave  ", 0));
     }
-    buttons.push(("  Discard  ", 1));
-    buttons.push(("  Cancel  ", 2));
+    buttons.push(("  [D]iscard  ", 1));
+    buttons.push(("  [C]ancel  ", 2));
 
     let msg = format!("  {name} has unsaved changes.");
     let buttons_w: usize = buttons.iter().map(|(t, _)| t.chars().count() + 2).sum();
@@ -74,23 +79,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         if bx + bw > inner.x + inner.width {
             break;
         }
-        // Underline the hotkey letter (capital S/D/C — index 2 in the
-        // padded label) so the user can find the keyboard shortcut
-        // without having to read the bracket-mnemonic that the
-        // pre-2026-06-13 version surfaced.
+        // Bracket-mnemonic layout is `  [X]abel  ` — the hotkey
+        // letter is at index 3 (after the two padding spaces and
+        // the `[`). Underline it too so terminals that render
+        // UNDERLINED get double-signaling.
         let mut spans: Vec<Span> = Vec::new();
         let chars: Vec<char> = label.chars().collect();
-        // Padding before the hotkey letter.
-        spans.push(Span::styled(chars[..2].iter().collect::<String>(), style));
+        // Padding + opening bracket (`  [`).
+        spans.push(Span::styled(chars[..3].iter().collect::<String>(), style));
         // The hotkey letter, underlined.
-        if let Some(&hk) = chars.get(2) {
+        if let Some(&hk) = chars.get(3) {
             spans.push(Span::styled(
                 hk.to_string(),
                 style.add_modifier(Modifier::UNDERLINED),
             ));
         }
-        // Rest of the label.
-        spans.push(Span::styled(chars[3..].iter().collect::<String>(), style));
+        // Closing bracket + rest of the label.
+        spans.push(Span::styled(chars[4..].iter().collect::<String>(), style));
         frame.render_widget(Paragraph::new(Line::from(spans)), Rect::new(bx, by, bw, 1));
         app.rects
             .close_prompt_buttons

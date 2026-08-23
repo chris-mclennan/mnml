@@ -32,22 +32,75 @@ pub fn fuzzy_match(needle: &str, haystack: &str) -> Option<(i64, Vec<usize>)> {
     // (lowercase folding can change length in pathological cases; clamp index use.)
     let n = hchars.len().min(hlower.len());
 
-    // Greedy forward subsequence — fine for picker-sized inputs.
+    // #1147 (R10 vscode-keyboard F1, 2026-08-22) — substring-first
+    // pass. Motivating case: needle `deselect` against
+    // `find  ·  Find: clear highlights + drop extra cursors  ·
+    // find.clear_and_deselect`. Greedy would pin `d` at position
+    // 3 (the `d` in the first `find`) and then chase `e-s-e-l`
+    // across the string, producing a scattered subsequence with
+    // a poor score — the target command loses to 22 shorter
+    // fuzzy matches. Palette users hit this any time they type
+    // the distinctive TAIL of a command id (a VS-Code
+    // muscle-memory pattern: `.deselect`, `.references`,
+    // `.hover_help`).
+    //
+    // Fix: try the ORIGINAL needle (before separator stripping —
+    // `_`/`-`/`.` are meaningful to id tails) as a case-
+    // insensitive substring first. If it appears at a word
+    // boundary in the haystack, use those positions as the
+    // match set — they're guaranteed contiguous, so the scorer
+    // gives the +15 contiguity bonus per char and the +12
+    // boundary bonus, then the exact-phrase boost at the bottom
+    // adds +50/+150 on top. Non-boundary substring hits (and
+    // needles the user typed without separators, e.g. `desel`)
+    // fall through to greedy — same behavior as before.
     let mut matched: Vec<usize> = Vec::with_capacity(nl.len());
-    let mut hi = 0usize;
-    for &nc in &nl {
-        let mut found = None;
-        while hi < n {
-            if hlower[hi] == nc {
-                found = Some(hi);
-                hi += 1;
-                break;
+    let needle_trim = needle.trim();
+    let mut used_substring_path = false;
+    if !needle_trim.is_empty() {
+        let needle_lower_chars: Vec<char> =
+            needle_trim.chars().flat_map(|c| c.to_lowercase()).collect();
+        let nlc = needle_lower_chars.len();
+        if nlc > 0 && nlc <= n {
+            let boundary_chars: &[char] = &['/', '_', '-', '.', ' ', ':'];
+            'outer: for start in 0..=n - nlc {
+                for (off, &nc) in needle_lower_chars.iter().enumerate() {
+                    if hlower.get(start + off).copied() != Some(nc) {
+                        continue 'outer;
+                    }
+                }
+                let at_boundary = start == 0
+                    || hchars
+                        .get(start - 1)
+                        .is_some_and(|c| boundary_chars.contains(c));
+                if at_boundary {
+                    matched = (start..start + nlc).collect();
+                    used_substring_path = true;
+                    break;
+                }
             }
-            hi += 1;
         }
-        {
-            let i = found?;
-            matched.push(i)
+    }
+
+    // Greedy forward subsequence — fine for picker-sized inputs.
+    // Only runs when the substring-first pass didn't land a
+    // boundary hit.
+    if !used_substring_path {
+        let mut hi = 0usize;
+        for &nc in &nl {
+            let mut found = None;
+            while hi < n {
+                if hlower[hi] == nc {
+                    found = Some(hi);
+                    hi += 1;
+                    break;
+                }
+                hi += 1;
+            }
+            {
+                let i = found?;
+                matched.push(i)
+            }
         }
     }
 
@@ -202,6 +255,36 @@ mod tests {
             winner > loser,
             "exact-id match must outrank prefix-hit on longer id: {winner} vs {loser}"
         );
+    }
+
+    #[test]
+    fn greedy_rescue_via_exact_substring() {
+        // #1147 (R10 vscode-keyboard F1) — greedy walks forward
+        // and can consume early letters that make a later
+        // substring unreachable. `deselect` against a haystack
+        // whose early `d` sits in `find` misses under greedy,
+        // even though the literal substring appears near the
+        // end. The rescue path retries as substring and admits
+        // the hit. Must not return None.
+        let haystack =
+            "find  ·  Find: clear highlights + drop extra cursors  ·  find.clear_and_deselect";
+        let m = fuzzy_match("deselect", haystack);
+        assert!(m.is_some(), "greedy-rescue should return a match");
+        let (_score, idx) = m.unwrap();
+        // Substring `deselect` starts near the end; positions
+        // returned should be contiguous.
+        assert!(!idx.is_empty(), "match index vec must be non-empty");
+        let contiguous = idx.windows(2).all(|w| w[1] == w[0] + 1);
+        assert!(contiguous, "rescue positions should be contiguous: {idx:?}");
+    }
+
+    #[test]
+    fn greedy_rescue_still_returns_none_when_no_substring() {
+        // The rescue path only saves matches that ARE
+        // substrings; a non-subsequence non-substring stays
+        // None (protects against relaxing too far — the picker
+        // relies on None to hide non-matches).
+        assert!(fuzzy_match("xyz", "abc").is_none());
     }
 
     #[test]
