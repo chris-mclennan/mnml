@@ -5444,7 +5444,15 @@ fn icon_for_pane(
                 "OPTIONS" => tt.purple,
                 _ => tt.blue,
             };
-            s(if nerd { "\u{F1D8}" } else { "→" }, color)
+            // #1159 (2026-08-23) — no leading glyph. The colored METHOD
+            // pill emitted by `verb_split` is already the identity
+            // signal ("this is an HTTP tab"); the paper-plane just
+            // duplicated it and ate a cell. Empty glyph triggers the
+            // bufferline renderer's `skip_icon` path, which drops the
+            // slot cleanly. The chip's tint color still lands (used
+            // for the border / method-chip fg), we just don't paint
+            // a plane before the METHOD pill.
+            (String::new(), color)
         }
         Pane::Pty(pty) => pty_icon(app, pty, nerd),
         Pane::Ai(_) => s(if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
