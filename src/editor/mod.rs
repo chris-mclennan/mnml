@@ -5468,6 +5468,36 @@ mod tests {
         assert_eq!(e.text(), "hello world");
     }
 
+    /// R10 vscode-keyboard F2 companion — InsertNewline (Enter on
+    /// a selection) must also coalesce. Reviewer W1 on ac89187c.
+    #[test]
+    fn insert_newline_over_selection_undoes_atomically() {
+        let (mut e, mut c) = ed("hello world");
+        e.cursor = 0;
+        e.anchor = Some(5);
+        e.apply(EditOp::InsertNewline, 10, &mut c);
+        assert_eq!(e.text(), "\n world");
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "hello world");
+    }
+
+    /// R10 vscode-keyboard F2 companion — multi-cursor InsertStr
+    /// over two selections. Reviewer W2 on ac89187c — locks in the
+    /// same coalescing for the multi-cursor paste path
+    /// (`multi_insert_str` route).
+    #[test]
+    fn multi_cursor_insert_str_over_selection_undoes_atomically() {
+        let (mut e, mut c) = ed("foo bar foo baz");
+        e.cursor = 1;
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+        assert_eq!(e.extra_cursors.len(), 1);
+        e.apply(EditOp::InsertStr("YY".to_string()), 10, &mut c);
+        assert_eq!(e.text(), "YY bar YY baz");
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "foo bar foo baz");
+    }
+
     /// vscode-user SEV-2 2026-07-10 — Ctrl+D on `foo bar foo` selects
     /// `foo`, second Ctrl+D adds an extra at the second `foo` with
     /// its own anchor+cursor selection. Typing `X` should delete both
