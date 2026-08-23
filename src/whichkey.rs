@@ -111,6 +111,18 @@ pub fn root() -> &'static Leader {
                 // root (single leaf), so muscle-memory `<leader>n`
                 // doesn't wait for a second key.
                 ('n', cmd("view.toggle_line_numbers", "line numbers")),
+                // nvchad-parity SEV-3 f/u (2026-08-22) — `<leader>ch`
+                // opens the cheatsheet, matching NvChad's canonical
+                // chord (`<leader>?` also works but muscle memory is
+                // `ch`). Group scaffolds a `+nvchad` slot for other
+                // NvChad-ish chords to slot in later.
+                (
+                    'c',
+                    group(
+                        "+nvchad",
+                        vec![('h', cmd("view.cheatsheet", "cheatsheet (all chords)"))],
+                    ),
+                ),
                 (
                     'b',
                     group(
