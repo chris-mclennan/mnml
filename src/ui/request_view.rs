@@ -1777,6 +1777,19 @@ fn paint_response_tab_strip(
         RunState::Done(r) if !r.headers.is_empty() => Some(r.headers.len()),
         _ => None,
     };
+    // Cookies count — same pattern for the "Cookies" tab label.
+    // Task #1167 (2026-08-23).
+    let cookie_count: Option<usize> = match &rp.state {
+        RunState::Done(r) => {
+            let n = r
+                .headers
+                .iter()
+                .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+                .count();
+            (n > 0).then_some(n)
+        }
+        _ => None,
+    };
     let mut label_spans: Vec<Span> = Vec::new();
     label_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
     let mut bar_spans: Vec<Span> = Vec::new();
@@ -1784,9 +1797,13 @@ fn paint_response_tab_strip(
     let mut col: u16 = 2;
     for tab in crate::request_pane::ResponseTab::ALL {
         let base = tab.label();
-        // Append " N" to the Headers label when we know the count.
+        // Append " N" to Headers + Cookies labels when we know the count.
         let label = if matches!(tab, crate::request_pane::ResponseTab::Headers)
             && let Some(n) = header_count
+        {
+            format!("{base} {n}")
+        } else if matches!(tab, crate::request_pane::ResponseTab::Cookies)
+            && let Some(n) = cookie_count
         {
             format!("{base} {n}")
         } else {
@@ -3657,6 +3674,64 @@ fn draw_response(
                     }
                     return;
                 }
+                ResponseTab::Cookies => {
+                    // Task #1167 (2026-08-23) — parse Set-Cookie headers
+                    // into a name / value / attrs table. Beats reading
+                    // the raw header row per cookie, which is where they
+                    // used to hide. Attribute tokens are shown as a
+                    // trailing dim string per row (Domain, Path, Expires,
+                    // Max-Age, Secure, HttpOnly, SameSite are the
+                    // meaningful ones — everything else just falls
+                    // through as a bare "; attr" chip).
+                    let cookies: Vec<parse_set_cookie::ParsedCookie> = r
+                        .headers
+                        .iter()
+                        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+                        .map(|(_, v)| parse_set_cookie::parse(v))
+                        .collect();
+                    if cookies.is_empty() {
+                        rows.push(plain(
+                            "  (no cookies set by this response)".to_string(),
+                            Style::default().fg(t.comment).bg(t.bg_dark),
+                        ));
+                        return;
+                    }
+                    for c in &cookies {
+                        rows.push(Line::from(vec![
+                            Span::styled("  ", Style::default().bg(t.bg_dark)),
+                            Span::styled(
+                                c.name.clone(),
+                                Style::default()
+                                    .fg(t.cyan)
+                                    .bg(t.bg_dark)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(" = ", Style::default().fg(t.comment).bg(t.bg_dark)),
+                            Span::styled(c.value.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
+                        ]));
+                        if !c.attrs.is_empty() {
+                            let attrs_line: Vec<Span> = std::iter::once(Span::styled(
+                                "    ".to_string(),
+                                Style::default().bg(t.bg_dark),
+                            ))
+                            .chain(c.attrs.iter().flat_map(|a| {
+                                let s = if a.value.is_empty() {
+                                    a.name.clone()
+                                } else {
+                                    format!("{}={}", a.name, a.value)
+                                };
+                                vec![
+                                    Span::styled(s, Style::default().fg(t.comment).bg(t.bg_dark)),
+                                    Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
+                                ]
+                            }))
+                            .collect();
+                            rows.push(Line::from(attrs_line));
+                        }
+                        rows.push(plain(String::new(), body_style));
+                    }
+                    return;
+                }
                 ResponseTab::Timeline => {
                     // Per-phase timing bars. reqwest::blocking only
                     // exposes two natural boundaries — `send()`
@@ -4074,4 +4149,107 @@ fn pretty_body(body: &str, headers: &[(String, String)]) -> String {
         return p;
     }
     body.to_string()
+}
+
+/// Minimal RFC 6265 Set-Cookie parser for the Cookies response tab
+/// (task #1167). We only need the primary name/value + the
+/// attributes list, not full validation — every `; attr[=val]`
+/// token becomes a `ParsedAttr` in order. Case-insensitive
+/// attribute names are preserved as-typed for the display; the
+/// caller doesn't semantic-interpret them either.
+///
+/// Not pulling in the `cookie` crate for this — one function, no
+/// escaping quirks in the Set-Cookie shape that would need it.
+pub mod parse_set_cookie {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ParsedCookie {
+        pub name: String,
+        pub value: String,
+        pub attrs: Vec<ParsedAttr>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ParsedAttr {
+        pub name: String,
+        pub value: String,
+    }
+
+    pub fn parse(raw: &str) -> ParsedCookie {
+        let mut parts = raw.split(';');
+        let first = parts.next().unwrap_or("").trim();
+        let (name, value) = match first.split_once('=') {
+            Some((n, v)) => (n.trim().to_string(), v.trim().to_string()),
+            None => (first.to_string(), String::new()),
+        };
+        let attrs = parts
+            .map(|p| {
+                let p = p.trim();
+                match p.split_once('=') {
+                    Some((n, v)) => ParsedAttr {
+                        name: n.trim().to_string(),
+                        value: v.trim().to_string(),
+                    },
+                    None => ParsedAttr {
+                        name: p.to_string(),
+                        value: String::new(),
+                    },
+                }
+            })
+            .filter(|a| !a.name.is_empty())
+            .collect();
+        ParsedCookie { name, value, attrs }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parses_bare_name_value() {
+            let c = parse("sid=abc123");
+            assert_eq!(c.name, "sid");
+            assert_eq!(c.value, "abc123");
+            assert!(c.attrs.is_empty());
+        }
+
+        #[test]
+        fn parses_flags_and_attrs() {
+            let c = parse(
+                "session=xyz; Path=/; Domain=example.com; Max-Age=3600; Secure; HttpOnly; SameSite=Strict",
+            );
+            assert_eq!(c.name, "session");
+            assert_eq!(c.value, "xyz");
+            assert_eq!(c.attrs.len(), 6);
+            assert_eq!(c.attrs[0].name, "Path");
+            assert_eq!(c.attrs[0].value, "/");
+            assert_eq!(c.attrs[1].name, "Domain");
+            assert_eq!(c.attrs[2].name, "Max-Age");
+            assert_eq!(c.attrs[2].value, "3600");
+            assert_eq!(c.attrs[3].name, "Secure");
+            assert!(c.attrs[3].value.is_empty());
+            assert_eq!(c.attrs[4].name, "HttpOnly");
+            assert_eq!(c.attrs[5].name, "SameSite");
+            assert_eq!(c.attrs[5].value, "Strict");
+        }
+
+        #[test]
+        fn parses_empty_value_cookie() {
+            // Common shape for "delete this cookie" — `id=; Max-Age=0`.
+            let c = parse("id=; Max-Age=0");
+            assert_eq!(c.name, "id");
+            assert_eq!(c.value, "");
+            assert_eq!(c.attrs.len(), 1);
+            assert_eq!(c.attrs[0].name, "Max-Age");
+        }
+
+        #[test]
+        fn parses_value_containing_equals() {
+            // JWT-shaped payloads contain `=` in the value; the first
+            // `=` split must not fracture them.
+            let c = parse("token=abc.def=; Path=/");
+            assert_eq!(c.name, "token");
+            assert_eq!(c.value, "abc.def=");
+            assert_eq!(c.attrs.len(), 1);
+        }
+    }
 }

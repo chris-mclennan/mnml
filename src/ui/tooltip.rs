@@ -1296,6 +1296,10 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     "click: copy response headers to clipboard",
                     Some("one per line, Name: value"),
                 ),
+                crate::request_pane::ResponseTab::Cookies => (
+                    "click: copy Set-Cookie headers to clipboard",
+                    Some("one per line, raw header form"),
+                ),
                 crate::request_pane::ResponseTab::Timeline => {
                     ("click: copy timeline table (wait / receive / total)", None)
                 }

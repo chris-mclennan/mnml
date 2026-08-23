@@ -281,6 +281,7 @@ impl SplitOrientation {
 pub enum ResponseTab {
     Body,
     Headers,
+    Cookies,
     Timeline,
     Tests,
 }
@@ -289,6 +290,7 @@ impl ResponseTab {
     pub const ALL: &'static [ResponseTab] = &[
         ResponseTab::Body,
         ResponseTab::Headers,
+        ResponseTab::Cookies,
         ResponseTab::Timeline,
         ResponseTab::Tests,
     ];
@@ -296,6 +298,7 @@ impl ResponseTab {
         match self {
             ResponseTab::Body => "Body",
             ResponseTab::Headers => "Headers",
+            ResponseTab::Cookies => "Cookies",
             ResponseTab::Timeline => "Timeline",
             ResponseTab::Tests => "Tests",
         }

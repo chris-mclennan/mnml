@@ -844,6 +844,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         match tab {
             crate::request_pane::ResponseTab::Body => app.http_copy_response_body(),
             crate::request_pane::ResponseTab::Headers => app.http_copy_response_headers(),
+            crate::request_pane::ResponseTab::Cookies => app.http_copy_response_cookies(),
             crate::request_pane::ResponseTab::Timeline => app.http_copy_response_timeline(),
             crate::request_pane::ResponseTab::Tests => app.http_copy_response_tests(),
         }

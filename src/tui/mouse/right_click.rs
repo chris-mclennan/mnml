@@ -433,6 +433,13 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                     MenuAction::Command("http.copy_response_headers"),
                 )],
             ),
+            ResponseTab::Cookies => (
+                "Response Cookies",
+                vec![MenuItem::new(
+                    "Copy Set-Cookie headers",
+                    MenuAction::Command("http.copy_response_cookies"),
+                )],
+            ),
             ResponseTab::Timeline => (
                 "Response Timeline",
                 vec![

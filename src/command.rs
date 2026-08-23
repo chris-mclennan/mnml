@@ -5873,6 +5873,16 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.http_copy_response_headers(),
         },
+        Command {
+            id: "http.copy_response_cookies",
+            title: "HTTP: copy the response Set-Cookie headers",
+            // Task #1167 (2026-08-23) — companion to the Cookies
+            // response tab. Filters Set-Cookie only, joins one per
+            // line as raw header form.
+            group: "http",
+            keys: &[],
+            run: |app| app.http_copy_response_cookies(),
+        },
         // R12 vscode-mouse SEV-2 + SEV-3 2026-08-23 — per-tab copy
         // commands so the Response `copy` chip on Timeline/Tests
         // no longer silently copies Body, and so the sub-tab
