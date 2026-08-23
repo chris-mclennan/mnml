@@ -399,7 +399,43 @@ fn git_bash_path() -> Option<String> {
 
 /// Run one `.test` file. Never panics — a parse error / IO error / failed
 /// expectation all come back as `TestOutcome { passed: false, .. }`.
+/// R12 multilang-dev SEV-1 (2026-08-23) — every `.test` run
+/// isolates its workspace via `tempfile::tempdir()`, but the
+/// persist-write sites (`persist_config_scalar` and friends)
+/// go through `home_config_path()` which — before this fix —
+/// resolved to the developer's REAL `~/.config/mnml/
+/// config.toml`. Running `cargo test` (which drives this
+/// suite) was silently mutating your global mnml config on
+/// every persisted-toggle test (`view.toggle_hover_help`,
+/// wrap, whitespace, rainbow, scrollbar, ...) and spamming
+/// `~/.config/mnml/backups/`.
+///
+/// Fix in two parts: `home_config_path` now honors
+/// `MNML_DATA_ROOT` (task #1041 shape), and this OnceLock
+/// sets it once at process init to a per-process tempdir.
+/// TempDir lives for the process's lifetime — cleanup on
+/// exit is best-effort but no worse than what the many
+/// per-test tempdirs already do. Idempotent: parallel test
+/// threads race harmlessly since OnceLock ensures the set
+/// happens exactly once and the value never changes
+/// afterward.
+fn ensure_e2e_data_root_isolated() {
+    static ISOLATED: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    ISOLATED.get_or_init(|| {
+        let dir = tempfile::tempdir().expect("MNML_DATA_ROOT tempdir for e2e");
+        // SAFETY: called exactly once per process (OnceLock),
+        // BEFORE any e2e test app is constructed, so no other
+        // thread is reading env at this moment. Env stays set
+        // for the process's lifetime — no mutation race after.
+        unsafe {
+            std::env::set_var("MNML_DATA_ROOT", dir.path());
+        }
+        dir
+    });
+}
+
 pub fn run_test(path: &Path) -> TestOutcome {
+    ensure_e2e_data_root_isolated();
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

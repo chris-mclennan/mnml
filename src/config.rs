@@ -3905,6 +3905,21 @@ fn strip_workspaces_blocks(src: &str) -> String {
 }
 
 fn home_config_path() -> Option<PathBuf> {
+    // R12 multilang-dev SEV-1 (2026-08-23) — highest-precedence
+    // override, matching `data_root::data_root()`'s first branch.
+    // Without this, `.test` E2E scripts and the stock `cargo
+    // test` (which drives them) silently mutate the developer's
+    // real `~/.config/mnml/config.toml` because every persisted
+    // toggle (view.toggle_hover_help, wrap, whitespace, rainbow,
+    // ...) routes through this function via `write_user_config`
+    // / `persist_config_scalar`. `MNML_DATA_ROOT` was the fix
+    // for that class of bug (task #1041); this function had
+    // slipped through the sweep.
+    if let Ok(root) = std::env::var("MNML_DATA_ROOT")
+        && !root.is_empty()
+    {
+        return Some(PathBuf::from(root).join("config.toml"));
+    }
     // Portable-mode override wins over everything — the marker
     // folder next to the binary is explicit user intent (task
     // #858). When absent, `crate::data_root::data_root_kind()`
