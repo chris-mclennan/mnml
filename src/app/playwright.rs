@@ -329,11 +329,25 @@ impl App {
                 root.join(".venv").join("bin").join("pytest"),
                 root.join(".venv").join("Scripts").join("pytest.exe"),
                 root.join("venv").join("bin").join("pytest"),
+                // R14 reviewer follow-up 2026-08-23 — Windows
+                // non-hidden venv/ variant (symmetry with the
+                // hidden .venv/Scripts entry above).
+                root.join("venv").join("Scripts").join("pytest.exe"),
             ];
             candidates.into_iter().find(|p| p.exists())
         };
+        // `BinaryProfile::task` runs `cmdline` via `$SHELL -c`, so
+        // an absolute venv path with a space or shell metacharacter
+        // (workspace under `~/My Project/...`) would fracture on
+        // interpolation. Wrap the bin path in single quotes with
+        // POSIX embedded-quote escape (`'` → `'\''`). The bare
+        // `pytest` PATH-fallback is safe unquoted — single word,
+        // no metacharacters. R14 reviewer follow-up.
         let bin = match venv_pytest.as_deref() {
-            Some(p) => p.display().to_string(),
+            Some(p) => {
+                let raw = p.display().to_string();
+                format!("'{}'", raw.replace('\'', "'\\''"))
+            }
             None => "pytest".to_string(),
         };
         let cmdline = if args.is_empty() {
