@@ -41,10 +41,27 @@ jobs:
       - name: Build site
         working-directory: site
         run: npm run build
+      - name: Detect release commit
+        id: relcheck
+        # 2026-08-22 — the release-plz chore commit bumps Cargo.toml and
+        # trips this workflow, but release-plz's own build hasn't
+        # published binaries to /releases/latest/download/* yet, so the
+        # smoke check 404s and fails the whole release. Skip the download
+        # probes on any commit whose message begins with `chore: release`.
+        # The daily scheduled cron still catches genuine broken links.
+        run: |
+          msg=$(git log -1 --format=%B)
+          if echo "$msg" | head -1 | grep -Eq '^chore(\([^)]*\))?: release'; then
+            echo "is_release=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=0" >> "$GITHUB_OUTPUT"
+          fi
       - name: Smoke — internal links + download HEAD
         working-directory: site
         # PR builds run without download probes to avoid rate-limiting
-        # noise on branches; main + scheduled runs hit the real URLs.
+        # noise on branches; release commits skip them for the same
+        # reason (binaries lag the commit by minutes); main + scheduled
+        # runs hit the real URLs.
         env:
-          SKIP_DOWNLOAD_CHECKS: ${{ github.event_name == 'pull_request' && '1' || '' }}
+          SKIP_DOWNLOAD_CHECKS: ${{ (github.event_name == 'pull_request' || steps.relcheck.outputs.is_release == '1') && '1' || '' }}
         run: npm run smoke
