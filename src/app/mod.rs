@@ -9860,9 +9860,18 @@ impl App {
     }
 
     /// `find.clear` (Esc when find is the only active overlay) — drop the matches.
+    ///
+    /// #1142 (2026-08-22, nvchad-parity SEV-1) — also drop any extra
+    /// multi-cursors on the active buffer. Esc in vim Normal now fires
+    /// `find.clear` (was ClearExtraCursors); folding the multi-cursor
+    /// clear into this command keeps both behaviors reachable in one
+    /// dispatch. Palette-level `find.clear` callers get a mild
+    /// side-effect (extra cursors also disappear); that's fine —
+    /// they're already clearing ephemeral overlays.
     pub fn clear_find(&mut self) {
         if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
             b.find = None;
+            b.editor.extra_cursors.clear();
         }
     }
 

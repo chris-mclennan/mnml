@@ -2822,14 +2822,25 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(Redo, n))
             }
-            // Note: terminals send Ctrl+I as Tab — we still wire both forms
-            // so a terminal that distinguishes them (Kitty protocol) gets
-            // the canonical chord, and Tab in normal mode (which has no
-            // built-in meaning) does the right thing on the rest. Ctrl+O is
-            // also wired for the canonical chord.
-            KeyCode::Tab => {
+            // NvChad convention: bare `Tab` / `Shift+Tab` in Normal
+            // cycle the bufferline (tabufline.next / .prev). mnml
+            // previously routed Tab to jumplist-forward (nvim's Ctrl+I
+            // semantic on terminals that fold them together) — but
+            // most terminals now send Ctrl+I distinct from Tab, and
+            // nvchad-parity audit 2026-08-22 (#1142) called out this
+            // divergence as a daily-hit break. Ctrl+I keeps
+            // jumplist-forward; bare Tab now walks buffers.
+            KeyCode::Tab if !ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("buffer.next".into()))
+            }
+            KeyCode::Tab if ctrl => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("nav.forward".into()))
+            }
+            KeyCode::BackTab => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("buffer.prev".into()))
             }
             // vim `Ctrl+W` — split/window prefix. Standard mode keeps
             // `Ctrl+W` bound to `buffer.close`; in vim it becomes a chord
@@ -2988,9 +2999,21 @@ impl VimInputHandler {
                 InputResult::Ops(Self::repeated(JoinLines { keep_space: true }, times))
             }
             KeyCode::Char('Y') => {
-                // vim `Y` — yank the current line (synonym for `yy`).
+                // Neovim default (v0.6+, inherited by NvChad): `Y = y$`
+                // — yank to end of line, symmetric with `D` and `C`.
+                // Was mapped to `yy` (vim 6.x linewise) — corrected per
+                // nvchad-parity audit 2026-08-22 (#1142). Rebuilt from
+                // the SelectStart + MoveLineLastChar + MoveRight (for
+                // inclusive) + YankSelection + SelectClear shape the
+                // motion path already uses for `y$`.
                 self.reset_pending();
-                InputResult::Ops(vec![YankLine])
+                InputResult::Ops(vec![
+                    SelectStart,
+                    MoveLineLastChar,
+                    MoveRight,
+                    YankSelection,
+                    SelectClear,
+                ])
             }
             // paste / undo / redo
             KeyCode::Char('p') => {
@@ -3183,9 +3206,18 @@ impl VimInputHandler {
             }
             KeyCode::Esc => {
                 self.reset_pending();
-                // Drop any extra multi-cursors on Esc — vim's "back to one
-                // cursor" gesture. Cheap when there are none.
-                InputResult::Ops(vec![EditOp::ClearExtraCursors])
+                // NvChad + Neovim: Esc in Normal clears search highlight
+                // in addition to dropping multi-cursors. Users hit `/foo`
+                // → n → n → Esc expecting the highlight to disappear
+                // without typing `:noh<CR>`. Previously only ClearExtraCursors
+                // fired (nvchad-parity audit 2026-08-22, #1142).
+                //
+                // App::clear_find now folds ClearExtraCursors into
+                // itself (see app/mod.rs::clear_find), so one App
+                // command does both jobs — safe when no search is
+                // active (no-op on `find`), and safe when no extras
+                // exist (no-op on `extra_cursors`).
+                InputResult::App(AppCommand::RunCommand("find.clear".into()))
             }
             _ => {
                 self.reset_pending();

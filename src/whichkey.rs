@@ -93,9 +93,24 @@ pub fn root() -> &'static Leader {
                             // grep. Bug-hunt seed #272 from 2026-06-07
                             // nvchad-user hunt — chord was missing.
                             ('g', cmd("find.grep", "grep")),
+                            // nvchad-parity #1142 (2026-08-22) —
+                            // `<leader>fm` = format buffer. NvChad
+                            // binds this to conform.format;
+                            // mnml routes to lsp.format.
+                            ('m', cmd("lsp.format", "format buffer")),
                         ],
                     ),
                 ),
+                // nvchad-parity #1142 (2026-08-22) — `<leader>/`
+                // toggles line comment. NvChad's canonical shortcut
+                // — mnml had `Ctrl+/` and `gcc` but the leader chord
+                // was missing.
+                ('/', cmd("editor.toggle_line_comment", "toggle comment")),
+                // nvchad-parity #1142 (2026-08-22) — `<leader>n`
+                // toggles the line-number gutter. Not a group at
+                // root (single leaf), so muscle-memory `<leader>n`
+                // doesn't wait for a second key.
+                ('n', cmd("view.toggle_line_numbers", "line numbers")),
                 (
                     'b',
                     group(

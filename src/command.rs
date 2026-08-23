@@ -683,6 +683,16 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.toggle_relative_line_numbers(),
         },
+        // nvchad-parity #1142 (2026-08-22) — line-number gutter toggle,
+        // paired with the relative-numbers toggle above. Bound to
+        // NvChad's `<leader>n`.
+        Command {
+            id: "view.toggle_line_numbers",
+            title: "Toggle line-number gutter",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_line_numbers(),
+        },
         Command {
             id: "view.toggle_whitespace",
             title: "Toggle visible whitespace markers (· / →)",
@@ -999,6 +1009,17 @@ fn builtin_commands() -> Vec<Command> {
             group: "editor",
             keys: &[],
             run: |app| app.run_editor_op(crate::edit_op::EditOp::Outdent),
+        },
+        // nvchad-parity #1142 (2026-08-22) — line-comment toggle
+        // reachable from the palette + <leader>/ chord. Vim already
+        // handles gcc/gc; this is the palette + leader entry point
+        // for standard mode + NvChad muscle memory.
+        Command {
+            id: "editor.toggle_line_comment",
+            title: "Toggle line comment (NvChad `<leader>/`, VSCode `Ctrl+/`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::ToggleLineComment),
         },
         Command {
             id: "editor.add_cursor_below",

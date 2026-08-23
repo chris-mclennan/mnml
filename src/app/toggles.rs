@@ -72,6 +72,21 @@ impl App {
         self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
     }
 
+    /// nvchad-parity #1142 (2026-08-22) — line-number gutter toggle,
+    /// counterpart to the existing relative-numbers toggle. Persists.
+    pub fn set_line_numbers(&mut self, on: bool) {
+        self.config.ui.line_numbers = on;
+        let _ = crate::app::discovery::persist_ui_bool("line_numbers", on);
+        self.toast(if on {
+            "line numbers: on"
+        } else {
+            "line numbers: off"
+        });
+    }
+    pub fn toggle_line_numbers(&mut self) {
+        self.set_line_numbers(!self.config.ui.line_numbers);
+    }
+
     /// Toggle visible whitespace markers (`:set list` / `:set nolist`).
     pub fn set_show_whitespace(&mut self, on: bool) {
         self.config.ui.show_whitespace = on;
