@@ -10,6 +10,19 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.15](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.14...mnml-rs-v0.2.15) - 2026-08-23
+
+### Added
+
+- *(sonos)* statusline speaker chip + two ways to send this Mac's audio
+
+### Fixed
+
+- *(#1138)* darken Beatport lime for fg-on-white; keep Spotify+Apple as-is
+- *(#1131)* Ctrl+W on exited Pty pane now closes it (footer hint promised this)
+- *(ui)* #1137 sessions New-session gutter + #1138 mixr idle chip white speaker
+- *(sonos)* stop the chip re-flowing the statusline on hover
+
 ## [0.2.14](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.13...mnml-rs-v0.2.14) - 2026-08-22
 
 ### Fixed
