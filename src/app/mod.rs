@@ -8927,10 +8927,17 @@ impl App {
     }
 
     pub fn refresh_agents_panel_if_due(&mut self) {
-        // 30s — the rail is a heads-up display, not a live tail.
+        // 2 min — the rail is a heads-up display, not a live tail.
         // The full Pane::ClaudeAgents has its own faster refresh
-        // tick when the user opens it.
-        const AGENTS_PANEL_REFRESH: std::time::Duration = std::time::Duration::from_secs(30);
+        // tick when the user opens it. #1161 (2026-08-23) — bumped
+        // from 30s. The Cloud Agents half of this refresh shells
+        // out to `aws dynamodb scan` (unbounded, subprocess spawn
+        // ~200-500ms + server-side scan cost), which stalls the
+        // worker each pass. Cloud runs change on the minute-to-hour
+        // scale, not seconds — the extra latency isn't visible to
+        // the user, and it stops the rail refresh from being a
+        // constant load on both the AWS side and the mnml side.
+        const AGENTS_PANEL_REFRESH: std::time::Duration = std::time::Duration::from_secs(120);
         if self.agents_panel_rx.is_some() {
             return; // a refresh is already in flight
         }

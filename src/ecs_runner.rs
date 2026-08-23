@@ -258,6 +258,16 @@ fn run_scan(cutoff_iso: &str, region: &str, table: &str, profile: Option<&str>) 
         "createdAt > :since",
         "--expression-attribute-values",
         &format!("{{\":since\":{{\"S\":\"{cutoff_iso}\"}}}}"),
+        // #1161 (2026-08-23) — cap the response so this can't grow
+        // unbounded on a large runs table. DynamoDB's own scan page
+        // cap is 1MB but the filter is applied AFTER the raw scan,
+        // and mnml only reads page 1 (no LastEvaluatedKey follow),
+        // so a large table would blow out the rail's refresh
+        // budget before returning anything useful. 200 is far past
+        // any plausible "recent 24h of runs" window; the rail is
+        // capped to 20 rows visible anyway.
+        "--max-items",
+        "200",
         "--output",
         "json",
     ]);
