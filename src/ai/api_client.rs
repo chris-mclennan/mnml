@@ -274,9 +274,11 @@ pub fn resolve_suggest_auth(backend: crate::ai::SuggestBackend) -> Result<Auth, 
                  `claude` in a shell to sign in, then retry."
                     .to_string()
             }),
-        SuggestBackend::ClaudeApi | SuggestBackend::Unset => std::env::var("ANTHROPIC_API_KEY")
-            .map(Auth::ApiKey)
-            .map_err(|_| "$ANTHROPIC_API_KEY not set".to_string()),
+        SuggestBackend::ClaudeApi | SuggestBackend::Unset => {
+            crate::api_canary::observe("api_client::resolve_suggest_auth")
+                .map(Auth::ApiKey)
+                .map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())
+        }
         // Local is engine-owned — API path shouldn't be called at all
         // for this backend. Route back to a clear error just in case.
         SuggestBackend::Local => Err(
@@ -445,7 +447,7 @@ pub fn stream_to_channel(
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
 ) {
-    let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") else {
+    let Ok(api_key) = crate::api_canary::observe("api_client::stream_to_channel") else {
         let _ = sink.send((
             job_id,
             AiMsg::Failed(
@@ -653,7 +655,7 @@ pub fn agent_to_channel(
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
 ) {
-    let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") else {
+    let Ok(api_key) = crate::api_canary::observe("api_client::agent_to_channel") else {
         let _ = sink.send((
             job_id,
             AiMsg::Failed(

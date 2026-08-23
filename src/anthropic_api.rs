@@ -305,7 +305,7 @@ pub fn detect_backend() -> Result<Backend, String> {
             workspace_id,
         });
     }
-    let first = std::env::var("ANTHROPIC_API_KEY")
+    let first = crate::api_canary::observe("anthropic_api::detect_backend")
         .map_err(|_| "no managed-agents auth found — set ANTHROPIC_API_KEY (first-party), OR AWS_REGION + ANTHROPIC_AWS_WORKSPACE_ID (Claude Platform on AWS via SigV4), optionally + ANTHROPIC_AWS_API_KEY (AWS API key auth)".to_string())?;
     if first.is_empty() {
         return Err("ANTHROPIC_API_KEY is empty".to_string());

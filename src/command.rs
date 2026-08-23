@@ -1195,6 +1195,19 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "ai.canary",
+            title: "AI: open the ANTHROPIC_API_KEY canary log (per-callsite hit trail)",
+            group: "ai",
+            // Task #1160 (2026-08-23) — every remaining read of the
+            // env var appends one JSONL row (ts + callsite + pid +
+            // thread) via `crate::api_canary::observe`. Open the log
+            // as a scratch pane so a surprise console charge can be
+            // traced back to its callsite in seconds instead of a
+            // codebase re-grep.
+            keys: &[],
+            run: |app| app.open_api_canary_log(),
+        },
+        Command {
             id: "ai.dashboard",
             title: "AI: open Claude Agents dashboard (also lists Codex sessions)",
             group: "ai",
