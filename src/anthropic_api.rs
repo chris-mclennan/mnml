@@ -736,7 +736,9 @@ pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
         Ok(s) => s,
         Err(e) => {
             // Silent — list_sessions runs from the rail
-            // refresh worker every 30s; printing to stderr
+            // refresh worker (cloud cadence 120s post-#1161
+            // when any cloud backend is opted in; local-only
+            // rigs never reach this path). Printing to stderr
             // would corrupt the TUI. The empty-vec fallback
             // matches the ECS scan's behavior so the panel
             // just stays empty if the backend isn't configured.

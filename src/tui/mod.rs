@@ -680,8 +680,15 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
     // explicit `!contains(CONTROL)` exclusion, Ctrl+Alt+W was
     // being consumed by the menu-bar accelerator (matching 'W' →
     // Window menu) before reaching dispatch_chord_chain.
+    // R14 vscode-keyboard K1 (2026-08-23) — the SHIFT check was
+    // missing, so `Shift+Alt+F` (VS Code's Format Document, the
+    // universal formatting chord) was stolen by the File menu.
+    // Any Shift+Alt+<letter> where the letter matched a menu's
+    // first-alpha char lost the same way. Excluding SHIFT closes
+    // the whole class; Alt-only accelerators still work.
     if key.modifiers.contains(KeyModifiers::ALT)
         && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::SHIFT)
         && let KeyCode::Char(ch) = key.code
     {
         let ch_lower = ch.to_ascii_lowercase();
@@ -808,8 +815,12 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
     // Was: silent no-op — user needed Esc or Alt+different-letter
     // to close. Only matches the SAME menu; Alt+other-letter still
     // switches menus (existing behavior below).
+    // Same SHIFT guard as the open-side accelerator above (R14
+    // vscode-keyboard K1 2026-08-23) — Shift+Alt+<letter> is
+    // never a menu-close accelerator either.
     if key.modifiers.contains(KeyModifiers::ALT)
         && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::SHIFT)
         && let KeyCode::Char(ch) = key.code
     {
         let ch_lower = ch.to_ascii_lowercase();
