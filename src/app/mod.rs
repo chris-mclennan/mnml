@@ -11585,6 +11585,42 @@ mod tests {
         assert_eq!(fs::read_to_string(&orig).unwrap(), "alpha");
     }
 
+    /// R12 nvchad SEV-3 2026-08-23 — vim `:w <path>` writes bytes
+    /// to `<path>` but leaves the buffer's own path unchanged. Only
+    /// `:saveas` / `:file` are supposed to rename. Before the fix,
+    /// mnml routed `:w path` through `save_active_as` which
+    /// repointed the buffer + dirtied the tab title.
+    #[test]
+    fn write_active_to_does_not_rename_buffer() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        if let Some(b) = app.active_editor_mut() {
+            b.editor.place_cursor(0, 5);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::InsertStr("!!".into())],
+                &mut Clipboard::new(),
+                0,
+            );
+        }
+        let orig_path = app.workspace.join("a.txt");
+        // Buffer was pinned at a.txt; make sure it still is post-write.
+        app.write_active_to("subdir/snapshot.txt");
+        let new_abs = app.workspace.join("subdir").join("snapshot.txt");
+        assert!(new_abs.exists(), "snapshot file was written");
+        assert_eq!(fs::read_to_string(&new_abs).unwrap(), "alpha!!\n");
+        let buf = app.active_editor().unwrap();
+        assert_eq!(
+            buf.path.as_deref(),
+            Some(orig_path.as_path()),
+            "buffer path stays pinned to a.txt (vim `:w path` semantic)"
+        );
+        // Original a.txt is untouched — the write went to the snapshot only.
+        assert_eq!(fs::read_to_string(&orig_path).unwrap(), "alpha");
+        // Buffer is still dirty (the disk copy on the ORIGINAL path
+        // wasn't updated — only the snapshot got the new bytes).
+        assert!(buf.dirty, "dirty stays true — original file wasn't touched");
+    }
+
     #[test]
     fn parse_line_range_handles_common_forms() {
         // `:1,5d` — line 1 (0-based: 0) to line 5 (0-based: 4); cmd "d".

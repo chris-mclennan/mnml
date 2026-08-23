@@ -231,6 +231,13 @@ pub enum EditOp {
     /// vim visual `o` — swap the anchor and cursor of the current selection
     /// (move the "active end" to the other side). No-op without a selection.
     SwapAnchorCursor,
+    /// Move cursor to `min(anchor, cursor)` — the "start" byte of the
+    /// current selection. No-op when no selection is live. Vim's
+    /// `:help v_y` — "the cursor moves to the start of the highlighted
+    /// area" — is implemented by emitting this AFTER `YankSelection`
+    /// (anchor still live) and BEFORE `SelectClear`. R12 nvchad SEV-2
+    /// 2026-08-23.
+    MoveCursorToSelectionStart,
     /// vim `f`/`F`/`t`/`T` — find char on the cursor's line. `forward=true`
     /// scans rightward, `forward=false` scans leftward. `before=true` (`t`/`T`)
     /// stops one cell before the match instead of on it. When `inclusive=true`
@@ -526,6 +533,7 @@ impl EditOp {
             | SelectOuterIndentBlock
             | RestoreLastSelection
             | SwapAnchorCursor
+            | MoveCursorToSelectionStart
             | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove

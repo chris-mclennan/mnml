@@ -226,9 +226,45 @@ impl App {
             self.notify_lsp_saved(&p);
         }
     }
-    /// `:w <path>` — save the active editor to a new path (relative paths are
-    /// resolved against the workspace). Repoints the buffer at the new path so
-    /// subsequent `:w` writes there. Refreshes git/tree/LSP. Toasts the result.
+    /// Vim `:w <path>` — write the active editor to `<path>` WITHOUT
+    /// repointing the buffer. The tab title, dirty state, and
+    /// subsequent bare `:w` target all stay pinned to the original
+    /// path. Vim canonical. Use `save_active_as` for the repointing
+    /// (`:saveas` / `:file`) semantic. R12 nvchad SEV-3 2026-08-23.
+    pub fn write_active_to(&mut self, raw_path: &str) {
+        let path = std::path::PathBuf::from(raw_path);
+        let abs = if path.is_absolute() {
+            path
+        } else {
+            self.workspace.join(&path)
+        };
+        if let Some(parent) = abs.parent()
+            && !parent.as_os_str().is_empty()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("write: cannot create {}: {e}", parent.display()));
+            return;
+        }
+        let Some(buf) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        if let Err(e) = buf.write_to(&abs) {
+            self.toast(format!("write failed: {e}"));
+            return;
+        }
+        // Best-effort: refresh git/tree so the new file shows up. The
+        // buffer stays pinned to its original path so no LSP re-open
+        // fires (write goes to a different file that we're not editing).
+        self.git.refresh();
+        self.tree.refresh();
+        self.toast(format!("wrote to {}", rel_path(&self.workspace, &abs)));
+    }
+
+    /// `:saveas <path>` / `:file <path>` — save the active editor to a
+    /// new path AND repoint the buffer at it (relative paths are
+    /// resolved against the workspace). Subsequent bare `:w` writes
+    /// to the new path. Refreshes git/tree/LSP. Toasts the result.
     pub fn save_active_as(&mut self, raw_path: &str) {
         let path = std::path::PathBuf::from(raw_path);
         let abs = if path.is_absolute() {

@@ -1775,11 +1775,24 @@ impl VimInputHandler {
                     }
                     _ => return InputResult::Consumed,
                 };
+                // R12 nvchad SEV-3 2026-08-23 — `yap` / `yip` / `dap`
+                // / `dip` treat the paragraph as LINEWISE (vim's
+                // canonical `:help paragraph` — the object is a
+                // block of lines separated by blank lines). Without
+                // this, `yap` + `Gp` glued the paragraph onto the
+                // last line's tail instead of pasting as a new
+                // block below.
+                let text_object_linewise =
+                    matches!(select_op, SelectInnerParagraph | SelectAroundParagraph);
                 let mut ops = vec![select_op];
                 match op {
                     PendingOp::Delete => ops.push(DeleteSelection),
                     PendingOp::Yank => {
-                        ops.push(YankSelection);
+                        if text_object_linewise {
+                            ops.push(YankSelectionLinewise);
+                        } else {
+                            ops.push(YankSelection);
+                        }
                         ops.push(SelectClear);
                         // #1153 reviewer follow-up 2026-08-23 —
                         // text-object yanks `yiw` / `yaw` / `yip` /
@@ -3576,10 +3589,25 @@ impl VimInputHandler {
                 // line below (was `YankSelection` which stored
                 // characterwise; `p` then glued onto the current
                 // line's tail).
+                //
+                // R12 nvchad SEV-2 2026-08-23 — vim `:help v_y`:
+                // "the cursor moves to the start of the highlighted
+                // area" after yanking. Emit `MoveCursorToSelectionStart`
+                // AFTER YankSelection (so the yank uses the full range
+                // + `remember_selection` records the pre-move anchor
+                // + cursor) and BEFORE `SelectClear` (needs anchor
+                // alive to compute `min`). Vim users' muscle memory —
+                // `Vjjjy` → `p` — was broken by cursor landing at
+                // the selection endpoint.
                 if linewise {
-                    InputResult::Ops(vec![MoveLineEnd, YankSelectionLinewise, SelectClear])
+                    InputResult::Ops(vec![
+                        MoveLineEnd,
+                        YankSelectionLinewise,
+                        MoveCursorToSelectionStart,
+                        SelectClear,
+                    ])
                 } else {
-                    InputResult::Ops(vec![YankSelection, SelectClear])
+                    InputResult::Ops(vec![YankSelection, MoveCursorToSelectionStart, SelectClear])
                 }
             }
             KeyCode::Char('o') => {
@@ -3588,11 +3616,26 @@ impl VimInputHandler {
             }
             KeyCode::Char('>') => {
                 self.enter_normal();
-                InputResult::Ops(vec![Indent, SelectClear])
+                // R12 nvchad SEV-2 2026-08-23 — for linewise V, extend
+                // cursor to line-end BEFORE Indent so
+                // `for_each_selected_line`'s `hi == line_start(hi_line)`
+                // clip doesn't drop the cursor line. Same pattern as
+                // the `y` arm above (see comment there). Vim's `V …
+                // >` is inclusive on both endpoints; without this,
+                // 3-line `V 2j >` only indented the middle line.
+                if linewise {
+                    InputResult::Ops(vec![MoveLineEnd, Indent, SelectClear])
+                } else {
+                    InputResult::Ops(vec![Indent, SelectClear])
+                }
             }
             KeyCode::Char('<') => {
                 self.enter_normal();
-                InputResult::Ops(vec![Outdent, SelectClear])
+                if linewise {
+                    InputResult::Ops(vec![MoveLineEnd, Outdent, SelectClear])
+                } else {
+                    InputResult::Ops(vec![Outdent, SelectClear])
+                }
             }
             KeyCode::Char('g') => {
                 self.prefix = Prefix::G;
@@ -4319,9 +4362,17 @@ mod tests {
         assert_eq!(ops(v.handle_key(k('v'), &ctx())), vec![EditOp::SelectStart]);
         assert_eq!(v.mode(), EditingMode::Visual);
         assert_eq!(ops(v.handle_key(k('l'), &ctx())), vec![EditOp::MoveRight]);
+        // R12 nvchad SEV-2 2026-08-23 — visual `y` now emits
+        // `MoveCursorToSelectionStart` between the yank and the
+        // clear so the cursor lands at the selection start (vim
+        // `:help v_y`).
         assert_eq!(
             ops(v.handle_key(k('y'), &ctx())),
-            vec![EditOp::YankSelection, EditOp::SelectClear]
+            vec![
+                EditOp::YankSelection,
+                EditOp::MoveCursorToSelectionStart,
+                EditOp::SelectClear,
+            ]
         );
         assert_eq!(v.mode(), EditingMode::Normal);
     }

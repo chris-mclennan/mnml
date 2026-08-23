@@ -705,8 +705,10 @@ impl Buffer {
         Ok(())
     }
 
-    /// `:w <path>` — write the current text to `path`, then repoint the buffer
-    /// at it (subsequent `:w` writes there). Errors propagate as `Err`.
+    /// `:saveas <path>` / `:file <path>` — write to `path` AND repoint the
+    /// buffer at it (subsequent `:w` writes there). Errors propagate as
+    /// `Err`. Vim's `:w <path>` uses `write_to` instead, which is
+    /// non-repointing (see below).
     pub fn save_as(&mut self, path: PathBuf) -> std::io::Result<()> {
         if self.trim_trailing_ws_on_save {
             self.apply_trim_trailing_ws();
@@ -721,6 +723,24 @@ impl Buffer {
         self.dirty = false;
         self.last_edited = None;
         Ok(())
+    }
+
+    /// Vim `:w <path>` — write the current text to `path` WITHOUT
+    /// repointing the buffer. The buffer's own `path` + tab title +
+    /// dirty state are untouched. Runs `trim_trailing_ws` and
+    /// `ensure_trailing_newline` normalizers (a `:w path` is a real
+    /// save, so it should look the same on disk as a `:w` to the
+    /// buffer's own path). Errors propagate as `Err`. R12 nvchad
+    /// SEV-3 2026-08-23 — was routing through `save_as` which
+    /// silently renamed the buffer.
+    pub fn write_to(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        if self.trim_trailing_ws_on_save {
+            self.apply_trim_trailing_ws();
+        }
+        if self.ensure_trailing_newline {
+            self.apply_ensure_trailing_newline();
+        }
+        std::fs::write(path, self.editor.text())
     }
 
     /// Append a single `\n` to the buffer if it doesn't already end with one

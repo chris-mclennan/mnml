@@ -2627,6 +2627,17 @@ impl Editor {
                     self.goal_col = None;
                 }
             }
+            MoveCursorToSelectionStart => {
+                // Vim `:help v_y` — after `y` from Visual mode the
+                // cursor moves to the start of the highlighted area.
+                // R12 nvchad SEV-2 2026-08-23. No-op without a
+                // selection.
+                if let Some(a) = self.anchor {
+                    let start = a.min(self.cursor);
+                    self.cursor = start;
+                    self.goal_col = None;
+                }
+            }
             FindCharOnLine {
                 ch,
                 forward,
@@ -3796,10 +3807,12 @@ impl Editor {
                     if transformed != original {
                         self.checkpoint();
                         self.text.replace_range(lo..hi, &transformed);
-                        // Cursor lands at the end of the transformed range
-                        // (vim parks it at the start, but landing at the end
-                        // is more useful when chaining; both are common).
-                        self.cursor = lo + transformed.len();
+                        // Vim canonical: cursor parks at the START of the
+                        // transformed range after `gu` / `gU` / `g~`.
+                        // R12 nvchad SEV-3 2026-08-23 — was landing at
+                        // range end, breaking muscle memory for `gUiw`
+                        // (cursor drifted from word-start to word-end).
+                        self.cursor = lo;
                         self.anchor = None;
                         out.buffer_changed = true;
                     } else {
@@ -4724,7 +4737,21 @@ impl Editor {
                 end_line += 1;
             }
         }
-        (self.line_start(start_line), self.line_end(end_line))
+        // R12 nvchad SEV-3 2026-08-23 — extend `hi` PAST the last
+        // line's `\n` when there's more buffer after us AND we
+        // pulled in a trailing blank (`around` at BOF, or any
+        // `around` where `end_line` was walked into blanks).
+        // Otherwise `dap` on the first paragraph leaves the
+        // trailing blank's `\n` behind, producing a leading blank
+        // line before the next paragraph. Vim canonical.
+        let lo = self.line_start(start_line);
+        let mut hi = self.line_end(end_line);
+        if around && hi < self.text.len() && is_blank(end_line) {
+            // Consume the `\n` terminator of the trailing blank so
+            // it doesn't survive a `d` / `c` on the range.
+            hi += 1;
+        }
+        (lo, hi)
     }
 
     /// vim-indent-object — the contiguous run of lines whose indent is
@@ -5556,6 +5583,80 @@ mod tests {
         assert_eq!(e.text(), "a\nb\nc");
     }
 
+    /// R12 nvchad SEV-2 2026-08-23 — `V 2j >` on a 3-line buffer must
+    /// indent ALL THREE lines (vim's `V` is inclusive on both
+    /// endpoints). Before the fix, `for_each_selected_line`'s
+    /// `hi == line_start(hi_line)` clipped the cursor line off, so
+    /// only lines 0-1 got indented. The vim handler now emits
+    /// `MoveLineEnd + Indent + SelectClear` so the selection's `hi`
+    /// lands past line_start of the cursor line and the clip
+    /// heuristic no longer trips.
+    #[test]
+    fn visual_line_indent_includes_cursor_line() {
+        let (mut e, mut c) = ed("one\ntwo\nthree\n");
+        // Simulate `gg V j j MoveLineEnd Indent`: SelectLine (anchor=0,
+        // cursor stays at 0), MoveDown x2 puts cursor at line 2 col 0
+        // (byte 8), MoveLineEnd extends to line_end(2) = 13.
+        e.apply(SelectLine, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(Indent, 10, &mut c);
+        assert_eq!(e.text(), "    one\n    two\n    three\n");
+    }
+
+    /// R12 nvchad SEV-2 2026-08-23 — `V j >` on a 3-line buffer indents
+    /// lines 0 AND 1 (both endpoints inclusive). Before the fix only
+    /// line 0 was indented.
+    #[test]
+    fn visual_line_indent_two_line_selection() {
+        let (mut e, mut c) = ed("one\ntwo\nthree\n");
+        e.apply(SelectLine, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(Indent, 10, &mut c);
+        assert_eq!(e.text(), "    one\n    two\nthree\n");
+    }
+
+    /// R12 nvchad SEV-2 2026-08-23 — visual `V j <` outdents both
+    /// endpoints (mirror of `>` fix).
+    #[test]
+    fn visual_line_outdent_includes_cursor_line() {
+        let (mut e, mut c) = ed("    one\n    two\n    three\n");
+        e.apply(SelectLine, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(Outdent, 10, &mut c);
+        assert_eq!(e.text(), "one\ntwo\nthree\n");
+    }
+
+    /// R12 nvchad SEV-2 2026-08-23 — `MoveCursorToSelectionStart`
+    /// puts the cursor at `min(anchor, cursor)`. Enables vim
+    /// `:help v_y` semantics — "cursor moves to the start of the
+    /// highlighted area" — for the visual-y yank path.
+    #[test]
+    fn move_cursor_to_selection_start_snaps_to_min() {
+        let (mut e, mut c) = ed("one\ntwo\nthree\n");
+        // Simulate visual v-mode: anchor at 0, cursor at 6 (mid line 1).
+        e.cursor = 6;
+        e.apply(SelectStart, 10, &mut c);
+        e.cursor = 12; // move cursor past "three"
+        e.apply(MoveCursorToSelectionStart, 10, &mut c);
+        assert_eq!(e.cursor(), 6, "cursor should snap back to anchor (start)");
+    }
+
+    /// R12 nvchad SEV-2 2026-08-23 — `MoveCursorToSelectionStart`
+    /// is a no-op when the anchor is `None` (safe to emit as part
+    /// of a shared op sequence).
+    #[test]
+    fn move_cursor_to_selection_start_no_op_without_anchor() {
+        let (mut e, mut c) = ed("one\ntwo\nthree\n");
+        e.cursor = 8;
+        e.apply(MoveCursorToSelectionStart, 10, &mut c);
+        assert_eq!(e.cursor(), 8, "no anchor → no move");
+    }
+
     #[test]
     fn toggle_line_comment() {
         let (mut e, mut c) = ed("foo();\nbar();");
@@ -5753,6 +5854,42 @@ mod tests {
         );
         // Punctuation untouched; each ASCII letter swapped.
         assert_eq!(e.text(), "hELLO, wORLD!");
+    }
+
+    /// R12 nvchad SEV-3 2026-08-23 — `gUiw` on a word must leave the
+    /// cursor at the WORD START (vim canonical), not at the word end.
+    /// This tests `TransformSelectionCase` directly with a selection
+    /// spanning bytes 8..13 (the word "hello" in "let x = hello").
+    #[test]
+    fn case_transform_parks_cursor_at_range_start() {
+        let (mut e, mut c) = ed("let x = hello");
+        e.cursor = 8;
+        e.apply(SelectStart, 10, &mut c);
+        e.cursor = 13;
+        e.apply(
+            TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+            10,
+            &mut c,
+        );
+        assert_eq!(e.text(), "let x = HELLO");
+        assert_eq!(e.cursor(), 8, "cursor should park at the word start");
+    }
+
+    /// Same guarantee when the case-transform is a no-op (e.g. `gU`
+    /// on already-uppercase text). Vim still moves the cursor to
+    /// range start + drops the selection.
+    #[test]
+    fn case_transform_no_change_still_parks_at_start() {
+        let (mut e, mut c) = ed("HELLO");
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(
+            TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+            10,
+            &mut c,
+        );
+        assert_eq!(e.text(), "HELLO");
+        assert_eq!(e.cursor(), 0);
     }
 
     #[test]

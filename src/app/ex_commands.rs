@@ -1238,7 +1238,10 @@ impl App {
                     // created a file named `!cmd`.
                     self.write_buffer_to_shell(shell_cmd.trim());
                 } else {
-                    self.save_active_as(rest);
+                    // R12 nvchad SEV-3 2026-08-23 — vim `:w <path>`
+                    // writes bytes only, does NOT rename the buffer.
+                    // `:saveas` / `:file` are the repointing forms.
+                    self.write_active_to(rest);
                 }
             }
             // nvchad-round-12 SEV-2 2026-07-14 — `:w!` / `:write!` used
@@ -1255,7 +1258,9 @@ impl App {
                 } else if let Some(shell_cmd) = rest.strip_prefix('!') {
                     self.write_buffer_to_shell(shell_cmd.trim());
                 } else {
-                    self.save_active_as(rest);
+                    // R12 nvchad SEV-3 2026-08-23 — parity with `:w path`
+                    // (write bytes only, don't rename the buffer).
+                    self.write_active_to(rest);
                 }
             }
             "saveas" => {
@@ -2908,9 +2913,21 @@ impl App {
                     self.toast(":delete");
                 }
             }
-            // `:y[ank]` — yank current line.
+            // `:y[ank]` — yank current line. Optional single-letter
+            // register argument: `:y a` (or `:yank a`) yanks into
+            // register `"a`. Uppercase (`:y A`) appends to the
+            // register. R12 nvchad SEV-3 2026-08-23 — was silently
+            // ignoring `rest`, so the `:g/pat/y a` capture idiom
+            // yielded an empty register.
             "y" | "yank" | "ya" => {
                 let Some(idx) = self.active else { return };
+                if !rest.is_empty()
+                    && rest.len() == 1
+                    && let Some(reg) = rest.chars().next()
+                    && reg.is_ascii_alphabetic()
+                {
+                    self.clipboard.set_pending_register(Some(reg));
+                }
                 if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
                     b.editor
                         .apply(crate::edit_op::EditOp::YankLine, 20, &mut self.clipboard);
@@ -4211,11 +4228,18 @@ impl App {
                 parts.push(format!("\"{c}  {}", preview(&text, 40)));
             }
         }
-        if parts.is_empty() {
-            self.toast(":reg — empty");
+        // R12 nvchad SEV-3 2026-08-23 — vim's `:reg` is a persistent
+        // listing (the user reads it, then dismisses). Was routing
+        // through `toast` which faded in ~4s, so the user usually
+        // missed everything past register `"0`. Pin as
+        // `toast_persistent("ex:reg", ...)` so it stays until the
+        // next Esc / toast-dismiss / another `:reg`.
+        let msg = if parts.is_empty() {
+            ":reg — empty".to_string()
         } else {
-            self.toast(format!(":reg · {}", parts.join("  ")));
-        }
+            format!(":reg · {}", parts.join("  "))
+        };
+        self.toast_persistent("ex:reg", msg, crate::app::ToastLevel::Info);
     }
 
     fn ex_edit(&mut self, rest: &str) {
