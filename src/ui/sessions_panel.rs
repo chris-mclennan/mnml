@@ -534,10 +534,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // an accent background when cursored so it reads as "focused"
     // and Enter matches expectation.
     if y < area.y + area.height {
+        // #1137 — shift the chip rect +1 cell right (breathing room
+        // from the activity-bar column, matches the Integrations tab
+        // strip gutter from #1121) and shrink the in-chip leading pad
+        // from 3 spaces to 1 so the "+ New session" text lands 1 cell
+        // LEFT of where it used to render (net: rect +1, text -1).
         let new_rect = Rect {
-            x: area.x,
+            x: area.x + 1,
             y,
-            width: area.width,
+            width: area.width.saturating_sub(1),
             height: 1,
         };
         let chip_bg = if cursor_on_new_chip { t.bg2 } else { bg };
@@ -550,12 +555,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 new_rect,
             );
         }
-        // #1103 f/u4 (2026-08-20) — 3-space leading pad here vs 2
-        // before, to align the `+` with the `C` in the "Claude Code"
-        // row above (which now sits at area.x + 3 after the accent
-        // shifted right by 1 to make room for the sessions gutter).
         let line = Line::from(vec![
-            Span::styled("   ", Style::default().bg(chip_bg)),
+            Span::styled(" ", Style::default().bg(chip_bg)),
             Span::styled(
                 "+ New session",
                 Style::default()

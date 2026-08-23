@@ -1626,12 +1626,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Color::Rgb(0x00, 0x00, 0x00),
             ),
         };
-        // Brand keeps its own leading + trailing pad; play drops
-        // the leading space so the two segments meet at a single
-        // cell of air (was two, from trailing-of-brand + leading-
-        // of-play doubling up).
+        // #1138 — brand glyph gets a WHITE inner cell (same visual
+        // as the playing-state chip) so the source logo reads as
+        // its own framed icon rather than blending into the wider
+        // chip's tinted background. The play_box segment keeps the
+        // source-colored bg for identity — logo-on-white / play-on-
+        // color mirrors the playing state's two-tier framing.
         let brand_idx = right.len();
-        right.push(Seg::new(format!(" {} ", source_glyph), chip_fg, chip_bg));
+        right.push(Seg::new(
+            format!(" {} ", source_glyph),
+            chip_bg, // brand color as fg (glyph paints in source tint)
+            Color::Rgb(0xFF, 0xFF, 0xFF),
+        ));
         let play_idx = right.len();
         right.push(Seg::new(
             format!("{} ", NF_PLAY_BOX), // nf-md-play_box_outline
