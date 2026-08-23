@@ -602,6 +602,19 @@ impl App {
             for item in items.iter_mut() {
                 if order.contains_key(&item.id) {
                     item.label = format!("★ {}", item.label);
+                    // #1154 reviewer follow-up 2026-08-23 —
+                    // when the pane-scoped boost switched from
+                    // `priority` to `score_bonus` (+20), a
+                    // non-namespaced recent (score 0) started
+                    // losing to a pane-scoped non-recent (score
+                    // 20). Bump recents to +50 so they still
+                    // beat pane-scope. Preserves the documented
+                    // "recents > pane-scoped > everything-else"
+                    // order at empty query AND on non-empty
+                    // queries (a strong bull's-eye elsewhere,
+                    // typical fuzzy scores 200-500, can still
+                    // beat a weakly-matching recent).
+                    item.score_bonus = item.score_bonus.max(50);
                 }
             }
             items.sort_by(|a, b| {

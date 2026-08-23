@@ -2879,12 +2879,17 @@ impl VimInputHandler {
             // would then swallow it and route to `buffer.next` — the
             // opposite of what the user pressed. Guard SHIFT first.
             //
-            // pre-push reviewer 2026-08-23: also require `!ctrl` so
-            // `Ctrl+Shift+Tab` still lands on the ctrl arm's
-            // `nav.forward` instead of `buffer.prev` — the ctrl arm
-            // predates this SHIFT arm and both branches should
-            // remain reachable.
-            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) && !ctrl => {
+            // R11 vscode-keyboard reviewer follow-up 2026-08-23 —
+            // `Ctrl+Shift+Tab` is VS Code's canonical "previous
+            // tab" (MRU-reverse of Ctrl+Tab). The original decision
+            // to leave it on the ctrl arm's `nav.forward` (Ctrl+I's
+            // vim semantics) was preserved for the earliest
+            // Ctrl-Shift-Tab fix, but that left the R11-tester
+            // report unaddressed in vim mode — `buffer.prev` bound
+            // to the same chord in command.rs was shadowed by this
+            // handler. Route ctrl+shift+tab to buffer.prev
+            // explicitly; jumplist-forward still has bare Ctrl+I.
+            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("buffer.prev".into()))
             }
