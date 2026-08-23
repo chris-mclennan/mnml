@@ -381,6 +381,11 @@ pub enum HoverChip {
     /// AI launcher button at the right end of a per-leaf tab
     /// strip — opens Claude / Codex in a split.
     SplitStripAiButton,
+    /// Maximize / restore chip at the right end of a per-leaf tab
+    /// strip — click toggles per-leaf zoom (or full-screen when
+    /// already in full-screen mode). R13 vscode-mouse SEV-3
+    /// 2026-08-23.
+    SplitStripMaximizeButton,
     /// Palette-bar sidebar toggle (codicon layout-sidebar-left/off)
     /// — click fires view.toggle_tree (Ctrl+B).
     PaletteSidebarButton,

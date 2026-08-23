@@ -1656,6 +1656,17 @@ pub fn rects_dump_json(app: &App) -> String {
         };
         push_rect(&mut out, &mut first, &label, *r);
     }
+    // R13 vscode-mouse SEV-3 2026-08-23 — the per-leaf maximize
+    // chip (rightmost in the split-strip cluster) was populated
+    // in `App::rects` but never emitted here, so headless drivers
+    // + `debug.toggle_click_inspector` couldn't see its hitbox.
+    for (r, leaf_active) in &app.rects.split_strip_maximize_buttons {
+        let label = match leaf_active {
+            Some(pid) => format!("split_strip_maximize:{pid}"),
+            None => "split_strip_maximize:none".to_string(),
+        };
+        push_rect(&mut out, &mut first, &label, *r);
+    }
     // 2026-06-19 — second batch of rect families per vscode-user-
     // mouse agent's "toolkit misses what it was built for" finding.
     if let Some(r) = app.rects.picker_box {

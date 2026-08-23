@@ -1412,6 +1412,20 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitStripMaximizeButton
+        // R13 vscode-mouse SEV-3 2026-08-23 — the maximize chip had
+        // no info-view entry so the neighbours' hover-help was
+        // visible but the maximize chip itself was silent.
+        SplitStripMaximizeButton => Some(InfoViewCopy {
+            title: "Zoom / full-screen".into(),
+            body: "Left-click toggles per-leaf zoom — that leaf expands to \
+                   fill the editor area, other splits hide until you click \
+                   again to restore. Right-click opens a menu with Zoom / \
+                   Enter full-screen / Equalize splits. Full-screen mode \
+                   also hides the palette bar, statusline, and activity bar."
+                .into(),
+            ..Default::default()
+        }),
         // src: src/ui/tooltip.rs::HoverChip::ScrollbarThumb
         ScrollbarThumb => Some(InfoViewCopy {
             title: "Scrollbar".into(),
@@ -1785,10 +1799,17 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RequestResponseCopy
+        // R13 vscode-mouse SEV-3 2026-08-23 — the info-view text
+        // is one step less granular than the tooltip (which
+        // switches per active sub-tab); this generic-copy summary
+        // now documents the per-tab routing rather than lying
+        // about "response body".
         RequestResponseCopy => Some(InfoViewCopy {
-            title: "Copy response body".into(),
-            body: "Copies the full response body to the clipboard, exactly as \
-                   received — no re-formatting."
+            title: "Copy (context-sensitive)".into(),
+            body: "Copies whatever the active Response sub-tab is showing: \
+                   Body → response body (raw), Headers → headers as `Name: value` \
+                   lines, Timeline → the wait/receive/total table, Tests → the \
+                   assertion pass/fail summary. The toast confirms which."
                 .into(),
             ..Default::default()
         }),

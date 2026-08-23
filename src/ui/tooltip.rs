@@ -831,6 +831,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .next()?;
             Some((rect, "open shell in split".to_string(), None))
         }
+        HoverChip::SplitStripMaximizeButton => {
+            let rect = app
+                .rects
+                .split_strip_maximize_buttons
+                .iter()
+                .map(|(r, _)| *r)
+                .next()?;
+            let (primary, secondary) = if app.fullscreen_mode {
+                (
+                    "click: exit full-screen mode",
+                    Some("hides mnml chrome so a single pane fills the terminal"),
+                )
+            } else if app.zoomed_leaf.is_some() {
+                (
+                    "click: restore split (unzoom this leaf)",
+                    Some("right-click: zoom / full-screen / equalize"),
+                )
+            } else {
+                (
+                    "click: zoom this leaf to full editor area",
+                    Some("right-click: zoom / enter full-screen / equalize"),
+                )
+            };
+            Some((rect, primary.into(), secondary.map(|s| s.into())))
+        }
         HoverChip::SplitStripButton(dir) => {
             let rect = app
                 .rects
@@ -1248,11 +1273,42 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, primary.into(), secondary.map(|s| s.into())))
         }
-        HoverChip::RequestResponseCopy => Some((
-            app.rects.request_response_copy_chip?,
-            "click: copy response body to clipboard".into(),
-            None,
-        )),
+        HoverChip::RequestResponseCopy => {
+            // R13 vscode-mouse SEV-3 2026-08-23 — the copy chip now
+            // routes per-sub-tab (R12 fix), so the tooltip must be
+            // sub-tab-aware. Was fixed at "copy response body",
+            // which lied on Timeline / Tests where the click
+            // actually copies the timeline table / tests summary.
+            let (primary, secondary) = match app
+                .active
+                .and_then(|i| app.panes.get(i))
+                .and_then(|p| match p {
+                    crate::pane::Pane::Request(rp) => Some(rp.response_tab),
+                    _ => None,
+                })
+                .unwrap_or(crate::request_pane::ResponseTab::Body)
+            {
+                crate::request_pane::ResponseTab::Body => (
+                    "click: copy response body to clipboard",
+                    Some("routes per sub-tab (Body / Headers / Timeline / Tests)"),
+                ),
+                crate::request_pane::ResponseTab::Headers => (
+                    "click: copy response headers to clipboard",
+                    Some("one per line, Name: value"),
+                ),
+                crate::request_pane::ResponseTab::Timeline => {
+                    ("click: copy timeline table (wait / receive / total)", None)
+                }
+                crate::request_pane::ResponseTab::Tests => {
+                    ("click: copy tests summary (✓/✗ per assertion)", None)
+                }
+            };
+            Some((
+                app.rects.request_response_copy_chip?,
+                primary.into(),
+                secondary.map(|s| s.into()),
+            ))
+        }
         HoverChip::RequestResponseWrap => Some((
             app.rects.request_response_wrap_chip?,
             "click: toggle body line wrap".into(),

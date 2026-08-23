@@ -903,6 +903,16 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::SplitStripTermButton);
     }
+    // R13 vscode-mouse SEV-3 2026-08-23 — maximize chip hover
+    // mapping so the info-view + tooltip fire on hover.
+    if app
+        .rects
+        .split_strip_maximize_buttons
+        .iter()
+        .any(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::SplitStripMaximizeButton);
+    }
     if let Some(&(_, _, dir)) = app
         .rects
         .split_strip_buttons

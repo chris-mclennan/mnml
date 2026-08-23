@@ -1560,6 +1560,50 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some(title.into()), (x, y), items));
         return;
     }
+    // R13 vscode-mouse SEV-3 2026-08-23 — maximize chip right-click
+    // menu. Was missing, so mouse users couldn't discover
+    // full-screen alongside per-leaf zoom (only left-click worked
+    // and it flipped whichever state was already active).
+    if let Some(&(_, leaf_active)) = app
+        .rects
+        .split_strip_maximize_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+        }
+        let mut items = Vec::new();
+        if app.zoomed_leaf.is_some() {
+            items.push(MenuItem::new(
+                "Restore split",
+                MenuAction::Command("view.toggle_zoom"),
+            ));
+        } else {
+            items.push(MenuItem::new(
+                "Zoom this leaf",
+                MenuAction::Command("view.toggle_zoom"),
+            ));
+        }
+        if app.fullscreen_mode {
+            items.push(MenuItem::new(
+                "Exit full screen",
+                MenuAction::Command("view.fullscreen"),
+            ));
+        } else {
+            items.push(MenuItem::new(
+                "Enter full screen",
+                MenuAction::Command("view.fullscreen"),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Equalize splits",
+            MenuAction::Command("view.equalize_splits"),
+        ));
+        app.context_menu = Some(ContextMenu::new(Some("Maximize".into()), (x, y), items));
+        return;
+    }
     if let Some(&(_, leaf_active)) = app
         .rects
         .split_strip_term_buttons
