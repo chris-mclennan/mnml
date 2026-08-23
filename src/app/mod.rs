@@ -1352,9 +1352,27 @@ fn derive_bitbucket_slug(repo_path: &std::path::Path) -> Option<String> {
     Some(slug)
 }
 
-/// Open a URL string in the OS's default browser. Best-effort. Used by
-/// the GitHub-browse command + LSP gx URL opener.
+/// Open a URL string in the OS's default browser. Best-effort. Used
+/// by the GitHub-browse command + LSP `gx` URL opener + a dozen chip
+/// clicks.
+///
+/// Task #1168 (2026-08-23) — SSH-aware. When `$SSH_TTY` or
+/// `$SSH_CONNECTION` is set, mnml is running on a remote host and
+/// `open`/`xdg-open`/`cmd start` would launch a browser on the
+/// SERVER, not on the user's local machine (a silently-wrong
+/// behavior the SSH-verify pass caught, see `docs/design/mnml-over-ssh.md`).
+/// In that case we skip the shellout and best-effort emit OSC 52
+/// to `/dev/tty` so the local terminal copies the URL to the
+/// user's clipboard for manual paste into a local browser.
+/// Terminals that don't honor OSC 52 (or have it disabled) still
+/// get the strict improvement of "no wrong-browser open" — the
+/// toast side of this (surface the URL in the UI too) needs an
+/// App handle and is filed as a follow-up.
 pub fn open_url_external(url: &str) {
+    if is_ssh_session() {
+        best_effort_osc52_copy(url);
+        return;
+    }
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
     } else if cfg!(target_os = "windows") {
@@ -1369,6 +1387,83 @@ pub fn open_url_external(url: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// True when this mnml instance is running on the far side of an
+/// SSH connection — either the server component or the user
+/// SSH'd into a Linux box and launched mnml there. Detected via
+/// the standard `SSH_TTY` / `SSH_CONNECTION` env vars set by
+/// `sshd`. Cached would be nice, but this is called from
+/// mouse-click hot paths that already pay the same env read on
+/// every render, and a plain `env::var` is a hash-map lookup.
+pub fn is_ssh_session() -> bool {
+    std::env::var("SSH_TTY").is_ok() || std::env::var("SSH_CONNECTION").is_ok()
+}
+
+/// Emit an OSC 52 clipboard-copy escape sequence to `/dev/tty`
+/// (not stdout — ratatui owns that). Most SSH-friendly terminals
+/// (iTerm2, kitty, wezterm, alacritty with the option enabled,
+/// tmux with `set-option -g set-clipboard on`) will pick this up
+/// and copy the payload into the user's local system clipboard.
+/// Terminals that don't honor OSC 52 silently ignore the
+/// sequence — no visual artifact. Best-effort; errors dropped.
+fn best_effort_osc52_copy(url: &str) {
+    use std::io::Write;
+    let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") else {
+        return;
+    };
+    // OSC 52 payload is base64. Doing a tiny inline encoder rather
+    // than pulling in the `base64` crate for one call.
+    let encoded = osc52_base64(url.as_bytes());
+    // ESC ] 52 ; c ; <base64> BEL
+    let seq = format!("\x1b]52;c;{encoded}\x07");
+    let _ = tty.write_all(seq.as_bytes());
+}
+
+fn osc52_base64(input: &[u8]) -> String {
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let (b0, b1, b2) = (
+            chunk[0] as u32,
+            chunk.get(1).copied().unwrap_or(0) as u32,
+            chunk.get(2).copied().unwrap_or(0) as u32,
+        );
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHA[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(ALPHA[((triple >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHA[((triple >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHA[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod url_open_tests {
+    use super::*;
+
+    #[test]
+    fn osc52_base64_matches_reference() {
+        // Reference values from `printf hello | base64` etc.
+        assert_eq!(osc52_base64(b""), "");
+        assert_eq!(osc52_base64(b"f"), "Zg==");
+        assert_eq!(osc52_base64(b"fo"), "Zm8=");
+        assert_eq!(osc52_base64(b"foo"), "Zm9v");
+        assert_eq!(osc52_base64(b"foob"), "Zm9vYg==");
+        assert_eq!(osc52_base64(b"hello"), "aGVsbG8=");
+        assert_eq!(
+            osc52_base64(b"https://example.com/path?q=1"),
+            "aHR0cHM6Ly9leGFtcGxlLmNvbS9wYXRoP3E9MQ=="
+        );
+    }
 }
 
 /// Convert an `s3://bucket/key/prefix/` URL to the AWS S3 console

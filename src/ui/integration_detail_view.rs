@@ -998,16 +998,10 @@ fn dispatch_detail_action(app: &mut App, action: &DetailAction, label: &str) -> 
 }
 
 fn open_url(url: &str) {
-    // Same fallback chain the tree / bufferline uses for external
-    // paths — one attempt per platform.
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-    #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd")
-        .args(["/C", "start", url])
-        .spawn();
+    // Delegates to the canonical `app::open_url_external` so the
+    // SSH-detection + OSC-52 clipboard fallback (task #1168) live
+    // in one place, not duplicated per callsite.
+    crate::app::open_url_external(url);
 }
 
 /// Return the count of actionable rows on the pane (buttons +
