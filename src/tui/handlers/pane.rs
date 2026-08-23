@@ -2991,6 +2991,35 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     // see the `KeyCode::Char('r')` arm below at line
                     // 4723. In Edit view, every printable char goes
                     // to the focused field.
+                    //
+                    // #1145 (R10 api-workflow SEV-1) — Headers is
+                    // now a KV table, not a raw textarea; typing on
+                    // Headers-focus with no active draft used to
+                    // append to a vestigial buffer that nothing
+                    // rendered AND parse_headers_text dropped on
+                    // Send (silent black hole). Instead: auto-start
+                    // the inline `+ Add row` draft and seed it with
+                    // the first char, so `Tab → 'X'` in Headers
+                    // lands you in a new-row key-cell editor
+                    // exactly the way a user expects. Below-the-
+                    // input dispatch path (the `headers_active`
+                    // branch above at L2769-2870) picks up every
+                    // subsequent keystroke from here.
+                    if rp.focus == crate::request_pane::EditField::Headers
+                        && rp.headers_add.is_none()
+                        && matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_')
+                    {
+                        let _ = rp;
+                        app.http_headers_add();
+                        if let Some(id) = app.active
+                            && let Some(Pane::Request(rp)) = app.panes.get_mut(id)
+                            && let Some(draft) = rp.headers_add.as_mut()
+                        {
+                            draft.key.push(c);
+                            draft.key_cursor = draft.key.len();
+                        }
+                        return true;
+                    }
                     rp.type_char(c);
                     return true;
                 }

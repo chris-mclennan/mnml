@@ -2839,7 +2839,13 @@ fn draw_edit(
     tabs: &mut Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
     show_ws: bool,
     workspace: &std::path::Path,
-    env_override: Option<&str>,
+    // #1145 f/u — Vars-tab env resolution now uses `envset` directly
+    // (caller's config-aware selection). This arg used to feed a
+    // second 2-tier `EnvSet::select` call here which ignored the
+    // config default. Kept in the signature until other call sites
+    // move to `envset` too — reference here to silence dead-arg
+    // clippy without changing behavior.
+    _env_override: Option<&str>,
     vars_rows_local: &mut Vec<(Rect, String, KvTableKind)>,
     params_rows_local: &mut Vec<(Rect, String, KvTableKind)>,
     auth_rows_local: &mut Vec<(Rect, String)>,
@@ -3321,7 +3327,17 @@ fn draw_edit(
         // Read active env's vars. Runtime override wins first; then
         // .rqst → .mnml order with last-wins on same key. Matches
         // EnvSet::load precedence exactly.
-        let env_name = crate::http::template::EnvSet::select(workspace, env_override)
+        //
+        // #1145 (R10 api-workflow SEV-2, 2026-08-22) — was
+        // `EnvSet::select(workspace, env_override)` (2-tier), which
+        // ignored `[http] default_env` in config. Two sibling call
+        // sites (URL-token coloring at :896, cell-edit seed) had
+        // already been switched to the config-aware variant with
+        // explanatory comments; this render path was missed. Reuse
+        // the `envset` already computed by the caller with the
+        // config-default variant so the tab label + values reflect
+        // the same env Send actually uses.
+        let env_name = envset
             .name()
             .map(str::to_string)
             .unwrap_or_else(|| "dev".to_string());
