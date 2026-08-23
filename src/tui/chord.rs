@@ -99,8 +99,20 @@ pub fn dispatch_chord_chain(app: &mut App, key: KeyEvent) -> bool {
             // opened a file AND moved the cursor). Return false so
             // the non-Char key falls through to the focused
             // handler for its normal meaning.
+            //
+            // R12 vscode-keyboard SEV-2 K-1 (2026-08-23) — but
+            // when a fallback JUST fired (whichkey opened),
+            // swallow the terminating non-Char key too.
+            // Otherwise it falls through to the editor and
+            // `Ctrl+K` + `Ctrl+Shift+Tab` dirties the buffer
+            // with a tab-width run of spaces (or lands as
+            // whatever the standard-mode handler makes of the
+            // key). VS Code semantic: any chord-chain miss
+            // dismisses the overlay AND drops the terminating
+            // key.
+            let fallback_just_fired = app.whichkey.is_some();
             if !matches!(new_chord.code, ratatui::crossterm::event::KeyCode::Char(_)) {
-                return false;
+                return fallback_just_fired;
             }
             app.pending_chord_seq.push(new_chord);
             match app.keymap.resolve_seq(&app.pending_chord_seq) {

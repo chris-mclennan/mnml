@@ -711,7 +711,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.close_others",
             title: "Close all other panes (keep active; respects unsaved guards)",
             group: "view",
-            keys: &[],
+            // R12 vscode-keyboard SEV-3 V-1 (2026-08-23) — Ctrl+K
+            // W is VS Code's "close all editors" chord. Bind to
+            // view.close_others which is the closest mnml
+            // primitive (keeps the active pane, closes the rest).
+            keys: &["ctrl+k w"],
             run: |app| app.close_other_panes(),
         },
         Command {
@@ -3740,14 +3744,16 @@ fn builtin_commands() -> Vec<Command> {
             id: "git.diff_next_file",
             title: "Git: jump to next file in the diff pane (]f)",
             group: "git",
-            keys: &[],
+            // R12 vscode-keyboard SEV-3 V-2 (2026-08-23) — F7 is
+            // VS Code's canonical "next diff change" chord.
+            keys: &["f7"],
             run: |app| app.diff_jump_file(true),
         },
         Command {
             id: "git.diff_prev_file",
             title: "Git: jump to previous file in the diff pane ([f)",
             group: "git",
-            keys: &[],
+            keys: &["shift+f7"],
             run: |app| app.diff_jump_file(false),
         },
         Command {
@@ -5969,7 +5975,12 @@ fn builtin_commands() -> Vec<Command> {
             id: "term.shell",
             title: "Terminal: open a NEW shell (split beside)",
             group: "term",
-            keys: &[],
+            // R12 vscode-keyboard SEV-3 V-3 (2026-08-23) —
+            // Ctrl+Shift+` is VS Code's "new terminal in panel"
+            // chord. Ctrl+` still toggles the scratch strip;
+            // this pair matches VS Code muscle memory for the
+            // NEW terminal case.
+            keys: &["ctrl+shift+`"],
             run: |app| app.open_shell(),
         },
         // 2026-07-22 — placement variants to match the AI chip

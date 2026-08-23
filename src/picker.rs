@@ -388,13 +388,42 @@ impl Picker {
         // selected + non-selected rows. Was: fuzzy_match's second
         // tuple element (`_`) got dropped after scoring; the renderer
         // then had no way to know WHY a row matched.
+        //
+        // R12 vscode-keyboard SEV-2 P-1 (2026-08-23) —
+        // exact-id bull's-eye + substring-of-id bonuses for the
+        // command palette. Typing "save file" or the literal
+        // "file.save" used to lose to fuzzy neighbors like
+        // `editor.file_stats` — dangerously, Enter would fire
+        // the wrong command. Two boosts:
+        //   1. `query == id` (case-insensitive): treat as a
+        //      hard tier-0 pin via `priority.max(9)` — sits
+        //      above any score-based sort.
+        //   2. `id` contains `query` as a case-insensitive
+        //      substring: additive +100 score bonus, big
+        //      enough to eclipse the +20 pane-scope bonus and
+        //      +50 recents bonus that the palette applies.
+        // Only fires for `PickerKind::Commands` — the file
+        // picker's own priority/score conventions stay intact.
+        let q_lower = self.query.to_ascii_lowercase();
+        let apply_id_boosts = matches!(self.kind, PickerKind::Commands) && !q_lower.is_empty();
         let mut scored: Vec<(u8, i64, usize, Vec<usize>)> = self
             .items
             .iter()
             .enumerate()
             .filter_map(|(i, it)| {
-                fuzzy_match(&self.query, &it.label)
-                    .map(|(s, hits)| (it.priority, s + it.score_bonus, i, hits))
+                fuzzy_match(&self.query, &it.label).map(|(s, hits)| {
+                    let mut prio = it.priority;
+                    let mut score = s + it.score_bonus;
+                    if apply_id_boosts {
+                        let id_lower = it.id.to_ascii_lowercase();
+                        if id_lower == q_lower {
+                            prio = prio.max(9);
+                        } else if id_lower.contains(&q_lower) {
+                            score += 100;
+                        }
+                    }
+                    (prio, score, i, hits)
+                })
             })
             .collect();
         scored.sort_by(|a, b| {
