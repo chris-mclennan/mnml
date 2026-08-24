@@ -792,8 +792,25 @@ impl App {
             self.open_new_request_pane();
             return;
         }
-        // Reset the active Request pane back to a blank template.
+        // 2026-08-23 (mouse-r16 SEV-2) — don't silently wipe an
+        // active Request pane that has real content in it. If the
+        // URL, body, or headers are non-empty, spawn a NEW request
+        // pane instead of clobbering the current one. The old
+        // reset-in-place path was reachable by clicking `+ New
+        // request` while typing a URL, with no confirm.
         let Some(cur) = self.active else { return };
+        let has_content = matches!(
+            self.panes.get(cur),
+            Some(Pane::Request(rp))
+                if !rp.request.url.is_empty()
+                    || !rp.headers_buffer.is_empty()
+                    || rp.request.body.as_deref().is_some_and(|b| !b.is_empty())
+        );
+        if has_content {
+            self.open_new_request_pane();
+            return;
+        }
+        // Blank pane in place — safe to reset (nothing to lose).
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
             rp.request = crate::http::Request {
                 method: "GET".to_string(),

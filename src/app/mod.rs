@@ -3359,6 +3359,17 @@ impl PaneRects {
         // Sessions panel.
         self.sessions_panel_filter_input = None;
         self.sessions_panel_area = None;
+        // 2026-08-23 (mouse-r16 SEV-2) — `session_new_chip` used to
+        // survive here, so switching Sessions → Notes left the "+
+        // New session" rect intact; a right-click at the same coords
+        // over Notes' "+ New note" popped the Sessions chip's batch-
+        // spawn menu.
+        self.session_new_chip = None;
+        // Notes panel — sister rects that the mouse-tester audit
+        // pointed out never get cleared on section switch either.
+        self.notes_panel_files.clear();
+        self.notes_panel_new_chip = None;
+        self.notes_panel_filter_input = None;
         // Agents (Claude Code / Codex) panel.
         self.agents_panel_rows.clear();
         self.agents_panel_workspace_headers.clear();
