@@ -1385,9 +1385,14 @@ impl App {
         self.notes_panel_scanned_once = true;
     }
 
-    /// Notes panel `+ New note` action — creates a numbered markdown
-    /// file under `<workspace>/.mnml/notes/` and opens it. Directory
-    /// is created on demand. (#8)
+    /// Notes panel `+ New note` action — opens the "New file"
+    /// prompt seeded with the next auto-numbered default
+    /// (`note-N.md`) so the user can accept it with Enter (fast
+    /// path, common case) or type over it with a real name
+    /// (mouse-r16 SEV-3 — the click used to silently create
+    /// `note-1.md` with no chance to name it). The prompt already
+    /// routes accept → `create_new_file` which writes the file
+    /// and opens it in an editor pane.
     pub fn notes_panel_new_note(&mut self) {
         let dir = crate::ui::notes_panel::notes_dir(&self.workspace);
         if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -1395,18 +1400,24 @@ impl App {
             return;
         }
         let mut i = 1;
-        let mut path = dir.join("note-1.md");
-        while path.exists() {
+        let mut candidate = dir.join("note-1.md");
+        while candidate.exists() {
             i += 1;
-            path = dir.join(format!("note-{i}.md"));
+            candidate = dir.join(format!("note-{i}.md"));
         }
-        let stub = format!("# Note {i}\n\n");
-        if let Err(e) = std::fs::write(&path, stub) {
-            self.toast(format!("notes: create failed: {e}"));
-            return;
-        }
-        self.notes_panel_refresh();
-        self.open_path(&path);
+        let seed = format!("note-{i}.md");
+        self.pending_fs_action = Some(FsAction::NewFile {
+            parent: dir.clone(),
+        });
+        let title = format!(
+            "New note in {}/",
+            crate::app::util::rel_path(&self.workspace, &dir)
+        );
+        self.prompt = Some(crate::prompt::Prompt::seeded_select_all(
+            crate::prompt::PromptKind::NewFile,
+            title,
+            seed,
+        ));
     }
 }
 
@@ -1572,45 +1583,37 @@ fn walk_for_todos(
 #[cfg(test)]
 mod notes_new_note_tests {
     #[test]
-    fn new_note_creates_file_and_opens_preview_pane() {
+    fn new_note_opens_prompt_seeded_with_next_auto_number() {
+        // 2026-08-23 (mouse-r16 SEV-3) — was direct-create; now
+        // opens a NewFile prompt seeded with the next auto-numbered
+        // default so the user can accept it (fast) or type over it
+        // (deliberate name).
         let d = tempfile::tempdir().unwrap();
         let cfg = crate::config::Config::default();
         let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
-        let before_panes = app.panes.len();
         app.notes_panel_new_note();
-        let note_path = d.path().join(".mnml").join("notes").join("note-1.md");
-        assert!(note_path.exists(), "note file should be created");
-        assert!(
-            app.panes.len() > before_panes,
-            "opening the note should push a new pane; before={} after={}",
-            before_panes,
-            app.panes.len()
+        let p = app.prompt.as_ref().expect("new_note should open a prompt");
+        assert!(matches!(p.kind, crate::prompt::PromptKind::NewFile));
+        assert_eq!(
+            p.input, "note-1.md",
+            "seed should be the next auto-numbered default"
         );
-        // Match preview by file name — canonicalization on macOS may
-        // give `/private/var/…` vs `/var/…` differences.
-        let preview_name = app.panes.iter().find_map(|p| match p {
-            crate::pane::Pane::MdPreview(mp) => mp
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(str::to_string),
-            _ => None,
-        });
-        assert_eq!(preview_name.as_deref(), Some("note-1.md"));
     }
 
     #[test]
-    fn new_note_numbers_sequentially_when_pressed_repeatedly() {
+    fn new_note_seeds_next_number_when_prior_notes_exist() {
+        // Pre-seed the dir with note-1.md and note-2.md so
+        // notes_panel_new_note lands on note-3.md as the default.
         let d = tempfile::tempdir().unwrap();
         let cfg = crate::config::Config::default();
         let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
-        app.notes_panel_new_note();
-        app.notes_panel_new_note();
-        app.notes_panel_new_note();
         let dir = d.path().join(".mnml").join("notes");
-        assert!(dir.join("note-1.md").exists());
-        assert!(dir.join("note-2.md").exists());
-        assert!(dir.join("note-3.md").exists());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("note-1.md"), "").unwrap();
+        std::fs::write(dir.join("note-2.md"), "").unwrap();
+        app.notes_panel_new_note();
+        let p = app.prompt.as_ref().expect("prompt should open");
+        assert_eq!(p.input, "note-3.md");
     }
 }
 
