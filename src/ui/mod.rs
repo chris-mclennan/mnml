@@ -3454,22 +3454,25 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // Reset chip rects on every frame — same idiom as the other panels.
     app.rects.integrations_add_chip = None;
 
-    // Header row.
-    let header_rect = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    frame.render_widget(
-        Paragraph::new(ratatui::text::Line::from(" INTEGRATIONS")).style(
-            Style::default()
-                .fg(t.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        header_rect,
+    // 2026-08-24 (user ask) — INTEGRATIONS header uses the shared
+    // caps-header helper so the refresh chip lands top-right of
+    // the label, parity with GIT / TODOS / NOTES / FINDINGS. The
+    // old refresh chip that lived on the tab row (below) is gone.
+    let header_refresh_rect = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+        frame,
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+        "INTEGRATIONS",
+        None,
+        bg,
+        &t,
+        app.config.ui.ascii_icons,
     );
+    app.rects.integrations_tab_refresh = header_refresh_rect;
     // qa-feature 2026-07-01 — Installed / Marketplace tabs below
     // the header. `Installed` is the daily-driver rail (enabled
     // icons only); `Marketplace` is what the gear link used to open
@@ -3597,10 +3600,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // Refresh chip is 3 chars (" ⟳ "). Priority ladder: prefer showing
     // refresh over long labels since refresh is a frequent action and
     // Inst/Mkt reads unambiguously.
-    let refresh_w_usize: usize = 3;
-    // 1-cell left gutter (defined below). Subtract it from the tier
-    // decision's width budget so the rightmost tab can't overrun into
-    // the refresh chip at exact-fit widths (reviewer catch on 72f95de0).
+    // 2026-08-24 — refresh chip lives on the INTEGRATIONS header
+    // row now (parity with the other activity panels), so the tab
+    // row's width budget no longer reserves cells for it. Pick the
+    // largest label tier that fits, minus the 1-cell left gutter.
     let width_usize = area.width.saturating_sub(1) as usize;
     #[derive(Clone, Copy)]
     enum Tier {
@@ -3608,18 +3611,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         Compact,
         Tiny,
     }
-    let (tier, show_refresh) = if full_total + refresh_w_usize <= width_usize {
-        (Tier::Full, true)
-    } else if compact_total + refresh_w_usize <= width_usize {
-        (Tier::Compact, true)
-    } else if tiny_total + refresh_w_usize <= width_usize {
-        (Tier::Tiny, true)
-    } else if full_total <= width_usize {
-        (Tier::Full, false)
+    let _ = tiny_total; // tiny labels used when neither full nor compact fit
+    let tier = if full_total <= width_usize {
+        Tier::Full
     } else if compact_total <= width_usize {
-        (Tier::Compact, false)
+        Tier::Compact
     } else {
-        (Tier::Tiny, false)
+        Tier::Tiny
     };
     let (installed_label, marketplace_label) = match tier {
         Tier::Full => (full_installed, full_marketplace),
@@ -3701,38 +3699,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.integrations_tab_in_dev = None;
     }
 
-    // Refresh affordance — small ⟳ chip on the far right of the tab
-    // row. Clicks fire `marketplace.refresh` when on the Marketplace
-    // tab (re-fetches crates.io + GitHub sources) or
-    // `integrations.refresh` on the Installed tab (re-scans local
-    // manifest dirs). User report 2026-08-04 — the palette commands
-    // existed but there was no visible button, so the panel felt
-    // stale between launches.
-    let refresh_label = " ⟳ ";
-    let refresh_w = refresh_label.chars().count() as u16;
-    if show_refresh {
-        // 2026-08-08 — nudge 1 cell left of the panel edge so the chip
-        // isn't jammed against the vertical separator between the
-        // Integrations panel and the main content.
-        let refresh_rect = Rect {
-            x: area.x + area.width.saturating_sub(refresh_w + 1),
-            y: area.y + 1,
-            width: refresh_w,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(refresh_label).style(
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            refresh_rect,
-        );
-        app.rects.integrations_tab_refresh = Some(refresh_rect);
-    } else {
-        app.rects.integrations_tab_refresh = None;
-    }
+    // 2026-08-24 — refresh chip moved to the INTEGRATIONS header
+    // top-right (above), so the tab row no longer paints one here.
+    // `integrations_tab_refresh` is populated by the header call
+    // above and still routes clicks to `marketplace.refresh` (on
+    // Marketplace / InDev tabs) or `integrations.refresh` (on the
+    // Installed tab) — see the mouse handler in
+    // `src/tui/mouse/down_left.rs`.
 
     // 2026-08-07 — sort chip on the filter row's right edge.
     // Left-click cycles through the modes for the ACTIVE tab.
@@ -3801,15 +3774,28 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         t.comment
     };
-    let cursor = if filter_focused { "▏" } else { "" };
+    // 2026-08-24 (user ask) — filter row background now matches
+    // the shared `filter_chip_bg` used by every other activity
+    // panel (Notes / Todos / Sessions / HTTP / Findings) so the
+    // input reads as a proper input field, not bare text on the
+    // panel bg. Pad cells inside the chip are filled with the
+    // chip bg; the leading + trailing 1-cell gaps use the panel
+    // bg so the chip has visible margins on both sides.
+    let cursor = if filter_focused { "\u{258F}" } else { " " };
+    let bg_chip = crate::ui::panel_chrome::filter_chip_bg(&t);
+    let display_w = filter_display.chars().count();
+    let pad = (filter_row.width as usize).saturating_sub(1 + 3 + display_w + 1 + 1);
     frame.render_widget(
         Paragraph::new(ratatui::text::Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
-                format!(" {search_glyph} "),
-                Style::default().fg(t.comment).bg(bg),
+                format!("{search_glyph} "),
+                Style::default().fg(t.comment).bg(bg_chip),
             ),
-            Span::styled(filter_display, Style::default().fg(filter_fg).bg(bg)),
-            Span::styled(cursor, Style::default().fg(t.cyan).bg(bg)),
+            Span::styled(filter_display, Style::default().fg(filter_fg).bg(bg_chip)),
+            Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
+            Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
+            Span::styled(" ", Style::default().bg(bg)),
         ])),
         filter_row,
     );
