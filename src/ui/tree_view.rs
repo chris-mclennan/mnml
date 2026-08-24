@@ -1191,21 +1191,26 @@ fn draw_workspace_files(
             .get(vi)
             .cloned()
             .unwrap_or_else(|| "  ".repeat(row.depth));
-        // Split chevron + icon so the chevron renders in a muted grey
-        // (VS Code / NvChad tree style) while the folder/file icon keeps
-        // its devicon color.
+        // R16 (2026-08-24) — split into THREE parts so the
+        // connector indent can dim independently of the chevron.
+        // The connector lines want to fade into the background;
+        // the chevron is functional (click-target, expand
+        // indicator) and needs full contrast.
+        let indent_part = depth_indent.clone();
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
-            (format!("{depth_indent}{c} "), format!("{glyph} "))
+            (format!("{c} "), format!("{glyph} "))
         } else if nerd {
             // File row — pad the chevron column with spaces so icons
             // align with sibling dir rows.
-            (format!("{depth_indent}  "), format!("{glyph} "))
+            ("  ".to_string(), format!("{glyph} "))
         } else {
-            (depth_indent.clone(), format!("{glyph} "))
+            (String::new(), format!("{glyph} "))
         };
-        let prefix_width =
-            ROOT_INDENT.chars().count() + chev_part.chars().count() + icon_part.chars().count();
+        let prefix_width = ROOT_INDENT.chars().count()
+            + indent_part.chars().count()
+            + chev_part.chars().count()
+            + icon_part.chars().count();
         let git_state = if row.is_dir {
             None
         } else {
@@ -1303,16 +1308,17 @@ fn draw_workspace_files(
         // Second cell keeps row_bg so the highlight still reads as
         // wide as the row — pulling both cells off looked over-
         // trimmed (2026-08-20 user follow-up).
+        // R16 (2026-08-24) — connector indent renders in bg2 (a
+        // darker shade of grey than `t.comment`), no DIM, so the
+        // ├─ / └─ / │ read as background trace lines. Chevron
+        // paints back in `t.comment` (bright grey, no DIM) so it
+        // stays legible as the expand-indicator + click target.
+        let indent_style = Style::default().fg(theme::cur().bg2).bg(bg);
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                chev_part,
-                Style::default()
-                    .fg(theme::cur().comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::DIM),
-            ),
+            Span::styled(indent_part.clone(), indent_style),
+            Span::styled(chev_part, Style::default().fg(theme::cur().comment).bg(bg)),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(bg)),
         ];
         if !repo_marker.is_empty() {
@@ -1576,16 +1582,19 @@ fn draw_extra_workspace_section(
             .get(vi)
             .cloned()
             .unwrap_or_else(|| "  ".repeat(row.depth));
+        let indent_part = depth_indent.clone();
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
-            (format!("{depth_indent}{c} "), format!("{glyph} "))
+            (format!("{c} "), format!("{glyph} "))
         } else if nerd {
-            (format!("{depth_indent}  "), format!("{glyph} "))
+            ("  ".to_string(), format!("{glyph} "))
         } else {
-            (depth_indent.clone(), format!("{glyph} "))
+            (String::new(), format!("{glyph} "))
         };
-        let prefix_width =
-            ROOT_INDENT.chars().count() + chev_part.chars().count() + icon_part.chars().count();
+        let prefix_width = ROOT_INDENT.chars().count()
+            + indent_part.chars().count()
+            + chev_part.chars().count()
+            + icon_part.chars().count();
         let name_color = if is_repo_row {
             theme::cur().yellow
         } else if row.is_dir {
@@ -1627,15 +1636,17 @@ fn draw_extra_workspace_section(
         let pad_n = (width.saturating_sub(sb_w as usize)).saturating_sub(used);
         // #970 f/u (2026-08-20) — 1 cell of rail_bg then 1 cell of
         // row bg. See draw_workspace_files.
+        // R16 (2026-08-24) — connector indent in bg2 (darker
+        // grey), chevron in `t.comment` (undimmed), matching the
+        // pass in draw_workspace_files above.
+        let indent_style = Style::default().fg(theme::cur().bg2).bg(row_bg_col);
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(" ", Style::default().bg(row_bg_col)),
+            Span::styled(indent_part.clone(), indent_style),
             Span::styled(
                 chev_part,
-                Style::default()
-                    .fg(theme::cur().comment)
-                    .bg(row_bg_col)
-                    .add_modifier(Modifier::DIM),
+                Style::default().fg(theme::cur().comment).bg(row_bg_col),
             ),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(row_bg_col)),
         ];
