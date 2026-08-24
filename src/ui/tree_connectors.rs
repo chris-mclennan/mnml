@@ -158,21 +158,20 @@ mod tests {
             row(0, "parent-b"),
         ];
         let out = compute_prefixes(&rows, false);
-        // child-1: level-1 continuation (child-2 still coming) → `│ │`.
-        assert_eq!(out[1], "\u{2502} \u{2502}");
-        // child-2: corner (last depth-1 sibling in parent-a) → `└  `.
-        assert_eq!(out[2], "\u{2514}  ");
+        // child-1: level-1 continuation (child-2 still coming) → ' ││'.
+        assert_eq!(out[1], " \u{2502}\u{2502}");
+        // child-2: last depth-1 sibling → ' │└' (chev straight, folder curls).
+        assert_eq!(out[2], " \u{2502}\u{2514}");
         // grandchild: level-1 has ended (no more depth-1 under
-        // parent-a) → 3 spaces, level-2 is corner (only child of
-        // child-2) → `└  `.
-        assert_eq!(out[3], "   \u{2514}  ");
+        // parent-a) → 3 spaces, level-2 is last-child of child-2 → ' │└'.
+        assert_eq!(out[3], "    \u{2502}\u{2514}");
     }
 
     #[test]
     fn ascii_mode_uses_pipe_and_backslash() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "last")];
         let out = compute_prefixes(&rows, true);
-        assert_eq!(out[1], "| |");
-        assert_eq!(out[2], "\\  ");
+        assert_eq!(out[1], " ||");
+        assert_eq!(out[2], " |\\");
     }
 }
