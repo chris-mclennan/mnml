@@ -172,7 +172,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.rects.sessions_panel_filter_input = Some(row_rect);
         }
     }
-    let mut y = area.y + 3;
+    // Chip sits one row below the filter (no blank in between) so
+    // the sessions panel matches every other panel's tighter header
+    // stack. Was `area.y + 3` — user ask 2026-08-23.
+    let mut y = area.y + 2;
 
     // #1188 (2026-08-23) — "+ New session" chip lives above the
     // rows now, not below. User ask: when the list scrolls past the

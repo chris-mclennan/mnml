@@ -2237,6 +2237,11 @@ pub struct PaneRects {
     /// Click rect for the git palette's filter input. Click to
     /// focus + start typing; Esc clears + unfocuses.
     pub git_palette_filter_input: Option<Rect>,
+    /// Click rect for the git palette's ↻ refresh chip in the GIT
+    /// caps header row. Re-runs `git status` / branch enumeration
+    /// so external changes (branches deleted at the CLI, worktrees
+    /// added, etc.) show up without a mnml restart.
+    pub git_palette_refresh_chip: Option<Rect>,
     /// Click target for the `▾` dropdown chevron next to the
     /// workspace name. Toggles `App::workspace_picker_open`.
     pub workspace_picker_chevron: Option<Rect>,

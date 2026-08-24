@@ -51,6 +51,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // steal clicks at cells we're no longer painting.
     app.rects.git_palette_rows.clear();
     app.rects.git_palette_filter_input = None;
+    app.rects.git_palette_refresh_chip = None;
     app.rects.git_palette_section_headers.clear();
     app.rects.git_palette_folder_headers.clear();
     // qa-feature 2026-06-30 — clear BEFORE rendering so the
@@ -65,6 +66,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // carry a caps-name header (SESSIONS / FINDINGS / TODOS / …).
     // Git was the odd panel out, jumping straight into the repo
     // pill; user asked for parity.
+    // 2026-08-23 — right-aligned ↻ refresh chip re-runs
+    // `git status` + branch/tag enumeration. Needed because
+    // branches/worktrees created or deleted outside mnml (git CLI)
+    // don't show up until the panel re-scans.
+    let ascii = app.config.ui.ascii_icons;
+    let refresh_glyph = if ascii { "r" } else { "\u{EB37}" }; // codicon-refresh
+    let refresh_text = format!(" {refresh_glyph} ");
+    let refresh_w = refresh_text.chars().count() as u16;
+    let refresh_x = area.x.saturating_add(area.width.saturating_sub(refresh_w));
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
@@ -79,10 +89,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Rect {
             x: area.x,
             y,
-            width: area.width,
+            width: area.width.saturating_sub(refresh_w),
             height: 1,
         },
     );
+    if area.width >= refresh_w + 4 {
+        let refresh_rect = Rect {
+            x: refresh_x,
+            y,
+            width: refresh_w,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                refresh_text,
+                Style::default().fg(t.comment).bg(bg),
+            )])),
+            refresh_rect,
+        );
+        app.rects.git_palette_refresh_chip = Some(refresh_rect);
+    }
     y += 1;
     let snap = app.git.snapshot().clone();
     // Lower-cased filter for case-insensitive substring matching

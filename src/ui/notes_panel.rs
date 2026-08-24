@@ -122,13 +122,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.rects.notes_panel_filter_input = Some(row_rect);
         }
     }
-    let mut y = area.y + 3;
-
     // 2026-08-23 — "+ New note" chip lives ABOVE the list now (was
     // pinned to the bottom, where it fell offscreen once the list
     // grew past the panel height). Same idiom as the sessions rail's
     // "+ New session": narrow chip + `bg2` background so it reads as
-    // a distinct button instead of a floating bare-text label.
+    // a distinct button instead of a floating bare-text label. Sits
+    // one row below the filter (no blank in between) so the notes
+    // panel matches every other panel's tighter header stack.
+    let mut y = area.y + 2;
     if y < area.y + area.height {
         let label = "+ New note";
         let chip_w = (label.chars().count() as u16) + 2; // pad on both sides

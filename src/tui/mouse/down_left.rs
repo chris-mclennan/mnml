@@ -2852,6 +2852,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // Git-palette refresh chip in the GIT header — click to
+    // re-scan branches / tags / worktrees. Checked BEFORE the
+    // filter input so the chip in the row-1 area doesn't get
+    // shadowed by another handler.
+    if let Some(r) = app.rects.git_palette_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.rediscover_repos();
+        app.toast("git: refreshed".to_string());
+        return;
+    }
     // Git-palette filter input — click to focus + start typing.
     if let Some(r) = app.rects.git_palette_filter_input
         && crate::app::dispatch::contains(r, x, y)
