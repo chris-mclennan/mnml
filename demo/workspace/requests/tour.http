@@ -1,0 +1,7 @@
+### Session — current user + workspace + cookies
+# Deterministic fixture served by demo/server/server.py.
+# Response includes two Set-Cookie headers so the Cookies tab
+# in the http.gif demo has something meaningful to render.
+GET http://localhost:7071/api/session
+Accept: application/json
+User-Agent: mnml-demo/0.2

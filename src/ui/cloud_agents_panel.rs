@@ -116,6 +116,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let count_w = count_txt.chars().count() as u16;
     let header_used = 1 + header_label.chars().count() as u16 + count_w + view_w + refresh_w + 2;
+    // R16 vscode-mouse SEV-2 (2026-08-24) — same narrow-panel
+    // guard as AGENTS: when the width can't fit refresh + gaps,
+    // drop the refresh chip (glyph AND rect) so it doesn't leak
+    // past the panel divider.
+    let show_refresh = area.width >= header_used;
     let pad_width = area.width.saturating_sub(header_used) as usize;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -137,8 +142,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .bg(t.cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(refresh_text.to_string(), Style::default().fg(t.cyan).bg(bg)),
+            Span::styled(
+                if show_refresh { " " } else { "" }.to_string(),
+                Style::default().bg(bg),
+            ),
+            Span::styled(
+                if show_refresh {
+                    refresh_text.to_string()
+                } else {
+                    String::new()
+                },
+                Style::default().fg(t.cyan).bg(bg),
+            ),
         ])),
         header_row,
     );
@@ -149,12 +164,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         width: view_w,
         height: 1,
     });
-    app.rects.cloud_agents_refresh_chip = Some(Rect {
-        x: view_chip_x + view_w + 1,
-        y: header_row.y,
-        width: refresh_w,
-        height: 1,
-    });
+    if show_refresh {
+        app.rects.cloud_agents_refresh_chip = Some(Rect {
+            x: view_chip_x + view_w + 1,
+            y: header_row.y,
+            width: refresh_w,
+            height: 1,
+        });
+    }
     y += 1;
 
     // Filter input — same shape as the local panel for muscle memory.

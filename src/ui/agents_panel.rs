@@ -117,7 +117,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let refresh_w = refresh_text.chars().count() as u16;
     // Layout: ` AGENTS  (N)  …pad…  view: status  ⟳ `
     // 1 leading pad + label + count + view + refresh + inter-chip gap + trailing pad.
+    // R16 vscode-mouse SEV-2 (2026-08-24) — narrow-panel guard:
+    // when the width can't fit label + count + view + refresh +
+    // gaps, drop the refresh chip (both glyph AND click rect) so
+    // the rect never leaks past the panel bounds onto the divider.
+    // The view chip stays as long as it fits; the count subtitle
+    // is the last thing to go, since it's the identity signal.
     let header_used = 1 + header_left.chars().count() as u16 + count_w + view_w + refresh_w + 2;
+    let show_refresh = area.width >= header_used;
     let pad = (area.width).saturating_sub(header_used);
     let header_row = Rect {
         x: area.x,
@@ -144,8 +151,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .bg(t.cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(refresh_text.to_string(), Style::default().fg(t.cyan).bg(bg)),
+            Span::styled(
+                if show_refresh { " " } else { "" }.to_string(),
+                Style::default().bg(bg),
+            ),
+            Span::styled(
+                if show_refresh {
+                    refresh_text.to_string()
+                } else {
+                    String::new()
+                },
+                Style::default().fg(t.cyan).bg(bg),
+            ),
         ])),
         header_row,
     );
@@ -157,13 +174,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     app.rects.agents_panel_view_chip = Some(chip_rect);
-    let refresh_rect = Rect {
-        x: view_chip_x + view_w + 1,
-        y,
-        width: refresh_w,
-        height: 1,
-    };
-    app.rects.agents_panel_refresh_chip = Some(refresh_rect);
+    if show_refresh {
+        let refresh_rect = Rect {
+            x: view_chip_x + view_w + 1,
+            y,
+            width: refresh_w,
+            height: 1,
+        };
+        app.rects.agents_panel_refresh_chip = Some(refresh_rect);
+    }
     y += 1;
 
     // Filter input.

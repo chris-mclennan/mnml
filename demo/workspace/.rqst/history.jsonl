@@ -1,0 +1,4 @@
+{"ts":1787545459921,"method":"GET","url":"http://localhost:7071/api/session","status":200,"duration_ms":2,"body_bytes":483,"error":null,"headers":[["Accept","application/json"],["User-Agent","mnml-demo/0.2"]],"request_body":null}
+{"ts":1787545821267,"method":"GET","url":"http://localhost:7071/api/session","status":200,"duration_ms":1,"body_bytes":483,"error":null,"headers":[["Accept","application/json"],["User-Agent","mnml-demo/0.2"]],"request_body":null}
+{"ts":1787545972072,"method":"GET","url":"http://localhost:7071/api/session","status":200,"duration_ms":1,"body_bytes":483,"error":null,"headers":[["Accept","application/json"],["User-Agent","mnml-demo/0.2"]],"request_body":null}
+{"ts":1787546159828,"method":"GET","url":"http://localhost:7071/api/session","status":200,"duration_ms":1,"body_bytes":483,"error":null,"headers":[["Accept","application/json"],["User-Agent","mnml-demo/0.2"]],"request_body":null}

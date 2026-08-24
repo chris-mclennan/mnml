@@ -1520,6 +1520,18 @@ pub fn rects_dump_json(app: &App) -> String {
         "agents_panel_refresh_chip",
         app.rects.agents_panel_refresh_chip
     );
+    // R16 vscode-mouse SEV-2 (2026-08-24) — todos + cloud_agents
+    // refresh chips were populated by the panel render but never
+    // dumped over IPC, so the mouse tester couldn't verify their
+    // click rects and reasonably concluded they were unregistered.
+    one!(
+        "todos_panel_refresh_chip",
+        app.rects.todos_panel_refresh_chip
+    );
+    one!(
+        "cloud_agents_refresh_chip",
+        app.rects.cloud_agents_refresh_chip
+    );
     for (r, _leaf, tag) in &app.rects.split_strip_ai_buttons {
         let label = if *tag == 1 {
             "split_strip_ai_codex"

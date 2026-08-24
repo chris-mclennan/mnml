@@ -1,0 +1,23 @@
+{
+  "user": {
+    "id": "usr_01hp9v3qk8g4m2z8t7d5r0c1e9",
+    "handle": "ava",
+    "email": "ava@bloomlabs.dev",
+    "name": "Ava Chen",
+    "avatar_url": "https://cdn.bloomlabs.dev/u/ava.png",
+    "roles": ["admin", "billing"]
+  },
+  "workspace": {
+    "id": "ws_bloomlabs",
+    "name": "bloomlabs",
+    "plan": "team",
+    "seats_used": 6,
+    "seats_total": 10
+  },
+  "session": {
+    "id": "sess_9b7d21c4a9b7e3f61d5c02af",
+    "issued_at": "2026-08-24T14:22:00Z",
+    "expires_at": "2026-08-24T22:22:00Z",
+    "device": "mnml/0.2.10 · darwin-arm64"
+  }
+}
