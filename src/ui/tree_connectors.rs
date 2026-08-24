@@ -26,16 +26,16 @@ use crate::tree::VisibleRow;
 // expanded parent leaves TWO vertical bars (chevron-col bar +
 // folder-col bar), separated by a space instead of adjacent.
 // Uniform width per level keeps the paint math simple.
-// 2026-08-24 — chev-col bar shifted 1 cell right so it visually
-// sits under the Nerd Font chevron glyph. At last-child, ONLY
-// the folder-col bar terminates with `└` (curls into the row's
-// icon area); the chev-col bar stays a straight `│` — the
-// chevron-drop line has no L-shape, ever.
-const CONT_NERD: &str = " \u{2502}\u{2502}"; // ' ││'  (pad, chev col, folder col)
-const CORNER_NERD: &str = " \u{2502}\u{2514}"; // ' │└' (chev straight, folder curls)
+// 2026-08-24 — 3-cell indent, spaced bars. Chev-col bar at
+// col 0, folder-col bar at col 2, gap between them.
+// Chev-col bar stays STRAIGHT `│` even at last-child; only
+// the folder-col bar terminates with `└`. The chevron-drop
+// line never has an L-shape.
+const CONT_NERD: &str = "\u{2502} \u{2502}"; // '│ │' (chev, gap, folder)
+const CORNER_NERD: &str = "\u{2502} \u{2514}"; // '│ └' (chev straight, folder curls)
 const SPACES: &str = "   "; // 3 spaces — ancestor level fully skipped
-const CONT_ASCII: &str = " ||";
-const CORNER_ASCII: &str = " |\\";
+const CONT_ASCII: &str = "| |";
+const CORNER_ASCII: &str = "| \\";
 
 /// One prefix per row. Width per prefix == `2 * row.depth`.
 pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
@@ -113,22 +113,22 @@ mod tests {
     fn only_child_gets_corner() {
         let rows = vec![row(0, "parent"), row(1, "only")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], " \u{2502}\u{2514}"); // ' │└'  chev straight, folder curls
+        assert_eq!(out[1], "\u{2502} \u{2514}"); // '│ └'  chev straight, folder curls
     }
 
     #[test]
     fn more_siblings_at_same_depth_draw_bar_then_corner() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "second")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], " \u{2502}\u{2502}"); // ' ││'  chev-col + folder-col straight
-        assert_eq!(out[2], " \u{2502}\u{2514}"); // ' │└'  last of its group
+        assert_eq!(out[1], "\u{2502} \u{2502}"); // '│ │' chev + folder straight
+        assert_eq!(out[2], "\u{2502} \u{2514}"); // '│ └' last of its group
     }
 
     #[test]
     fn continuation_from_uncle_still_coming() {
         let rows = vec![row(0, "parent-a"), row(1, "child"), row(0, "parent-b")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], " \u{2502}\u{2514}"); // last child of parent-a
+        assert_eq!(out[1], "\u{2502} \u{2514}"); // last child of parent-a
     }
 
     #[test]
