@@ -1,18 +1,19 @@
 //! Central source of truth for the "search / find / filter"
-//! magnifier glyph used in filter rows across the UI.
+//! magnifier glyph used EVERYWHERE in the UI — filter rows, menu
+//! items, activity-bar sections, dropdown headers, all of it.
 //!
 //! Before this module lived here, ~14 filter-row sites hard-coded
-//! the glyph independently. Two had already drifted to a different
-//! codepoint (nf-fa-search U+F002 instead of nf-md-magnify U+F0349)
-//! so the visual was almost — but not quite — consistent. User ask
+//! the glyph independently and had drifted to two different code-
+//! points (nf-fa-search U+F002 vs nf-md-magnify U+F0349). User ask
 //! 2026-08-23: "make the search / find magnifying glass a constant
 //! so it's consistent". Centralized here alongside
 //! [`filter_placeholder`][crate::ui::filter_placeholder].
 //!
-//! Note: the `Find…` / `Find in files…` / `Go to file…` menu-bar
-//! items and the Search activity-bar section use nf-fa-search
-//! (U+F002) deliberately — those are section/menu icons, not
-//! filter-row glyphs, so they intentionally stay on the FA variant.
+//! 2026-08-24: the earlier "section/menu icons deliberately stay on
+//! nf-fa (U+F002)" carve-out was reversed at user request — ONE
+//! magnifier everywhere, no exceptions. The Find… / Find in files… /
+//! Go to file… menu items and the Search activity-bar section all
+//! flow through [`NERD`] now.
 
 /// nf-md-magnify — the canonical magnifier used in every filter row.
 pub const NERD: &str = "\u{F0349}";

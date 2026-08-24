@@ -1166,7 +1166,7 @@ fn draw_workspace_files(
     let sb_w: u16 = if needs_sb { 1 } else { 0 };
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
-    const ROOT_INDENT: &str = "  ";
+    const ROOT_INDENT: &str = " ";
     let triangle = app.config.ui.expand_indicator == "triangle";
     // 2026-08-23 (#1201) — nvim-tree-style ├─ / └─ / │  connector
     // prefixes replace flat `"  ".repeat(depth)` padding so the
@@ -1331,7 +1331,6 @@ fn draw_workspace_files(
         let indent_style = Style::default().fg(theme::cur().bg2).bg(bg);
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
-            Span::styled(" ", Style::default().bg(bg)),
             Span::styled(indent_part.clone(), indent_style),
             Span::styled(chev_part, Style::default().fg(theme::cur().comment).bg(bg)),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(bg)),
@@ -1566,7 +1565,7 @@ fn draw_extra_workspace_section(
     let triangle = app.config.ui.expand_indicator == "triangle";
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
-    const ROOT_INDENT: &str = "  ";
+    const ROOT_INDENT: &str = " ";
     // #1201 — nvim-tree-style connectors, matching workspace_files.
     let connectors = crate::ui::tree_connectors::compute_prefixes(&rows, !nerd);
     for (vi, row) in rows.iter().enumerate().skip(scroll).take(h) {
@@ -1657,7 +1656,6 @@ fn draw_extra_workspace_section(
         let indent_style = Style::default().fg(theme::cur().bg2).bg(row_bg_col);
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
-            Span::styled(" ", Style::default().bg(row_bg_col)),
             Span::styled(indent_part.clone(), indent_style),
             Span::styled(
                 chev_part,

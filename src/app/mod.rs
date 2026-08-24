@@ -1895,8 +1895,13 @@ impl ActivitySection {
         match self {
             // nf-fa-folder_open
             Self::Explorer => ("\u{F115}", "E", "Explorer", "view.activity_explorer"),
-            // nf-fa-search
-            Self::Search => ("\u{F002}", "S", "Search", "view.activity_search"),
+            // nf-md-magnify (via search_glyph::NERD — one glyph everywhere)
+            Self::Search => (
+                crate::ui::search_glyph::NERD,
+                "S",
+                "Search",
+                "view.activity_search",
+            ),
             // nf-md-source_branch
             Self::Git => ("\u{F062C}", "G", "Source control", "view.activity_git"),
             // nf-fa-bug

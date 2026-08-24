@@ -304,12 +304,16 @@ fn edit_menu() -> MenuDef {
     MenuDef {
         label: "Edit".to_string(),
         items: vec![
-            MenuItem::action_with_icon("\u{F002}", "Find…", "find.find"),
+            MenuItem::action_with_icon(crate::ui::search_glyph::NERD, "Find…", "find.find"),
             MenuItem::action_with_icon("\u{F063}", "Find next", "find.next"),
             MenuItem::action_with_icon("\u{F062}", "Find previous", "find.prev"),
             MenuItem::action_with_icon("\u{F0EC}", "Replace…", "find.replace"),
             MenuItem::Separator,
-            MenuItem::action_with_icon("\u{F002}", "Find in files…", "find.grep"),
+            MenuItem::action_with_icon(
+                crate::ui::search_glyph::NERD,
+                "Find in files…",
+                "find.grep",
+            ),
             MenuItem::action_with_icon("\u{F0EC}", "Replace in files…", "find.grep_replace"),
         ],
     }
@@ -400,7 +404,11 @@ fn go_menu() -> MenuDef {
     MenuDef {
         label: "Go".to_string(),
         items: vec![
-            MenuItem::action_with_icon("\u{F002}", "Go to file…", "view.discovery"),
+            MenuItem::action_with_icon(
+                crate::ui::search_glyph::NERD,
+                "Go to file…",
+                "view.discovery",
+            ),
             // fa-hashtag — universal "line #N" mark.
             MenuItem::action_with_icon("\u{F292}", "Go to line…", "editor.goto_line"),
             // codicon-arrow-right — "jump-to" (distinct from Prev/Next
