@@ -29,6 +29,22 @@ use crate::ui::theme;
 /// density.
 pub const ACTIVITY_BAR_WIDTH: u16 = 3;
 
+/// Pulse duty cycle for the activity-bar notification badge. Icon
+/// shows for `PULSE_ICON_SECS`, then the count shows for
+/// `PULSE_COUNT_SECS`, then repeat. Time source is a process-static
+/// `Instant` so the cycle is stable within a session and there's no
+/// tick state to thread through `App`.
+const PULSE_ICON_SECS: u64 = 4;
+const PULSE_COUNT_SECS: u64 = 1;
+
+fn badge_pulse_showing_count() -> bool {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    let elapsed = start.elapsed().as_secs();
+    let period = PULSE_ICON_SECS + PULSE_COUNT_SECS;
+    elapsed % period >= PULSE_ICON_SECS
+}
+
 /// Paint the activity bar into `area`. Registers a click rect per
 /// icon on `app.rects.activity_bar_icons` so mouse handling can
 /// resolve a click → `ActivitySection`.
@@ -142,7 +158,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .badge_key(app)
             .map(|k| app.activity_badge_for(&k))
             .unwrap_or(0);
-        if badge_count > 0 && area.width >= 3 {
+        // 2026-08-24 (user ask) — badge PULSES over the icon instead
+        // of statically covering it. The 3-cell activity strip is too
+        // narrow for a real superscript, and the prior badge_rect at
+        // `x + width - 2` (col 1 of a 3-cell strip) sat directly on
+        // top of the 2-cell nerd font glyph, so the terminal blanked
+        // the wide char and the "2" read as if it had replaced the
+        // icon entirely. Pulse: icon shown ~4s, badge shown ~1s,
+        // repeat. Icon stays the primary signal; count still surfaces
+        // periodically. Only the last render's second-precision is
+        // needed — no per-tick state on App.
+        if badge_count > 0 && area.width >= 3 && badge_pulse_showing_count() {
             let badge_glyph = if badge_count == 1 {
                 "•".to_string()
             } else if badge_count <= 9 {
@@ -150,10 +176,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 "+".to_string()
             };
+            // Full glyph column so the count is legible; overwriting
+            // the icon is fine during the ~1s pulse window.
             let badge_rect = Rect {
-                x: area.x + area.width.saturating_sub(2),
+                x: icon_x,
                 y,
-                width: 1,
+                width: area.width.saturating_sub(1),
                 height: 1,
             };
             frame.render_widget(
@@ -225,7 +253,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // Notification badge for manifest mounts — same shape as
         // for builtins above.
         let badge_count = app.activity_badge_for(&manifest.id);
-        if badge_count > 0 && area.width >= 3 {
+        // 2026-08-24 (user ask) — badge PULSES over the icon instead
+        // of statically covering it. The 3-cell activity strip is too
+        // narrow for a real superscript, and the prior badge_rect at
+        // `x + width - 2` (col 1 of a 3-cell strip) sat directly on
+        // top of the 2-cell nerd font glyph, so the terminal blanked
+        // the wide char and the "2" read as if it had replaced the
+        // icon entirely. Pulse: icon shown ~4s, badge shown ~1s,
+        // repeat. Icon stays the primary signal; count still surfaces
+        // periodically. Only the last render's second-precision is
+        // needed — no per-tick state on App.
+        if badge_count > 0 && area.width >= 3 && badge_pulse_showing_count() {
             let badge_glyph = if badge_count == 1 {
                 "•".to_string()
             } else if badge_count <= 9 {
@@ -233,10 +271,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 "+".to_string()
             };
+            // Full glyph column so the count is legible; overwriting
+            // the icon is fine during the ~1s pulse window.
             let badge_rect = Rect {
-                x: area.x + area.width.saturating_sub(2),
+                x: icon_x,
                 y,
-                width: 1,
+                width: area.width.saturating_sub(1),
                 height: 1,
             };
             frame.render_widget(
