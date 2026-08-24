@@ -3000,8 +3000,15 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     // has any content the `/` is a URL literal
                     // again (path separator). Backspacing the URL
                     // back to empty naturally re-arms this gate.
+                    // Flip global focus to Tree so subsequent
+                    // keystrokes hit the sidebar's filter absorb
+                    // block, not the URL field. Without this the
+                    // filter-focused flag was set but Focus::Pane
+                    // still routed chars to the URL — the "cursor
+                    // moved but typing goes nowhere" bug.
                     let _ = rp;
                     app.http_panel_filter_focused = true;
+                    app.focus = crate::focus::Focus::Tree;
                     return true;
                 }
                 KeyCode::Char(c) if !ctrl => {
