@@ -847,22 +847,19 @@ fn draw_files(
     let files = app.http_panel_files_cache.clone();
     if files.is_empty() {
         if y < bottom {
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled(
-                        "No .http / .curl files yet — save one to see it here.",
-                        Style::default().fg(t.comment).bg(bg),
-                    ),
-                ])),
+            y = crate::ui::empty_state::draw(
+                frame,
                 Rect {
                     x: area.x,
                     y,
                     width: area.width,
-                    height: 1,
+                    height: bottom.saturating_sub(y),
                 },
+                "No .http / .curl files yet — save one to see it here.",
+                None,
+                bg,
+                &t,
             );
-            y += 1;
         }
         return y;
     }
@@ -1190,19 +1187,19 @@ fn draw_envs(
     });
     if envs.is_empty() {
         if y < bottom {
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled("No env files yet.", Style::default().fg(t.comment).bg(bg)),
-                ])),
+            y = crate::ui::empty_state::draw(
+                frame,
                 Rect {
                     x: area.x,
                     y,
                     width: area.width,
-                    height: 1,
+                    height: bottom.saturating_sub(y),
                 },
+                "No env files yet — click + New env below.",
+                None,
+                bg,
+                &t,
             );
-            y += 1;
         }
     } else {
         let filter_lc = app.http_panel_filter.to_ascii_lowercase();
@@ -1277,19 +1274,19 @@ fn draw_chains(
     let body_y_start = y;
     let chains = app.http_panel_chains_cache.clone();
     if chains.is_empty() && y < bottom {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled("No chains yet.", Style::default().fg(t.comment).bg(bg)),
-            ])),
+        y = crate::ui::empty_state::draw(
+            frame,
             Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: bottom.saturating_sub(y),
             },
+            "No chains yet — click + New chain below.",
+            None,
+            bg,
+            &t,
         );
-        y += 1;
     }
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     let total = chains.len();
@@ -1482,19 +1479,19 @@ fn draw_collections(
     let files = app.http_panel_collections_cache.clone();
     if roots.is_empty() {
         if y < bottom {
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled("No collections yet.", Style::default().fg(t.comment).bg(bg)),
-                ])),
+            y = crate::ui::empty_state::draw(
+                frame,
                 Rect {
                     x: area.x,
                     y,
                     width: area.width,
-                    height: 1,
+                    height: bottom.saturating_sub(y),
                 },
+                "No collections yet — click + New collection below.",
+                None,
+                bg,
+                &t,
             );
-            y += 1;
         }
         if y < bottom {
             let new_rect = Rect {
