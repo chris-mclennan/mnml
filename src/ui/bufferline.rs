@@ -580,8 +580,10 @@ pub fn right_cluster_width(app: &App) -> u16 {
     // is just: ` + ` new-tab + ` TABS ` + tab-page chips + theme
     // + close.
     let _ = app;
-    // ` + ` new-tab button — always present.
-    let mut w: u16 = 3;
+    // ` +` new-tab button — always present.
+    // 2026-08-24 — dropped trailing pad (was 3 cells); paired-chip
+    // marker already provides the gap.
+    let mut w: u16 = 2;
     // ` TABS ` label + per-tab-page chips — always present in the
     // full cluster so the feature is discoverable even at 1 tab-page.
     // Compact fallback (when the full width doesn't fit or the user
@@ -632,9 +634,10 @@ pub fn pick_cluster_mode(
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
 /// and per-tab-page chips.
 pub fn compact_cluster_width(app: &App) -> u16 {
-    // ` + ` (3) + 1-cell neutral gap after tab-strip (2026-08-23)
-    // + theme toggle pill (3, #1189) + ` × ` (3)
-    let mut w: u16 = 3 + 1 + 3 + 3;
+    // ` +` (2, tightened 2026-08-24) + 1-cell neutral gap after
+    // tab-strip (2026-08-23) + theme toggle pill (3, #1189) +
+    // ` × ` (3)
+    let mut w: u16 = 2 + 1 + 3 + 3;
     // 2026-08-01 — compact mode now shows numbered chips + close
     // on active when there are 2+ tab pages (user asked). Reserve
     // that width so the picker knows compact is wider than the
@@ -754,18 +757,21 @@ pub fn paint_right_cluster(
     // `paint_integration_chips_in_gap`. The far-right cluster is
     // chrome-only.
     // `+` new-tab button. api-workflow-user F5 — honor --ascii.
+    // 2026-08-24 — dropped trailing pad. Next chip's `{marker}{digit} `
+    // already provides a leading-marker cell (space when not dirty),
+    // so keeping both read as 2 cells of dead gap between `+` and `1`.
     let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
     spans.push(Span::styled(
-        format!(" {plus_glyph} "),
+        format!(" {plus_glyph}"),
         Style::default().fg(t.fg).bg(t.bg2),
     ));
     app.rects.bufferline_new_tab_button = Some(Rect {
         x: cluster_x,
         y: area.y,
-        width: 3,
+        width: 2,
         height: 1,
     });
-    cluster_x += 3;
+    cluster_x += 2;
     // Full mode: always show the TABS label + per-tab-page chips
     // (with `1` visible even on a single-tab session so the feature
     // is discoverable). Compact mode drops both. User can force the

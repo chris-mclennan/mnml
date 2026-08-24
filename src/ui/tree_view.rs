@@ -37,8 +37,15 @@ use crate::ui::{hover_help, icons, theme};
 // column-wise. Same-family = same centering, so `>` sits in
 // the same column as `v` even if the MDI right glyph is a
 // touch heavier in this Nerd Font.
-const CHEVRON_OPEN: &str = "\u{F0140}"; // nf-md-chevron_down
-const CHEVRON_CLOSED: &str = "\u{F0142}"; // nf-md-chevron_right
+// 2026-08-24 — swapped MDI (F0140/F0142) → FontAwesome
+// (F078/F054). User feedback: MDI chevron_right rendered "big
+// again" — the MDI family draws chevrons as broader/heavier
+// glyphs than FontAwesome. FontAwesome is neo-tree.nvim's
+// other common default and renders as thinner/lighter carets
+// in the same slot. Same family (both fa), so vertical
+// alignment with the │/└ connector below stays consistent.
+const CHEVRON_OPEN: &str = "\u{F078}"; // nf-fa-chevron_down
+const CHEVRON_CLOSED: &str = "\u{F054}"; // nf-fa-chevron_right
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks
