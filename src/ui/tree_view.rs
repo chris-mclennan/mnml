@@ -474,11 +474,20 @@ fn workspace_header_chips(
         }
         n
     };
+    // 2026-08-24 (user ask) — cluster now sits FLUSH LEFT (right
+    // after the workspace label + a min-separation gap) rather
+    // than pinned to the right edge with pad-then-chips. Prior
+    // right-align left a huge gap between the cluster and the
+    // right edge on wide panes. Trailing pad fills to width so
+    // the rail_bg keeps a clean edge on the right.
     let chips_used = chip_count * chip_w;
-    let pad = width.saturating_sub(label_used + chips_used);
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(1 + chip_count);
-    spans.push(Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)));
-    let cluster_start_x = header_rect.x + (label_used + pad) as u16;
+    let trailing_pad = width.saturating_sub(label_used + min_separation + chips_used);
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(2 + chip_count);
+    spans.push(Span::styled(
+        " ".repeat(min_separation),
+        Style::default().bg(rail_bg),
+    ));
+    let cluster_start_x = header_rect.x + (label_used + min_separation) as u16;
     for (i, (glyph_nerd, glyph_ascii, cmd_id, fg)) in chips.iter().take(chip_count).enumerate() {
         let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
         spans.push(Span::styled(
@@ -496,6 +505,10 @@ fn workspace_header_chips(
             *cmd_id,
         ));
     }
+    spans.push(Span::styled(
+        " ".repeat(trailing_pad),
+        Style::default().bg(rail_bg),
+    ));
     spans
 }
 
@@ -1262,7 +1275,13 @@ fn draw_workspace_files(
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(chev_part, Style::default().fg(theme::cur().comment).bg(bg)),
+            Span::styled(
+                chev_part,
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(bg)),
         ];
         if !repo_marker.is_empty() {
@@ -1582,7 +1601,10 @@ fn draw_extra_workspace_section(
             Span::styled(" ", Style::default().bg(row_bg_col)),
             Span::styled(
                 chev_part,
-                Style::default().fg(theme::cur().comment).bg(row_bg_col),
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(row_bg_col)
+                    .add_modifier(Modifier::DIM),
             ),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(row_bg_col)),
         ];

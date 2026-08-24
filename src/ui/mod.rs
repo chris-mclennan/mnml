@@ -3649,11 +3649,16 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         width: marketplace_w.min(strip_max_w.saturating_sub(installed_w + 1)),
         height: 1,
     };
+    // 2026-08-24 (user ask) — active tab pill matches the
+    // "view: status" chip elsewhere in the app: dark text on a
+    // pale cyan fill. Prior style was `fg=fg bold on bg2` (too
+    // close to the inactive style's weight); the pale-cyan fill
+    // makes the active tab distinctive at a glance.
     let tab_style = |active: bool| {
         if active {
             Style::default()
-                .fg(t.fg)
-                .bg(t.bg2)
+                .fg(t.bg)
+                .bg(t.cyan)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(t.comment).bg(bg)

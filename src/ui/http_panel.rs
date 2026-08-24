@@ -69,15 +69,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_collection_new_request_chips.clear();
 
     // Top header — HTTP label on the left, toolbar chips on the
-    // right (mirrors the file-tree pattern). Order left→right:
-    // ↺ refresh · ↕ collapse/expand all.
+    // right. 2026-08-24 (user ask) — order swapped so refresh
+    // sits in the far-right corner, matching every other activity
+    // panel's header (GIT / TODOS / NOTES / FINDINGS /
+    // INTEGRATIONS / AGENTS). Layout: `HTTP …pad… ↕ collapse ⟳`.
     let all_collapsed = app.http_panel_section_collapsed.iter().all(|c| *c);
     let toolbar_chips: [(&str, &str, &str); 2] = [
-        (
-            crate::ui::refresh_glyph::NERD,
-            crate::ui::refresh_glyph::ASCII,
-            "http.refresh",
-        ),
         (
             if all_collapsed {
                 "\u{F0AB4}"
@@ -86,6 +83,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             },
             if all_collapsed { "↧" } else { "↕" },
             "http.toggle_collapse_all",
+        ),
+        (
+            crate::ui::refresh_glyph::NERD,
+            crate::ui::refresh_glyph::ASCII,
+            "http.refresh",
         ),
     ];
     const CHIP_W: usize = 3;
