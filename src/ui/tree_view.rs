@@ -1099,6 +1099,11 @@ fn draw_workspace_files(
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
     let triangle = app.config.ui.expand_indicator == "triangle";
+    // 2026-08-23 (#1201) — nvim-tree-style ├─ / └─ / │  connector
+    // prefixes replace flat `"  ".repeat(depth)` padding so the
+    // hierarchy reads at a glance. Same 2*depth width, no layout
+    // math changes.
+    let connectors = crate::ui::tree_connectors::compute_prefixes(&rows, !nerd);
     for (vi, row) in rows.iter().enumerate().skip(app.tree.scroll).take(h) {
         let is_cursor = vi == cursor;
         let is_repo_row = multi_repo
@@ -1128,7 +1133,10 @@ fn draw_workspace_files(
         // immediately right of the activity bar, reading as "the
         // highlight is stuck onto the activity-bar column". Users
         // want that leading col to keep the panel's own dark bg.
-        let depth_indent = "  ".repeat(row.depth);
+        let depth_indent = connectors
+            .get(vi)
+            .cloned()
+            .unwrap_or_else(|| "  ".repeat(row.depth));
         // Split chevron + icon so the chevron renders in a muted grey
         // (VS Code / NvChad tree style) while the folder/file icon keeps
         // its devicon color.
@@ -1478,6 +1486,8 @@ fn draw_extra_workspace_section(
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
+    // #1201 — nvim-tree-style connectors, matching workspace_files.
+    let connectors = crate::ui::tree_connectors::compute_prefixes(&rows, !nerd);
     for (vi, row) in rows.iter().enumerate().skip(scroll).take(h) {
         let is_cursor = vi == cursor;
         let row_bg_col = row_bg(is_cursor, focused, rail_bg);
@@ -1502,7 +1512,10 @@ fn draw_extra_workspace_section(
             icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd)
         };
         // #970 f/u (2026-08-20) — see draw_workspace_files.
-        let depth_indent = "  ".repeat(row.depth);
+        let depth_indent = connectors
+            .get(vi)
+            .cloned()
+            .unwrap_or_else(|| "  ".repeat(row.depth));
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{depth_indent}{c} "), format!("{glyph} "))

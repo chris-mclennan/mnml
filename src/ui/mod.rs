@@ -32,6 +32,7 @@ pub mod panel_chrome;
 pub mod search_glyph;
 pub mod session_color;
 pub mod spend_report_view;
+pub mod tree_connectors;
 pub mod usage_time;
 
 /// 2026-06-21 vscode-mouse SEV-2 — which Claude Agents dashboard
