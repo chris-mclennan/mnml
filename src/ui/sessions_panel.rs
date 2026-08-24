@@ -189,11 +189,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if y < area.y + area.height {
         // 2026-08-23 (#1200) — chip routed through the shared
         // `action_button::primary` role so every "+ New X" chip
-        // across activity panels reads the same. Was: `bg2` chip
-        // with green text (blended into the filter row's grey
-        // chip above). Focused/keyboard-cursor variant just
-        // brightens the fg — the base fill stays the primary
-        // green either way.
+        // across activity panels reads the same. The solid green
+        // fill IS the focus signal — no cursor-lift fg swap
+        // (2026-08-23 f/u: swapping fg to `t.fg` on cursor made
+        // mid-grey text on mid-green — unreadable — user report).
+        let _ = cursor_on_new_chip_preview;
         let label = "+ New session";
         let chip_w = crate::ui::action_button::chip_width(label);
         let avail = area.width.saturating_sub(1);
@@ -203,13 +203,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             width: chip_w.min(avail),
             height: 1,
         };
-        let mut style = crate::ui::action_button::primary(&t);
-        if cursor_on_new_chip_preview {
-            // Cursor lift: white fg on the primary green fill.
-            style = style.fg(t.fg);
-        }
         frame.render_widget(
-            Paragraph::new(crate::ui::action_button::chip_line(label, style)),
+            Paragraph::new(crate::ui::action_button::chip_line(
+                label,
+                crate::ui::action_button::primary(&t),
+            )),
             new_rect,
         );
         app.rects.session_new_chip = Some(new_rect);
