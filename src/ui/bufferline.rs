@@ -867,7 +867,12 @@ pub fn paint_right_cluster(
     // toggle's ● dot on its right. See width helpers below —
     // `right_cluster_width` / `compact_cluster_width` add +1 to
     // match.
-    spans.push(Span::styled(" ", Style::default().bg(bg)));
+    // 2026-08-24 (user ask) — this 1-cell separator between the
+    // last tab-page chip (`+` / `1` / `2`) and the theme-toggle
+    // pill now paints in `t.bg2` (matching every neighbouring
+    // chip) instead of the bar `bg`. Prior version made this
+    // cell read as a punched-out gap between two chip strips.
+    spans.push(Span::styled(" ", Style::default().bg(t.bg2)));
     cluster_x += 1;
     // Stress-meter mirror was added to the top-right cluster on
     // 2026-07-12 at user request, then removed on 2026-07-12 —
