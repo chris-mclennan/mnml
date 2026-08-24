@@ -1,15 +1,12 @@
-//! Connector prefixes for the workspace file tree.
+//! Neo-tree-style connector prefixes for the workspace file tree.
 //!
-//! R16 (2026-08-24) — neo-tree-style column math (`│` at ancestor
-//! levels whose subtree still has siblings coming, corner or
-//! tee at own level).
-//!
-//! 2026-08-24 update — added the horizontal spur at OWN-level
-//! connectors so the connector visually reaches into the icon
-//! column, matching what mnml-neo-tree-in-the-wild renders (as
-//! opposed to the bare-defaults screenshot from the plugin
-//! README). Ancestor levels stay `│ ` (they don't attach to the
-//! row's icon, just carry the line down through it).
+//! Matches neo-tree.nvim's defaults exactly: `│` for continuation
+//! (ancestor AND own-level-with-more-siblings-coming), `└` for
+//! last child at its own level. NO `├─`, NO `─` spur — an
+//! intermediate row keeps a plain `│` at its own level, and the
+//! `└` is JUST the corner character (whose natural bottom-right
+//! shape looks like a small L but does not extend into the icon
+//! column).
 //!
 //! Given a DFS-ordered flat list of rows with `depth`, emit per
 //! row a prefix of exactly `2 * depth` cells:
@@ -17,28 +14,26 @@
 //! - For each ancestor level `level` in `1..depth`: `│ ` if
 //!   that level's ancestor still has same-depth siblings
 //!   coming below this row, else `  `.
-//! - At the row's own level `depth`: `├─` (T + spur) if this
-//!   row has a later same-depth sibling (line continues past),
-//!   else `└─` (corner + spur, this is the last child).
+//! - At the row's own level `depth`: `│ ` if this row has a
+//!   later same-depth sibling (line continues past), else
+//!   `└ ` (this is the last child, corner into the row).
 //!
 //! Total width `2 * depth`; sibling detection is DFS-flat.
 
 use crate::tree::VisibleRow;
 
-const CONT_NERD: &str = "\u{2502} "; // │  — ancestor continuation
-const TEE_NERD: &str = "\u{251C}\u{2500}"; // ├─  — own level, more siblings coming
-const CORNER_NERD: &str = "\u{2514}\u{2500}"; // └─  — own level, last child
+const CONT_NERD: &str = "\u{2502} "; // │
+const CORNER_NERD: &str = "\u{2514} "; // └
 const SPACES: &str = "  ";
 const CONT_ASCII: &str = "| ";
-const TEE_ASCII: &str = "|-";
-const CORNER_ASCII: &str = "\\-";
+const CORNER_ASCII: &str = "\\ ";
 
 /// One prefix per row. Width per prefix == `2 * row.depth`.
 pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
-    let (cont, tee, corner) = if ascii {
-        (CONT_ASCII, TEE_ASCII, CORNER_ASCII)
+    let (cont, corner) = if ascii {
+        (CONT_ASCII, CORNER_ASCII)
     } else {
-        (CONT_NERD, TEE_NERD, CORNER_NERD)
+        (CONT_NERD, CORNER_NERD)
     };
 
     let mut out = Vec::with_capacity(rows.len());
@@ -58,11 +53,12 @@ pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
                 prefix.push_str(SPACES);
             }
         }
-        // Own level (`d`): `├─` (T + spur) if more siblings coming
-        // after us, `└─` (corner + spur) if we're the last child.
-        // The horizontal spur reaches into the icon column.
+        // Own level (`d`): `│ ` if more siblings coming after us
+        // (line continues down to reach the next sibling), `└ ` if
+        // we're the last child. NO horizontal spur — neo-tree
+        // doesn't reach into the icon column.
         if has_later_sibling(rows, i, d) {
-            prefix.push_str(tee);
+            prefix.push_str(cont);
         } else {
             prefix.push_str(corner);
         }
@@ -108,22 +104,22 @@ mod tests {
     fn only_child_gets_corner() {
         let rows = vec![row(0, "parent"), row(1, "only")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2514}\u{2500}"); // └─ — last (and only) child
+        assert_eq!(out[1], "\u{2514} "); // └ — last (and only) child
     }
 
     #[test]
-    fn more_siblings_at_same_depth_draw_tee_then_corner() {
+    fn more_siblings_at_same_depth_draw_bar_then_corner() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "second")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{251C}\u{2500}"); // ├─ — sibling still coming
-        assert_eq!(out[2], "\u{2514}\u{2500}"); // └─ — last of its group
+        assert_eq!(out[1], "\u{2502} "); // │ — sibling still coming
+        assert_eq!(out[2], "\u{2514} "); // └ — last of its group
     }
 
     #[test]
     fn continuation_from_uncle_still_coming() {
         let rows = vec![row(0, "parent-a"), row(1, "child"), row(0, "parent-b")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2514}\u{2500}"); // last child of parent-a
+        assert_eq!(out[1], "\u{2514} "); // last child of parent-a
     }
 
     #[test]
@@ -153,20 +149,20 @@ mod tests {
             row(0, "parent-b"),
         ];
         let out = compute_prefixes(&rows, false);
-        // child-1: level-1 own-level, more siblings coming → ├─.
-        assert_eq!(out[1], "\u{251C}\u{2500}");
-        // child-2: level-1 own-level, last of parent-a's kids → └─.
-        assert_eq!(out[2], "\u{2514}\u{2500}");
-        // grandchild: level-1 has ended (space+space), level-2
-        // own-level is corner (only child of child-2) → └─.
-        assert_eq!(out[3], "  \u{2514}\u{2500}");
+        // child-1: level-1 continuation (child-2 still coming).
+        assert_eq!(out[1], "\u{2502} ");
+        // child-2: corner (last depth-1 sibling in parent-a).
+        assert_eq!(out[2], "\u{2514} ");
+        // grandchild: level-1 has ended (no more depth-1 under
+        // parent-a), level-2 is corner (only child of child-2).
+        assert_eq!(out[3], "  \u{2514} ");
     }
 
     #[test]
-    fn ascii_mode_uses_pipe_and_dashes() {
+    fn ascii_mode_uses_pipe_and_backslash() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "last")];
         let out = compute_prefixes(&rows, true);
-        assert_eq!(out[1], "|-");
-        assert_eq!(out[2], "\\-");
+        assert_eq!(out[1], "| ");
+        assert_eq!(out[2], "\\ ");
     }
 }
