@@ -1,47 +1,33 @@
-//! nvim-tree-style ├─ / └─ / │  connector prefixes for the
-//! workspace file tree.
+//! Neo-tree-style vertical connector prefixes for the workspace
+//! file tree.
 //!
-//! User ask 2026-08-23: mnml's tree only indents; nvim-tree draws
-//! visible connector lines between parent folders and children so
-//! the hierarchy is obvious at a glance.
+//! R16 (2026-08-24) — user pointed at neo-tree.nvim's look: just
+//! continuous vertical guide lines at each ancestor level. No
+//! horizontal ├─ / └─ elbows into individual rows — the rows
+//! themselves already break the visual pattern via their icons,
+//! so the elbow adds noise rather than clarity.
 //!
 //! Given a DFS-ordered flat list of rows with `depth`, emit per
-//! row a prefix of exactly `2 * depth` cells:
+//! row a prefix of exactly `2 * depth` cells. For each ancestor
+//! level `level` in `0..depth`: draw `│ ` when that ancestor's
+//! subtree still has more siblings coming below this row (the
+//! line continues down), else `  `. The self-level cell
+//! (`level == depth - 1`) is `│ ` on every row of a sibling
+//! group except the last, which gets `  ` — same rule.
 //!
-//! - For each ancestor level `level` in `0..depth-1`: `│ ` when
-//!   that ancestor has a later same-depth sibling still coming
-//!   (line-continues-down), else `  ` (line ends above us).
-//! - Cells `2*(depth-1)..2*depth`: the elbow into this row.
-//!   `├─` when this row has a later sibling at its own depth
-//!   (line continues past us to the next sibling); `└─` when
-//!   we're the last of our sibling group.
-//!
-//! Total width `2 * depth` matches the old `"  ".repeat(depth)`
-//! padding, so downstream tree-view layout math is untouched.
-//!
-//! Sibling detection is DFS-flat: for row `i` at depth `d`, walk
-//! forward — a row at exactly `d` seen before any row at depth
-//! `< d` means another sibling is coming. O(n·d) worst case;
-//! for typical tree sizes (< 500 visible rows) this is a
-//! non-issue on the render path.
+//! Sibling detection is DFS-flat: for row `i` at level `l`,
+//! walk forward — a row at exactly `l` seen before any row at
+//! depth `< l` means another sibling is coming.
 
 use crate::tree::VisibleRow;
 
-const ELBOW_MORE_NERD: &str = "\u{251C}\u{2500}"; // ├─
-const ELBOW_LAST_NERD: &str = "\u{2514}\u{2500}"; // └─
-const CONT_NERD: &str = "\u{2502} "; //           │
+const CONT_NERD: &str = "\u{2502} "; // │
 const SPACES: &str = "  ";
-const ELBOW_MORE_ASCII: &str = "+-";
-const ELBOW_LAST_ASCII: &str = "\\-";
 const CONT_ASCII: &str = "| ";
 
 /// One prefix per row. Width per prefix == `2 * row.depth`.
 pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
-    let (cont, elbow_more, elbow_last) = if ascii {
-        (CONT_ASCII, ELBOW_MORE_ASCII, ELBOW_LAST_ASCII)
-    } else {
-        (CONT_NERD, ELBOW_MORE_NERD, ELBOW_LAST_NERD)
-    };
+    let cont = if ascii { CONT_ASCII } else { CONT_NERD };
 
     let mut out = Vec::with_capacity(rows.len());
     for (i, row) in rows.iter().enumerate() {
@@ -51,19 +37,17 @@ pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
             continue;
         }
         let mut prefix = String::with_capacity(2 * d);
-        // Ancestor cells — levels 0..d-1.
-        for level in 0..d.saturating_sub(1) {
+        // Draw a continuation bar at every level whose subtree
+        // still has a later sibling below this row; a plain
+        // indent otherwise. `level` here is 1-based (level 1 =
+        // depth-1 ancestor); we probe `has_later_sibling` for
+        // that level's own depth.
+        for level in 1..=d {
             if has_later_sibling(rows, i, level) {
                 prefix.push_str(cont);
             } else {
                 prefix.push_str(SPACES);
             }
-        }
-        // Elbow — based on this row's own-depth sibling status.
-        if has_later_sibling(rows, i, d) {
-            prefix.push_str(elbow_more);
-        } else {
-            prefix.push_str(elbow_last);
         }
         out.push(prefix);
     }
@@ -104,33 +88,29 @@ mod tests {
     }
 
     #[test]
-    fn elbow_last_for_only_child() {
+    fn only_child_gets_plain_indent() {
         let rows = vec![row(0, "parent"), row(1, "only")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2514}\u{2500}"); // └─
+        assert_eq!(out[1], "  "); // no later sibling at level 1
     }
 
     #[test]
-    fn elbow_more_when_more_same_depth_siblings_follow() {
+    fn more_siblings_at_same_depth_draw_bars() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "second")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{251C}\u{2500}"); // ├─
-        assert_eq!(out[2], "\u{2514}\u{2500}"); // └─
+        assert_eq!(out[1], "\u{2502} "); // │  — sibling still coming
+        assert_eq!(out[2], "  "); // last of its group
     }
 
     #[test]
     fn continuation_from_uncle_still_coming() {
-        // parent-a (has sibling later), child (only), parent-b
         let rows = vec![row(0, "parent-a"), row(1, "child"), row(0, "parent-b")];
         let out = compute_prefixes(&rows, false);
-        // child depth 1 has no d=1 sibling after → elbow └─. No
-        // ancestor levels for d=1.
-        assert_eq!(out[1], "\u{2514}\u{2500}");
+        assert_eq!(out[1], "  ");
     }
 
     #[test]
     fn deep_prefix_width_matches_two_times_depth() {
-        // a → b → c1, c2 → d
         let rows = vec![
             row(0, "a"),
             row(1, "b"),
@@ -148,11 +128,11 @@ mod tests {
 
     #[test]
     fn ancestor_continuation_draws_vertical_bar() {
-        // parent-a (has later sibling parent-b), child-1, child-2,
-        // grandchild (child of child-2), parent-b.
-        // grandchild's depth-0 ancestor (parent-a) still has a
-        // later sibling (parent-b), so the level-0 column must
-        // render "│ " not "  ".
+        // parent-a (has later sibling parent-b at depth 0),
+        // child-1 (depth 1, has later sibling child-2 at depth 1),
+        // child-2 (last at depth 1 within parent-a's subtree),
+        // grandchild (depth 2, only child of child-2),
+        // parent-b (depth 0).
         let rows = vec![
             row(0, "parent-a"),
             row(1, "child-1"),
@@ -161,17 +141,23 @@ mod tests {
             row(0, "parent-b"),
         ];
         let out = compute_prefixes(&rows, false);
-        // grandchild prefix: level 0 continuation ("│ ") + elbow
-        // (child-2 is last child of parent-a's subtree at that
-        // level, but grandchild has no d=2 siblings → └─).
-        assert_eq!(out[3], "\u{2502} \u{2514}\u{2500}");
+        // child-1: level-1 continuation because child-2 (another
+        // depth-1 sibling) is still coming.
+        assert_eq!(out[1], "\u{2502} ");
+        // child-2 (last depth-1 sibling in parent-a's subtree) →
+        // no bar at own level.
+        assert_eq!(out[2], "  ");
+        // grandchild: no bars — child-2 has no more depth-1
+        // siblings under parent-a, and grandchild itself is the
+        // only depth-2 row in its subtree.
+        assert_eq!(out[3], "    ");
     }
 
     #[test]
-    fn ascii_mode_uses_pipe_and_backslash() {
+    fn ascii_mode_uses_pipe() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "last")];
         let out = compute_prefixes(&rows, true);
-        assert_eq!(out[1], "+-");
-        assert_eq!(out[2], "\\-");
+        assert_eq!(out[1], "| ");
+        assert_eq!(out[2], "  ");
     }
 }
