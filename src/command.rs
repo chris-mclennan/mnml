@@ -4138,6 +4138,40 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.findings_panel_refresh(),
         },
+        // R16 vscode-keyboard SEV-3 (2026-08-24) — missing palette
+        // callable for the header refresh chips on NOTES / AGENTS /
+        // CLOUD AGENTS. Every panel with a visible refresh chip
+        // should have a matching palette command so keyboard-only
+        // users have parity with mouse users.
+        Command {
+            id: "notes.refresh",
+            title: "Notes: rescan .mnml/notes/",
+            group: "view",
+            keys: &[],
+            run: |app| app.notes_panel_refresh(),
+        },
+        Command {
+            id: "agents.refresh",
+            title: "Agents: rescan local Claude/Codex sessions",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.agents_panel_built_at = None;
+                app.refresh_agents_panel_if_due();
+                app.toast("agents: refreshing…".to_string());
+            },
+        },
+        Command {
+            id: "cloud_agents.refresh",
+            title: "Cloud agents: rescan ECS runner rows",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.agents_panel_built_at = None;
+                app.refresh_agents_panel_if_due();
+                app.toast("cloud agents: refreshing…".to_string());
+            },
+        },
         Command {
             id: "cloud_agents.new_run",
             title: "Cloud agents: fire a new ECS run for a Jira ticket",
