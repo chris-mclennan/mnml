@@ -163,6 +163,33 @@ pub struct RequestPane {
     pub is_preview: bool,
 }
 
+impl RequestPane {
+    /// True when the pane holds no user-meaningful content — URL is
+    /// empty, method is still the default `GET`, and every
+    /// text-buffer (Body / Headers / Source) is blank. Used to
+    /// treat "user typed then deleted back to empty" as clean, so
+    /// leaving the HTTP activity section reclaims those panes the
+    /// same way it reclaims untouched preview panes.
+    ///
+    /// Note: `is_preview` alone is not enough — it flips to false
+    /// on the first edit and is never restored, so a pane where
+    /// the user typed then cleared everything looks "dirty" by
+    /// the preview flag but is actually blank. 2026-08-24 user ask.
+    pub fn is_effectively_blank(&self) -> bool {
+        self.request.url.trim().is_empty()
+            && self.request.method.eq_ignore_ascii_case("GET")
+            && self.request.headers.is_empty()
+            && self
+                .request
+                .body
+                .as_deref()
+                .map(|b| b.trim().is_empty())
+                .unwrap_or(true)
+            && self.headers_buffer.trim().is_empty()
+            && self.source_buffer.trim().is_empty()
+    }
+}
+
 /// Draft state for an inline "add a new key/value pair" editor.
 /// Shared by the Params and Headers tabs — Bruno-style: key field
 /// on the left, value on the right, Tab cycles focus.

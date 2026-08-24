@@ -2391,12 +2391,23 @@ impl App {
         // (see `tui/handlers/pane.rs`), so what remains preview at
         // this point is genuinely unused.
         if leaving_http {
+            // 2026-08-24 user ask — close any Request pane that's
+            // still a preview OR that's genuinely blank (user
+            // typed something then deleted it back to empty; the
+            // preview flag doesn't restore itself, so
+            // `is_effectively_blank` catches that case). Untouched
+            // preview panes stay caught by the first branch;
+            // typed-then-cleared panes are the newly-swept case.
             let to_close: Vec<usize> = self
                 .panes
                 .iter()
                 .enumerate()
                 .filter_map(|(i, p)| match p {
-                    crate::pane::Pane::Request(rp) if rp.is_preview => Some(i),
+                    crate::pane::Pane::Request(rp)
+                        if rp.is_preview || rp.is_effectively_blank() =>
+                    {
+                        Some(i)
+                    }
                     _ => None,
                 })
                 .collect();
