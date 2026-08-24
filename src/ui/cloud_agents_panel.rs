@@ -87,10 +87,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
                 header_label,
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
+                crate::ui::panel_chrome::caps_label_style(&t, bg),
             ),
             Span::styled(header_count.clone(), Style::default().fg(t.comment).bg(bg)),
             Span::styled(" ".repeat(pad_width), Style::default().bg(bg)),
@@ -130,11 +127,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // panels. The field-specific hint (ticket / runId /
         // state) moves into the focused-empty line so it still
         // guides new users without breaking the visual pattern.
+        // 2026-08-23 (design-system r1 SEV-low #5) — the unfocused
+        // form is the shared UNFOCUSED constant; the focused form
+        // extends it with a scope hint that other panels don't
+        // need. Keeps a future wording change to the base string
+        // flowing through here too.
         let display = if app.cloud_agents_filter.is_empty() {
             if focused {
                 "type to filter (ticket / runId / state)\u{2026}".to_string()
             } else {
-                "/ filter".to_string()
+                crate::ui::filter_placeholder::UNFOCUSED.to_string()
             }
         } else {
             app.cloud_agents_filter.clone()

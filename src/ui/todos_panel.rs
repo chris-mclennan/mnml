@@ -139,13 +139,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut y = area.y + 3;
 
     if app.todos_hits.is_empty() {
+        // Interpolate the same glyph the Rescan chip uses so the
+        // hint stays in sync in every mode (design-system r1 SEV-1).
+        let ascii = app.config.ui.ascii_icons;
+        let hint_msg = format!(
+            "No markers found — click {} Rescan below.",
+            crate::ui::refresh_glyph::for_ascii(ascii)
+        );
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    "No markers found — click ⟳ Rescan below.",
-                    Style::default().fg(t.comment).bg(bg),
-                ),
+                Span::styled(hint_msg, Style::default().fg(t.comment).bg(bg)),
             ])),
             Rect {
                 x: area.x,
@@ -249,6 +253,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     if y < area.y + area.height {
+        // 2026-08-23 (design-system r1 SEV-1) — routed through the
+        // shared refresh_glyph so this rescan chip matches every
+        // other refresh affordance in the app + degrades correctly
+        // in `--ascii` mode. Was a hardcoded `⟳` literal, which was
+        // the fourth un-canonicalized refresh variant in the app.
+        let ascii = app.config.ui.ascii_icons;
         let refresh_rect = Rect {
             x: area.x,
             y,
@@ -259,10 +269,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
                 Span::styled(
-                    // `⟳` eats its right sidebearing in Nerd Font +
-                    // CoreText; a 2-space gap keeps it visually
-                    // matched to other action rows in the app.
-                    "⟳  Rescan",
+                    format!("{}  Rescan", crate::ui::refresh_glyph::for_ascii(ascii)),
                     Style::default()
                         .fg(t.cyan)
                         .bg(bg)

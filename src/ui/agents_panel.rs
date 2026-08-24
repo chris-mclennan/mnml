@@ -90,10 +90,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
                 header_left.to_string(),
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
+                crate::ui::panel_chrome::caps_label_style(&t, bg),
             ),
             Span::styled(" ".repeat(pad as usize), Style::default().bg(bg)),
             Span::styled(

@@ -96,10 +96,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             width: refresh_w,
             height: 1,
         };
+        // 2026-08-23 (design-system r1 SEV-medium #4) — cyan to
+        // match the file-tree Fetch chip and HTTP's refresh chip.
+        // Was `t.comment` (dim grey), which read as disabled next
+        // to the other refresh affordances a scroll away.
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
                 refresh_text,
-                Style::default().fg(t.comment).bg(bg),
+                Style::default().fg(t.cyan).bg(bg),
             )])),
             refresh_rect,
         );

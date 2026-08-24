@@ -99,10 +99,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     header_spans.push(Span::styled(" ", Style::default().bg(bg)));
     header_spans.push(Span::styled(
         label,
-        Style::default()
-            .fg(t.comment)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD),
+        crate::ui::panel_chrome::caps_label_style(&t, bg),
     ));
     header_spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
     let cluster_start_x = area.x + (label_used + pad) as u16;
@@ -1255,7 +1252,7 @@ fn draw_envs(
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("  ", Style::default().bg(bg)),
                 Span::styled("+ New env", crate::ui::action_button::link(&t, bg)),
             ])),
             new_rect,
@@ -1360,7 +1357,7 @@ fn draw_chains(
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("  ", Style::default().bg(bg)),
                 Span::styled("+ New chain", crate::ui::action_button::link(&t, bg)),
             ])),
             new_rect,
@@ -1508,7 +1505,7 @@ fn draw_collections(
             };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled("  ", Style::default().bg(bg)),
                     Span::styled("+ New collection", crate::ui::action_button::link(&t, bg)),
                 ])),
                 new_rect,
