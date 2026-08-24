@@ -1464,6 +1464,50 @@ pub fn rects_dump_json(app: &App) -> String {
         "sessions_panel_filter_input",
         app.rects.sessions_panel_filter_input
     );
+    // mouse-r16 2026-08-23 — activity-panel `+ New X` chips + the
+    // git panel refresh chip. The design-system pass added / renamed
+    // several of these; headless mouse audits were pixel-probing
+    // the panels to find them. Publish the whole family so R17+
+    // testers can drive them by label instead of column-guessing.
+    one!("session_new_chip", app.rects.session_new_chip);
+    one!("notes_panel_new_chip", app.rects.notes_panel_new_chip);
+    one!(
+        "findings_panel_filter_input",
+        app.rects.findings_panel_filter_input
+    );
+    one!("agents_panel_new_chip", app.rects.agents_panel_new_chip);
+    one!("agents_panel_pr_chip", app.rects.agents_panel_pr_chip);
+    one!(
+        "agents_panel_filter_input",
+        app.rects.agents_panel_filter_input
+    );
+    one!(
+        "cloud_agents_new_run_button",
+        app.rects.cloud_agents_new_run_button
+    );
+    one!(
+        "cloud_agents_filter_input",
+        app.rects.cloud_agents_filter_input
+    );
+    one!("http_panel_new_chip", app.rects.http_panel_new_chip);
+    one!("http_panel_env_new_chip", app.rects.http_panel_env_new_chip);
+    one!(
+        "http_panel_chain_new_chip",
+        app.rects.http_panel_chain_new_chip
+    );
+    one!(
+        "http_panel_collection_new_chip",
+        app.rects.http_panel_collection_new_chip
+    );
+    one!("http_panel_filter_input", app.rects.http_panel_filter_input);
+    one!(
+        "git_palette_filter_input",
+        app.rects.git_palette_filter_input
+    );
+    one!(
+        "git_palette_refresh_chip",
+        app.rects.git_palette_refresh_chip
+    );
     for (r, _leaf, tag) in &app.rects.split_strip_ai_buttons {
         let label = if *tag == 1 {
             "split_strip_ai_codex"
