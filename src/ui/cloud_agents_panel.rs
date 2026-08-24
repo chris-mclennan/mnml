@@ -73,10 +73,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     // Build the header line: "CLOUD AGENTS  (N)        [chip]"
-    // where [chip] is "compact ⇄" or "standard ⇄" — clickable to
-    // toggle the row-density mode.
+    // where [chip] is "view: compact" or "view: standard" —
+    // clickable to toggle the row-density mode. 2026-08-24 (user
+    // ask) — label reads `view: <mode>` for parity with the
+    // AGENTS panel's own view chip.
     let view_label = app.cloud_agents_view.label();
-    let chip_text = format!("{view_label} ⇄");
+    let chip_text = format!(" view: {view_label} ");
     let chip_width = chip_text.chars().count() as u16 + 2; // " " padding
     let header_label = "CLOUD AGENTS";
     let header_count = format!("  ({})", app.cloud_agents_rows.len());
@@ -91,11 +93,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             Span::styled(header_count.clone(), Style::default().fg(t.comment).bg(bg)),
             Span::styled(" ".repeat(pad_width), Style::default().bg(bg)),
+            // Match the AGENTS view chip: dark-fg on pale-cyan bg.
             Span::styled(
                 chip_text.clone(),
                 Style::default()
-                    .fg(t.cyan)
-                    .bg(t.bg2)
+                    .fg(t.bg)
+                    .bg(t.cyan)
                     .add_modifier(Modifier::BOLD),
             ),
         ])),
@@ -122,22 +125,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             t.fg
         };
-        // 2026-08-23 user ask — normalize placeholder to the
-        // two-state family idiom used by the sibling activity
-        // panels. The field-specific hint (ticket / runId /
-        // state) moves into the focused-empty line so it still
-        // guides new users without breaking the visual pattern.
-        // 2026-08-23 (design-system r1 SEV-low #5) — the unfocused
-        // form is the shared UNFOCUSED constant; the focused form
-        // extends it with a scope hint that other panels don't
-        // need. Keeps a future wording change to the base string
-        // flowing through here too.
+        // 2026-08-24 (user ask) — normalize to the shared
+        // `filter_placeholder::for_state` used by every other
+        // activity-bar filter. The field-specific hint (ticket /
+        // runId / state) now lives in the filter chip's
+        // hover-help copy — see `info_view_copy` for
+        // `HoverChip::CloudAgentsFilter`. Prior in-line hint
+        // read as an outlier next to the plain `type to filter…`
+        // used elsewhere.
         let display = if app.cloud_agents_filter.is_empty() {
-            if focused {
-                "type to filter (ticket / runId / state)\u{2026}".to_string()
-            } else {
-                crate::ui::filter_placeholder::UNFOCUSED.to_string()
-            }
+            crate::ui::filter_placeholder::for_state(focused).to_string()
         } else {
             app.cloud_agents_filter.clone()
         };
