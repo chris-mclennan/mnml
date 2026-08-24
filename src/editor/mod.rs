@@ -3588,6 +3588,15 @@ impl Editor {
                 }
             }
             ToggleLineComment => {
+                // R16 nvchad-user SEV-3 (2026-08-24) — commentless
+                // filetypes (`.txt`, `.log`, no-extension) return an
+                // empty `comment_token` from `buffer::comment_token_for`.
+                // No-op instead of stamping a stray literal into a text
+                // file. Reflex Ctrl+/ in a scratch or note buffer
+                // used to leave a `// ` behind requiring Ctrl+Z.
+                if self.comment_token.trim().is_empty() {
+                    return;
+                }
                 self.checkpoint();
                 let token = self.comment_token.clone();
                 let close = self.comment_token_close.clone();

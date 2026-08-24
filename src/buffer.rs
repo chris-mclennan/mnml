@@ -1336,10 +1336,17 @@ fn comment_token_for(ext: Option<&str>) -> (&'static str, &'static str) {
         Some("lua" | "sql") => ("-- ", ""),
         // HTML-family: block-comment wrap. The toggle inserts ` -->` at
         // end-of-line so the closing tag survives a round-trip.
-        Some("html" | "htm" | "xml" | "vue" | "svelte" | "astro") => ("<!-- ", " -->"),
+        Some("html" | "htm" | "xml" | "vue" | "svelte" | "astro" | "md" | "markdown") => {
+            ("<!-- ", " -->")
+        }
         // CSS-family: `/* … */` block-comment wrap.
         Some("css") => ("/* ", " */"),
-        _ => ("// ", ""),
+        // R16 nvchad-user SEV-3 (2026-08-24) — unknown / commentless
+        // filetypes (`.txt`, `.log`, no-extension) return empty tokens
+        // so Ctrl+/ becomes a no-op instead of stamping a stray `// `
+        // into text files. `ToggleLineComment` in `editor/mod.rs`
+        // treats an empty `comment_token` as no-op.
+        _ => ("", ""),
     }
 }
 
