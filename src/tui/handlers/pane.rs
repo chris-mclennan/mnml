@@ -2986,6 +2986,24 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     }
                     return true;
                 }
+                KeyCode::Char('/')
+                    if !ctrl
+                        && rp.focus == crate::request_pane::EditField::Url
+                        && rp.request.url.is_empty()
+                        && app.active_section == crate::app::ActivitySection::Http =>
+                {
+                    // 2026-08-24 (user ask) — HTTP entry lands the
+                    // cursor in the URL field, but a first `/`
+                    // keystroke should route to the sidebar's
+                    // request-list filter, mirroring every other
+                    // activity panel's `/` gesture. Once the URL
+                    // has any content the `/` is a URL literal
+                    // again (path separator). Backspacing the URL
+                    // back to empty naturally re-arms this gate.
+                    let _ = rp;
+                    app.http_panel_filter_focused = true;
+                    return true;
+                }
                 KeyCode::Char(c) if !ctrl => {
                     // `r` from URL / Method fires; `r` inside multi-line fields
                     // is a literal char (so typing "Authorization" etc. works).
