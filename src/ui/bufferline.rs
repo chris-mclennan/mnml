@@ -598,8 +598,9 @@ pub fn right_cluster_width(app: &App) -> u16 {
             w += 2;
         }
     }
+    // 1-cell neutral gap after the tab-strip (2026-08-23) +
     // theme toggle pill (3, #1189) + ` × ` window close (3)
-    w += 3 + 3;
+    w += 1 + 3 + 3;
     w
 }
 
@@ -631,8 +632,9 @@ pub fn pick_cluster_mode(
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
 /// and per-tab-page chips.
 pub fn compact_cluster_width(app: &App) -> u16 {
-    // ` + ` (3) + theme toggle pill (3, #1189) + ` × ` (3)
-    let mut w: u16 = 3 + 3 + 3;
+    // ` + ` (3) + 1-cell neutral gap after tab-strip (2026-08-23)
+    // + theme toggle pill (3, #1189) + ` × ` (3)
+    let mut w: u16 = 3 + 1 + 3 + 3;
     // 2026-08-01 — compact mode now shows numbered chips + close
     // on active when there are 2+ tab pages (user asked). Reserve
     // that width so the picker knows compact is wider than the
@@ -858,6 +860,15 @@ pub fn paint_right_cluster(
             }
         }
     }
+    // 2026-08-23 — 1-cell neutral spacer between the tab-page
+    // strip and the theme toggle. The active tab-page chip paints
+    // with a blue `chip_bg` all the way through its trailing space,
+    // so without this gap the blue reads as touching the theme
+    // toggle's ● dot on its right. See width helpers below —
+    // `right_cluster_width` / `compact_cluster_width` add +1 to
+    // match.
+    spans.push(Span::styled(" ", Style::default().bg(bg)));
+    cluster_x += 1;
     // Stress-meter mirror was added to the top-right cluster on
     // 2026-07-12 at user request, then removed on 2026-07-12 —
     // the statusline meter is enough; the mirror duplicated
