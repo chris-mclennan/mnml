@@ -2510,6 +2510,10 @@ pub struct PaneRects {
     /// Click rect for the "compact / standard" density chip in the
     /// Cloud Agents panel header.
     pub cloud_agents_view_chip: Option<Rect>,
+    /// R16 (2026-08-24) — refresh chip in CLOUD AGENTS header
+    /// top-right, parity with every other data-fetching panel.
+    /// Click forces a rescan of the ECS runner DynamoDB table.
+    pub cloud_agents_refresh_chip: Option<Rect>,
     /// Click rects for the workspaces-editor overlay. Each row is
     /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
     /// reserved for action rows (`-1 = Add`, `-2 = Close`).
@@ -3401,6 +3405,7 @@ impl PaneRects {
         self.cloud_agents_quick_input = None;
         self.cloud_agents_change_defaults_chip = None;
         self.cloud_agents_view_chip = None;
+        self.cloud_agents_refresh_chip = None;
     }
 }
 

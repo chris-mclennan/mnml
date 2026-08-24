@@ -72,18 +72,51 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         width: area.width,
         height: 1,
     };
-    // Build the header line: "CLOUD AGENTS  (N)        [chip]"
-    // where [chip] is "view: compact" or "view: standard" —
-    // clickable to toggle the row-density mode. 2026-08-24 (user
-    // ask) — label reads `view: <mode>` for parity with the
-    // AGENTS panel's own view chip.
+    // R16 design-critic pass (2026-08-24) — header overhaul for
+    // parity with AGENTS: DIM count subtitle via
+    // `caps_subtitle_style`, `M of N` when the filter narrows,
+    // pale-cyan `view: <mode>` chip, and a refresh chip in the
+    // top-right corner (was missing entirely — the sole
+    // data-fetching panel in the family without one).
     let view_label = app.cloud_agents_view.label();
-    let chip_text = format!(" view: {view_label} ");
-    let chip_width = chip_text.chars().count() as u16 + 2; // " " padding
+    let view_chip = format!(" view: {view_label} ");
+    let view_w = view_chip.chars().count() as u16;
+    let refresh_text = crate::ui::refresh_glyph::chip_icon_only(app.config.ui.ascii_icons);
+    let refresh_w = refresh_text.chars().count() as u16;
     let header_label = "CLOUD AGENTS";
-    let header_count = format!("  ({})", app.cloud_agents_rows.len());
-    let used_left = 1 + header_label.chars().count() + header_count.chars().count();
-    let pad_width = (area.width as usize).saturating_sub(used_left + chip_width as usize + 1);
+    let filter_lc_hdr = app.cloud_agents_filter.to_ascii_lowercase();
+    // Filtered count uses the same substring match the row loop
+    // uses (workspace / session_id / state / flow); computed
+    // twice (here + at the render loop) since re-borrowing across
+    // the header/render split adds no real cost.
+    let total = app.cloud_agents_rows.len();
+    let visible = if filter_lc_hdr.is_empty() {
+        total
+    } else {
+        app.cloud_agents_rows
+            .iter()
+            .filter(|r| {
+                let m = app.cloud_agents_meta.get(&r.session_id);
+                let mut parts: Vec<String> = vec![
+                    r.workspace.to_ascii_lowercase(),
+                    r.session_id.to_ascii_lowercase(),
+                ];
+                if let Some(m) = m {
+                    parts.push(m.state.to_ascii_lowercase());
+                    parts.push(m.flow.to_ascii_lowercase());
+                }
+                parts.iter().any(|p| p.contains(&filter_lc_hdr))
+            })
+            .count()
+    };
+    let count_txt = if filter_lc_hdr.is_empty() {
+        format!("  ({total})")
+    } else {
+        format!("  ({visible} of {total})")
+    };
+    let count_w = count_txt.chars().count() as u16;
+    let header_used = 1 + header_label.chars().count() as u16 + count_w + view_w + refresh_w + 2;
+    let pad_width = area.width.saturating_sub(header_used) as usize;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
@@ -91,29 +124,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 header_label,
                 crate::ui::panel_chrome::caps_label_style(&t, bg),
             ),
-            Span::styled(header_count.clone(), Style::default().fg(t.comment).bg(bg)),
+            Span::styled(
+                count_txt.clone(),
+                crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
+            ),
             Span::styled(" ".repeat(pad_width), Style::default().bg(bg)),
             // Match the AGENTS view chip: dark-fg on pale-cyan bg.
             Span::styled(
-                chip_text.clone(),
+                view_chip,
                 Style::default()
                     .fg(t.bg)
                     .bg(t.cyan)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(refresh_text.to_string(), Style::default().fg(t.cyan).bg(bg)),
         ])),
         header_row,
     );
-    // Click rect for the chip — let users tap to flip density.
-    let chip_x = area.x + (used_left + pad_width) as u16;
-    if chip_x + chip_width <= area.x + area.width {
-        app.rects.cloud_agents_view_chip = Some(Rect {
-            x: chip_x,
-            y: header_row.y,
-            width: chip_width,
-            height: 1,
-        });
-    }
+    let view_chip_x = area.x + 1 + header_label.chars().count() as u16 + count_w + pad_width as u16;
+    app.rects.cloud_agents_view_chip = Some(Rect {
+        x: view_chip_x,
+        y: header_row.y,
+        width: view_w,
+        height: 1,
+    });
+    app.rects.cloud_agents_refresh_chip = Some(Rect {
+        x: view_chip_x + view_w + 1,
+        y: header_row.y,
+        width: refresh_w,
+        height: 1,
+    });
     y += 1;
 
     // Filter input — same shape as the local panel for muscle memory.
@@ -239,13 +280,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_in)),
                 Span::styled(" ".repeat(pad), Style::default().bg(bg_in)),
                 Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    chip.to_string(),
-                    Style::default()
-                        .fg(t.bg_dark)
-                        .bg(t.purple)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                // R16 (2026-08-24) — was `.fg(t.bg_dark)` which
+                // `action_button`'s doc-comment records as an
+                // already-fixed contrast bug against mid-brightness
+                // fills. Route through `action_button::secondary`
+                // for guaranteed pure-black label parity with
+                // AGENTS' `+ from PR` chip.
+                Span::styled(chip.to_string(), crate::ui::action_button::secondary(&t)),
             ])),
             row_rect,
         );
@@ -381,6 +422,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     for v in [&mut action_needed, &mut running, &mut done] {
         v.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
+    }
+    // R16 design-critic pass (2026-08-24) — filtered-to-zero
+    // state. Without this branch the panel just paints nothing
+    // (looks broken/loading) when the filter narrows a
+    // non-empty list to zero matches. Route through
+    // `empty_state::draw` so hint-row + fit() behavior matches
+    // every other panel's filtered-empty state.
+    if !filter_lc.is_empty() && action_needed.is_empty() && running.is_empty() && done.is_empty() {
+        crate::ui::empty_state::draw(
+            frame,
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: area.height.saturating_sub(y - area.y),
+            },
+            "No matches — Esc clears",
+            None,
+            bg,
+            &t,
+        );
+        return;
     }
 
     // Build a flat row list. Standard mode renders multi-line rows

@@ -3336,6 +3336,18 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.cloud_agents_toggle_view();
         return;
     }
+    // R16 (2026-08-24) — refresh chip on the CLOUD AGENTS header
+    // top-right forces a rescan of the ECS runner rows (auto-poll
+    // is on a 2-minute cadence; this is for impatience). Reuses
+    // the same "reset built_at + call refresh" path AGENTS uses.
+    if let Some(r) = app.rects.cloud_agents_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.agents_panel_built_at = None;
+        app.refresh_agents_panel_if_due();
+        app.toast("cloud agents: refreshing…".to_string());
+        return;
+    }
     if let Some(r) = app.rects.cloud_agents_new_run_button
         && crate::app::dispatch::contains(r, x, y)
     {
