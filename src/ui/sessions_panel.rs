@@ -191,14 +191,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // chip — surprising to keyboard users.
     let cursor_on_new_chip_preview = app.sessions_panel_cursor == 0;
     if y < area.y + area.height {
-        // #1188 f/u (2026-08-23) — chip width fits the label instead
-        // of stretching the full rail width. Content is
-        // ` + New session ` (1 leading pad + 13 label + 1 trailing
-        // pad) = 15 cells. User ask: "should stop 1 char after the n
-        // in session". Rest of the row is transparent bg so the
-        // chip reads as a discrete button, not a full-width bar.
+        // 2026-08-23 (#1200) — chip routed through the shared
+        // `action_button::primary` role so every "+ New X" chip
+        // across activity panels reads the same. Was: `bg2` chip
+        // with green text (blended into the filter row's grey
+        // chip above). Focused/keyboard-cursor variant just
+        // brightens the fg — the base fill stays the primary
+        // green either way.
         let label = "+ New session";
-        let chip_w = (label.chars().count() as u16) + 2; // pad on both sides
+        let chip_w = crate::ui::action_button::chip_width(label);
         let avail = area.width.saturating_sub(1);
         let new_rect = Rect {
             x: area.x + 1,
@@ -206,35 +207,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             width: chip_w.min(avail),
             height: 1,
         };
-        let chip_bg = if cursor_on_new_chip_preview {
-            t.bg2
-        } else {
-            bg
-        };
-        let chip_fg = if cursor_on_new_chip_preview {
-            t.fg
-        } else {
-            t.comment
-        };
+        let mut style = crate::ui::action_button::primary(&t);
         if cursor_on_new_chip_preview {
-            frame.render_widget(
-                Paragraph::new(" ".repeat(new_rect.width as usize))
-                    .style(Style::default().bg(chip_bg)),
-                new_rect,
-            );
+            // Cursor lift: white fg on the primary green fill.
+            style = style.fg(t.fg);
         }
-        let line = Line::from(vec![
-            Span::styled(" ", Style::default().bg(chip_bg)),
-            Span::styled(
-                label,
-                Style::default()
-                    .fg(chip_fg)
-                    .bg(chip_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().bg(chip_bg)),
-        ]);
-        frame.render_widget(Paragraph::new(line), new_rect);
+        frame.render_widget(
+            Paragraph::new(crate::ui::action_button::chip_line(label, style)),
+            new_rect,
+        );
         app.rects.session_new_chip = Some(new_rect);
         y += 2; // chip row + 1-row breathing space before the list
     }

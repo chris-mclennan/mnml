@@ -166,33 +166,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // The first fires a single Claude Code session in the
         // workspace; the second opens the wizard that picks PRs
         // and fires one session per checked PR.
-        let new_chip_text = " + New session ";
-        let pr_chip_text = " + from PR ";
-        let new_w = new_chip_text.chars().count() as u16;
-        let pr_w = pr_chip_text.chars().count() as u16;
+        // 2026-08-23 (#1200) — routed through the shared
+        // action_button roles: primary (green) for the main
+        // action, secondary (purple) for the peer. Was inlined
+        // fg/bg pairs that had drifted from the other panels.
+        let new_label = "+ New session";
+        let pr_label = "+ from PR";
+        let new_w = crate::ui::action_button::chip_width(new_label);
+        let pr_w = crate::ui::action_button::chip_width(pr_label);
         let pad = (area.width as usize).saturating_sub(1 + new_w as usize + 1 + pr_w as usize + 1);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    new_chip_text.to_string(),
-                    Style::default()
-                        .fg(t.bg_darker)
-                        .bg(t.green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    pr_chip_text.to_string(),
-                    Style::default()
-                        .fg(t.bg_darker)
-                        .bg(t.cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-            ])),
-            new_rect,
-        );
+        let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", Style::default().bg(bg))];
+        for span in
+            crate::ui::action_button::chip_line(new_label, crate::ui::action_button::primary(&t))
+                .spans
+        {
+            spans.push(Span::styled(span.content.into_owned(), span.style));
+        }
+        spans.push(Span::styled(" ", Style::default().bg(bg)));
+        for span in
+            crate::ui::action_button::chip_line(pr_label, crate::ui::action_button::secondary(&t))
+                .spans
+        {
+            spans.push(Span::styled(span.content.into_owned(), span.style));
+        }
+        spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+        frame.render_widget(Paragraph::new(Line::from(spans)), new_rect);
         app.rects.agents_panel_new_chip = Some(Rect {
             x: area.x + 1,
             y,

@@ -20,6 +20,7 @@
 //! palette / which-key / popups) draw on top.
 
 pub mod about_overlay;
+pub mod action_button;
 pub mod activity_bar;
 pub mod ai_view;
 pub mod claude_usage_view;

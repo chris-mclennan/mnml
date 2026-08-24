@@ -131,8 +131,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // panel matches every other panel's tighter header stack.
     let mut y = area.y + 2;
     if y < area.y + area.height {
+        // 2026-08-23 (#1200) — routed through the shared
+        // `action_button::primary` role so this chip matches every
+        // other activity panel's primary action.
         let label = "+ New note";
-        let chip_w = (label.chars().count() as u16) + 2; // pad on both sides
+        let chip_w = crate::ui::action_button::chip_width(label);
         let avail = area.width.saturating_sub(1);
         let new_rect = Rect {
             x: area.x + 1,
@@ -141,17 +144,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" ", Style::default().bg(t.bg2)),
-                Span::styled(
-                    label,
-                    Style::default()
-                        .fg(t.green)
-                        .bg(t.bg2)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", Style::default().bg(t.bg2)),
-            ])),
+            Paragraph::new(crate::ui::action_button::chip_line(
+                label,
+                crate::ui::action_button::primary(&t),
+            )),
             new_rect,
         );
         app.rects.notes_panel_new_chip = Some(new_rect);
