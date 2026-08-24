@@ -141,6 +141,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.rects.todos_panel_filter_input = Some(row_rect);
         }
     }
+    // R16 design-critic (2026-08-24) — `area.y + 3` (blank row under
+    // filter) is intentional: TODOS has no `+ New todo` CTA chip like
+    // NOTES/SESSIONS do, so the row acts as breathing room instead of
+    // a chip slot. Matches `findings_panel.rs`.
     let mut y = area.y + 3;
 
     if app.todos_hits.is_empty() {

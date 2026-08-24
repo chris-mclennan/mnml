@@ -121,6 +121,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
+    // R16 design-critic (2026-08-24) — content starts at `area.y + 3`
+    // (one blank row under the filter) rather than the `area.y + 2`
+    // that NOTES/SESSIONS use. FINDINGS has no `+ New finding` CTA
+    // chip to occupy that row, so the blank is deliberate breathing
+    // room instead of a missing button. Same call in `todos_panel.rs`.
     let mut y = area.y + 3;
 
     if files.is_empty() {

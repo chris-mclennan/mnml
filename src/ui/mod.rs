@@ -3467,6 +3467,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         },
         "INTEGRATIONS",
+        // R16 (2026-08-24) — no top-level count-in-parens:
+        // INTEGRATIONS carries per-tab counts already (Installed /
+        // Marketplace / DEV each show their own `(N)`), so a single
+        // header count wouldn't obviously mean anything.
         None,
         bg,
         &t,

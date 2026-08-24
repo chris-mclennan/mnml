@@ -77,6 +77,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         },
         "GIT",
+        // R16 (2026-08-24) — no top-level count-in-parens: GIT is a
+        // multi-section panel (LOCAL / REMOTE / WORKTREES / PRS /
+        // STASHES / TAGS) and each section already carries its own
+        // count below. A single top-level `(N)` would be ambiguous.
         None,
         bg,
         &t,
