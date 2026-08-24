@@ -419,7 +419,7 @@ fn workspace_action_chip_specs(
     &'static str,
     &'static str,
     ratatui::style::Color,
-); 4] {
+); 5] {
     let t = theme::cur();
     let (collapse_glyph, collapse_ascii) = if app.tree.is_fully_collapsed() {
         ("\u{F0AB4}", "↧") // expand-all
@@ -427,6 +427,12 @@ fn workspace_action_chip_specs(
         ("\u{EAC5}", "↕") // collapse-all
     };
     [
+        // 2026-08-24 — up-nav (↑) chip. Replaces the `.. Projects`
+        // row that used to sit above the file list. Same command
+        // (`view.workspace_up`), now a header icon instead of a
+        // consumable list row. Codicon EAA1 = arrow-up (pair of
+        // EA9A arrow-down used by pull below).
+        ("\u{EAA1}", "↑", "view.workspace_up", t.comment),
         // 2026-06-24 — user-reported swap: the visually-rendered
         // glyphs in mnml's patched font are folder-shape (EA80,
         // blue) + file-shape (EA7F, yellow), but the upstream
@@ -1078,53 +1084,11 @@ fn draw_workspace_files(
         };
         shift += 1;
     }
-    // `..` up-navigation row — always sits above the file list so
-    // users can climb out of the current workspace root without the
-    // "Add workspace" prompt. Hidden when we're at filesystem root
-    // (nothing above) OR in the empty-workspace splash state (its
-    // own layout owns the whole rect). 2026-07-07.
-    let show_up = app.workspace.parent().is_some() && !is_empty_workspace(app);
-    if show_up && inner.height >= 2 {
-        let t = theme::cur();
-        let parent_name = app
-            .workspace
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "/".to_string());
-        let clipped_parent = crate::ui::clip_to_cells(
-            &parent_name,
-            (inner.width as usize).saturating_sub(6).max(4),
-        );
-        let up_line = Line::from(vec![
-            Span::styled("  ", Style::default().bg(rail_bg)),
-            Span::styled(
-                "..",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(rail_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().bg(rail_bg)),
-            Span::styled(clipped_parent, Style::default().fg(t.comment).bg(rail_bg)),
-        ]);
-        let up_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: 1,
-        };
-        frame.render_widget(Paragraph::new(up_line), up_rect);
-        app.rects.tree_up_row = Some(up_rect);
-        inner = Rect {
-            x: inner.x,
-            y: inner.y + 1,
-            width: inner.width,
-            height: inner.height - 1,
-        };
-        shift += 1;
-    }
+    // 2026-08-24 — `..` up-navigation row REMOVED. Replaced by the
+    // ↑ chip in the tree header icon cluster (fires
+    // `view.workspace_up`). Frees a row of vertical space; same
+    // affordance is now visible from the header row.
+    app.rects.tree_up_row = None;
     app.rects.tree = Some(inner);
     let h = inner.height as usize;
     if h == 0 {

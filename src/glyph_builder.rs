@@ -789,6 +789,34 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     // drawn apple silhouette that rendered as a broken boxy shape
     // through fontforge. Both replaced by the native nf-fa-apple
     // (E711) — the mnml statusline uses that codepoint direct.
+    // 2026-08-24 — custom file-tree chevrons at F1F02 (down) and
+    // F1F03 (right). The Nerd Font Octicons chevrons (F47C/F460)
+    // rendered slightly right-of-center in their cell, which read
+    // as offset when compared against parent folder icons above.
+    // These SVGs draw the chevron in the LEFT half of the 24×24
+    // viewBox (paths span x=3..15 and x=5..11 respectively) so
+    // the visible pixels sit further left. `center_x_frac` isn't
+    // trustworthy for horizontal shifts in ghostty — pixel-round
+    // quantization eats sub-cell nudges — so shift via the SVG
+    // content itself.
+    BuiltinGlyph {
+        codepoint: 0xF1F02,
+        name: "tree-chevron-down",
+        svg_relpath: "assets/glyphs/tree/chevron-down.svg",
+        width_frac: 1.0,
+        height_frac: 1.0,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1F03,
+        name: "tree-chevron-right",
+        svg_relpath: "assets/glyphs/tree/chevron-right.svg",
+        width_frac: 1.0,
+        height_frac: 1.0,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
 ];
 
 /// SVGs embedded into the binary so the AI-glyph bake path
@@ -834,6 +862,18 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
     (
         "assets/glyphs/music/beatport.svg",
         include_bytes!("../assets/glyphs/music/beatport.svg"),
+    ),
+    // File-tree chevrons (2026-08-24). Custom SVGs drawn with the
+    // chevron pixels in the LEFT half of the viewBox so the visible
+    // shape sits left-of-center in its cell, aligning better under
+    // parent folder icons.
+    (
+        "assets/glyphs/tree/chevron-down.svg",
+        include_bytes!("../assets/glyphs/tree/chevron-down.svg"),
+    ),
+    (
+        "assets/glyphs/tree/chevron-right.svg",
+        include_bytes!("../assets/glyphs/tree/chevron-right.svg"),
     ),
     // assets/glyphs/dev/{btop,htop,iftop}.svg — removed 2026-08-06
     // together with their BUILTIN_GLYPHS entries. Launchers now use
