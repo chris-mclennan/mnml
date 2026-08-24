@@ -3772,12 +3772,14 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         app.integrations_panel_filter.clone()
     };
-    let filter_fg = if !app.integrations_panel_filter.is_empty() {
-        t.fg
-    } else if filter_focused {
-        t.cyan
-    } else {
+    // 2026-08-24 (user ask) — placeholder text stays in `t.comment`
+    // (the shared dim-grey used by every other panel's filter),
+    // typed content lifts to `t.fg`. Prior code lit the placeholder
+    // in `t.cyan` on focus, which made INTEGRATIONS an outlier.
+    let filter_fg = if app.integrations_panel_filter.is_empty() {
         t.comment
+    } else {
+        t.fg
     };
     // 2026-08-24 (user ask) — filter row background now matches
     // the shared `filter_chip_bg` used by every other activity
