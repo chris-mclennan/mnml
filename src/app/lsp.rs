@@ -1221,6 +1221,19 @@ impl App {
                 if items.is_empty() {
                     return;
                 }
+                // R16 nvchad-user SEV-2 (2026-08-24) — the request
+                // was fired while the user was typing in INSERT mode,
+                // but by the time the reply arrives they may have
+                // hit Esc back to NORMAL (or fired an ex-command,
+                // `dw`, `p`, `.`, macro-end, etc). Opening a
+                // completion popup in NORMAL mode is a vim regression
+                // — nothing they type there wants a completion. Drop
+                // the reply unless we're still in INSERT.
+                if self.editing_mode() != crate::input::EditingMode::Insert
+                    && self.config.editor.input_style == "vim"
+                {
+                    return;
+                }
                 // 2026-08-19 (#1070) — if an AI ghost suggestion is currently
                 // showing, drop the completion reply on the floor instead of
                 // opening a competing popup on top of it. The user's next
