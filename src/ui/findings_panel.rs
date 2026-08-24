@@ -62,10 +62,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
                 "FINDINGS",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
+                crate::ui::panel_chrome::caps_label_style(&t, bg),
             ),
             Span::styled(
                 if filter_lc.is_empty() {
@@ -73,10 +70,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     format!("  ({} of {})", files.len(), all_files.len())
                 },
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::DIM),
+                crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
             ),
         ])),
         Rect {
@@ -94,7 +88,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let y_filter = area.y + 1;
         if y_filter < area.y + area.height {
             let focused = app.findings_panel_filter_focused;
-            let bg_chip = t.bg2;
+            let bg_chip = crate::ui::panel_chrome::filter_chip_bg(&t);
             let fg_chip = if app.findings_panel_filter.is_empty() && !focused {
                 t.comment
             } else {

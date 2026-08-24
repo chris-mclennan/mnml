@@ -102,23 +102,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let pty_indices = sort_sessions(app, pty_indices);
 
     // Header — appends `(N of M)` when the filter is active.
+    // Styles come from `panel_chrome` so every activity-panel
+    // caps header stays in sync.
     let mut header_spans = vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
             "SESSIONS",
-            Style::default()
-                .fg(t.comment)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            crate::ui::panel_chrome::caps_label_style(&t, bg),
         ),
     ];
     if !filter_lc.is_empty() {
         header_spans.push(Span::styled(
             format!("  ({} of {})", pty_indices.len(), all_pty_indices.len()),
-            Style::default()
-                .fg(t.comment)
-                .bg(bg)
-                .add_modifier(Modifier::DIM),
+            crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
         ));
     }
     frame.render_widget(
@@ -138,7 +134,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let y_filter = area.y + 1;
         if y_filter < area.y + area.height {
             let focused = app.sessions_panel_filter_focused;
-            let bg_chip = t.bg2;
+            let bg_chip = crate::ui::panel_chrome::filter_chip_bg(&t);
             let fg_chip = if app.sessions_panel_filter.is_empty() && !focused {
                 t.comment
             } else {

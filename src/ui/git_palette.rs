@@ -78,13 +78,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                "GIT",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("GIT", crate::ui::panel_chrome::caps_label_style(&t, bg)),
         ])),
         Rect {
             x: area.x,
@@ -219,7 +213,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // unfocuses + clears (handled in tui dispatch_key).
     if y < area.y + area.height {
         let focused = app.git_palette_filter_focused;
-        let bg_chip = t.bg2;
+        let bg_chip = crate::ui::panel_chrome::filter_chip_bg(&t);
         let fg_chip = if app.git_palette_filter.is_empty() && !focused {
             t.comment
         } else {

@@ -119,7 +119,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Filter input — same shape as the local panel for muscle memory.
     if y < area.y + area.height {
         let focused = app.cloud_agents_filter_focused;
-        let bg_chip = t.bg2;
+        let bg_chip = crate::ui::panel_chrome::filter_chip_bg(&t);
         let fg_chip = if app.cloud_agents_filter.is_empty() && !focused {
             t.comment
         } else {

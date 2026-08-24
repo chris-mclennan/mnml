@@ -242,7 +242,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let bottom = area.y + area.height;
     if y < bottom {
         let focused = app.http_panel_filter_focused;
-        let bg_chip = t.bg2;
+        let bg_chip = crate::ui::panel_chrome::filter_chip_bg(&t);
         let fg_chip = if app.http_panel_filter.is_empty() && !focused {
             t.comment
         } else {
