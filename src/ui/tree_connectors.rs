@@ -145,4 +145,33 @@ mod tests {
         assert_eq!(out[3].chars().count(), 4);
         assert_eq!(out[4].chars().count(), 6);
     }
+
+    #[test]
+    fn ancestor_continuation_draws_vertical_bar() {
+        // parent-a (has later sibling parent-b), child-1, child-2,
+        // grandchild (child of child-2), parent-b.
+        // grandchild's depth-0 ancestor (parent-a) still has a
+        // later sibling (parent-b), so the level-0 column must
+        // render "│ " not "  ".
+        let rows = vec![
+            row(0, "parent-a"),
+            row(1, "child-1"),
+            row(1, "child-2"),
+            row(2, "grandchild"),
+            row(0, "parent-b"),
+        ];
+        let out = compute_prefixes(&rows, false);
+        // grandchild prefix: level 0 continuation ("│ ") + elbow
+        // (child-2 is last child of parent-a's subtree at that
+        // level, but grandchild has no d=2 siblings → └─).
+        assert_eq!(out[3], "\u{2502} \u{2514}\u{2500}");
+    }
+
+    #[test]
+    fn ascii_mode_uses_pipe_and_backslash() {
+        let rows = vec![row(0, "parent"), row(1, "first"), row(1, "last")];
+        let out = compute_prefixes(&rows, true);
+        assert_eq!(out[1], "+-");
+        assert_eq!(out[2], "\\-");
+    }
 }

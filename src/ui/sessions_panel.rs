@@ -185,7 +185,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Was: chip at slot n (past-last), which made ↓↓↓↓ walk off the
     // last visible session and the highlight visually jump UP to the
     // chip — surprising to keyboard users.
-    let cursor_on_new_chip_preview = app.sessions_panel_cursor == 0;
     if y < area.y + area.height {
         // 2026-08-23 (#1200) — chip routed through the shared
         // `action_button::primary` role so every "+ New X" chip
@@ -193,7 +192,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // fill IS the focus signal — no cursor-lift fg swap
         // (2026-08-23 f/u: swapping fg to `t.fg` on cursor made
         // mid-grey text on mid-green — unreadable — user report).
-        let _ = cursor_on_new_chip_preview;
         let label = "+ New session";
         let chip_w = crate::ui::action_button::chip_width(label);
         let avail = area.width.saturating_sub(1);
