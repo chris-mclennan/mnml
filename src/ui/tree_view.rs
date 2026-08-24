@@ -20,16 +20,17 @@ use crate::git::rail::GitRailHit;
 use crate::git::status::FileState;
 use crate::ui::{hover_help, icons, theme};
 
-// Tree / integrations panel section chevrons. 2026-08-08 —
-// switched to nf-oct-chevron_right / chevron_down (F460 / F47C).
-// User-suggested small chevrons; smaller than the mnml-baked
-// F1E20/F1E21 pair we tried first, which rendered clipped in
-// the user's ghostty. Historic failures (all reverted): MDI
-// F01F5/F01F6 → smileys; codicon EAB4/EAA0 → chevron-UP; MDI
-// F0142 → tofu. If F460/F47C also fail, fall back to baking
-// our own at F1E20/F1E21 with a redrawn narrower SVG.
-const CHEVRON_OPEN: &str = "\u{F47C}";
-const CHEVRON_CLOSED: &str = "\u{F460}";
+// Tree / integrations panel section chevrons.
+// R16 (2026-08-24) — swapped from nf-oct chevrons (F47C /
+// F460) to nf-md-chevron_down / chevron_right (F0140 / F0142),
+// matching neo-tree.nvim's defaults so the chevron centers on
+// the same column as the `│` / `└` connector below it. The
+// 2026-08-08 note that F0142 "rendered tofu" was from an
+// older baked-font path — the current build delegates general
+// glyphs to the user's system Nerd Font, which includes the
+// MDI range. If MDI ever regresses, revert to F460/F47C.
+const CHEVRON_OPEN: &str = "\u{F0140}"; // nf-md-chevron_down
+const CHEVRON_CLOSED: &str = "\u{F0142}"; // nf-md-chevron_right
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks
