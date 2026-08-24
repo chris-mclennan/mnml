@@ -26,6 +26,7 @@ pub mod ai_view;
 pub mod claude_usage_view;
 pub mod codex_usage_view;
 pub mod design_tokens;
+pub mod empty_state;
 pub mod filter_placeholder;
 pub mod panel_chrome;
 pub mod search_glyph;

@@ -275,8 +275,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // pair on the local Sessions panel. Net: button at
         // `area.x + 1`, text still `" + New Cloud Run "` with the
         // leading pad space.
-        let btn = " + New Cloud Run ";
-        let bw = btn.chars().count() as u16;
+        // 2026-08-23 (#1200) — routed through `action_button::primary`
+        // so the wizard CTA reads the same as every other panel's
+        // main call-to-action (was solid cyan; now solid green).
+        let label = "+ New Cloud Run";
+        let bw = crate::ui::action_button::chip_width(label);
         let btn_rect = Rect {
             x: area.x + 1,
             y,
@@ -284,13 +287,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                btn.to_string(),
-                Style::default()
-                    .fg(t.bg_dark)
-                    .bg(t.cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))),
+            Paragraph::new(crate::ui::action_button::chip_line(
+                label,
+                crate::ui::action_button::primary(&t),
+            )),
             btn_rect,
         );
         app.rects.cloud_agents_new_run_button = Some(btn_rect);

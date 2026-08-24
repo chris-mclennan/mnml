@@ -25,13 +25,15 @@
 //! to compose spans by hand.
 
 use ratatui::{
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 
 use crate::ui::theme::Theme;
 
 /// Primary action chip style — the panel's main call-to-action.
+/// Solid green fill + dark text. Use for toolbar-level actions
+/// (`+ New session`, `+ New note`).
 #[inline]
 pub fn primary(t: &Theme) -> Style {
     Style::default()
@@ -41,11 +43,27 @@ pub fn primary(t: &Theme) -> Style {
 }
 
 /// Secondary action chip style — a peer action on the same row.
+/// Solid purple fill + dark text. Use next to a `primary` chip
+/// when the panel has two peer create-flows (`+ from PR`).
 #[inline]
 pub fn secondary(t: &Theme) -> Style {
     Style::default()
         .fg(t.bg_darker)
         .bg(t.purple)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Text-link "add row" style — green text on the panel's own
+/// background, no chip fill. Use for inline "+ New X" prompts
+/// that sit at the end of a listed section (HTTP's per-section
+/// `+ New request` / `+ New env` / `+ New chain` /
+/// `+ New collection`) where a filled chip would read as a
+/// heavy button in the middle of a list.
+#[inline]
+pub fn link(t: &Theme, bg: Color) -> Style {
+    Style::default()
+        .fg(t.green)
+        .bg(bg)
         .add_modifier(Modifier::BOLD)
 }
 

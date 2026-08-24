@@ -416,13 +416,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    "+ New request",
-                    Style::default()
-                        .fg(t.green)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("+ New request", crate::ui::action_button::link(&t, bg)),
             ])),
             new_rect,
         );
@@ -1258,13 +1252,7 @@ fn draw_envs(
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(
-                    "+ New env",
-                    Style::default()
-                        .fg(t.green)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("+ New env", crate::ui::action_button::link(&t, bg)),
             ])),
             new_rect,
         );
@@ -1369,13 +1357,7 @@ fn draw_chains(
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(
-                    "+ New chain",
-                    Style::default()
-                        .fg(t.green)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled("+ New chain", crate::ui::action_button::link(&t, bg)),
             ])),
             new_rect,
         );
@@ -1523,13 +1505,7 @@ fn draw_collections(
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled(
-                        "+ New collection",
-                        Style::default()
-                            .fg(t.green)
-                            .bg(bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled("+ New collection", crate::ui::action_button::link(&t, bg)),
                 ])),
                 new_rect,
             );

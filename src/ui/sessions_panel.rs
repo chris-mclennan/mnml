@@ -222,18 +222,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "No sessions yet."
         };
-        let empty = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(msg, Style::default().fg(t.comment).bg(bg)),
-        ]);
-        frame.render_widget(
-            Paragraph::new(empty),
+        crate::ui::empty_state::draw(
+            frame,
             Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: area.height.saturating_sub(y - area.y),
             },
+            msg,
+            None,
+            bg,
+            &t,
         );
         // Advance past the message + a gap, then fall through (don't
         // `return`) so the "+ New session" row below still renders — you

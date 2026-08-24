@@ -218,17 +218,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "No sessions yet."
         };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(label, Style::default().fg(t.comment).bg(bg)),
-            ])),
+        crate::ui::empty_state::draw(
+            frame,
             Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: area.height.saturating_sub(y - area.y),
             },
+            label,
+            None,
+            bg,
+            &t,
         );
         return;
     }

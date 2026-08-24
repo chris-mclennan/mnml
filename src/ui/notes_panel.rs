@@ -12,7 +12,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Paragraph},
 };
@@ -146,61 +146,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     if files.is_empty() && !filter_lc.is_empty() {
-        let empty = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "No matches — Esc clears",
-                Style::default().fg(t.comment).bg(bg),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(empty),
+        y = crate::ui::empty_state::draw(
+            frame,
             Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: area.height.saturating_sub(y - area.y),
             },
+            "No matches — Esc clears",
+            None,
+            bg,
+            &t,
         );
-        y += 2;
+        y += 1; // extra breathing space to match prior layout
     } else if files.is_empty() {
-        let empty = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "No notes yet — click + New note above.",
-                Style::default().fg(t.comment).bg(bg),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(empty),
+        y = crate::ui::empty_state::draw(
+            frame,
             Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: area.height.saturating_sub(y - area.y),
             },
+            "No notes yet — click + New note above.",
+            Some("Stored under .mnml/notes/*.md"),
+            bg,
+            &t,
         );
         y += 1;
-        let hint = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "Stored under .mnml/notes/*.md",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(hint),
-            Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            },
-        );
-        y += 2;
     } else {
         // #polish 2026-07-06 — right-aligned age column. Users
         // reported it was hard to find "the note I edited yesterday"

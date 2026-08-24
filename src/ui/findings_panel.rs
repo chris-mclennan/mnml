@@ -15,7 +15,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Paragraph},
 };
@@ -137,38 +137,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 all_files.len()
             )
         };
-        let empty = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(empty_msg, Style::default().fg(t.comment).bg(bg)),
-        ]);
-        frame.render_widget(
-            Paragraph::new(empty),
+        crate::ui::empty_state::draw(
+            frame,
             Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: 1,
+                height: area.height.saturating_sub(y - area.y),
             },
-        );
-        y += 1;
-        let hint = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "Stored under .mnml/findings/*.md",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(hint),
-            Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            },
+            &empty_msg,
+            Some("Stored under .mnml/findings/*.md"),
+            bg,
+            &t,
         );
         return;
     }
@@ -181,6 +161,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // `root` computed above alongside the filter — reused here so
     // nested tester-round dirs render `round/foo` instead of
     // losing all context to file_stem.
+    #[allow(clippy::explicit_counter_loop)]
     for path in files.iter().take(area.height.saturating_sub(3) as usize) {
         if y >= area.y + area.height {
             break;
