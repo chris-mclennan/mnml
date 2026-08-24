@@ -26,16 +26,18 @@ use crate::tree::VisibleRow;
 // expanded parent leaves TWO vertical bars (chevron-col bar +
 // folder-col bar), separated by a space instead of adjacent.
 // Uniform width per level keeps the paint math simple.
-// 2026-08-24 — 3-cell indent, spaced bars. Chev-col bar at
-// col 0, folder-col bar at col 2, gap between them.
-// Chev-col bar stays STRAIGHT `│` even at last-child; only
-// the folder-col bar terminates with `└`. The chevron-drop
-// line never has an L-shape.
-const CONT_NERD: &str = "\u{2502} \u{2502}"; // '│ │' (chev, gap, folder)
-const CORNER_NERD: &str = "\u{2502} \u{2514}"; // '│ └' (chev straight, folder curls)
-const SPACES: &str = "   "; // 3 spaces — ancestor level fully skipped
-const CONT_ASCII: &str = "| |";
-const CORNER_ASCII: &str = "| \\";
+// 2026-08-24 — 2-cell per level. One bar per ancestor at
+// chev-col. Child chev aligns with parent's folder icon
+// column (parent chev at col N + trailing space at N+1 +
+// child chev at N+2 = parent folder at N+2). Sacrifices
+// the second (folder-col) bar to get alignment.
+// Level 1 (top-level rows) never emits connectors — just
+// spaces — matching neo-tree's `level < 2` skip.
+const CONT_NERD: &str = "\u{2502} "; // '│ '
+const CORNER_NERD: &str = "\u{2514} "; // '└ '
+const SPACES: &str = "  "; // 2 spaces — ancestor ended (or level 1 skip)
+const CONT_ASCII: &str = "| ";
+const CORNER_ASCII: &str = "\\ ";
 
 /// One prefix per row. Width per prefix == `2 * row.depth`.
 pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
@@ -52,28 +54,40 @@ pub fn compute_prefixes(rows: &[VisibleRow], ascii: bool) -> Vec<String> {
             out.push(String::new());
             continue;
         }
-        let mut prefix = String::with_capacity(3 * d);
-        // Ancestor levels 1..d-1: `│ ` for continuation, `  ` for
-        // ended.
+        let mut prefix = String::with_capacity(2 * d);
+        // Ancestor levels 1..d-1: `│ │` for continuation, 3 spaces
+        // for ended. Level 1 always renders as spaces — top-level
+        // items don't emit connectors (matches neo-tree `level<2`).
         for level in 1..d {
-            if has_later_sibling(rows, i, level) {
+            if level >= 2 && has_later_sibling(rows, i, level) {
                 prefix.push_str(cont);
             } else {
                 prefix.push_str(SPACES);
             }
         }
-        // Own level (`d`): `│ ` if more siblings coming after us
-        // (line continues down to reach the next sibling), `└ ` if
-        // we're the last child. NO horizontal spur — neo-tree
-        // doesn't reach into the icon column.
-        if has_later_sibling(rows, i, d) {
-            prefix.push_str(cont);
+        // Own level (`d`). Depth 1 rows get plain spaces. Depth 2+
+        // ALWAYS get `│ ` (never `└ `) — this line sits under the
+        // parent's chevron column, and per user rule the chevron-
+        // drop line never terminates with an L. File rows get their
+        // own `└ ` terminator painted in the chev-slot by tree_view.
+        if d < 2 {
+            prefix.push_str(SPACES);
         } else {
-            prefix.push_str(corner);
+            let _ = corner; // kept for potential future use
+            prefix.push_str(cont);
         }
         out.push(prefix);
     }
     out
+}
+
+/// True if the row at `idx` has NO more same-depth siblings coming
+/// after it in DFS order. Used by tree_view to paint `└` in the
+/// chev-column slot of a file row (files don't have their own
+/// chevron; the slot becomes the terminating corner instead).
+pub fn is_last_child(rows: &[VisibleRow], idx: usize) -> bool {
+    let d = rows[idx].depth;
+    !has_later_sibling(rows, idx, d)
 }
 
 fn has_later_sibling(rows: &[VisibleRow], from_idx: usize, level: usize) -> bool {
@@ -111,28 +125,42 @@ mod tests {
 
     #[test]
     fn only_child_gets_corner() {
+        // Level 1 row: no connectors at all (matches neo-tree level<2 skip).
         let rows = vec![row(0, "parent"), row(1, "only")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2502} \u{2514}"); // '│ └'  chev straight, folder curls
+        assert_eq!(out[1], "  "); // 2 spaces
     }
 
     #[test]
     fn more_siblings_at_same_depth_draw_bar_then_corner() {
+        // At level 1, no markers either way.
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "second")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2502} \u{2502}"); // '│ │' chev + folder straight
-        assert_eq!(out[2], "\u{2502} \u{2514}"); // '│ └' last of its group
+        assert_eq!(out[1], "  ");
+        assert_eq!(out[2], "  ");
     }
 
     #[test]
-    fn continuation_from_uncle_still_coming() {
-        let rows = vec![row(0, "parent-a"), row(1, "child"), row(0, "parent-b")];
+    fn depth_2_gets_own_level_markers() {
+        // parent (0) > child (1) > grand-a (2) > grand-b (2)
+        let rows = vec![
+            row(0, "parent"),
+            row(1, "child"),
+            row(2, "grand-a"),
+            row(2, "grand-b"),
+        ];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2502} \u{2514}"); // last child of parent-a
+        assert_eq!(out[1], "  "); // level 1 = spaces
+        // grand-a: level 1 = spaces (skip), level 2 own = `│ ` (chev-drop straight)
+        assert_eq!(out[2], "  \u{2502} ");
+        // grand-b: level 1 = spaces, level 2 own = `│ ` (chev-drop always
+        // straight — no `└ ` here even at last-child. Last-child `└` is
+        // painted by tree_view for FILE rows in the chev-slot, not here).
+        assert_eq!(out[3], "  \u{2502} ");
     }
 
     #[test]
-    fn deep_prefix_width_matches_three_times_depth() {
+    fn deep_prefix_width_matches_two_times_depth() {
         let rows = vec![
             row(0, "a"),
             row(1, "b"),
@@ -142,35 +170,35 @@ mod tests {
         ];
         let out = compute_prefixes(&rows, false);
         assert_eq!(out[0].chars().count(), 0);
-        assert_eq!(out[1].chars().count(), 3);
-        assert_eq!(out[2].chars().count(), 6);
-        assert_eq!(out[3].chars().count(), 6);
-        assert_eq!(out[4].chars().count(), 9);
+        assert_eq!(out[1].chars().count(), 2);
+        assert_eq!(out[2].chars().count(), 4);
+        assert_eq!(out[3].chars().count(), 4);
+        assert_eq!(out[4].chars().count(), 6);
     }
 
     #[test]
-    fn ancestor_continuation_draws_vertical_bar() {
+    fn deep_ancestor_continuation() {
+        // parent-a (0) > c1 (1) > gc1 (2) > gc2 (2) > ggc (3) > parent-b (0)
         let rows = vec![
             row(0, "parent-a"),
-            row(1, "child-1"),
-            row(1, "child-2"),
-            row(2, "grandchild"),
+            row(1, "c1"),
+            row(2, "gc1"),
+            row(2, "gc2"),
+            row(3, "ggc"),
             row(0, "parent-b"),
         ];
         let out = compute_prefixes(&rows, false);
-        // child-1: level-1 continuation (child-2 still coming) → '│ │'.
-        assert_eq!(out[1], "\u{2502} \u{2502}");
-        // child-2: last depth-1 sibling → '│ └' (chev straight, folder curls).
-        assert_eq!(out[2], "\u{2502} \u{2514}");
-        // grandchild: level-1 ended → 3 spaces, level-2 last-child → '│ └'.
-        assert_eq!(out[3], "   \u{2502} \u{2514}");
+        // ggc at depth 3: level 1 spaces + level 2 spaces (gc2 is last, no
+        // more depth-2 after) + own level 3 = `│ ` (chev-drop always straight).
+        assert_eq!(out[4], "    \u{2502} ");
     }
 
     #[test]
     fn ascii_mode_uses_pipe_and_backslash() {
+        // Depth 1 always spaces regardless of ascii/nerd.
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "last")];
         let out = compute_prefixes(&rows, true);
-        assert_eq!(out[1], "| |");
-        assert_eq!(out[2], "| \\");
+        assert_eq!(out[1], "  ");
+        assert_eq!(out[2], "  ");
     }
 }

@@ -43,6 +43,11 @@ use crate::ui::{hover_help, icons, theme};
 // MDI, not FontAwesome). Prior attempts assumed one of the
 // bigger-caret families; the Octicons pair is narrower and
 // lighter, which is the look the user was pointing at.
+// 2026-08-24 — back to Nerd Font Octicons chevrons. The
+// alignment problem was actually the indent width (3-cell
+// levels put child chev 1 col off from parent folder icon).
+// With 2-cell indent, child chev sits in parent's folder-
+// icon column — matches neo-tree.
 const CHEVRON_OPEN: &str = "\u{F47C}"; // nf-oct-chevron_down
 const CHEVRON_CLOSED: &str = "\u{F460}"; // nf-oct-chevron_right
 
@@ -1205,7 +1210,7 @@ fn draw_workspace_files(
         let depth_indent = connectors
             .get(vi)
             .cloned()
-            .unwrap_or_else(|| "   ".repeat(row.depth));
+            .unwrap_or_else(|| "  ".repeat(row.depth));
         // R16 (2026-08-24) — split into THREE parts so the
         // connector indent can dim independently of the chevron.
         // The connector lines want to fade into the background;
@@ -1216,9 +1221,21 @@ fn draw_workspace_files(
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{c} "), format!("{glyph} "))
         } else if nerd {
-            // File row — pad the chevron column with spaces so icons
-            // align with sibling dir rows.
-            ("  ".to_string(), format!("{glyph} "))
+            // File row — chevron slot becomes a connector line
+            // descending from the parent's folder-icon column.
+            // `│ ` if there are more siblings coming, `└ ` if this
+            // file is the last child. Depth 1 keeps spaces (top-
+            // level no-connector rule).
+            let slot = if row.depth >= 2 {
+                if crate::ui::tree_connectors::is_last_child(&rows, vi) {
+                    "\u{2514} " // └
+                } else {
+                    "\u{2502} " // │
+                }
+            } else {
+                "  "
+            };
+            (slot.to_string(), format!("{glyph} "))
         } else {
             (String::new(), format!("{glyph} "))
         };
@@ -1329,10 +1346,19 @@ fn draw_workspace_files(
         // paints back in `t.comment` (bright grey, no DIM) so it
         // stays legible as the expand-indicator + click target.
         let indent_style = Style::default().fg(theme::cur().bg2).bg(bg);
+        // Chev-slot color: dirs get the bright chevron fg
+        // (`comment`); files get the dim connector fg (`bg2`) since
+        // for files the slot is actually a `│`/`└` connector, not a
+        // chevron.
+        let chev_slot_fg = if row.is_dir {
+            theme::cur().comment
+        } else {
+            theme::cur().bg2
+        };
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(indent_part.clone(), indent_style),
-            Span::styled(chev_part, Style::default().fg(theme::cur().comment).bg(bg)),
+            Span::styled(chev_part, Style::default().fg(chev_slot_fg).bg(bg)),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(bg)),
         ];
         if !repo_marker.is_empty() {
@@ -1595,13 +1621,24 @@ fn draw_extra_workspace_section(
         let depth_indent = connectors
             .get(vi)
             .cloned()
-            .unwrap_or_else(|| "   ".repeat(row.depth));
+            .unwrap_or_else(|| "  ".repeat(row.depth));
         let indent_part = depth_indent.clone();
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{c} "), format!("{glyph} "))
         } else if nerd {
-            ("  ".to_string(), format!("{glyph} "))
+            // File row — see draw_workspace_files. Chevron slot
+            // becomes `│ ` / `└ ` connector at depth 2+.
+            let slot = if row.depth >= 2 {
+                if crate::ui::tree_connectors::is_last_child(&rows, vi) {
+                    "\u{2514} "
+                } else {
+                    "\u{2502} "
+                }
+            } else {
+                "  "
+            };
+            (slot.to_string(), format!("{glyph} "))
         } else {
             (String::new(), format!("{glyph} "))
         };
@@ -1654,13 +1691,17 @@ fn draw_extra_workspace_section(
         // grey), chevron in `t.comment` (undimmed), matching the
         // pass in draw_workspace_files above.
         let indent_style = Style::default().fg(theme::cur().bg2).bg(row_bg_col);
+        // See draw_workspace_files — dirs get bright chevron fg,
+        // files get dim connector fg (their slot is `│`/`└`).
+        let chev_slot_fg = if row.is_dir {
+            theme::cur().comment
+        } else {
+            theme::cur().bg2
+        };
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(indent_part.clone(), indent_style),
-            Span::styled(
-                chev_part,
-                Style::default().fg(theme::cur().comment).bg(row_bg_col),
-            ),
+            Span::styled(chev_part, Style::default().fg(chev_slot_fg).bg(row_bg_col)),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(row_bg_col)),
         ];
         if !repo_marker.is_empty() {
