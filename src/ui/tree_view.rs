@@ -401,10 +401,6 @@ fn hover_help_finish(frame: &mut Frame, app: &mut App, area: Option<Rect>) {
     }
 }
 
-/// The four per-workspace action chips that hang off the right edge of
-/// every workspace/repo header row. Click dispatches a palette command
-/// by id; the cluster reads `+ file · + folder · ↺ refresh · ↕ collapse`
-/// from left to right.
 /// Per-workspace action chips. The fourth chip is a toggle whose glyph
 /// + dispatch flip with the tree's current expansion state:
 ///   - any dir expanded   → ` collapse-all` (EAC5)
@@ -419,7 +415,7 @@ fn workspace_action_chip_specs(
     &'static str,
     &'static str,
     ratatui::style::Color,
-); 5] {
+); 4] {
     let t = theme::cur();
     let (collapse_glyph, collapse_ascii) = if app.tree.is_fully_collapsed() {
         ("\u{F0AB4}", "↧") // expand-all
@@ -427,12 +423,6 @@ fn workspace_action_chip_specs(
         ("\u{EAC5}", "↕") // collapse-all
     };
     [
-        // 2026-08-24 — up-nav (↑) chip. Replaces the `.. Projects`
-        // row that used to sit above the file list. Same command
-        // (`view.workspace_up`), now a header icon instead of a
-        // consumable list row. Codicon EAA1 = arrow-up (pair of
-        // EA9A arrow-down used by pull below).
-        ("\u{EAA1}", "↑", "view.workspace_up", t.comment),
         // 2026-06-24 — user-reported swap: the visually-rendered
         // glyphs in mnml's patched font are folder-shape (EA80,
         // blue) + file-shape (EA7F, yellow), but the upstream
@@ -474,66 +464,92 @@ fn workspace_action_chip_specs(
 /// clicks on "empty" strip silently fired file.new_folder / git.pull
 /// / tree.refresh because rects were live but glyphs blended in) —
 /// visible = clickable, no invisible hit surface.
+/// Paints the action-chip cluster (up, folder+, file+, pull, collapse,
+/// refresh) DIRECTLY at an explicit right-aligned rect inside the
+/// header row, and pushes each chip's rect into `tree_icon_buttons`.
+///
+/// 2026-08-24 — rewritten. Prior version returned spans that the caller
+/// concatenated after label spans, relying on `label_used` + `pad` math
+/// to right-align. That math undercounted display width for wide Nerd
+/// Font glyphs (chevron is 2-wide but `chars().count()` returned 1) —
+/// producing a large dead-space gap between the cluster and the panel
+/// divider. Now uses absolute positioning: computes the cluster's
+/// exact display width, paints at `header_rect.x + header_rect.width
+/// - cluster_width`. No dependency on label width bookkeeping.
 fn workspace_header_chips(
     app: &mut App,
+    frame: &mut Frame,
     header_rect: Rect,
     label_used: usize,
     nerd: bool,
     rail_bg: ratatui::style::Color,
-) -> Vec<Span<'static>> {
+) {
     let chip_bg = rail_bg;
     let chips = workspace_action_chip_specs(app);
     let width = header_rect.width as usize;
-    // 2026-08-16 — Nerd Font glyphs (EA80/EA7F/EB37/EA9A/…) are 2 display
-    // columns wide, so the rendered `" {glyph} "` span occupies 4 cells
-    // (space + wide glyph + space). Prior chip_w=3 for both modes made the
-    // rect narrower than the glyph AND advanced the next chip start under
-    // the previous chip's trailing space, so clicks landed 1-N cells right
-    // of the visible icon. Match the actual rendered width per-mode.
-    let chip_w = if nerd { 4usize } else { 3usize };
+    // Each chip: format is `" {glyph} "` — 3 char count, glyph is
+    // 2-wide, ratatui clips the trailing space in a 3-cell rect →
+    // visible ` glyph` (2 cells of glyph + 1 leading pad). Same
+    // pattern as `panel_chrome::draw_caps_header_with_refresh`.
+    let chip_w = 3usize;
+    // Refresh uses the shared refresh_glyph helper — same format
+    // + width as every other panel's refresh chip so the glyph
+    // renders at the same size (not shrunk).
+    let refresh_span_w = 3usize;
+    // Reserve 1 cell at the right for the scrollbar column so the
+    // cluster doesn't paint over where the body's vertical scrollbar
+    // sits below.
+    let right_margin = 1usize;
+    let refresh_gap = 1usize;
     let min_separation = 1usize;
-    // R16 (2026-08-24) — refresh chip now sits alone in the
-    // far-right corner, separated from the primary cluster by a
-    // 1-cell gap (parity with GIT / TODOS / NOTES / FINDINGS
-    // header refresh-chip position). The primary cluster
-    // (folder+ / file+ / pull / collapse-all) right-aligns just
-    // to the left of that.
-    let refresh_glyph_nerd = crate::ui::refresh_glyph::NERD;
-    let refresh_glyph_ascii = crate::ui::refresh_glyph::ASCII;
-    let refresh_gap = 1usize; // gap between cluster and refresh chip
+    // Narrow the cluster from the LEFT if the panel is too tight
+    // to fit label + full-cluster + refresh (refresh wins).
     let chip_count = {
         let mut n = chips.len();
-        // Refresh always renders first when there's room; the
-        // action cluster drops from the LEFT (fewest chips first)
-        // if the panel is too narrow.
-        while n > 0 && label_used + min_separation + n * chip_w + refresh_gap + chip_w > width {
+        while n > 0
+            && label_used
+                + min_separation
+                + n * chip_w
+                + refresh_gap
+                + refresh_span_w
+                + right_margin
+                > width
+        {
             n -= 1;
         }
         n
     };
-    let show_refresh = width >= label_used + min_separation + chip_w;
+    let show_refresh = width >= label_used + min_separation + refresh_span_w + right_margin;
     let chips_used = chip_count * chip_w;
     let refresh_used = if show_refresh {
-        refresh_gap + chip_w
+        refresh_gap + refresh_span_w
     } else {
         0
     };
-    let pad = width.saturating_sub(label_used + chips_used + refresh_used);
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(3 + chip_count);
-    // Leading pad after the label pushes the whole cluster to the
-    // right edge (minus the refresh chip's reserved cells).
-    spans.push(Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)));
-    let cluster_start_x = header_rect.x + (label_used + pad) as u16;
+    let cluster_w = chips_used + refresh_used;
+    if cluster_w == 0 {
+        return;
+    }
+    // Reserve `right_margin` cells at the right edge for the body's
+    // vertical-scrollbar column (which lands directly below this
+    // header row). Cluster ends at `width - right_margin - 1`.
+    let cluster_x = header_rect.x.saturating_add(
+        header_rect
+            .width
+            .saturating_sub((cluster_w + right_margin) as u16),
+    );
+    // Build the cluster line and paint it into its own rect. No
+    // leading pad — the rect itself is positioned at the right.
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(chip_count + 2);
     for (i, (glyph_nerd, glyph_ascii, cmd_id, fg)) in chips.iter().take(chip_count).enumerate() {
         let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
         spans.push(Span::styled(
             format!(" {glyph} "),
             Style::default().fg(*fg).bg(chip_bg),
         ));
-        let chip_x = cluster_start_x + (i * chip_w) as u16;
         app.rects.tree_icon_buttons.push((
             Rect {
-                x: chip_x,
+                x: cluster_x + (i * chip_w) as u16,
                 y: header_rect.y,
                 width: chip_w as u16,
                 height: 1,
@@ -547,26 +563,34 @@ fn workspace_header_chips(
             Style::default().bg(rail_bg),
         ));
         let refresh_glyph = if nerd {
-            refresh_glyph_nerd
+            crate::ui::refresh_glyph::NERD
         } else {
-            refresh_glyph_ascii
+            crate::ui::refresh_glyph::ASCII
         };
         spans.push(Span::styled(
             format!(" {refresh_glyph} "),
             Style::default().fg(theme::cur().cyan).bg(chip_bg),
         ));
-        let refresh_x = cluster_start_x + (chip_count * chip_w + refresh_gap) as u16;
+        // Click rect covers the visible span (no phantom trailing).
         app.rects.tree_icon_buttons.push((
             Rect {
-                x: refresh_x,
+                x: cluster_x + (chips_used + refresh_gap) as u16,
                 y: header_rect.y,
-                width: chip_w as u16,
+                width: refresh_span_w as u16,
                 height: 1,
             },
             "tree.refresh",
         ));
     }
-    spans
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect {
+            x: cluster_x,
+            y: header_rect.y,
+            width: cluster_w as u16,
+            height: 1,
+        },
+    );
 }
 
 /// Single right-aligned `+ repo` chip on its own row — sits below the
@@ -936,12 +960,20 @@ fn draw_primary_workspace_section(
     if start_y >= area_end {
         return start_y;
     }
-    let ws_name = app
-        .workspace
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace")
-        .to_string();
+    // 2026-08-24 — header shows the full home-relative path (neo-tree
+    // style: `~/Projects/mnml/`) instead of just the basename. Makes
+    // the workspace root read as the top of a real tree that children
+    // hang from — not a bare label above an unrelated file list.
+    let ws_name = {
+        let full = app.workspace.display().to_string();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let short = if !home.is_empty() && full.starts_with(&home) {
+            format!("~{}", &full[home.len()..])
+        } else {
+            full
+        };
+        format!("{short}/")
+    };
     let triangle = app.config.ui.expand_indicator == "triangle";
     let chev = section_chev_with_pref(app.tree_root_expanded, nerd, triangle);
     let chev_str = format!(" {chev} ");
@@ -957,7 +989,10 @@ fn draw_primary_workspace_section(
         width: area.width,
         height: 1,
     };
-    let chip_spans = workspace_header_chips(app, header_rect, header_used, nerd, rail_bg);
+    // Chips paint themselves at a right-aligned rect inside the
+    // header (see workspace_header_chips). We only need to build
+    // the label spans below and paint them; the header row's bg
+    // between label and cluster stays rail_bg from the outer Block.
     let name_x = area.x + chev_str.chars().count() as u16 + CURRENT_DOT_W as u16;
     app.rects.workspace_name_rect = Some(Rect {
         x: name_x,
@@ -992,8 +1027,8 @@ fn draw_primary_workspace_section(
         ));
     }
     spans.push(Span::styled(ws_name.clone(), name_style));
-    spans.extend(chip_spans);
     frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
+    workspace_header_chips(app, frame, header_rect, header_used, nerd, rail_bg);
     app.rects.tree_toggle = Some(header_rect);
 
     // File list — only when the primary is expanded and there's room.
@@ -1084,11 +1119,6 @@ fn draw_workspace_files(
         };
         shift += 1;
     }
-    // 2026-08-24 — `..` up-navigation row REMOVED. Replaced by the
-    // ↑ chip in the tree header icon cluster (fires
-    // `view.workspace_up`). Frees a row of vertical space; same
-    // affordance is now visible from the header row.
-    app.rects.tree_up_row = None;
     app.rects.tree = Some(inner);
     let h = inner.height as usize;
     if h == 0 {
@@ -1180,7 +1210,12 @@ fn draw_workspace_files(
         // The connector lines want to fade into the background;
         // the chevron is functional (click-target, expand
         // indicator) and needs full contrast.
-        let indent_part = depth_indent.clone();
+        // 2026-08-24 — prepend 2-cell child-of-root indent. The
+        // workspace header row now reads as the real tree root
+        // (`~/Projects/mnml/`); everything below it is one level
+        // deeper visually. Shift makes children of root indent
+        // relative to the root chevron column, matching neo-tree.
+        let indent_part = format!("  {}", depth_indent);
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{c} "), format!("{glyph} "))
@@ -1190,11 +1225,11 @@ fn draw_workspace_files(
             // `│ ` if there are more siblings coming, `└ ` if this
             // file is the last child. Depth 1 keeps spaces (top-
             // level no-connector rule).
-            let slot = if row.depth >= 2 {
+            let slot = if row.depth >= 1 {
                 if crate::ui::tree_connectors::is_last_child(&rows, vi) {
-                    "\u{2514} " // └
+                    "\u{F1F05} " // shifted └ (injected by inject_tree_connectors.py)
                 } else {
-                    "\u{2502} " // │
+                    "\u{F1F04} " // shifted │
                 }
             } else {
                 "  "
@@ -1309,16 +1344,16 @@ fn draw_workspace_files(
         // ├─ / └─ / │ read as background trace lines. Chevron
         // paints back in `t.comment` (bright grey, no DIM) so it
         // stays legible as the expand-indicator + click target.
-        let indent_style = Style::default().fg(theme::cur().bg2).bg(bg);
-        // Chev-slot color: dirs get the bright chevron fg
-        // (`comment`); files get the dim connector fg (`bg2`) since
-        // for files the slot is actually a `│`/`└` connector, not a
-        // chevron.
-        let chev_slot_fg = if row.is_dir {
-            theme::cur().comment
+        // Cursor row uses bg2 as background — connector/chevron fg
+        // must lift to bg3 there or they render invisible. Non-cursor
+        // rows stay on bg2 for the muted trace-line look (2026-08-24).
+        let trace_fg = if is_cursor && focused {
+            theme::cur().bg3
         } else {
             theme::cur().bg2
         };
+        let indent_style = Style::default().fg(trace_fg).bg(bg);
+        let chev_slot_fg = trace_fg;
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(indent_part.clone(), indent_style),
@@ -1586,18 +1621,23 @@ fn draw_extra_workspace_section(
             .get(vi)
             .cloned()
             .unwrap_or_else(|| "  ".repeat(row.depth));
-        let indent_part = depth_indent.clone();
+        // 2026-08-24 — prepend 2-cell child-of-root indent. The
+        // workspace header row now reads as the real tree root
+        // (`~/Projects/mnml/`); everything below it is one level
+        // deeper visually. Shift makes children of root indent
+        // relative to the root chevron column, matching neo-tree.
+        let indent_part = format!("  {}", depth_indent);
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
             (format!("{c} "), format!("{glyph} "))
         } else if nerd {
             // File row — see draw_workspace_files. Chevron slot
             // becomes `│ ` / `└ ` connector at depth 2+.
-            let slot = if row.depth >= 2 {
+            let slot = if row.depth >= 1 {
                 if crate::ui::tree_connectors::is_last_child(&rows, vi) {
-                    "\u{2514} "
+                    "\u{F1F05} " // shifted └ (injected by inject_tree_connectors.py)
                 } else {
-                    "\u{2502} "
+                    "\u{F1F04} " // shifted │
                 }
             } else {
                 "  "
@@ -1654,14 +1694,15 @@ fn draw_extra_workspace_section(
         // R16 (2026-08-24) — connector indent in bg2 (darker
         // grey), chevron in `t.comment` (undimmed), matching the
         // pass in draw_workspace_files above.
-        let indent_style = Style::default().fg(theme::cur().bg2).bg(row_bg_col);
-        // See draw_workspace_files — dirs get bright chevron fg,
-        // files get dim connector fg (their slot is `│`/`└`).
-        let chev_slot_fg = if row.is_dir {
-            theme::cur().comment
+        // See draw_workspace_files above — lift to bg3 on cursor
+        // row so trace marks stay visible over the bg2 highlight.
+        let trace_fg = if is_cursor && focused {
+            theme::cur().bg3
         } else {
             theme::cur().bg2
         };
+        let indent_style = Style::default().fg(trace_fg).bg(row_bg_col);
+        let chev_slot_fg = trace_fg;
         let mut spans = vec![
             Span::styled(" ", Style::default().bg(rail_bg)),
             Span::styled(indent_part.clone(), indent_style),

@@ -570,11 +570,6 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::HttpToolbarChip(idx));
     }
-    if let Some(r) = app.rects.tree_up_row
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::TreeUpRow);
-    }
     if let Some(r) = app.rects.request_edit_split_divider
         && contains(r, x, y)
     {

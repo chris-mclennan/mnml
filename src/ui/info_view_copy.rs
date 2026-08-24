@@ -1469,16 +1469,6 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
-        // src: src/ui/tooltip.rs::HoverChip::TreeUpRow
-        TreeUpRow => Some(InfoViewCopy {
-            title: "Up-navigation row".into(),
-            body: "The `..` row above the file tree — click to re-root the \
-                   workspace one directory up. Hidden at the filesystem root, \
-                   since there's nowhere further up to go."
-                .into(),
-            try_it: vec![PaletteLink::new("view.workspace_up", "Go up one level")],
-            ..Default::default()
-        }),
         // src: src/ui/tooltip.rs::HoverChip::GutterMark
         // R14 modernize pass (2026-08-16) — `GutterMark` carries a
         // `GutterMarkKind` (src/lib.rs:615-626); this used to be one

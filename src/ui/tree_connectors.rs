@@ -33,8 +33,13 @@ use crate::tree::VisibleRow;
 // the second (folder-col) bar to get alignment.
 // Level 1 (top-level rows) never emits connectors — just
 // spaces — matching neo-tree's `level < 2` skip.
-const CONT_NERD: &str = "\u{2502} "; // '│ '
-const CORNER_NERD: &str = "\u{2514} "; // '└ '
+// 2026-08-24 — F1F04 / F1F05 are copies of JetBrainsMono's U+2502 /
+// U+2514 outlines translated +100u right, injected by
+// scripts/inject_tree_connectors.py. Correct cell metrics so lines
+// link vertically, with a modest right-shift toward the chevron
+// column above.
+const CONT_NERD: &str = "\u{F1F04} "; // shifted '│ '
+const CORNER_NERD: &str = "\u{F1F05} "; // shifted '└ '
 const SPACES: &str = "  "; // 2 spaces — ancestor ended (or level 1 skip)
 const CONT_ASCII: &str = "| ";
 const CORNER_ASCII: &str = "\\ ";
@@ -152,11 +157,11 @@ mod tests {
         let out = compute_prefixes(&rows, false);
         assert_eq!(out[1], "  "); // level 1 = spaces
         // grand-a: level 1 = spaces (skip), level 2 own = `│ ` (chev-drop straight)
-        assert_eq!(out[2], "  \u{2502} ");
+        assert_eq!(out[2], "  \u{F1F04} ");
         // grand-b: level 1 = spaces, level 2 own = `│ ` (chev-drop always
         // straight — no `└ ` here even at last-child. Last-child `└` is
         // painted by tree_view for FILE rows in the chev-slot, not here).
-        assert_eq!(out[3], "  \u{2502} ");
+        assert_eq!(out[3], "  \u{F1F04} ");
     }
 
     #[test]
@@ -190,7 +195,7 @@ mod tests {
         let out = compute_prefixes(&rows, false);
         // ggc at depth 3: level 1 spaces + level 2 spaces (gc2 is last, no
         // more depth-2 after) + own level 3 = `│ ` (chev-drop always straight).
-        assert_eq!(out[4], "    \u{2502} ");
+        assert_eq!(out[4], "    \u{F1F04} ");
     }
 
     #[test]

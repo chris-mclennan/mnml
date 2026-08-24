@@ -483,10 +483,6 @@ pub enum HoverChip {
     /// subset of these. `usize` indexes `PaneRects.http_panel_section_chips`.
     /// 2026-07-07.
     HttpSectionChip(usize),
-    /// Hover on the `..` up-navigation row above the file tree.
-    /// Tooltip names the parent path so the user sees where the click
-    /// will land. 2026-07-07 (design-critic #3).
-    TreeUpRow,
     /// Hover on one of the top-level HTTP panel toolbar chips (↺ / ↕).
     /// Command id is stashed alongside the rect on
     /// `http_panel_icon_buttons`; the tooltip callback resolves the

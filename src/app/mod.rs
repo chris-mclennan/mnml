@@ -2076,10 +2076,6 @@ pub struct PaneRects {
     pub tree: Option<Rect>,
     /// Tree scroll offset at render time (so a click maps to the right row).
     pub tree_scroll: usize,
-    /// The `.. (parent)` row at the top of the tree file list. Click →
-    /// `App::navigate_workspace_up`. `None` when the workspace is at
-    /// filesystem root (`/`) so there's nowhere to go. 2026-07-07.
-    pub tree_up_row: Option<Rect>,
     /// The clickable rect for "toggle tree visibility" — the workspace-name
     /// header row when the tree is expanded, or the whole activity-bar column
     /// when it's collapsed. Click → `App::toggle_tree`.

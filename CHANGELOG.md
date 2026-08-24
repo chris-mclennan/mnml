@@ -10,6 +10,53 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.17](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.16...mnml-rs-v0.2.17) - 2026-08-24
+
+Tree polish release. Iterative visual refinement of the file
+tree's connector + chevron system plus a workspace-header
+cleanup.
+
+### Added
+
+- **nvim-tree-style tree connectors** (#1201). Every child row
+  now carries a `│` line back to its parent, with the last child
+  in a directory getting the `└` corner. Rendered in `bg2` (a
+  step below `comment`) so they read as background trace marks;
+  chevrons paint at the same weight for a uniform look.
+- **Custom-baked connectors at F1F04 / F1F05** — a shifted
+  `│`/`└` pair injected into `MnmlSymbols.ttf` by
+  `scripts/inject_tree_connectors.py`. Sits closer to the parent
+  folder-icon column above than plain U+2502/U+2514, and the L's
+  arm is tuned to visually match the vertical bar (CoreText was
+  rasterising the two at different weights).
+- **`+ New session` action-chip constants** and search-glyph
+  consolidation — every activity-panel action chip now shares
+  the same visual + interaction shape (#1195, #1200).
+
+### Changed
+
+- **Workspace header shows `~/Projects/mnml/`** instead of a
+  bare `mnml`, so the active repo's location is visible at a
+  glance. Depth 1 rows shift 2 cells right so nested children
+  align under the parent's folder icon.
+- **Tree header icon cluster right-aligned** — file/folder/pull/
+  collapse-all chips flush to the panel's right edge; refresh
+  glyph reserved to the top-right corner above the scrollbar
+  (#1021).
+- **Cursor-row connector fg lifts to `bg3`** so the trace lines
+  stay visible over the highlight background instead of
+  vanishing.
+
+### Removed
+
+- **Workspace up-nav (↑) chip + `.. Projects` row**. The
+  `view.workspace_up` command, the `App::navigate_workspace_up`
+  method, the `tree_up_row` rect, and the `HoverChip::TreeUpRow`
+  variant are all gone — if a user wants another directory, they
+  add it as a workspace. Thorough cleanup across 10 sites
+  (command registry, hover-help, click handlers, IPC rects dump,
+  InfoViewCopy, dispatch).
+
 ## [0.2.16](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.15...mnml-rs-v0.2.16) - 2026-08-23
 
 Tester-round release. Two rounds of persona-driven bug hunts

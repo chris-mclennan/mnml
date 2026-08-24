@@ -1479,33 +1479,6 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, line, Some(sub)))
         }
-        HoverChip::TreeUpRow => {
-            let rect = app.rects.tree_up_row?;
-            // mouse-round-7 SEV-3 2026-07-12 — used to render the
-            // full absolute path (108 chars in a tempdir), stretching
-            // the tooltip box to the terminal width. Show just the
-            // last segment (or short-form middle-ellipsis) so the
-            // user sees "which parent" without the 100-char noise.
-            let parent = app.workspace.parent();
-            let display: String = match parent {
-                Some(p) => {
-                    let last = p.file_name().and_then(|n| n.to_str()).map(str::to_string);
-                    let full = p.display().to_string();
-                    match last {
-                        Some(name) if !name.is_empty() && full.chars().count() > 40 => {
-                            format!("…/{name}")
-                        }
-                        _ => full,
-                    }
-                }
-                None => "/".to_string(),
-            };
-            Some((
-                rect,
-                "Open parent as workspace".into(),
-                Some(format!("click: {display}")),
-            ))
-        }
         HoverChip::HttpToolbarChip(idx) => {
             let (rect, cmd_id) = *app.rects.http_panel_icon_buttons.get(idx)?;
             let title = crate::command::registry()

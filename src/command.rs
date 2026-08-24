@@ -2535,13 +2535,6 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
-        Command {
-            id: "view.workspace_up",
-            title: "Navigate the workspace root up one level (..)",
-            group: "view",
-            keys: &[],
-            run: |app| app.navigate_workspace_up(),
-        },
         // vscode-user-keyboard SEV-2 2026-07-11 — Ctrl+1..Ctrl+9
         // focus the Nth bufferline tab (Ctrl+9 = last tab, VS Code
         // convention). Non-existent tabs are silent no-ops. Each

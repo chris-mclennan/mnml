@@ -817,6 +817,14 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         center_frac: 0.36,
         center_x_frac: 0.5,
     },
+    // 2026-08-24 — F1F04 (`│`) / F1F05 (`└`) tree-connector glyphs
+    // are NOT baked via this pipeline. SVG rasterisation left visible
+    // gaps between rows and a huge L. They are injected by
+    // `scripts/inject_tree_connectors.py`, which copies the real
+    // outlines from JetBrainsMono Nerd Font (U+2502 / U+2514) and
+    // translates them +100u right. Re-run that script after every
+    // `integrations.bake_all_glyphs` — the bake regenerates the font
+    // and would otherwise wipe F1F04 / F1F05.
 ];
 
 /// SVGs embedded into the binary so the AI-glyph bake path

@@ -1283,10 +1283,9 @@ pub fn rects_dump_json(app: &App) -> String {
     one!("tree_toggle", app.rects.tree_toggle);
     one!("tree_edge", app.rects.tree_edge);
     // 2026-07-07 tape-recorder — expose the primary tree body rect
-    // so IPC drivers can compute per-row click coords (`tree_up_row`
-    // sits above; each visible tree row is at `tree.y + row_idx`).
+    // so IPC drivers can compute per-row click coords (each visible
+    // tree row is at `tree.y + row_idx`).
     one!("tree", app.rects.tree);
-    one!("tree_up_row", app.rects.tree_up_row);
     one!(
         "integration_section_toggle",
         app.rects.integration_section_toggle
