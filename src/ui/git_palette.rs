@@ -70,9 +70,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // `git status` + branch/tag enumeration. Needed because
     // branches/worktrees created or deleted outside mnml (git CLI)
     // don't show up until the panel re-scans.
+    // 2026-08-23 (#1202) — routed through shared refresh_glyph
+    // constant. Was `r` in ASCII mode (drift vs the ↺ used by
+    // every other refresh chip); now matches the whole family.
     let ascii = app.config.ui.ascii_icons;
-    let refresh_glyph = if ascii { "r" } else { "\u{EB37}" }; // codicon-refresh
-    let refresh_text = format!(" {refresh_glyph} ");
+    let refresh_text = crate::ui::refresh_glyph::chip_icon_only(ascii);
     let refresh_w = refresh_text.chars().count() as u16;
     let refresh_x = area.x.saturating_add(area.width.saturating_sub(refresh_w));
     frame.render_widget(

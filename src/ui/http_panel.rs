@@ -73,7 +73,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ↺ refresh · ↕ collapse/expand all.
     let all_collapsed = app.http_panel_section_collapsed.iter().all(|c| *c);
     let toolbar_chips: [(&str, &str, &str); 2] = [
-        ("\u{EB37}", "↺", "http.refresh"),
+        (
+            crate::ui::refresh_glyph::NERD,
+            crate::ui::refresh_glyph::ASCII,
+            "http.refresh",
+        ),
         (
             if all_collapsed {
                 "\u{F0AB4}"

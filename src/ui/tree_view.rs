@@ -253,7 +253,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ratatui::style::Color,
     );
     let chips_full: [ChipSpec; 6] = [
-        ("\u{EB37}", "↺", crate::GitRailHeaderAction::Fetch, t.cyan),
+        (
+            crate::ui::refresh_glyph::NERD,
+            crate::ui::refresh_glyph::ASCII,
+            crate::GitRailHeaderAction::Fetch,
+            t.cyan,
+        ),
         ("\u{EA9A}", "↓", crate::GitRailHeaderAction::Pull, t.green),
         ("\u{EAA1}", "↑", crate::GitRailHeaderAction::Push, t.blue),
         (
@@ -409,7 +414,12 @@ fn workspace_action_chip_specs(
         // visible icon, not to upstream codepoint name.
         ("\u{EA80}", "d+", "file.new_folder", t.blue),
         ("\u{EA7F}", "f+", "file.new", t.yellow),
-        ("\u{EB37}", "↺", "tree.refresh", t.cyan),
+        (
+            crate::ui::refresh_glyph::NERD,
+            crate::ui::refresh_glyph::ASCII,
+            "tree.refresh",
+            t.cyan,
+        ),
         // 2026-06-30 — pull (↓) chip. Codicon EAA1 was arrow-UP
         // (my mistake). Codicon EA9A is actual arrow-down —
         // matches git's universal pull=down convention.

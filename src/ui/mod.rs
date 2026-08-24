@@ -29,6 +29,7 @@ pub mod design_tokens;
 pub mod empty_state;
 pub mod filter_placeholder;
 pub mod panel_chrome;
+pub mod refresh_glyph;
 pub mod search_glyph;
 pub mod session_color;
 pub mod spend_report_view;
