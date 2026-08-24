@@ -1205,7 +1205,7 @@ fn draw_workspace_files(
         let depth_indent = connectors
             .get(vi)
             .cloned()
-            .unwrap_or_else(|| "  ".repeat(row.depth));
+            .unwrap_or_else(|| "   ".repeat(row.depth));
         // R16 (2026-08-24) — split into THREE parts so the
         // connector indent can dim independently of the chevron.
         // The connector lines want to fade into the background;
@@ -1595,7 +1595,7 @@ fn draw_extra_workspace_section(
         let depth_indent = connectors
             .get(vi)
             .cloned()
-            .unwrap_or_else(|| "  ".repeat(row.depth));
+            .unwrap_or_else(|| "   ".repeat(row.depth));
         let indent_part = depth_indent.clone();
         let (chev_part, icon_part) = if nerd && row.is_dir {
             let c = section_chev_with_pref(row.is_expanded, nerd, triangle);
