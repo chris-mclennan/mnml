@@ -29,8 +29,15 @@ use crate::ui::{hover_help, icons, theme};
 // older baked-font path — the current build delegates general
 // glyphs to the user's system Nerd Font, which includes the
 // MDI range. If MDI ever regresses, revert to F460/F47C.
+// R16 f/u (2026-08-24) — user report: nf-md-chevron_right
+// (F0142) renders visibly heavier than its sibling F0140 in the
+// user's Nerd Font, so the collapsed row's `>` looked oversized
+// vs the expanded row's `v`. Keep F0140 for expanded (it lines
+// up with the `│` connector); fall back to the smaller Octicons
+// chevron-right (F460) for collapsed so both states share the
+// same visual weight.
 const CHEVRON_OPEN: &str = "\u{F0140}"; // nf-md-chevron_down
-const CHEVRON_CLOSED: &str = "\u{F0142}"; // nf-md-chevron_right
+const CHEVRON_CLOSED: &str = "\u{F460}"; // nf-oct-chevron_right
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks
