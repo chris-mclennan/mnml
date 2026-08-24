@@ -399,7 +399,7 @@ fn workspace_action_chip_specs(
     &'static str,
     &'static str,
     ratatui::style::Color,
-); 5] {
+); 4] {
     let t = theme::cur();
     let (collapse_glyph, collapse_ascii) = if app.tree.is_fully_collapsed() {
         ("\u{F0AB4}", "↧") // expand-all
@@ -414,12 +414,6 @@ fn workspace_action_chip_specs(
         // visible icon, not to upstream codepoint name.
         ("\u{EA80}", "d+", "file.new_folder", t.blue),
         ("\u{EA7F}", "f+", "file.new", t.yellow),
-        (
-            crate::ui::refresh_glyph::NERD,
-            crate::ui::refresh_glyph::ASCII,
-            "tree.refresh",
-            t.cyan,
-        ),
         // 2026-06-30 — pull (↓) chip. Codicon EAA1 was arrow-UP
         // (my mistake). Codicon EA9A is actual arrow-down —
         // matches git's universal pull=down convention.
@@ -431,6 +425,11 @@ fn workspace_action_chip_specs(
             t.teal,
         ),
     ]
+    // 2026-08-24 R16 (user ask) — refresh was #3 in the middle of
+    // the cluster. Pulled OUT so it can live in the top-right
+    // corner separately, matching every other activity-panel
+    // header. Painted by `workspace_header_chips` after the
+    // cluster, with a 1-cell gap.
 }
 
 /// Right-aligned action-chip cluster for a workspace header row. Caller
@@ -467,27 +466,38 @@ fn workspace_header_chips(
     // of the visible icon. Match the actual rendered width per-mode.
     let chip_w = if nerd { 4usize } else { 3usize };
     let min_separation = 1usize;
+    // R16 (2026-08-24) — refresh chip now sits alone in the
+    // far-right corner, separated from the primary cluster by a
+    // 1-cell gap (parity with GIT / TODOS / NOTES / FINDINGS
+    // header refresh-chip position). The primary cluster
+    // (folder+ / file+ / pull / collapse-all) right-aligns just
+    // to the left of that.
+    let refresh_glyph_nerd = crate::ui::refresh_glyph::NERD;
+    let refresh_glyph_ascii = crate::ui::refresh_glyph::ASCII;
+    let refresh_gap = 1usize; // gap between cluster and refresh chip
     let chip_count = {
         let mut n = chips.len();
-        while n > 0 && label_used + min_separation + n * chip_w > width {
+        // Refresh always renders first when there's room; the
+        // action cluster drops from the LEFT (fewest chips first)
+        // if the panel is too narrow.
+        while n > 0 && label_used + min_separation + n * chip_w + refresh_gap + chip_w > width {
             n -= 1;
         }
         n
     };
-    // 2026-08-24 (user ask) — cluster now sits FLUSH LEFT (right
-    // after the workspace label + a min-separation gap) rather
-    // than pinned to the right edge with pad-then-chips. Prior
-    // right-align left a huge gap between the cluster and the
-    // right edge on wide panes. Trailing pad fills to width so
-    // the rail_bg keeps a clean edge on the right.
+    let show_refresh = width >= label_used + min_separation + chip_w;
     let chips_used = chip_count * chip_w;
-    let trailing_pad = width.saturating_sub(label_used + min_separation + chips_used);
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(2 + chip_count);
-    spans.push(Span::styled(
-        " ".repeat(min_separation),
-        Style::default().bg(rail_bg),
-    ));
-    let cluster_start_x = header_rect.x + (label_used + min_separation) as u16;
+    let refresh_used = if show_refresh {
+        refresh_gap + chip_w
+    } else {
+        0
+    };
+    let pad = width.saturating_sub(label_used + chips_used + refresh_used);
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(3 + chip_count);
+    // Leading pad after the label pushes the whole cluster to the
+    // right edge (minus the refresh chip's reserved cells).
+    spans.push(Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)));
+    let cluster_start_x = header_rect.x + (label_used + pad) as u16;
     for (i, (glyph_nerd, glyph_ascii, cmd_id, fg)) in chips.iter().take(chip_count).enumerate() {
         let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
         spans.push(Span::styled(
@@ -505,10 +515,31 @@ fn workspace_header_chips(
             *cmd_id,
         ));
     }
-    spans.push(Span::styled(
-        " ".repeat(trailing_pad),
-        Style::default().bg(rail_bg),
-    ));
+    if show_refresh {
+        spans.push(Span::styled(
+            " ".repeat(refresh_gap),
+            Style::default().bg(rail_bg),
+        ));
+        let refresh_glyph = if nerd {
+            refresh_glyph_nerd
+        } else {
+            refresh_glyph_ascii
+        };
+        spans.push(Span::styled(
+            format!(" {refresh_glyph} "),
+            Style::default().fg(theme::cur().cyan).bg(chip_bg),
+        ));
+        let refresh_x = cluster_start_x + (chip_count * chip_w + refresh_gap) as u16;
+        app.rects.tree_icon_buttons.push((
+            Rect {
+                x: refresh_x,
+                y: header_rect.y,
+                width: chip_w as u16,
+                height: 1,
+            },
+            "tree.refresh",
+        ));
+    }
     spans
 }
 
