@@ -3270,6 +3270,18 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.agents_panel_expanded_workspaces.clear();
         return;
     }
+    // 2026-08-24 (user ask) — refresh chip in the AGENTS header
+    // top-right forces a rescan of local Claude/Codex sessions +
+    // (when configured) cloud runs. Auto-refresh runs every 30s
+    // anyway; this is the click affordance for impatience.
+    if let Some(r) = app.rects.agents_panel_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.agents_panel_built_at = None;
+        app.refresh_agents_panel_if_due();
+        app.toast("agents: refreshing…".to_string());
+        return;
+    }
     // Workspace header (by-workspace view only) → toggle
     // expansion for that workspace.
     if let Some((_, ws)) = app

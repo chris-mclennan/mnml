@@ -82,6 +82,24 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Request-Id", "req_01hp9v3qk8g4m2z8t7d5r0c1e9")
+        # /api/* routes emit realistic Set-Cookie headers so the
+        # Request pane's Cookies tab has something to display in
+        # the http.gif demo tape. Two cookies (session + csrf)
+        # gives the tab enough shape to read as "real API"
+        # without leaking anything sensitive.
+        path = urlparse(self.path).path
+        if path.startswith("/api/"):
+            self.send_header(
+                "Set-Cookie",
+                "session=eyJ1IjoiYXZhIn0.demo; "
+                "Path=/; Domain=localhost; HttpOnly; SameSite=Lax; Max-Age=3600",
+            )
+            self.send_header(
+                "Set-Cookie",
+                "csrf=8f0d21c4a9b7e3f61d5c02af49b8; "
+                "Path=/; Domain=localhost; SameSite=Strict",
+            )
         self.end_headers()
         self.wfile.write(payload)
 

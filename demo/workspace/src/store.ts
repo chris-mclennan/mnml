@@ -25,3 +25,6 @@ export class Store {
     return { id: path, title, updated: Date.now() };
   }
 }
+export function reset(state: Store): Store {
+  return { ...state, items: [] };
+})

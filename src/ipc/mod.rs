@@ -1516,6 +1516,10 @@ pub fn rects_dump_json(app: &App) -> String {
         "findings_panel_refresh_chip",
         app.rects.findings_panel_refresh_chip
     );
+    one!(
+        "agents_panel_refresh_chip",
+        app.rects.agents_panel_refresh_chip
+    );
     for (r, _leaf, tag) in &app.rects.split_strip_ai_buttons {
         let label = if *tag == 1 {
             "split_strip_ai_codex"

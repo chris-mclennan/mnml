@@ -107,8 +107,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .count();
         format!("  ({} of {})", visible, app.agents_panel_rows.len())
     };
+    // 2026-08-24 (user ask) — refresh chip in the top-right corner
+    // (parity with GIT / TODOS / NOTES / FINDINGS / INTEGRATIONS).
+    // The view: chip keeps its home to the LEFT of the refresh
+    // chip. Both are painted below in one Line so the alignment
+    // math stays local to this block.
     let count_w = count_txt.chars().count() as u16;
-    let header_used = 1 + header_left.chars().count() as u16 + count_w + view_w + 1;
+    let refresh_text = crate::ui::refresh_glyph::chip_icon_only(app.config.ui.ascii_icons);
+    let refresh_w = refresh_text.chars().count() as u16;
+    // Layout: ` AGENTS  (N)  …pad…  view: status  ⟳ `
+    // 1 leading pad + label + count + view + refresh + inter-chip gap + trailing pad.
+    let header_used = 1 + header_left.chars().count() as u16 + count_w + view_w + refresh_w + 2;
     let pad = (area.width).saturating_sub(header_used);
     let header_row = Rect {
         x: area.x,
@@ -136,16 +145,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(refresh_text.to_string(), Style::default().fg(t.cyan).bg(bg)),
         ])),
         header_row,
     );
+    let view_chip_x = area.x + 1 + header_left.chars().count() as u16 + count_w + pad;
     let chip_rect = Rect {
-        x: area.x + 1 + header_left.chars().count() as u16 + count_w + pad,
+        x: view_chip_x,
         y,
         width: view_w,
         height: 1,
     };
     app.rects.agents_panel_view_chip = Some(chip_rect);
+    let refresh_rect = Rect {
+        x: view_chip_x + view_w + 1,
+        y,
+        width: refresh_w,
+        height: 1,
+    };
+    app.rects.agents_panel_refresh_chip = Some(refresh_rect);
     y += 1;
 
     // Filter input.

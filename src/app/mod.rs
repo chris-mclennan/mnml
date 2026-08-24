@@ -2495,6 +2495,10 @@ pub struct PaneRects {
     /// Click rect for the view-mode toggle (`status` ↔ `workspace`)
     /// in the panel header.
     pub agents_panel_view_chip: Option<Rect>,
+    /// Click rect for the refresh chip in the AGENTS header
+    /// top-right (2026-08-24, user ask — parity with the other
+    /// activity panels' headers).
+    pub agents_panel_refresh_chip: Option<Rect>,
     /// `(rect, workspace_label)` per workspace group header in
     /// the by-workspace view. Click → toggle collapse.
     pub agents_panel_workspace_headers: Vec<(Rect, String)>,
@@ -3389,6 +3393,7 @@ impl PaneRects {
         self.agents_panel_new_chip = None;
         self.agents_panel_pr_chip = None;
         self.agents_panel_view_chip = None;
+        self.agents_panel_refresh_chip = None;
         // Cloud agents (ECS runner) panel.
         self.cloud_agents_rows.clear();
         self.cloud_agents_filter_input = None;
