@@ -22,10 +22,15 @@
 
 use crate::tree::VisibleRow;
 
-const CONT_NERD: &str = "\u{2502} "; // │
-const CORNER_NERD: &str = "\u{2514} "; // └
+// 2026-08-24 — TWO vertical bars per continuation level: one at
+// the ancestor's chevron column (col 0 of the level) and one at
+// the ancestor's folder-icon column (col 1). Matches neo-tree in
+// the wild — a `│` shoots down from the chevron AND from the
+// folder icon of each expanded parent.
+const CONT_NERD: &str = "\u{2502}\u{2502}"; // ││
+const CORNER_NERD: &str = "\u{2514} "; // └   (no icon-column bar — this row is last)
 const SPACES: &str = "  ";
-const CONT_ASCII: &str = "| ";
+const CONT_ASCII: &str = "||";
 const CORNER_ASCII: &str = "\\ ";
 
 /// One prefix per row. Width per prefix == `2 * row.depth`.
@@ -111,7 +116,7 @@ mod tests {
     fn more_siblings_at_same_depth_draw_bar_then_corner() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "second")];
         let out = compute_prefixes(&rows, false);
-        assert_eq!(out[1], "\u{2502} "); // │ — sibling still coming
+        assert_eq!(out[1], "\u{2502}\u{2502}"); // ││ — sibling still coming
         assert_eq!(out[2], "\u{2514} "); // └ — last of its group
     }
 
@@ -149,20 +154,24 @@ mod tests {
             row(0, "parent-b"),
         ];
         let out = compute_prefixes(&rows, false);
-        // child-1: level-1 continuation (child-2 still coming).
-        assert_eq!(out[1], "\u{2502} ");
+        // child-1: level-1 continuation (child-2 still coming) → ││.
+        assert_eq!(out[1], "\u{2502}\u{2502}");
         // child-2: corner (last depth-1 sibling in parent-a).
         assert_eq!(out[2], "\u{2514} ");
         // grandchild: level-1 has ended (no more depth-1 under
-        // parent-a), level-2 is corner (only child of child-2).
+        // parent-a) → 2 spaces, level-2 is corner (only child of
+        // child-2) → `└ `.
         assert_eq!(out[3], "  \u{2514} ");
+        // (this test already covered by lines above; leaving the
+        // grandchild assertion unchanged since 2-space skip is
+        // still 2 cells wide.)
     }
 
     #[test]
     fn ascii_mode_uses_pipe_and_backslash() {
         let rows = vec![row(0, "parent"), row(1, "first"), row(1, "last")];
         let out = compute_prefixes(&rows, true);
-        assert_eq!(out[1], "| ");
+        assert_eq!(out[1], "||");
         assert_eq!(out[2], "\\ ");
     }
 }
