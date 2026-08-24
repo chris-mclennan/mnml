@@ -77,7 +77,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let view_chip = format!(" view: {view_label} ");
     let view_w = view_chip.chars().count() as u16;
     let header_left = "AGENTS";
-    let header_used = 1 + header_left.chars().count() as u16 + view_w + 1;
+    // 2026-08-24 — count-in-parens (parity with FINDINGS / TODOS
+    // / NOTES / SESSIONS): total when unfiltered, `M of N` when a
+    // filter narrows it. Total = `agents_panel_rows.len()`;
+    // filtered count folds through `matches_filter` below.
+    let filter_lc_hdr = app.agents_panel_filter.to_ascii_lowercase();
+    let count_txt = if filter_lc_hdr.is_empty() {
+        format!("  ({})", app.agents_panel_rows.len())
+    } else {
+        let visible = app
+            .agents_panel_rows
+            .iter()
+            .filter(|r| {
+                [
+                    r.workspace.to_ascii_lowercase(),
+                    r.session_id.to_ascii_lowercase(),
+                    r.last_user_msg
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                    r.last_assistant_msg
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                ]
+                .iter()
+                .any(|p| p.contains(&filter_lc_hdr))
+            })
+            .count();
+        format!("  ({} of {})", visible, app.agents_panel_rows.len())
+    };
+    let count_w = count_txt.chars().count() as u16;
+    let header_used = 1 + header_left.chars().count() as u16 + count_w + view_w + 1;
     let pad = (area.width).saturating_sub(header_used);
     let header_row = Rect {
         x: area.x,
@@ -92,6 +123,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 header_left.to_string(),
                 crate::ui::panel_chrome::caps_label_style(&t, bg),
             ),
+            Span::styled(
+                count_txt.clone(),
+                crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
+            ),
             Span::styled(" ".repeat(pad as usize), Style::default().bg(bg)),
             Span::styled(
                 view_chip,
@@ -105,7 +140,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         header_row,
     );
     let chip_rect = Rect {
-        x: area.x + 1 + header_left.chars().count() as u16 + pad,
+        x: area.x + 1 + header_left.chars().count() as u16 + count_w + pad,
         y,
         width: view_w,
         height: 1,

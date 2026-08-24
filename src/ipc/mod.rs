@@ -1508,6 +1508,14 @@ pub fn rects_dump_json(app: &App) -> String {
         "git_palette_refresh_chip",
         app.rects.git_palette_refresh_chip
     );
+    one!(
+        "notes_panel_refresh_chip",
+        app.rects.notes_panel_refresh_chip
+    );
+    one!(
+        "findings_panel_refresh_chip",
+        app.rects.findings_panel_refresh_chip
+    );
     for (r, _leaf, tag) in &app.rects.split_strip_ai_buttons {
         let label = if *tag == 1 {
             "split_strip_ai_codex"

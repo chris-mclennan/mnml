@@ -71,29 +71,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled("TODOS", crate::ui::panel_chrome::caps_label_style(&t, bg)),
-            Span::styled(
-                // Only show a count when the filter is active —
-                // design-critic 2026-07-09 flagged parity with
-                // Notes / Sessions / HTTP (which all show the
-                // count only when filter is on).
-                if filter_lc.is_empty() {
-                    String::new()
-                } else {
-                    format!("  ({} of {})", filtered.len(), app.todos_hits.len())
-                },
-                crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
-            ),
-        ])),
+    // 2026-08-24 (user ask) — TODOS header now sits alongside a
+    // right-aligned ↻ Refresh chip (was a bottom-of-panel
+    // "Rescan" row that didn't match the git-panel refresh idiom
+    // a scroll away). Routed through the shared
+    // `panel_chrome::draw_caps_header_with_refresh` helper so
+    // every future panel that wants a refresh chip gets the same
+    // shape.
+    // 2026-08-24 (user ask) — always show a count-in-parens
+    // (parity with FINDINGS): total when unfiltered, `M of N`
+    // when a filter narrows it.
+    let subtitle = if filter_lc.is_empty() {
+        format!("  ({})", app.todos_hits.len())
+    } else {
+        format!("  ({} of {})", filtered.len(), app.todos_hits.len())
+    };
+    app.rects.todos_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+        frame,
         Rect {
             x: area.x,
             y: area.y,
             width: area.width,
             height: 1,
         },
+        "TODOS",
+        Some(&subtitle),
+        bg,
+        &t,
+        app.config.ui.ascii_icons,
     );
     // Filter row (row 1). Matches `http_panel::draw` visual — chip
     // background, magnifier glyph, `/ filter` placeholder, `▏` cursor
@@ -139,11 +144,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut y = area.y + 3;
 
     if app.todos_hits.is_empty() {
-        // Interpolate the same glyph the Rescan chip uses so the
-        // hint stays in sync in every mode (design-system r1 SEV-1).
+        // Interpolate the same glyph the header refresh chip uses
+        // so the hint stays in sync in every mode.
         let ascii = app.config.ui.ascii_icons;
         let hint_msg = format!(
-            "No markers found — click {} Rescan below.",
+            "No markers found — click {} in the header to rescan.",
             crate::ui::refresh_glyph::for_ascii(ascii)
         );
         frame.render_widget(
@@ -252,34 +257,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 1;
     }
 
-    if y < area.y + area.height {
-        // 2026-08-23 (design-system r1 SEV-1) — routed through the
-        // shared refresh_glyph so this rescan chip matches every
-        // other refresh affordance in the app + degrades correctly
-        // in `--ascii` mode. Was a hardcoded `⟳` literal, which was
-        // the fourth un-canonicalized refresh variant in the app.
-        let ascii = app.config.ui.ascii_icons;
-        let refresh_rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    format!("{}  Rescan", crate::ui::refresh_glyph::for_ascii(ascii)),
-                    Style::default()
-                        .fg(t.cyan)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])),
-            refresh_rect,
-        );
-        app.rects.todos_panel_refresh_chip = Some(refresh_rect);
-    }
+    // 2026-08-24 (user ask) — Rescan chip moved from a bottom-of-
+    // panel row into the top-right of the TODOS caps header via
+    // `panel_chrome::draw_caps_header_with_refresh` so it lines up
+    // with the git panel's refresh chip a scroll away. The rect
+    // now populates from the header helper above.
+    let _ = y;
 }
 
 /// Grab the first double-quoted or single-quoted string on the

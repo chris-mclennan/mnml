@@ -54,25 +54,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .collect()
     };
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled("NOTES", crate::ui::panel_chrome::caps_label_style(&t, bg)),
-            Span::styled(
-                if filter_lc.is_empty() {
-                    String::new()
-                } else {
-                    format!("  ({} of {})", files.len(), all_files.len())
-                },
-                crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
-            ),
-        ])),
+    // 2026-08-24 (user ask) — refresh chip in top-right of the
+    // panel header, matching git + todos. Count-in-parens always
+    // shown (parity with FINDINGS): total when unfiltered,
+    // `M of N` when a filter narrows it.
+    let subtitle = if filter_lc.is_empty() {
+        format!("  ({})", all_files.len())
+    } else {
+        format!("  ({} of {})", files.len(), all_files.len())
+    };
+    app.rects.notes_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+        frame,
         Rect {
             x: area.x,
             y: area.y,
             width: area.width,
             height: 1,
         },
+        "NOTES",
+        Some(&subtitle),
+        bg,
+        &t,
+        app.config.ui.ascii_icons,
     );
     // Filter row (row 1). Same idiom as HTTP / Agents / TODOs.
     {

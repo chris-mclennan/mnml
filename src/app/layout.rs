@@ -2320,6 +2320,14 @@ impl App {
                 crate::app::ActivitySection::Todos => {
                     self.todos_panel_filter_focused = true;
                 }
+                // 2026-08-24 (user ask) — same auto-arm as its
+                // siblings so `/` isn't required to start typing.
+                crate::app::ActivitySection::Findings => {
+                    self.findings_panel_filter_focused = true;
+                }
+                crate::app::ActivitySection::CloudAgents => {
+                    self.cloud_agents_filter_focused = true;
+                }
                 _ => {}
             }
         }

@@ -111,12 +111,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             crate::ui::panel_chrome::caps_label_style(&t, bg),
         ),
     ];
-    if !filter_lc.is_empty() {
-        header_spans.push(Span::styled(
-            format!("  ({} of {})", pty_indices.len(), all_pty_indices.len()),
-            crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
-        ));
-    }
+    // 2026-08-24 — always show count-in-parens (parity with
+    // FINDINGS / TODOS / NOTES): total when unfiltered,
+    // `M of N` when a filter narrows it.
+    let count_txt = if filter_lc.is_empty() {
+        format!("  ({})", all_pty_indices.len())
+    } else {
+        format!("  ({} of {})", pty_indices.len(), all_pty_indices.len())
+    };
+    header_spans.push(Span::styled(
+        count_txt,
+        crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
+    ));
     frame.render_widget(
         Paragraph::new(Line::from(header_spans)),
         Rect {

@@ -2242,6 +2242,14 @@ pub struct PaneRects {
     /// so external changes (branches deleted at the CLI, worktrees
     /// added, etc.) show up without a mnml restart.
     pub git_palette_refresh_chip: Option<Rect>,
+    /// Click rect for the notes panel's ↻ refresh chip. Re-scans
+    /// `<workspace>/.mnml/notes/` so files added outside mnml
+    /// appear without a restart. Populated by the header helper.
+    pub notes_panel_refresh_chip: Option<Rect>,
+    /// Click rect for the findings panel's ↻ refresh chip.
+    /// Re-scans `<workspace>/.mnml/findings/` for new tester
+    /// reports. Populated by the header helper.
+    pub findings_panel_refresh_chip: Option<Rect>,
     /// Click target for the `▾` dropdown chevron next to the
     /// workspace name. Toggles `App::workspace_picker_open`.
     pub workspace_picker_chevron: Option<Rect>,
@@ -3355,6 +3363,9 @@ impl PaneRects {
         // Todos panel.
         self.todos_panel_rows.clear();
         self.todos_panel_refresh_chip = None;
+        // 2026-08-24 — new header refresh chips.
+        self.notes_panel_refresh_chip = None;
+        self.findings_panel_refresh_chip = None;
         self.todos_panel_filter_input = None;
         // Sessions panel.
         self.sessions_panel_filter_input = None;

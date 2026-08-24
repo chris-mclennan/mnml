@@ -3209,6 +3209,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         && crate::app::dispatch::contains(r, x, y)
     {
         app.todos_panel_refresh();
+        app.toast("todos: rescanned".to_string());
+        return;
+    }
+    // 2026-08-24 — Notes / Findings refresh chips (header ↻).
+    if let Some(r) = app.rects.notes_panel_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.notes_panel_refresh();
+        app.toast("notes: refreshed".to_string());
+        return;
+    }
+    if let Some(r) = app.rects.findings_panel_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.findings_panel_refresh();
+        app.toast("findings: refreshed".to_string());
         return;
     }
     if let Some(&(_, idx)) = app
