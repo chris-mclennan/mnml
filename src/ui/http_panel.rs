@@ -257,7 +257,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+            Span::styled(
+                format!("{} ", crate::ui::search_glyph::NERD),
+                Style::default().fg(t.comment).bg(bg_chip),
+            ),
             Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
             Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
@@ -281,6 +284,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // affects render order.
 
     // Section (idx=6) — COLLECTIONS. Primary surface.
+    // 2026-08-23 (user ask) — reserve one blank row above the first
+    // section so COLLECTIONS doesn't sit flush against the filter
+    // input; matches the visual breathing room every other panel
+    // gives its first section.
+    if y + 1 < bottom {
+        y += 1;
+    }
     let collections_len = app.http_panel_collection_roots.len();
     y = draw_section_header(frame, app, y, area, bg, ascii, 6, collections_len);
     if y >= bottom {

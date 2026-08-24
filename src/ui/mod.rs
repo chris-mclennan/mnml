@@ -26,6 +26,7 @@ pub mod claude_usage_view;
 pub mod codex_usage_view;
 pub mod design_tokens;
 pub mod filter_placeholder;
+pub mod search_glyph;
 pub mod session_color;
 pub mod spend_report_view;
 pub mod usage_time;
@@ -2668,7 +2669,11 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let sidebar_glyph = if ascii { "|" } else { "\u{EC02}" };
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
-    let magnify = if ascii { "?" } else { "\u{F0349}" };
+    let magnify = if ascii {
+        "?"
+    } else {
+        crate::ui::search_glyph::NERD
+    };
     // `\u{EAB4}` is the real codicon `chevron-down` in Nerd Fonts.
     // `\u{EAA1}` (the obvious-looking choice) renders as chevron-UP in
     // this font.
@@ -3774,7 +3779,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         width: area.width.saturating_sub(sort_reserve),
         height: 1,
     };
-    let search_glyph = if nerd { "\u{f002}" } else { "/" };
+    // Drift fix 2026-08-23: swap the last two filter-row sites off
+    // nf-fa-search (U+F002) onto the canonical nf-md-magnify used by
+    // the other 12 activity-bar / picker filter rows.
+    let search_glyph = crate::ui::search_glyph::for_ascii(!nerd);
     let filter_focused = app.integrations_panel_filter_focused;
     let filter_display = if app.integrations_panel_filter.is_empty() {
         crate::ui::filter_placeholder::for_state(filter_focused).to_string()

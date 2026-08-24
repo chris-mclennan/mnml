@@ -103,7 +103,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
             let line = Line::from(vec![
                 Span::styled(" ", Style::default().bg(bg)),
-                Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+                Span::styled(
+                    format!("{} ", crate::ui::search_glyph::NERD),
+                    Style::default().fg(t.comment).bg(bg_chip),
+                ),
                 Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
                 Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
                 Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
@@ -120,6 +123,39 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     let mut y = area.y + 3;
+
+    // 2026-08-23 — "+ New note" chip lives ABOVE the list now (was
+    // pinned to the bottom, where it fell offscreen once the list
+    // grew past the panel height). Same idiom as the sessions rail's
+    // "+ New session": narrow chip + `bg2` background so it reads as
+    // a distinct button instead of a floating bare-text label.
+    if y < area.y + area.height {
+        let label = "+ New note";
+        let chip_w = (label.chars().count() as u16) + 2; // pad on both sides
+        let avail = area.width.saturating_sub(1);
+        let new_rect = Rect {
+            x: area.x + 1,
+            y,
+            width: chip_w.min(avail),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ", Style::default().bg(t.bg2)),
+                Span::styled(
+                    label,
+                    Style::default()
+                        .fg(t.green)
+                        .bg(t.bg2)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ", Style::default().bg(t.bg2)),
+            ])),
+            new_rect,
+        );
+        app.rects.notes_panel_new_chip = Some(new_rect);
+        y += 2;
+    }
 
     if files.is_empty() && !filter_lc.is_empty() {
         let empty = Line::from(vec![
@@ -143,7 +179,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(
-                "No notes yet — click + New note below.",
+                "No notes yet — click + New note above.",
                 Style::default().fg(t.comment).bg(bg),
             ),
         ]);
@@ -247,31 +283,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.rects.notes_panel_files.push((row_rect, path.clone()));
             y += 1;
         }
-        y += 1;
     }
-
-    if y < area.y + area.height {
-        let new_rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    "+ New note",
-                    Style::default()
-                        .fg(t.green)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])),
-            new_rect,
-        );
-        app.rects.notes_panel_new_chip = Some(new_rect);
-    }
+    let _ = y;
 }
 
 pub fn notes_dir(workspace: &std::path::Path) -> std::path::PathBuf {

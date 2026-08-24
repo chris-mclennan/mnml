@@ -103,7 +103,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let cursor = "▏";
         let pad = (inner.width as usize).saturating_sub(display.chars().count() + 1 + 1);
         let line = Line::from(vec![
-            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(t.bg2)),
+            Span::styled(
+                format!("{} ", crate::ui::search_glyph::NERD),
+                Style::default().fg(t.comment).bg(t.bg2),
+            ),
             Span::styled(display, Style::default().fg(fg).bg(t.bg2)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(t.bg2)),
             Span::styled(" ".repeat(pad), Style::default().bg(t.bg2)),

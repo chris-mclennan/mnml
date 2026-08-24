@@ -16,6 +16,15 @@ use super::*;
 /// color added here shows up in both surfaces without hunt-and-
 /// pecking through two files.
 pub(crate) fn session_color_menu_items(pane_id: usize) -> Vec<crate::context_menu::MenuItem> {
+    session_color_menu_items_with_active(pane_id, None)
+}
+
+/// Same, but marks the currently-active color with a `✓` prefix so
+/// the user can see which is set. R15 vscode-mouse M-02 (2026-08-23).
+pub(crate) fn session_color_menu_items_with_active(
+    pane_id: usize,
+    active: Option<&str>,
+) -> Vec<crate::context_menu::MenuItem> {
     use crate::context_menu::{MenuAction, MenuItem};
     // Drive both the label and the SessionSetColor payload off the
     // shared PALETTE — menu order = auto-cycle order = list order,
@@ -24,14 +33,28 @@ pub(crate) fn session_color_menu_items(pane_id: usize) -> Vec<crate::context_men
     let mut items: Vec<MenuItem> = colors
         .iter()
         .map(|&name| {
-            MenuItem::new(
-                crate::ui::session_color::menu_label(name),
-                MenuAction::SessionSetColor(pane_id, name),
-            )
+            let base = crate::ui::session_color::menu_label(name);
+            // "✓ Color: Blue" when this is the active color, else
+            // "  Color: Blue" (2-space pad keeps labels aligned).
+            let label = if active == Some(name) {
+                format!("✓ {base}")
+            } else {
+                format!("  {base}")
+            };
+            MenuItem::new(label, MenuAction::SessionSetColor(pane_id, name))
         })
         .collect();
+    // R15 mouse M-10 — was "Color: None". The semantic is actually
+    // "clear override → re-derive palette slot"; "None" implied "no
+    // color at all" which reads misleading. "Auto" matches what
+    // set_session_color("none") actually does.
+    let auto_label = if active.is_none() {
+        "✓ Color: Auto".to_string()
+    } else {
+        "  Color: Auto".to_string()
+    };
     items.push(MenuItem::new(
-        "Color: None",
+        auto_label,
         MenuAction::SessionSetColor(pane_id, "none"),
     ));
     items

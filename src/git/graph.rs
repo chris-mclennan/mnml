@@ -234,7 +234,15 @@ impl GitGraphPane {
     }
 
     pub fn tab_title(&self) -> String {
-        "git graph".to_string()
+        // #1198 (2026-08-23) — multi-repo workspaces open one git-graph
+        // per repo; the bare "git graph" label made the tabs
+        // indistinguishable. Prefix with the repo's directory name.
+        let repo = self
+            .workspace
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("git");
+        format!("{repo} — git graph")
     }
 
     /// Re-run `git log` (after a commit, fetch, etc.), keeping the selection in range.

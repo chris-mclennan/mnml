@@ -94,11 +94,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         t.comment
     };
     let cursor = if filter_focused { "▏" } else { "" };
-    let search_glyph = if app.config.ui.ascii_icons {
-        "/"
-    } else {
-        "\u{f002}"
-    };
+    // Drift fix 2026-08-23: previously nf-fa-search (U+F002); now
+    // routed through the shared constant like every other filter row.
+    let search_glyph = crate::ui::search_glyph::for_ascii(app.config.ui.ascii_icons);
     let filter_row_rect = Rect {
         x: inner.x,
         y: inner.y,

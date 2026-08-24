@@ -159,7 +159,9 @@ fn filter_row(
         t.comment
     };
     let cursor = if focused { "▏" } else { "" };
-    let search_glyph = "\u{f002}";
+    // Drift fix 2026-08-23: previously nf-fa-search (U+F002); now the
+    // shared constant so this filter row matches every other one.
+    let search_glyph = crate::ui::search_glyph::NERD;
     let mut spans = vec![
         Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(

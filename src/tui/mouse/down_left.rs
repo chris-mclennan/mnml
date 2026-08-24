@@ -2867,9 +2867,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     // Sessions panel `/` filter row → focus. Checked BEFORE the
     // chip / tab handlers below so it wins when the row overlaps.
+    //
+    // R15 vscode-mouse M-01 (2026-08-23) — was setting only the
+    // filter-focused flag; typing after the click still routed to
+    // the underlying Pty because the char-dispatch gate ANDs
+    // `filter_focused && focus == Tree`. Focus the rail here so
+    // the click actually captures keystrokes.
     if let Some(r) = app.rects.sessions_panel_filter_input
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_tree();
         app.sessions_panel_filter_focused = true;
         return;
     }

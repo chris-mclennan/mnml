@@ -143,7 +143,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+            Span::styled(
+                format!("{} ", crate::ui::search_glyph::NERD),
+                Style::default().fg(t.comment).bg(bg_chip),
+            ),
             Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
             Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
@@ -229,7 +232,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(" \u{F0349} ", Style::default().fg(t.cyan).bg(bg_in)),
+                Span::styled(
+                    format!(" {} ", crate::ui::search_glyph::NERD),
+                    Style::default().fg(t.cyan).bg(bg_in),
+                ),
                 Span::styled(placeholder, Style::default().fg(fg_in).bg(bg_in)),
                 Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_in)),
                 Span::styled(" ".repeat(pad), Style::default().bg(bg_in)),
