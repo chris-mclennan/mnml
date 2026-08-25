@@ -1348,13 +1348,20 @@ impl App {
             } else {
                 format!("  [{}]", meta.category)
             };
+            // 2026-08-25 — surface ghostty's codepoint-map routing
+            // so users can see WHICH font would render this glyph
+            // per their config. `?` for unmapped codepoints (which
+            // fall back to the terminal's primary font).
+            let routed = crate::ghostty_config::resolve_family(meta.codepoint)
+                .map(|f| format!("  → {f}"))
+                .unwrap_or_default();
             items.push(crate::picker::PickerItem {
                 id: cp_hex.clone(),
                 label: format!(
                     "{ch}  {name}{category_chip}  U+{cp_hex}",
                     name = meta.human_name,
                 ),
-                detail: format!("nf-{}  \\u{{{cp_hex}}}", meta.full_name),
+                detail: format!("nf-{}  \\u{{{cp_hex}}}{routed}", meta.full_name,),
                 priority: 0,
                 score_bonus: 0,
             });

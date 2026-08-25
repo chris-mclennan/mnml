@@ -66,6 +66,7 @@ pub(crate) mod flash;
 pub(crate) mod focus;
 pub(crate) mod formatter;
 pub(crate) mod fuzzy;
+pub mod ghostty_config;
 pub(crate) mod git;
 pub mod glyph_builder;
 pub mod icon_catalog;
