@@ -731,6 +731,41 @@ impl MarketplaceCache {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/// Collapse cross-source duplicates: the same integration id can
+/// arrive from more than one source at once (e.g. `mnml-aws-amplify`
+/// via the crates.io keyword search AND the GitHub monorepo-apps
+/// folder), which rendered as two near-identical marketplace rows
+/// (user report 2026-08-25). Keep ONE row per id, preferring the
+/// crates.io entry — it carries the published version and the
+/// `cargo install` path; the GitHub sources exist as discovery
+/// fallbacks for crates that never set the crates.io keyword
+/// (#1055), so they only need to win when crates.io lacks the id.
+/// Among non-crates sources, first-seen wins (stable, source order).
+pub fn dedupe_entries_by_id(entries: &mut Vec<MarketplaceEntry>) {
+    use std::collections::HashMap;
+    let mut best: HashMap<String, usize> = HashMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        match best.get(&e.id) {
+            None => {
+                best.insert(e.id.clone(), i);
+            }
+            Some(&j) => {
+                let incumbent_is_crates = entries[j].source_id == "crates.io";
+                if !incumbent_is_crates && e.source_id == "crates.io" {
+                    best.insert(e.id.clone(), i);
+                }
+            }
+        }
+    }
+    let keep: std::collections::HashSet<usize> = best.into_values().collect();
+    let mut i = 0;
+    entries.retain(|_| {
+        let k = keep.contains(&i);
+        i += 1;
+        k
+    });
+}
+
 /// Parse an ISO 8601 timestamp like `"2026-08-01T18:00:00Z"` or
 /// `"2026-08-01T18:00:00.000000+00:00"` to Unix seconds. Returns
 /// None on any parse failure — the timestamp is metadata for sort
@@ -1211,6 +1246,66 @@ run = ":term htop"
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.entries[0].id, "mnml-x");
         assert_eq!(loaded.fetched_at, 1_754_000_000);
+    }
+
+    fn test_entry(id: &str, source_id: &str) -> MarketplaceEntry {
+        MarketplaceEntry {
+            source_id: source_id.to_string(),
+            kind: MarketplaceKind::App,
+            id: id.to_string(),
+            label: id.to_string(),
+            description: None,
+            install: InstallSpec::Cargo {
+                name: id.to_string(),
+            },
+            stats: EntryStats {
+                downloads: None,
+                stars: None,
+                updated_at: None,
+            },
+            provenance: Provenance::Official,
+            glyph: None,
+            color: None,
+            ready: true,
+        }
+    }
+
+    /// 2026-08-25 user report — `mnml-aws-amplify` (and codebuild,
+    /// mnml-db) rendered twice: once from the crates.io keyword
+    /// source and once from the GitHub monorepo-apps source. One row
+    /// per id; crates.io preferred regardless of arrival order.
+    #[test]
+    fn dedupe_prefers_crates_io_over_github_sources() {
+        // crates.io arrives AFTER the github entry.
+        let mut entries = vec![
+            test_entry("mnml-aws-amplify", "chris-mclennan/mnml-integrations-apps"),
+            test_entry("mnml-db", "chris-mclennan/mnml-integrations-apps"),
+            test_entry("mnml-aws-amplify", "crates.io"),
+            test_entry("htop", "chris-mclennan/mnml-integrations"),
+        ];
+        dedupe_entries_by_id(&mut entries);
+        assert_eq!(entries.len(), 3);
+        let amplify: Vec<_> = entries
+            .iter()
+            .filter(|e| e.id == "mnml-aws-amplify")
+            .collect();
+        assert_eq!(amplify.len(), 1);
+        assert_eq!(amplify[0].source_id, "crates.io");
+        // Non-duplicated ids survive untouched.
+        assert!(entries.iter().any(|e| e.id == "mnml-db"));
+        assert!(entries.iter().any(|e| e.id == "htop"));
+
+        // crates.io arrives FIRST — github later must not displace it.
+        let mut entries = vec![
+            test_entry("mnml-aws-codebuild", "crates.io"),
+            test_entry(
+                "mnml-aws-codebuild",
+                "chris-mclennan/mnml-integrations-apps",
+            ),
+        ];
+        dedupe_entries_by_id(&mut entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].source_id, "crates.io");
     }
 
     /// #849 — the two default-source ids get `Official`; anything

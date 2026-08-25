@@ -104,6 +104,9 @@ impl App {
         };
         self.marketplace_entries = cache.entries;
         self.marketplace_last_fetched = cache.fetched_at;
+        // Caches written before the 2026-08-25 dedupe fix can carry
+        // cross-source duplicate rows — collapse on load too.
+        crate::marketplace::dedupe_entries_by_id(&mut self.marketplace_entries);
         sort_marketplace_entries(&mut self.marketplace_entries);
     }
 
@@ -196,6 +199,7 @@ impl App {
             self.marketplace_entries.extend(entries);
         }
         if any {
+            crate::marketplace::dedupe_entries_by_id(&mut self.marketplace_entries);
             sort_marketplace_entries(&mut self.marketplace_entries);
         }
         for (source_id, e) in errored {
