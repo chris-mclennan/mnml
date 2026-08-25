@@ -2108,14 +2108,14 @@ pub fn draw_git_toolbar(
         ),
         (
             "Pull",
-            "\u{F404}",
+            "\u{F0162}",
             "↓",
             crate::GitToolbarAction::Pull,
             t.green,
         ),
         (
             "Push",
-            "\u{F403}",
+            "\u{F0167}",
             "↑",
             crate::GitToolbarAction::Push,
             t.blue,
