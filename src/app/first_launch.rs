@@ -547,7 +547,7 @@ impl App {
                 // all; codepoint-map alone leaves ?-boxes.
                 "Then: in `~/.config/ghostty/config` set `font-family = JetBrainsMono Nerd \
                  Font Mono` (any full Nerd-Font-patched mono works — NOT the symbols-only \
-                 face), plus `font-codepoint-map = U+F1B00-U+F20FF,U+F8B0-U+F8B1=MnmlSymbols` \
+                 face), plus `font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols` \
                  for mnml's baked glyphs. Fully quit (Cmd+Q) + reopen ghostty."
             }
             Some("iTerm.app") => {

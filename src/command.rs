@@ -2372,22 +2372,11 @@ fn builtin_commands() -> Vec<Command> {
                 app.toast(msg);
             },
         },
-        Command {
-            id: "view.ai_chip_toggle_font",
-            title: "Toggle AI chip font (JBM-NF patched ↔ mnml-baked)",
-            group: "view",
-            keys: &[],
-            run: |app| {
-                let now = !app.config.ui.ai_chip_use_mnml_glyphs;
-                app.config.ui.ai_chip_use_mnml_glyphs = now;
-                let msg = if now {
-                    "AI chip font: mnml-baked (F1E00/F1E01) — bake first if you haven't"
-                } else {
-                    "AI chip font: JBM-NF patched (F8B0/F8B1)"
-                };
-                app.toast(msg);
-            },
-        },
+        // `view.ai_chip_toggle_font` removed 2026-08-25 — the
+        // JBM-NF-patched F8B0/F8B1 arm no longer exists (stock Nerd
+        // Fonts have nothing at those codepoints), so the toggle's
+        // "patched" branch could only produce tofu. AI chips always
+        // render the mnml-baked F1E00/F1E01 pair now.
         Command {
             id: "integrations.edit_claude_glyph",
             title: "Integrations: open glyph builder for Claude Code (F1E00)",

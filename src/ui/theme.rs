@@ -243,22 +243,21 @@ pub fn cur() -> Theme {
 /// _ => ("\u{F8B0}", "*", t.orange) }` was copy-pasted in bufferline.rs
 /// (single-leaf strip) and ui/mod.rs (per-leaf strip painter).
 pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, ratatui::style::Color) {
-    // Default chip glyphs use the JBM-NF-patched pair (F8B0/F8B1)
-    // so the chip renders out-of-the-box. Users who've baked the
-    // mnml-owned copies into MnmlSymbols.ttf (via the AI-chip
-    // right-click "Bake AI glyphs" item) can flip to F1E00/F1E01
-    // — which HAS a tunable `center_frac` — via
-    // `[ui] ai_chip_use_mnml_glyphs = true`. This dispatcher
-    // reads that flag from the current-theme fallback path so
-    // callers don't need to plumb config through.
+    // 2026-08-25 — always the mnml-owned F1E00/F1E01 pair, baked
+    // into MnmlSymbols.ttf every startup from the repo SVGs
+    // (assets/glyphs/ai/). The old JBM-NF-patched F8B0/F8B1 pair
+    // is retired: a stock Nerd Font install (brew cask) has nothing
+    // at those codepoints, so any user who reinstalls/upgrades their
+    // font silently lost them — the sessions rail rendered a broken
+    // fallback outline for Codex.
     // 2026-08-08 — swap `t.orange` for the exact Anthropic Claude
     // brand coral so the split-cluster AI chip matches the tab-glyph
     // color used by `pty_icon` (which also hardcodes this RGB when
     // the pane's integration_id is claude_code).
     match kind {
-        "codex" => ("\u{F8B1}", "C", t.cyan),
+        "codex" => ("\u{F1E01}", "C", t.cyan),
         _ => (
-            "\u{F8B0}",
+            "\u{F1E00}",
             "*",
             brand_color_for_builtin("claude_code").unwrap_or(t.orange),
         ),
@@ -300,20 +299,13 @@ pub fn brand_color_for_builtin(id: &str) -> Option<ratatui::style::Color> {
 pub fn ai_chip_parts_for(
     kind: &str,
     t: &Theme,
-    use_mnml: bool,
+    _use_mnml: bool,
 ) -> (&'static str, &'static str, ratatui::style::Color) {
-    if use_mnml {
-        match kind {
-            "codex" => ("\u{F1E01}", "C", t.cyan),
-            _ => (
-                "\u{F1E00}",
-                "*",
-                brand_color_for_builtin("claude_code").unwrap_or(t.orange),
-            ),
-        }
-    } else {
-        ai_chip_parts(kind, t)
-    }
+    // 2026-08-25 — the flag is vestigial: both arms now resolve to
+    // the mnml-owned F1E00/F1E01 pair (see `ai_chip_parts`). Kept
+    // so bufferline's call site doesn't churn; collapse when the
+    // deprecated `[ui] ai_chip_use_mnml_glyphs` key is removed.
+    ai_chip_parts(kind, t)
 }
 
 /// code-reviewer S2-2 — resolve a config color-slot name to a

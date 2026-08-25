@@ -1198,18 +1198,12 @@ pub struct UiConfig {
     /// Right-click the palette-bar AI chip to switch at runtime.
     pub ai_layout_mode: String,
 
-    /// Prefer the mnml-owned F1E00/F1E01 AI chip glyphs (baked
-    /// into `MnmlSymbols.ttf` via `integrations.bake_ai_glyphs`)
-    /// over the JBM-NF-patched F8B0/F8B1 defaults. The mnml
-    /// copies have a tunable `center_frac` so the vertical
-    /// baseline can actually be corrected — F8B0's drift is
-    /// baked into the user's Nerd Font and can't be fixed at
-    /// the codepoint layer.
-    ///
-    /// Off by default so users see SOMETHING (F8B0/F8B1 render
-    /// out-of-the-box). Turn on after running the bake + verifying
-    /// the mnml chips render — right-click the AI chip → "Use
-    /// mnml AI glyphs (baked)" toggle.
+    /// DEPRECATED 2026-08-25 — parsed for config compat but
+    /// ignored. AI chips always render the mnml-owned F1E00/F1E01
+    /// pair now: the alternative this flag selected (JBM-NF-patched
+    /// F8B0/F8B1) required a hand-patched JetBrains Mono that no
+    /// stock Nerd Fonts release ships, so any font reinstall or
+    /// brew upgrade silently broke it.
     pub ai_chip_use_mnml_glyphs: bool,
 
     /// Auto-switch the activity panel to Sessions when a Claude
@@ -2712,9 +2706,15 @@ impl Config {
                 if icon.id == "http" && icon.glyph != "\u{F1D8}" {
                     icon.glyph = "\u{F1D8}".to_string();
                 }
-                // Amplify legacy codicon → baked AWS SVG at F1B00.
-                if icon.id == "amplify" && icon.glyph == "\u{F087D}" {
-                    icon.glyph = "\u{F1B00}".to_string();
+                // Amplify legacy codicon → the live baked AWS SVG at
+                // F1C0E (the integration-glyphs assignment for
+                // mnml-aws-amplify). Second arm rescues configs the
+                // pre-2026-08-25 migration pointed at F1B00 — that
+                // slot was actually a mislabeled Codex glyph and has
+                // been stripped from MnmlSymbols.
+                if icon.id == "amplify" && (icon.glyph == "\u{F087D}" || icon.glyph == "\u{F1B00}")
+                {
+                    icon.glyph = "\u{F1C0E}".to_string();
                 }
                 // btop/htop/iftop legacy codicons → the current real
                 // Nerd Font picks (2026-08-25: the interim baked

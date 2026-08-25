@@ -814,10 +814,7 @@ fn draw_integration_section(
                 // Claude / Codex glyphs render 2-cell wide, so drop a
                 // trailing space to keep the visual chip width
                 // consistent.
-                let wide_glyph = matches!(
-                    glyph.as_str(),
-                    "\u{F8B0}" | "\u{F8B1}" | "\u{F1E00}" | "\u{F1E01}"
-                );
+                let wide_glyph = matches!(glyph.as_str(), "\u{F1E00}" | "\u{F1E01}");
                 let chip_text = if wide_glyph {
                     format!(" {g} ")
                 } else {
