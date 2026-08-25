@@ -515,7 +515,14 @@ pub fn parse_launcher_toml(
     // to the builtin catalog by id (e.g. a manifest that omits chip
     // still shows a recognizable icon if we know the id).
     let (chip_glyph, chip_color) = match &m.chip {
-        Some(c) => (Some(c.glyph.clone()), Some(c.color.clone())),
+        // An empty `glyph = ""` counts as absent — wrapping it as
+        // Some("") used to block the catalog fallback and render a
+        // blank icon cell (2026-08-25 user report: the claude_multi
+        // launcher row had no icon).
+        Some(c) => (
+            Some(c.glyph.clone()).filter(|g| !g.trim().is_empty()),
+            Some(c.color.clone()).filter(|c| !c.trim().is_empty()),
+        ),
         None => (None, None),
     };
     let (fallback_glyph, fallback_color) = catalog_lookup(&m.id);
@@ -573,7 +580,7 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         "vscode" | "VSCode" => ("\u{E8DA}", "blue"),
 
         // AI (first-party, baked into MnmlSymbols)
-        "claude_code" | "claude-code" => ("\u{F1E00}", "orange"),
+        "claude_code" | "claude-code" | "claude_multi" => ("\u{F1E00}", "orange"),
         "codex" => ("\u{F1E01}", "cyan"),
 
         // Browser — nf-cod-browser
