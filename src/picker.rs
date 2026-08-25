@@ -412,6 +412,14 @@ impl Picker {
         // picker's own priority/score conventions stay intact.
         let q_lower = self.query.to_ascii_lowercase();
         let apply_id_boosts = matches!(self.kind, PickerKind::Commands) && !q_lower.is_empty();
+        // 2026-08-25 — icon-picker parity boost. With ~11k grid tiles
+        // and no visible names, the top-left cell must be the closest
+        // NAME hit or the user can't find `nf-cod-repo_pull` in a sea
+        // of 77 subsequence matches. Same shape as the Commands boost
+        // (exact match → priority=9; substring → +200 score) but keyed
+        // off `detail`, which for IconGlyphs holds `nf-<full_name>`.
+        let apply_glyph_name_boosts =
+            matches!(self.kind, PickerKind::IconGlyphs) && !q_lower.is_empty();
         let mut scored: Vec<(u8, i64, usize, Vec<usize>)> = self
             .items
             .iter()
@@ -426,6 +434,31 @@ impl Picker {
                             prio = prio.max(9);
                         } else if id_lower.contains(&q_lower) {
                             score += 100;
+                        }
+                    }
+                    if apply_glyph_name_boosts {
+                        // `detail` = "nf-<full_name>  \u{XXXX}" —
+                        // strip the trailing escape sequence so
+                        // "eb40" doesn't spuriously substring-match
+                        // via the `\u{...}` half.
+                        let detail_lower = it.detail.to_ascii_lowercase();
+                        let name_half = detail_lower.split("  ").next().unwrap_or(&detail_lower);
+                        // Suffix after `nf-<category>-` — this is the
+                        // token nerdfonts.com users think of as "the
+                        // name" (e.g. "repo_pull", "cloud_download").
+                        let suffix = name_half.splitn(3, '-').nth(2).unwrap_or(name_half);
+                        if suffix == q_lower {
+                            // Exact suffix hit — highest tier.
+                            prio = prio.max(9);
+                        } else if suffix.contains(&q_lower) {
+                            // Substring on the name suffix — the
+                            // "repo_pull matches pull" case.
+                            score += 200;
+                        } else if name_half.contains(&q_lower) {
+                            // Weaker: matches full nf-* name but
+                            // not the suffix (e.g. query = "cod"
+                            // matches every codicon glyph).
+                            score += 50;
                         }
                     }
                     (prio, score, i, hits)
