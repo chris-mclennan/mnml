@@ -115,6 +115,23 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Fonts in Marketplace + UI-managed launch profiles (2026-08-25,
+#1202 + #1203 f/u).** `src/font_scan.rs` (seek-based sfnt name-table
+reader; TTF/OTF/TTC) scans platform font dirs, reads "Nerd Fonts
+X.Y.Z" from name ID 5, collapses variant families (Mono/Propo/NL/NF
+abbreviations — NB: NF files carry a duplicate abbreviated platform-3
+ID-16 record, first-per-platform wins) and renders a FONTS section
+pinned atop the Marketplace tab: version vs latest release (GitHub
+API, 24h cache), green ✓ / yellow + "↑ Update" chip → brew upgrade in
+a Pty (macOS-only v1). Launch profiles are now fully UI-managed:
+chip right-click → "New launch profile…" (two-step name → command
+prompts) / "Remove profile: <name>" write the workspace manifest;
+`launch_profiles::{add,remove}_profile` are comment-preserving text
+edits. Fixed en route: the welcome/About overlays' dismiss-on-click
+swallow ran before the context-menu modal handler, so chip-menu items
+clicked over the welcome screen were dead (user report — "Set
+launcher script… does nothing").
+
 **AI launch profiles (2026-08-25, #1203).** Multiple named launch
 commands per Claude/Codex chip replace the "wrapper as a separate
 integration" pattern (the `claude_multi` manifest is retired). New
