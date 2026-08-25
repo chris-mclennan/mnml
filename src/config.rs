@@ -2716,15 +2716,21 @@ impl Config {
                 if icon.id == "amplify" && icon.glyph == "\u{F087D}" {
                     icon.glyph = "\u{F1B00}".to_string();
                 }
-                // btop/htop/iftop legacy codicons → baked dev SVGs.
-                if icon.id == "btop" && icon.glyph == "\u{F085F}" {
-                    icon.glyph = "\u{F2000}".to_string();
+                // btop/htop/iftop legacy codicons → the current real
+                // Nerd Font picks (2026-08-25: the interim baked
+                // F2000-F2002 dev SVGs were retired from MnmlSymbols —
+                // the manifests/marketplace now use primary-font
+                // glyphs: alpha_b, monitor, network). The two arms per
+                // id catch both the original codicon values AND
+                // configs that were migrated onto the baked trio.
+                if icon.id == "btop" && (icon.glyph == "\u{F085F}" || icon.glyph == "\u{F2000}") {
+                    icon.glyph = "\u{F0AEF}".to_string();
                 }
-                if icon.id == "htop" && icon.glyph == "\u{F085A}" {
-                    icon.glyph = "\u{F2001}".to_string();
+                if icon.id == "htop" && (icon.glyph == "\u{F085A}" || icon.glyph == "\u{F2001}") {
+                    icon.glyph = "\u{F0379}".to_string();
                 }
-                if icon.id == "iftop" && icon.glyph == "\u{F048D}" {
-                    icon.glyph = "\u{F2002}".to_string();
+                if icon.id == "iftop" && (icon.glyph == "\u{F048D}" || icon.glyph == "\u{F2002}") {
+                    icon.glyph = "\u{F06F3}".to_string();
                 }
             }
             // 2026-07-19 — the single "bitbucket" chip was split into
