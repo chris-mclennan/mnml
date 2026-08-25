@@ -5459,7 +5459,26 @@ fn icon_for_pane(
             s(icon.0, icon.1)
         }
         Pane::Diff(_) => s(if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
-        Pane::GitGraph(_) => s(if nerd { "\u{f02a2}" } else { "⎇" }, theme::cur().orange),
+        Pane::GitGraph(g) => {
+            // Per-repo tint using the shared session-color palette so
+            // the multi-repo tab strip is visually distinct at a
+            // glance. Palette slot = position in `app.repos`;
+            // wraps modulo palette length past 8 repos (user ask
+            // 2026-08-24 — "keep going or repeat colors"). Unknown
+            // path falls back to orange (matches Pane::Diff).
+            let slot = app
+                .repos
+                .iter()
+                .position(|r| r.path == g.workspace)
+                .map(|i| i % crate::ui::session_color::PALETTE.len());
+            let t = theme::cur();
+            let color = slot
+                .and_then(|i| {
+                    crate::ui::session_color::resolve(crate::ui::session_color::PALETTE[i], &t)
+                })
+                .unwrap_or(t.orange);
+            s(if nerd { "\u{f02a2}" } else { "⎇" }, color)
+        }
         Pane::GitStatus(_) => s(if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
         Pane::Request(r) => {
             let tt = theme::cur();
