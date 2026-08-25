@@ -286,6 +286,61 @@ pub fn read_family_and_version(path: &Path) -> Option<(String, Option<String>)> 
     Some((family, version.map(|(v, _)| v)))
 }
 
+/// Codepoints a font's cmap actually maps — the ground truth for
+/// "will this char render or fall back to `?`" within fonts mnml
+/// OWNS (the terminal does its own fallback for everything else, and
+/// mnml never hears about it). Reads format-12 subtables only: the
+/// mnml PUA block (U+F1B00+) lives in supplementary plane 15, which
+/// format 4 (BMP-only) can't encode, so every font that carries mnml
+/// glyphs necessarily has a format-12 table. Seek-based like the
+/// name-table reader. Used by the `glyphs.doctor` tofu check (#1205).
+pub fn cmap_codepoints(path: &Path) -> Option<std::collections::HashSet<u32>> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut sfnt_base: u64 = 0;
+    if read_u32(&mut f, 0)? == u32::from_be_bytes(*b"ttcf") {
+        sfnt_base = read_u32(&mut f, 12)? as u64;
+    }
+    let num_tables = read_u16(&mut f, sfnt_base + 4)?;
+    if num_tables > 64 {
+        return None;
+    }
+    let mut cmap_off: Option<u64> = None;
+    for i in 0..num_tables as u64 {
+        let rec = sfnt_base + 12 + i * 16;
+        if read_u32(&mut f, rec)? == u32::from_be_bytes(*b"cmap") {
+            cmap_off = Some(read_u32(&mut f, rec + 8)? as u64);
+            break;
+        }
+    }
+    let cmap_off = cmap_off?;
+    let n_sub = read_u16(&mut f, cmap_off + 2)?;
+    if n_sub > 32 {
+        return None;
+    }
+    let mut out = std::collections::HashSet::new();
+    for i in 0..n_sub as u64 {
+        let rec = cmap_off + 4 + i * 8;
+        let sub_off = cmap_off + read_u32(&mut f, rec + 4)? as u64;
+        if read_u16(&mut f, sub_off)? != 12 {
+            continue;
+        }
+        let n_groups = read_u32(&mut f, sub_off + 12)?;
+        if n_groups > 10_000 {
+            continue; // corrupt header guard
+        }
+        for g in 0..n_groups as u64 {
+            let grp = sub_off + 16 + g * 12;
+            let start = read_u32(&mut f, grp)?;
+            let end = read_u32(&mut f, grp + 4)?;
+            if end < start || end - start > 0x10000 {
+                continue;
+            }
+            out.extend(start..=end);
+        }
+    }
+    Some(out)
+}
+
 // ── latest-release check + cache ──────────────────────────────────
 
 /// 24h cache for the GitHub latest-release lookup.

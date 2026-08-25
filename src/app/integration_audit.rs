@@ -26,11 +26,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// One inclusive codepoint range parsed from ghostty's
-/// `font-codepoint-map` config line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `font-codepoint-map` config line, plus the font it forces the
+/// range to. The font matters (#1205): ghostty applies NO fallback
+/// inside a force-routed range, so "routed" only means "renders" when
+/// the target font actually carries the codepoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GhosttyRange {
     pub start: u32,
     pub end: u32,
+    /// Target font family after the final `=` — e.g. `MnmlSymbols`,
+    /// `Symbols Nerd Font Mono`. Empty when the line omitted it.
+    pub font: String,
 }
 
 impl GhosttyRange {
@@ -61,15 +67,20 @@ pub fn parse_ghostty_codepoint_map(config_text: &str) -> Vec<GhosttyRange> {
         };
         let rest = rest.trim();
         // `rest` now looks like `U+E5FA-U+E8FF=Symbols Nerd Font Mono`.
-        // Split on `=`; the LEFT side is the range.
-        let Some(range_spec) = rest.split('=').next() else {
-            continue;
+        // LEFT of the first `=` is the range; RIGHT is the target font.
+        let (range_spec, font) = match rest.split_once('=') {
+            Some((r, f)) => (r, f.trim().to_string()),
+            None => (rest, String::new()),
         };
         // `range_spec` = `U+E5FA-U+E8FF` (or a single `U+XXXX` — rare).
         let Some((lo_str, hi_str)) = range_spec.split_once('-') else {
             // Single-codepoint form.
             if let Some(cp) = parse_ghostty_cp(range_spec) {
-                out.push(GhosttyRange { start: cp, end: cp });
+                out.push(GhosttyRange {
+                    start: cp,
+                    end: cp,
+                    font,
+                });
             }
             continue;
         };
@@ -77,7 +88,11 @@ pub fn parse_ghostty_codepoint_map(config_text: &str) -> Vec<GhosttyRange> {
             continue;
         };
         if lo <= hi {
-            out.push(GhosttyRange { start: lo, end: hi });
+            out.push(GhosttyRange {
+                start: lo,
+                end: hi,
+                font,
+            });
         }
     }
     out
@@ -87,11 +102,6 @@ fn parse_ghostty_cp(s: &str) -> Option<u32> {
     let s = s.trim();
     let hex = s.strip_prefix("U+").or_else(|| s.strip_prefix("u+"))?;
     u32::from_str_radix(hex, 16).ok()
-}
-
-/// True when `cp` is in ANY of the routed ranges.
-pub fn is_routed(cp: u32, ranges: &[GhosttyRange]) -> bool {
-    ranges.iter().any(|r| r.contains(cp))
 }
 
 /// Find rows in `assignments` that share a codepoint under different ids.
@@ -139,6 +149,50 @@ pub struct UnrenderableGlyph {
     pub manifest_id: String,
     pub codepoint: u32,
     pub label: String,
+    /// Where the reference lives — `"manifest"` or `"config icon"`.
+    pub source: &'static str,
+    /// Why it will tofu — human sentence from [`classify_glyph`].
+    pub verdict: String,
+}
+
+/// mnml's own PUA block — the range mnml bakes into MnmlSymbols.ttf
+/// itself, so presence there is fully decidable.
+pub const MNML_PUA: std::ops::RangeInclusive<u32> = 0xF1B00..=0xF20FF;
+
+/// The tofu decision for one referenced codepoint (#1205). Pure so
+/// tests don't need fonts on disk. Returns `Some(verdict)` when the
+/// glyph is certain (or near-certain) to render as `?`:
+///
+/// - **mnml PUA range**: mnml owns MnmlSymbols — not baked ⇒
+///   guaranteed tofu, regardless of ghostty routing (a route INTO
+///   MnmlSymbols can't help, and no other font carries this block).
+/// - **Force-routed elsewhere**: ghostty applies no fallback inside a
+///   `font-codepoint-map` range, so a resolvable target font that
+///   lacks the codepoint ⇒ tofu. `route` carries
+///   `(font_name, Some(cmap))` when the font file was found on disk;
+///   `(_, None)` = unresolvable → honest `None` (can't verify).
+/// - **Unrouted non-mnml glyphs**: the terminal's internal fallback
+///   chain decides — undetectable by any app ⇒ `None`.
+pub fn classify_glyph(
+    cp: u32,
+    baked: &std::collections::HashSet<u32>,
+    route: Option<(&str, Option<&std::collections::HashSet<u32>>)>,
+) -> Option<String> {
+    if MNML_PUA.contains(&cp) {
+        return if baked.contains(&cp) {
+            None
+        } else {
+            Some("not baked into MnmlSymbols.ttf — guaranteed `?`".to_string())
+        };
+    }
+    if let Some((font, Some(cmap))) = route
+        && !cmap.contains(&cp)
+    {
+        return Some(format!(
+            "force-routed to `{font}` which lacks it — `?` (routed ranges get no fallback)"
+        ));
+    }
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -150,8 +204,39 @@ pub struct OrphanMeta {
 
 impl App {
     /// Fire the audit, write the report, toast the count.
+    /// The config-icon glyphs to feed Class 1 alongside the installed
+    /// manifests (#1205 — stale icon glyphs in config.toml were a
+    /// blind spot; amplify's F087D lived there).
+    fn audit_icon_refs(&self) -> Vec<(String, char, String)> {
+        self.config
+            .ui
+            .integration_icons
+            .iter()
+            .filter_map(|i| {
+                let ch = i.glyph.chars().next()?;
+                let label = i.label.clone().unwrap_or_else(|| i.id.clone());
+                Some((i.id.clone(), ch, label))
+            })
+            .collect()
+    }
+
+    /// #1205 — launch-time tofu check. Runs the same Class-1 scan the
+    /// full audit uses and toasts when anything is certain to render
+    /// as `?`, pointing at the full report command. Silent when clean
+    /// or when MnmlSymbols hasn't been baked yet (first launch).
+    pub fn glyph_audit_startup_check(&mut self) {
+        let findings = collect_findings(&self.audit_icon_refs());
+        let n = findings.unrenderable.len();
+        if n > 0 {
+            self.toast(format!(
+                "\u{26A0} {n} integration icon{} will render as `?` \u{2014} run :integrations.audit_glyphs",
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+    }
+
     pub fn audit_glyphs(&mut self) {
-        let findings = collect_findings();
+        let findings = collect_findings(&self.audit_icon_refs());
         let path = write_report(&self.workspace, &findings);
         let count = findings.total();
         match path {
@@ -169,30 +254,94 @@ impl App {
     }
 }
 
-fn collect_findings() -> AuditFindings {
+fn collect_findings(config_icons: &[(String, char, String)]) -> AuditFindings {
     let mut findings = AuditFindings::default();
 
     // Ghostty routing map (may be empty if no config).
     let ghostty_ranges = read_ghostty_ranges();
 
     // Which codepoints does MnmlSymbols.ttf actually have baked?
-    let baked = read_baked_codepoints();
+    // `font_present = false` means the font hasn't been baked at all
+    // (fresh install, first launch) — nothing mnml-PUA is assertable
+    // yet, so those checks stand down rather than flagging the world.
+    let (font_present, baked) = read_baked_codepoints();
 
-    // Class 1 — walk installed manifests, check every chip.glyph codepoint.
-    for (id, glyph_char, label) in read_manifest_glyphs() {
+    // #1205 — lazily-resolved cmaps for the fonts codepoint-map lines
+    // force ranges to. Keyed by the font NAME from the config line;
+    // `None` = we couldn't find a matching font file on disk (can't
+    // verify → never flagged).
+    let mut route_cmaps: HashMap<String, Option<std::collections::HashSet<u32>>> = HashMap::new();
+
+    // Class 1 — walk installed manifests AND config icons, classify
+    // every glyph codepoint. Deduped on (id, codepoint) since config
+    // icons usually mirror the manifest they came from.
+    let mut seen: std::collections::HashSet<(String, u32)> = std::collections::HashSet::new();
+    let manifest_entries = read_manifest_glyphs()
+        .into_iter()
+        .map(|(id, ch, label)| (id, ch, label, "manifest"));
+    let icon_entries = config_icons
+        .iter()
+        .map(|(id, ch, label)| (id.clone(), *ch, label.clone(), "config icon"));
+    for (id, glyph_char, label, source) in manifest_entries.chain(icon_entries) {
         let cp = glyph_char as u32;
         // If the glyph is a plain ASCII letter (fallback shim) skip —
-        // that's not a real glyph declaration.
-        if cp < 0x80 {
+        // that's not a real glyph declaration. mnml-PUA refs are
+        // also unassertable before the first bake exists.
+        if cp < 0x80 || !seen.insert((id.clone(), cp)) {
             continue;
         }
-        let routed = is_routed(cp, &ghostty_ranges);
-        let in_mnml_font = baked.contains(&cp);
-        if !routed && !in_mnml_font {
+        if MNML_PUA.contains(&cp) && !font_present {
+            continue;
+        }
+        let route_font: Option<String> = ghostty_ranges
+            .iter()
+            .find(|r| r.contains(cp))
+            .map(|r| r.font.clone());
+        let route = match &route_font {
+            Some(f) => {
+                let cmap = route_cmaps
+                    .entry(f.clone())
+                    .or_insert_with(|| resolve_route_font_cmap(f));
+                Some((f.as_str(), cmap.as_ref()))
+            }
+            None => None,
+        };
+        if let Some(verdict) = classify_glyph(cp, &baked, route) {
             findings.unrenderable.push(UnrenderableGlyph {
                 manifest_id: id,
                 codepoint: cp,
                 label,
+                source,
+                verdict,
+            });
+        }
+    }
+
+    // Class 1b (#1205) — core-UI glyphs mnml itself draws every
+    // frame: the BUILTIN_GLYPHS seeds (AI chips, spinners, …) plus
+    // the script-injected tree connectors. A full font rebake wipes
+    // F1F04/F1F05 until `scripts/inject_tree_connectors.py` reruns —
+    // this is the check that surfaces it instead of a tofu tree.
+    let core_required: Vec<(u32, &str)> = if font_present {
+        crate::glyph_builder::BUILTIN_GLYPHS
+            .iter()
+            .map(|g| (g.codepoint, g.name))
+            .chain([
+                (0xF1F04, "tree-line-vertical"),
+                (0xF1F05, "tree-line-corner"),
+            ])
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for (cp, name) in core_required {
+        if !baked.contains(&cp) {
+            findings.unrenderable.push(UnrenderableGlyph {
+                manifest_id: name.to_string(),
+                codepoint: cp,
+                label: "mnml core UI".to_string(),
+                source: "core UI",
+                verdict: "not baked into MnmlSymbols.ttf — guaranteed `?` (rerun the bake; tree connectors need scripts/inject_tree_connectors.py)".to_string(),
             });
         }
     }
@@ -220,44 +369,41 @@ fn read_ghostty_ranges() -> Vec<GhosttyRange> {
     }
 }
 
-fn read_baked_codepoints() -> std::collections::HashSet<u32> {
-    use std::collections::HashSet;
-    // ~/Library/Fonts/MnmlSymbols.ttf. If missing, treat every glyph as
-    // "not in mnml font" — the audit still runs, just conservatively.
+fn read_baked_codepoints() -> (bool, std::collections::HashSet<u32>) {
+    // ~/Library/Fonts/MnmlSymbols.ttf. `(false, empty)` = the font
+    // isn't baked/readable at all — callers stand their mnml-PUA
+    // checks down (first launch predates the first bake).
+    //
+    // #1205 — was a python3/fontTools shell-out; now the native
+    // seek-based reader (`font_scan::cmap_codepoints`), so the audit
+    // works on machines without fontTools and costs ~a millisecond.
     let Some(home) = std::env::var_os("HOME") else {
-        return HashSet::new();
+        return (false, std::collections::HashSet::new());
     };
     let path = PathBuf::from(home).join("Library/Fonts/MnmlSymbols.ttf");
-    if !path.exists() {
-        return HashSet::new();
+    match crate::font_scan::cmap_codepoints(&path) {
+        Some(set) => (true, set),
+        None => (false, std::collections::HashSet::new()),
     }
-    // Parse the TTF's cmap directly via a tiny shell-out. We can't
-    // pull `ttf-parser` into mnml core for one call site — but Python's
-    // `fontTools` is on the user's machine (used elsewhere by the
-    // glyph bake pipeline).
-    let out = std::process::Command::new("python3")
-        .arg("-c")
-        .arg(
-            r#"
-import sys
-try:
-    from fontTools.ttLib import TTFont
-    f = TTFont(sys.argv[1])
-    for cp in sorted(f['cmap'].getBestCmap().keys()):
-        print(f"{cp:X}")
-except Exception:
-    pass
-"#,
-        )
-        .arg(&path)
-        .output();
-    let Ok(o) = out else {
-        return HashSet::new();
-    };
-    let text = String::from_utf8_lossy(&o.stdout);
-    text.lines()
-        .filter_map(|l| u32::from_str_radix(l.trim(), 16).ok())
-        .collect()
+}
+
+/// #1205 — resolve a `font-codepoint-map` target font NAME to a font
+/// file on disk and read its cmap. `None` = no matching file found
+/// (the audit then treats the route as unverifiable, never flagged).
+/// Matching is loose: the installed family (from the name table,
+/// variant-collapsed) must be a prefix-ish of the config's name —
+/// "Symbols Nerd Font" matches target "Symbols Nerd Font Mono".
+fn resolve_route_font_cmap(font_name: &str) -> Option<std::collections::HashSet<u32>> {
+    let target = font_name.trim().to_ascii_lowercase();
+    if target.is_empty() {
+        return None;
+    }
+    let installed = crate::font_scan::scan_nerd_fonts();
+    let hit = installed.iter().find(|f| {
+        let fam = f.family.to_ascii_lowercase();
+        target == fam || target.starts_with(&fam) || fam.starts_with(&target)
+    })?;
+    crate::font_scan::cmap_codepoints(&hit.path)
 }
 
 /// Read every `~/.config/mnml/integrations/*.toml` and return
@@ -397,15 +543,26 @@ fn write_report(workspace: &std::path::Path, f: &AuditFindings) -> Option<PathBu
     body.push_str(&format!("Drift items: {}\n\n", f.total()));
     body.push_str("Read-only report — nothing changed. See `scratchpad/sibling-audit-2026-08-09.md` for the structural design.\n\n");
 
-    body.push_str("## Manifest glyphs that won't render\n\n");
+    body.push_str("## Glyphs that will render as `?`\n\n");
+    body.push_str(
+        "**Scope (honest coverage — #1205):** this section checks (a) mnml's own \
+         PUA block U+F1B00-U+F20FF against what's actually baked in `MnmlSymbols.ttf` \
+         (fully decidable — mnml owns that font), and (b) codepoints your ghostty \
+         `font-codepoint-map` force-routes to a font file we can find on disk \
+         (forced routes get no fallback, so a missing codepoint there is tofu). \
+         NOT checkable by any app: unrouted glyphs — the terminal's internal \
+         fallback chain decides those.\n\n",
+    );
     if f.unrenderable.is_empty() {
-        body.push_str("None. Every installed manifest's `chip.glyph` codepoint is either in ghostty's `font-codepoint-map` OR baked into `MnmlSymbols.ttf`.\n\n");
+        body.push_str("None found within the checkable scope above.\n\n");
     } else {
-        body.push_str("| Manifest id | Codepoint | Label | Fix |\n|---|---|---|---|\n");
+        body.push_str(
+            "| Id | Source | Codepoint | Label | Why | Fix |\n|---|---|---|---|---|---|\n",
+        );
         for u in &f.unrenderable {
             body.push_str(&format!(
-                "| `{}` | U+{:04X} | {} | Swap the integration's `chip.glyph` to a codepoint in ghostty's routed range (F0001-F1AFF for MDI, E5FA-E8FF for codicon/DevIcons) OR ship an SVG for baking. |\n",
-                u.manifest_id, u.codepoint, u.label
+                "| `{}` | {} | U+{:04X} | {} | {} | Repoint to a live codepoint (see `integration-glyphs.toml` assignments), reinstall the integration, or rebake its SVG. |\n",
+                u.manifest_id, u.source, u.codepoint, u.label, u.verdict
             ));
         }
         body.push('\n');
@@ -460,6 +617,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn classify_mnml_pua_requires_baked_regardless_of_routing() {
+        use std::collections::HashSet;
+        let baked: HashSet<u32> = [0xF1C04].into_iter().collect();
+        // Baked → fine.
+        assert!(classify_glyph(0xF1C04, &baked, None).is_none());
+        // Not baked → guaranteed tofu, EVEN with a route covering it
+        // (this is the exact codebuild F1B0A case the old logic
+        // missed: routed-to-MnmlSymbols read as "renderable").
+        let route_cmap: HashSet<u32> = HashSet::new();
+        let verdict = classify_glyph(0xF1B0A, &baked, Some(("MnmlSymbols", Some(&route_cmap))));
+        assert!(verdict.unwrap().contains("guaranteed"));
+        assert!(classify_glyph(0xF1B0A, &baked, None).is_some());
+    }
+
+    #[test]
+    fn classify_forced_route_checks_target_font() {
+        use std::collections::HashSet;
+        let baked: HashSet<u32> = HashSet::new();
+        let nf: HashSet<u32> = [0xEB40].into_iter().collect();
+        // Routed + present in the target font → renders.
+        assert!(
+            classify_glyph(0xEB40, &baked, Some(("Symbols Nerd Font Mono", Some(&nf)))).is_none()
+        );
+        // Routed + absent from the target font → tofu (no fallback
+        // inside forced ranges).
+        let v = classify_glyph(0xEB41, &baked, Some(("Symbols Nerd Font Mono", Some(&nf))));
+        assert!(v.unwrap().contains("Symbols Nerd Font Mono"));
+        // Routed but font file unresolvable → honest can't-verify.
+        assert!(classify_glyph(0xEB41, &baked, Some(("Mystery Font", None))).is_none());
+        // Unrouted non-mnml glyph → terminal fallback decides; never flagged.
+        assert!(classify_glyph(0xEB41, &baked, None).is_none());
+    }
+
+    #[test]
+    fn parse_captures_target_font_name() {
+        let cfg = "font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols\n";
+        let out = parse_ghostty_codepoint_map(cfg);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].font, "MnmlSymbols");
+    }
+
+    #[test]
     fn parse_range_line_extracts_the_pair() {
         let cfg = "font-codepoint-map = U+E5FA-U+E8FF=Symbols Nerd Font Mono\n";
         let out = parse_ghostty_codepoint_map(cfg);
@@ -468,7 +667,8 @@ mod tests {
             out[0],
             GhosttyRange {
                 start: 0xE5FA,
-                end: 0xE8FF
+                end: 0xE8FF,
+                font: "Symbols Nerd Font Mono".to_string(),
             }
         );
     }
@@ -495,26 +695,6 @@ font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols
         assert_eq!(out.len(), 1);
         assert!(out[0].contains(0xABCD));
         assert!(!out[0].contains(0xABCE));
-    }
-
-    #[test]
-    fn is_routed_true_when_in_any_range() {
-        let ranges = vec![
-            GhosttyRange {
-                start: 0xE5FA,
-                end: 0xE8FF,
-            },
-            GhosttyRange {
-                start: 0xF0001,
-                end: 0xF1AFF,
-            },
-        ];
-        assert!(is_routed(0xE8A4, &ranges));
-        assert!(is_routed(0xF07D2, &ranges));
-        assert!(
-            !is_routed(0xF0F6, &ranges),
-            "F0F6 falls outside routed ranges — should tofu"
-        );
     }
 
     #[test]

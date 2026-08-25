@@ -2713,8 +2713,39 @@ impl Config {
                 // slot was actually a mislabeled Codex glyph and has
                 // been stripped from MnmlSymbols.
                 if icon.id == "amplify" && (icon.glyph == "\u{F087D}" || icon.glyph == "\u{F1B00}")
+                // pua-drift-ok: matches the OLD value
                 {
                     icon.glyph = "\u{F1C0E}".to_string();
+                }
+                // 2026-08-25 audit (user report: CodeBuild rendered
+                // `?` on the Installed tab): the WHOLE F1B0x block
+                // was purged from MnmlSymbols in the glyph cleanup,
+                // but the AWS installers pinned those slots — remap
+                // every one to its canonical F1C0x duplicate (the
+                // integration-glyphs assignments the marketplace
+                // catalog already uses). Installer pins fixed in
+                // mnml-integrations ad45cec. NB: f02215d4 claimed to
+                // land this arm but the edit was lost to a bisect
+                // checkout before commit — the pua-drift test caught
+                // the absence; THIS commit actually lands it.
+                const AWS_F1B_REMAP: &[(char, char)] = &[
+                    ('\u{F1B00}', '\u{F1C0E}'), // amplify      pua-drift-ok: OLD value
+                    ('\u{F1B01}', '\u{F1C0A}'), // lambda       pua-drift-ok: OLD value
+                    ('\u{F1B02}', '\u{F1C08}'), // ecs          pua-drift-ok: OLD value
+                    ('\u{F1B03}', '\u{F1C07}'), // ecr          pua-drift-ok: OLD value
+                    ('\u{F1B04}', '\u{F1C0B}'), // rds          pua-drift-ok: OLD value
+                    ('\u{F1B05}', '\u{F1C0D}'), // sqs          pua-drift-ok: OLD value
+                    ('\u{F1B06}', '\u{F1C0C}'), // sns          pua-drift-ok: OLD value
+                    ('\u{F1B08}', '\u{F1C05}'), // cognito      pua-drift-ok: OLD value
+                    ('\u{F1B09}', '\u{F1C03}'), // cloudwatch   pua-drift-ok: OLD value
+                    ('\u{F1B0A}', '\u{F1C04}'), // codebuild    pua-drift-ok: OLD value
+                    ('\u{F1B0B}', '\u{F1C09}'), // eventbridge  pua-drift-ok: OLD value
+                ];
+                if let Some(&(_, new)) = AWS_F1B_REMAP
+                    .iter()
+                    .find(|(old, _)| icon.glyph.starts_with(*old))
+                {
+                    icon.glyph = new.to_string();
                 }
                 // btop/htop/iftop legacy codicons → the current real
                 // Nerd Font picks (2026-08-25: the interim baked
@@ -2724,12 +2755,15 @@ impl Config {
                 // id catch both the original codicon values AND
                 // configs that were migrated onto the baked trio.
                 if icon.id == "btop" && (icon.glyph == "\u{F085F}" || icon.glyph == "\u{F2000}") {
+                    // pua-drift-ok: OLD value
                     icon.glyph = "\u{F0AEF}".to_string();
                 }
                 if icon.id == "htop" && (icon.glyph == "\u{F085A}" || icon.glyph == "\u{F2001}") {
+                    // pua-drift-ok: OLD value
                     icon.glyph = "\u{F0379}".to_string();
                 }
                 if icon.id == "iftop" && (icon.glyph == "\u{F048D}" || icon.glyph == "\u{F2002}") {
+                    // pua-drift-ok: OLD value
                     icon.glyph = "\u{F06F3}".to_string();
                 }
             }

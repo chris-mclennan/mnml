@@ -1196,3 +1196,103 @@ mod tests {
         assert!((s.center_x_frac - 0.50).abs() < 1e-6);
     }
 }
+
+#[cfg(test)]
+mod pua_drift_tests {
+    /// #1205 layer 2 — the CI-runnable half of the tofu guard. The
+    /// runtime audit checks a USER machine's font vs their manifests;
+    /// this test checks the REPO: every mnml-PUA codepoint that core
+    /// source references as a `\u{...}` literal must have a bake
+    /// source (a `BUILTIN_GLYPHS` entry) or sit in the documented
+    /// install-time-baked set below. When a future font cleanup
+    /// purges a block, this test forces the sweep of core references
+    /// that yesterday's cleanup missed (F1B0A → CodeBuild tofu,
+    /// user-reported 2026-08-25).
+    #[test]
+    fn core_pua_references_have_a_bake_source() {
+        use std::collections::HashSet;
+        // Codepoints baked at INSTALL time from integration-shipped
+        // SVGs (mnml-aws-*, mnml-db drivers, terminal rebrand, htop
+        // launcher) — not bakeable from this repo, but canonical.
+        // Growing this list is a deliberate act: only add a slot the
+        // install/bake pipeline genuinely populates.
+        let install_baked: HashSet<u32> = (0xF1C03..=0xF1C14).chain([0xF1D00]).collect();
+        // Baked by scripts/inject_tree_connectors.py (outlines copied
+        // from JBM-NF, not SVG-rasterized — see the BUILTIN_GLYPHS
+        // tail comment). Fragile by design: a full rebake wipes them
+        // until the script reruns; the runtime startup check
+        // (glyph_audit_startup_check) covers that case per-machine.
+        let script_baked: HashSet<u32> = [0xF1F04, 0xF1F05].into_iter().collect();
+        let builtin: HashSet<u32> = super::BUILTIN_GLYPHS.iter().map(|g| g.codepoint).collect();
+
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![src_root];
+        let mut offenders: Vec<String> = Vec::new();
+        let re = regex_lite();
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
+                for (line_no, line) in text.lines().enumerate() {
+                    // Escape hatch for lines that deliberately name a
+                    // DEAD codepoint (config-migration arms matching
+                    // the value being migrated away from).
+                    if line.contains("pua-drift-ok") {
+                        continue;
+                    }
+                    for cp in re(line) {
+                        if (0xF1B00..=0xF20FF).contains(&cp)
+                            && !builtin.contains(&cp)
+                            && !install_baked.contains(&cp)
+                            && !script_baked.contains(&cp)
+                        {
+                            offenders.push(format!(
+                                "U+{cp:05X} at {}:{}",
+                                p.display(),
+                                line_no + 1
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "mnml-PUA codepoints referenced in core with NO bake source \
+             (add a BUILTIN_GLYPHS entry, add to install_baked with \
+             justification, or drop the reference):\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// Extract `\u{F1XXX}`/`\u{F20XX}`-style literals from one source
+    /// line without pulling in a regex crate.
+    fn regex_lite() -> impl Fn(&str) -> Vec<u32> {
+        |line: &str| {
+            let mut out = Vec::new();
+            let mut rest = line;
+            while let Some(i) = rest.find("\\u{") {
+                rest = &rest[i + 3..];
+                if let Some(end) = rest.find('}')
+                    && end <= 6
+                    && let Ok(cp) = u32::from_str_radix(&rest[..end], 16)
+                {
+                    out.push(cp);
+                }
+            }
+            out
+        }
+    }
+}

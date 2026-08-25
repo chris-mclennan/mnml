@@ -778,6 +778,10 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // First-launch onboarding overlay. If the user has never dismissed it
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();
+    // #1205 — launch-time tofu check: toast when any integration
+    // glyph is certain to render as `?` (mnml PUA not baked, or a
+    // force-routed codepoint the target font lacks).
+    app.glyph_audit_startup_check();
     // Global first-launch wizard — one-time-ever setup (AI backend,
     // input style, Nerd Font check, tool installs). Gated by
     // `[ui] first_launch_complete`. Runs AFTER the per-workspace
