@@ -4301,6 +4301,108 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         crate::app::IntegrationsPanelTab::Marketplace | crate::app::IntegrationsPanelTab::InDev
     ) {
         let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
+        // #1202 (2026-08-25) — FONTS section: installed Nerd Font
+        // families with their name-table versions vs the latest
+        // release, plus a one-click "↑ Update" chip (brew, macOS).
+        // Marketplace tab only; rendered before the entries so it's
+        // the first thing under the icon list. Simplifications (all
+        // deliberate): hidden while a `/` filter is active, and
+        // hidden wholesale once the list is scrolled (start_idx > 0)
+        // instead of scrolling row-by-row — the section is 3-6 rows,
+        // so "scrolled = gone" reads naturally and keeps the
+        // virtual-list math untouched.
+        if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace)
+            && start_idx == 0
+            && filter_lc_mp.is_empty()
+            && !app.installed_fonts.is_empty()
+            && y + 1 < area.y + area.height
+        {
+            let latest: Option<String> = app.nerdfonts_latest.lock().ok().and_then(|g| g.clone());
+            let header = Rect {
+                x: area.x,
+                y,
+                width: row_width,
+                height: 1,
+            };
+            let header_label = match &latest {
+                Some(v) => format!("  FONTS · latest Nerd Fonts {v}"),
+                None => "  FONTS".to_string(),
+            };
+            frame.render_widget(
+                Paragraph::new(header_label).style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                header,
+            );
+            y += 1;
+            for font in &app.installed_fonts {
+                if y + 1 >= area.y + area.height {
+                    break;
+                }
+                let row = Rect {
+                    x: area.x,
+                    y,
+                    width: row_width,
+                    height: 1,
+                };
+                let behind = matches!(
+                    (&font.nf_version, &latest),
+                    (Some(cur), Some(lat)) if cur != lat
+                );
+                let (ver_label, ver_fg) = match (&font.nf_version, &latest) {
+                    (Some(cur), Some(lat)) if cur == lat => (format!("v{cur} ✓"), t.green),
+                    (Some(cur), Some(_)) => (format!("v{cur}"), t.yellow),
+                    (Some(cur), None) => (format!("v{cur}"), t.comment),
+                    // MnmlSymbols (and any non-NF face that slips
+                    // through): no NF lineage to compare.
+                    (None, _) => ("auto-baked by mnml".to_string(), t.comment),
+                };
+                let spans: Vec<Span<'static>> = vec![
+                    Span::styled("  \u{F031}  ", Style::default().fg(t.cyan).bg(bg)),
+                    Span::styled(font.family.clone(), Style::default().fg(t.fg).bg(bg)),
+                    Span::styled(format!("  {ver_label}"), Style::default().fg(ver_fg).bg(bg)),
+                ];
+                frame.render_widget(Paragraph::new(ratatui::text::Line::from(spans)), row);
+                // "↑ Update" chip, painted OVER the row at the right
+                // edge — only when the family is behind AND mnml
+                // knows a command for it (macOS brew; the mnml-owned
+                // face never offers one).
+                if behind && crate::font_scan::update_command(&font.family).is_some() {
+                    let used: usize =
+                        2 + 3 + font.family.chars().count() + 2 + ver_label.chars().count();
+                    let chip = "↑ Update";
+                    let chip_len = chip.chars().count() as u16;
+                    let chip_x = (area.x + row_width.saturating_sub(chip_len + 1))
+                        .max(area.x + used as u16 + 2);
+                    if chip_x + chip_len <= area.x + row_width {
+                        let chip_rect = Rect {
+                            x: chip_x,
+                            y,
+                            width: chip_len,
+                            height: 1,
+                        };
+                        frame.render_widget(
+                            Paragraph::new(chip).style(
+                                Style::default()
+                                    .fg(t.cyan)
+                                    .bg(bg)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            chip_rect,
+                        );
+                        app.rects
+                            .font_update_chip_rects
+                            .push((chip_rect, font.family.clone()));
+                    }
+                }
+                y += 1;
+            }
+            // Spacer before the marketplace entries.
+            y += 1;
+        }
         // Skip marketplace entries for ids the user already has
         // installed — those appear in the top section of this same
         // tab (installed-but-not-enabled chips) and rendering them

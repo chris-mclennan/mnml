@@ -2293,6 +2293,35 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.apply_integration_update(&id);
         return;
     }
+    // #1202 (2026-08-25) — "↑ Update" chip on a FONTS row → run the
+    // brew upgrade in a Pty pane so the user sees the install live.
+    // After it finishes, `integrations.refresh` re-scans versions.
+    if let Some(family) = app
+        .rects
+        .font_update_chip_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, f)| f.clone())
+    {
+        match crate::font_scan::update_command(&family) {
+            Some(cmd) => {
+                let ws = app.workspace.clone();
+                app.open_pty_dir(
+                    crate::pty_pane::BinaryProfile::task(
+                        &format!("font update: {family}"),
+                        &cmd,
+                        ws,
+                    ),
+                    crate::layout::SplitDir::Horizontal,
+                );
+                app.toast(format!(
+                    "updating {family} — run `:integrations.refresh` after it finishes"
+                ));
+            }
+            None => app.toast(format!("no update command known for {family}")),
+        }
+        return;
+    }
     // P4c (2026-08-01) — click on a marketplace entry row → install
     // action. Checked BEFORE the integration icon row cascade below,
     // so a marketplace row doesn't get swallowed by a co-located

@@ -64,6 +64,7 @@ pub(crate) mod editor;
 pub(crate) mod editorconfig;
 pub(crate) mod flash;
 pub(crate) mod focus;
+pub mod font_scan;
 pub(crate) mod formatter;
 pub(crate) mod fuzzy;
 pub mod ghostty_config;

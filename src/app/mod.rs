@@ -2202,6 +2202,12 @@ pub struct PaneRects {
     /// Cleared + repopulated every frame (default reset via
     /// `reset_for_frame`).
     pub update_chip_rects: Vec<(Rect, String)>,
+    /// #1202 (2026-08-25) — clickable "↑ Update" chips on the FONTS
+    /// rows pinned at the top of the Marketplace tab. `(rect,
+    /// family)` — the click handler resolves the family to a brew
+    /// command via `font_scan::update_command` and runs it in a Pty
+    /// pane. Cleared + repopulated every frame.
+    pub font_update_chip_rects: Vec<(Rect, String)>,
     /// Activity-bar icon rects (the far-left vscode-style strip) —
     /// `(rect, section)`. Click dispatcher in `tui.rs` flips
     /// `App.active_section`.
@@ -4071,6 +4077,17 @@ pub struct App {
     /// the unit + e2e suites don't stack un-joined worker threads
     /// (matches the `spawn_coverage_s3_syncer` gating pattern).
     pub integration_updates_waker: Option<crate::app::integration_updates::UpdateWaker>,
+    /// #1202 (2026-08-25) — installed Nerd Font families (name-table
+    /// scan via `font_scan::scan_nerd_fonts`). Rendered as the FONTS
+    /// section pinned at the top of the Marketplace tab so users can
+    /// see each family's Nerd Fonts version. Populated at startup +
+    /// on `integrations.refresh`; empty under `cfg!(test)`.
+    pub installed_fonts: Vec<crate::font_scan::InstalledFont>,
+    /// #1202 — latest Nerd Fonts release version ("3.5.1"), filled by
+    /// a one-shot worker thread (GitHub API, 24h disk cache). `None`
+    /// until the fetch resolves; the FONTS rows then color stale
+    /// families and grow an "↑ Update" chip.
+    pub nerdfonts_latest: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// #993 step 2b (2026-08-20) — background tick for auto-update
     /// firing. Records the last wall-clock at which `tick_auto_updates`
     /// evaluated the plan, so the check runs at most once per
@@ -5678,6 +5695,11 @@ pub struct App {
     /// `PromptKind::IntegrationLauncher` prompt. Set by the chip's
     /// "Set launcher script…" menu, read by the prompt-accept.
     pub pending_integration_launcher_id: Option<String>,
+    /// #1203 f/u — state for the two-step "New launch profile…"
+    /// flow: `(integration id, Some(name) once step 1 accepted)`.
+    /// Set by the chip menu's NewAiLaunchProfile action; consumed by
+    /// the `LaunchProfileName` / `LaunchProfileCommand` accepts.
+    pub pending_launch_profile: Option<(String, Option<String>)>,
     /// Task #944 rename UX (2026-08-16) — Claude account name being
     /// renamed by the `PromptKind::ClaudeAccountRename` prompt.
     /// Populated by `App::open_claude_account_rename_prompt` (from
@@ -6084,6 +6106,34 @@ impl App {
         let integration_updates_waker_init: Option<
             crate::app::integration_updates::UpdateWaker,
         > = None;
+        // #1202 — installed Nerd Font scan (local seek-reads only,
+        // fast) + a one-shot latest-release check on a worker thread
+        // (24h disk cache short-circuits the network hit). Both empty
+        // under cfg(test) — same hermetic-suite rationale as the
+        // update-check worker above.
+        #[cfg(not(test))]
+        let installed_fonts_init = crate::font_scan::scan_nerd_fonts();
+        #[cfg(test)]
+        let installed_fonts_init: Vec<crate::font_scan::InstalledFont> = Vec::new();
+        let nerdfonts_latest_init: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::font_scan::latest_nerdfonts_cached(),
+            ));
+        #[cfg(not(test))]
+        if nerdfonts_latest_init
+            .lock()
+            .map(|g| g.is_none())
+            .unwrap_or(false)
+        {
+            let slot = nerdfonts_latest_init.clone();
+            std::thread::spawn(move || {
+                if let Ok(v) = crate::font_scan::fetch_latest_nerdfonts()
+                    && let Ok(mut g) = slot.lock()
+                {
+                    *g = Some(v);
+                }
+            });
+        }
         Ok(App {
             workspace,
             config,
@@ -6110,6 +6160,8 @@ impl App {
             launcher_install_pending: Vec::new(),
             integration_updates: integration_updates_map,
             integration_updates_waker: integration_updates_waker_init,
+            installed_fonts: installed_fonts_init,
+            nerdfonts_latest: nerdfonts_latest_init,
             last_auto_update_tick_at: None,
             readme_cache: std::collections::HashMap::new(),
             readme_pending: Vec::new(),
@@ -6519,6 +6571,7 @@ impl App {
             pending_integration_remove_id: None,
             pending_integration_remove_binary: None,
             pending_integration_launcher_id: None,
+            pending_launch_profile: None,
             pending_claude_account_rename: None,
             pending_worktree_path: None,
             pending_merge_source: None,

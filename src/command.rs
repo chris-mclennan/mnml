@@ -6143,7 +6143,13 @@ fn builtin_commands() -> Vec<Command> {
             title: "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/",
             group: "integrations",
             keys: &[],
-            run: |app| app.refresh_integration_manifests(),
+            run: |app| {
+                app.refresh_integration_manifests();
+                // #1202 — the FONTS section shares this refresh so a
+                // just-completed brew update shows its new version
+                // without an mnml restart.
+                app.installed_fonts = crate::font_scan::scan_nerd_fonts();
+            },
         },
         // 2026-08-07 design-critic r2 #1: keyboard path for the sort
         // chip. Cycles the ACTIVE tab's sort mode (mirrors what the
