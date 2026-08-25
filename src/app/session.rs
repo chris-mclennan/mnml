@@ -566,6 +566,15 @@ impl App {
             };
             if let Some(sec) = s {
                 self.active_section = sec;
+                // 2026-08-24 — Git section auto-populates its
+                // multi-repo tab strip on entry. Session restore
+                // sets `active_section` directly (skipping the
+                // `set_activity_section` entering_git hook), so
+                // fire the same open here for the restart-into-git
+                // path — otherwise the panel comes back blank.
+                if matches!(sec, ActivitySection::Git) {
+                    self.open_git_graph();
+                }
             }
         }
         if saved.fullscreen_mode.unwrap_or(false) {

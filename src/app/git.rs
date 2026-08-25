@@ -1503,6 +1503,38 @@ impl App {
         ));
     }
 
+    /// `git.reopen_repo` — picker over repos the user closed from the
+    /// git multi-repo tab strip this session. Accept ⇒ remove from
+    /// `git_closed_repos` and rebuild the tab layout. Toasts and
+    /// no-ops when nothing has been closed. Session-scoped state:
+    /// a fresh mnml launch always starts with the full repo set.
+    pub fn open_git_reopen_repo_picker(&mut self) {
+        if self.git_closed_repos.is_empty() {
+            self.toast("no closed repos to reopen");
+            return;
+        }
+        let mut closed: Vec<std::path::PathBuf> = self.git_closed_repos.iter().cloned().collect();
+        closed.sort();
+        let items: Vec<crate::picker::PickerItem> = closed
+            .iter()
+            .map(|p| {
+                let name = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("repo")
+                    .to_string();
+                let detail = p.display().to_string();
+                crate::picker::PickerItem::new(p.display().to_string(), name, detail)
+            })
+            .collect();
+        let count = items.len();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::GitReopenRepo,
+            format!("Reopen repo ({count})"),
+            items,
+        ));
+    }
+
     /// `git.stash_list` — fuzzy picker over `git stash list`. Accept ⇒
     /// `git stash apply <ref>` (keeps the stash; sibling `git.stash_drop`
     /// drops without applying).

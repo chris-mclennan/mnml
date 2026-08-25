@@ -4389,6 +4389,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_git_push_tags(),
         },
         Command {
+            id: "git.reopen_repo",
+            title: "Git: reopen a closed repo tab",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_reopen_repo_picker(),
+        },
+        Command {
             id: "git.stash_list",
             title: "Git: stash list (pick to apply — keeps the stash)",
             group: "git",

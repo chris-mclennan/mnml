@@ -133,6 +133,12 @@ pub enum PickerKind {
     /// `id` = the tag name. Accept ⇒ `git tag -d <name>`. Populated by
     /// `git.tag_delete`.
     GitTags,
+    /// `id` = an absolute repo path. Accept ⇒ remove that repo from
+    /// `App.git_closed_repos` and re-fire `open_git_graph` so the
+    /// multi-repo tab strip includes it again. Populated by
+    /// `git.reopen_repo`; only enabled when at least one repo has
+    /// been closed this session.
+    GitReopenRepo,
     /// `id` = a stash ref (`stash@{N}`). Accept ⇒ `git stash apply <id>`.
     /// Populated by `git.stash_list`.
     StashesApply,

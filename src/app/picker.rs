@@ -978,6 +978,14 @@ impl App {
                     Err(e) => self.toast(format!("git tag -d: {e}")),
                 }
             }
+            PickerKind::GitReopenRepo => {
+                let path = std::path::PathBuf::from(&item.id);
+                if self.git_closed_repos.remove(&path) {
+                    self.open_git_graph();
+                    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
+                    self.toast(format!("reopened {name}"));
+                }
+            }
             PickerKind::StashesApply => {
                 let stash_ref = item.id;
                 match crate::git::stash::apply(self.active_repo_path(), &stash_ref) {
