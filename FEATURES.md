@@ -130,6 +130,11 @@ The complete, organised feature inventory. For the front-door overview see
   key, offline after a one-time download).
 - **Context-aware chat** — a claude-chat.nvim-style wrapper that seeds a prompt
   with the active file and selection.
+- **Launch profiles** — multiple named launch commands per Claude/Codex chip
+  (`[[launch_profile]]` + `default_profile` in the integration manifest,
+  user-global or workspace-scoped). Right-click the chip to fire a one-off
+  session with any profile or to persist a new default; the legacy
+  "Set launcher script…" single override still works as the `wrapper` profile.
 
 ## Terminal & process panes
 

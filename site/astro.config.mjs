@@ -146,6 +146,7 @@ export default defineConfig({
             { label: 'HTTP lookups', slug: 'manual/http-lookup' },
             { label: 'HTTP helpers — JWT & bearer', slug: 'manual/http-helpers' },
             { label: 'AI panes', slug: 'manual/ai-panes' },
+            { label: 'AI launch profiles', slug: 'manual/ai-launch-profiles' },
             { label: 'Cross-host PR workflow', slug: 'manual/cross-host-prs' },
             { label: 'Headless & .test', slug: 'manual/headless' },
             { label: 'Settings & configuration', slug: 'manual/settings' },
