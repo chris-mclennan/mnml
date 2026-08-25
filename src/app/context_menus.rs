@@ -432,28 +432,87 @@ impl App {
         }
         let default_exe = if id == "codex" { "codex" } else { "claude" };
         let lp = crate::launch_profiles::LaunchProfiles::load(&self.workspace, id, default_exe);
-        if lp.profiles.len() < 2 {
-            return Vec::new();
-        }
         let mut items = Vec::new();
-        for p in &lp.profiles {
-            items.push(MenuItem::new(
-                format!("New session: {}", p.name),
-                MenuAction::OpenAiSessionWithProfile(id.to_string(), p.name.clone()),
-            ));
+        if lp.profiles.len() >= 2 {
+            for p in &lp.profiles {
+                items.push(MenuItem::new(
+                    format!("New session: {}", p.name),
+                    MenuAction::OpenAiSessionWithProfile(id.to_string(), p.name.clone()),
+                ));
+            }
+            for p in &lp.profiles {
+                let mark = if p.name == lp.default_name {
+                    "\u{2713} "
+                } else {
+                    "  "
+                };
+                items.push(MenuItem::new(
+                    format!("{mark}Default: {}", p.name),
+                    MenuAction::SetAiDefaultProfile(id.to_string(), p.name.clone()),
+                ));
+            }
         }
-        for p in &lp.profiles {
-            let mark = if p.name == lp.default_name {
-                "\u{2713} "
-            } else {
-                "  "
-            };
-            items.push(MenuItem::new(
-                format!("{mark}Default: {}", p.name),
-                MenuAction::SetAiDefaultProfile(id.to_string(), p.name.clone()),
+        // #1203 f/u — UI-managed profiles: create is always offered
+        // (it's the discoverable entry into the whole feature);
+        // remove rows appear per workspace-declared profile.
+        items.push(MenuItem::new(
+            "New launch profile\u{2026}",
+            MenuAction::NewAiLaunchProfile(id.to_string()),
+        ));
+        for p in crate::launch_profiles::workspace_profiles(&self.workspace, id) {
+            items.push(MenuItem::destructive(
+                format!("Remove profile: {}", p.name),
+                MenuAction::RemoveAiLaunchProfile(id.to_string(), p.name),
             ));
         }
         items
+    }
+
+    /// #1203 f/u — step 1 of "New launch profile…": ask for the name.
+    pub fn open_launch_profile_name_prompt(&mut self, id: String) {
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::LaunchProfileName,
+            format!("New `{id}` launch profile \u{2014} name (e.g. multi-repo)"),
+            String::new(),
+        );
+        self.pending_launch_profile = Some((id, None));
+        self.prompt = Some(prompt);
+    }
+
+    /// Accept for `LaunchProfileName` — stash the name, chain into
+    /// the command prompt (seeded with the template prefix so
+    /// workspace-relative wrappers are one path-completion away).
+    pub fn accept_launch_profile_name(&mut self, input: String) {
+        let Some((id, _)) = self.pending_launch_profile.take() else {
+            return;
+        };
+        let name = input.trim().to_string();
+        if name.is_empty() || name.contains('"') {
+            self.toast("profile name must be non-empty, without double quotes");
+            return;
+        }
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::LaunchProfileCommand,
+            format!("Command for `{name}` \u{2014} executable path ({{{{workspace}}}} expands)"),
+            "{{workspace}}/".to_string(),
+        );
+        self.pending_launch_profile = Some((id, Some(name)));
+        self.prompt = Some(prompt);
+    }
+
+    /// Accept for `LaunchProfileCommand` — write the profile into the
+    /// workspace manifest; the chip menu shows its run/default rows
+    /// from the next right-click.
+    pub fn accept_launch_profile_command(&mut self, input: String) {
+        let Some((id, Some(name))) = self.pending_launch_profile.take() else {
+            return;
+        };
+        match crate::launch_profiles::add_profile(&self.workspace, &id, &name, input.trim()) {
+            Ok(()) => self.toast(format!(
+                "profile `{name}` added \u{2014} right-click the {id} chip to run or set default"
+            )),
+            Err(e) => self.toast(format!("add profile: {e}")),
+        }
     }
 
     pub fn integration_launcher_override(&self, id: &str) -> Option<String> {
@@ -2218,6 +2277,15 @@ impl App {
                 match crate::launch_profiles::set_default_profile(&self.workspace, &id, &profile) {
                     Ok(()) => self.toast(format!("default {id} profile \u{2192} {profile}")),
                     Err(e) => self.toast(format!("set default profile: {e}")),
+                }
+            }
+            NewAiLaunchProfile(id) => {
+                self.open_launch_profile_name_prompt(id);
+            }
+            RemoveAiLaunchProfile(id, profile) => {
+                match crate::launch_profiles::remove_profile(&self.workspace, &id, &profile) {
+                    Ok(()) => self.toast(format!("removed profile `{profile}` from {id}")),
+                    Err(e) => self.toast(format!("remove profile: {e}")),
                 }
             }
             RemoveIntegration(id) => {

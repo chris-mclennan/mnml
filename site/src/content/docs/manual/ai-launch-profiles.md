@@ -68,6 +68,28 @@ Commands are template-expanded at **spawn time** (not load time — switching wo
 
 Editor-context tokens (`{{current_file}}`, `{{cursor_line}}`, …) exist in the wider [launcher template engine](/manual/integrations/launcher-manifests/) but expand to empty here — there's no "current file" at AI-chip-click time. Unknown tokens stay literal, so a typo executes visibly instead of vanishing.
 
+## Creating profiles from the UI
+
+You never have to touch the TOML. Right-click the Claude Code or
+Codex chip and every profile operation is a menu row:
+
+- **New launch profile…** — a two-step prompt: profile *name* (e.g.
+  `multi-repo`), then its *command* (seeded with `{{workspace}}/` so a
+  workspace-relative wrapper is a few keystrokes away). Accepting
+  writes the `[[launch_profile]]` into
+  `<workspace>/.mnml/integrations/<id>.toml` for you.
+- **New session: <name>** — one row per resolved profile; fires a
+  single session with that launcher (the tab is suffixed `(name)`).
+- **Default: <name>** — persists which profile plain clicks use; the
+  ✓ marks the current default.
+- **Remove profile: <name>** — deletes a workspace-declared profile
+  (and clears `default_profile` if it pointed there). Builtin and
+  user-global profiles don't get remove rows — edit those files
+  directly.
+
+The TOML in the next section is what those menu actions read and
+write — hand-editing and the UI stay interchangeable.
+
 ## The right-click menu
 
 Profiles surface on both chip locations:

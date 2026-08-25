@@ -117,6 +117,15 @@ pub enum MenuAction {
     /// clicks / palette commands spawn that profile from now on.
     /// Payload: (integration id, profile name).
     SetAiDefaultProfile(String, String),
+    /// #1203 f/u (2026-08-25, user request "configure the launchers
+    /// from the UI") — start the two-step name → command prompt flow
+    /// that writes a `[[launch_profile]]` into the workspace
+    /// manifest. Payload: integration id.
+    NewAiLaunchProfile(String),
+    /// #1203 f/u — delete one workspace-scope `[[launch_profile]]`
+    /// (and a `default_profile` key pointing at it). Payload:
+    /// (integration id, profile name).
+    RemoveAiLaunchProfile(String, String),
     /// #1103 f/u7 (2026-08-20) — spawn `<binary> --diag` as a Pty
     /// pane. Every integration that follows the mnml-bridge SDK
     /// contract supports the `--diag` subcommand; the output is a

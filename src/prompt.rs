@@ -202,6 +202,15 @@ pub enum PromptKind {
     /// so a per-workspace wrapper (e.g. `./bin/claude-multi.sh`)
     /// runs in place of the plain binary. Ships with v0.2.0.
     IntegrationLauncher,
+    /// #1203 f/u (2026-08-25) — step 1 of "New launch profile…":
+    /// the profile NAME. Accept stashes it on
+    /// `App.pending_launch_profile` and chains into the
+    /// `LaunchProfileCommand` prompt.
+    LaunchProfileName,
+    /// Step 2 — the profile COMMAND (an executable path; `{{workspace}}`
+    /// templates expand at spawn). Accept writes a `[[launch_profile]]`
+    /// into `<workspace>/.mnml/integrations/<id>.toml`.
+    LaunchProfileCommand,
     /// Accept ⇒ create an empty file at `<parent>/<input>`, then open it.
     NewFile,
     /// Accept ⇒ `mkdir -p <parent>/<input>`. No buffer opened.

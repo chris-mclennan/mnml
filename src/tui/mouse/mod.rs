@@ -1037,12 +1037,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
     }
     // Welcome overlay — any left-click dismisses + persists the marker.
-    if app.show_welcome && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+    //
+    // #1203 f/u (2026-08-25) — but NOT while a context menu is open:
+    // right-click still opens chip menus over the welcome screen, and
+    // this swallow used to eat the follow-up click on a menu item, so
+    // every item (user hit it on "Set launcher script…") read as
+    // dead. Let the modal menu handler below take the click; the next
+    // outside-click still dismisses the welcome.
+    if app.show_welcome
+        && app.context_menu.is_none()
+        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+    {
         app.dismiss_welcome();
         return;
     }
     // About overlay — any left-click dismisses (no marker; pure in-memory).
-    if app.show_about && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+    if app.show_about
+        && app.context_menu.is_none()
+        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+    {
         app.show_about = false;
         return;
     }

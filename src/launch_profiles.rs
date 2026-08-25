@@ -213,6 +213,116 @@ fn merge(default_exe: &str, user_text: Option<&str>, ws_text: Option<&str>) -> L
     }
 }
 
+/// The profiles declared in the WORKSPACE-scope manifest only —
+/// what the right-click "Remove profile:" rows may delete (builtin
+/// and user-global entries aren't removable from a workspace menu).
+pub fn workspace_profiles(workspace: &Path, id: &str) -> Vec<LaunchProfile> {
+    std::fs::read_to_string(workspace_manifest_path(workspace, id))
+        .map(|t| parse_scope(&t).profiles)
+        .unwrap_or_default()
+}
+
+/// Add (or update, when the name already exists) one
+/// `[[launch_profile]]` in the workspace-scope manifest. Text-level
+/// edit so comments and unrelated keys survive. Names/commands with
+/// double quotes are rejected — they'd break the TOML we emit.
+pub fn add_profile(workspace: &Path, id: &str, name: &str, command: &str) -> Result<(), String> {
+    let name = name.trim();
+    let command = command.trim();
+    if name.is_empty() || command.is_empty() {
+        return Err("name and command must be non-empty".into());
+    }
+    if name.contains('"') || command.contains('"') {
+        return Err("double quotes aren't allowed".into());
+    }
+    let dir = workspace.join(".mnml").join("integrations");
+    let path = dir.join(format!("{id}.toml"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut out = if let Some((start, end)) = find_profile_block(&existing, name) {
+        // Replace the block wholesale — simplest way to keep name +
+        // command adjacent and drop any stale extra keys.
+        let lines: Vec<&str> = existing.lines().collect();
+        let mut rebuilt: Vec<String> = lines[..start].iter().map(|l| l.to_string()).collect();
+        rebuilt.push("[[launch_profile]]".to_string());
+        rebuilt.push(format!("name = \"{name}\""));
+        rebuilt.push(format!("command = \"{command}\""));
+        rebuilt.extend(lines[end..].iter().map(|l| l.to_string()));
+        rebuilt.join("\n")
+    } else {
+        let mut text = existing.trim_end().to_string();
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&format!(
+            "[[launch_profile]]\nname = \"{name}\"\ncommand = \"{command}\""
+        ));
+        text
+    };
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(&path, out).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+/// Remove one `[[launch_profile]]` from the workspace-scope manifest;
+/// also drops a `default_profile` key that pointed at it (resolution
+/// falls back to the builtin). Errors when the name isn't declared in
+/// the workspace file (builtin / user-global profiles aren't ours to
+/// delete here).
+pub fn remove_profile(workspace: &Path, id: &str, name: &str) -> Result<(), String> {
+    let path = workspace_manifest_path(workspace, id);
+    let existing =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let Some((start, end)) = find_profile_block(&existing, name) else {
+        return Err(format!("profile `{name}` isn't in the workspace manifest"));
+    };
+    let lines: Vec<&str> = existing.lines().collect();
+    let mut rebuilt: Vec<String> = Vec::with_capacity(lines.len());
+    for (i, l) in lines.iter().enumerate() {
+        if i >= start && i < end {
+            continue;
+        }
+        let trimmed = l.trim_start();
+        if trimmed.starts_with("default_profile") && trimmed.contains(&format!("\"{name}\"")) {
+            continue;
+        }
+        rebuilt.push(l.to_string());
+    }
+    let mut out = rebuilt.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(&path, out).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+/// Line range `[start, end)` of the `[[launch_profile]]` block whose
+/// `name` matches, where `start` is the header line and `end` is the
+/// next table header (or EOF).
+fn find_profile_block(text: &str, name: &str) -> Option<(usize, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "[[launch_profile]]" {
+            let mut end = i + 1;
+            while end < lines.len() && !lines[end].trim_start().starts_with('[') {
+                end += 1;
+            }
+            let has_name = lines[i + 1..end].iter().any(|l| {
+                let t = l.trim_start();
+                t.starts_with("name") && t.contains(&format!("\"{name}\""))
+            });
+            if has_name {
+                return Some((i, end));
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 /// Persist `default_profile = "<name>"` into the workspace-scope
 /// manifest, preserving everything else in the file. The key must sit
 /// ABOVE any `[table]` / `[[array]]` header to stay top-level, so it's
@@ -382,6 +492,43 @@ mod tests {
         let text = std::fs::read_to_string(manifest_dir.join("claude_code.toml")).unwrap();
         assert_eq!(text.matches("default_profile").count(), 1);
         assert!(text.contains("default_profile = \"default\""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_update_remove_profile_roundtrip() {
+        let dir =
+            std::env::temp_dir().join(format!("mnml-launch-profiles-test3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Add into a missing file.
+        add_profile(&dir, "claude_code", "multi", "{{workspace}}/bin/m.sh").unwrap();
+        let ws_profiles = workspace_profiles(&dir, "claude_code");
+        assert_eq!(ws_profiles.len(), 1);
+        assert_eq!(ws_profiles[0].command, "{{workspace}}/bin/m.sh");
+        // Same-name add updates in place (no duplicate block).
+        add_profile(&dir, "claude_code", "multi", "/opt/m2.sh").unwrap();
+        let ws_profiles = workspace_profiles(&dir, "claude_code");
+        assert_eq!(ws_profiles.len(), 1);
+        assert_eq!(ws_profiles[0].command, "/opt/m2.sh");
+        // Second profile + default pointing at the first; comments
+        // and the default key must survive the add.
+        set_default_profile(&dir, "claude_code", "multi").unwrap();
+        add_profile(&dir, "claude_code", "fast", "/opt/fast").unwrap();
+        let lp = LaunchProfiles::load(&dir, "claude_code", "claude");
+        assert_eq!(lp.default_name, "multi");
+        assert_eq!(lp.profiles.len(), 3);
+        // Removing the default profile also drops the default key —
+        // resolution falls back to builtin.
+        remove_profile(&dir, "claude_code", "multi").unwrap();
+        let lp = LaunchProfiles::load(&dir, "claude_code", "claude");
+        assert_eq!(lp.default_name, "default");
+        assert!(lp.profiles.iter().all(|p| p.name != "multi"));
+        assert!(lp.profiles.iter().any(|p| p.name == "fast"));
+        // Removing an undeclared name errors instead of no-op.
+        assert!(remove_profile(&dir, "claude_code", "ghost").is_err());
+        // Quotes rejected.
+        assert!(add_profile(&dir, "claude_code", "bad\"name", "/x").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

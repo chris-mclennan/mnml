@@ -2259,6 +2259,14 @@ impl App {
                 let input = p.input.clone();
                 self.accept_integration_launcher(input);
             }
+            crate::prompt::PromptKind::LaunchProfileName => {
+                let input = p.input.clone();
+                self.accept_launch_profile_name(input);
+            }
+            crate::prompt::PromptKind::LaunchProfileCommand => {
+                let input = p.input.clone();
+                self.accept_launch_profile_command(input);
+            }
             crate::prompt::PromptKind::ClaudeAccountRename => {
                 let typed = p.input.clone();
                 if let Some(old) = self.pending_claude_account_rename.take() {
