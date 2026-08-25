@@ -1325,45 +1325,39 @@ impl App {
             });
         }
 
-        // Full Nerd Fonts PUA ranges. Some codepoints are unassigned
-        // in a given Nerd Font (renders as tofu) — filtering those
-        // requires font introspection, so we surface every codepoint
-        // and let the user visually skip blanks.
-        const NERD_RANGES: &[(u32, u32)] = &[
-            (0xE000, 0xE00A),   // Pomicons
-            (0xE0A0, 0xE0A2),   // Powerline
-            (0xE0B0, 0xE0B3),   // Powerline
-            (0xE0A3, 0xE0A3),   // Powerline Extra
-            (0xE0B4, 0xE0C8),   // Powerline Extra
-            (0xE0CA, 0xE0CA),   // Powerline Extra
-            (0xE0CC, 0xE0D4),   // Powerline Extra
-            (0xE200, 0xE2A9),   // IEC Power Symbols
-            (0xE300, 0xE3E3),   // Weather
-            (0xE5FA, 0xE6B7),   // Seti-UI + Custom
-            (0xE700, 0xE8EF),   // Devicons
-            (0xEA60, 0xEC1E),   // Codicons
-            (0xED00, 0xEFCE),   // Font Awesome
-            (0xF000, 0xF2FF),   // Font Awesome
-            (0xF300, 0xF381),   // Font Logos
-            (0xF400, 0xF533),   // Octicons
-            (0xF0001, 0xF1AF0), // Material Design Icons
-        ];
-        for &(start, end) in NERD_RANGES {
-            for cp in start..=end {
-                if seen.contains(&cp) {
-                    continue;
-                }
-                let Some(ch) = char::from_u32(cp) else {
-                    continue;
-                };
-                items.push(crate::picker::PickerItem {
-                    id: format!("{cp:04X}"),
-                    label: format!("{ch} U+{cp:04X}"),
-                    detail: format!("\\u{{{cp:04X}}}"),
-                    priority: 0,
-                    score_bonus: 0,
-                });
+        // Full Nerd Fonts catalog (~11k glyphs) from bundled
+        // glyphnames.json v3.5.1. Each row carries name + category
+        // so search matches "repo pull" and "cod-repo_pull" the way
+        // nerdfonts.com's own search does — was previously typing
+        // hex codepoints only, since the fallback path only labeled
+        // rows as `U+XXXX`.
+        for meta in crate::nerd_glyphs::catalog().values() {
+            if seen.contains(&meta.codepoint) {
+                continue;
             }
+            let Some(ch) = char::from_u32(meta.codepoint) else {
+                continue;
+            };
+            let cp_hex = format!("{:04X}", meta.codepoint);
+            // Label carries: glyph, human name, category chip, hex.
+            // The picker's fuzzy matcher runs against the whole label,
+            // so `pull` finds every `*_pull` glyph, `md` narrows to
+            // Material Design, and `eb40` still lands on repo_pull.
+            let category_chip = if meta.category.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", meta.category)
+            };
+            items.push(crate::picker::PickerItem {
+                id: cp_hex.clone(),
+                label: format!(
+                    "{ch}  {name}{category_chip}  U+{cp_hex}",
+                    name = meta.human_name,
+                ),
+                detail: format!("nf-{}  \\u{{{cp_hex}}}", meta.full_name),
+                priority: 0,
+                score_bonus: 0,
+            });
         }
         let title = format!("Pick glyph · {} shown", items.len());
         let picker =

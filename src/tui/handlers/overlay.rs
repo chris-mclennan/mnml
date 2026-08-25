@@ -841,6 +841,34 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
             picker.move_down();
             app.on_picker_moved();
         }
+        // 2026-08-25 — PageUp/PageDown jump by a full viewport
+        // (approximated as 10 rows in list mode). Home / End snap
+        // to the ends. Native scrolling helps a ~11k-row glyph
+        // picker; typing filters still narrow, but not everyone
+        // knows the search term.
+        KeyCode::PageUp => {
+            for _ in 0..10 {
+                picker.move_up();
+            }
+            app.on_picker_moved();
+        }
+        KeyCode::PageDown => {
+            for _ in 0..10 {
+                picker.move_down();
+            }
+            app.on_picker_moved();
+        }
+        KeyCode::Home => {
+            picker.set_selected(0);
+            app.on_picker_moved();
+        }
+        KeyCode::End => {
+            let n = picker.len();
+            if n > 0 {
+                picker.set_selected(n - 1);
+            }
+            app.on_picker_moved();
+        }
         // Left / Right only navigate in grid mode (icon picker). List
         // pickers ignore them so typing arrow-shaped modifiers into
         // paths doesn't disturb the selection.

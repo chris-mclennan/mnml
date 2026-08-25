@@ -1252,14 +1252,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     app.close_picker(); // click outside dismisses
                 }
             }
+            // 2026-08-25 — a single wheel notch stepping one row felt
+            // useless on the 11k-row glyph picker. Bump to 3 rows per
+            // notch (matches most native list scroll rates) so users
+            // can actually browse instead of only search-narrowing.
             MouseEventKind::ScrollUp => {
                 if let Some(p) = app.picker.as_mut() {
-                    p.move_up();
+                    for _ in 0..3 {
+                        p.move_up();
+                    }
                 }
             }
             MouseEventKind::ScrollDown => {
                 if let Some(p) = app.picker.as_mut() {
-                    p.move_down();
+                    for _ in 0..3 {
+                        p.move_down();
+                    }
                 }
             }
             _ => {}
