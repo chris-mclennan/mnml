@@ -437,27 +437,36 @@ impl Picker {
                         }
                     }
                     if apply_glyph_name_boosts {
-                        // `detail` = "nf-<full_name>  \u{XXXX}" —
-                        // strip the trailing escape sequence so
-                        // "eb40" doesn't spuriously substring-match
-                        // via the `\u{...}` half.
+                        // `detail` = "nf-<full_name>  \u{XXXX}" for
+                        // full-catalog rows; curated rows carry the
+                        // name in the label instead. Check both so
+                        // the substring boost hits either source.
                         let detail_lower = it.detail.to_ascii_lowercase();
+                        let label_lower = it.label.to_ascii_lowercase();
                         let name_half = detail_lower.split("  ").next().unwrap_or(&detail_lower);
-                        // Suffix after `nf-<category>-` — this is the
-                        // token nerdfonts.com users think of as "the
-                        // name" (e.g. "repo_pull", "cloud_download").
+                        // Suffix after `nf-<category>-` — the token
+                        // nerdfonts.com users think of as "the name"
+                        // (e.g. "repo_pull", "cloud_download").
                         let suffix = name_half.splitn(3, '-').nth(2).unwrap_or(name_half);
-                        if suffix == q_lower {
-                            // Exact suffix hit — highest tier.
+                        // Whole-word match on label (curated rows).
+                        // Query "pull" hits `source-pull` because it
+                        // splits on `-` giving `source`, `pull`.
+                        let label_word_hit = label_lower
+                            .split(|c: char| !c.is_alphanumeric())
+                            .any(|w| w == q_lower);
+                        if suffix == q_lower || label_word_hit {
+                            // Exact hit — top tier. Priority=9 wins
+                            // outright over anything else.
                             prio = prio.max(9);
-                        } else if suffix.contains(&q_lower) {
-                            // Substring on the name suffix — the
-                            // "repo_pull matches pull" case.
+                            score += 300;
+                        } else if suffix.contains(&q_lower) || label_lower.contains(&q_lower) {
+                            // Substring hit on the name (curated OR
+                            // full catalog). Priority=2 clears the
+                            // curated `priority=1` tier so a scattered
+                            // curated fuzzy hit doesn't win.
+                            prio = prio.max(2);
                             score += 200;
                         } else if name_half.contains(&q_lower) {
-                            // Weaker: matches full nf-* name but
-                            // not the suffix (e.g. query = "cod"
-                            // matches every codicon glyph).
                             score += 50;
                         }
                     }
