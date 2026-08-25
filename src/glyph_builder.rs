@@ -789,34 +789,13 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     // drawn apple silhouette that rendered as a broken boxy shape
     // through fontforge. Both replaced by the native nf-fa-apple
     // (E711) — the mnml statusline uses that codepoint direct.
-    // 2026-08-24 — custom file-tree chevrons at F1F02 (down) and
-    // F1F03 (right). The Nerd Font Octicons chevrons (F47C/F460)
-    // rendered slightly right-of-center in their cell, which read
-    // as offset when compared against parent folder icons above.
-    // These SVGs draw the chevron in the LEFT half of the 24×24
-    // viewBox (paths span x=3..15 and x=5..11 respectively) so
-    // the visible pixels sit further left. `center_x_frac` isn't
-    // trustworthy for horizontal shifts in ghostty — pixel-round
-    // quantization eats sub-cell nudges — so shift via the SVG
-    // content itself.
-    BuiltinGlyph {
-        codepoint: 0xF1F02,
-        name: "tree-chevron-down",
-        svg_relpath: "assets/glyphs/tree/chevron-down.svg",
-        width_frac: 1.0,
-        height_frac: 1.0,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1F03,
-        name: "tree-chevron-right",
-        svg_relpath: "assets/glyphs/tree/chevron-right.svg",
-        width_frac: 1.0,
-        height_frac: 1.0,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
+    // 2026-08-25 — the F1F02/F1F03 custom tree-chevron experiment is
+    // retired: tree_view.rs render sites went back to the Nerd Font
+    // Octicons chevrons (F47C/F460), so the custom pair was baked
+    // every startup but never drawn. Removed from this seed list +
+    // stripped from MnmlSymbols.ttf in the same cleanup that dropped
+    // the EB40/EB41 + F1F10/F1F11 pull/push copies (superseded by
+    // Nerd Fonts 3.5.1's corrected codicons in the primary font).
     // 2026-08-24 — F1F04 (`│`) / F1F05 (`└`) tree-connector glyphs
     // are NOT baked via this pipeline. SVG rasterisation left visible
     // gaps between rows and a huge L. They are injected by
@@ -871,18 +850,9 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
         "assets/glyphs/music/beatport.svg",
         include_bytes!("../assets/glyphs/music/beatport.svg"),
     ),
-    // File-tree chevrons (2026-08-24). Custom SVGs drawn with the
-    // chevron pixels in the LEFT half of the viewBox so the visible
-    // shape sits left-of-center in its cell, aligning better under
-    // parent folder icons.
-    (
-        "assets/glyphs/tree/chevron-down.svg",
-        include_bytes!("../assets/glyphs/tree/chevron-down.svg"),
-    ),
-    (
-        "assets/glyphs/tree/chevron-right.svg",
-        include_bytes!("../assets/glyphs/tree/chevron-right.svg"),
-    ),
+    // assets/glyphs/tree/chevron-{down,right}.svg — removed 2026-08-25
+    // with their BUILTIN_GLYPHS entries; tree render sites use the
+    // Octicons chevrons (F47C/F460) so the custom pair never drew.
     // assets/glyphs/dev/{btop,htop,iftop}.svg — removed 2026-08-06
     // together with their BUILTIN_GLYPHS entries. Launchers now use
     // real Nerd Fonts codepoints.

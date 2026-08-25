@@ -106,10 +106,19 @@ impl WizardSection {
             }
             Self::NerdFont => {
                 "mnml uses Nerd Font glyphs for icons throughout the UI. If the \
-                 sample below renders as boxes instead of icons, your terminal \
-                 font isn't a Nerd Font. Press Space to auto-install Symbols \
-                 Nerd Font Mono (brew / winget / curl per OS) — you'll still \
-                 need to point your terminal at the new font and restart it."
+                 sample below renders as boxes or `?` marks instead of icons, \
+                 your terminal font isn't a Nerd Font. Press Space to \
+                 auto-install Symbols Nerd Font Mono (brew / winget / curl \
+                 per OS) — you'll still need to point your terminal at the new \
+                 font and restart it.\n\n\
+                 macOS 26 note: use the auto-install (brew cask). Dragging the \
+                 .ttf into ~/Library/Fonts or Font Book LOOKS like it works \
+                 (Font Book shows \"Installed\") but CoreText silently fails \
+                 to register unsigned Nerd Fonts under user or system scope. \
+                 Ghostty (and other terminals) then fall back to an embedded \
+                 older copy that renders some icons — notably git repo-pull \
+                 U+EB40 — with the wrong outline. The Homebrew cask install \
+                 path bypasses the failing validator."
             }
             Self::AiRouting => {
                 "For each AI product below, tell mnml where to route calls. \
@@ -454,10 +463,18 @@ impl App {
         if let Some(s) = self.first_launch.as_mut() {
             s.answers.nerd_font_ok = Some(ok);
             if !ok {
-                self.toast(
-                    "Press Space to install Symbols Nerd Font, or install manually from \
-                     https://www.nerdfonts.com/font-downloads.",
-                );
+                let os = std::env::consts::OS;
+                let cmd = match os {
+                    "macos" => "brew install --cask font-symbols-only-nerd-font",
+                    "windows" => "winget install --id NerdFonts.SymbolsOnly -e",
+                    _ => "the auto-install",
+                };
+                self.toast(format!(
+                    "Press Space to run `{cmd}`. On macOS 26+ this is the only \
+                     reliable install path — dragging the .ttf into Font Book \
+                     looks like it works but CoreText silently fails to register \
+                     unsigned Nerd Fonts."
+                ));
             }
         }
     }
@@ -522,9 +539,16 @@ impl App {
         // export it), unreliable on Windows.
         let term_hint = match std::env::var("TERM_PROGRAM").ok().as_deref() {
             Some("ghostty") => {
-                "Then: add `font-family = Symbols Nerd Font Mono` (or `font-codepoint-map = ...` \
-                 for icon-glyph ranges — see CLAUDE.md) to `~/.config/ghostty/config`, restart \
-                 ghostty."
+                // The primary font must be a full Nerd-Font-patched mono
+                // (NOT the symbols-only face — that has no letters).
+                // mnml draws icons outside the four classic ranges too
+                // (Font Awesome F000-F4FF, powerline E0B0, baked
+                // F8B0-F8B1), and only a patched primary covers them
+                // all; codepoint-map alone leaves ?-boxes.
+                "Then: in `~/.config/ghostty/config` set `font-family = JetBrainsMono Nerd \
+                 Font Mono` (any full Nerd-Font-patched mono works — NOT the symbols-only \
+                 face), plus `font-codepoint-map = U+F1B00-U+F20FF,U+F8B0-U+F8B1=MnmlSymbols` \
+                 for mnml's baked glyphs. Fully quit (Cmd+Q) + reopen ghostty."
             }
             Some("iTerm.app") => {
                 "Then: iTerm2 → Preferences → Profiles → Text → Font → choose Symbols Nerd Font \
