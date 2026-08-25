@@ -279,8 +279,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             crate::GitRailHeaderAction::Fetch,
             t.cyan,
         ),
-        ("\u{EA9A}", "↓", crate::GitRailHeaderAction::Pull, t.green),
-        ("\u{EAA1}", "↑", crate::GitRailHeaderAction::Push, t.blue),
+        ("\u{EB40}", "↓", crate::GitRailHeaderAction::Pull, t.green),
+        ("\u{EB41}", "↑", crate::GitRailHeaderAction::Push, t.blue),
         (
             "\u{EA60}",
             "+",
