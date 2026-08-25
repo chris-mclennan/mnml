@@ -708,6 +708,36 @@ impl App {
         }
     }
 
+    /// #1203 — spawn ONE new AI session using a named launch profile
+    /// (right-click "New session: <name>"), leaving the configured
+    /// default untouched. Always a fresh split — the auto-tile grid
+    /// logic stays with the default-profile paths.
+    pub fn open_ai_session_with_profile(&mut self, id: &str, profile: &str) {
+        let ws = self.workspace.clone();
+        let default_exe = if id == "codex" { "codex" } else { "claude" };
+        let lp = crate::launch_profiles::LaunchProfiles::load(&ws, id, default_exe);
+        let Some(cmd) = lp.command_for(profile, &ws) else {
+            self.toast(format!("launch profile `{profile}` not found for {id}"));
+            return;
+        };
+        let mut bp = if id == "codex" {
+            crate::pty_pane::BinaryProfile::codex(ws)
+        } else {
+            crate::pty_pane::BinaryProfile::claude_code(ws)
+        };
+        bp.exe = cmd;
+        if profile != crate::launch_profiles::BUILTIN_PROFILE {
+            // Suffix the tab label so concurrent default + wrapper
+            // sessions are tellable apart. Keeps the "Claude" prefix
+            // that list_claude_pty_ids / pty_icon match on.
+            bp.label = format!("{} ({profile})", bp.label);
+        }
+        if self.config.ui.auto_show_sessions_on_ai_activate {
+            self.set_activity_section(crate::app::ActivitySection::Sessions);
+        }
+        self.open_pty_dir(bp, crate::layout::SplitDir::Horizontal);
+    }
+
     fn list_claude_pty_ids(&self) -> Vec<crate::layout::PaneId> {
         self.panes
             .iter()

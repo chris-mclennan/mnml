@@ -77,58 +77,20 @@ impl RenderGrid {
     }
 }
 
-/// Look up the per-workspace launcher override for an integration.
-/// Reads `<workspace>/.mnml/integrations/<id>.toml` for a
-/// `launcher = "..."` line; returns that path (expanded via the
-/// launcher template engine so `{{workspace}}` etc. work) if
-/// present, otherwise `default_exe`.
+/// Resolve the launch command an integration's DEFAULT profile spawns
+/// (task #1203 — this is now a thin wrapper over
+/// [`crate::launch_profiles`]).
 ///
-/// The right-click "Set launcher script…" writes this file; users
-/// can also hand-edit it. Empty launcher / missing file = default.
-///
-/// P6 (2026-08-01) — absorbed into the launcher class model via
-/// two adjustments to the historical narrow-shim:
-///   1. Templates: the returned path is passed through
-///      `launcher_template::expand` with the workspace-only
-///      context. `launcher = "{{workspace}}/bin/claude-multi.sh"`
-///      resolves to the absolute path at spawn time.
-///   2. Unknown fields tolerated. The narrow single-field parser
-///      still works but future workspace-scoped manifests can carry
-///      any IntegrationManifest field (proper TOML) without
-///      breaking this path.
-///
-/// Still hand-scraped rather than using the toml crate to keep the
-/// hot spawn path lightweight — the file has ~1 meaningful line.
+/// Sources, later wins: builtin `default_exe` → user-global
+/// `~/.config/mnml/integrations/<id>.toml` → workspace
+/// `<workspace>/.mnml/integrations/<id>.toml`. Both files may carry a
+/// legacy `launcher = "…"` single-field override (written by the chip
+/// right-click "Set launcher script…" — behaves exactly as before) or
+/// `[[launch_profile]]` entries + a `default_profile` pick. The
+/// returned command is template-expanded (`{{workspace}}` etc.).
 pub fn resolve_launcher(workspace: &std::path::Path, id: &str, default_exe: &str) -> String {
-    let path = workspace
-        .join(".mnml")
-        .join("integrations")
-        .join(format!("{id}.toml"));
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return default_exe.to_string();
-    };
-    for line in text.lines() {
-        let l = line.trim();
-        if let Some(rest) = l.strip_prefix("launcher") {
-            let rest = rest.trim_start();
-            let Some(rest) = rest.strip_prefix('=') else {
-                continue;
-            };
-            let rest = rest.trim();
-            if let Some(inner) = rest.strip_prefix('"')
-                && let Some(end) = inner.find('"')
-            {
-                let val = &inner[..end];
-                if !val.is_empty() {
-                    let ctx = crate::launcher_template::TemplateContext::workspace_only(
-                        workspace.to_path_buf(),
-                    );
-                    return crate::launcher_template::expand(val, &ctx);
-                }
-            }
-        }
-    }
-    default_exe.to_string()
+    crate::launch_profiles::LaunchProfiles::load(workspace, id, default_exe)
+        .default_command(workspace)
 }
 
 /// What runs inside a pty pane — a config record so the caller picks "shell" vs

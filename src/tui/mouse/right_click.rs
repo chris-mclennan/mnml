@@ -1732,7 +1732,12 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         // active leaf (single big pane, N tabs). 2026-07-19.
         let layout_mode = app.config.ui.ai_layout_mode.clone();
         let layout_mark = |val: &str| if layout_mode == val { "✓ " } else { "  " };
-        let items = vec![
+        // #1203 — launch-profile rows lead the menu when 2+ profiles
+        // resolve (empty vec otherwise): pick a wrapper for one
+        // session, or flip the persisted default.
+        let chip_id = if is_codex { "codex" } else { "claude_code" };
+        let mut items = app.ai_profile_menu_items(chip_id);
+        items.extend(vec![
             MenuItem::new(
                 format!("Toggle existing {kind_label} pane"),
                 MenuAction::Command(toggle_cmd),
@@ -1765,30 +1770,18 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             // Font glyph controls (2026-07-19). "Bake" installs the
             // AI chip glyphs into MnmlSymbols.ttf using the defaults
             // in `BUILTIN_GLYPHS`; "Edit" opens the glyph builder
-            // for iterative center_frac tuning. "Use mnml AI glyphs"
-            // flips the chip renderer from the JBM-NF-patched pair
-            // to the mnml-baked F1E00/F1E01 pair — only enable
-            // after baking, or the chip renders as tofu.
+            // for iterative center_frac tuning. (The "Use mnml AI
+            // glyphs" toggle was retired 2026-08-25 with the F8B0/
+            // F8B1 legacy pair — F1E00/F1E01 are unconditional now.)
             MenuItem::new(
                 "Bake AI glyphs into MnmlSymbols",
                 MenuAction::Command("integrations.bake_ai_glyphs"),
             ),
             MenuItem::new(
-                {
-                    let mark = if app.config.ui.ai_chip_use_mnml_glyphs {
-                        "✓ "
-                    } else {
-                        "  "
-                    };
-                    format!("{mark}Use mnml AI glyphs (baked)")
-                },
-                MenuAction::Command("view.ai_chip_toggle_font"),
-            ),
-            MenuItem::new(
                 format!("Edit {kind_label} glyph… (center)"),
                 MenuAction::OpenGlyphBuilderForCp(glyph_cp),
             ),
-        ];
+        ]);
         // Suppress the unused vars from the earlier item set —
         // kept the local for the toggle path above.
         let _ = new_cmd;

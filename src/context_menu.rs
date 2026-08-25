@@ -106,6 +106,17 @@ pub enum MenuAction {
     /// the current value; accept writes to
     /// `<workspace>/.mnml/integrations/<id>.toml`.
     SetIntegrationLauncher(String),
+    /// #1203 (2026-08-25) — fire ONE new AI session using the named
+    /// launch profile, without changing the configured default.
+    /// Payload: (integration id `claude_code`/`codex`, profile name).
+    /// Surfaced as flat "New session: <name>" rows on the AI chip
+    /// right-click menus when 2+ profiles resolve.
+    OpenAiSessionWithProfile(String, String),
+    /// #1203 — persist `default_profile = "<name>"` into
+    /// `<workspace>/.mnml/integrations/<id>.toml` so plain chip
+    /// clicks / palette commands spawn that profile from now on.
+    /// Payload: (integration id, profile name).
+    SetAiDefaultProfile(String, String),
     /// #1103 f/u7 (2026-08-20) — spawn `<binary> --diag` as a Pty
     /// pane. Every integration that follows the mnml-bridge SDK
     /// contract supports the `--diag` subcommand; the output is a

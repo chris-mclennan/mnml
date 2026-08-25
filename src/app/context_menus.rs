@@ -418,6 +418,44 @@ impl App {
         self.toast(format!("unpinned '{id}' from activity bar"));
     }
 
+    /// #1203 — flat menu rows for the AI chips' launch profiles.
+    /// Empty unless 2+ profiles resolve for this workspace (the
+    /// builtin `default` counts as one, so any custom profile or
+    /// legacy `launcher =` override activates the rows). One "New
+    /// session: <name>" row per profile (fire-once, no state change)
+    /// followed by one "Default: <name>" row per profile (persists
+    /// `default_profile` to the workspace manifest; ✓ marks current).
+    pub fn ai_profile_menu_items(&self, id: &str) -> Vec<crate::context_menu::MenuItem> {
+        use crate::context_menu::{MenuAction, MenuItem};
+        if id != "claude_code" && id != "codex" {
+            return Vec::new();
+        }
+        let default_exe = if id == "codex" { "codex" } else { "claude" };
+        let lp = crate::launch_profiles::LaunchProfiles::load(&self.workspace, id, default_exe);
+        if lp.profiles.len() < 2 {
+            return Vec::new();
+        }
+        let mut items = Vec::new();
+        for p in &lp.profiles {
+            items.push(MenuItem::new(
+                format!("New session: {}", p.name),
+                MenuAction::OpenAiSessionWithProfile(id.to_string(), p.name.clone()),
+            ));
+        }
+        for p in &lp.profiles {
+            let mark = if p.name == lp.default_name {
+                "\u{2713} "
+            } else {
+                "  "
+            };
+            items.push(MenuItem::new(
+                format!("{mark}Default: {}", p.name),
+                MenuAction::SetAiDefaultProfile(id.to_string(), p.name.clone()),
+            ));
+        }
+        items
+    }
+
     pub fn integration_launcher_override(&self, id: &str) -> Option<String> {
         // resolve_launcher returns default_exe if no override; use
         // a sentinel we can compare against to detect that case.
@@ -661,6 +699,10 @@ impl App {
         // spawn via `binary = "..."` in the manifest, so the
         // wrapper isn't useful for them.
         if id == "claude_code" || id == "codex" {
+            // #1203 — launch-profile rows (pick one session's
+            // launcher on the fly / persist a default) sit above the
+            // legacy single-override prompt.
+            items.extend(self.ai_profile_menu_items(&id));
             let label = match self.integration_launcher_override(&id) {
                 Some(current) => format!("Set launcher script… (current: {current})"),
                 None => "Set launcher script…".to_string(),
@@ -2168,6 +2210,15 @@ impl App {
             }
             SetIntegrationLauncher(id) => {
                 self.open_integration_launcher_prompt(id);
+            }
+            OpenAiSessionWithProfile(id, profile) => {
+                self.open_ai_session_with_profile(&id, &profile);
+            }
+            SetAiDefaultProfile(id, profile) => {
+                match crate::launch_profiles::set_default_profile(&self.workspace, &id, &profile) {
+                    Ok(()) => self.toast(format!("default {id} profile \u{2192} {profile}")),
+                    Err(e) => self.toast(format!("set default profile: {e}")),
+                }
             }
             RemoveIntegration(id) => {
                 self.open_integration_remove_confirm(id);

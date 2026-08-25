@@ -70,6 +70,7 @@ pub mod ghostty_config;
 pub(crate) mod git;
 pub mod glyph_builder;
 pub mod icon_catalog;
+pub mod launch_profiles;
 pub mod launcher_template;
 pub mod marketplace;
 pub mod nerd_glyphs;
