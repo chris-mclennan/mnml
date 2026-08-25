@@ -115,6 +115,22 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**AI launch profiles (2026-08-25, #1203).** Multiple named launch
+commands per Claude/Codex chip replace the "wrapper as a separate
+integration" pattern (the `claude_multi` manifest is retired). New
+`src/launch_profiles.rs`: `[[launch_profile]] {name, command}` +
+`default_profile` in the user-global and workspace integration
+manifests (workspace wins per name); the legacy `launcher = "…"`
+single-override becomes profile `wrapper` and keeps its always-wins
+default (full back-compat — `pty_pane::resolve_launcher` now
+delegates here and gained user-scope resolution). Right-click the AI
+chip (top-right cluster or split-strip) → flat "New session: <name>"
+rows (one-off spawn, label suffixed) + "✓ Default: <name>" rows
+(persists to the workspace manifest, top-level key inserted above
+tables). Commands are exe paths, not shell lines — flags belong in
+wrapper scripts. tattle-claude-workspace's manifest upgraded to the
+named form (`multi-repo`). 11 new tests.
+
 **Sonos speaker chip + two ways to send Mac audio (2026-08-22).**
 New `src/sonos/` subsystem (`soap` / `discovery` / `ops` / `stream` /
 `airplay` / `coreaudio`) plus `src/app/sonos.rs`. Statusline cluster on the
