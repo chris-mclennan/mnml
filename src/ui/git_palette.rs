@@ -120,7 +120,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         width: area.width,
         height: 1,
     };
-    let pill_text = format!(" {repo_name} ▾ ");
+    let pill_text = format!(" {repo_name} \u{F0140} ");
     let pill_w = pill_text.chars().count() as u16;
     let header_line = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),

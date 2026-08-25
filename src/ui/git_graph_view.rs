@@ -94,12 +94,14 @@ pub fn draw(
     let nerd_icons = !app.config.ui.ascii_icons;
     if toolbar_h > 0 {
         let toolbar_area = Rect::new(area.x, area.y, area.width, toolbar_h);
+        let has_stash = !app.git_rail.stashes.is_empty();
         draw_git_toolbar(
             frame,
             toolbar_area,
             &t,
             pane_id,
             nerd_icons,
+            has_stash,
             &mut app.rects.git_toolbar_buttons,
         );
     }
@@ -2066,6 +2068,7 @@ pub fn draw_git_toolbar(
     t: &Theme,
     pane_id: PaneId,
     nerd: bool,
+    has_stash: bool,
     buttons_out: &mut Vec<(Rect, PaneId, crate::GitToolbarAction)>,
 ) {
     if area.width < 20 || area.height < 1 {
@@ -2078,13 +2081,17 @@ pub fn draw_git_toolbar(
     // Order: Undo/Redo first (left edge of the toolbar, matching the
     // common convention), then Pull/Push, Fetch, Branch/Commit/Stash/
     // Pop, Reflog, Terminal.
-    let buttons: [(
+    // 2026-08-24 — was `[…; 13]`, now Vec so Pop can hide when
+    // there's no stash to pop (button is meaningless otherwise) and
+    // the Switch entry can drop out entirely (see multi-repo tabs
+    // + left-panel switcher).
+    let mut buttons: Vec<(
         &str,
         &str,
         &str,
         crate::GitToolbarAction,
         ratatui::style::Color,
-    ); 13] = [
+    )> = vec![
         (
             "Undo",
             "\u{F054C}",
@@ -2101,53 +2108,48 @@ pub fn draw_git_toolbar(
         ),
         (
             "Pull",
-            "\u{F0162}",
+            "\u{EB40}",
             "↓",
             crate::GitToolbarAction::Pull,
             t.green,
         ),
         (
             "Push",
-            "\u{F0166}",
+            "\u{EB41}",
             "↑",
             crate::GitToolbarAction::Push,
             t.blue,
         ),
         (
             "Fetch",
-            "\u{F0450}",
+            "\u{EC1D}",
             "↺",
             crate::GitToolbarAction::Fetch,
             t.cyan,
         ),
         (
             "Branch",
-            "\u{F062C}",
+            "\u{EC6F}",
             "⎇",
             crate::GitToolbarAction::BranchPicker,
             t.yellow,
         ),
         (
             "Commit",
-            "\u{F012C}",
+            "\u{EAFC}",
             "✓",
             crate::GitToolbarAction::Commit,
             t.green,
         ),
         (
             "Stash",
-            "\u{F01DA}",
+            "\u{EC26}",
             "↧",
             crate::GitToolbarAction::Stash,
             t.purple,
         ),
-        (
-            "Pop",
-            "\u{F01DB}",
-            "↥",
-            crate::GitToolbarAction::StashPop,
-            t.purple,
-        ),
+        // Pop injected below IFF the repo has a stash. Placed here in
+        // the source only so the ordering is obvious.
         (
             "Reflog",
             "\u{F02DA}",
@@ -2162,13 +2164,10 @@ pub fn draw_git_toolbar(
             crate::GitToolbarAction::RefreshRepos,
             t.cyan,
         ),
-        (
-            "Switch",
-            "\u{F062C}",
-            "⇄",
-            crate::GitToolbarAction::SwitchRepo,
-            t.blue,
-        ),
+        // 2026-08-24 — SwitchRepo removed from the toolbar. Since the
+        // multi-repo tabs auto-open (one tab per repo) and the left
+        // panel already carries a repo switcher, having a third
+        // switch affordance up here is redundant.
         (
             "Blame",
             "\u{F02A0}",
@@ -2177,6 +2176,25 @@ pub fn draw_git_toolbar(
             t.yellow,
         ),
     ];
+    // Pop inserted after Stash only when there's actually a stash
+    // to pop — otherwise the button is a dead action.
+    if has_stash {
+        let pos = buttons
+            .iter()
+            .position(|(l, ..)| *l == "Stash")
+            .map(|i| i + 1)
+            .unwrap_or(buttons.len());
+        buttons.insert(
+            pos,
+            (
+                "Pop",
+                "\u{EC28}",
+                "↥",
+                crate::GitToolbarAction::StashPop,
+                t.purple,
+            ),
+        );
+    }
 
     // qa-feature 2026-07-01 — render each button at its natural
     // width so the trailing whitespace before the next divider is

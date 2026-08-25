@@ -59,12 +59,14 @@ pub fn draw(
     let diff_toolbar_h: u16 = if area.height >= 5 { 1 } else { 0 };
     let mut top = area.y;
     if git_toolbar_h > 0 {
+        let has_stash = !app.git_rail.stashes.is_empty();
         crate::ui::git_graph_view::draw_git_toolbar(
             frame,
             Rect::new(area.x, top, area.width, git_toolbar_h),
             &t,
             pane_id,
             nerd_icons,
+            has_stash,
             &mut app.rects.git_toolbar_buttons,
         );
         top += git_toolbar_h;

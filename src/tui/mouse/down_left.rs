@@ -217,10 +217,11 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             }
             return;
         }
+        // 2026-08-24 — Git-section entry now auto-opens the
+        // multi-repo tab strip via the `entering_git` hook in
+        // `set_activity_section` itself. No follow-up
+        // `git.graph` needed.
         app.set_activity_section(section);
-        if matches!(section, crate::app::ActivitySection::Git) {
-            crate::command::run("git.graph", app);
-        }
         if let crate::app::ActivitySection::Mount(idx) = section {
             app.open_mount_from_manifest(idx);
         }

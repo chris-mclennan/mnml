@@ -1225,6 +1225,12 @@ impl App {
             self.close_prompt = Some(id);
             return;
         }
+        // 2026-08-24 — closing a GitGraph tab is a session-scoped
+        // "hide this repo" — record it so re-entering the Git
+        // section doesn't spawn it back automatically.
+        if let Some(Pane::GitGraph(g)) = self.panes.get(id) {
+            self.git_closed_repos.insert(g.workspace.clone());
+        }
         self.force_close_pane(id);
     }
 
@@ -2239,6 +2245,8 @@ impl App {
             self.active_section == crate::app::ActivitySection::Search && !entering_search;
         let leaving_git = self.active_section == crate::app::ActivitySection::Git
             && section != crate::app::ActivitySection::Git;
+        let entering_git = self.active_section != crate::app::ActivitySection::Git
+            && section == crate::app::ActivitySection::Git;
         // Track HTTP entry BEFORE we clobber `active_section` — the
         // "open HttpHome on entry" hook needs to distinguish an
         // idempotent re-click on an already-active HTTP icon (leave
@@ -2332,24 +2340,33 @@ impl App {
             }
         }
         // qa-feature 2026-06-30 — leaving the Git activity section
-        // auto-closes any open GitGraph panes so the editor area
-        // returns to the file the user was working on. The graph
-        // is a viewer, tied to the Git section; keeping it open
-        // when the user has moved to Explorer/Debug/etc. feels
-        // stale. Reopen via the Git icon or :git.graph.
+        // 2026-08-24 — was force-closing every GitGraph pane on
+        // leave, which destroyed scroll/expanded/filter state and
+        // meant returning to Git re-launched a fresh single-repo
+        // view. New behavior: clear the current desktop-tab's
+        // layout (git panes stay in `self.panes`) so
+        // `open_git_graph` on re-entry can rebuild the multi-repo
+        // tab strip and reuse the existing GitGraphPanes by
+        // workspace path — state stays intact across the round trip.
         if leaving_git {
-            let to_close: Vec<usize> = self
-                .panes
-                .iter()
-                .enumerate()
-                .filter_map(|(i, p)| matches!(p, crate::pane::Pane::GitGraph(_)).then_some(i))
-                .collect();
-            // Close descending so arena shifts don't invalidate ids.
-            let mut to_close = to_close;
-            to_close.sort_unstable_by(|a, b| b.cmp(a));
-            for pid in to_close {
-                self.force_close_pane(pid);
+            let has_git = self
+                .layout()
+                .all_panes()
+                .into_iter()
+                .any(|id| matches!(self.panes.get(id), Some(crate::pane::Pane::GitGraph(_))));
+            if has_git {
+                *self.layout_mut() = crate::layout::Layout::Empty;
+                self.active = None;
             }
+        }
+        // 2026-08-24 — entering Git auto-builds the multi-repo tab
+        // strip. Fires on ANY entry (mouse rail click, palette
+        // `view.activity_git`, startup restore) so the tabs load
+        // without the rail-click handler having to know. Redundant
+        // rail-click call was removed; palette flow still works
+        // because it also calls set_activity_section under the hood.
+        if entering_git {
+            self.open_git_graph();
         }
         // Entering HTTP from another section → land the user
         // directly on a blank form-style Request pane (Postman
@@ -2814,15 +2831,19 @@ mod layout_tests {
     fn leaving_http_keeps_promoted_request_pane() {
         // If the user edited the URL, the request stops being a
         // preview — leaving HTTP must NOT close it. Verifies the
-        // is_preview guard on the cleanup pass.
+        // is_preview + is_effectively_blank guards on the cleanup
+        // pass. 2026-08-24 — the second cleanup arm also drops
+        // blank panes, so the test simulates a real edit (a URL)
+        // instead of just flipping the preview flag on an empty
+        // pane; otherwise the blank-pane branch closes it and the
+        // "promoted" intent isn't what's being tested.
         let (_d, mut app) = app_with_files();
         app.set_activity_section(crate::app::ActivitySection::Http);
-        // Promote out of preview by clearing the flag directly (a
-        // real edit would do the same via the pane key handler).
         if let Some(cur) = app.active
             && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
         {
             rp.is_preview = false;
+            rp.request.url = "https://example.com".to_string();
         }
         app.set_activity_section(crate::app::ActivitySection::Explorer);
         let promoted_still_alive = app

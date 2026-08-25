@@ -4428,7 +4428,12 @@ fn builtin_commands() -> Vec<Command> {
             title: "Git: commit graph (DAG browser)",
             group: "git",
             keys: &[],
-            run: |app| app.open_git_graph(),
+            // 2026-08-24 — route through set_activity_section so the
+            // rail highlights Git AND the multi-repo tabs open via
+            // the entering_git hook. Direct open_git_graph call
+            // would flip the layout but leave the rail stuck on the
+            // previous section, and skip the hook.
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Git),
         },
         Command {
             id: "git.graph_filter_branch",

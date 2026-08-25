@@ -1691,22 +1691,61 @@ impl App {
         if target_detail >= 20 {
             self.git_graph_detail_col_override = Some(target_detail);
         }
-        if let Some(id) = (0..self.panes.len()).find(|&i| {
-            matches!(self.panes.get(i), Some(Pane::GitGraph(_))) && self.layout().contains(i)
-        }) {
-            self.reveal_pane(id);
-            *self.layout_mut() = Layout::leaf(id);
-            self.active = Some(id);
-            self.focus = Focus::Pane;
+        // 2026-08-24 — Git activity now auto-opens one GitGraph pane
+        // per discovered repo as sibling tabs. Reuse existing panes
+        // (preserves scroll/expanded/filter state across enter+leave)
+        // and skip repos the user has explicitly closed this session.
+        // Falls back to the single-active-repo pane when `repos` is
+        // empty (workspace has no git repo) — nothing to enumerate
+        // there but we still want the ex-command to open something.
+        let previously_active_repo =
+            self.active
+                .and_then(|i| self.panes.get(i))
+                .and_then(|p| match p {
+                    Pane::GitGraph(g) => Some(g.workspace.clone()),
+                    _ => None,
+                });
+        let repo_paths: Vec<std::path::PathBuf> = if self.repos.is_empty() {
+            vec![self.active_repo_path().to_path_buf()]
+        } else {
+            self.repos
+                .iter()
+                .map(|r| r.path.clone())
+                .filter(|p| !self.git_closed_repos.contains(p))
+                .collect()
+        };
+        if repo_paths.is_empty() {
+            // Every repo has been closed this session — leave layout
+            // empty so the `+` picker can bring one back. Toast so
+            // the user knows why the pane is blank.
+            *self.layout_mut() = Layout::Empty;
+            self.active = None;
+            self.toast("no git repos open — use + to reopen");
             return;
         }
-        let pane = Pane::GitGraph(crate::git::graph::GitGraphPane::open(
-            self.active_repo_path(),
-        ));
-        self.panes.push(pane);
-        let id = self.panes.len() - 1;
-        *self.layout_mut() = Layout::leaf(id);
-        self.active = Some(id);
+        let mut tab_ids: Vec<usize> = Vec::with_capacity(repo_paths.len());
+        for path in &repo_paths {
+            let existing = (0..self.panes.len()).find(
+                |&i| matches!(self.panes.get(i), Some(Pane::GitGraph(g)) if g.workspace == *path),
+            );
+            if let Some(id) = existing {
+                tab_ids.push(id);
+            } else {
+                let pane = Pane::GitGraph(crate::git::graph::GitGraphPane::open(path.as_path()));
+                self.panes.push(pane);
+                tab_ids.push(self.panes.len() - 1);
+            }
+        }
+        let active_id = previously_active_repo
+            .as_ref()
+            .and_then(|prev| {
+                tab_ids.iter().copied().find(|&id| {
+                    matches!(self.panes.get(id), Some(Pane::GitGraph(g)) if g.workspace == *prev)
+                })
+            })
+            .unwrap_or(tab_ids[0]);
+        *self.layout_mut() = Layout::leaf_with_tabs(active_id, tab_ids);
+        self.active = Some(active_id);
         self.focus = Focus::Pane;
     }
 

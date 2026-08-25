@@ -5459,7 +5459,7 @@ fn icon_for_pane(
             s(icon.0, icon.1)
         }
         Pane::Diff(_) => s(if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
-        Pane::GitGraph(_) => s(if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
+        Pane::GitGraph(_) => s(if nerd { "\u{f02a2}" } else { "⎇" }, theme::cur().orange),
         Pane::GitStatus(_) => s(if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
         Pane::Request(r) => {
             let tt = theme::cur();

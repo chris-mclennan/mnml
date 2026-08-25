@@ -1903,7 +1903,7 @@ impl ActivitySection {
                 "view.activity_search",
             ),
             // nf-md-source_branch
-            Self::Git => ("\u{F062C}", "G", "Source control", "view.activity_git"),
+            Self::Git => ("\u{F02A2}", "G", "Source control", "view.activity_git"),
             // nf-fa-bug
             Self::Debug => ("\u{F188}", "D", "Run and debug", "view.activity_debug"),
             // nf-md-puzzle
@@ -4628,6 +4628,12 @@ pub struct App {
     /// across launches by name (not index) so re-discovery order changes
     /// don't shift selection.
     pub active_repo: usize,
+    /// 2026-08-24 — repos the user has explicitly closed from the git
+    /// multi-repo tab strip this session. Not persisted; a fresh mnml
+    /// launch re-opens tabs for every discovered repo. `open_git_graph`
+    /// skips repos in this set; a future `+ Reopen…` menu will let the
+    /// user pull them back.
+    pub git_closed_repos: std::collections::HashSet<std::path::PathBuf>,
     /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
     /// Persisted in session.json. Default `true`.
     pub git_section_expanded: bool,
@@ -6323,6 +6329,7 @@ impl App {
             http_env_override: None,
             repos,
             active_repo,
+            git_closed_repos: std::collections::HashSet::new(),
             git_section_expanded: git_section_expanded_default,
             integration_section_expanded: integrations_section_expanded_default,
             git_branches_expanded: false,
