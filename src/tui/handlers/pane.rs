@@ -2450,7 +2450,23 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             // Drive the as-you-type completion popup off the fresh buffer state.
-            app.completion_on_edit(typed_char);
+            // Guard: vim `x` / `dw` / `p` / `u` / `>>` / macros all fire an
+            // Edited event in NORMAL — routing them through `completion_on_edit`
+            // opens the LSP popup after every operator (which vim users never
+            // see in nvim / NvChad). Only fire when the post-feed mode is
+            // Insert (vim) or None (standard, always insert-like).
+            let mode_after = match app.panes.get(i) {
+                Some(Pane::Editor(b)) => Some(b.input.mode()),
+                _ => None,
+            };
+            if matches!(
+                mode_after,
+                Some(crate::input::EditingMode::Insert | crate::input::EditingMode::None)
+            ) {
+                app.completion_on_edit(typed_char);
+            } else {
+                app.completion = None;
+            }
             // (Re)arm the AI ghost-text debounce — fires once typing pauses.
             app.note_edit_for_suggest();
             // `[editor] format_on_type` — fire `textDocument/onTypeFormatting`

@@ -2837,7 +2837,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             && ctrl
             && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O'));
-        normal_reserved || insert_reserved
+        // R16 nvchad SEV-2 2026-08-24 — when the vim handler has a pending
+        // prefix (`Ctrl+W`, `g`, `y`/`d`/`c`/`>`, `r`, `f`/`t`, `[`/`]`,
+        // `m`/`'`/`` ` ``, macro register targets), the NEXT keystroke is
+        // vim's — chord-chain must not eat it. Was: after `Ctrl+W`, the
+        // follow-up `h`/`j`/`k`/`l` fell into `dispatch_chord_chain` and
+        // never reached the vim handler's Window branch. Arrow keys
+        // slipped past because the chain rejects them; the letter forms
+        // did not.
+        let pending_vim_chord = app
+            .active_editor()
+            .and_then(|b| b.input.pending_display())
+            .is_some();
+        normal_reserved || insert_reserved || pending_vim_chord
     };
 
     // keyboard-round-14 SEV-2 2026-07-16 — when a Pty pane is
