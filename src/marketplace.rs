@@ -646,7 +646,10 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         //   #DD344C red     = Security + Front-End (Cognito, Amplify)
         "mnml-aws-amplify" => ("\u{F1C0E}", "red"), // #DD344C
         "mnml-aws-cloudwatch" => ("\u{F1C03}", "pink"), // #E7157B (Analytics — pink)
-        "mnml-aws-codebuild" => ("\u{F1C04}", "pink"), // #C925D1 (DevTools — pink per user)
+        // Exact AWS Developer Tools magenta — the `pink` slot
+        // (#E7157B) read as the wrong hue next to the official icon
+        // (user report 2026-08-25, with the brand swatch).
+        "mnml-aws-codebuild" => ("\u{F1C04}", "#C925D1"),
         "mnml-aws-cognito" => ("\u{F1C05}", "red"), // #DD344C
         "mnml-aws-dynamodb" => ("\u{F1C06}", "purple"), // #C925D1
         "mnml-aws-ecr" => ("\u{F1C07}", "orange"),  // #ED7100
