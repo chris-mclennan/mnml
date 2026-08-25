@@ -420,11 +420,37 @@ impl Picker {
         // off `detail`, which for IconGlyphs holds `nf-<full_name>`.
         let apply_glyph_name_boosts =
             matches!(self.kind, PickerKind::IconGlyphs) && !q_lower.is_empty();
+        // 2026-08-25 — hex-codepoint mode. When the user types a
+        // hex-shaped query (`eb40`, `F1F10`, 2-6 chars, all
+        // 0-9a-f) treat it as a codepoint lookup, not a fuzzy
+        // subsequence. Without this, `eb40` matched `arrange_send_
+        // to_back` (contains "eb" scattered + "0040" as literal
+        // hex substring) instead of just `cod-repo_pull` (EB40).
+        // Mirrors nerdfonts.com's Cheat Sheet behavior.
+        let hex_query = matches!(self.kind, PickerKind::IconGlyphs)
+            && (2..=6).contains(&q_lower.len())
+            && q_lower.chars().all(|c| c.is_ascii_hexdigit());
         let mut scored: Vec<(u8, i64, usize, Vec<usize>)> = self
             .items
             .iter()
             .enumerate()
             .filter_map(|(i, it)| {
+                // Hex-codepoint mode: filter strictly by
+                // codepoint hex (item id) and skip the fuzzy path
+                // entirely. `eb40` returns exactly the U+EB40
+                // codepoint, matching nerdfonts.com's behavior.
+                if hex_query {
+                    let id_lower = it.id.to_ascii_lowercase();
+                    return if id_lower.contains(&q_lower) {
+                        let prio = if id_lower == q_lower { 9 } else { 2 };
+                        // Shorter is a better hex hit (`eb40` on
+                        // `EB40` wins over `eb40` on `EEB405`).
+                        let len_bonus = 500i64.saturating_sub(id_lower.len() as i64 * 10);
+                        Some((prio, 500 + len_bonus, i, Vec::new()))
+                    } else {
+                        None
+                    };
+                }
                 fuzzy_match(&self.query, &it.label).map(|(s, hits)| {
                     let mut prio = it.priority;
                     let mut score = s + it.score_bonus;
