@@ -7,10 +7,10 @@ open aa.txt
 command tree.refresh
 
 # After tree.refresh, ac96648 auto-expands top-level dirs. Rail
-# after adding the palette bar (row 0) + bufferline (row 1):
-# workspace header row 2, sub/ (open) row 3, cc.txt row 4,
-# aa.txt row 5. Drag aa.txt (row 5) up onto sub/ (row 3).
-drag 7 5 7 3
+# since the v0.2.17 up-nav cleanup (a76e7de3): menu/palette bar
+# row 0, workspace header row 1, sub/ (open) row 2, cc.txt row 3,
+# aa.txt row 4. Drag aa.txt (row 4) up onto sub/ (row 2).
+drag 7 4 7 2
 expect screen contains "Move to"
 key enter
 expect file sub/aa.txt contains "aa-content"

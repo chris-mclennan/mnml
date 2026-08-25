@@ -4,10 +4,10 @@ write bb.txt content-of-bb
 open aa.txt
 command tree.refresh
 
-# Rail after refresh: with the palette bar on screen row 0 +
-# bufferline on row 1, the tree's workspace header lands on
-# row 2. Files: aa.txt on row 3, bb.txt on row 4. Click bb.txt.
+# Rail since the v0.2.17 up-nav cleanup (a76e7de3 — the `..` row
+# moved into the header chip): menu/palette bar row 0, workspace
+# header row 1, aa.txt row 2, bb.txt row 3. Click bb.txt.
 expect pane "aa.txt"
-click 5 4
+click 5 3
 expect pane "bb.txt"
 expect screen contains "content-of-bb"

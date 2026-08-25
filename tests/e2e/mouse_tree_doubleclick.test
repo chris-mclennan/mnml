@@ -4,8 +4,8 @@ write aa.txt aa-content
 write bb.txt bb-content
 open aa.txt
 command tree.refresh
-# Palette bar (row 0) + bufferline (row 1) push the tree down:
-# workspace header row 2, aa.txt row 3, bb.txt row 4.
-doubleclick 5 4
+# Rail since the v0.2.17 up-nav cleanup (a76e7de3): menu/palette
+# bar row 0, workspace header row 1, aa.txt row 2, bb.txt row 3.
+doubleclick 5 3
 expect pane "bb.txt"
 expect screen contains "bb-content"
