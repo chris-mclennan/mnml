@@ -87,8 +87,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         }
     } else {
         // Compute matches fresh each frame. Cheap — N=~150 commands.
+        // 2026-08-25 — was `>= 2`. That silently hid the popup right
+        // when the user narrowed to a single hit — the exact moment
+        // they need it visible to confirm which command Enter will
+        // fire. Repro: `:integrations.i` (only `integrations.
+        // icon_picker` matches) or `:icon_picker` (substring hit on
+        // the same). Show for any ≥1 match instead.
         match crate::app::compute_cmdline_completions_for_app(app, &line) {
-            Some(s) if s.matches.len() >= 2 => s,
+            Some(s) if !s.matches.is_empty() => s,
             _ => return,
         }
     };
