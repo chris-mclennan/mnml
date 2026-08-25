@@ -459,6 +459,22 @@ impl Picker {
                             // outright over anything else.
                             prio = prio.max(9);
                             score += 300;
+                            // Tail-anchored suffix (`repo_pull` ends
+                            // with `pull`, but `git_pull_request_done`
+                            // has `pull` in the middle) — the tail
+                            // form is what nerdfonts.com surfaces
+                            // first for a bare query. Big bonus.
+                            if suffix.ends_with(&q_lower) {
+                                score += 500;
+                            }
+                            // Prefer shorter suffixes at the same
+                            // tier. `repo_pull` (9 chars) beats
+                            // `git_pull_request_done` (20 chars) by
+                            // (20 - 9) * 10 = 110. Caps at 500 so
+                            // 2-char names don't dominate every
+                            // multi-word query unfairly.
+                            let len_bonus = 500i64.saturating_sub(suffix.len() as i64 * 10);
+                            score += len_bonus.max(0);
                         } else if suffix.contains(&q_lower) || label_lower.contains(&q_lower) {
                             // Substring hit on the name (curated OR
                             // full catalog). Priority=2 clears the
