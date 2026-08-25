@@ -107,6 +107,14 @@ impl App {
         // Caches written before the 2026-08-25 dedupe fix can carry
         // cross-source duplicate rows — collapse on load too.
         crate::marketplace::dedupe_entries_by_id(&mut self.marketplace_entries);
+        // `ready` is derived from the shipped `ready_ids()` list at
+        // fetch time; re-derive on load so a binary upgrade that
+        // changes the list takes effect without waiting out the
+        // cache TTL (2026-08-25: launchers gained the ready gate —
+        // stale caches held ready=false for btop/htop/iftop/vscode).
+        for e in &mut self.marketplace_entries {
+            e.ready = crate::marketplace::is_ready(&e.id);
+        }
         sort_marketplace_entries(&mut self.marketplace_entries);
     }
 

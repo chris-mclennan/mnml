@@ -187,6 +187,15 @@ pub fn ready_ids() -> &'static [&'static str] {
         "mnml-aws-amplify",
         "mnml-aws-codebuild",
         "mnml-db",
+        // 2026-08-25 — launchers now respect the ready gate too
+        // (previously they bypassed it, which surfaced claude_multi
+        // — a wrapper needing a workspace-local bin/claude-multi.sh
+        // — to every mnml user). These four are standalone tools
+        // that work anywhere the binary is installed:
+        "btop",
+        "htop",
+        "iftop",
+        "vscode",
         // 2026-08-19 (#1062) — `mnml-msg-slack` removed from the
         // ready set: still WIP (threads unfinished, canvases tab
         // was mislabeled "Slack Boards" until 0.1.4). Reinstate

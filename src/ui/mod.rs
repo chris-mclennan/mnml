@@ -3534,13 +3534,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // 2026-08-19 (#1055) — count only entries that pass the Ready
     // gate. Was `app.marketplace_entries.len()` — that included
     // unready App entries the render loop hides, so the tab read
-    // "Marketplace (48)" while only ~7 rows painted. Launchers /
-    // drivers bypass the gate (they show unconditionally).
-    let marketplace_count = app
-        .marketplace_entries
-        .iter()
-        .filter(|e| !matches!(e.kind, crate::marketplace::MarketplaceKind::App) || e.ready)
-        .count();
+    // "Marketplace (48)" while only ~7 rows painted.
+    // 2026-08-25 — launchers no longer bypass the gate: claude_multi
+    // (a workspace-specific wrapper needing bin/claude-multi.sh)
+    // surfaced for every mnml user and would fail on install+fire.
+    // Standalone launchers (btop/htop/iftop/vscode) are in
+    // `ready_ids`; the rest live on the InDev tab.
+    let marketplace_count = app.marketplace_entries.iter().filter(|e| e.ready).count();
     // vscode-mouse SEV-2 2026-08-05 — was
     //   `" Installed ({N}) "` + `" Marketplace ({M}) "`
     // which needs ~32 chars minimum; the activity panel is ~28 wide
@@ -3575,11 +3575,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // panel. Renders App entries that failed the Ready gate — meant
     // for integration authors browsing their own not-yet-shipped work.
     let show_dev_tab = app.config.marketplace.show_dev_tab;
-    let in_dev_count = app
-        .marketplace_entries
-        .iter()
-        .filter(|e| matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready)
-        .count();
+    let in_dev_count = app.marketplace_entries.iter().filter(|e| !e.ready).count();
     let in_dev_label = format!("\u{EEF4} ({in_dev_count})");
     let in_dev_w_usize = if show_dev_tab {
         in_dev_label.chars().count()
@@ -4017,17 +4013,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 // #1055 / #1056 — Ready gate: Marketplace tab hides
                 // App entries with `ready = false`; InDev tab hides
                 // App entries with `ready = true` (mirror image).
-                // Launchers / drivers always show on Marketplace but
-                // never appear on InDev (they're external tools with
-                // their own release cycle).
+                // 2026-08-25 — the ready gate applies to every kind
+                // (launchers included; see marketplace_count note).
                 if is_in_dev {
-                    if !matches!(e.kind, crate::marketplace::MarketplaceKind::App) {
-                        return false;
-                    }
                     if e.ready {
                         return false;
                     }
-                } else if matches!(e.kind, crate::marketplace::MarketplaceKind::App) && !e.ready {
+                } else if !e.ready {
                     return false;
                 }
                 if filter_lc_mp.is_empty() {
@@ -4392,19 +4384,15 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // 2026-08-19 (#1055 / #1056) — Ready gate.
             //  * Marketplace: hide App entries where `ready = false`
             //    (author hasn't declared them ready). Launchers and
-            //    drivers bypass — they're external tools with their
-            //    own publish criteria, not authored integrations.
-            //  * InDev: mirror — show ONLY App entries with
-            //    `ready = false`. Launchers/drivers never appear.
+            //    2026-08-25 — the ready gate applies to every kind
+            //    now, launchers included (claude_multi was surfacing
+            //    for every user despite needing a workspace script).
+            //  * InDev: mirror — everything with `ready = false`.
             if is_in_dev_tab {
-                if !matches!(entry.kind, crate::marketplace::MarketplaceKind::App) {
-                    continue;
-                }
                 if entry.ready {
                     continue;
                 }
-            } else if matches!(entry.kind, crate::marketplace::MarketplaceKind::App) && !entry.ready
-            {
+            } else if !entry.ready {
                 continue;
             }
             // 2026-08-07 — installed entries stay visible in the
@@ -4489,10 +4477,24 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // have F0487, and any letter fallback looked worse than
             // clean whitespace).
             let entry_glyph_span: Option<Span<'static>> = entry.glyph.as_ref().map(|g| {
-                let fg = entry
-                    .color
-                    .as_deref()
-                    .map(|c| crate::ui::theme::color_from_slot(c, &t))
+                // Built-in brand colors win over the entry's slot
+                // color (theme.rs convention: any renderer drawing a
+                // chip/row for a built-in id consults
+                // brand_color_for_builtin FIRST). claude_multi is the
+                // Claude Code wrapper, so it wears the same coral as
+                // the top-right cluster's Claude chip — not
+                // theme-orange (2026-08-25 user report).
+                let brand_id = match entry.id.as_str() {
+                    "claude_multi" => "claude_code",
+                    other => other,
+                };
+                let fg = crate::ui::theme::brand_color_for_builtin(brand_id)
+                    .or_else(|| {
+                        entry
+                            .color
+                            .as_deref()
+                            .map(|c| crate::ui::theme::color_from_slot(c, &t))
+                    })
                     .unwrap_or(t.fg);
                 Span::styled(format!("  {g}  "), Style::default().fg(fg).bg(bg))
             });
