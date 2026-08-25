@@ -703,6 +703,13 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Warm the Nerd Fonts glyph catalog off the render thread — ~30ms
+    // to parse the bundled 533KB JSON into a HashMap. Done eagerly so
+    // the first `integrations.icon_picker` open feels instant instead
+    // of taking a beat while the catalog builds.
+    std::thread::spawn(|| {
+        let _ = mnml::nerd_glyphs::catalog();
+    });
     // Re-open last session's buffers (no-op when [session] restore = false).
     // Sandbox mode also skips restore — the whole point is a fresh
     // "brand-new user" look, so restoring the user's real dock
