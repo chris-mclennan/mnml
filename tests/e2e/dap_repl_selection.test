@@ -3,8 +3,13 @@
 # inserting into the input (Esc returns focus). Verifies the dual-
 # mode (input ⇄ history) behavior without a live adapter.
 
-write code.rs "fn main() {}\n"
-open code.rs
+# Plain-text fixture on purpose: a .rs file in a Cargo-less temp
+# workspace makes rust-analyzer fail discovery, and its stacked
+# error toasts paint OVER the REPL input row — the "(repl) > y"
+# assertion then fails on any machine with rust-analyzer installed
+# (found 2026-08-25 after months of environment-dependent red).
+write notes.txt "hello\n"
+open notes.txt
 
 command dap.repl
 
