@@ -644,21 +644,21 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         //   #E7157B magenta = App Integration + Observability
         //                     (EventBridge, SNS, SQS, CloudWatch)
         //   #DD344C red     = Security + Front-End (Cognito, Amplify)
-        "mnml-aws-amplify" => ("\u{F1C0E}", "red"), // #DD344C
-        "mnml-aws-cloudwatch" => ("\u{F1C03}", "pink"), // #E7157B (Analytics — pink)
+        "mnml-aws-amplify" => ("\u{F1C0E}", "#DD344C"),
+        "mnml-aws-cloudwatch" => ("\u{F1C03}", "#E7157B"),
         // Exact AWS Developer Tools magenta — the `pink` slot
         // (#E7157B) read as the wrong hue next to the official icon
         // (user report 2026-08-25, with the brand swatch).
         "mnml-aws-codebuild" => ("\u{F1C04}", "#C925D1"),
-        "mnml-aws-cognito" => ("\u{F1C05}", "red"), // #DD344C
-        "mnml-aws-dynamodb" => ("\u{F1C06}", "purple"), // #C925D1
-        "mnml-aws-ecr" => ("\u{F1C07}", "orange"),  // #ED7100
-        "mnml-aws-ecs" => ("\u{F1C08}", "orange"),  // #ED7100
-        "mnml-aws-eventbridge" => ("\u{F1C09}", "magenta"), // #E7157B
-        "mnml-aws-lambda" => ("\u{F1C0A}", "orange"), // #ED7100
-        "mnml-aws-rds" => ("\u{F1C0B}", "purple"),  // #C925D1
-        "mnml-aws-sns" => ("\u{F1C0C}", "magenta"), // #E7157B
-        "mnml-aws-sqs" => ("\u{F1C0D}", "magenta"), // #E7157B
+        "mnml-aws-cognito" => ("\u{F1C05}", "#DD344C"),
+        "mnml-aws-dynamodb" => ("\u{F1C06}", "#C925D1"),
+        "mnml-aws-ecr" => ("\u{F1C07}", "#ED7100"),
+        "mnml-aws-ecs" => ("\u{F1C08}", "#ED7100"),
+        "mnml-aws-eventbridge" => ("\u{F1C09}", "#E7157B"),
+        "mnml-aws-lambda" => ("\u{F1C0A}", "#ED7100"),
+        "mnml-aws-rds" => ("\u{F1C0B}", "#C925D1"),
+        "mnml-aws-sns" => ("\u{F1C0C}", "#E7157B"),
+        "mnml-aws-sqs" => ("\u{F1C0D}", "#E7157B"),
 
         // Anything else — no match; renderer skips the leading
         // glyph column and just prints the [kind] tag.
