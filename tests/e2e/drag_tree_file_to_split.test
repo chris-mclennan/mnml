@@ -6,9 +6,9 @@ write bb.txt BBBBBBBB
 open aa.txt
 command tree.refresh
 
-# Rail with palette bar (row 0) + bufferline (row 1): workspace
-# header row 2, aa.txt row 3, bb.txt row 4.  Only aa.txt is
-# open; bb.txt's content isn't on screen yet.
+# Rail since the v0.2.17 up-nav cleanup (a76e7de3): menu/palette
+# bar row 0, workspace header row 1, aa.txt row 2, bb.txt row 3.
+# Only aa.txt is open; bb.txt's content isn't on screen yet.
 expect pane "aa.txt"
 expect screen lacks "BBBBBBBB"
 
@@ -19,6 +19,6 @@ expect screen lacks "BBBBBBBB"
 # rather than splitting. That's OK for this test's original
 # intent (bb.txt got opened, not lost); the split-shape
 # assertion is deferred until the drop-zones are re-mapped.
-drag 5 4 90 20
+drag 5 3 90 20
 expect screen contains "BBBBBBBB"
 expect pane "bb.txt"
