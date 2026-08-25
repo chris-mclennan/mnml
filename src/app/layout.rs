@@ -1877,16 +1877,29 @@ impl App {
         } else {
             return;
         };
-        // `cmdline_get` returns the line WITHOUT the leading `:` —
-        // the `:` is added by `pending_display`. Same shape that
-        // `compute_cmdline_completions_for_app` expects.
-        let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
-            return;
+        // Empty cmdline shows recent-commands in the popup (see
+        // cmdline_popup_view.rs). Accept must read from the same
+        // source so index 1 → recent_commands[1], not the compute
+        // function's alphabetically-sorted default list.
+        // #cmdline-popup-empty 2026-08-25.
+        let (head_str, matches): (String, Vec<String>) = if line.trim().is_empty() {
+            if self.recent_commands.is_empty() {
+                return;
+            }
+            (String::new(), self.recent_commands.to_vec())
+        } else {
+            // `cmdline_get` returns the line WITHOUT the leading `:` —
+            // the `:` is added by `pending_display`. Same shape that
+            // `compute_cmdline_completions_for_app` expects.
+            let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
+                return;
+            };
+            (state.head, state.matches)
         };
-        if idx >= state.matches.len() {
+        if idx >= matches.len() {
             return;
         }
-        let new_line = format!("{}{}", state.head, state.matches[idx]);
+        let new_line = format!("{}{}", head_str, matches[idx]);
         self.cmdline_popup_selected = idx;
         // Write back to whichever path was hosting the cmdline.
         if self.no_pane_cmdline.is_some() {
@@ -1894,9 +1907,12 @@ impl App {
         } else if let Some(b) = self.active_editor_mut() {
             b.input.cmdline_set(Some(new_line.clone()));
         }
-        let mut stored = state;
-        stored.idx = idx;
-        stored.last_shown = new_line;
+        let stored = crate::app::CmdlineCompleteState {
+            head: head_str,
+            matches,
+            idx,
+            last_shown: new_line,
+        };
         self.cmdline_complete_state = Some(stored);
     }
 
@@ -1990,11 +2006,17 @@ impl App {
         } else {
             return false;
         };
+        // Empty cmdline shows recent-commands in the popup view
+        // (see cmdline_popup_view.rs). Mirror that here so the
+        // Enter-accept path sees the popup as "showing" and picks
+        // up the highlighted recent command instead of committing
+        // an empty line (which does nothing). #cmdline-popup-empty
+        // 2026-08-25.
         if line.trim().is_empty() {
-            return false;
+            return !self.recent_commands.is_empty();
         }
         compute_cmdline_completions_for_app(self, &line)
-            .map(|s| s.matches.len() >= 2)
+            .map(|s| !s.matches.is_empty())
             .unwrap_or(false)
     }
 
