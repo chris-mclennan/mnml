@@ -67,43 +67,91 @@ def close_triangle(pen, a, b, c):
     pen.closePath()
 
 
-def draw_pull(pen, _):
-    """Arrow pointing DOWN. Stem in the upper half, arrowhead below
-    it filling the lower portion of the cell.
+# Circle (the "repo target" mark) — sits below the arrow. Approximate
+# a ring using an octagon; TrueType curves would work but octagons
+# rasterise reliably at all terminal sizes without curve dropout.
+CIRCLE_CY = V_BOTTOM + 80    # circle center — sit near bottom of cell
+CIRCLE_R_OUT = 130           # outer radius
+CIRCLE_R_IN = 60             # inner radius (ring thickness ≈ 70)
+GAP_ABOVE_CIRCLE = 40        # empty space between arrow tip / tail base
+                             # and the circle above/below it
+
+
+def close_ring(pen, cx, cy, r_out, r_in, n=16):
+    """Filled ring approximated with two n-gons (outer + inner
+    counter-wound). TrueType interprets counter-clockwise-wound holes
+    as removed area, giving us the ring silhouette.
     """
-    # Stem top → bottom-of-stem.
+    import math
+    # Outer contour — clockwise.
+    pts_out = [
+        (cx + r_out * math.cos(math.pi * 2 * i / n - math.pi / 2),
+         cy + r_out * math.sin(math.pi * 2 * i / n - math.pi / 2))
+        for i in range(n)
+    ]
+    # Reverse for clockwise winding in y-up coords.
+    pts_out = list(reversed(pts_out))
+    pen.moveTo(pts_out[0])
+    for p in pts_out[1:]:
+        pen.lineTo(p)
+    pen.closePath()
+    # Inner hole — counter-clockwise (opposite winding).
+    pts_in = [
+        (cx + r_in * math.cos(math.pi * 2 * i / n - math.pi / 2),
+         cy + r_in * math.sin(math.pi * 2 * i / n - math.pi / 2))
+        for i in range(n)
+    ]
+    pen.moveTo(pts_in[0])
+    for p in pts_in[1:]:
+        pen.lineTo(p)
+    pen.closePath()
+
+
+def draw_pull(pen, _):
+    """Repo Pull — bold arrow pointing DOWN in the upper cell, with a
+    small ring below it (the "into repo" target). Matches the
+    nf-cod-repo_pull reference shape but sized for terminal
+    legibility: thicker stem, wider arrowhead, ring instead of a
+    filled dot so it doesn't merge with the head.
+    """
+    # Arrow head tip lands just above the ring.
+    head_tip = CIRCLE_CY + CIRCLE_R_OUT + GAP_ABOVE_CIRCLE
+    stem_bot = head_tip + HEAD_HEIGHT
     stem_top = V_TOP
-    stem_bot = V_BOTTOM + HEAD_HEIGHT
     close_rect(pen, BAR_LEFT, stem_bot, BAR_RIGHT, stem_top)
-    # Head — clockwise from top-left of the head base.
     head_left = BAR_CENTER - HEAD_HALF
     head_right = BAR_CENTER + HEAD_HALF
-    head_tip = V_BOTTOM
     close_triangle(
         pen,
         (head_left, stem_bot),
         (head_right, stem_bot),
         (BAR_CENTER, head_tip),
     )
+    # Ring at the bottom.
+    close_ring(pen, BAR_CENTER, CIRCLE_CY, CIRCLE_R_OUT, CIRCLE_R_IN)
 
 
 def draw_push(pen, _):
-    """Arrow pointing UP. Mirror of `draw_pull` around the cell's
-    horizontal midline.
+    """Repo Push — mirror of Pull: ring at the bottom (source), bold
+    arrow above pointing UP away from it. Matches the
+    nf-cod-repo_push reference: arrow leaves the repo mark heading
+    up-and-away.
     """
-    stem_bot = V_BOTTOM
+    # Arrow tail base sits just above the ring.
+    tail_base = CIRCLE_CY + CIRCLE_R_OUT + GAP_ABOVE_CIRCLE
+    stem_bot = tail_base
     stem_top = V_TOP - HEAD_HEIGHT
     close_rect(pen, BAR_LEFT, stem_bot, BAR_RIGHT, stem_top)
     head_left = BAR_CENTER - HEAD_HALF
     head_right = BAR_CENTER + HEAD_HALF
     head_tip = V_TOP
-    # Clockwise: top (tip) → right-base → left-base.
     close_triangle(
         pen,
         (BAR_CENTER, head_tip),
         (head_right, stem_top),
         (head_left, stem_top),
     )
+    close_ring(pen, BAR_CENTER, CIRCLE_CY, CIRCLE_R_OUT, CIRCLE_R_IN)
 
 
 def install_glyph(font, cp, name, draw_fn):
