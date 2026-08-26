@@ -262,10 +262,8 @@ pub fn read_family_and_version(path: &Path) -> Option<(String, Option<String>)> 
         f.read_exact(&mut buf).ok()?;
         let s = if platform == 3 {
             // UTF-16BE
-            let units: Vec<u16> = buf
-                .chunks_exact(2)
-                .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                .collect();
+            let (pairs, _odd_trailing_byte) = buf.as_chunks::<2>();
+            let units: Vec<u16> = pairs.iter().copied().map(u16::from_be_bytes).collect();
             String::from_utf16_lossy(&units)
         } else {
             // Mac roman ≈ ASCII for every font we care about.
