@@ -17,6 +17,72 @@ use crate::app::App;
 use crate::command;
 use crate::pane::Pane;
 
+/// Rows for the `Create…` menu shared by all three `+` chips: the
+/// per-leaf tab-strip `+`, the empty-state `+` on the top row, and
+/// the top-right cluster's `+`.
+///
+/// #1210 — this used to be inlined three times, and the third copy
+/// didn't exist at all: the top-right `+` fired `tab_new` directly,
+/// so with every pane closed (the one situation where it's the ONLY
+/// `+` on screen) there was no route back to a closed tab. One
+/// builder means a row added here shows up on every `+`, which is
+/// what "behavior parity between the `+` chips" was already trying
+/// to promise.
+fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
+    use crate::context_menu::{MenuAction, MenuItem};
+    let mut items = vec![
+        MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
+        MenuItem::new("Open file…", MenuAction::Command("picker.files")),
+        MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
+        MenuItem::new(
+            "From clipboard",
+            MenuAction::Command("scratch.from_clipboard"),
+        ),
+        MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
+        MenuItem::new("New shell", MenuAction::Command("term.shell")),
+        MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
+        MenuItem::new(
+            "New Claude Code session",
+            MenuAction::Command("ai.claude_code_new"),
+        ),
+        MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
+        MenuItem::new("New tab page", MenuAction::Command("tab.new")),
+    ];
+    // Every row above opens something NEW. After closing your tabs
+    // the thing you actually want is them BACK, and the only route
+    // was Ctrl+Shift+T (undiscoverable) or restarting mnml, which
+    // restores the session. Prepended so it's first under the
+    // cursor, and only when there IS something to reopen — an
+    // always-present row that usually toasts "nothing to reopen"
+    // just teaches people to skip it.
+    if !app.closed_buffers.is_empty() {
+        items.insert(
+            0,
+            MenuItem::new(
+                format!("Reopen last closed ({})", app.closed_buffers.len()),
+                MenuAction::Command("buffer.reopen"),
+            ),
+        );
+    }
+    // 2026-07-19 — append every enabled integration chip as its own
+    // "Open <tooltip>" row so users can launch a rail integration
+    // from the `+` menu without hunting for its chip. The chip's own
+    // command string is dispatched identically to a chip click
+    // (`:<ex>` runs as ex-command, anything else through the
+    // command registry).
+    for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
+        let label = icon
+            .label
+            .clone()
+            .unwrap_or_else(|| icon.id.replace('_', " "));
+        items.push(MenuItem::new(
+            format!("Open {label}"),
+            MenuAction::RunCmd(icon.command.clone()),
+        ));
+    }
+    items
+}
+
 /// Max gap between two clicks at the same (x, y) that still counts
 /// as a double-click. mouse-round-14 SEV-2 F1 2026-07-14 — bumped
 /// from 450 → 700 ms because natural trackpad cadence lands
@@ -1431,7 +1497,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.bufferline_new_tab_button
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.tab_new(None);
+        // #1210 — was `app.tab_new(None)` with no menu. This is the
+        // top-right cluster's `+`, and with every pane closed it is
+        // the ONLY `+` on screen — so the one state where you most
+        // need "reopen what I just closed" was the one state with no
+        // menu to offer it. Now shows the same rows as the other two
+        // chips; "New tab page" is still in there, one row down, so
+        // the old action isn't lost.
+        use crate::context_menu::ContextMenu;
+        let items = plus_menu_items(app);
+        let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        menu.selected = 0;
+        menu.interacted = true;
+        app.context_menu = Some(menu);
         return;
     }
     // Inline `+` new-request chip — sits just past the last tab in
@@ -1537,59 +1615,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         app.active = Some(leaf_active);
         app.focus = crate::focus::Focus::Pane;
-        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let mut items = vec![
-            MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
-            MenuItem::new("Open file…", MenuAction::Command("picker.files")),
-            MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
-            MenuItem::new(
-                "From clipboard",
-                MenuAction::Command("scratch.from_clipboard"),
-            ),
-            MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
-            MenuItem::new("New shell", MenuAction::Command("term.shell")),
-            MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
-            MenuItem::new(
-                "New Claude Code session",
-                MenuAction::Command("ai.claude_code_new"),
-            ),
-            MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
-            MenuItem::new("New tab page", MenuAction::Command("tab.new")),
-        ];
-        // #1210 — every row above opens something NEW. After closing
-        // your tabs the thing you actually want is them BACK, and the
-        // only route was Ctrl+Shift+T (undiscoverable) or restarting
-        // mnml, which restores the session. User report: "closed all
-        // the tabs, clicked the plus and didn't see a way to reload
-        // the repos". Prepend it so it's the first thing under the
-        // cursor, and only when there's something to reopen — an
-        // always-present row that usually toasts "nothing to reopen"
-        // teaches people to ignore it.
-        if !app.closed_buffers.is_empty() {
-            items.insert(
-                0,
-                MenuItem::new(
-                    format!("Reopen last closed ({})", app.closed_buffers.len()),
-                    MenuAction::Command("buffer.reopen"),
-                ),
-            );
-        }
-        // 2026-07-19 — append every enabled integration chip as its
-        // own "Open <tooltip>" menu row so users can launch a rail
-        // integration from the `+` tab menu without hunting for its
-        // chip. The chip's own command string is dispatched
-        // identically to a chip click (`:<ex>` runs as ex-command,
-        // anything else through the command registry).
-        for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
-            let label = icon
-                .label
-                .clone()
-                .unwrap_or_else(|| icon.id.replace('_', " "));
-            items.push(MenuItem::new(
-                format!("Open {label}"),
-                MenuAction::RunCmd(icon.command.clone()),
-            ));
-        }
+        use crate::context_menu::ContextMenu;
+        let items = plus_menu_items(app);
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
         menu.selected = 0;
         menu.interacted = true;
@@ -1612,59 +1639,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.bufferline_empty_plus
         && crate::app::dispatch::contains(r, x, y)
     {
-        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let mut items = vec![
-            MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
-            MenuItem::new("Open file…", MenuAction::Command("picker.files")),
-            MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
-            MenuItem::new(
-                "From clipboard",
-                MenuAction::Command("scratch.from_clipboard"),
-            ),
-            MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
-            MenuItem::new("New shell", MenuAction::Command("term.shell")),
-            MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
-            MenuItem::new(
-                "New Claude Code session",
-                MenuAction::Command("ai.claude_code_new"),
-            ),
-            MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
-            MenuItem::new("New tab page", MenuAction::Command("tab.new")),
-        ];
-        // #1210 — every row above opens something NEW. After closing
-        // your tabs the thing you actually want is them BACK, and the
-        // only route was Ctrl+Shift+T (undiscoverable) or restarting
-        // mnml, which restores the session. User report: "closed all
-        // the tabs, clicked the plus and didn't see a way to reload
-        // the repos". Prepend it so it's the first thing under the
-        // cursor, and only when there's something to reopen — an
-        // always-present row that usually toasts "nothing to reopen"
-        // teaches people to ignore it.
-        if !app.closed_buffers.is_empty() {
-            items.insert(
-                0,
-                MenuItem::new(
-                    format!("Reopen last closed ({})", app.closed_buffers.len()),
-                    MenuAction::Command("buffer.reopen"),
-                ),
-            );
-        }
-        // 2026-07-19 — append every enabled integration chip as its
-        // own "Open <tooltip>" menu row so users can launch a rail
-        // integration from the `+` tab menu without hunting for its
-        // chip. The chip's own command string is dispatched
-        // identically to a chip click (`:<ex>` runs as ex-command,
-        // anything else through the command registry).
-        for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
-            let label = icon
-                .label
-                .clone()
-                .unwrap_or_else(|| icon.id.replace('_', " "));
-            items.push(MenuItem::new(
-                format!("Open {label}"),
-                MenuAction::RunCmd(icon.command.clone()),
-            ));
-        }
+        use crate::context_menu::ContextMenu;
+        let items = plus_menu_items(app);
         // Anchor the menu near the chip so it doesn't fly to the
         // screen center — sits just below-left of the click.
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
@@ -3788,5 +3764,66 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 app.lsp_goto_definition();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod plus_menu_tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        (d, app)
+    }
+
+    fn labels(app: &App) -> Vec<String> {
+        plus_menu_items(app).into_iter().map(|i| i.label).collect()
+    }
+
+    /// #1210 — the reported flow: close everything, click `+`, get
+    /// back what you closed. The row is the whole point of the fix,
+    /// and it must be FIRST so it's under the cursor when the menu
+    /// opens.
+    #[test]
+    fn reopen_row_is_first_when_there_is_something_to_reopen() {
+        let (_d, mut app) = app();
+        app.closed_buffers
+            .push((std::path::PathBuf::from("/tmp/a.txt"), 0, 0));
+        app.closed_buffers
+            .push((std::path::PathBuf::from("/tmp/b.txt"), 0, 0));
+        let l = labels(&app);
+        assert_eq!(
+            l.first().map(String::as_str),
+            Some("Reopen last closed (2)"),
+            "menu was: {l:?}"
+        );
+    }
+
+    /// Nothing closed ⇒ no row. An always-present entry that usually
+    /// toasts "nothing to reopen" just trains people to skip it.
+    #[test]
+    fn reopen_row_absent_with_nothing_closed() {
+        let (_d, app) = app();
+        assert!(app.closed_buffers.is_empty(), "precondition");
+        let l = labels(&app);
+        assert!(
+            !l.iter().any(|s| s.starts_with("Reopen last closed")),
+            "menu was: {l:?}"
+        );
+    }
+
+    /// The top-right `+` traded an immediate `tab_new` for this menu,
+    /// so the action it used to perform has to still be reachable —
+    /// otherwise the change is a straight regression for anyone with
+    /// that click in muscle memory.
+    #[test]
+    fn new_tab_page_survives_the_move_to_a_menu() {
+        let (_d, app) = app();
+        let l = labels(&app);
+        assert!(l.iter().any(|s| s == "New tab page"), "menu was: {l:?}");
     }
 }
