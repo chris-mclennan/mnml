@@ -381,11 +381,35 @@ impl Ipc {
         // diffs its own IPC files). Best-effort append a `.mnml/`
         // line to the workspace's `.gitignore` on first creation.
         // Idempotent — checks the file content before appending.
-        let _ = ensure_gitignore_excludes_mnml(workspace);
+        let _ = ensure_workspace_gitignore(workspace);
         let cmd_path = dir.join("command");
         let screen_path = dir.join("screen.txt");
         let status_path = dir.join("status.json");
         let events_path = dir.join("events.jsonl");
+        // Refuse to write through a symlink. Git preserves symlinks
+        // (`core.symlinks` defaults on for Unix), so a cloned repo can
+        // ship `.mnml/ipc/screen.txt` pointing at `~/.zshrc` or
+        // `~/.ssh/authorized_keys` — and `write_screen` would then
+        // truncate that target and keep overwriting it ~10x/sec with
+        // screen text. Verified end-to-end against a real build before
+        // this guard existed.
+        //
+        // Unlink rather than bail: these are mnml-owned scratch files
+        // with no user content to lose, and refusing outright would
+        // brick the IPC channel for the whole session over a file we
+        // are entitled to replace.
+        for p in [&cmd_path, &screen_path, &status_path, &events_path] {
+            if std::fs::symlink_metadata(p)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                eprintln!(
+                    "mnml: {} was a symlink — replacing it with a regular file",
+                    p.display()
+                );
+                let _ = std::fs::remove_file(p);
+            }
+        }
         // Snapshot any bytes the host pre-queued before our launch
         // and log them as a discrete event — `Ipc::init` then
         // truncates the channel so the live loop starts clean.
@@ -699,33 +723,87 @@ fn parse_command(line: &str) -> IpcCommand {
 ///   * `.gitignore` already has a literal `.mnml/` or `.mnml` line
 ///
 /// Creates the gitignore if absent.
-fn ensure_gitignore_excludes_mnml(workspace: &Path) -> io::Result<()> {
-    if !workspace.join(".git").exists() {
-        return Ok(());
-    }
-    let gi = workspace.join(".gitignore");
-    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
-    // Match `.mnml`, `.mnml/`, `/.mnml`, `/.mnml/` as anchored or
-    // non-anchored lines. Comments + indentation tolerated.
-    let already = existing.lines().any(|line| {
+/// Workspace-local state directories mnml writes into a repo. Both
+/// hold credential-bearing files, so both belong in `.gitignore`.
+///
+/// `.rqst/` is the HTTP client's original home and is still live —
+/// request history (with template-EXPANDED `Authorization` headers),
+/// captured browser traffic, `env/` variable values, lookups, config.
+/// Newer HTTP code writes under `.mnml/`, so a workspace can easily
+/// have both. Only `.mnml/` was ever auto-ignored, which left the
+/// directory holding resolved secrets stageable by `git add -A`.
+///
+/// Deliberately NOT listed: `.curl` / `.http` / `.rest` request files.
+/// Those are user-authored API definitions — committing them is the
+/// point of a collection — and they reference secrets through
+/// `{{VAR}}` rather than embedding them.
+const WORKSPACE_STATE_DIRS: &[&str] = &[".mnml", ".rqst"];
+
+/// True when `existing` already ignores `dir`, tolerating the usual
+/// spellings (`x`, `x/`, `/x`, `/x/`, `x/**`) plus comments and
+/// indentation.
+fn gitignore_covers(existing: &str, dir: &str) -> bool {
+    existing.lines().any(|line| {
         let t = line
             .split('#')
             .next()
             .unwrap_or("")
             .trim()
             .trim_start_matches('/')
+            .trim_end_matches("**")
             .trim_end_matches('/');
-        t == ".mnml"
-    });
-    if already {
+        t == dir
+    })
+}
+
+pub(crate) fn ensure_workspace_gitignore(workspace: &Path) -> io::Result<()> {
+    if !workspace.join(".git").exists() {
         return Ok(());
     }
+    let gi = workspace.join(".gitignore");
+    // A repo can ship `.gitignore` as a symlink to somewhere outside
+    // the workspace; rewriting it would then clobber that target. This
+    // one we refuse rather than unlink — unlike the IPC scratch files,
+    // `.gitignore` is the user's content, and silently replacing it
+    // would be worse than skipping the convenience.
+    if std::fs::symlink_metadata(&gi)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "mnml: {} is a symlink — not modifying it. Add `.mnml/` \
+             (and `.rqst/` if you use the HTTP client) yourself.",
+            gi.display()
+        );
+        return Ok(());
+    }
+    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
+
+    let missing: Vec<&str> = WORKSPACE_STATE_DIRS
+        .iter()
+        .copied()
+        // Only add a directory the workspace actually uses, or is
+        // about to: `.mnml` always (the IPC channel lives there and
+        // this runs from `Ipc::init`), `.rqst` only once it exists.
+        // Keeps a stray `.rqst/` line out of repos that never touch
+        // the HTTP client.
+        .filter(|d| *d == ".mnml" || workspace.join(d).exists())
+        .filter(|d| !gitignore_covers(&existing, d))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
     let mut out = existing;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str("# Added by mnml on first launch — workspace IPC + session state\n");
-    out.push_str(".mnml/\n");
+    out.push_str("# Added by mnml — workspace state: IPC, session, and HTTP\n");
+    out.push_str("# history / captured traffic / env values (these carry secrets)\n");
+    for dir in missing {
+        out.push_str(dir);
+        out.push_str("/\n");
+    }
     std::fs::write(&gi, out)
 }
 
@@ -1245,7 +1323,15 @@ pub fn dump_screen_status(ipc: &Ipc, screen: &ratatui::buffer::Buffer, app: &App
     // as &Ipc from the outer loop's paint path.
     let area = screen.area();
     ipc.last_backend_size.set(Some((area.width, area.height)));
-    ipc.write_screen(&screen_to_text(screen));
+    // `[ipc] write_screen = false` suppresses the verbatim screen dump
+    // (see `IpcConfig::write_screen`). Only this file is gated —
+    // `status.json` / `rects.json` carry pane metadata, not buffer
+    // contents, and `./run.sh restart` needs the channel alive.
+    // Headless forces it on at startup: observing the virtual screen
+    // is the only way to drive a headless run.
+    if app.config.ipc.write_screen {
+        ipc.write_screen(&screen_to_text(screen));
+    }
     ipc.write_status(&status_json(app));
     // Always emit `rects.json` alongside the screen so headless
     // audit scripts can verify click rects without a separate IPC
@@ -2163,6 +2249,129 @@ mod tests {
             1,
             "second init should not append duplicate; content:\n{content}"
         );
+    }
+
+    #[test]
+    fn ipc_write_screen_defaults_on_and_parses_the_opt_out() {
+        // Default must stay ON: `./run.sh restart`, the .test harness,
+        // and agent UI inspection all read screen.txt.
+        assert!(crate::config::Config::default().ipc.write_screen);
+
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
+        std::fs::write(
+            d.path().join(".mnml/config.toml"),
+            "[ipc]\nwrite_screen = false\n",
+        )
+        .unwrap();
+        let cfg = crate::config::Config::load(None, d.path());
+        assert!(!cfg.ipc.write_screen, "[ipc] write_screen = false ignored");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ipc_init_refuses_to_write_through_a_symlink() {
+        // A cloned repo can ship `.mnml/ipc/screen.txt` as a symlink
+        // (git preserves them) pointing at ~/.zshrc; write_screen
+        // would then truncate and continuously overwrite that target.
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "IMPORTANT").unwrap();
+
+        let ws = tempfile::tempdir().unwrap();
+        let ipc_dir = ws.path().join(".mnml/ipc");
+        std::fs::create_dir_all(&ipc_dir).unwrap();
+        std::os::unix::fs::symlink(&victim, ipc_dir.join("screen.txt")).unwrap();
+
+        let ipc = Ipc::init(ws.path()).unwrap();
+        ipc.write_screen("rendered UI with an open .env in it");
+
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "IMPORTANT",
+            "must not write through the symlink"
+        );
+        assert!(
+            !std::fs::symlink_metadata(ipc_dir.join("screen.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "symlink should have been replaced by a regular file"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn gitignore_symlink_is_left_alone() {
+        // Unlike the IPC scratch files, `.gitignore` is the user's
+        // content — refuse rather than replace.
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("real-gitignore");
+        std::fs::write(&victim, "original\n").unwrap();
+
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        std::os::unix::fs::symlink(&victim, ws.path().join(".gitignore")).unwrap();
+
+        ensure_workspace_gitignore(ws.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "original\n",
+            "must not rewrite through the symlink"
+        );
+    }
+
+    #[test]
+    fn rqst_dir_is_ignored_once_it_exists() {
+        // `.rqst/` holds request history with template-EXPANDED
+        // Authorization headers. It's created lazily on the first
+        // request, so the check has to run again then — `Ipc::init`
+        // alone is too early.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let gi = dir.path().join(".gitignore");
+
+        // No `.rqst/` yet — don't add a line the repo doesn't need.
+        ensure_workspace_gitignore(dir.path()).unwrap();
+        let first = std::fs::read_to_string(&gi).unwrap();
+        assert!(first.contains(".mnml/"));
+        assert!(
+            !first.contains(".rqst/"),
+            "shouldn't pre-emptively ignore an unused dir:\n{first}"
+        );
+
+        // The HTTP client creates it; now it must be covered.
+        std::fs::create_dir(dir.path().join(".rqst")).unwrap();
+        ensure_workspace_gitignore(dir.path()).unwrap();
+        let second = std::fs::read_to_string(&gi).unwrap();
+        assert!(second.contains(".rqst/"), "content:\n{second}");
+        assert_eq!(second.matches(".mnml/").count(), 1, "no duplicate .mnml");
+
+        // Idempotent.
+        ensure_workspace_gitignore(dir.path()).unwrap();
+        let third = std::fs::read_to_string(&gi).unwrap();
+        assert_eq!(third.matches(".rqst/").count(), 1, "content:\n{third}");
+    }
+
+    #[test]
+    fn gitignore_covers_recognises_the_usual_spellings() {
+        for spelling in [
+            ".rqst",
+            ".rqst/",
+            "/.rqst",
+            "/.rqst/",
+            ".rqst/**",
+            "  .rqst/  ",
+        ] {
+            assert!(
+                gitignore_covers(&format!("target/\n{spelling}\n"), ".rqst"),
+                "should recognise {spelling:?}"
+            );
+        }
+        // A comment mentioning it is not coverage.
+        assert!(!gitignore_covers("# .rqst/ is noisy\ntarget/\n", ".rqst"));
+        // Nor is a different directory that merely shares a prefix.
+        assert!(!gitignore_covers(".rqst-old/\n", ".rqst"));
     }
 
     #[test]
