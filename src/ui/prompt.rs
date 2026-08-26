@@ -491,7 +491,13 @@ fn draw_generic_confirm(
         .unwrap_or(0);
 
     let buttons_w: usize = buttons.iter().map(|(l, _, _)| l.chars().count() + 1).sum();
-    let inner_w = widest.max(buttons_w + 2).max(40);
+    // `+ 2` for the one-space gutter on each side. Message rows render
+    // as `" {line}"`, so sizing the box to `widest` alone left every
+    // line one column too wide and silently clipped its last character
+    // — visible in the first real workspace-trust dialog, which showed
+    // `…/bin/claude-multi.s`. Latent for any confirm whose title
+    // exceeded the 40-column floor; short ones were never affected.
+    let inner_w = (widest + 2).max(buttons_w + 2).max(40);
     let w = (inner_w as u16 + 2).min(screen.width.saturating_sub(2));
     // Inner rows = message lines + blank spacer + button row, +2 for
     // the block's borders. Equals the previous h=5 when there's one
@@ -513,10 +519,17 @@ fn draw_generic_confirm(
     // Leave the last two inner rows for the spacer + buttons.
     let msg_rows = inner.height.saturating_sub(2);
     for (i, line) in msg_lines.iter().take(msg_rows as usize).enumerate() {
-        let padded = format!(
-            " {line:<width$}",
-            width = (inner.width as usize).saturating_sub(1)
-        );
+        // On a terminal too narrow for the sized box, clip to fit with
+        // an ellipsis rather than letting the renderer shear the tail
+        // off mid-character. `avail` accounts for the leading gutter.
+        let avail = (inner.width as usize).saturating_sub(1);
+        let shown: String = if line.chars().count() > avail {
+            let head: String = line.chars().take(avail.saturating_sub(1)).collect();
+            format!("{head}…")
+        } else {
+            line.clone()
+        };
+        let padded = format!(" {shown:<avail$}");
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 padded,

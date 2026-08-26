@@ -51,9 +51,22 @@ impl App {
         let mut lines = vec![format!("{ws_name}/.mnml/ declares:"), String::new()];
         const MAX_SHOWN: usize = 6;
         for claim in claims.iter().take(MAX_SHOWN) {
+            // Name the specific entry, not just its category. Without
+            // it the dialog said "integration · multi-repo: …" — and
+            // `multi-repo` is only the launch-PROFILE name, so the
+            // reader couldn't tell which integration was involved.
+            // It matters most in the shadowing case: a repo shipping
+            // `integrations/claude_code.toml` overrides YOUR
+            // claude_code, and the id is what reveals that.
+            //
+            // Deliberately the config key (file stem for integrations),
+            // never the manifest's own `label` — that string comes from
+            // the untrusted workspace, and a hostile repo could set it
+            // to something reassuring to dress up this very prompt.
             lines.push(format!(
-                "  • {} · {}",
+                "  • {} {} · {}",
                 claim.kind.label(),
+                claim.entry_name(),
                 truncate_command(&claim.command)
             ));
             lines.push(format!("      runs {}", claim.kind.trigger()));

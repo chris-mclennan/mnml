@@ -105,6 +105,22 @@ pub struct ExecClaim {
 }
 
 impl ExecClaim {
+    /// The specific entry's name, without its section prefix —
+    /// `claude_code` from `integrations.claude_code`, `rust` from
+    /// `lsp.rust`. Shown in the trust dialog so a claim identifies
+    /// WHICH entry it is, not just what category it falls in.
+    ///
+    /// Comes from the config key (the file stem for integrations),
+    /// never from a manifest-supplied display label: that string is
+    /// written by the workspace being judged, and a hostile repo
+    /// could choose a reassuring one to dress up the prompt.
+    pub fn entry_name(&self) -> &str {
+        match self.key.split_once('.') {
+            Some((_, rest)) if !rest.is_empty() => rest,
+            _ => &self.key,
+        }
+    }
+
     /// Stable one-line form used for both the fingerprint and tests.
     fn canonical(&self) -> String {
         format!("{:?}\u{1f}{}\u{1f}{}", self.kind, self.key, self.command)
@@ -576,6 +592,25 @@ mod tests {
             assert!(is_trusted(a.path(), &fp));
             assert!(!is_trusted(b.path(), &fp));
         });
+    }
+
+    #[test]
+    fn entry_name_strips_the_section_prefix() {
+        let claim = |k: &str| ExecClaim {
+            kind: ExecKind::Integration,
+            key: k.to_string(),
+            command: "x".into(),
+        };
+        assert_eq!(
+            claim("integrations.claude_code").entry_name(),
+            "claude_code"
+        );
+        assert_eq!(claim("lsp.rust").entry_name(), "rust");
+        assert_eq!(claim("formatters.rs").entry_name(), "rs");
+        // Dotless keys (`startup.layout` is prefixed, `ui.md_preview_engine`
+        // too) still return something usable rather than empty.
+        assert_eq!(claim("standalone").entry_name(), "standalone");
+        assert_eq!(claim("trailing.").entry_name(), "trailing.");
     }
 
     #[test]
