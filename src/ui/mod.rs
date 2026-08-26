@@ -5107,12 +5107,12 @@ fn paint_leaf_tab_strip_with_hidden(
     // split buttons cluster).
     let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
     let plus_w = 3u16; // ` + `
-    let mode_chip_w = mode_chip
-        .as_ref()
-        .map(|(l, _, _)| l.chars().count() as u16)
-        .unwrap_or(0);
-    let reserved_right = split_btns_total + mode_chip_w;
-    if chip_x + plus_w <= strip_right.saturating_sub(reserved_right) {
+    // #1209 f/u — bound by `tabs_right`, which already has the mode
+    // chip, split buttons AND the chevron slot subtracted. This used
+    // to recompute the bound as `strip_right - (split_btns +
+    // mode_chip)` — the PRE-reservation edge — so the `+` chip, which
+    // draws after the chevrons, painted straight over them.
+    if chip_x + plus_w <= tabs_right {
         let plus_rect = Rect {
             x: chip_x,
             y: strip.y,
@@ -5148,14 +5148,14 @@ fn paint_leaf_tab_strip_with_hidden(
         // Recompute the leftmost x this chip could occupy — it's
         // the same slot `+` would go into, offset by the `+` width
         // when the `+` was drawn.
-        let after_plus_x = if chip_x + plus_w <= strip_right.saturating_sub(reserved_right) {
+        let after_plus_x = if chip_x + plus_w <= tabs_right {
             chip_x + plus_w
         } else {
             chip_x
         };
         let label = format!(" +{hidden_tab_count} hidden ");
         let label_w = label.chars().count() as u16;
-        if after_plus_x + label_w <= strip_right.saturating_sub(reserved_right) {
+        if after_plus_x + label_w <= tabs_right {
             let chip_rect = Rect {
                 x: after_plus_x,
                 y: strip.y,
@@ -5869,6 +5869,34 @@ mod leaf_tab_scroll_tests {
             "2 tabs in 200 cells fit; got {:?}",
             app.rects.leaf_tab_arrows
         );
+    }
+
+    /// The `+` chip draws AFTER the chevrons, so if its bound is
+    /// computed from the pre-reservation edge it paints straight over
+    /// them — which is what shipped first: the chevrons were
+    /// registered as click targets but invisible under the `+`.
+    /// Rect-level overlap is the assertion that catches it; the
+    /// chevron-exists tests above all passed while it was broken.
+    #[test]
+    fn plus_chip_never_overlaps_a_chevron() {
+        let app = paint_strip(40, 8);
+        let arrows: Vec<Rect> = app
+            .rects
+            .leaf_tab_arrows
+            .iter()
+            .map(|(r, _, _)| *r)
+            .collect();
+        assert!(!arrows.is_empty(), "precondition: strip must overflow");
+        for (plus, _) in &app.rects.split_tab_plus_buttons {
+            for a in &arrows {
+                let overlaps = plus.x < a.x + a.width && a.x < plus.x + plus.width;
+                assert!(
+                    !overlaps,
+                    "`+` chip {plus:?} overlaps chevron {a:?} — the chevron \
+                     would be painted over and unreachable"
+                );
+            }
+        }
     }
 
     /// Scrolling is per-leaf state, so the offset the click handler
