@@ -1245,11 +1245,24 @@ mod pua_drift_tests {
                 let Ok(text) = std::fs::read_to_string(&p) else {
                     continue;
                 };
-                for (line_no, line) in text.lines().enumerate() {
+                let lines: Vec<&str> = text.lines().collect();
+                for (line_no, line) in lines.iter().enumerate() {
                     // Escape hatch for lines that deliberately name a
                     // DEAD codepoint (config-migration arms matching
                     // the value being migrated away from).
-                    if line.contains("pua-drift-ok") {
+                    //
+                    // The marker is honored on the neighbouring lines
+                    // too, not just this one: rustfmt reflows a long
+                    // `if` condition and pushes its trailing comment
+                    // onto the next line, which silently detached
+                    // every marker in config.rs the first time a
+                    // `cargo fmt` ran after they were added. A
+                    // one-line window either side survives that.
+                    let exempt = [line_no.wrapping_sub(1), line_no, line_no + 1]
+                        .iter()
+                        .filter_map(|i| lines.get(*i))
+                        .any(|l| l.contains("pua-drift-ok"));
+                    if exempt {
                         continue;
                     }
                     for cp in re(line) {

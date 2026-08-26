@@ -585,13 +585,13 @@ fn stream_cli_to_channel(
 ) {
     use std::io::Read;
     use std::process::Stdio;
-    let mut child = match Command::new(bin)
-        .args(args)
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    crate::api_canary::scrub_key(&mut cmd);
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             let _ = sink.send((
@@ -694,12 +694,14 @@ pub fn one_shot_cancellable(
 ) -> Result<String, String> {
     use std::io::Read;
     use std::process::Stdio;
-    let mut child = Command::new(CLI)
-        .args(["-p", "--session-id", session_id])
+    let mut cmd = Command::new(CLI);
+    cmd.args(["-p", "--session-id", session_id])
         .arg(prompt)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::api_canary::scrub_key(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("running `{CLI} -p`: {e} — is the Claude Code CLI on PATH?"))?;
     let mut so = child.stdout.take().expect("piped stdout");

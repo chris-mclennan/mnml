@@ -429,6 +429,13 @@ impl PtySession {
         for a in &profile.args {
             cmd.arg(a);
         }
+        // #1206 — a Claude Code pane inherits our env, and Claude
+        // Code prefers an inherited $ANTHROPIC_API_KEY over the
+        // user's claude.ai login, silently moving the session onto
+        // metered API billing. Strip it from every pty child: shells
+        // included, since a shell pane is where the user runs
+        // `claude` by hand.
+        crate::api_canary::scrub_key_pty(&mut cmd);
         if let Some(cwd) = &profile.cwd {
             cmd.cwd(cwd);
         }
