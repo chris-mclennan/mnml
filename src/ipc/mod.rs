@@ -394,10 +394,18 @@ impl Ipc {
         // for state changes that never came. 2026-06-07 bug-hunt SEV-3.
         let pre_queued = std::fs::read_to_string(&cmd_path).unwrap_or_default();
         // Truncate the command channel + events log so we start clean.
-        std::fs::write(&cmd_path, b"")?;
-        std::fs::write(&events_path, b"")?;
-        std::fs::write(&screen_path, b"")?;
-        std::fs::write(&status_path, b"{}")?;
+        // Owner-only from creation. `screen.txt` is a verbatim dump
+        // of the rendered UI — an open `.env`, an HTTP pane's
+        // Authorization header, a token pasted into a prompt — and
+        // `events.jsonl` / `status.json` carry paths and pane state.
+        // They live inside the user's project directory, so 0644 put
+        // the whole screen within reach of any local process.
+        // `write_secret` also tightens files left behind at 0644 by
+        // an earlier mnml.
+        crate::secret_file::write_secret(&cmd_path, b"")?;
+        crate::secret_file::write_secret(&events_path, b"")?;
+        crate::secret_file::write_secret(&screen_path, b"")?;
+        crate::secret_file::write_secret(&status_path, b"{}")?;
         let ipc = Ipc {
             dir,
             cmd_path,
@@ -462,10 +470,10 @@ impl Ipc {
     }
 
     pub fn write_screen(&self, text: &str) {
-        let _ = std::fs::write(&self.screen_path, text.as_bytes());
+        let _ = crate::secret_file::write_secret(&self.screen_path, text.as_bytes());
     }
     pub fn write_status(&self, json: &str) {
-        let _ = std::fs::write(&self.status_path, json.as_bytes());
+        let _ = crate::secret_file::write_secret(&self.status_path, json.as_bytes());
     }
     /// Write a JSON dump of every registered click rect to
     /// `<ipc>/rects.json`. Triggered by the `dump-rects` IPC command
@@ -473,18 +481,14 @@ impl Ipc {
     /// `app.debug_rects` is enabled. Format: a JSON array of
     /// `{"label": str, "x": u16, "y": u16, "w": u16, "h": u16}`.
     pub fn write_rects(&self, json: &str) {
-        let _ = std::fs::write(self.dir.join("rects.json"), json.as_bytes());
+        let _ = crate::secret_file::write_secret(&self.dir.join("rects.json"), json.as_bytes());
     }
     pub fn append_event(&self, json_line: &str) {
         if json_line.contains(r#""event":"exit""#) {
             self.exit_event_written
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.events_path)
-        {
+        if let Ok(mut f) = crate::secret_file::append_secret(&self.events_path) {
             let _ = writeln!(f, "{json_line}");
         }
     }

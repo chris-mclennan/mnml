@@ -78,7 +78,11 @@ impl CookieJar {
         }
         let text = serde_json::to_string_pretty(&serde_json::Value::Object(out))
             .map_err(|e| format!("serialize: {e}"))?;
-        std::fs::write(&path, text).map_err(|e| format!("write: {e}"))?;
+        // Session cookies are bearer credentials in everything but
+        // name — anyone who can read this file can impersonate the
+        // user against those hosts.
+        crate::secret_file::write_secret(&path, text.as_bytes())
+            .map_err(|e| format!("write: {e}"))?;
         Ok(path)
     }
 
