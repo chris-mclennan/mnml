@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::cursor::SetCursorStyle;
+use ratatui::crossterm::cursor::{SetCursorStyle, Show};
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
@@ -73,6 +73,8 @@ pub fn run(mut app: App) -> Result<bool, String> {
         _ => "mnml".to_string(),
     };
     let blink = app.config.editor.cursor_blink;
+    // Before setup, so a panic *during* setup is covered too.
+    install_panic_hook();
     let mut term =
         setup_terminal(&title, blink).map_err(|e| format!("terminal setup failed: {e}"))?;
     let result = run_loop(&mut term, &mut app);
@@ -80,6 +82,50 @@ pub fn run(mut app: App) -> Result<bool, String> {
     result
         .map(|()| app.restart_requested)
         .map_err(|e| format!("{e}"))
+}
+
+/// Undo everything `setup_terminal` turned on, writing to `io::stdout()`
+/// directly rather than through a `Terminal` handle — a panic hook has no
+/// access to one. Mirrors `restore_terminal`; every step is best-effort,
+/// because a panicking process must not panic again on its way out.
+fn emergency_restore_terminal() {
+    if supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        io::stdout(),
+        LeaveAlternateScreen,
+        ratatui::crossterm::style::Print("\x1b[?1003l"),
+        DisableMouseCapture,
+        ratatui::crossterm::event::DisableBracketedPaste,
+        SetCursorStyle::DefaultUserShape,
+        Show,
+    );
+}
+
+/// Restore the terminal on a panic, then let the previous hook run.
+///
+/// Without this, a panic anywhere in `run_loop` / `app.tick()` / `ui::draw`
+/// unwinds straight past `restore_terminal`, and the process exits without
+/// ever sending `disable_raw_mode` / `LeaveAlternateScreen` / show-cursor.
+/// termios belongs to the tty, not the process, so the user's shell is left
+/// with echo and canonical mode off — typing shows nothing, Enter does not
+/// submit — still painted on the alternate screen. The only way out is to
+/// blind-type `stty sane`.
+///
+/// Chaining to the previous hook keeps the panic message and backtrace.
+fn install_panic_hook() {
+    install_panic_hook_with(emergency_restore_terminal);
+}
+
+/// Seam for testing: same wiring, with the teardown injected.
+fn install_panic_hook_with(restore: fn()) {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore();
+        prev(info);
+    }));
 }
 
 fn setup_terminal(
@@ -3356,5 +3402,56 @@ mod nav_mode_gate_tests {
             before,
             "Ctrl+- should navigate back in NORMAL"
         );
+    }
+}
+
+#[cfg(test)]
+mod panic_hook_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static RESTORED: AtomicBool = AtomicBool::new(false);
+    static PREV_RAN: AtomicBool = AtomicBool::new(false);
+
+    fn fake_restore() {
+        RESTORED.store(true, Ordering::SeqCst);
+    }
+
+    /// A panic must restore the terminal *and* still reach the previous
+    /// hook, so the panic message and backtrace survive. Without the
+    /// first half the user's shell is left in raw mode on the alternate
+    /// screen; without the second half we would swallow the crash report.
+    #[test]
+    fn panic_hook_restores_terminal_then_chains() {
+        // `set_hook` is process-global. Put the harness's own hook back
+        // before asserting, so a failed assertion here can't leak ours
+        // into the rest of the suite.
+        let original = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {
+            PREV_RAN.store(true, Ordering::SeqCst);
+        }));
+        install_panic_hook_with(fake_restore);
+
+        let panicked = std::panic::catch_unwind(|| panic!("boom")).is_err();
+        let restored = RESTORED.load(Ordering::SeqCst);
+        let chained = PREV_RAN.load(Ordering::SeqCst);
+
+        let _ = std::panic::take_hook();
+        std::panic::set_hook(original);
+
+        assert!(panicked, "the panic must still propagate");
+        assert!(restored, "terminal teardown must run on panic");
+        assert!(
+            chained,
+            "previous hook must still run, or we lose the backtrace"
+        );
+    }
+
+    /// The hook runs while the process is already unwinding, and may run
+    /// when setup never completed. It must not panic a second time.
+    #[test]
+    fn emergency_restore_is_safe_without_a_terminal() {
+        emergency_restore_terminal();
+        emergency_restore_terminal();
     }
 }
