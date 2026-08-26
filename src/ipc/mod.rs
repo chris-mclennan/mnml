@@ -1426,14 +1426,13 @@ pub fn rects_dump_json(app: &App) -> String {
     // had click handlers in mouse/down_left.rs but the rects
     // never made it to rects.json, so IPC-driven users couldn't
     // see them and the agent reported them as missing.
-    one!(
-        "bufferline_overflow_left",
-        app.rects.bufferline_overflow_left
-    );
-    one!(
-        "bufferline_overflow_right",
-        app.rects.bufferline_overflow_right
-    );
+    // #1209 — one entry per painted chevron, suffixed by the leaf it
+    // scrolls, so a headless script driving a split layout can tell
+    // which strip it's about to move.
+    for (rect, leaf_key, is_left) in &app.rects.leaf_tab_arrows {
+        let side = if *is_left { "left" } else { "right" };
+        one!(&format!("leaf_tab_arrow_{side}_{leaf_key}"), Some(*rect));
+    }
     // qa-8th render W-3 2026-06-30 — Settings Save / Cancel chips
     // had click handlers in mouse/mod.rs but the rects never
     // reached rects.json so headless scripts couldn't drive them.

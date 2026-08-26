@@ -1153,21 +1153,14 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     // let editor scroll steal the notch. Bounded to prev/next per
     // notch — no multi-step jump. Also applies over the overflow
     // arrow zones so the user can wheel there without missing.
+    // #1209 — the global overflow-arrow zones are gone. A leaf
+    // strip's chevrons now sit inside `split_tab_strip_areas`, and
+    // the per-leaf scroll branch further down handles wheeling there.
     let on_bufferline_zone = app
         .rects
         .bufferline_tabs
         .iter()
-        .any(|(r, _)| contains(*r, x, y))
-        || app
-            .rects
-            .bufferline_overflow_left
-            .map(|r| contains(r, x, y))
-            .unwrap_or(false)
-        || app
-            .rects
-            .bufferline_overflow_right
-            .map(|r| contains(r, x, y))
-            .unwrap_or(false);
+        .any(|(r, _)| contains(*r, x, y));
     if on_bufferline_zone {
         if delta < 0 {
             app.prev_buffer();
@@ -1409,15 +1402,30 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
-    // Wheel over the bufferline → scroll the tab strip by one per tick.
-    if let Some(br) = app.rects.bufferline
-        && contains(br, x, y)
+    // #1209 — wheel over a leaf's tab strip scrolls THAT strip. Was a
+    // single global offset that no painter had read since the top tab
+    // strip was retired on 2026-07-18, so this scrolled nothing.
+    if let Some(&(_, leaf_pane)) = app
+        .rects
+        .split_tab_strip_areas
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
     {
-        if delta < 0 {
-            app.bufferline_first_visible = app.bufferline_first_visible.saturating_sub(1);
-        } else if app.bufferline_first_visible + 1 < app.panes.len() {
-            app.bufferline_first_visible += 1;
-        }
+        // `split_tab_strip_areas` keys by the leaf's ACTIVE pane;
+        // `leaf_tab_scroll` keys by its FIRST tab. Translate, or the
+        // wheel would write an offset the painter never reads.
+        let leaf_key = app
+            .layout()
+            .leaf_containing(leaf_pane)
+            .and_then(|tabs| tabs.first().copied())
+            .unwrap_or(leaf_pane);
+        let cur = app.leaf_tab_scroll.get(&leaf_key).copied().unwrap_or(0);
+        let next = if delta < 0 {
+            cur.saturating_sub(1)
+        } else {
+            cur.saturating_add(1)
+        };
+        app.leaf_tab_scroll.insert(leaf_key, next);
         return;
     }
     // Scroll whichever split leaf is under the pointer (not necessarily the focused one).

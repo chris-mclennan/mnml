@@ -3031,14 +3031,16 @@ pub struct PaneRects {
     /// Cleared + rebuilt per render so the rect always matches the
     /// current layout.
     pub scrollbars: Vec<ScrollbarHit>,
-    /// Rect of the bufferline's `‹` overflow chevron when painted (more tabs
-    /// scrolled off the left edge); `None` when there's nothing past it.
-    /// Clicking scrolls the bufferline left by one.
-    pub bufferline_overflow_left: Option<Rect>,
-    /// Rect of the bufferline's `›` overflow chevron when painted (more tabs
-    /// past the right edge); `None` when there's nothing past it. Clicking
-    /// scrolls the bufferline right by one.
-    pub bufferline_overflow_right: Option<Rect>,
+    /// `(rect, leaf_key, is_left)` per overflow chevron on a leaf's
+    /// tab strip. `leaf_key` is the leaf's first tab id — the same
+    /// key `App::leaf_tab_scroll` uses. Clicking scrolls THAT leaf's
+    /// strip by one; a chevron is only pushed when it has somewhere
+    /// to go, so a click is never a no-op.
+    ///
+    /// #1209 — replaces the single `bufferline_overflow_left/right`
+    /// pair, which belonged to the retired global top strip and had
+    /// been set to `None` on every render since 2026-07-18.
+    pub leaf_tab_arrows: Vec<(Rect, PaneId, bool)>,
     /// `(rect, pane_id, view_mode)` per `[Edit]` / `[Response]` tab chip
     /// on a request pane's tab bar. Clicking switches the pane's view.
     pub request_tabs: Vec<(Rect, PaneId, crate::request_pane::ViewMode)>,
@@ -4310,17 +4312,27 @@ pub struct App {
     /// Persisted in session.json across mnml restarts.
     pub diff_view_mode_pref: crate::pane::DiffViewMode,
     pub diff_wrap_pref: bool,
-    /// Bufferline horizontal scroll — index of the leftmost rendered tab. Auto
-    /// adjusts on every render to keep the active tab visible (the user never
-    /// has to scroll it manually). Reset when the pane count drops past it.
-    pub bufferline_first_visible: usize,
-    /// qa-7th vscode SEV-2 2026-06-30 — when the user clicks ‹/›
-    /// the chevron handler stamps the current active pane here.
-    /// While the stamp matches `app.active`, the auto-scroll
-    /// keep-active-visible logic in `ui::bufferline::draw` is
-    /// suppressed (the chevron actually scrolls). On active-pane
-    /// change the stamp clears and auto-scroll resumes.
-    pub bufferline_active_at_scroll: Option<crate::layout::PaneId>,
+    /// Per-leaf tab-strip horizontal scroll — index of the leftmost
+    /// rendered tab in that leaf. Keyed by the leaf's FIRST tab id,
+    /// not its active one: the active tab changes every time you
+    /// switch within the leaf, which would lose the offset on every
+    /// click. The first tab is stable until it's closed or dragged,
+    /// and losing the offset in those cases is harmless.
+    ///
+    /// #1209 (2026-08-26) — replaces the old global
+    /// `bufferline_first_visible`, which dated from when there was
+    /// one shared tab strip at the top. Per-leaf strips replaced
+    /// that on 2026-07-18 and the global offset was orphaned; with
+    /// splits, one shared offset would make scrolling one split's
+    /// tabs move another's.
+    pub leaf_tab_scroll: std::collections::HashMap<crate::layout::PaneId, usize>,
+    /// The active tab each leaf had at its last paint, keyed the same
+    /// way. Auto-scroll-to-reveal only fires when a leaf's active tab
+    /// *changed* since the last frame, so a deliberate scroll away
+    /// from the active tab survives instead of being yanked back on
+    /// the very next render.
+    pub leaf_tab_last_active:
+        std::collections::HashMap<crate::layout::PaneId, crate::layout::PaneId>,
     /// Full-screen focus mode (`view.fullscreen`): hide the tree rail, bufferline, and
     /// statusline; the editor takes the full window. Independent of the other
     /// visibility flags, which are remembered separately. Not persisted —
@@ -6214,8 +6226,8 @@ impl App {
             dragging_git_graph_detail: None,
             diff_view_mode_pref: crate::pane::DiffViewMode::Inline,
             diff_wrap_pref: false,
-            bufferline_first_visible: 0,
-            bufferline_active_at_scroll: None,
+            leaf_tab_scroll: std::collections::HashMap::new(),
+            leaf_tab_last_active: std::collections::HashMap::new(),
             fullscreen_mode: false,
             recent_files: Vec::new(),
             harpoon: Default::default(),

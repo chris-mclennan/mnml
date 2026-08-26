@@ -412,8 +412,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     app.rects.bufferline_tabs.clear();
     app.rects.bufferline_tab_close.clear();
-    app.rects.bufferline_overflow_left = None;
-    app.rects.bufferline_overflow_right = None;
     // 2026-06-22 — the right-cluster chip rects
     // (launcher_icon_rects / bufferline_new_tab_button /
     // bufferline_tab_page_* / bufferline_theme_toggle /

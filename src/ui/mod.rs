@@ -1225,8 +1225,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.bufferline = None;
         app.rects.bufferline_tabs.clear();
         app.rects.bufferline_tab_close.clear();
-        app.rects.bufferline_overflow_left = None;
-        app.rects.bufferline_overflow_right = None;
         // NOTE: do NOT clear `bufferline_new_tab_button`,
         // `bufferline_tab_page_*`, `bufferline_theme_toggle`, or
         // `bufferline_window_close` here. Since the 2026-07-18
@@ -1367,6 +1365,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.split_tab_chips.clear();
     app.rects.split_tab_close.clear();
     app.rects.split_tab_strip_areas.clear();
+    // #1209 — same lifetime as the strip areas above: rebuilt by
+    // `paint_leaf_tab_strip_with_hidden` for whichever leaves paint
+    // this frame.
+    app.rects.leaf_tab_arrows.clear();
     app.rects.split_tab_plus_buttons.clear();
     app.rects.ai_placeholder_card = None;
     app.rects.tab_insert_hint = None;
@@ -4940,8 +4942,34 @@ fn paint_leaf_tab_strip_with_hidden(
     // so the "+N hidden" chip surfaces the overflow (previously only
     // the ActivitySection::Http filter path fed `hidden_tab_count`;
     // strip clipping was silent).
+    // #1209 (2026-08-26) — per-leaf horizontal scroll + overflow
+    // chevrons.
+    //
+    // The chevron pair is reserved BEFORE the tabs are laid out, and
+    // that ordering is the whole fix. The pre-existing `+N hidden`
+    // chip was placed only if room remained *after* the tabs, but
+    // tabs are laid out right up to `tabs_right` — so the one
+    // affordance whose job is to announce overflow was the first
+    // thing dropped whenever overflow actually happened. Reserving
+    // up front also keeps the chips from shifting as a strip crosses
+    // the overflow threshold.
+    //
+    // Keyed by the leaf's FIRST tab, not its active one — see
+    // `App::leaf_tab_scroll`.
+    const ARROW_W: u16 = 2;
+    let leaf_key = tabs.first().copied().unwrap_or(active);
+    let tab_count = tabs.len();
+    let arrows_w = if tab_count >= 2 { ARROW_W * 2 } else { 0 };
+    let tabs_right = tabs_right.saturating_sub(arrows_w);
+    let scroll = app
+        .leaf_tab_scroll
+        .get(&leaf_key)
+        .copied()
+        .unwrap_or(0)
+        .min(tab_count.saturating_sub(1));
+
     let mut painted_count: usize = 0;
-    for &id in tabs {
+    for &id in tabs.iter().skip(scroll) {
         if chip_x >= tabs_right {
             break;
         }
@@ -5005,6 +5033,72 @@ fn paint_leaf_tab_strip_with_hidden(
     // a 10-tab result strip rendered 5 chips + zero discoverability).
     let overflow_hidden = tabs.len().saturating_sub(painted_count);
     let hidden_tab_count = hidden_tab_count.saturating_add(overflow_hidden);
+
+    // #1209 — chevrons in the slot reserved above, at the right end
+    // of the tab region. Each is pushed ONLY when it has somewhere to
+    // go, so a visible chevron is never a dead click: `‹` needs tabs
+    // scrolled off the left, `›` needs tabs past the right edge.
+    let hidden_right = tab_count.saturating_sub(scroll + painted_count);
+    if arrows_w > 0 {
+        let arrows_x = tabs_right;
+        for (slot, is_left, enabled) in [(0u16, true, scroll > 0), (1u16, false, hidden_right > 0)]
+        {
+            let x = arrows_x + slot * ARROW_W;
+            if x + ARROW_W > strip_right {
+                break;
+            }
+            let glyph = match (is_left, nerd) {
+                (true, true) => "\u{F0141}",
+                (false, true) => "\u{F0142}",
+                (true, false) => "<",
+                (false, false) => ">",
+            };
+            let style = if enabled {
+                Style::default().fg(t.fg).bg(t.bg2)
+            } else {
+                // Painted but inert — keeping both slots occupied
+                // stops the strip reflowing by 2 cells every time
+                // you scroll to either end.
+                Style::default()
+                    .fg(t.comment)
+                    .bg(strip_bg)
+                    .add_modifier(Modifier::DIM)
+            };
+            let rect = Rect {
+                x,
+                y: strip.y,
+                width: ARROW_W,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(format!("{glyph} "), style))),
+                rect,
+            );
+            if enabled {
+                app.rects.leaf_tab_arrows.push((rect, leaf_key, is_left));
+            }
+        }
+    }
+
+    // Auto-reveal: only when this leaf's active tab CHANGED since the
+    // last paint. Doing it unconditionally would yank the strip back
+    // the instant the user scrolled away from the active tab, which
+    // is exactly the bug the retired global strip papered over with
+    // an `active_at_scroll` stamp. Comparing against the last painted
+    // active gets the same result without the extra flag.
+    let active_changed = app.leaf_tab_last_active.get(&leaf_key) != Some(&active);
+    if active_changed && let Some(active_idx) = tabs.iter().position(|&id| id == active) {
+        {
+            let visible = scroll..scroll + painted_count;
+            if !visible.contains(&active_idx) {
+                // One frame late by construction — we can't know what
+                // fits without laying the chips out, and laying them
+                // out twice per render to find out isn't worth it.
+                app.leaf_tab_scroll.insert(leaf_key, active_idx);
+            }
+        }
+    }
+    app.leaf_tab_last_active.insert(leaf_key, active);
 
     // one-tab-type 2026-07-18 — a `+` chip immediately after the
     // last tab in this leaf's strip. Click → focus this leaf +
@@ -5682,6 +5776,149 @@ fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
             let line: String = "─".repeat(rect.width as usize);
             frame.render_widget(Paragraph::new(Span::styled(line, line_style)), rect);
         }
+    }
+}
+
+#[cfg(test)]
+mod leaf_tab_scroll_tests {
+    use super::*;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Open `n` scratch panes into one leaf and paint that leaf's tab
+    /// strip at `width`. Returns the app so the caller can inspect
+    /// the rects the paint registered.
+    fn paint_strip(width: u16, n: usize) -> App {
+        let d = tempfile::tempdir().unwrap();
+        for i in 0..n {
+            std::fs::write(d.path().join(format!("file{i}.txt")), "x").unwrap();
+        }
+        let mut cfg = Config::default();
+        // vim style: `open_path` appends a pane instead of replacing
+        // the active preview tab, so we reliably end up with n tabs.
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        for i in 0..n {
+            app.open_path(&d.path().join(format!("file{i}.txt")));
+        }
+        let tabs: Vec<crate::layout::PaneId> = app
+            .layout()
+            .leaf_containing(app.active.unwrap())
+            .map(|t| t.to_vec())
+            .unwrap_or_default();
+        let active = app.active.unwrap();
+        let mut term = Terminal::new(TestBackend::new(width, 1)).unwrap();
+        term.draw(|f| {
+            let strip = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height: 1,
+            };
+            app.rects.leaf_tab_arrows.clear();
+            paint_leaf_tab_strip_with_hidden(f, &mut app, active, &tabs, 0, strip, true);
+        })
+        .unwrap();
+        app
+    }
+
+    /// #1209 — the regression that motivated the feature. A strip too
+    /// narrow for its tabs must still surface an affordance. The old
+    /// `+N hidden` chip was placed only if room remained AFTER the
+    /// tabs, so it vanished in exactly the case it existed for; the
+    /// chevron slot is now reserved before the tabs are laid out.
+    #[test]
+    fn narrow_strip_registers_a_right_chevron_to_reach_hidden_tabs() {
+        let app = paint_strip(40, 8);
+        let right = app
+            .rects
+            .leaf_tab_arrows
+            .iter()
+            .find(|(_, _, is_left)| !*is_left);
+        assert!(
+            right.is_some(),
+            "8 tabs in 40 cells must overflow and offer a right chevron; \
+             got arrows: {:?}",
+            app.rects.leaf_tab_arrows
+        );
+    }
+
+    /// The chevron must sit inside the strip. A rect painted past the
+    /// edge is invisible but still clickable, which is worse than not
+    /// drawing it at all.
+    #[test]
+    fn chevron_rect_stays_inside_the_strip() {
+        let app = paint_strip(40, 8);
+        for (r, _, _) in &app.rects.leaf_tab_arrows {
+            assert!(
+                r.x + r.width <= 40,
+                "chevron {r:?} extends past the 40-cell strip"
+            );
+        }
+    }
+
+    /// No overflow ⇒ nothing to scroll ⇒ no chevron registered, so a
+    /// click can never land on a dead target.
+    #[test]
+    fn wide_strip_with_two_tabs_registers_no_chevrons() {
+        let app = paint_strip(200, 2);
+        assert!(
+            app.rects.leaf_tab_arrows.is_empty(),
+            "2 tabs in 200 cells fit; got {:?}",
+            app.rects.leaf_tab_arrows
+        );
+    }
+
+    /// Scrolling is per-leaf state, so the offset the click handler
+    /// writes must be the one the painter reads back — same key.
+    #[test]
+    fn scrolled_strip_offers_a_left_chevron_back() {
+        let d = tempfile::tempdir().unwrap();
+        for i in 0..8 {
+            std::fs::write(d.path().join(format!("file{i}.txt")), "x").unwrap();
+        }
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        for i in 0..8 {
+            app.open_path(&d.path().join(format!("file{i}.txt")));
+        }
+        let active = app.active.unwrap();
+        let tabs: Vec<crate::layout::PaneId> = app
+            .layout()
+            .leaf_containing(active)
+            .map(|t| t.to_vec())
+            .unwrap_or_default();
+        let leaf_key = tabs[0];
+        app.leaf_tab_scroll.insert(leaf_key, 3);
+        // Pin last-active so the auto-reveal doesn't reset the offset
+        // we just set — that path only fires on an active-tab change.
+        app.leaf_tab_last_active.insert(leaf_key, active);
+
+        let mut term = Terminal::new(TestBackend::new(40, 1)).unwrap();
+        term.draw(|f| {
+            let strip = Rect {
+                x: 0,
+                y: 0,
+                width: 40,
+                height: 1,
+            };
+            app.rects.leaf_tab_arrows.clear();
+            paint_leaf_tab_strip_with_hidden(f, &mut app, active, &tabs, 0, strip, true);
+        })
+        .unwrap();
+
+        assert!(
+            app.rects
+                .leaf_tab_arrows
+                .iter()
+                .any(|(_, k, is_left)| *is_left && *k == leaf_key),
+            "scrolled to 3, so a left chevron keyed to this leaf must be \
+             offered; got {:?}",
+            app.rects.leaf_tab_arrows
+        );
     }
 }
 

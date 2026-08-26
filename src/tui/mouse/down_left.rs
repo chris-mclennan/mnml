@@ -1184,32 +1184,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // Bufferline overflow chevrons — scroll the tab strip by one.
-    if let Some(r) = app.rects.bufferline_overflow_left
-        && crate::app::dispatch::contains(r, x, y)
+    // #1209 — a leaf tab strip's overflow chevrons scroll THAT leaf
+    // by one. The painter only registers a chevron when it has room
+    // to move, so no bounds check is needed here beyond the
+    // saturating decrement.
+    if let Some(&(_, leaf_key, is_left)) = app
+        .rects
+        .leaf_tab_arrows
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        if app.bufferline_first_visible > 0 {
-            app.bufferline_first_visible -= 1;
-            // qa-7th vscode SEV-2 — stamp the active pane so the
-            // auto-scroll-to-keep-active-visible logic in
-            // ui::bufferline::draw doesn't immediately clobber
-            // this manual scroll. Cleared when active changes.
-            app.bufferline_active_at_scroll = app.active;
-        }
-        return;
-    }
-    if let Some(r) = app.rects.bufferline_overflow_right
-        && crate::app::dispatch::contains(r, x, y)
-    {
-        // qa-8th crash SEV-3 2026-06-30 — was app.panes.len(),
-        // which includes right_panel_panes (not in the bufferline
-        // visible list). The render-side clamp swallowed the
-        // extra clicks silently. Use the actual visible count.
-        let visible_count = app.panes.len().saturating_sub(app.right_panel_panes.len());
-        if app.bufferline_first_visible + 1 < visible_count {
-            app.bufferline_first_visible += 1;
-            app.bufferline_active_at_scroll = app.active;
-        }
+        let cur = app.leaf_tab_scroll.get(&leaf_key).copied().unwrap_or(0);
+        let next = if is_left {
+            cur.saturating_sub(1)
+        } else {
+            cur.saturating_add(1)
+        };
+        app.leaf_tab_scroll.insert(leaf_key, next);
         return;
     }
     // qa-feature 2026-07-01 — click the [×] on an exited pty's banner
