@@ -5836,6 +5836,19 @@ mod leaf_tab_scroll_tests {
     /// strips sit at x > 0 the moment there's a vertical split or a
     /// tree rail.
     fn paint_strip_at(x: u16, width: u16, n: usize) -> App {
+        paint_strip_full(x, width, n, 0).0
+    }
+
+    /// As `paint_strip_at`, but also feeds `hidden` to the
+    /// `+N hidden` chip and hands back the rendered buffer. That chip
+    /// registers no rect (it isn't clickable), so reading cells is the
+    /// only way to assert where it landed.
+    fn paint_strip_full(
+        x: u16,
+        width: u16,
+        n: usize,
+        hidden: usize,
+    ) -> (App, ratatui::buffer::Buffer) {
         let d = tempfile::tempdir().unwrap();
         for i in 0..n {
             std::fs::write(d.path().join(format!("file{i}.txt")), "x").unwrap();
@@ -5863,10 +5876,11 @@ mod leaf_tab_scroll_tests {
                 height: 1,
             };
             app.rects.leaf_tab_arrows.clear();
-            paint_leaf_tab_strip_with_hidden(f, &mut app, active, &tabs, 0, strip, true);
+            paint_leaf_tab_strip_with_hidden(f, &mut app, active, &tabs, hidden, strip, true);
         })
         .unwrap();
-        app
+        let buf = term.backend().buffer().clone();
+        (app, buf)
     }
 
     /// #1209 — the regression that motivated the feature. A strip too
@@ -5943,6 +5957,27 @@ mod leaf_tab_scroll_tests {
                 assert!(
                     r.x >= ORIGIN && r.x + r.width <= right,
                     "width {width}: `+` {r:?} escapes [{ORIGIN}, {right})"
+                );
+            }
+        }
+    }
+
+    /// Sibling of the above for the `+N hidden` chip, which derives
+    /// its x from `plus_x` and so inherits that clamp. Every other
+    /// test here passes `hidden_tab_count: 0`, leaving the branch
+    /// unexercised, and the chip registers no rect — so this asserts
+    /// on painted cells instead.
+    #[test]
+    fn hidden_chip_never_paints_left_of_the_strip_origin() {
+        const ORIGIN: u16 = 10;
+        for width in [1u16, 4, 8, 12, 16, 20] {
+            let (_app, buf) = paint_strip_full(ORIGIN, width, 6, 3);
+            for cx in 0..ORIGIN {
+                assert_eq!(
+                    buf[(cx, 0)].symbol(),
+                    " ",
+                    "width {width}: cell x={cx} painted {:?}, left of origin {ORIGIN}",
+                    buf[(cx, 0)].symbol()
                 );
             }
         }
