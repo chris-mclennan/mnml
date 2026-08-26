@@ -26,6 +26,14 @@ exclude = [
     ".local/",
     ".claude/",
     ".github/",
+    # setup-zig points ZIG_LOCAL_CACHE_DIR at the workspace root, so CI
+    # builds leave a ~700 MB .zig-cache/ beside Cargo.toml. It was neither
+    # gitignored nor excluded, and `cargo package` includes untracked-but-
+    # unignored files — so the tarball shipped at 446 MB / 2937 files
+    # (33 MB of that is actually tracked) and every crates.io upload died
+    # on a 503 write error against the 10 MB cap. Listed here as well as
+    # in .gitignore so it holds even outside a git checkout.
+    ".zig-cache/",
     # 1.2 MiB demo gif that lives at assets/demo.gif — README-facing only,
     # not referenced by any include_bytes!/include_str! in src/.
     "assets/demo.gif",

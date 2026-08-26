@@ -1,4 +1,10 @@
 /target
+# mlugg/setup-zig@v2 points ZIG_LOCAL_CACHE_DIR at the workspace root,
+# so CI builds drop a ~700 MB .zig-cache/ here. Untracked and unignored,
+# `cargo package` swept it into the crate tarball (446 MB, 2937 files)
+# and every crates.io upload died on a 503 write error. Also excluded in
+# Cargo.toml so packaging is safe regardless of VCS state.
+.zig-cache/
 scratchpad/
 .mnml/
 # The demo workspace's .mnml/ carries the demo-scope integration
