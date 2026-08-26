@@ -700,6 +700,34 @@ impl App {
                 *id -= 1;
             }
         }
+        // #1209 f/u (pre-push review) — the per-leaf tab-scroll maps
+        // carry PaneIds too and were missed when they landed. Keys are
+        // a leaf's FIRST tab id; `leaf_tab_last_active` also stores a
+        // PaneId as its VALUE, so both halves need the shift.
+        //
+        // This matters because ids are REUSED: `panes.remove` compacts
+        // the vec, so a later pane inherits the departed one's number.
+        // Without the shift, a stale offset silently re-attaches to an
+        // unrelated leaf that happens to reuse the id — clamped, so it
+        // wouldn't panic, it would just scroll the wrong strip. The
+        // map would also grow forever across open/close churn.
+        self.leaf_tab_scroll = self
+            .leaf_tab_scroll
+            .drain()
+            .filter(|(k, _)| *k != removed)
+            .map(|(k, v)| (if k > removed { k - 1 } else { k }, v))
+            .collect();
+        self.leaf_tab_last_active = self
+            .leaf_tab_last_active
+            .drain()
+            .filter(|(k, v)| *k != removed && *v != removed)
+            .map(|(k, v)| {
+                (
+                    if k > removed { k - 1 } else { k },
+                    if v > removed { v - 1 } else { v },
+                )
+            })
+            .collect();
         // crash-investigator 2026-06-28 SEV-1 #1: right_panel_panes
         // also carries PaneIds and needs the same drop + shift. Without
         // it, closing a pane with a lower index than a hosted right-
@@ -2886,6 +2914,46 @@ mod layout_tests {
             Some(a.as_path())
         );
         assert_eq!(app.active_editor().unwrap().editor.row_col(), (0, 2));
+    }
+
+    /// Pre-push review — `remove_pane_storage` must shift the #1209
+    /// tab-scroll maps like every other PaneId-carrying field.
+    /// `panes.remove` compacts the vec, so ids are REUSED: without
+    /// the shift a stale offset silently re-attaches to whichever
+    /// leaf later inherits the number.
+    #[test]
+    fn removing_a_pane_shifts_the_leaf_tab_scroll_maps() {
+        let (d, mut app) = app_with_files();
+        for n in ["a.txt", "b.txt"] {
+            app.open_path(&d.path().join(n));
+        }
+        // Seed entries either side of the pane about to go: id 0 is
+        // removed, id 2 must become id 1.
+        app.leaf_tab_scroll.insert(0, 7);
+        app.leaf_tab_scroll.insert(2, 9);
+        app.leaf_tab_last_active.insert(2, 2);
+        app.leaf_tab_last_active.insert(3, 0);
+
+        app.force_close_pane(0);
+
+        assert!(
+            !app.leaf_tab_scroll.contains_key(&0),
+            "the removed pane's own entry must be dropped"
+        );
+        assert_eq!(
+            app.leaf_tab_scroll.get(&1),
+            Some(&9),
+            "id 2 should have shifted down to 1, keeping its offset"
+        );
+        assert_eq!(
+            app.leaf_tab_last_active.get(&1),
+            Some(&1),
+            "both the KEY and the PaneId VALUE need shifting"
+        );
+        assert!(
+            !app.leaf_tab_last_active.contains_key(&3),
+            "an entry whose VALUE pointed at the removed pane must go"
+        );
     }
 
     // ── #1207 — cmdline popup nav/accept agree with what's drawn ───

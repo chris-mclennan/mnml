@@ -4973,8 +4973,14 @@ fn paint_leaf_tab_strip_with_hidden(
     // havent seen the plus since"). Anything painted after the tabs
     // needs its width carved out before the tabs are laid out, not
     // checked for afterwards.
-    let arrows_x = tabs_right.saturating_sub(arrows_w);
-    let tabs_right = arrows_x.saturating_sub(PLUS_RESERVE);
+    // Clamp to `strip.x`. `saturating_sub` stops an arithmetic
+    // underflow, but not a *logical* one: on a strip narrower than the
+    // fixed reservations (split buttons + AI chips + mode chip + these
+    // 7 cells), the result lands LEFT of this strip's own origin and
+    // the chevrons paint onto whatever pane or divider sits beside it.
+    // Realistic at 4+ splits deep. Flagged in pre-push review.
+    let arrows_x = tabs_right.saturating_sub(arrows_w).max(strip.x);
+    let tabs_right = arrows_x.saturating_sub(PLUS_RESERVE).max(strip.x);
     let scroll = app
         .leaf_tab_scroll
         .get(&leaf_key)
@@ -5248,7 +5254,11 @@ fn paint_leaf_tab_strip_with_hidden(
     let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
     let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let dim_fg = t.comment;
-    let mut bx = strip_right.saturating_sub(split_btns_total);
+    // Same strip.x clamp as the chevron/tab bounds above. This line
+    // predates #1209, but #1209's extra 7 cells of reservation widen
+    // the range of strip widths where it would otherwise paint the
+    // button cluster onto the neighbouring pane.
+    let mut bx = strip_right.saturating_sub(split_btns_total).max(strip.x);
 
     // AI button(s), leftmost in cluster. `ai_button_count` was
     // downgraded above based on strip width, so a "both" config
@@ -5889,6 +5899,31 @@ mod leaf_tab_scroll_tests {
             "2 tabs in 200 cells fit; got {:?}",
             app.rects.leaf_tab_arrows
         );
+    }
+
+    /// Pre-push review — nothing may paint left of the strip's own
+    /// origin. `saturating_sub` prevents an arithmetic underflow but
+    /// not a logical one: on a strip narrower than the fixed
+    /// reservations the bounds land left of `strip.x` and the
+    /// chevrons/buttons render onto the neighbouring pane. Realistic
+    /// at 4+ splits deep.
+    #[test]
+    fn nothing_paints_left_of_a_very_narrow_strips_origin() {
+        for width in [1u16, 4, 8, 12, 16, 20] {
+            let app = paint_strip(width, 6);
+            for (r, _, _) in &app.rects.leaf_tab_arrows {
+                assert!(
+                    r.x + r.width <= width,
+                    "width {width}: chevron {r:?} escapes the strip"
+                );
+            }
+            for (r, _) in &app.rects.split_tab_plus_buttons {
+                assert!(
+                    r.x + r.width <= width,
+                    "width {width}: `+` {r:?} escapes the strip"
+                );
+            }
+        }
     }
 
     /// #1209 f/u — the `+` must still be PRESENT when the strip
