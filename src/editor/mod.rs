@@ -510,7 +510,11 @@ pub fn find_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)
         if before_ok && after_ok {
             out.push((s, e));
         }
-        start = s + 1; // overlap-safe: step one byte past the start
+        // Overlap-safe: step one *char* past the start. A byte step
+        // lands inside a multi-byte char and the next `text[start..]`
+        // panics. No caller passes a non-ASCII word today, so this is
+        // latent — fixed alongside its twin in AddCursorAtNextWord.
+        start = s + text[s..].chars().next().map_or(1, |c| c.len_utf8());
     }
     out
 }
@@ -3032,7 +3036,10 @@ impl Editor {
                             }
                             return;
                         }
-                        start = pos + 1;
+                        // Step one *char*, not one byte: `pos` can be
+                        // the start of a multi-byte char, and the next
+                        // iteration slices `self.text[start..]`.
+                        start = self.next_char_boundary(pos);
                     } else {
                         break;
                     }
@@ -5620,6 +5627,35 @@ mod tests {
     /// `foo`, second Ctrl+D adds an extra at the second `foo` with
     /// its own anchor+cursor selection. Typing `X` should delete both
     /// selections and insert `X` at both positions.
+    /// The same byte-step bug in `find_whole_word_occurrences`. Latent
+    /// today because every caller feeds it an ASCII word from
+    /// `word_under_cursor`, but it panics the moment a Unicode word
+    /// reaches it — fixed alongside its twin rather than left armed.
+    #[test]
+    fn find_whole_word_occurrences_survives_non_ascii_word() {
+        // "\u{fc}ber foo x\u{fc}ber \u{fc}ber" — the middle one is not a
+        // whole word, so the rejection path (the bad step) is exercised.
+        let hits = find_whole_word_occurrences("\u{fc}ber foo x\u{fc}ber \u{fc}ber", "\u{fc}ber");
+        assert_eq!(hits, vec![(0, 5), (17, 22)]);
+    }
+
+    /// Ctrl+D on a word starting with a multi-byte char. A candidate
+    /// match rejected by the whole-word check stepped `start = pos + 1`,
+    /// which lands inside that char — and the next `text[start..]`
+    /// slice panics, killing the editor.
+    #[test]
+    fn ctrl_d_survives_non_ascii_word() {
+        // "\u{fc}ber" is 5 bytes ('\u{fc}' = 0..2). The trailing
+        // "x\u{fc}ber" contains "\u{fc}ber" but is rejected as not a
+        // whole word, which is what triggers the bad step.
+        let (mut e, mut c) = ed("\u{fc}ber foo x\u{fc}ber");
+        e.cursor = 2; // on the 'b' of the first word
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+        assert_eq!(e.selected_text(), "\u{fc}ber");
+        // Panicked here before the boundary-safe step.
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+    }
+
     #[test]
     fn ctrl_d_add_cursor_to_next_word_typing_replaces_both_matches() {
         let (mut e, mut c) = ed("foo bar foo baz");
