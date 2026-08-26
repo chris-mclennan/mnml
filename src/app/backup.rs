@@ -45,12 +45,24 @@ pub(crate) fn write_toml_with_backup(path: &Path, contents: &str, reason: &str) 
         }
         prune_backups(path, reason, MAX_BACKUPS_PER_REASON);
     }
-    std::fs::write(path, contents)
+    // Integration manifests carry `[auth_values]` — Slack bot tokens,
+    // Jira API tokens, Bitbucket app passwords. A plain `fs::write`
+    // put them on disk at the process umask (0644 on a stock box).
+    // Every caller of this helper writes user config, so tighten
+    // unconditionally rather than trying to guess which files are
+    // secret-bearing: a private theme file costs nothing, a
+    // world-readable token costs a lot.
+    crate::secret_file::write_secret(path, contents.as_bytes())
 }
 
 fn make_backup(path: &Path, reason: &str) -> io::Result<PathBuf> {
     let backup = backup_path(path, reason);
-    std::fs::copy(path, &backup)?;
+    // `fs::copy` propagates the SOURCE's mode, so a backup taken from
+    // a pre-0600 manifest would faithfully reproduce its 0644 — and
+    // these backups outlive the value they copy: clearing a token from
+    // the Configure pane leaves up to MAX_BACKUPS_PER_REASON readable
+    // copies of it behind.
+    crate::secret_file::copy_secret(path, &backup)?;
     Ok(backup)
 }
 
@@ -171,6 +183,58 @@ mod tests {
             })
             .collect();
         assert!(siblings.is_empty());
+    }
+
+    /// Integration manifests carry `[auth_values]` — real service
+    /// tokens. Both the live file AND the timestamped backup must be
+    /// owner-only, including when the pre-existing file was 0644 from
+    /// an older mnml. The backup matters as much as the live file:
+    /// clearing a token from the Configure pane leaves up to
+    /// `MAX_BACKUPS_PER_REASON` copies of it behind.
+    #[test]
+    #[cfg(unix)]
+    fn secret_manifests_and_their_backups_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode_of = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("slack.toml");
+        fs::write(&path, "[auth_values]\nbot_token = \"xoxb-old\"\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_toml_with_backup(
+            &path,
+            "[auth_values]\nbot_token = \"xoxb-new\"\n",
+            "settings",
+        )
+        .unwrap();
+
+        assert_eq!(mode_of(&path), 0o600, "live manifest must be 0600");
+
+        let backups: Vec<PathBuf> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.contains(".pre-settings-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "expected exactly one backup");
+        assert_eq!(
+            mode_of(&backups[0]),
+            0o600,
+            "backup must not inherit the source's 0644"
+        );
+        // And it really is the old secret we just made private.
+        assert!(
+            fs::read_to_string(&backups[0])
+                .unwrap()
+                .contains("xoxb-old"),
+            "backup should hold the prior value"
+        );
     }
 
     #[test]

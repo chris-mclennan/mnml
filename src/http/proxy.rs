@@ -67,10 +67,10 @@ pub fn run(opts: Options) -> Result<usize, String> {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create log dir: {e}"))?;
     }
-    let mut log = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
+    // Captured browser traffic records each request's headers —
+    // session cookies and Authorization among them — inside the
+    // project directory.
+    let mut log = crate::secret_file::append_secret(&log_path)
         .map_err(|e| format!("open {}: {e}", log_path.display()))?;
 
     // Chrome's user-data-dir for this run — keep it fresh so cached

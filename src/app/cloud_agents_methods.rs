@@ -1384,7 +1384,11 @@ impl App {
                             return;
                         }
                         let path = dir.join(format!("{stem}.md"));
-                        match std::fs::write(&path, &md) {
+                        // Transcripts embed up to 2000 chars of each
+                        // `tool_use` input — verbatim Bash command
+                        // lines, which routinely carry tokens pasted
+                        // or exported during a session.
+                        match crate::secret_file::write_secret(&path, md.as_bytes()) {
                             Ok(()) => {
                                 self.toast(format!("exported → {}", path.display()));
                                 self.open_path(&path);

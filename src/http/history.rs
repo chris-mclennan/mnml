@@ -15,7 +15,7 @@
 //! firing it but not which workspace you were in.
 
 use serde_json::Value;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -62,7 +62,14 @@ pub fn append(workspace: &Path, entry: &Entry) {
         Err(_) => return,
     };
     line.push('\n');
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+    // Entries carry template-EXPANDED request headers, so an
+    // `Authorization: Bearer {{TOKEN}}` lands here as the resolved
+    // secret, alongside request bodies (login payloads, OAuth
+    // client_secrets). Owner-only. NOTE: permissions are only half the
+    // fix — the values are still stored in cleartext, and the
+    // workspace copy sits inside the project tree where `git add -A`
+    // can stage it. Redaction + gitignore are tracked separately.
+    if let Ok(mut f) = crate::secret_file::append_secret(&path) {
         let _ = f.write_all(line.as_bytes());
     }
 }
@@ -117,7 +124,14 @@ fn append_global(workspace: &Path, entry: &Entry, ts: u128) {
         Err(_) => return,
     };
     line.push('\n');
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+    // Entries carry template-EXPANDED request headers, so an
+    // `Authorization: Bearer {{TOKEN}}` lands here as the resolved
+    // secret, alongside request bodies (login payloads, OAuth
+    // client_secrets). Owner-only. NOTE: permissions are only half the
+    // fix — the values are still stored in cleartext, and the
+    // workspace copy sits inside the project tree where `git add -A`
+    // can stage it. Redaction + gitignore are tracked separately.
+    if let Ok(mut f) = crate::secret_file::append_secret(&path) {
         let _ = f.write_all(line.as_bytes());
     }
 }
