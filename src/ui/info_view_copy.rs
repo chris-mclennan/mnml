@@ -21,6 +21,7 @@
 use crate::AgentsPanelChipKind;
 use crate::DiffToolbarAction;
 use crate::GitRailHeaderAction;
+use crate::GitToolbarAction;
 use crate::GutterMarkKind;
 use crate::RequestTopBarChip as ReqChip;
 use crate::app::App;
@@ -1087,12 +1088,163 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
-        // src: src/ui/statusline.rs — top-right git toolbar cluster
-        GitToolbarChip(_) => Some(InfoViewCopy {
-            title: "Git toolbar chip".into(),
-            body: "One-click git action — fetch, pull, push, stage-all, commit. \
-                   Same actions live in `> GIT` rail headers and the palette."
+        // src: src/ui/git_graph_view.rs::draw_git_toolbar (line 2065) —
+        // the Pane::GitGraph top-toolbar row. Was a single generic
+        // entry for all 13 GitToolbarAction variants (src/lib.rs:
+        // 132-165) — fixed a hover-help gap report where the toolbar
+        // read as having no help at all because nothing differentiated
+        // Undo from Reflog from Blame. Per-action copy now, matching
+        // the RailHeaderChip / RequestTopBarChip pattern elsewhere in
+        // this file. Command ids verified against src/command.rs;
+        // behavior verified against src/app/git.rs +
+        // src/app/mod.rs::run_git_toolbar_action (~line 9654) — a few
+        // entries correct stale doc comments on GitToolbarAction
+        // itself (see notes inline).
+        GitToolbarChip(GitToolbarAction::Pull) => Some(InfoViewCopy {
+            title: "Git toolbar: Pull".into(),
+            body: "`git pull --ff-only` for the active repo — fast-forwards if \
+                   origin has moved ahead cleanly, refuses rather than creating a \
+                   merge commit if it can't."
                 .into(),
+            aside: Some(
+                "Also refuses if any open buffer has unsaved edits — pull \
+                 rewrites tracked files on disk."
+                    .into(),
+            ),
+            try_it: vec![PaletteLink::new("git.pull", "Pull")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Push) => Some(InfoViewCopy {
+            title: "Git toolbar: Push".into(),
+            body: "Pushes committed work to origin. A branch with no upstream \
+                   yet falls back to `--set-upstream` automatically — no separate \
+                   step for a first push."
+                .into(),
+            aside: Some("Never forces — refuses on a diverged branch instead.".into()),
+            try_it: vec![PaletteLink::new("git.push", "Push")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Fetch) => Some(InfoViewCopy {
+            title: "Git toolbar: Fetch".into(),
+            body: "`git fetch --all --prune` — updates every remote-tracking ref \
+                   and drops stale ones, without touching your working tree or \
+                   branch. Always safe; run it to make the statusline's \
+                   ahead/behind counts trustworthy again."
+                .into(),
+            try_it: vec![PaletteLink::new("git.fetch", "Fetch")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::BranchPicker) => Some(InfoViewCopy {
+            title: "Git toolbar: Branch".into(),
+            body: "Opens the branch picker — search local and remote branches, \
+                   Enter checks one out. A remote branch with no local copy yet \
+                   gets one created on checkout."
+                .into(),
+            try_it: vec![PaletteLink::new("git.checkout", "Checkout a branch")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Commit) => Some(InfoViewCopy {
+            title: "Git toolbar: Commit".into(),
+            body: "Opens the commit-message prompt for whatever's currently \
+                   staged. Nothing staged yet? The prompt says so — stage from \
+                   the WIP row or use Stage All first."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K g c", "Open commit prompt")],
+            try_it: vec![PaletteLink::new("git.commit", "Commit")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Stash) => Some(InfoViewCopy {
+            title: "Git toolbar: Stash".into(),
+            body: "Shelves every working-tree change (`git stash push -u`) with \
+                   an optional message, leaving a clean tree. Pop it back later \
+                   from the same toolbar — the Pop button only appears once \
+                   there's a stash to apply."
+                .into(),
+            aside: Some(
+                "Refuses if any open buffer has unsaved edits, same guard as \
+                 Pull."
+                    .into(),
+            ),
+            try_it: vec![PaletteLink::new("git.stash", "Stash")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::StashPop) => Some(InfoViewCopy {
+            title: "Git toolbar: Pop".into(),
+            body: "Applies the most recent stash back onto the working tree and \
+                   drops it from the stash list in one step — not a copy, so \
+                   there's no re-popping the same entry."
+                .into(),
+            aside: Some("Only drawn when the repo actually has a stash to pop.".into()),
+            try_it: vec![PaletteLink::new("git.stash_pop", "Pop stash")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Reflog) => Some(InfoViewCopy {
+            title: "Git toolbar: Reflog".into(),
+            body: "Opens the last 200 entries of HEAD's reflog — every commit, \
+                   reset, checkout and rebase step, including ones no branch \
+                   points at anymore. Picking an entry opens that commit's diff, \
+                   so you can find and cherry-pick your way back to it."
+                .into(),
+            aside: Some("The recovery tool for \"I just rebased and lost a commit\".".into()),
+            try_it: vec![PaletteLink::new("git.reflog", "Open reflog")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::RefreshRepos) => Some(InfoViewCopy {
+            title: "Git toolbar: Refresh".into(),
+            body: "Re-scans the workspace for git repositories and rebuilds the \
+                   rail's branch / worktree / PR lists for whichever one is \
+                   active. For pulling new commits from a remote, use Fetch or \
+                   Pull instead — this doesn't touch the network."
+                .into(),
+            try_it: vec![PaletteLink::new("git.refresh_repos", "Rediscover repos")],
+            ..Default::default()
+        }),
+        // SwitchRepo isn't currently emitted by draw_git_toolbar (dropped
+        // 2026-08-24 — multi-repo tabs + the rail switcher made a third
+        // affordance redundant; see the comment at
+        // src/ui/git_graph_view.rs:2167). The match arm — and this entry
+        // — stay in case the button comes back; App::run_git_toolbar_action
+        // still wires it to git.next_repo.
+        GitToolbarChip(GitToolbarAction::SwitchRepo) => Some(InfoViewCopy {
+            title: "Git toolbar: Switch repo".into(),
+            body: "Cycles the active repo in a multi-repo workspace — the same \
+                   action as `Alt+]` or the rail's repo-switcher chip."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Alt+]", "Next repo")],
+            try_it: vec![PaletteLink::new("git.next_repo", "Next repo")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::BlameToggle) => Some(InfoViewCopy {
+            title: "Git toolbar: Blame".into(),
+            body: "Toggles the per-line blame gutter on the active editor pane — \
+                   author + relative commit time next to each line, computed in \
+                   the background. Click again (or toggle) to turn it off."
+                .into(),
+            aside: Some("Needs a saved file open in an editor pane; no-ops otherwise.".into()),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K b", "Toggle blame gutter")],
+            try_it: vec![PaletteLink::new("git.blame_toggle", "Toggle blame")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Undo) => Some(InfoViewCopy {
+            title: "Git toolbar: Undo".into(),
+            body: "Reverses the most recent commit or branch checkout made \
+                   through mnml's git actions — a commit undoes via `reset \
+                   --soft` (keeps your changes staged, working tree untouched); \
+                   a checkout switches back to the branch you were on."
+                .into(),
+            aside: Some(
+                "Tracks mnml's own undo stack, not `git reflog` — Redo reverses it.".into(),
+            ),
+            try_it: vec![PaletteLink::new("git.undo", "Undo")],
+            ..Default::default()
+        }),
+        GitToolbarChip(GitToolbarAction::Redo) => Some(InfoViewCopy {
+            title: "Git toolbar: Redo".into(),
+            body: "Re-applies whatever the last Undo just reversed — a commit's \
+                   soft-reset or a branch checkout. No-op when there's nothing on \
+                   the redo stack."
+                .into(),
+            try_it: vec![PaletteLink::new("git.redo", "Redo")],
             ..Default::default()
         }),
         // src: src/ui/editor_view.rs — gutter fold indicator

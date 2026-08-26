@@ -147,8 +147,12 @@ pub enum GitToolbarAction {
     /// Open the reflog picker — recovery surface for "I just rebased
     /// and lost a commit" flows.
     Reflog,
-    /// `git fetch --all --prune` across every configured repo, then
-    /// refresh the rail's branch / worktree / PR lists.
+    /// Re-scan the workspace for git roots and rebuild the rail's
+    /// branch / worktree / PR lists. Purely local — `App::
+    /// rediscover_repos` walks the filesystem, it does NOT fetch.
+    /// (The comment here used to claim `git fetch --all --prune`;
+    /// Fetch and Pull are the buttons that touch the network.)
+    /// Resets the active repo to the first one found.
     RefreshRepos,
     /// Cycle the active repo when the workspace has multiple
     /// `[[workspaces]]` or detected git roots. Fires the
