@@ -200,6 +200,13 @@ fn try_iso_date(line: &str, cur_rel: usize, delta: i64) -> Option<(usize, usize,
         if s + 10 > bytes.len() {
             break;
         }
+        // `s` is a raw byte offset, so it can land inside a multi-byte
+        // char on any line containing non-ASCII text — slicing there
+        // panics. An ISO date is 10 ASCII bytes and can only begin on a
+        // boundary, so skipping non-boundary offsets loses no matches.
+        if !line.is_char_boundary(s) || !line.is_char_boundary(s + 10) {
+            continue;
+        }
         let slice = &line[s..s + 10];
         if !looks_like_iso(slice) {
             continue;
@@ -5382,6 +5389,37 @@ mod tests {
         for op in ops {
             e.apply(op.clone(), 10, c);
         }
+    }
+
+    /// Ctrl+A / Ctrl+X on a line containing any non-ASCII character.
+    /// `try_iso_date` scans a +/-10-byte window using raw byte offsets;
+    /// before the boundary guard, an offset landing inside a multi-byte
+    /// char panicked with "byte index 2 is not a char boundary".
+    #[test]
+    fn smart_increment_survives_non_ascii_line() {
+        for text in [
+            "h\u{e9}llo world",
+            "\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}",
+            "a \u{e9} 2026-01-31 b",
+            "\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}\u{2014}",
+        ] {
+            for (cursor, _) in text.char_indices() {
+                let _ = smart_increment_at(text, cursor, 0, 1);
+                let _ = smart_increment_at(text, cursor, 0, -1);
+            }
+            let _ = smart_increment_at(text, text.len(), 0, 1);
+        }
+    }
+
+    /// The boundary guard must not cost us any real ISO-date match.
+    #[test]
+    fn smart_increment_still_bumps_iso_date_after_non_ascii() {
+        let text = "due \u{e9} 2026-01-31 x";
+        let hit = text.find("2026").unwrap();
+        let (start, end, new) =
+            smart_increment_at(text, hit, 0, 1).expect("ISO date should still bump");
+        assert_eq!(&text[start..end], "2026-01-31");
+        assert_eq!(new, "2026-02-01");
     }
 
     /// nvchad-user SEV-2 2026-07-10 — dit/dat HTML tag text objects.
