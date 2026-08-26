@@ -531,28 +531,21 @@ mod tests {
         assert_eq!(fingerprint(&scan(d.path())), fingerprint(&[]));
     }
 
-    /// Serializes the tests that repoint `MNML_DATA_ROOT`, which is
-    /// process-global. Without this they race under the default
-    /// multi-threaded test runner and clobber each other's store.
-    static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// Run `f` with the trust store redirected into a temp dir, so no
     /// test ever touches the developer's real `~/.config/mnml/`.
+    ///
+    /// Uses the crate-wide `test_env_lock()` + `EnvGuard`, which exist
+    /// for exactly this (see `lib.rs` — added 2026-08-03 after an
+    /// Ubuntu-CI flake of the same shape). A module-local lock would
+    /// be internally consistent while still racing every other module
+    /// that mutates env.
     fn with_isolated_store<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let home = tempfile::tempdir().unwrap();
-        let prev = std::env::var("MNML_DATA_ROOT").ok();
-        // SAFETY: guarded by STORE_LOCK, so no other test in this
-        // binary is reading or writing the var concurrently.
-        unsafe { std::env::set_var("MNML_DATA_ROOT", home.path()) };
-        let out = f();
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("MNML_DATA_ROOT", v),
-                None => std::env::remove_var("MNML_DATA_ROOT"),
-            }
-        }
-        out
+        let _root = crate::EnvGuard::set("MNML_DATA_ROOT", home.path());
+        f()
     }
 
     #[test]

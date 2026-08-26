@@ -204,9 +204,6 @@ mod tests {
     /// this test controls, not on whatever the developer has installed.
     #[test]
     fn granting_trust_preserves_manifest_derived_icons() {
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(home.path().join("integrations")).unwrap();
         // A non-built-in manifest: only the re-merge can put this back.
@@ -216,9 +213,13 @@ mod tests {
         )
         .unwrap();
 
-        let prev = std::env::var("MNML_DATA_ROOT").ok();
-        // SAFETY: serialized by ENV_LOCK.
-        unsafe { std::env::set_var("MNML_DATA_ROOT", home.path()) };
+        // Crate-wide env lock + RAII guard (lib.rs) — the established
+        // convention for tests that repoint env, and the only thing
+        // that serializes against OTHER modules doing the same.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _root = crate::EnvGuard::set("MNML_DATA_ROOT", home.path());
 
         let ws = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(ws.path().join(".mnml")).unwrap();
@@ -252,16 +253,11 @@ mod tests {
         app.pending_workspace_trust = Some((crate::workspace_trust::fingerprint(&claims), claims));
         app.grant_workspace_trust();
 
-        let survived = has_sentinel(&app);
-
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("MNML_DATA_ROOT", v),
-                None => std::env::remove_var("MNML_DATA_ROOT"),
-            }
-        }
+        // The guard restores MNML_DATA_ROOT on drop, so this can now
+        // assert directly instead of stashing the result to avoid
+        // leaking the env var past a failing assertion.
         assert!(
-            survived,
+            has_sentinel(&app),
             "granting trust dropped a manifest-derived chip — the config \
              swap must be followed by refresh_integration_manifests()"
         );

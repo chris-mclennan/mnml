@@ -423,10 +423,28 @@ fn ensure_e2e_data_root_isolated() {
     static ISOLATED: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     ISOLATED.get_or_init(|| {
         let dir = tempfile::tempdir().expect("MNML_DATA_ROOT tempdir for e2e");
-        // SAFETY: called exactly once per process (OnceLock),
-        // BEFORE any e2e test app is constructed, so no other
-        // thread is reading env at this moment. Env stays set
-        // for the process's lifetime — no mutation race after.
+        // Take the crate-wide env lock in test builds. The old comment
+        // here claimed a `OnceLock` made this race-free — "set once per
+        // process, before any e2e app exists, never mutated after".
+        // That reasoning holds in the `tests/e2e.rs` binary, where this
+        // is the only thing touching env.
+        //
+        // It does NOT hold in the `--lib` binary: the e2e module has
+        // its own unit test (`run_test` on a temp .test file) that runs
+        // in parallel with every other module's tests. This then fires
+        // partway through the suite and PERMANENTLY repoints
+        // MNML_DATA_ROOT, so any test holding an `EnvGuard` on that var
+        // silently starts reading a different config root. Cost ~6 of 8
+        // full-suite runs failing, across three unrelated tests, with
+        // each one passing in isolation.
+        //
+        // SAFETY: guarded by `test_env_lock()` in test builds. In a
+        // release build there is no parallel test harness and this runs
+        // once from the `mnml test` CLI entry point.
+        #[cfg(test)]
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("MNML_DATA_ROOT", dir.path());
         }
