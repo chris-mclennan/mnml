@@ -534,6 +534,17 @@ mod tests {
 
     #[test]
     fn cask_mapping_covers_the_common_families() {
+        // `update_command` returns None off macOS by design (brew casks
+        // are macOS-only — the FONTS section is a macOS v1). Asserting
+        // the Some(..) mappings unconditionally made this fail on the
+        // Linux and Windows CI runners; it only ever passed because a
+        // red clippy step meant the test job never got to run.
+        if !cfg!(target_os = "macos") {
+            assert_eq!(update_command("JetBrainsMono Nerd Font Mono"), None);
+            assert_eq!(update_command("Symbols Nerd Font Mono"), None);
+            assert_eq!(update_command("MnmlSymbols"), None);
+            return;
+        }
         assert_eq!(
             update_command("JetBrainsMono Nerd Font Mono"),
             Some(
