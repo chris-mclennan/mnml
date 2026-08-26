@@ -12,6 +12,22 @@ cargo build
 cargo test
 ```
 
+**Zig is a build prerequisite on every platform, not just Windows.**
+`mnml-libghostty-vt-sys` links `libghostty-vt`; when it can't find a prebuilt
+one through `pkg-config` — the default on a fresh machine — it source-builds
+it and needs **zig 0.16.0** plus `git` on PATH. Without it the very first
+`cargo build` fails in the build script:
+
+```bash
+brew install zig          # macOS / Linux
+snap install zig --classic --edge
+scoop install zig         # Windows
+```
+
+If you already have `libghostty-vt.a` elsewhere, point `PKG_CONFIG_PATH` at
+the directory holding `libghostty-vt.pc` and no zig is needed; a local ghostty
+checkout works via `GHOSTTY_SOURCE_DIR`.
+
 `mnml-fim-engine` (the local FIM code-completion engine) is a workspace member
 at `crates/fim-engine/` — a single `cargo build` from the mnml root builds
 everything. There's no external sibling checkout to keep in sync; the crate
@@ -20,7 +36,7 @@ git-subtree history preserved. mnml's `Cargo.toml` depends on it under the
 short alias `fim-engine` (`package = "mnml-fim-engine"`), so `use fim_engine::…`
 in the source is expected — `mnml-fim-engine` is the published name.
 
-mnml builds on stable Rust — MSRV **1.87**, edition 2024. A
+mnml builds on stable Rust — MSRV **1.90**, edition 2024. A
 [Nerd Font](https://www.nerdfonts.com/) helps when running the UI, but isn't
 needed to build or test.
 
