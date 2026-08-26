@@ -123,6 +123,7 @@ pub mod tui;
 pub mod ui;
 pub mod update_check;
 pub(crate) mod whichkey;
+pub mod workspace_trust;
 
 /// One clickable button in the `Pane::GitGraph` top toolbar.
 /// The toolbar's `(rect, pane_id, action)` entries land on

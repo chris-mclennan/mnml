@@ -1835,6 +1835,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().orange,
         ));
     }
+    // Restricted-workspace chip. This workspace declared commands mnml
+    // isn't running because it hasn't been trusted — without a chip
+    // the only symptom is a language server or formatter mysteriously
+    // not working, which reads as an mnml bug rather than a decision
+    // the user made. Yellow: a state to notice, not an error.
+    if app.workspace_trust_restricted {
+        let label = if nerd {
+            " \u{F033E} RESTRICTED ".to_string()
+        } else {
+            " RESTRICTED ".to_string()
+        };
+        right.push(Seg::new(label, theme::cur().bg_darker, theme::cur().yellow));
+    }
     // `WRAP` chip when `[ui] wrap` is on. Easy to forget the mode is
     // active when the file's lines aren't actually long; this gives a
     // quiet visible confirmation.

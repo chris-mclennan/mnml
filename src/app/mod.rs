@@ -86,6 +86,7 @@ mod toggles;
 pub(crate) mod util;
 mod vim_range_methods;
 pub(crate) mod workspace_methods;
+pub(crate) mod workspace_trust_methods;
 
 pub use startup_picker::{StartupPickerAction, StartupPickerState};
 // Re-export the util helpers so existing call sites in this file
@@ -4045,6 +4046,22 @@ pub struct App {
     /// ToolInstallConfirm prompt. See `run_external_tool` +
     /// `accept_tool_install`.
     pub pending_tool_install: Option<(String, String)>, // (id, install_cmd)
+    /// The `--config PATH` override, if one was passed. Stored so
+    /// `grant_workspace_trust` can rebuild the config with the same
+    /// layering it had at startup — without it, trusting a workspace
+    /// would silently drop an explicit `--config`. Set by `main.rs`
+    /// after construction so `App::new`'s signature (and every test
+    /// that calls it) stays unchanged.
+    pub explicit_config_path: Option<std::path::PathBuf>,
+    /// True while the current workspace declares executable config
+    /// that hasn't been trusted — its exec-bearing keys are suppressed.
+    /// Read by the statusline to show the restricted chip.
+    pub workspace_trust_restricted: bool,
+    /// `(fingerprint, claims)` awaiting a Trust / Don't-trust answer.
+    /// Held across the prompt so the grant records the exact
+    /// fingerprint the user was shown, not a re-scan that could have
+    /// changed underneath them.
+    pub pending_workspace_trust: Option<(String, Vec<crate::workspace_trust::ExecClaim>)>,
     /// P4b — cached marketplace entries + in-flight fetch receivers.
     /// Populated by `App::refresh_marketplace()` (spawns a fetch
     /// thread per configured source) + drained by
@@ -6168,6 +6185,9 @@ impl App {
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
             pending_tool_install: None,
+            explicit_config_path: None,
+            workspace_trust_restricted: false,
+            pending_workspace_trust: None,
             marketplace_entries: Vec::new(),
             marketplace_pending: Vec::new(),
             launcher_install_pending: Vec::new(),

@@ -2139,6 +2139,20 @@ impl App {
                     self.toast("reset cancelled");
                 }
             }
+            crate::prompt::PromptKind::WorkspaceTrustConfirm => {
+                if p.input.trim().eq_ignore_ascii_case("trust") {
+                    self.grant_workspace_trust();
+                } else {
+                    // Staying restricted needs no action — the exec
+                    // keys were never applied. Just say so, since the
+                    // consequence (no repo LSP/formatter) is otherwise
+                    // invisible until something quietly doesn't run.
+                    self.toast(
+                        "Workspace left untrusted — its language servers, formatters, \
+                         and startup commands stay off. `workspace.review_trust` to revisit.",
+                    );
+                }
+            }
             crate::prompt::PromptKind::PortableChoicePrompt => {
                 // #867 — both options are valid choices, not
                 // primary/cancel. The synth in run_confirm_button

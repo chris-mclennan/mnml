@@ -432,6 +432,7 @@ impl App {
                 ToolInstallConfirm | MarketplaceInstallConfirm => "y".into(),
                 IntegrationRemoveConfirm => "uninstall".into(),
                 ResetToDefaultsConfirm => "reset".into(),
+                WorkspaceTrustConfirm => "trust".into(),
                 // Both options are valid — primary=portable, cancel=normal.
                 // The accept handler discriminates on the input string.
                 PortableChoicePrompt => {

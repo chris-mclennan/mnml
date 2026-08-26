@@ -354,6 +354,9 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         ToolInstallConfirm | MarketplaceInstallConfirm => ("  Install  ", " Cancel "),
         IntegrationRemoveConfirm => ("  Uninstall  ", " Cancel "),
         ResetToDefaultsConfirm => ("  Reset  ", " Cancel "),
+        // "Don't trust" rather than "Cancel": both are real choices,
+        // and the safe one shouldn't read as backing out of a task.
+        WorkspaceTrustConfirm => ("  Trust  ", " Don't trust "),
         PortableChoicePrompt => ("  Portable  ", "  Normal  "),
         _ => return None,
     })
@@ -477,10 +480,23 @@ fn draw_generic_confirm(
     let selected = p.cursor.min(buttons.len().saturating_sub(1));
     let title = p.title.clone();
 
+    // Titles may carry `\n` — the workspace-trust dialog lists one line
+    // per thing the workspace wants to run. Single-line callers yield a
+    // 1-element vec and keep their previous geometry exactly.
+    let msg_lines: Vec<String> = title.split('\n').map(str::to_string).collect();
+    let widest = msg_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
+
     let buttons_w: usize = buttons.iter().map(|(l, _, _)| l.chars().count() + 1).sum();
-    let inner_w = title.chars().count().max(buttons_w + 2).max(40);
+    let inner_w = widest.max(buttons_w + 2).max(40);
     let w = (inner_w as u16 + 2).min(screen.width.saturating_sub(2));
-    let h = 5u16.min(screen.height.saturating_sub(2));
+    // Inner rows = message lines + blank spacer + button row, +2 for
+    // the block's borders. Equals the previous h=5 when there's one
+    // message line, so existing confirms render unchanged.
+    let h = (msg_lines.len() as u16 + 4).min(screen.height.saturating_sub(2));
     let area = Rect {
         x: screen.x + (screen.width.saturating_sub(w)) / 2,
         y: screen.y + (screen.height.saturating_sub(h)) / 3,
@@ -494,17 +510,21 @@ fn draw_generic_confirm(
     if inner.width == 0 || inner.height < 2 {
         return;
     }
-    let msg_padded = format!(
-        " {title:<width$}",
-        width = (inner.width as usize).saturating_sub(1)
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            msg_padded,
-            Style::default().fg(theme::cur().fg).bg(theme::cur().bg2),
-        ))),
-        Rect::new(inner.x, inner.y, inner.width, 1),
-    );
+    // Leave the last two inner rows for the spacer + buttons.
+    let msg_rows = inner.height.saturating_sub(2);
+    for (i, line) in msg_lines.iter().take(msg_rows as usize).enumerate() {
+        let padded = format!(
+            " {line:<width$}",
+            width = (inner.width as usize).saturating_sub(1)
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                padded,
+                Style::default().fg(theme::cur().fg).bg(theme::cur().bg2),
+            ))),
+            Rect::new(inner.x, inner.y + i as u16, inner.width, 1),
+        );
+    }
     let by = inner.y + inner.height - 1;
     let total_bw: u16 = buttons
         .iter()

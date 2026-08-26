@@ -696,6 +696,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         config.workspaces.clear();
     }
 
+    let explicit_config_path = args.config_path.clone();
     let mut app = match App::new(args.workspace, config) {
         Ok(a) => a,
         Err(e) => {
@@ -703,6 +704,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    app.explicit_config_path = explicit_config_path;
     // Warm the Nerd Fonts glyph catalog off the render thread — ~30ms
     // to parse the bundled 533KB JSON into a HashMap. Done eagerly so
     // the first `integrations.icon_picker` open feels instant instead
@@ -729,6 +731,19 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // inside `apply_startup_layout` still no-ops.
     if !args.sandbox {
         app.apply_startup_layout();
+    }
+    // Workspace trust — must come AFTER session restore + startup
+    // layout so the dialog lands on top of the finished UI rather than
+    // being clobbered by it. The exec keys it gates were already
+    // suppressed at `Config::load` time, so nothing has run by now;
+    // this only asks whether to turn them on. Silent unless the
+    // workspace actually declares something executable.
+    //
+    // Skipped in sandbox/demo for the same reason session restore is:
+    // those modes present a curated first-run view, and the demo
+    // workspace's own manifests are mnml's, not a stranger's.
+    if !args.sandbox {
+        app.maybe_prompt_workspace_trust();
     }
     // #851 phase 3 — one-shot aggressive migration of any legacy
     // `[[ui.integration_icon]]` blocks in ~/.config/mnml/config.toml

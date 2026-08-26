@@ -6139,6 +6139,15 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.refresh_mount_manifests(),
         },
         Command {
+            id: "workspace.review_trust",
+            title: "Workspace: review what this workspace is allowed to run",
+            group: "workspace",
+            keys: &[],
+            run: |app| {
+                app.review_workspace_trust();
+            },
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/",
             group: "integrations",
