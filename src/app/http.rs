@@ -2733,7 +2733,10 @@ impl App {
             self.toast(format!("env: mkdir {}: {e}", parent.display()));
             return;
         }
-        match std::fs::write(&env_path, updated) {
+        // Env files hold the VALUES behind `{{VAR}}` — API tokens,
+        // client secrets. The gitignore append below keeps them out of
+        // commits; 0600 keeps them from other local processes.
+        match crate::secret_file::write_secret(&env_path, updated.as_bytes()) {
             Ok(()) => {
                 self.toast(format!("wrote {key}={value} → {}", env_path.display()));
                 // #861 — first .env write in this workspace? Make sure
@@ -2807,7 +2810,7 @@ impl App {
         if !updated.ends_with('\n') {
             updated.push('\n');
         }
-        match std::fs::write(&env_path, updated) {
+        match crate::secret_file::write_secret(&env_path, updated.as_bytes()) {
             Ok(()) => self.toast(format!("deleted {key} from {}", env_path.display())),
             Err(e) => self.toast(format!("env: write {}: {e}", env_path.display())),
         }
@@ -3970,7 +3973,9 @@ impl App {
             self.toast(format!("auth: mkdir: {e}"));
             return;
         }
-        match std::fs::write(&path, &value) {
+        // A preset IS an Authorization header value — a bearer token
+        // in plain text.
+        match crate::secret_file::write_secret(&path, value.as_bytes()) {
             Ok(()) => self.toast(format!("auth: saved → {}", path.display())),
             Err(e) => self.toast(format!("auth: write failed: {e}")),
         }
@@ -6838,17 +6843,27 @@ impl App {
                         }
                     }
                     let hist_url = crate::http::template::expand(&rp.request.url, &hist_env);
+                    // Expand for readability, but keep credentials off
+                    // disk: `header_value_for_history` persists the
+                    // UNEXPANDED `{{VAR}}` form for sensitive headers
+                    // (so replay still re-expands correctly) and
+                    // redacts only a hard-coded literal secret.
                     let hist_headers: Vec<(String, String)> = rp
                         .request
                         .headers
                         .iter()
-                        .map(|(k, v)| (k.clone(), crate::http::template::expand(v, &hist_env)))
+                        .map(|(k, v)| {
+                            let expanded = crate::http::template::expand(v, &hist_env);
+                            (
+                                k.clone(),
+                                crate::http::history::header_value_for_history(k, v, &expanded),
+                            )
+                        })
                         .collect();
-                    let hist_body = rp
-                        .request
-                        .body
-                        .as_deref()
-                        .map(|b| crate::http::template::expand(b, &hist_env));
+                    let hist_body = rp.request.body.as_deref().map(|b| {
+                        let expanded = crate::http::template::expand(b, &hist_env);
+                        crate::http::history::body_for_history(b, &expanded)
+                    });
                     crate::http::history::append_with_global_mirror(
                         &workspace,
                         &crate::http::history::Entry {

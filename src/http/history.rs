@@ -36,11 +36,182 @@ pub struct Entry<'a> {
     pub request_body: Option<&'a str>,
 }
 
+/// Header names whose values are credentials. Matched
+/// case-insensitively — HTTP header names aren't case-sensitive, and
+/// `.curl` files in the wild spell these every possible way.
+const SENSITIVE_HEADERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "api-key",
+    "x-auth-token",
+    "x-amz-security-token",
+    "x-csrf-token",
+];
+
+pub fn is_sensitive_header(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    SENSITIVE_HEADERS.contains(&lower.as_str())
+}
+
+/// Decide what to persist for one request header.
+///
+/// History previously stored the template-EXPANDED value, so an
+/// `Authorization: Bearer {{TOKEN}}` landed on disk as the resolved
+/// secret. Expansion was deliberate — the history picker rebuilds a
+/// runnable curl from these — so blanket redaction would trade one
+/// problem for a broken feature.
+///
+/// Instead, for a sensitive header, prefer the UNEXPANDED `raw` when
+/// it still carries a `{{VAR}}` reference: replay re-expands it
+/// against the active env, so the entry stays runnable AND no secret
+/// is written. Only when the user hard-coded a literal credential
+/// (nothing to re-expand from) does the value get redacted — there is
+/// no way to keep that replayable without storing the secret, and not
+/// storing it is the right call.
+///
+/// Non-sensitive headers are unchanged: `Accept`, `Content-Type` and
+/// friends are far more useful expanded.
+pub fn header_value_for_history(name: &str, raw: &str, expanded: &str) -> String {
+    if !is_sensitive_header(name) {
+        return expanded.to_string();
+    }
+    if raw.contains("{{") && raw.contains("}}") {
+        return raw.to_string();
+    }
+    "<redacted by mnml>".to_string()
+}
+
+/// JSON / form field names whose values are credentials.
+const SENSITIVE_FIELDS: &[&str] = &[
+    "password",
+    "passwd",
+    "secret",
+    "client_secret",
+    "clientsecret",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "token",
+];
+
+/// What to persist for a request body.
+///
+/// Prefers the UNEXPANDED body for the same reason as headers: a body
+/// referencing `{{CLIENT_SECRET}}` stays symbolic on disk and still
+/// replays correctly. Then scrubs literal values for well-known
+/// credential field names, which covers the case the template form
+/// can't — a password typed directly into the request.
+///
+/// Not a JSON parser: bodies are frequently non-JSON (form-encoded,
+/// GraphQL, XML) and a malformed one must still be scrubbed. This is a
+/// deliberately blunt textual pass — it can over-redact a field
+/// innocently named `token`, which is the safe direction.
+pub fn body_for_history(raw: &str, expanded: &str) -> String {
+    let base = if raw.contains("{{") && raw.contains("}}") {
+        raw
+    } else {
+        expanded
+    };
+    scrub_sensitive_fields(base)
+}
+
+/// Replace the value following any `"<sensitive>": "…"` or
+/// `<sensitive>=…` with a redaction marker.
+fn scrub_sensitive_fields(body: &str) -> String {
+    let lower = body.to_ascii_lowercase();
+    // Cheap bail-out: most bodies mention none of these.
+    if !SENSITIVE_FIELDS.iter().any(|f| lower.contains(f)) {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len());
+    let bytes: Vec<char> = body.chars().collect();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // Find the next `"` or `&`/`?` boundary-ish token start; we
+        // scan for `name` followed by `":` or `=`.
+        let rest_lower: String = lower.chars().skip(i).collect();
+        let hit = SENSITIVE_FIELDS
+            .iter()
+            .filter_map(|f| rest_lower.find(f).map(|at| (at, *f)))
+            .min_by_key(|(at, _)| *at);
+        let Some((at, field)) = hit else {
+            out.extend(bytes[i..].iter());
+            break;
+        };
+        let start = i + at;
+        out.extend(bytes[i..start].iter());
+        out.push_str(field);
+        let mut j = start + field.chars().count();
+        // Skip a closing quote / whitespace / separator.
+        let mut sep = String::new();
+        while j < bytes.len() && (bytes[j].is_whitespace() || bytes[j] == '"' || bytes[j] == '\'') {
+            sep.push(bytes[j]);
+            j += 1;
+        }
+        if j < bytes.len() && (bytes[j] == ':' || bytes[j] == '=') {
+            sep.push(bytes[j]);
+            j += 1;
+            while j < bytes.len() && bytes[j].is_whitespace() {
+                sep.push(bytes[j]);
+                j += 1;
+            }
+            out.push_str(&sep);
+            // Consume the value: a quoted string, or up to the next
+            // delimiter for form/loose syntax.
+            if j < bytes.len() && (bytes[j] == '"' || bytes[j] == '\'') {
+                let quote = bytes[j];
+                j += 1;
+                while j < bytes.len() && bytes[j] != quote {
+                    j += 1;
+                }
+                if j < bytes.len() {
+                    j += 1;
+                }
+                out.push_str("\"<redacted by mnml>\"");
+            } else {
+                while j < bytes.len() && !matches!(bytes[j], ',' | '&' | '}' | '\n' | ' ') {
+                    j += 1;
+                }
+                out.push_str("<redacted by mnml>");
+            }
+        } else {
+            out.push_str(&sep);
+        }
+        i = j;
+    }
+    out
+}
+
+/// Last-ditch scrub for values reaching history by some other path.
+/// Catches a bare `Bearer <token>` / `Basic <b64>` even when the
+/// header name wasn't recognised.
+fn scrub_residual_credentials(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    for prefix in ["bearer ", "basic ", "token ", "sk-ant-", "sk-", "xox"] {
+        if lower.starts_with(prefix) && value.len() > prefix.len() + 8 {
+            return "<redacted by mnml>".to_string();
+        }
+    }
+    value.to_string()
+}
+
 pub fn append(workspace: &Path, entry: &Entry) {
     let dir = workspace.join(".rqst");
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
+    // `.rqst/` is created lazily, on the first request — well after
+    // `Ipc::init` ran its gitignore pass at startup. Re-run it here so
+    // the directory that holds resolved `Authorization` headers gets
+    // ignored the moment it comes into existence, rather than waiting
+    // for the next launch. Cheap: early-returns once covered.
+    let _ = crate::ipc::ensure_workspace_gitignore(workspace);
     let path = dir.join("history.jsonl");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -54,8 +225,21 @@ pub fn append(workspace: &Path, entry: &Entry) {
         "duration_ms": entry.duration_ms,
         "body_bytes": entry.body_bytes,
         "error": entry.error,
-        "headers": entry.headers,
-        "request_body": entry.request_body,
+        // Defense in depth: callers should route sensitive headers
+        // through `header_value_for_history`, but a future call site
+        // that forgets shouldn't write a live token to disk.
+        "headers": entry.headers.map(|hs| {
+            hs.iter()
+                .map(|(k, v)| {
+                    if is_sensitive_header(k) && !(v.contains("{{") && v.contains("}}")) {
+                        (k.clone(), "<redacted by mnml>".to_string())
+                    } else {
+                        (k.clone(), scrub_residual_credentials(v))
+                    }
+                })
+                .collect::<Vec<_>>()
+        }),
+        "request_body": entry.request_body.map(scrub_sensitive_fields),
     });
     let mut line = match serde_json::to_string(&payload) {
         Ok(s) => s,
@@ -116,8 +300,21 @@ fn append_global(workspace: &Path, entry: &Entry, ts: u128) {
         "duration_ms": entry.duration_ms,
         "body_bytes": entry.body_bytes,
         "error": entry.error,
-        "headers": entry.headers,
-        "request_body": entry.request_body,
+        // Defense in depth: callers should route sensitive headers
+        // through `header_value_for_history`, but a future call site
+        // that forgets shouldn't write a live token to disk.
+        "headers": entry.headers.map(|hs| {
+            hs.iter()
+                .map(|(k, v)| {
+                    if is_sensitive_header(k) && !(v.contains("{{") && v.contains("}}")) {
+                        (k.clone(), "<redacted by mnml>".to_string())
+                    } else {
+                        (k.clone(), scrub_residual_credentials(v))
+                    }
+                })
+                .collect::<Vec<_>>()
+        }),
+        "request_body": entry.request_body.map(scrub_sensitive_fields),
     });
     let mut line = match serde_json::to_string(&payload) {
         Ok(s) => s,
@@ -226,6 +423,124 @@ pub fn tail(workspace: &Path, n: usize) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── redaction ────────────────────────────────────────────────
+
+    #[test]
+    fn templated_auth_header_is_stored_unexpanded_so_replay_still_works() {
+        // The point of the design: no secret on disk AND the history
+        // entry stays runnable, because replay re-expands the var.
+        let out = header_value_for_history("Authorization", "Bearer {{TOKEN}}", "Bearer sk-live-1");
+        assert_eq!(out, "Bearer {{TOKEN}}");
+        assert!(!out.contains("sk-live-1"));
+    }
+
+    #[test]
+    fn hardcoded_auth_header_is_redacted() {
+        // Nothing to re-expand from, so replayability has to give.
+        let out = header_value_for_history("authorization", "Bearer sk-live-1", "Bearer sk-live-1");
+        assert!(out.contains("redacted"));
+        assert!(!out.contains("sk-live-1"));
+    }
+
+    #[test]
+    fn ordinary_headers_keep_their_expanded_value() {
+        let out = header_value_for_history("Accept", "{{FMT}}", "application/json");
+        assert_eq!(out, "application/json");
+    }
+
+    #[test]
+    fn sensitive_header_matching_is_case_insensitive() {
+        for name in ["Authorization", "AUTHORIZATION", "x-api-key", "X-Api-Key"] {
+            assert!(is_sensitive_header(name), "{name} should be sensitive");
+        }
+        for name in ["Accept", "Content-Type", "X-Request-Id"] {
+            assert!(!is_sensitive_header(name), "{name} should not be");
+        }
+    }
+
+    #[test]
+    fn body_prefers_the_template_form() {
+        let out = body_for_history(
+            r#"{"client_secret":"{{SECRET}}"}"#,
+            r#"{"client_secret":"live-value"}"#,
+        );
+        assert!(!out.contains("live-value"));
+    }
+
+    #[test]
+    fn literal_credential_fields_in_a_body_are_scrubbed() {
+        let out = scrub_sensitive_fields(r#"{"user":"ava","password":"hunter2"}"#);
+        assert!(!out.contains("hunter2"), "got: {out}");
+        assert!(out.contains("ava"), "non-secret fields survive: {out}");
+        assert!(out.contains("password"), "field NAME is kept: {out}");
+    }
+
+    #[test]
+    fn form_encoded_credentials_are_scrubbed() {
+        let out = scrub_sensitive_fields("grant_type=password&client_secret=abc123&scope=read");
+        assert!(!out.contains("abc123"), "got: {out}");
+        assert!(out.contains("scope=read"), "rest survives: {out}");
+    }
+
+    #[test]
+    fn body_without_credential_fields_is_untouched() {
+        let body = r#"{"name":"ava","tags":["a","b"],"count":3}"#;
+        assert_eq!(scrub_sensitive_fields(body), body);
+    }
+
+    #[test]
+    fn scrubbing_a_malformed_body_does_not_panic() {
+        // Bodies are often not JSON at all, and a truncated one must
+        // still be handled — this runs on every request.
+        for body in [
+            r#"{"password":"#,
+            r#"password"#,
+            r#"{"password":"unterminated"#,
+            "password=",
+            "",
+            "{{password}}",
+        ] {
+            let _ = scrub_sensitive_fields(body);
+        }
+    }
+
+    #[test]
+    fn residual_bearer_values_are_caught_by_the_safety_net() {
+        assert!(scrub_residual_credentials("Bearer sk-ant-abcdefghijklmnop").contains("redacted"));
+        assert!(scrub_residual_credentials("application/json") == "application/json");
+    }
+
+    #[test]
+    fn persisted_entry_never_contains_a_hardcoded_secret() {
+        // End-to-end through the actual writer, since that's where a
+        // missed sanitiser would show up.
+        let dir = tempfile::tempdir().unwrap();
+        let headers = vec![
+            (
+                "Authorization".to_string(),
+                "Bearer sk-live-SECRET".to_string(),
+            ),
+            ("Accept".to_string(), "application/json".to_string()),
+        ];
+        append(
+            dir.path(),
+            &Entry {
+                method: "POST",
+                url: "https://api.example.com/login",
+                status: Some(200),
+                duration_ms: Some(5),
+                body_bytes: Some(2),
+                error: None,
+                headers: Some(&headers),
+                request_body: Some(r#"{"password":"hunter2"}"#),
+            },
+        );
+        let text = std::fs::read_to_string(dir.path().join(".rqst/history.jsonl")).unwrap();
+        assert!(!text.contains("sk-live-SECRET"), "header leaked:\n{text}");
+        assert!(!text.contains("hunter2"), "body leaked:\n{text}");
+        assert!(text.contains("application/json"), "benign header kept");
+    }
 
     fn temp(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -417,8 +732,18 @@ mod tests {
         assert_eq!(h.len(), 2);
         assert_eq!(h[0][0], "Content-Type");
         assert_eq!(h[0][1], "application/json");
+        // 2026-08-26 — this used to assert `Bearer abc123` round-tripped
+        // verbatim, which is exactly the leak being fixed: the header
+        // name is still recorded (so the entry shows an authed request
+        // was made) but a hard-coded credential never reaches disk.
+        // A `{{VAR}}` form would be preserved instead — see
+        // `templated_auth_header_is_stored_unexpanded_so_replay_still_works`.
         assert_eq!(h[1][0], "Authorization");
-        assert_eq!(h[1][1], "Bearer abc123");
+        assert!(
+            h[1][1].as_str().is_some_and(|s| s.contains("redacted")),
+            "expected redaction, got {:?}",
+            h[1][1]
+        );
         assert_eq!(v["request_body"].as_str(), Some(body));
         let _ = fs::remove_dir_all(&dir);
     }

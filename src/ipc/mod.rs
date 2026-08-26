@@ -381,7 +381,7 @@ impl Ipc {
         // diffs its own IPC files). Best-effort append a `.mnml/`
         // line to the workspace's `.gitignore` on first creation.
         // Idempotent — checks the file content before appending.
-        let _ = ensure_gitignore_excludes_mnml(workspace);
+        let _ = ensure_workspace_gitignore(workspace);
         let cmd_path = dir.join("command");
         let screen_path = dir.join("screen.txt");
         let status_path = dir.join("status.json");
@@ -699,33 +699,71 @@ fn parse_command(line: &str) -> IpcCommand {
 ///   * `.gitignore` already has a literal `.mnml/` or `.mnml` line
 ///
 /// Creates the gitignore if absent.
-fn ensure_gitignore_excludes_mnml(workspace: &Path) -> io::Result<()> {
-    if !workspace.join(".git").exists() {
-        return Ok(());
-    }
-    let gi = workspace.join(".gitignore");
-    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
-    // Match `.mnml`, `.mnml/`, `/.mnml`, `/.mnml/` as anchored or
-    // non-anchored lines. Comments + indentation tolerated.
-    let already = existing.lines().any(|line| {
+/// Workspace-local state directories mnml writes into a repo. Both
+/// hold credential-bearing files, so both belong in `.gitignore`.
+///
+/// `.rqst/` is the HTTP client's original home and is still live —
+/// request history (with template-EXPANDED `Authorization` headers),
+/// captured browser traffic, `env/` variable values, lookups, config.
+/// Newer HTTP code writes under `.mnml/`, so a workspace can easily
+/// have both. Only `.mnml/` was ever auto-ignored, which left the
+/// directory holding resolved secrets stageable by `git add -A`.
+///
+/// Deliberately NOT listed: `.curl` / `.http` / `.rest` request files.
+/// Those are user-authored API definitions — committing them is the
+/// point of a collection — and they reference secrets through
+/// `{{VAR}}` rather than embedding them.
+const WORKSPACE_STATE_DIRS: &[&str] = &[".mnml", ".rqst"];
+
+/// True when `existing` already ignores `dir`, tolerating the usual
+/// spellings (`x`, `x/`, `/x`, `/x/`, `x/**`) plus comments and
+/// indentation.
+fn gitignore_covers(existing: &str, dir: &str) -> bool {
+    existing.lines().any(|line| {
         let t = line
             .split('#')
             .next()
             .unwrap_or("")
             .trim()
             .trim_start_matches('/')
+            .trim_end_matches("**")
             .trim_end_matches('/');
-        t == ".mnml"
-    });
-    if already {
+        t == dir
+    })
+}
+
+pub(crate) fn ensure_workspace_gitignore(workspace: &Path) -> io::Result<()> {
+    if !workspace.join(".git").exists() {
         return Ok(());
     }
+    let gi = workspace.join(".gitignore");
+    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
+
+    let missing: Vec<&str> = WORKSPACE_STATE_DIRS
+        .iter()
+        .copied()
+        // Only add a directory the workspace actually uses, or is
+        // about to: `.mnml` always (the IPC channel lives there and
+        // this runs from `Ipc::init`), `.rqst` only once it exists.
+        // Keeps a stray `.rqst/` line out of repos that never touch
+        // the HTTP client.
+        .filter(|d| *d == ".mnml" || workspace.join(d).exists())
+        .filter(|d| !gitignore_covers(&existing, d))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
     let mut out = existing;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str("# Added by mnml on first launch — workspace IPC + session state\n");
-    out.push_str(".mnml/\n");
+    out.push_str("# Added by mnml — workspace state: IPC, session, and HTTP\n");
+    out.push_str("# history / captured traffic / env values (these carry secrets)\n");
+    for dir in missing {
+        out.push_str(dir);
+        out.push_str("/\n");
+    }
     std::fs::write(&gi, out)
 }
 
@@ -2163,6 +2201,59 @@ mod tests {
             1,
             "second init should not append duplicate; content:\n{content}"
         );
+    }
+
+    #[test]
+    fn rqst_dir_is_ignored_once_it_exists() {
+        // `.rqst/` holds request history with template-EXPANDED
+        // Authorization headers. It's created lazily on the first
+        // request, so the check has to run again then — `Ipc::init`
+        // alone is too early.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let gi = dir.path().join(".gitignore");
+
+        // No `.rqst/` yet — don't add a line the repo doesn't need.
+        ensure_workspace_gitignore(dir.path()).unwrap();
+        let first = std::fs::read_to_string(&gi).unwrap();
+        assert!(first.contains(".mnml/"));
+        assert!(
+            !first.contains(".rqst/"),
+            "shouldn't pre-emptively ignore an unused dir:\n{first}"
+        );
+
+        // The HTTP client creates it; now it must be covered.
+        std::fs::create_dir(dir.path().join(".rqst")).unwrap();
+        ensure_workspace_gitignore(dir.path()).unwrap();
+        let second = std::fs::read_to_string(&gi).unwrap();
+        assert!(second.contains(".rqst/"), "content:\n{second}");
+        assert_eq!(second.matches(".mnml/").count(), 1, "no duplicate .mnml");
+
+        // Idempotent.
+        ensure_workspace_gitignore(dir.path()).unwrap();
+        let third = std::fs::read_to_string(&gi).unwrap();
+        assert_eq!(third.matches(".rqst/").count(), 1, "content:\n{third}");
+    }
+
+    #[test]
+    fn gitignore_covers_recognises_the_usual_spellings() {
+        for spelling in [
+            ".rqst",
+            ".rqst/",
+            "/.rqst",
+            "/.rqst/",
+            ".rqst/**",
+            "  .rqst/  ",
+        ] {
+            assert!(
+                gitignore_covers(&format!("target/\n{spelling}\n"), ".rqst"),
+                "should recognise {spelling:?}"
+            );
+        }
+        // A comment mentioning it is not coverage.
+        assert!(!gitignore_covers("# .rqst/ is noisy\ntarget/\n", ".rqst"));
+        // Nor is a different directory that merely shares a prefix.
+        assert!(!gitignore_covers(".rqst-old/\n", ".rqst"));
     }
 
     #[test]
