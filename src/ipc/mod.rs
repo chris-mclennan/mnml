@@ -386,6 +386,30 @@ impl Ipc {
         let screen_path = dir.join("screen.txt");
         let status_path = dir.join("status.json");
         let events_path = dir.join("events.jsonl");
+        // Refuse to write through a symlink. Git preserves symlinks
+        // (`core.symlinks` defaults on for Unix), so a cloned repo can
+        // ship `.mnml/ipc/screen.txt` pointing at `~/.zshrc` or
+        // `~/.ssh/authorized_keys` — and `write_screen` would then
+        // truncate that target and keep overwriting it ~10x/sec with
+        // screen text. Verified end-to-end against a real build before
+        // this guard existed.
+        //
+        // Unlink rather than bail: these are mnml-owned scratch files
+        // with no user content to lose, and refusing outright would
+        // brick the IPC channel for the whole session over a file we
+        // are entitled to replace.
+        for p in [&cmd_path, &screen_path, &status_path, &events_path] {
+            if std::fs::symlink_metadata(p)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                eprintln!(
+                    "mnml: {} was a symlink — replacing it with a regular file",
+                    p.display()
+                );
+                let _ = std::fs::remove_file(p);
+            }
+        }
         // Snapshot any bytes the host pre-queued before our launch
         // and log them as a discrete event — `Ipc::init` then
         // truncates the channel so the live loop starts clean.
@@ -737,6 +761,22 @@ pub(crate) fn ensure_workspace_gitignore(workspace: &Path) -> io::Result<()> {
         return Ok(());
     }
     let gi = workspace.join(".gitignore");
+    // A repo can ship `.gitignore` as a symlink to somewhere outside
+    // the workspace; rewriting it would then clobber that target. This
+    // one we refuse rather than unlink — unlike the IPC scratch files,
+    // `.gitignore` is the user's content, and silently replacing it
+    // would be worse than skipping the convenience.
+    if std::fs::symlink_metadata(&gi)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "mnml: {} is a symlink — not modifying it. Add `.mnml/` \
+             (and `.rqst/` if you use the HTTP client) yourself.",
+            gi.display()
+        );
+        return Ok(());
+    }
     let existing = std::fs::read_to_string(&gi).unwrap_or_default();
 
     let missing: Vec<&str> = WORKSPACE_STATE_DIRS
@@ -1283,7 +1323,15 @@ pub fn dump_screen_status(ipc: &Ipc, screen: &ratatui::buffer::Buffer, app: &App
     // as &Ipc from the outer loop's paint path.
     let area = screen.area();
     ipc.last_backend_size.set(Some((area.width, area.height)));
-    ipc.write_screen(&screen_to_text(screen));
+    // `[ipc] write_screen = false` suppresses the verbatim screen dump
+    // (see `IpcConfig::write_screen`). Only this file is gated —
+    // `status.json` / `rects.json` carry pane metadata, not buffer
+    // contents, and `./run.sh restart` needs the channel alive.
+    // Headless forces it on at startup: observing the virtual screen
+    // is the only way to drive a headless run.
+    if app.config.ipc.write_screen {
+        ipc.write_screen(&screen_to_text(screen));
+    }
     ipc.write_status(&status_json(app));
     // Always emit `rects.json` alongside the screen so headless
     // audit scripts can verify click rects without a separate IPC
@@ -2200,6 +2248,76 @@ mod tests {
             content.matches(".mnml/").count(),
             1,
             "second init should not append duplicate; content:\n{content}"
+        );
+    }
+
+    #[test]
+    fn ipc_write_screen_defaults_on_and_parses_the_opt_out() {
+        // Default must stay ON: `./run.sh restart`, the .test harness,
+        // and agent UI inspection all read screen.txt.
+        assert!(crate::config::Config::default().ipc.write_screen);
+
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
+        std::fs::write(
+            d.path().join(".mnml/config.toml"),
+            "[ipc]\nwrite_screen = false\n",
+        )
+        .unwrap();
+        let cfg = crate::config::Config::load(None, d.path());
+        assert!(!cfg.ipc.write_screen, "[ipc] write_screen = false ignored");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ipc_init_refuses_to_write_through_a_symlink() {
+        // A cloned repo can ship `.mnml/ipc/screen.txt` as a symlink
+        // (git preserves them) pointing at ~/.zshrc; write_screen
+        // would then truncate and continuously overwrite that target.
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "IMPORTANT").unwrap();
+
+        let ws = tempfile::tempdir().unwrap();
+        let ipc_dir = ws.path().join(".mnml/ipc");
+        std::fs::create_dir_all(&ipc_dir).unwrap();
+        std::os::unix::fs::symlink(&victim, ipc_dir.join("screen.txt")).unwrap();
+
+        let ipc = Ipc::init(ws.path()).unwrap();
+        ipc.write_screen("rendered UI with an open .env in it");
+
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "IMPORTANT",
+            "must not write through the symlink"
+        );
+        assert!(
+            !std::fs::symlink_metadata(ipc_dir.join("screen.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "symlink should have been replaced by a regular file"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn gitignore_symlink_is_left_alone() {
+        // Unlike the IPC scratch files, `.gitignore` is the user's
+        // content — refuse rather than replace.
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("real-gitignore");
+        std::fs::write(&victim, "original\n").unwrap();
+
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        std::os::unix::fs::symlink(&victim, ws.path().join(".gitignore")).unwrap();
+
+        ensure_workspace_gitignore(ws.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "original\n",
+            "must not rewrite through the symlink"
         );
     }
 

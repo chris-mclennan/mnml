@@ -16,6 +16,11 @@ const POLL_SLEEP: Duration = Duration::from_millis(40);
 
 /// Run headless (virtual screen + file-IPC). `Ok(true)` ⇒ restart requested.
 pub fn run(mut app: App) -> Result<bool, String> {
+    // `[ipc] write_screen` governs the interactive terminal loop only.
+    // Headless has no terminal — `screen.txt` IS its output, and the
+    // `.test` harness reads it — so honouring the opt-out here would
+    // make headless mode silently useless.
+    app.config.ipc.write_screen = true;
     let (w, h) = screen_size();
     let backend = TestBackend::new(w, h);
     let mut terminal = Terminal::new(backend).map_err(|e| format!("headless terminal: {e}"))?;

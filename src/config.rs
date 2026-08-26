@@ -40,6 +40,7 @@ pub struct Config {
     pub editor: EditorConfig,
     pub ui: UiConfig,
     pub session: SessionConfig,
+    pub ipc: IpcConfig,
     /// `[cloud_run.defaults]` — what the Cloud Agents panel's
     /// quick-fire prompt input uses when you hit Enter. Populated
     /// by the wizard on submit; edited via the wizard's
@@ -756,6 +757,30 @@ pub struct SessionConfig {
     /// On quit, save the open editor buffers + cursors to `.mnml/session.json`,
     /// and re-open them on the next launch in the same workspace.
     pub restore: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct IpcConfig {
+    /// Write the rendered screen to `<workspace>/.mnml/ipc/screen.txt`
+    /// (~10x/sec) in the INTERACTIVE terminal loop. Headless mode
+    /// always writes it — observing the virtual screen is the only way
+    /// to drive a headless run — so this key governs the
+    /// real-terminal path only.
+    ///
+    /// Default true, deliberately. `./run.sh restart`, the `.test`
+    /// E2E harness, and agent-driven UI inspection all read this file;
+    /// defaulting it off would silently break workflows people depend
+    /// on. The two concrete problems that made the dump a finding are
+    /// fixed at the source instead — it's now 0600 (see
+    /// `crate::secret_file`) and `.mnml/` is auto-gitignored, so it is
+    /// neither world-readable nor stageable by `git add -A`.
+    ///
+    /// The knob exists because the residual fact remains true: the
+    /// file is a verbatim copy of whatever is on screen, including an
+    /// open `.env` or a token pasted into a prompt. Anyone who wants
+    /// that never written can set `[ipc] write_screen = false` and
+    /// give up live inspection.
+    pub write_screen: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1597,6 +1622,7 @@ impl Default for Config {
                 md_preview_engine: "builtin".to_string(),
             },
             session: SessionConfig { restore: true },
+            ipc: IpcConfig { write_screen: true },
             keys: BTreeMap::new(),
             lsp: BTreeMap::new(),
             ai: toml::Value::Table(Default::default()),
@@ -1658,6 +1684,8 @@ struct RawConfig {
     startup: RawStartup,
     #[serde(default)]
     session: RawSession,
+    #[serde(default)]
+    ipc: RawIpc,
     #[serde(default)]
     snippets: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default)]
@@ -1860,6 +1888,11 @@ struct RawBrowser {
 #[derive(Debug, Default, Deserialize)]
 struct RawSession {
     restore: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawIpc {
+    write_screen: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -3000,6 +3033,9 @@ impl Config {
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;
+        }
+        if let Some(v) = raw.ipc.write_screen {
+            self.ipc.write_screen = v;
         }
         for (k, v) in raw.keys {
             self.keys.entry(k).or_default().extend(v);
