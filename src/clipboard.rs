@@ -38,6 +38,11 @@ pub struct Clipboard {
     /// on an empty line yields empty, not stale browser text. R10
     /// nvchad-user SEV-3 (2026-08-22).
     register_owned: bool,
+    /// Exactly what mnml last pushed to the OS clipboard, so a later
+    /// read can distinguish "nobody has touched it since" from "another
+    /// app copied something". `None` means we never pushed, or the push
+    /// failed — in which case we cannot detect an external change.
+    last_pushed_to_os: Option<String>,
 }
 
 impl Default for Clipboard {
@@ -56,6 +61,7 @@ impl Clipboard {
             named: HashMap::new(),
             pending_register: None,
             register_owned: false,
+            last_pushed_to_os: None,
         }
     }
 
@@ -70,6 +76,7 @@ impl Clipboard {
             named: HashMap::new(),
             pending_register: None,
             register_owned: false,
+            last_pushed_to_os: None,
         }
     }
 
@@ -140,9 +147,11 @@ impl Clipboard {
                 self.register_linewise = linewise;
                 self.effective_linewise = linewise;
                 self.register_owned = true;
-                if let Some(sys) = self.sys.as_mut() {
-                    let _ = sys.set_text(self.register.clone());
-                }
+                let pushed = self.register.clone();
+                self.last_pushed_to_os = match self.sys.as_mut() {
+                    Some(sys) => sys.set_text(pushed.clone()).ok().map(|()| pushed),
+                    None => None,
+                };
             }
         }
     }
@@ -223,9 +232,13 @@ impl Clipboard {
             //       browser text after an explicit `Y` on an
             //       empty line cleared the register to "".
             _ => {
-                if !self.register_owned
-                    && let Some(sys) = self.sys.as_mut()
-                    && let Ok(t) = sys.get_text()
+                let os_text = self.sys.as_mut().and_then(|s| s.get_text().ok());
+                if let Some(t) = os_text
+                    && Self::os_clipboard_wins(
+                        self.register_owned,
+                        self.last_pushed_to_os.as_deref(),
+                        &t,
+                    )
                 {
                     self.effective_linewise = false;
                     return t;
@@ -233,6 +246,30 @@ impl Clipboard {
                 self.effective_linewise = self.register_linewise;
                 self.register.clone()
             }
+        }
+    }
+
+    /// Does the OS clipboard win over mnml's unnamed register?
+    ///
+    /// Latching on "mnml has written the register" alone is not enough:
+    /// it makes the register authoritative for the rest of the session,
+    /// so copying in another app never reaches mnml again. Comparing the
+    /// OS text against what we ourselves last pushed distinguishes the
+    /// two cases the latch conflated.
+    fn os_clipboard_wins(register_owned: bool, last_pushed: Option<&str>, os_text: &str) -> bool {
+        match (register_owned, last_pushed) {
+            // Cold start — no in-mnml op has written the register, so a
+            // paste should pick up whatever the user copied elsewhere.
+            (false, _) => true,
+            // We pushed, and the OS still holds exactly that: nothing
+            // external happened, so our register is authoritative. This
+            // is the R10 case — `Y` on an empty line yields empty, not
+            // stale browser text.
+            (true, Some(ours)) => ours != os_text,
+            // We own the register but could not push (no OS bridge, or
+            // the push failed), so we cannot detect an external change.
+            // Trust mnml — the user just yanked here.
+            (true, None) => false,
         }
     }
 
@@ -245,5 +282,68 @@ impl Clipboard {
     /// `:reg` / `:registers` for the display dump.
     pub fn named_registers(&self) -> &HashMap<char, (String, bool)> {
         &self.named
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These exercise the decision in isolation, so nothing here touches
+    // (or depends on) the real system clipboard.
+
+    /// Cold start: no in-mnml op has written the register yet, so a
+    /// paste picks up whatever the user copied in another app.
+    #[test]
+    fn os_wins_before_mnml_has_written_the_register() {
+        assert!(Clipboard::os_clipboard_wins(false, None, "from browser"));
+        assert!(Clipboard::os_clipboard_wins(
+            false,
+            Some("stale"),
+            "from browser"
+        ));
+    }
+
+    /// The R10 case that motivated the original latch: `Y` on an empty
+    /// line sets the register to "", we push "", and the OS still holds
+    /// "". Our register must win, or the user pastes stale browser text.
+    #[test]
+    fn register_wins_when_os_still_holds_what_we_pushed() {
+        assert!(!Clipboard::os_clipboard_wins(true, Some(""), ""));
+        assert!(!Clipboard::os_clipboard_wins(
+            true,
+            Some("yanked"),
+            "yanked"
+        ));
+    }
+
+    /// The regression the latch introduced: once mnml owned the
+    /// register, copying in another app was ignored for the rest of the
+    /// session. A differing OS clipboard means someone else wrote it.
+    #[test]
+    fn os_wins_after_an_external_copy() {
+        assert!(Clipboard::os_clipboard_wins(
+            true,
+            Some("yanked in mnml"),
+            "copied in browser"
+        ));
+    }
+
+    /// No OS bridge, or the push failed — we cannot detect an external
+    /// change, so trust the register the user just yanked into.
+    #[test]
+    fn register_wins_when_we_could_not_push() {
+        assert!(!Clipboard::os_clipboard_wins(true, None, "anything"));
+    }
+
+    /// End-to-end on a detached clipboard: with no OS bridge, set/text
+    /// round-trips the register and never consults the OS.
+    #[test]
+    fn detached_clipboard_round_trips_the_register() {
+        let mut c = Clipboard::detached();
+        c.set("hello".to_string(), false);
+        assert_eq!(c.text(), "hello");
+        c.set(String::new(), false);
+        assert_eq!(c.text(), "", "an explicit empty yank must yield empty");
     }
 }
