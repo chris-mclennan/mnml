@@ -294,6 +294,12 @@ impl App {
 
     /// Ask-me-later — close without setting the complete flag so
     /// the wizard reopens on next launch.
+    ///
+    /// Deliberately persists NOTHING. An undecided user must not have
+    /// consent inferred either way, and `ai_inline_suggestions()`
+    /// treats an absent key as off — so deferring leaves ghost text
+    /// disabled until the user actually answers. Don't "helpfully"
+    /// commit `wizard_snapshot_current()` here.
     pub fn close_first_launch_defer(&mut self) {
         self.first_launch = None;
         self.toast(
@@ -310,8 +316,14 @@ impl App {
         // Commit each answer to config + persist to disk.
         // AI backend: "claude-code" | "claude-api" | "local" all
         // enable inline suggestions + set the backend; "skip" (or
-        // empty) leaves both defaulted (backend stays Unset,
-        // inline_suggestions stays false).
+        // empty) writes `inline_suggestions = false` EXPLICITLY.
+        //
+        // That write matters — it isn't redundant with the config
+        // default. The Skip row's own label promises "Skip for now —
+        // decide later", so a declining user must end up off and
+        // STAY off even if the default flips again later. Before
+        // 2026-08-26 this arm wrote nothing and #974's `true`
+        // default took over, so Skip silently meant yes.
         use crate::app::discovery::{
             persist_ai_bool, persist_ai_string, persist_editor_string, persist_ui_bool,
         };
@@ -323,8 +335,8 @@ impl App {
         // so the user sees WHY the setup didn't stick instead of a
         // silent phantom reset.
         let mut errs: Vec<String> = Vec::new();
-        match state.answers.ai_backend.as_str() {
-            "claude-code" | "claude-api" | "local" => {
+        match ai_answer_enables_ghost_text(&state.answers.ai_backend) {
+            true => {
                 self.set_ai_suggest_backend(crate::ai::SuggestBackend::parse(
                     &state.answers.ai_backend,
                 ));
@@ -335,7 +347,16 @@ impl App {
                     errs.push(format!("ai.inline_suggestions: {e}"));
                 }
             }
-            _ => {}
+            // "skip" / empty — record the decline so it survives a
+            // future default change, and suppress the discoverability
+            // hint (the user just saw the feature and said no; the
+            // Skip label already points them at `ai.setup_suggestions`).
+            false => {
+                if let Err(e) = persist_ai_bool("inline_suggestions", false) {
+                    errs.push(format!("ai.inline_suggestions: {e}"));
+                }
+                self.mark_ghost_text_hint_shown();
+            }
         }
         // Gate persistence on `input_style_touched` — the wizard's
         // pre-select is a display convenience, not user intent. A
@@ -651,5 +672,44 @@ impl App {
             &cmd,
             self.workspace.clone(),
         ));
+    }
+}
+
+/// Does this wizard AI answer turn ghost text ON?
+///
+/// Only the three affirmative backend choices do. Everything else —
+/// `"skip"`, an empty answer, or any future/unknown value — is a
+/// decline, and the caller persists `inline_suggestions = false`
+/// rather than leaving the key absent.
+///
+/// Extracted as a pure fn so the decision is testable without a
+/// wizard, an `App`, or a writable `$HOME`. It exists because the
+/// inverse shipped: before 2026-08-26 the decline arm was `_ => {}`,
+/// writing nothing, so #974's on-by-default made the "Skip for now"
+/// button mean yes.
+pub(crate) fn ai_answer_enables_ghost_text(answer: &str) -> bool {
+    matches!(answer, "claude-code" | "claude-api" | "local")
+}
+
+#[cfg(test)]
+mod first_launch_tests {
+    use super::*;
+
+    #[test]
+    fn affirmative_answers_enable_ghost_text() {
+        for a in ["claude-code", "claude-api", "local"] {
+            assert!(ai_answer_enables_ghost_text(a), "{a} should enable");
+        }
+    }
+
+    #[test]
+    fn skip_and_unknown_answers_decline() {
+        // "skip" is the wizard's own label ("Skip for now — decide
+        // later"); "" is Finish-without-visiting-the-row. Both must
+        // read as a decline, and so must anything unrecognised —
+        // failing closed is the whole point.
+        for a in ["skip", "", "SKIP", "none", "off", "gpt-4"] {
+            assert!(!ai_answer_enables_ghost_text(a), "{a:?} should decline");
+        }
     }
 }

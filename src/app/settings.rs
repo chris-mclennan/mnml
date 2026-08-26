@@ -817,12 +817,15 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         .ai
         .get("inline_suggestions")
         .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+        .unwrap_or(false);
     out.push(bool_row(
         "ai.inline_suggestions",
         "Ghost-text inline suggestions",
         ai_inline_on,
-        true, // default is on since task #974
+        // Default off — #974 flipped it on, reverted 2026-08-26 so an
+        // absent key can't stand in for consent to upload buffer
+        // context. Must track `App::ai_inline_suggestions`.
+        false,
     ));
     let backend_str = cfg
         .ai

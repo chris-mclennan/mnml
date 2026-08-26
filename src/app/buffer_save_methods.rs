@@ -224,6 +224,10 @@ impl App {
             self.refresh_md_previews(&p);
             self.refresh_blame_for(&p);
             self.notify_lsp_saved(&p);
+            // A completed save is the "user is doing real work here"
+            // signal we hang the one-time ghost-text hint off. No-ops
+            // after the first fire, and whenever suggestions are on.
+            self.maybe_show_ghost_text_hint();
         }
     }
     /// Vim `:w <path>` — write the active editor to `<path>` WITHOUT

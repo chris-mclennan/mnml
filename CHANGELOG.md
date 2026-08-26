@@ -10,6 +10,35 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Changed
+
+- **AI ghost-text is off by default again.** 0.2.16 (task #974) turned
+  inline suggestions on for anyone who hadn't explicitly set
+  `[ai] inline_suggestions`. Ghost text sends buffer context around
+  your cursor to a remote backend, so an absent setting shouldn't have
+  stood in for consent — and three groups had never actually been
+  asked: anyone who picked the first-launch wizard's "Skip for now",
+  anyone who dismissed it with Esc, and anyone who completed the wizard
+  before it had an AI section at all.
+
+  **If you set `inline_suggestions = true` yourself, nothing changes.**
+  If you were relying on the 0.2.16 default, re-enable via
+  `ai.setup_suggestions`, Settings → AI, or `[ai] inline_suggestions =
+  true`. A one-time tip after your first save points the way.
+
+### Fixed
+
+- **First-launch wizard: "Skip for now" now actually skips.** It wrote
+  no setting, so the on-by-default took over and declining the feature
+  silently enabled it. Skip and Esc now leave ghost text off, and Skip
+  records the decision so a future default change can't override it.
+- **Secrets files are never sent to a remote ghost-text backend.**
+  Files whose names look secret-bearing — `.env`, `id_rsa`, `*.pem`,
+  `*.key`, `*credentials*`, `.netrc`, `.npmrc`, and similar — are
+  skipped regardless of your settings. Opting into completions isn't
+  opting into uploading your AWS credentials. The local FIM backend is
+  unaffected; nothing leaves the machine there.
+
 ## [0.2.17](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.16...mnml-rs-v0.2.17) - 2026-08-24
 
 Tree polish release. Iterative visual refinement of the file

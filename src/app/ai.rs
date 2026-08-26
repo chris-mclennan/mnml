@@ -264,6 +264,17 @@ impl App {
         if b.editor.ghost_suggestion.is_some() {
             return;
         }
+        // Never ship a secrets file to a REMOTE backend, regardless of
+        // the user's opt-in. Local FIM is on-device, so it's exempt —
+        // suppressing there would cost the feature for no privacy gain.
+        if self.ai_suggest_backend() != crate::ai::SuggestBackend::Local
+            && b.path.as_deref().is_some_and(is_secret_bearing_filename)
+        {
+            // Clear the dirty flag so we don't re-evaluate this same
+            // buffer state on every subsequent tick.
+            self.suggest_dirty_at = None;
+            return;
+        }
         let text = b.editor.text();
         let cursor = b.editor.cursor();
         // Cap context: last ~2000 chars before the cursor, first ~1000
@@ -1471,16 +1482,69 @@ impl App {
             .map(str::to_string)
     }
 
-    /// Read the user's `[ai] backend = "cli" | "api"` setting. Default
-    /// `Cli` (no surprises for users without an API key set).
+    /// Record that the ghost-text hint has been shown (or is no longer
+    /// wanted) so it never fires again on this machine.
+    ///
+    /// Called on the wizard's Skip arm too: a user who was just shown
+    /// the feature and declined does not need to be told it exists.
+    pub fn mark_ghost_text_hint_shown(&self) {
+        let Some(marker) = ghost_text_hint_marker() else {
+            return;
+        };
+        if let Some(dir) = marker.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&marker, "");
+    }
+
+    /// One-time nudge that ghost text exists, for users who have it
+    /// off. This is what pays for defaulting `inline_suggestions` to
+    /// off — the feature stays discoverable without consent being
+    /// assumed. Reaches cohorts a default flip never could, including
+    /// users who completed the wizard before it had an AI section.
+    ///
+    /// Deliberately fired from the save path rather than a keystroke
+    /// tick: a completed save means real work, not a stray keypress
+    /// in a scratch buffer, and it can't interrupt mid-typing.
+    /// No-ops when suggestions are already on, when the Claude
+    /// product is routed `off` (a standing "no"), or once the marker
+    /// exists.
+    pub fn maybe_show_ghost_text_hint(&mut self) {
+        if self.ai_inline_suggestions()
+            || crate::ai::resolve_backend(&self.config.ai, crate::ai::AiProduct::Claude)
+                == crate::ai::ResolvedBackend::Off
+        {
+            return;
+        }
+        let Some(marker) = ghost_text_hint_marker() else {
+            return;
+        };
+        if marker.exists() {
+            return;
+        }
+        self.mark_ghost_text_hint_shown();
+        self.toast_persistent(
+            "ghost-text-hint",
+            "Tip: AI ghost-text suggestions are available but off · \
+             enable via `ai.setup_suggestions` or Settings → AI",
+            crate::app::ToastLevel::Info,
+        );
+    }
+
     /// `[ai] inline_suggestions` — whether Cursor-style AI ghost-text
-    /// fires as you type. Defaults to **on** (task #974, 2026-08-17)
-    /// now that the default AI backend is `cli` / `claude-code` (sub-
-    /// backed via the Keychain OAuth token — no per-keystroke API
-    /// billing). Existing users with an explicit `inline_suggestions =
-    /// false` in their config keep it off (defaults only kick in when
-    /// the key is absent). Also automatically disabled when the Claude
-    /// product is routed `off` (task #975).
+    /// fires as you type. Defaults to **off**: the feature sends
+    /// buffer context to a remote backend, so it turns on only when
+    /// the user has explicitly said yes (first-launch wizard, the
+    /// `ai.setup_suggestions` picker, or Settings → AI).
+    ///
+    /// #974 (2026-08-17) briefly defaulted this **on** — sub-backed
+    /// ghost text is free within the Claude Code plan, so the billing
+    /// objection went away. But "free" isn't the same as "consented",
+    /// and an absent key covered three never-asked cohorts. Reverted
+    /// 2026-08-26; discoverability moved to a one-time hint.
+    ///
+    /// Also automatically disabled when the Claude product is routed
+    /// `off` (task #975).
     pub fn ai_inline_suggestions(&self) -> bool {
         // Product-off short-circuits the config default. A user who
         // set `[ai.routing.claude] backend = "off"` clearly doesn't
@@ -1491,11 +1555,28 @@ impl App {
         {
             return false;
         }
+        // Absent key = "never answered" = off. Only an EXPLICIT
+        // `true` enables ghost text.
+        //
+        // #974 (2026-08-17) defaulted this to `true`, which made an
+        // absent key mean consent. Three cohorts had never actually
+        // been asked: users who hit the wizard's "Skip for now"
+        // (whose own label promises nothing is enabled yet), users
+        // who dismissed it with Esc / "Ask me later", and users who
+        // completed the wizard BEFORE #974 added the AI section at
+        // all. Ghost text ships up to 3000 chars of the buffer to a
+        // remote backend, so silence has to read as "no" — see
+        // `maybe_show_ghost_text_hint` for how discoverability is
+        // recovered without taking consent by default.
+        //
+        // NB: gating the `true` on `[ui] first_launch_complete`
+        // would miss that third cohort — their flag is set, but the
+        // AI question never existed when they answered it.
         self.config
             .ai
             .get("inline_suggestions")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Flip `[ai] inline_suggestions` at runtime. Doesn't persist —
@@ -1668,6 +1749,8 @@ impl App {
         }
     }
 
+    /// Read the user's `[ai] backend = "cli" | "api"` setting. Default
+    /// `Cli` (no surprises for users without an API key set).
     pub fn ai_backend(&self) -> crate::ai::AiBackend {
         // Task #975 (2026-08-17) — route through the resolved product
         // backend so `[ai.routing.claude] backend = "api"` etc. take
@@ -3100,9 +3183,129 @@ pub(crate) fn mixr_has_favorite_genres() -> bool {
         .unwrap_or(false)
 }
 
+/// Path of the marker that suppresses the ghost-text discoverability
+/// hint. Mirrors `.tools-sudo-hint-shown` — a zero-byte file next to
+/// the user config, so "already told them" survives restarts.
+fn ghost_text_hint_marker() -> Option<std::path::PathBuf> {
+    let cfg_path = crate::config::user_config_path()?;
+    let cfg_dir = cfg_path.parent()?;
+    Some(cfg_dir.join(".ghost-text-hint-shown"))
+}
+
+/// True when a file's contents must never be shipped to a remote
+/// ghost-text backend, judged by filename alone.
+///
+/// Enabling ghost text is consent to send *code* to a completion
+/// backend. It is not consent to send an AWS credentials file or an
+/// SSH private key, which a user may open in the same editor without
+/// ever connecting the two ideas. This check is deliberately
+/// independent of the `inline_suggestions` setting — it holds even
+/// for a user who has explicitly opted in.
+///
+/// Matched on the file NAME, not the path, so a directory called
+/// `env/` doesn't blanket-suppress the feature. Conservative by
+/// design: a false positive costs one missing suggestion, a false
+/// negative uploads a secret.
+///
+/// Local (on-device FIM) suggestions are unaffected — nothing leaves
+/// the machine, so the caller only consults this for remote backends.
+pub(crate) fn is_secret_bearing_filename(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+
+    // `.env`, `.env.local`, `.env.production` — but NOT `.envrc`
+    // (direnv config, routinely edited and rarely secret-bearing)
+    // and not `environment.ts`.
+    if lower == ".env" || lower.starts_with(".env.") {
+        return true;
+    }
+    // Private keys: OpenSSH (`id_rsa`, `id_ed25519`), PEM/PKCS
+    // containers, PuTTY. `.pub` counterparts are public by
+    // definition, so let those through.
+    if lower.ends_with(".pub") {
+        return false;
+    }
+    if lower.starts_with("id_")
+        || lower.ends_with(".pem")
+        || lower.ends_with(".key")
+        || lower.ends_with(".p12")
+        || lower.ends_with(".pfx")
+        || lower.ends_with(".ppk")
+        || lower.ends_with(".jks")
+        || lower.ends_with(".keystore")
+    {
+        return true;
+    }
+    // Cloud / tool credential files, incl. the extensionless
+    // `~/.aws/credentials` shape.
+    if lower.contains("credential") || lower.contains("secret") {
+        return true;
+    }
+    // Shell / token stores commonly opened for a quick edit.
+    matches!(
+        lower.as_str(),
+        ".netrc" | ".pgpass" | ".htpasswd" | ".npmrc" | ".pypirc" | ".dockercfg"
+    )
+}
+
 #[cfg(test)]
 mod ai_tests {
     use super::*;
+
+    #[test]
+    fn secret_bearing_filenames_are_suppressed() {
+        let yes = [
+            "/p/.env",
+            "/p/.env.production",
+            "/home/u/.ssh/id_rsa",
+            "/home/u/.ssh/id_ed25519",
+            "/p/server.pem",
+            "/p/tls.key",
+            "/home/u/.aws/credentials",
+            "/p/client_secret.json",
+            "/home/u/.netrc",
+            "/home/u/.npmrc",
+        ];
+        for p in yes {
+            assert!(
+                is_secret_bearing_filename(std::path::Path::new(p)),
+                "expected suppression for {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_source_files_still_get_suggestions() {
+        let no = [
+            "/p/src/main.rs",
+            "/p/environment.ts",
+            "/p/.envrc",
+            "/home/u/.ssh/id_rsa.pub",
+            "/p/keyboard.rs",
+            "/p/README.md",
+            "/p/env/config.rs",
+        ];
+        for p in no {
+            assert!(
+                !is_secret_bearing_filename(std::path::Path::new(p)),
+                "expected suggestions to still fire for {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_suggestions_default_off_when_key_absent() {
+        // Regression guard for the #974 revert: an absent
+        // `inline_suggestions` key must read as OFF, so a user who
+        // was never asked never uploads buffer context.
+        let d = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::default();
+        let app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
+        assert!(app.config.ai.get("inline_suggestions").is_none());
+        assert!(!app.ai_inline_suggestions());
+    }
 
     #[test]
     fn ghost_word_boundary_takes_leading_ws_plus_one_word() {

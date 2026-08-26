@@ -127,7 +127,12 @@ The complete, organised feature inventory. For the front-door overview see
   backend, model name, system prompt, and token cap are all config knobs.
 - **Inline suggestions** — opt-in Copilot-style ghost text: an API backend, or a
   fully local, in-process FIM model via the sibling `fim-engine` crate (no API
-  key, offline after a one-time download).
+  key, offline after a one-time download). Off until you turn it on — via the
+  first-launch wizard, `ai.setup_suggestions`, or Settings → AI. The remote
+  backends send buffer context around the cursor, so files whose names look
+  secret-bearing (`.env`, `id_rsa`, `*.pem`, `*credentials*`, …) are never sent
+  regardless of the setting; the local backend is exempt since nothing leaves
+  the machine.
 - **Context-aware chat** — a claude-chat.nvim-style wrapper that seeds a prompt
   with the active file and selection.
 - **Launch profiles** — multiple named launch commands per Claude/Codex chip
