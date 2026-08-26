@@ -92,7 +92,8 @@ pub use startup_picker::{StartupPickerAction, StartupPickerState};
 // and in sibling modules (which `use super::*`) keep working
 // without an import-site change.
 pub(crate) use cmdline_methods::{
-    compute_cmdline_completions_for_app, parse_line_range, parse_substitute, parse_undo_age_spec,
+    cmdline_popup_list, compute_cmdline_completions_for_app, parse_line_range, parse_substitute,
+    parse_undo_age_spec,
 };
 pub(crate) use util::*;
 

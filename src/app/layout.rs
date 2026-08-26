@@ -1877,25 +1877,15 @@ impl App {
         } else {
             return;
         };
-        // Empty cmdline shows recent-commands in the popup (see
-        // cmdline_popup_view.rs). Accept must read from the same
-        // source so index 1 → recent_commands[1], not the compute
-        // function's alphabetically-sorted default list.
-        // #cmdline-popup-empty 2026-08-25.
-        let (head_str, matches): (String, Vec<String>) = if line.trim().is_empty() {
-            if self.recent_commands.is_empty() {
-                return;
-            }
-            (String::new(), self.recent_commands.to_vec())
-        } else {
-            // `cmdline_get` returns the line WITHOUT the leading `:` —
-            // the `:` is added by `pending_display`. Same shape that
-            // `compute_cmdline_completions_for_app` expects.
-            let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
-                return;
-            };
-            (state.head, state.matches)
+        // `cmdline_get` returns the line WITHOUT the leading `:` —
+        // the `:` is added by `pending_display`, and that is the
+        // shape `cmdline_popup_list` expects. It also handles the
+        // empty-cmdline (recent-commands) case, so accept indexes
+        // the same list the popup drew. #1207.
+        let Some(state) = crate::app::cmdline_popup_list(self, &line) else {
+            return;
         };
+        let (head_str, matches): (String, Vec<String>) = (state.head, state.matches);
         if idx >= matches.len() {
             return;
         }
@@ -1934,7 +1924,10 @@ impl App {
         } else {
             return;
         };
-        let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
+        // #1207 — must be the list the popup DREW, not the raw
+        // completer: on an empty cmdline the completer returns the
+        // whole registry while the popup shows recent commands.
+        let Some(state) = crate::app::cmdline_popup_list(self, &line) else {
             return;
         };
         if state.matches.len() < 2 {
@@ -1981,7 +1974,9 @@ impl App {
         } else {
             return;
         };
-        let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
+        // #1207 — same source of truth as the view (see
+        // cmdline_popup_move).
+        let Some(state) = crate::app::cmdline_popup_list(self, &line) else {
             return;
         };
         if state.matches.len() < 2 {
@@ -2006,16 +2001,7 @@ impl App {
         } else {
             return false;
         };
-        // Empty cmdline shows recent-commands in the popup view
-        // (see cmdline_popup_view.rs). Mirror that here so the
-        // Enter-accept path sees the popup as "showing" and picks
-        // up the highlighted recent command instead of committing
-        // an empty line (which does nothing). #cmdline-popup-empty
-        // 2026-08-25.
-        if line.trim().is_empty() {
-            return !self.recent_commands.is_empty();
-        }
-        compute_cmdline_completions_for_app(self, &line)
+        crate::app::cmdline_popup_list(self, &line)
             .map(|s| !s.matches.is_empty())
             .unwrap_or(false)
     }
@@ -2900,6 +2886,67 @@ mod layout_tests {
             Some(a.as_path())
         );
         assert_eq!(app.active_editor().unwrap().editor.row_col(), (0, 2));
+    }
+
+    // ── #1207 — cmdline popup nav/accept agree with what's drawn ───
+
+    /// The empty cmdline (`:` with nothing typed, or Ctrl+;) shows
+    /// RECENT COMMANDS. The raw completer, given an empty token,
+    /// matches `starts_with("")` — i.e. the whole registry. Arrow-nav
+    /// used to walk that registry list while the popup drew recent
+    /// commands, so the highlight ran off the end of the visible rows
+    /// and Enter no-oped. Pin the two together.
+    #[test]
+    fn empty_cmdline_popup_navigates_recents_not_the_whole_registry() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = Config::default();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.recent_commands = vec!["view.settings".into(), "app.quit".into()];
+        app.no_pane_cmdline = Some(String::new());
+
+        let shown = crate::app::cmdline_popup_list(&app, "").expect("popup has rows");
+        assert_eq!(shown.matches, app.recent_commands, "popup draws recents");
+
+        // The completer on its own would hand back the full registry —
+        // this is the divergence the fix closes.
+        let raw = crate::app::compute_cmdline_completions_for_app(&app, "")
+            .expect("completer returns something for an empty token");
+        assert!(
+            raw.matches.len() > shown.matches.len(),
+            "precondition: the raw completer is much wider than the popup"
+        );
+
+        // Down twice from 0 must wrap within the 2 recents, never
+        // land on an index only the registry list has.
+        app.cmdline_popup_move(1);
+        assert_eq!(app.cmdline_popup_selected, 1);
+        app.cmdline_popup_move(1);
+        assert_eq!(app.cmdline_popup_selected, 0, "wraps inside the drawn list");
+
+        // And accept resolves against the same list, so Enter fires
+        // the row the user is looking at instead of no-oping.
+        app.cmdline_popup_move(1);
+        app.cmdline_popup_accept_current();
+        assert_eq!(app.no_pane_cmdline.as_deref(), Some("app.quit"));
+    }
+
+    /// The typed-text path must keep working unchanged — it was never
+    /// broken, and it shares the new helper.
+    #[test]
+    fn typed_cmdline_popup_still_navigates_its_matches() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = Config::default();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.no_pane_cmdline = Some("view.".into());
+        let shown = crate::app::cmdline_popup_list(&app, "view.").expect("matches for `view.`");
+        assert!(shown.matches.len() >= 2, "several view.* commands exist");
+        app.cmdline_popup_move(1);
+        assert_eq!(app.cmdline_popup_selected, 1);
+        app.cmdline_popup_accept_current();
+        assert_eq!(
+            app.no_pane_cmdline.as_deref(),
+            Some(shown.matches[1].as_str())
+        );
     }
 
     // ── #1018 — maximize / restore zoom ────────────────────────────

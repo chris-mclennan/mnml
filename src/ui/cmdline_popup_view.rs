@@ -69,34 +69,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // re-fired with one keystroke. VS Code's palette behavior.
     // Falls back to nothing if recent_commands is empty (fresh
     // session).
-    let state = if line.trim().is_empty() {
-        if app.recent_commands.is_empty() {
-            return;
-        }
-        let matches: Vec<String> = app
-            .recent_commands
-            .iter()
-            .take(MAX_VISIBLE * 2)
-            .cloned()
-            .collect();
-        crate::app::CmdlineCompleteState {
-            head: String::new(),
-            matches,
-            idx: 0,
-            last_shown: String::new(),
-        }
-    } else {
-        // Compute matches fresh each frame. Cheap — N=~150 commands.
-        // 2026-08-25 — was `>= 2`. That silently hid the popup right
-        // when the user narrowed to a single hit — the exact moment
-        // they need it visible to confirm which command Enter will
-        // fire. Repro: `:integrations.i` (only `integrations.
-        // icon_picker` matches) or `:icon_picker` (substring hit on
-        // the same). Show for any ≥1 match instead.
-        match crate::app::compute_cmdline_completions_for_app(app, &line) {
-            Some(s) if !s.matches.is_empty() => s,
-            _ => return,
-        }
+    // Computed fresh each frame — cheap, N=~150 commands. Shows for
+    // any ≥1 match: an earlier `>= 2` gate hid the popup exactly when
+    // the user narrowed to a single hit, the moment they most need to
+    // see which command Enter will fire (repro: `:integrations.i`).
+    //
+    // #1207 — the empty-cmdline (recent-commands) branch used to live
+    // here, which let navigation and accept drift onto a different
+    // list. Both now come through `cmdline_popup_list`, so the rows
+    // drawn here are by construction the rows Up/Down and Enter act on.
+    let Some(state) = crate::app::cmdline_popup_list(app, &line) else {
+        return;
     };
     // Reset the popup-selected idx when the cmdline content has
     // changed since the last render. Without this, typing in

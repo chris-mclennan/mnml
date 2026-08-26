@@ -26,6 +26,50 @@ use super::*;
 /// - Trailing arg of `:colorscheme`/`:colo` ⇒ theme names.
 /// - Trailing arg of a path-accepting command ⇒ workspace-rooted
 ///   file/dir lookup using the user's typed prefix.
+/// How many recent-command rows the empty-cmdline popup keeps.
+/// Mirrors `ui::cmdline_popup_view`'s `MAX_VISIBLE * 2` — the view
+/// truncates to this, so navigation and accept must see the same
+/// bound or the last rows would be selectable but invisible.
+const RECENT_POPUP_CAP: usize = 16;
+
+/// The list the cmdline popup is *actually showing*, and the single
+/// source of truth for every consumer of it: the view, the
+/// is-showing gate, arrow navigation, and Enter-accept.
+///
+/// #1207 (2026-08-25) — an empty cmdline (`:` with nothing typed, or
+/// Ctrl+;) shows RECENT COMMANDS, but `compute_cmdline_completions_
+/// for_app` on an empty token matches `starts_with("")` — i.e. the
+/// ENTIRE registry. The readers had drifted apart: the view and
+/// accept read recent_commands, while arrow-nav and the Enter
+/// dispatch read the computed registry list. Arrowing therefore set
+/// `cmdline_popup_selected` to an index into a several-hundred-entry
+/// list while the popup rendered eight rows, so the highlight walked
+/// off the visible list and Enter either no-oped (index past the end
+/// of recent_commands) or fired a command the user never saw.
+///
+/// Anything that needs the popup's contents must come through here
+/// rather than calling the completer directly, or the same class of
+/// divergence comes straight back.
+pub(crate) fn cmdline_popup_list(app: &App, line: &str) -> Option<CmdlineCompleteState> {
+    if line.trim().is_empty() {
+        if app.recent_commands.is_empty() {
+            return None;
+        }
+        return Some(CmdlineCompleteState {
+            head: String::new(),
+            matches: app
+                .recent_commands
+                .iter()
+                .take(RECENT_POPUP_CAP)
+                .cloned()
+                .collect(),
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
+    compute_cmdline_completions_for_app(app, line).filter(|s| !s.matches.is_empty())
+}
+
 pub(crate) fn compute_cmdline_completions_for_app(
     app: &App,
     line: &str,
