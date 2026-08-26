@@ -5137,7 +5137,12 @@ fn paint_leaf_tab_strip_with_hidden(
     // then testing `chip_x + plus_w <= arrows_x` lost that race by
     // one cell and dropped the `+` entirely. Clamping is immune to
     // however far the final chip overran.
-    let plus_x = chip_x.min(arrows_x.saturating_sub(plus_w));
+    // `.max(strip.x)` matters as much as the `.min()`: `arrows_x` is
+    // clamped, but `arrows_x - plus_w` is not, so whenever the strip
+    // is within `plus_w` cells of its own origin this lands LEFT of
+    // it and the `+` paints onto the neighbouring pane. Same bug the
+    // other three bounds were just fixed for; this was the fourth.
+    let plus_x = chip_x.min(arrows_x.saturating_sub(plus_w)).max(strip.x);
     if plus_x + plus_w <= arrows_x {
         let plus_rect = Rect {
             x: plus_x,
@@ -5821,6 +5826,16 @@ mod leaf_tab_scroll_tests {
     /// strip at `width`. Returns the app so the caller can inspect
     /// the rects the paint registered.
     fn paint_strip(width: u16, n: usize) -> App {
+        paint_strip_at(0, width, n)
+    }
+
+    /// Paint a leaf strip whose origin is `x`, inside a wider
+    /// terminal. The non-zero origin is the whole point: rect coords
+    /// are `u16`, so with `strip.x == 0` a "nothing paints left of
+    /// the origin" assertion is vacuously true and cannot fail. Real
+    /// strips sit at x > 0 the moment there's a vertical split or a
+    /// tree rail.
+    fn paint_strip_at(x: u16, width: u16, n: usize) -> App {
         let d = tempfile::tempdir().unwrap();
         for i in 0..n {
             std::fs::write(d.path().join(format!("file{i}.txt")), "x").unwrap();
@@ -5839,10 +5854,10 @@ mod leaf_tab_scroll_tests {
             .map(|t| t.to_vec())
             .unwrap_or_default();
         let active = app.active.unwrap();
-        let mut term = Terminal::new(TestBackend::new(width, 1)).unwrap();
+        let mut term = Terminal::new(TestBackend::new(x + width, 1)).unwrap();
         term.draw(|f| {
             let strip = Rect {
-                x: 0,
+                x,
                 y: 0,
                 width,
                 height: 1,
@@ -5909,18 +5924,25 @@ mod leaf_tab_scroll_tests {
     /// at 4+ splits deep.
     #[test]
     fn nothing_paints_left_of_a_very_narrow_strips_origin() {
+        // ORIGIN must be non-zero. The first version of this test
+        // painted at x=0, where `r.x >= strip.x` is vacuously true for
+        // unsigned coords — it passed against code that had an
+        // unclamped `plus_x`, i.e. it asserted nothing about the
+        // hazard its own name describes.
+        const ORIGIN: u16 = 10;
         for width in [1u16, 4, 8, 12, 16, 20] {
-            let app = paint_strip(width, 6);
+            let app = paint_strip_at(ORIGIN, width, 6);
+            let right = ORIGIN + width;
             for (r, _, _) in &app.rects.leaf_tab_arrows {
                 assert!(
-                    r.x + r.width <= width,
-                    "width {width}: chevron {r:?} escapes the strip"
+                    r.x >= ORIGIN && r.x + r.width <= right,
+                    "width {width}: chevron {r:?} escapes [{ORIGIN}, {right})"
                 );
             }
             for (r, _) in &app.rects.split_tab_plus_buttons {
                 assert!(
-                    r.x + r.width <= width,
-                    "width {width}: `+` {r:?} escapes the strip"
+                    r.x >= ORIGIN && r.x + r.width <= right,
+                    "width {width}: `+` {r:?} escapes [{ORIGIN}, {right})"
                 );
             }
         }
