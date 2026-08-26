@@ -1530,10 +1530,6 @@ mod tests {
             idx += 1;
         }
 
-        // Warm: cache the initial tree.
-        let mut tree: Option<Tree> = None;
-        let prev_h = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[], Vec::new());
-        assert!(tree.is_some());
         let prev_starts: Vec<usize> = std::iter::once(0)
             .chain(
                 text.as_bytes()
@@ -1557,22 +1553,53 @@ mod tests {
             new_end_byte: insert_at + 1,
         };
 
-        let t_inc = std::time::Instant::now();
-        let _ = highlight_lines_with_cache(&after, "rs", &mut tree, &[edit], &prev_starts, prev_h);
-        let inc = t_inc.elapsed();
+        // Take the FASTEST of several independent samples rather than
+        // timing each path once. A single sample compares two wall
+        // clocks with no margin, so any scheduler hiccup during the
+        // incremental run inverts the comparison: on a loaded machine
+        // (a parallel cargo build, another agent, a busy CI runner)
+        // this failed roughly one run in three, while passing 5/5 when
+        // run alone. The minimum is the sample least contaminated by
+        // descheduling, which is what we actually want to compare.
+        //
+        // Each sample re-warms its own cache so the timed incremental
+        // call always sees a freshly-parsed tree plus exactly one
+        // pending edit — reusing one tree across samples would leave
+        // later runs with nothing to re-parse and measure the wrong
+        // thing.
+        const SAMPLES: usize = 3;
+        let mut inc = std::time::Duration::MAX;
+        let mut fresh = std::time::Duration::MAX;
 
-        let mut fresh_tree: Option<Tree> = None;
-        let t_fresh = std::time::Instant::now();
-        let _ = highlight_lines_with_cache(&after, "rs", &mut fresh_tree, &[], &[], Vec::new());
-        let fresh = t_fresh.elapsed();
+        for _ in 0..SAMPLES {
+            let mut tree: Option<Tree> = None;
+            let prev_h = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[], Vec::new());
+            assert!(tree.is_some());
 
-        // Looser than the handoff's "< 5ms" — that's a real-machine target.
-        // We just want a confidence floor that incremental is doing *something*
-        // useful, so allow it to be up to fresh's time. In practice it's much
-        // less (the parse is the dominant cost; query traversal is similar).
+            let t_inc = std::time::Instant::now();
+            let _ =
+                highlight_lines_with_cache(&after, "rs", &mut tree, &[edit], &prev_starts, prev_h);
+            inc = inc.min(t_inc.elapsed());
+
+            let mut fresh_tree: Option<Tree> = None;
+            let t_fresh = std::time::Instant::now();
+            let _ = highlight_lines_with_cache(&after, "rs", &mut fresh_tree, &[], &[], Vec::new());
+            fresh = fresh.min(t_fresh.elapsed());
+        }
+
+        // Require incremental to be a CLEAR win, not merely "not slower".
+        // Measured on this machine it runs ~13x faster (44ms vs ~600ms on
+        // the 600 KB fixture), so demanding 4x leaves a wide margin while
+        // still failing loudly for the regression this test exists to
+        // catch: if the cached tree stops being reused, both paths do a
+        // full parse and the ratio collapses toward 1.0. The old
+        // `inc <= fresh` could not distinguish that from noise — at
+        // ratio 1.0 it was a coin flip.
         assert!(
-            inc <= fresh,
-            "incremental ({inc:?}) should not be slower than fresh ({fresh:?})"
+            inc * 4 <= fresh,
+            "incremental ({inc:?}) should be well under a quarter of fresh \
+             ({fresh:?}) — cached tree likely not reused; best of {SAMPLES} \
+             samples each"
         );
     }
 
