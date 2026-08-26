@@ -2875,12 +2875,21 @@ mod layout_tests {
         // "promoted" intent isn't what's being tested.
         let (_d, mut app) = app_with_files();
         app.set_activity_section(crate::app::ActivitySection::Http);
-        if let Some(cur) = app.active
+        let promoted = if let Some(cur) = app.active
             && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
         {
+            rp.request.url = "https://api.example.com/x".into();
             rp.is_preview = false;
-            rp.request.url = "https://example.com".to_string();
-        }
+            true
+        } else {
+            false
+        };
+        // Without this the `if let` chain can silently no-op and the
+        // assertion below passes vacuously.
+        assert!(
+            promoted,
+            "setup: active pane should be the preview Request pane"
+        );
         app.set_activity_section(crate::app::ActivitySection::Explorer);
         let promoted_still_alive = app
             .panes
