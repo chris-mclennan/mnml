@@ -361,6 +361,16 @@ pub enum PromptKind {
     /// the backup path so the launch-time toast can point the user
     /// at their restore command.
     ResetToDefaultsConfirm,
+    /// Workspace trust — this workspace's own `.mnml/` declares
+    /// something mnml would execute (language server, formatter,
+    /// startup command, integration). Accept ⇒ record trust at the
+    /// current fingerprint and re-load config so those keys apply;
+    /// cancel ⇒ stay restricted (the keys are already suppressed, so
+    /// cancel is a no-op beyond dismissing).
+    ///
+    /// Opened by `App::maybe_prompt_workspace_trust` at startup and by
+    /// `workspace.review_trust`. See `src/workspace_trust.rs`.
+    WorkspaceTrustConfirm,
     /// #867 — first-ever launch prompt: portable-mode-vs-normal
     /// data-layout choice. Rendered as a button dialog `[ Portable ]
     /// [ Normal ]`. Primary defaults to Portable when

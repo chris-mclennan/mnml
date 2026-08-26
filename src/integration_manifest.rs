@@ -515,8 +515,22 @@ pub struct Requires {
 
 /// Scan both manifest dirs and return the merged list. Workspace
 /// entries shadow user-global entries with the same id.
+///
+/// The workspace half is skipped entirely for an untrusted workspace:
+/// a manifest registers runnable commands and supplies `[env]` for
+/// spawns (so `PATH` / `DYLD_INSERT_LIBRARIES` are in play, not just
+/// the command string). Trust is consulted here rather than passed in
+/// by callers so the gate can't be forgotten at a call site — and so
+/// the user clicking Trust is picked up by the next
+/// `integrations.refresh` without extra wiring.
 pub fn load_all(workspace: &Path) -> Vec<IntegrationManifest> {
-    load_all_with_user_base(workspace, user_dir())
+    let claims = crate::workspace_trust::scan(workspace);
+    let trusted = claims.is_empty()
+        || crate::workspace_trust::is_trusted(
+            workspace,
+            &crate::workspace_trust::fingerprint(&claims),
+        );
+    load_all_scoped(workspace, user_dir(), trusted)
 }
 
 /// Same as `load_all` but with an explicit user-config base
@@ -526,14 +540,26 @@ pub fn load_all_with_user_base(
     workspace: &Path,
     user_base: Option<PathBuf>,
 ) -> Vec<IntegrationManifest> {
+    load_all_scoped(workspace, user_base, true)
+}
+
+/// [`load_all_with_user_base`] plus the workspace-trust decision.
+/// `trusted = false` drops the workspace manifest dir.
+pub fn load_all_scoped(
+    workspace: &Path,
+    user_base: Option<PathBuf>,
+    trusted: bool,
+) -> Vec<IntegrationManifest> {
     let mut out: Vec<IntegrationManifest> = Vec::new();
 
     // User-global first (lower priority).
     if let Some(dir) = user_base {
         scan_dir(&dir, &mut out);
     }
-    // Workspace second (higher priority).
-    scan_dir(&workspace.join(".mnml").join("integrations"), &mut out);
+    // Workspace second (higher priority) — trusted workspaces only.
+    if trusted {
+        scan_dir(&workspace.join(".mnml").join("integrations"), &mut out);
+    }
 
     // Dedup by id, keeping the LAST occurrence (workspace wins).
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();

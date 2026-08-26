@@ -393,6 +393,33 @@ The complete, organised feature inventory. For the front-door overview see
   cancels on right-click.
 - **Zen mode**, **stacked notifications**, a clickable statusline.
 
+## Workspace trust
+
+- **Repo-supplied config is gated before it can run anything.** A workspace's
+  own `.mnml/config.toml` can name programs mnml would execute — language
+  servers (`[lsp.*] cmd`), formatters and linters, debug adapters,
+  `[ui] md_preview_engine = "custom:…"`, `[[startup.layout]] kind = "pty"` —
+  and `.mnml/integrations/*.toml` can register commands, launch profiles, and
+  spawn `[env]`. mnml scans for exactly those keys on open and asks before
+  honouring any of them, so cloning a repo and opening it can't run code.
+- **Quiet by default.** The scan means an ordinary repo — no `.mnml/`, or one
+  with only themes and keymaps — never prompts. You see the dialog only when a
+  workspace actually declares something executable, which is what keeps it
+  worth reading rather than reflexively dismissing.
+- **The dialog shows the actual commands**, what each one is, and when it would
+  fire ("runs when you open a file", "runs immediately, on open"). "Don't
+  trust" is focused by default.
+- **Untrusted is restricted, not broken.** Only the exec-bearing keys are
+  dropped; the same file's theme, keymaps, and editor settings still apply, and
+  your global language servers and formatters keep working. A `RESTRICTED` chip
+  in the statusline says why something isn't running.
+- **Trust is fingerprinted**, so approving a workspace today doesn't bless
+  whatever a later `git pull` adds — if the declared commands change, mnml asks
+  again. Cosmetic config edits don't re-prompt. Decisions live in
+  `~/.config/mnml/trusted_workspaces.toml`, keyed by canonical path (never in
+  the workspace, which the repo itself could write). `workspace.review_trust`
+  reviews or revokes.
+
 ## Headless, IPC & extensibility
 
 - **Headless mode** — `mnml --headless` renders to a virtual screen, driven over

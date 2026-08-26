@@ -10,6 +10,29 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Added
+
+- **Workspace trust.** A workspace's own `.mnml/` config could name programs
+  mnml would then run — a language server, a formatter, a startup command, an
+  integration — which meant cloning a repo and opening it in mnml could execute
+  code from that repo with no prompt. mnml now scans for those keys on open and
+  asks first.
+
+  You'll see the dialog only when a workspace actually declares something
+  executable; an ordinary repo never prompts. It lists the real commands and
+  when each would fire, and defaults to "Don't trust". Declining is
+  non-destructive — only the executable keys are ignored, so the same config's
+  theme and keymaps still apply and your global language servers and formatters
+  keep working, with a `RESTRICTED` chip explaining why anything is off.
+
+  Trust is remembered per workspace and fingerprinted, so approving one today
+  doesn't bless what a later `git pull` adds. `workspace.review_trust` reviews
+  or revokes; decisions live in `~/.config/mnml/trusted_workspaces.toml`.
+
+  **You'll likely be asked once for workspaces you already use** — anything with
+  a `.mnml/integrations/` manifest or custom `[lsp.*]` block. That's expected;
+  trust it once and it stays trusted.
+
 ### Changed
 
 - **AI ghost-text is off by default again.** 0.2.16 (task #974) turned
