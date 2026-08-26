@@ -4957,10 +4957,24 @@ fn paint_leaf_tab_strip_with_hidden(
     // Keyed by the leaf's FIRST tab, not its active one — see
     // `App::leaf_tab_scroll`.
     const ARROW_W: u16 = 2;
+    /// Width of the ` + ` chip painted after the last tab.
+    const PLUS_RESERVE: u16 = 3;
     let leaf_key = tabs.first().copied().unwrap_or(active);
     let tab_count = tabs.len();
     let arrows_w = if tab_count >= 2 { ARROW_W * 2 } else { 0 };
-    let tabs_right = tabs_right.saturating_sub(arrows_w);
+    // Chevrons sit at the far right of the tab region; the `+` gets
+    // its own slot just left of them; tabs stop before BOTH.
+    //
+    // Reserving the `+` here matters as much as reserving the
+    // chevrons. The first cut of #1209 reserved only the chevrons and
+    // then bounded the `+` by the same `tabs_right` the tabs fill up
+    // to — so on overflow `chip_x + plus_w <= tabs_right` was never
+    // true and the `+` silently stopped rendering (user report: "i
+    // havent seen the plus since"). Anything painted after the tabs
+    // needs its width carved out before the tabs are laid out, not
+    // checked for afterwards.
+    let arrows_x = tabs_right.saturating_sub(arrows_w);
+    let tabs_right = arrows_x.saturating_sub(PLUS_RESERVE);
     let scroll = app
         .leaf_tab_scroll
         .get(&leaf_key)
@@ -5040,7 +5054,6 @@ fn paint_leaf_tab_strip_with_hidden(
     // scrolled off the left, `›` needs tabs past the right edge.
     let hidden_right = tab_count.saturating_sub(scroll + painted_count);
     if arrows_w > 0 {
-        let arrows_x = tabs_right;
         for (slot, is_left, enabled) in [(0u16, true, scroll > 0), (1u16, false, hidden_right > 0)]
         {
             let x = arrows_x + slot * ARROW_W;
@@ -5112,9 +5125,16 @@ fn paint_leaf_tab_strip_with_hidden(
     // to recompute the bound as `strip_right - (split_btns +
     // mode_chip)` — the PRE-reservation edge — so the `+` chip, which
     // draws after the chevrons, painted straight over them.
-    if chip_x + plus_w <= tabs_right {
+    // Clamp into the reserved slot rather than trusting `chip_x`: a
+    // tab chip has a minimum width, so the last one can overshoot
+    // `tabs_right` by a cell or two. Reserving exactly `plus_w` and
+    // then testing `chip_x + plus_w <= arrows_x` lost that race by
+    // one cell and dropped the `+` entirely. Clamping is immune to
+    // however far the final chip overran.
+    let plus_x = chip_x.min(arrows_x.saturating_sub(plus_w));
+    if plus_x + plus_w <= arrows_x {
         let plus_rect = Rect {
-            x: chip_x,
+            x: plus_x,
             y: strip.y,
             width: plus_w,
             height: 1,
@@ -5148,14 +5168,14 @@ fn paint_leaf_tab_strip_with_hidden(
         // Recompute the leftmost x this chip could occupy — it's
         // the same slot `+` would go into, offset by the `+` width
         // when the `+` was drawn.
-        let after_plus_x = if chip_x + plus_w <= tabs_right {
-            chip_x + plus_w
+        let after_plus_x = if plus_x + plus_w <= arrows_x {
+            plus_x + plus_w
         } else {
-            chip_x
+            plus_x
         };
         let label = format!(" +{hidden_tab_count} hidden ");
         let label_w = label.chars().count() as u16;
-        if after_plus_x + label_w <= tabs_right {
+        if after_plus_x + label_w <= arrows_x {
             let chip_rect = Rect {
                 x: after_plus_x,
                 y: strip.y,
@@ -5868,6 +5888,26 @@ mod leaf_tab_scroll_tests {
             app.rects.leaf_tab_arrows.is_empty(),
             "2 tabs in 200 cells fit; got {:?}",
             app.rects.leaf_tab_arrows
+        );
+    }
+
+    /// #1209 f/u — the `+` must still be PRESENT when the strip
+    /// overflows, not merely non-overlapping. The first overlap fix
+    /// bounded it by `tabs_right`, which is exactly where tabs stop
+    /// on overflow, so the check could never pass and the chip
+    /// vanished entirely — traded a cosmetic bug for a missing
+    /// control. `plus_chip_never_overlaps_a_chevron` stayed green
+    /// throughout, because zero chips trivially overlap nothing.
+    #[test]
+    fn plus_chip_survives_overflow() {
+        let app = paint_strip(40, 8);
+        assert!(
+            !app.rects.leaf_tab_arrows.is_empty(),
+            "precondition: strip must overflow"
+        );
+        assert!(
+            !app.rects.split_tab_plus_buttons.is_empty(),
+            "the `+` disappeared on an overflowing strip"
         );
     }
 
