@@ -2968,7 +2968,10 @@ impl Editor {
                 }
             }
             ClearExtraCursors => {
-                self.extra_cursors.clear();
+                // Must clear `extra_anchors` too — they are parallel
+                // arrays indexed in lockstep, and `replace_extra_positions`
+                // zips them by index. Clearing only one desyncs them.
+                self.clear_extra_cursors();
             }
             AddCursorAtNextWord => {
                 // Word at the PRIMARY cursor is the rename target. Pick the
@@ -5654,6 +5657,43 @@ mod tests {
         assert_eq!(e.selected_text(), "\u{fc}ber");
         // Panicked here before the boundary-safe step.
         e.apply(EditOp::AddCursorAtNextWord, 10, &mut c);
+    }
+
+    /// `extra_cursors` and `extra_anchors` are parallel arrays indexed
+    /// in lockstep. `ClearExtraCursors` cleared only the first, leaving
+    /// the second longer — after which `replace_extra_positions` trips
+    /// its `debug_assert_eq!` (a panic in the debug builds `./run.sh`
+    /// produces), and in release silently zips each cursor to the wrong
+    /// anchor.
+    #[test]
+    fn clear_extra_cursors_op_clears_anchors_too() {
+        let (mut e, mut c) = ed("aaa\nbbb\nccc");
+        e.cursor = 0;
+        e.apply(EditOp::AddCursorBelow, 10, &mut c);
+        assert_eq!(e.extra_cursors.len(), 1, "setup: one extra cursor");
+        assert_eq!(e.extra_anchors.len(), 1, "setup: one matching anchor");
+
+        e.apply(EditOp::ClearExtraCursors, 10, &mut c);
+
+        assert!(e.extra_cursors.is_empty());
+        assert!(
+            e.extra_anchors.is_empty(),
+            "anchors must clear with the cursors, or the parallel arrays desync"
+        );
+    }
+
+    /// The user-facing sequence: add a cursor, Esc, add another, move.
+    /// The move drives `replace_extra_positions`, which is where the
+    /// desync surfaces.
+    #[test]
+    fn add_clear_add_then_move_keeps_arrays_in_step() {
+        let (mut e, mut c) = ed("aaa\nbbb\nccc");
+        e.cursor = 0;
+        e.apply(EditOp::AddCursorBelow, 10, &mut c);
+        e.apply(EditOp::ClearExtraCursors, 10, &mut c);
+        e.apply(EditOp::AddCursorBelow, 10, &mut c);
+        e.apply(EditOp::MoveRight, 10, &mut c);
+        assert_eq!(e.extra_cursors.len(), e.extra_anchors.len());
     }
 
     #[test]
