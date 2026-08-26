@@ -107,9 +107,26 @@ impl App {
         let explicit = self.explicit_config_path.clone();
         self.config =
             crate::config::Config::load_with_trust(explicit.as_deref(), &self.workspace, true);
-        // Integration manifests consult the trust store themselves, so
-        // this picks up the workspace dir now that it's recorded.
-        self.integration_manifests = crate::integration_manifest::load_all(&self.workspace);
+        // MUST follow the config swap, and must be the full refresh
+        // rather than a bare `load_all`.
+        //
+        // `config.ui.integration_icons` is not purely file-derived:
+        // `merge_integration_manifests` folds every installed
+        // manifest into it at startup. Replacing `self.config` above
+        // resets that vec to the freshly-parsed state — built-in
+        // defaults plus any `[[ui.integration_icon]]` blocks — so
+        // without re-merging, every manifest-derived chip vanishes
+        // until the next launch. Shipped briefly and cost a user 12
+        // of 15 installed integrations the moment they clicked
+        // Trust; only `browser` / `claude_code` / `codex` (the
+        // built-ins, per `is_builtin_integration_id`) survived.
+        //
+        // `refresh_integration_manifests` is the correct entry point:
+        // it re-loads manifests (which consult the trust store, so
+        // the workspace dir is now included), re-runs glyph
+        // discovery and the binary-version cache, and THEN merges —
+        // an ordering the bare `load_all` skipped entirely.
+        self.refresh_integration_manifests();
 
         self.toast(
             "Workspace trusted — its language servers, formatters, and integrations are active.",
@@ -173,6 +190,82 @@ fn truncate_command(cmd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Granting trust must not cost the user their installed chips.
+    ///
+    /// `grant_workspace_trust` replaces `self.config`, which resets
+    /// `ui.integration_icons` to its file-derived state.
+    /// `merge_integration_manifests` is what folds installed manifests
+    /// back into that vec — the shipped version skipped it, so every
+    /// manifest-derived chip vanished the instant a user clicked Trust
+    /// (15 installed integrations down to the 3 built-ins).
+    ///
+    /// Isolates `MNML_DATA_ROOT` so the assertion rests on a manifest
+    /// this test controls, not on whatever the developer has installed.
+    #[test]
+    fn granting_trust_preserves_manifest_derived_icons() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("integrations")).unwrap();
+        // A non-built-in manifest: only the re-merge can put this back.
+        std::fs::write(
+            home.path().join("integrations/sentinel.toml"),
+            "id = \"sentinel\"\nlabel = \"Sentinel\"\n\n[chip]\nglyph = \"S\"\nfallback = \"S\"\ncolor = \"blue\"\nenabled = true\nin_palette_bar = true\n\n[[commands]]\nid = \"sentinel.open\"\ntitle = \"Sentinel: open\"\nrun = \"noop\"\n",
+        )
+        .unwrap();
+
+        let prev = std::env::var("MNML_DATA_ROOT").ok();
+        // SAFETY: serialized by ENV_LOCK.
+        unsafe { std::env::set_var("MNML_DATA_ROOT", home.path()) };
+
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ws.path().join(".mnml")).unwrap();
+        std::fs::write(
+            ws.path().join(".mnml/config.toml"),
+            "[lsp.demo]\ncmd = \"demo-ls\"\nextensions = [\"demo\"]\n",
+        )
+        .unwrap();
+
+        let has_sentinel = |app: &App| {
+            app.config
+                .ui
+                .integration_icons
+                .iter()
+                .any(|i| i.id == "sentinel")
+        };
+
+        let cfg = crate::config::Config::load(None, ws.path());
+        let mut app = crate::app::App::new(ws.path().to_path_buf(), cfg).unwrap();
+        // `App::new` deliberately loads no user manifests under
+        // `cfg!(test)` (hermeticity), so establish the precondition the
+        // same way the real startup path does.
+        app.refresh_integration_manifests();
+        assert!(
+            has_sentinel(&app),
+            "precondition: the merge should surface the manifest chip"
+        );
+
+        let claims = crate::workspace_trust::scan(ws.path());
+        assert!(!claims.is_empty(), "fixture must produce a claim");
+        app.pending_workspace_trust = Some((crate::workspace_trust::fingerprint(&claims), claims));
+        app.grant_workspace_trust();
+
+        let survived = has_sentinel(&app);
+
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("MNML_DATA_ROOT", v),
+                None => std::env::remove_var("MNML_DATA_ROOT"),
+            }
+        }
+        assert!(
+            survived,
+            "granting trust dropped a manifest-derived chip — the config \
+             swap must be followed by refresh_integration_manifests()"
+        );
+    }
 
     #[test]
     fn truncate_keeps_short_commands_verbatim() {
