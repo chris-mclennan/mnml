@@ -1556,6 +1556,24 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
             MenuItem::new("New tab page", MenuAction::Command("tab.new")),
         ];
+        // #1210 — every row above opens something NEW. After closing
+        // your tabs the thing you actually want is them BACK, and the
+        // only route was Ctrl+Shift+T (undiscoverable) or restarting
+        // mnml, which restores the session. User report: "closed all
+        // the tabs, clicked the plus and didn't see a way to reload
+        // the repos". Prepend it so it's the first thing under the
+        // cursor, and only when there's something to reopen — an
+        // always-present row that usually toasts "nothing to reopen"
+        // teaches people to ignore it.
+        if !app.closed_buffers.is_empty() {
+            items.insert(
+                0,
+                MenuItem::new(
+                    format!("Reopen last closed ({})", app.closed_buffers.len()),
+                    MenuAction::Command("buffer.reopen"),
+                ),
+            );
+        }
         // 2026-07-19 — append every enabled integration chip as its
         // own "Open <tooltip>" menu row so users can launch a rail
         // integration from the `+` tab menu without hunting for its
@@ -1613,6 +1631,24 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
             MenuItem::new("New tab page", MenuAction::Command("tab.new")),
         ];
+        // #1210 — every row above opens something NEW. After closing
+        // your tabs the thing you actually want is them BACK, and the
+        // only route was Ctrl+Shift+T (undiscoverable) or restarting
+        // mnml, which restores the session. User report: "closed all
+        // the tabs, clicked the plus and didn't see a way to reload
+        // the repos". Prepend it so it's the first thing under the
+        // cursor, and only when there's something to reopen — an
+        // always-present row that usually toasts "nothing to reopen"
+        // teaches people to ignore it.
+        if !app.closed_buffers.is_empty() {
+            items.insert(
+                0,
+                MenuItem::new(
+                    format!("Reopen last closed ({})", app.closed_buffers.len()),
+                    MenuAction::Command("buffer.reopen"),
+                ),
+            );
+        }
         // 2026-07-19 — append every enabled integration chip as its
         // own "Open <tooltip>" menu row so users can launch a rail
         // integration from the `+` tab menu without hunting for its
