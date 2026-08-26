@@ -291,11 +291,14 @@ impl App {
                     b.editor.place_cursor(0, 0);
                     let _ = new_len; // placeholder if needed later
                     // Restore cursor + scroll best-effort.
+                    // `cursor` is a byte offset captured from the OLD
+                    // text; against the freshly-read text it can land
+                    // inside a multi-byte char, and slicing there
+                    // panics. `byte_to_row_col` snaps to a boundary
+                    // first — see `app::util::snap_to_char_boundary`,
+                    // "always snap before slicing".
                     let cur = cursor.min(b.editor.text().len());
-                    let row = b.editor.text()[..cur]
-                        .bytes()
-                        .filter(|&c| c == b'\n')
-                        .count();
+                    let (row, _) = crate::app::util::byte_to_row_col(b.editor.text(), cur);
                     let line_count = b.editor.line_count();
                     b.editor
                         .place_cursor(row.min(line_count.saturating_sub(1)), 0);
@@ -381,5 +384,68 @@ impl App {
             let mode = if is_dark { "dark" } else { "light" };
             self.toast(format!("theme: {target} (system {mode})"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::fs;
+
+    fn app_with_file(name: &str, contents: &str) -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join(name), contents).unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// A *clean* buffer whose file changes on disk is silently reloaded,
+    /// restoring the old byte cursor against the NEW text. Those offsets
+    /// come from a different string, so one can land inside a multi-byte
+    /// char — and `text[..cur]` panics there, killing the app and every
+    /// other unsaved buffer.
+    ///
+    /// Realistic trigger: `git checkout`, `git pull`, or a formatter
+    /// rewriting a file that contains non-ASCII, while the cursor sits
+    /// past that content.
+    #[test]
+    fn external_reload_survives_cursor_landing_mid_char() {
+        // 8 ASCII bytes, so byte 5 is a valid cursor here.
+        let (d, mut app) = app_with_file("a.txt", "abcdefgh");
+        let path = d.path().join("a.txt");
+        app.open_path(&path);
+
+        let staged = if let Some(Pane::Editor(b)) = app.active.and_then(|i| app.panes.get_mut(i)) {
+            b.editor.set_cursor_byte(5);
+            b.dirty = false;
+            // Force the mtime comparison to fire regardless of the
+            // filesystem's timestamp granularity.
+            b.disk_mtime = Some(std::time::UNIX_EPOCH);
+            true
+        } else {
+            false
+        };
+        assert!(staged, "setup: expected an editor pane for a.txt");
+
+        // Each 'é' is 2 bytes, so boundaries are at 0/2/4/6/8/10 —
+        // byte 5 now lands inside the third one.
+        fs::write(&path, "ééééé").unwrap();
+
+        // Panicked here before the boundary snap.
+        app.check_external_file_changes();
+
+        let reloaded = app
+            .active
+            .and_then(|i| app.panes.get(i))
+            .and_then(|p| match p {
+                Pane::Editor(b) => Some(b.editor.text().to_string()),
+                _ => None,
+            });
+        assert_eq!(
+            reloaded.as_deref(),
+            Some("ééééé"),
+            "clean buffer should have been silently reloaded"
+        );
     }
 }
