@@ -5962,11 +5962,21 @@ mod leaf_tab_scroll_tests {
         }
     }
 
-    /// Sibling of the above for the `+N hidden` chip, which derives
-    /// its x from `plus_x` and so inherits that clamp. Every other
-    /// test here passes `hidden_tab_count: 0`, leaving the branch
-    /// unexercised, and the chip registers no rect — so this asserts
-    /// on painted cells instead.
+    /// Cell-level twin of the above: it reads the rendered buffer
+    /// rather than the registered rects, so it guards EVERY glyph
+    /// this function paints, including chips that register no rect
+    /// and are therefore invisible to a rect-based assertion.
+    ///
+    /// Scope note (measured, don't re-derive): passing a non-zero
+    /// `hidden_tab_count` here does NOT exercise the `+N hidden`
+    /// chip. That chip only draws when the strip has slack left
+    /// after the tabs — n=1 needs width >= 60, n=6 needs ~200 —
+    /// whereas the origin hazard only exists on strips too narrow
+    /// for their own reservations. The two conditions are disjoint,
+    /// so the clamp this test actually catches is `plus_x`'s (remove
+    /// its `.max(strip.x)` and this fails with a glyph at x=8 for
+    /// ORIGIN=10). Kept cell-based anyway: it is the only assertion
+    /// here that would catch a future rect-less chip escaping left.
     #[test]
     fn hidden_chip_never_paints_left_of_the_strip_origin() {
         const ORIGIN: u16 = 10;
