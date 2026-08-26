@@ -1589,15 +1589,22 @@ mod tests {
 
         // Require incremental to be a CLEAR win, not merely "not slower".
         // Measured on this machine it runs ~13x faster (44ms vs ~600ms on
-        // the 600 KB fixture), so demanding 4x leaves a wide margin while
-        // still failing loudly for the regression this test exists to
-        // catch: if the cached tree stops being reused, both paths do a
-        // full parse and the ratio collapses toward 1.0. The old
-        // `inc <= fresh` could not distinguish that from noise — at
-        // ratio 1.0 it was a coin flip.
+        // the 600 KB fixture). The old `inc <= fresh` could not tell the
+        // regression this test exists to catch from noise: if the cached
+        // tree stops being reused both paths do a full parse, the ratio
+        // collapses to ~1.0, and a <= comparison is then a coin flip.
+        //
+        // 3x is the threshold rather than something tighter because the
+        // win is mostly algorithmic — the query is restricted to the edit
+        // window, so it's O(edit) vs O(file) and largely CPU-speed-
+        // invariant — but both paths still pay a fixed per-call setup
+        // cost, which is a bigger fraction of the smaller number. Heavy
+        // contention can therefore compress the ratio more than the
+        // asymptotics suggest. 3x keeps a wide margin over the measured
+        // 13x while still failing decisively at ~1.0.
         assert!(
-            inc * 4 <= fresh,
-            "incremental ({inc:?}) should be well under a quarter of fresh \
+            inc * 3 <= fresh,
+            "incremental ({inc:?}) should be well under a third of fresh \
              ({fresh:?}) — cached tree likely not reused; best of {SAMPLES} \
              samples each"
         );
