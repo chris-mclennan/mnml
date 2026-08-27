@@ -65,8 +65,34 @@ pub struct LaunchProfiles {
 impl LaunchProfiles {
     /// Load + merge both scopes for integration `id`.
     pub fn load(workspace: &Path, id: &str, default_exe: &str) -> Self {
+        Self::load_scoped(
+            workspace,
+            id,
+            default_exe,
+            crate::workspace_trust::is_workspace_trusted(workspace),
+        )
+    }
+
+    /// [`Self::load`] with the trust decision supplied — used by tests
+    /// to exercise both sides without touching the real store.
+    ///
+    /// The workspace layer is a `[[launch_profile]] command` (or the
+    /// legacy `launcher` key) that mnml SPAWNS, so an untrusted
+    /// workspace must not contribute one. This read bypassed the gate
+    /// completely: `integration_manifest::load_all` consults the trust
+    /// store, but this is a separate `read_to_string` of the very same
+    /// file, so declining the trust prompt still left a repo's
+    /// launcher command live. Found via a report flagging the
+    /// resume-session path, which reaches here with a `cwd` taken from
+    /// a Claude transcript — meaning the directory whose manifest gets
+    /// read need not be the workspace the user has open.
+    pub fn load_scoped(workspace: &Path, id: &str, default_exe: &str, trusted: bool) -> Self {
         let user_text = user_manifest_path(id).and_then(|p| std::fs::read_to_string(p).ok());
-        let ws_text = std::fs::read_to_string(workspace_manifest_path(workspace, id)).ok();
+        let ws_text = if trusted {
+            std::fs::read_to_string(workspace_manifest_path(workspace, id)).ok()
+        } else {
+            None
+        };
         merge(default_exe, user_text.as_deref(), ws_text.as_deref())
     }
 
@@ -515,13 +541,13 @@ mod tests {
         // and the default key must survive the add.
         set_default_profile(&dir, "claude_code", "multi").unwrap();
         add_profile(&dir, "claude_code", "fast", "/opt/fast").unwrap();
-        let lp = LaunchProfiles::load(&dir, "claude_code", "claude");
+        let lp = LaunchProfiles::load_scoped(&dir, "claude_code", "claude", true);
         assert_eq!(lp.default_name, "multi");
         assert_eq!(lp.profiles.len(), 3);
         // Removing the default profile also drops the default key —
         // resolution falls back to builtin.
         remove_profile(&dir, "claude_code", "multi").unwrap();
-        let lp = LaunchProfiles::load(&dir, "claude_code", "claude");
+        let lp = LaunchProfiles::load_scoped(&dir, "claude_code", "claude", true);
         assert_eq!(lp.default_name, "default");
         assert!(lp.profiles.iter().all(|p| p.name != "multi"));
         assert!(lp.profiles.iter().any(|p| p.name == "fast"));

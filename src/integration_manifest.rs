@@ -524,12 +524,7 @@ pub struct Requires {
 /// the user clicking Trust is picked up by the next
 /// `integrations.refresh` without extra wiring.
 pub fn load_all(workspace: &Path) -> Vec<IntegrationManifest> {
-    let claims = crate::workspace_trust::scan(workspace);
-    let trusted = claims.is_empty()
-        || crate::workspace_trust::is_trusted(
-            workspace,
-            &crate::workspace_trust::fingerprint(&claims),
-        );
+    let trusted = crate::workspace_trust::is_workspace_trusted(workspace);
     load_all_scoped(workspace, user_dir(), trusted)
 }
 

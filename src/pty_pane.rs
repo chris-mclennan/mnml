@@ -1983,11 +1983,71 @@ mod tests {
         assert!(p.args.is_empty());
     }
 
+    /// `resolve_launcher` for a workspace the user HAS trusted.
+    ///
+    /// The tests below are about merge precedence and template
+    /// expansion, not about the trust gate, so they assert against a
+    /// trusted workspace. `launcher_from_an_untrusted_workspace_is_ignored`
+    /// covers the gate itself. Before the gate existed all of these
+    /// called `resolve_launcher` directly on an untrusted tempdir and
+    /// passed — which is precisely the bypass.
+    fn resolve_launcher_trusted(ws: &std::path::Path, id: &str, default_exe: &str) -> String {
+        crate::launch_profiles::LaunchProfiles::load_scoped(ws, id, default_exe, true)
+            .default_command(ws)
+    }
+
+    #[test]
+    fn launcher_from_an_untrusted_workspace_is_ignored() {
+        // A cloned repo shipping `.mnml/integrations/claude_code.toml`
+        // got its `launcher` / `[[launch_profile]] command` spawned on
+        // a chip click even after the user declined to trust it:
+        // `LaunchProfiles::load` read the file directly rather than
+        // through `integration_manifest::load_all`, which is where the
+        // trust check lived.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "launcher = \"/tmp/evil.sh\"\n",
+        )
+        .unwrap();
+        // Untrusted (nothing in the store for this tempdir) ⇒ falls
+        // back to the default exe, not the repo's command.
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            "claude",
+            "an untrusted workspace's launcher must not be spawned"
+        );
+        // …and the same workspace, once trusted, still works.
+        assert_eq!(
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
+            "/tmp/evil.sh"
+        );
+    }
+
+    #[test]
+    fn launch_profile_command_is_gated_too() {
+        // The named-profile form (#1203) is the shape mnml's own repo
+        // uses, and the one the scanner originally missed.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "default_profile = \"evil\"\n\
+             [[launch_profile]]\nname = \"evil\"\ncommand = \"/tmp/evil.sh\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            "claude"
+        );
+    }
+
     #[test]
     fn resolve_launcher_returns_default_when_no_manifest() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
-            resolve_launcher(dir.path(), "claude_code", "claude"),
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
             "claude"
         );
     }
@@ -2002,7 +2062,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            resolve_launcher(dir.path(), "claude_code", "claude"),
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
             "./bin/multi.sh"
         );
     }
@@ -2017,7 +2077,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            resolve_launcher(dir.path(), "claude_code", "claude"),
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
             "claude"
         );
     }
@@ -2037,7 +2097,7 @@ mod tests {
         .unwrap();
         let expected = format!("{}/bin/multi.sh", dir.path().display());
         assert_eq!(
-            resolve_launcher(dir.path(), "claude_code", "claude"),
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
             expected
         );
     }
@@ -2058,7 +2118,7 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert_eq!(
-            resolve_launcher(dir.path(), "claude_code", "claude"),
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
             format!("echo-{name}")
         );
     }
@@ -2075,7 +2135,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            resolve_launcher(dir.path(), "claude_code", "claude"),
+            resolve_launcher_trusted(dir.path(), "claude_code", "claude"),
             "{{workspce}}/bin/multi.sh"
         );
     }
@@ -2089,7 +2149,10 @@ mod tests {
             "# comment\n\n   launcher  =  \"wrap.sh\"   \n",
         )
         .unwrap();
-        assert_eq!(resolve_launcher(dir.path(), "codex", "codex"), "wrap.sh");
+        assert_eq!(
+            resolve_launcher_trusted(dir.path(), "codex", "codex"),
+            "wrap.sh"
+        );
     }
 
     #[test]

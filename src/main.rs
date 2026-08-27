@@ -594,7 +594,29 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     // mnml checkout clean if the user autosaves or edits during a
     // screenshot session.
     if demo {
-        workspace = Some(resolve_demo_workspace().map_err(|e| format!("--demo: {e}"))?);
+        let ws = resolve_demo_workspace().map_err(|e| format!("--demo: {e}"))?;
+        // Trust the bundled demo fixture. Its integration overrides
+        // carry `[env]` blocks (pointing Jira / Bitbucket / GitHub at
+        // the local mock server), which the workspace-trust scanner
+        // correctly reads as executable-adjacent claims — so without
+        // this, `--demo` would boot with those overrides suppressed
+        // and the demo would try to reach the real Atlassian.
+        //
+        // Recording a real trust entry rather than adding a
+        // "sandbox means trusted" bypass: `--sandbox` can be pointed
+        // at ANY directory, so a blanket exemption would hand an
+        // untrusted repo the very execution path the gate exists to
+        // close. This trusts one specific directory that mnml ships
+        // and copies itself. In `--demo` the store lives under the
+        // sandboxed HOME, so the entry is throwaway too.
+        let claims = mnml::workspace_trust::scan(&ws);
+        if !claims.is_empty() {
+            let fp = mnml::workspace_trust::fingerprint(&claims);
+            if let Err(e) = mnml::workspace_trust::trust(&ws, &fp) {
+                eprintln!("mnml: --demo could not trust the demo workspace: {e}");
+            }
+        }
+        workspace = Some(ws);
     }
 
     // Workspace resolution order:
