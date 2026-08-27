@@ -767,19 +767,29 @@ pub struct IpcConfig {
     /// to drive a headless run — so this key governs the
     /// real-terminal path only.
     ///
-    /// Default true, deliberately. `./run.sh restart`, the `.test`
-    /// E2E harness, and agent-driven UI inspection all read this file;
-    /// defaulting it off would silently break workflows people depend
-    /// on. The two concrete problems that made the dump a finding are
-    /// fixed at the source instead — it's now 0600 (see
-    /// `crate::secret_file`) and `.mnml/` is auto-gitignored, so it is
-    /// neither world-readable nor stageable by `git add -A`.
+    /// Default **false**. Set `[ipc] write_screen = true` to let an
+    /// agent or script inspect the live UI.
     ///
-    /// The knob exists because the residual fact remains true: the
-    /// file is a verbatim copy of whatever is on screen, including an
-    /// open `.env` or a token pasted into a prompt. Anyone who wants
-    /// that never written can set `[ipc] write_screen = false` and
-    /// give up live inspection.
+    /// Shipped `true` for one commit, on the reasoning that
+    /// `./run.sh restart`, the `.test` harness, and agent inspection
+    /// all needed it. Two of those three were wrong: `run.sh restart`
+    /// only WRITES `{"cmd":"restart"}` to the `command` mailbox and
+    /// never reads the screen, and the `.test` harness plus every
+    /// bug-hunt agent run headless — where this flag is forced on
+    /// regardless.
+    ///
+    /// Auditing the real readers settled it: `.claude/skills/
+    /// drive-mnml`, the demo tape drivers, `scripts/shot.sh`. Every
+    /// one is mnml's own development tooling, and no end-user feature
+    /// reads this file at all. Defaulting on made every user pay — a
+    /// verbatim copy of the screen, an open `.env` or a pasted token
+    /// included, written to disk ~10x/sec — to benefit the few people
+    /// who develop mnml, who are exactly the people best placed to set
+    /// a config key.
+    ///
+    /// 0600 (`crate::secret_file`) and the `.mnml/` auto-gitignore
+    /// still apply when it IS on. They bound the exposure; they don't
+    /// remove it.
     pub write_screen: bool,
 }
 
@@ -1622,7 +1632,9 @@ impl Default for Config {
                 md_preview_engine: "builtin".to_string(),
             },
             session: SessionConfig { restore: true },
-            ipc: IpcConfig { write_screen: true },
+            ipc: IpcConfig {
+                write_screen: false,
+            },
             keys: BTreeMap::new(),
             lsp: BTreeMap::new(),
             ai: toml::Value::Table(Default::default()),

@@ -2252,20 +2252,22 @@ mod tests {
     }
 
     #[test]
-    fn ipc_write_screen_defaults_on_and_parses_the_opt_out() {
-        // Default must stay ON: `./run.sh restart`, the .test harness,
-        // and agent UI inspection all read screen.txt.
-        assert!(crate::config::Config::default().ipc.write_screen);
+    fn ipc_write_screen_defaults_off_and_parses_the_opt_in() {
+        // Default OFF: screen.txt is a verbatim copy of the UI and no
+        // end-user feature reads it — only mnml's own dev tooling
+        // (drive-mnml, tape drivers, shot.sh) does, and headless
+        // forces it on separately.
+        assert!(!crate::config::Config::default().ipc.write_screen);
 
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
         std::fs::write(
             d.path().join(".mnml/config.toml"),
-            "[ipc]\nwrite_screen = false\n",
+            "[ipc]\nwrite_screen = true\n",
         )
         .unwrap();
         let cfg = crate::config::Config::load(None, d.path());
-        assert!(!cfg.ipc.write_screen, "[ipc] write_screen = false ignored");
+        assert!(cfg.ipc.write_screen, "[ipc] write_screen = true ignored");
     }
 
     #[test]

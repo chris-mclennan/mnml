@@ -12,7 +12,11 @@ this skill is the third — **pixels**.
 1. **headless** — `--headless` renders to a ratatui `TestBackend`; the cell grid
    is dumped to `.mnml/ipc/screen.txt`.
 2. **screen.txt** — the real terminal loop *also* dumps `screen.txt` every frame
-   (`src/tui.rs`). Same text form as headless.
+   (`src/tui.rs`). Same text form as headless. **Requires `[ipc]
+   write_screen = true`** — it ships off, because the dump is a verbatim copy
+   of the screen (an open `.env`, a pasted token) and only mnml's own dev
+   tooling ever reads it. Headless forces it on regardless, so option 1 works
+   with no config.
 3. **this skill** — a real screenshot of ghostty's window + synthetic mouse
    input. The only way to see what `screen.txt` fundamentally can't: the
    CoreText-rendered glyphs, Nerd Font icons, true colors, cursor shape — the
