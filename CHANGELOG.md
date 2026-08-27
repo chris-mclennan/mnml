@@ -10,7 +10,7 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
-## [0.2.18](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.17...mnml-rs-v0.2.18) - 2026-08-27
+## [0.2.19](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.17...mnml-rs-v0.2.19) - 2026-08-27
 
 Security release. Everything below came out of an audit of the
 credential, untrusted-input, and network surfaces; upgrading is
@@ -86,8 +86,9 @@ from it, and AI ghost text is off unless you turned it on.
   macOS or Linux box. Existing files are tightened in place, so this
   applies to what you already have, not only to new writes.
 - **HTTP history no longer records resolved credentials.** Headers were
-  template-expanded before logging, so `Authorization: Bearer {{TOKEN}}`
-  was written out as the real token — into the workspace log *and* a
+  template-expanded before logging, so an auth header written as a
+  `{{VAR}}` reference was recorded with the variable already resolved —
+  the real token, into the workspace log *and* a
   global cross-workspace one. Sensitive headers now persist the
   unexpanded `{{VAR}}` form, which keeps history entries replayable
   without storing the secret; a hard-coded literal is redacted instead.

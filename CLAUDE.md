@@ -36,6 +36,33 @@ before architectural decisions).
   `apply` so a rope can slide in later without touching call sites. Columns are chars
   for now (display-width / tabs / CJK is a P2 refinement).
 
+## Cutting a release — the CHANGELOG secret-scrub trap
+
+**Never write a credential-shaped literal in the CHANGELOG.** Not
+`Authorization: Bearer <anything>`, not `xoxb-…`, not `sk-…`, not a
+`token = "…"` line — even as an obviously-fake example.
+
+cargo-dist embeds the CHANGELOG into `plan-dist-manifest.json`. If any
+substring matches a stored repo secret's value, GitHub Actions replaces
+it with `***` **inside the JSON**, which corrupts the manifest. The
+`artifacts_matrix` then fails to parse, `build-local-artifacts` and
+`build-global-artifacts` are silently **skipped**, and the Release run
+reports **success** while shipping only `dist-manifest.json`. The tap /
+winget / nfpm jobs then fail for lack of binaries.
+
+This has now happened twice — v0.2.9 and v0.2.18. Both times the
+workflow was green. Describe the shape in prose instead ("an auth
+header written as a `{{VAR}}` reference").
+
+**After every release, verify assets — a green run is not enough:**
+
+```bash
+gh release view vX.Y.Z --json assets --jq '.assets|length'   # want ~22, not 1
+```
+
+A tag that shipped no binaries can't be reused safely; bump the patch
+version and re-cut (v0.2.9 → v0.2.10, v0.2.18 → v0.2.19).
+
 ## Build / run / test
 
 ```bash
