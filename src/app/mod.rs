@@ -1407,10 +1407,28 @@ pub fn open_url_external(url: &str) {
         best_effort_osc52_copy(url);
         return;
     }
+    if !is_safe_external_url(url) {
+        eprintln!("mnml: refusing to open {url:?} — not a plain http(s) URL");
+        return;
+    }
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
     } else if cfg!(target_os = "windows") {
-        ("cmd", &["/C", "start", ""])
+        // `explorer.exe <url>`, NOT `cmd /C start "" <url>`.
+        //
+        // Rust only quotes an argument that contains whitespace or
+        // quotes, and `cmd.exe` re-parses its command line with its own
+        // metacharacter rules — so a URL with no spaces reached cmd
+        // unquoted and `&` started a second command. Opening a README
+        // containing `https://example.com/a&calc.exe` and hitting the
+        // open-URL binding was enough. (Rust's CVE-2024-24576 hardening
+        // doesn't help: that escapes args for BATCH files, and the
+        // program here was cmd.exe itself.)
+        //
+        // explorer.exe takes the URL as a normal argv entry and hands
+        // it to the default handler without a shell parser in between.
+        // `is_safe_external_url` is the second layer.
+        ("explorer.exe", &[])
     } else {
         ("xdg-open", &[])
     };
@@ -1421,6 +1439,49 @@ pub fn open_url_external(url: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// Whether `url` is safe to hand to the OS URL opener.
+///
+/// Requires a plain `http://` or `https://` URL and rejects anything
+/// carrying a shell/`cmd.exe` metacharacter, whitespace, or a control
+/// character. Deliberately stricter than "is a valid URL": these
+/// strings reach a process spawn on three OSes, one of which
+/// historically re-parsed them, and every legitimate caller here
+/// passes an ordinary web link — a repo browse URL, a PR link, a docs
+/// page.
+///
+/// Callers are worth knowing: ten sites, including a `web_url` from a
+/// remote forge API, a `prUrl` from DynamoDB, and the token under the
+/// cursor in whatever file happens to be open. None of those are
+/// trustworthy input.
+pub(crate) fn is_safe_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return false;
+    }
+    // Must have something after the scheme.
+    let rest = &url[url.find("//").map(|i| i + 2).unwrap_or(url.len())..];
+    if rest.is_empty() || rest.starts_with('/') {
+        return false;
+    }
+    // Whitespace and control characters are quoting hazards on every
+    // platform, and no legitimate URL contains them unencoded — a
+    // newline in particular could forge a second argument.
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    // Quote characters and backslash only: they're what breaks argv
+    // quoting, and they're never needed unencoded in a URL.
+    //
+    // NOT rejected: `&` `?` `=` `%` `$` `;` `,` `+` `(` `)` `*` `!`.
+    // Those are ordinary URL characters — `&` alone appears in every
+    // multi-parameter query string, and an early draft of this
+    // function rejected it, which would have refused most real links.
+    // `&` was only dangerous because `cmd /C start` re-parsed it, and
+    // the Windows arm no longer goes through cmd.
+    const FORBIDDEN: &[char] = &['"', '\'', '`', '\\', '|', '<', '>', '^'];
+    !url.contains(FORBIDDEN)
 }
 
 /// True when this mnml instance is running on the far side of an
@@ -11062,6 +11123,67 @@ fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Opt
 mod tests {
     use super::*;
     use std::fs;
+
+    // ── external URL opener ──────────────────────────────────────
+
+    #[test]
+    fn ordinary_web_urls_are_allowed() {
+        // Query strings matter: an early draft of the validator
+        // rejected `&`, which would have refused most real links.
+        for url in [
+            "https://github.com/chris-mclennan/mnml",
+            "http://localhost:7071/jira",
+            "https://example.com/a?b=1&c=2",
+            "https://example.com/path%20with%20encoded",
+            "https://example.com/~user/(parens)/a+b,c",
+            "https://bitbucket.org/x/y/pull-requests/12?tab=diff&anchor=f1",
+        ] {
+            assert!(is_safe_external_url(url), "should allow {url}");
+        }
+    }
+
+    #[test]
+    fn non_http_schemes_are_refused() {
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<script>",
+            "vbscript:x",
+            "",
+            "not-a-url",
+            "https://",
+            "https:///no-host",
+        ] {
+            assert!(!is_safe_external_url(url), "should refuse {url:?}");
+        }
+    }
+
+    #[test]
+    fn quoting_hazards_are_refused() {
+        // These break argv quoting or forge a second argument. The
+        // Windows arm no longer routes through `cmd /C start`, so `&`
+        // is no longer an injection primitive — but a quote, a
+        // backslash or a newline never belongs in a URL unencoded.
+        for url in [
+            "https://example.com/a\"b",
+            "https://example.com/a'b",
+            "https://example.com/a`b",
+            "https://example.com/a\\b",
+            "https://example.com/a|b",
+            "https://example.com/a>b",
+            "https://example.com/a b",
+            "https://example.com/a\nhttps://evil",
+            "https://example.com/a\tb",
+        ] {
+            assert!(!is_safe_external_url(url), "should refuse {url:?}");
+        }
+    }
+
+    #[test]
+    fn scheme_matching_is_case_insensitive() {
+        assert!(is_safe_external_url("HTTPS://example.com/x"));
+        assert!(is_safe_external_url("HtTp://example.com/x"));
+    }
 
     fn app_with_files() -> (tempfile::TempDir, App) {
         let d = tempfile::tempdir().unwrap();

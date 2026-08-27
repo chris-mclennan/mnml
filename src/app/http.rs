@@ -4584,11 +4584,16 @@ impl App {
         {
             request.headers.push(("Cookie".to_string(), cookie));
         }
-        let host_for_record = crate::cookie_jar::CookieJar::host_of(&request.url);
         std::thread::spawn(move || {
             let result: Result<ResponseView, String> = (|| {
                 let resp = crate::http::send(&request)?;
-                // Record any Set-Cookie headers from the response.
+                // Attribute Set-Cookie to the host that ACTUALLY sent
+                // it — `resp.final_url`, after redirects — not the URL
+                // we asked for. Keying on the requested URL meant a 302
+                // to another host stored that host's cookie under this
+                // one and replayed it there later, handing site A a
+                // credential issued by site B.
+                let host_for_record = crate::cookie_jar::CookieJar::host_of(&resp.final_url);
                 if let Some(host) = &host_for_record
                     && let Ok(mut j) = jar.lock()
                 {

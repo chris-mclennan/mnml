@@ -210,4 +210,42 @@ mod tests {
         jar.record_set_cookie("x", "k=v2");
         assert_eq!(jar.cookie_header_for("x"), Some("k=v2".to_string()));
     }
+
+    /// A cookie must be filed under the host that SENT it.
+    ///
+    /// Callers used to derive the host from the URL they requested,
+    /// captured before `http::send` followed redirects. A request to
+    /// `a.test` that 302'd to `b.test` therefore stored b's cookie
+    /// under `a.test`, and every later request to `a.test` replayed
+    /// it — handing site A a session credential issued by site B.
+    /// The call sites now key on `Response::final_url`; this pins the
+    /// jar behaviour they depend on.
+    #[test]
+    fn cookies_are_keyed_by_the_responding_host_not_the_requested_one() {
+        let requested = "https://a.test/login";
+        let after_redirect = "https://b.test/callback?code=1";
+
+        let mut jar = CookieJar::default();
+        let host = CookieJar::host_of(after_redirect).unwrap();
+        jar.record_set_cookie(&host, "session=B-SECRET; Path=/; HttpOnly");
+
+        assert_eq!(
+            jar.cookie_header_for("b.test"),
+            Some("session=B-SECRET".to_string()),
+            "the issuing host gets the cookie"
+        );
+        assert_eq!(
+            jar.cookie_header_for(&CookieJar::host_of(requested).unwrap()),
+            None,
+            "the originally-requested host must NOT receive it"
+        );
+    }
+
+    #[test]
+    fn host_of_ignores_path_query_and_port() {
+        assert_eq!(
+            CookieJar::host_of("https://b.test:8443/x?y=1#z").as_deref(),
+            Some("b.test")
+        );
+    }
 }
