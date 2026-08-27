@@ -83,7 +83,16 @@ impl Session {
         self.shutdown.store(true, Ordering::Relaxed);
         // Unblock the accept loop so the server thread can notice the
         // shutdown flag and exit.
-        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        //
+        // Must target `host_ip`, not 127.0.0.1: the listener binds to
+        // the player-facing interface now, so nothing is listening on
+        // loopback and a wake-up sent there would silently fail,
+        // leaving the accept thread parked until some later connection
+        // happened along. The peer check rejects this connection —
+        // it's from the Mac, not the player — but `incoming()` returns
+        // first and the loop reads the shutdown flag before looking at
+        // the peer, which is all the wake-up needs to do.
+        let _ = TcpStream::connect((self.host_ip.as_str(), self.port));
         if let Ok(mut children) = self.children.lock() {
             for mut child in children.drain(..) {
                 let _ = child.kill();
@@ -106,7 +115,15 @@ impl Session {
         let index = avfoundation_index(&ffmpeg, &device.name)?;
         let host_ip = local_ip_towards(player_host)
             .ok_or("could not work out this Mac's address on the network")?;
-        let listener = TcpListener::bind(("0.0.0.0", 0))
+        // Bind to the interface facing the player, not 0.0.0.0. This
+        // server streams a live encode of the Mac's ENTIRE system
+        // output — whatever is playing, including the far end of a
+        // call — and `pump` deliberately doesn't route on the request,
+        // so before this every host that could reach the port got the
+        // feed by asking. Narrowing the bind drops other interfaces
+        // (VPNs, secondary NICs, container bridges); the peer check in
+        // `serve` handles the rest of this subnet.
+        let listener = TcpListener::bind((host_ip.as_str(), 0))
             .map_err(|e| format!("could not open a local stream port: {e}"))?;
         let port = listener
             .local_addr()
@@ -120,7 +137,20 @@ impl Session {
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let children: Arc<Mutex<Vec<Child>>> = Arc::new(Mutex::new(Vec::new()));
-        serve(listener, ffmpeg, index, shutdown.clone(), children.clone());
+        // Only the player we handed the URL to may fetch it. mnml
+        // sends `play_uri` to the group COORDINATOR (`control_host`),
+        // and the coordinator is what fetches the stream and
+        // redistributes to the rest of the group — so one allowed peer
+        // is right even for grouped rooms.
+        let allowed_peer = player_host.parse::<std::net::IpAddr>().ok();
+        serve(
+            listener,
+            ffmpeg,
+            index,
+            shutdown.clone(),
+            children.clone(),
+            allowed_peer,
+        );
         Ok(Session {
             port,
             host_ip,
@@ -149,6 +179,7 @@ fn serve(
     index: String,
     shutdown: Arc<AtomicBool>,
     children: Arc<Mutex<Vec<Child>>>,
+    allowed_peer: Option<std::net::IpAddr>,
 ) {
     std::thread::spawn(move || {
         for conn in listener.incoming() {
@@ -156,6 +187,12 @@ fn serve(
                 break;
             }
             let Ok(conn) = conn else { continue };
+            if !peer_allowed(&conn, allowed_peer) {
+                // Drop without a response. There is no auth to fail
+                // and nothing useful to say — anything on this port
+                // that isn't the player is either a scan or a mistake.
+                continue;
+            }
             let (ffmpeg, index) = (ffmpeg.clone(), index.clone());
             let (shutdown, children) = (shutdown.clone(), children.clone());
             std::thread::spawn(move || {
@@ -163,6 +200,19 @@ fn serve(
             });
         }
     });
+}
+
+/// True when `conn` comes from the player we handed the stream URL to.
+///
+/// Fails CLOSED on an unreadable peer address: this is a live feed of
+/// the machine's audio, so "couldn't tell who this is" has to mean no.
+/// `allowed_peer` is `None` only when the player host didn't parse as
+/// an IP, which also denies — discovery always yields a literal.
+fn peer_allowed(conn: &TcpStream, allowed_peer: Option<std::net::IpAddr>) -> bool {
+    let (Some(allowed), Ok(peer)) = (allowed_peer, conn.peer_addr()) else {
+        return false;
+    };
+    peer.ip() == allowed
 }
 
 /// Serve one client: read (and discard) its request, write stream
@@ -425,5 +475,40 @@ mod tests {
     #[test]
     fn install_hint_names_the_actual_formula() {
         assert!(INSTALL_HINT.contains("blackhole-2ch"));
+    }
+
+    /// Connect to a throwaway listener and hand the accepted socket to
+    /// `peer_allowed`. Uses a real TCP pair so the check is exercised
+    /// against an actual `peer_addr()`, not a stub.
+    fn check_with_real_socket(allowed: Option<std::net::IpAddr>) -> bool {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = std::thread::spawn(move || TcpStream::connect(addr).unwrap());
+        let (server_side, _) = listener.accept().unwrap();
+        let _c = client.join().unwrap();
+        peer_allowed(&server_side, allowed)
+    }
+
+    #[test]
+    fn the_expected_player_is_allowed() {
+        // Loopback connection, loopback allowed.
+        assert!(check_with_real_socket(Some("127.0.0.1".parse().unwrap())));
+    }
+
+    #[test]
+    fn any_other_lan_host_is_refused() {
+        // The finding: this server streams the Mac's entire system
+        // audio and `pump` never routes on the request, so before the
+        // peer check ANY host that reached the port got the feed.
+        assert!(!check_with_real_socket(Some(
+            "192.168.1.131".parse().unwrap()
+        )));
+    }
+
+    #[test]
+    fn an_unparseable_player_host_fails_closed() {
+        // No allow-list ⇒ deny. For a live audio feed, "can't tell who
+        // this is" has to mean no.
+        assert!(!check_with_real_socket(None));
     }
 }
