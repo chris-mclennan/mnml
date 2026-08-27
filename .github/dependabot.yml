@@ -1,0 +1,31 @@
+version: 2
+
+updates:
+  # GitHub Actions ONLY — deliberately not Cargo or npm.
+  #
+  # The third-party actions in .github/workflows/ are pinned to commit
+  # SHAs rather than tags, because a tag is mutable: whoever owns the
+  # action can repoint `v2` at any commit, and the next run of
+  # release-plz.yml would execute it with the crates.io token in scope.
+  # A SHA can't be moved.
+  #
+  # The cost of pinning is that a SHA never updates itself, so this
+  # exists to raise those bumps as PRs. That's a handful a year.
+  #
+  # Cargo is left off on purpose: the lockfile carries 549 packages,
+  # and version updates across it would open a stream of PRs that each
+  # need a full matrix CI run. Dependabot SECURITY updates (enabled in
+  # repo settings) already cover the case that matters — a package with
+  # a known advisory — without the churn.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      # One PR per run rather than one per action.
+      actions:
+        patterns:
+          - "*"

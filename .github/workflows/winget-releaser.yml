@@ -43,7 +43,7 @@ jobs:
         # release; we trust them with the WINGET_TOKEN. If that
         # changes, re-pin to a specific SHA — see
         # https://github.com/vedantmgoyal9/winget-releaser/releases.
-        uses: vedantmgoyal9/winget-releaser@v2
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier: ChrisMcLennan.mnml
           # Version source varies by trigger:
