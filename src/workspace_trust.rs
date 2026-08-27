@@ -394,6 +394,23 @@ pub fn is_trusted(workspace: &Path, fp: &str) -> bool {
     read_store().get(&store_key(workspace)).map(String::as_str) == Some(fp)
 }
 
+/// Scan, fingerprint, and check the store in one call — "may this
+/// workspace's config run things?".
+///
+/// A workspace that declares nothing executable is trivially trusted:
+/// there is no decision to make and nothing to gate.
+///
+/// Every consumer of workspace-supplied exec config must route through
+/// this. It exists because the check was open-coded in two places and
+/// a third path — `launch_profiles::LaunchProfiles::load`, which reads
+/// `<ws>/.mnml/integrations/<id>.toml` with a plain `read_to_string` —
+/// was missed entirely, so a repo's `[[launch_profile]] command` still
+/// ran after the user declined to trust it.
+pub fn is_workspace_trusted(workspace: &Path) -> bool {
+    let claims = scan(workspace);
+    claims.is_empty() || is_trusted(workspace, &fingerprint(&claims))
+}
+
 /// Record trust for `workspace` at fingerprint `fp`.
 pub fn trust(workspace: &Path, fp: &str) -> Result<(), String> {
     let Some(path) = store_path() else {

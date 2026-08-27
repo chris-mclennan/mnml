@@ -508,6 +508,18 @@ impl App {
             return;
         };
         match crate::launch_profiles::add_profile(&self.workspace, &id, &name, input.trim()) {
+            // The profile is written into the WORKSPACE manifest, which
+            // an untrusted workspace doesn't contribute. Say so rather
+            // than reporting plain success and leaving the user to
+            // wonder why their profile never runs — mnml can't tell a
+            // just-authored profile from one a cloned repo shipped, so
+            // the gate has to apply either way.
+            Ok(()) if !crate::workspace_trust::is_workspace_trusted(&self.workspace) => {
+                self.toast(format!(
+                    "profile `{name}` saved, but this workspace isn't trusted so it won't run \
+                     \u{2014} `workspace.review_trust` to trust it"
+                ))
+            }
             Ok(()) => self.toast(format!(
                 "profile `{name}` added \u{2014} right-click the {id} chip to run or set default"
             )),

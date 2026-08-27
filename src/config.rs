@@ -2366,12 +2366,7 @@ impl Config {
     /// anything. The home and `--config` layers are always trusted:
     /// the user wrote one and typed the other on the command line.
     pub fn load(explicit: Option<&Path>, workspace: &Path) -> Config {
-        let claims = crate::workspace_trust::scan(workspace);
-        let trusted = claims.is_empty()
-            || crate::workspace_trust::is_trusted(
-                workspace,
-                &crate::workspace_trust::fingerprint(&claims),
-            );
+        let trusted = crate::workspace_trust::is_workspace_trusted(workspace);
         Config::load_with_trust(explicit, workspace, trusted)
     }
 
