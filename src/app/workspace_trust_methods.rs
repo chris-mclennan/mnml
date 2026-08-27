@@ -36,6 +36,18 @@ impl App {
     /// `maybe_prompt_workspace_trust` so `workspace.review_trust` can
     /// reopen it later without redoing the gating logic.
     pub fn open_workspace_trust_prompt(&mut self) {
+        self.open_workspace_trust_prompt_with(false);
+    }
+
+    /// `already_trusted` picks the framing: the first-time ask
+    /// (`Trust` / `Don't trust`) or the review of a standing decision
+    /// (`Revoke` / `Keep trusted`). The claim list is identical — what
+    /// the workspace wants to run is the same question either way.
+    ///
+    /// The inert choice sits in the CANCEL slot in both, which is why
+    /// the review pair reads back-to-front: `Esc` routes to the cancel
+    /// button, so that slot decides what a dismissal does.
+    pub fn open_workspace_trust_prompt_with(&mut self, already_trusted: bool) {
         let Some((_, claims)) = self.pending_workspace_trust.clone() else {
             return;
         };
@@ -75,15 +87,24 @@ impl App {
             lines.push(format!("  … and {} more", claims.len() - MAX_SHOWN));
         }
         lines.push(String::new());
-        lines.push("Trust this workspace only if you know where it came from.".to_string());
-        lines.push("Editing, git, and search work either way.".to_string());
+        if already_trusted {
+            lines.push("You trusted this workspace, so the above runs.".to_string());
+            lines.push("Revoke to stop it from the next launch.".to_string());
+        } else {
+            lines.push("Trust this workspace only if you know where it came from.".to_string());
+            lines.push("Editing, git, and search work either way.".to_string());
+        }
 
-        let mut prompt = crate::prompt::Prompt::new(
-            crate::prompt::PromptKind::WorkspaceTrustConfirm,
-            lines.join("\n"),
-        );
-        // Focus the SAFE button. The dangerous choice should never be
-        // one reflexive Enter away.
+        let kind = if already_trusted {
+            crate::prompt::PromptKind::WorkspaceTrustReview
+        } else {
+            crate::prompt::PromptKind::WorkspaceTrustConfirm
+        };
+        let mut prompt = crate::prompt::Prompt::new(kind, lines.join("\n"));
+        // Focus the button that CHANGES NOTHING, so a reflexive Enter
+        // is inert either way: "Don't trust" when deciding, "Keep
+        // trusted" when reviewing. Both live at index 1 — the cancel
+        // slot — which is also where Esc lands.
         prompt.cursor = 1;
         self.prompt = Some(prompt);
     }
@@ -143,19 +164,35 @@ impl App {
             return;
         }
         let fp = crate::workspace_trust::fingerprint(&claims);
-        if crate::workspace_trust::is_trusted(&self.workspace, &fp) {
-            // Offer the inverse action when already trusted, so the
-            // decision is reversible from the same entry point.
-            if let Err(e) = crate::workspace_trust::revoke(&self.workspace) {
-                self.toast(format!("could not revoke trust: {e}"));
-                return;
-            }
-            self.workspace_trust_restricted = true;
-            self.toast("Workspace trust revoked — restart mnml to drop its commands.");
+        let trusted = crate::workspace_trust::is_trusted(&self.workspace, &fp);
+        self.pending_workspace_trust = Some((fp, claims));
+        // Either way this SHOWS the decision and lets the user change
+        // it — only the buttons differ (`Trust`/`Don't trust` vs
+        // `Keep trusted`/`Revoke`).
+        //
+        // It previously revoked outright when already trusted: no
+        // dialog, no list of what was approved, no confirmation. A
+        // command named "review" that silently destroys the thing it
+        // claims to show is the same defect as the first-launch
+        // wizard's "Skip" that silently enabled ghost text — the label
+        // promising one thing while the code does another.
+        self.open_workspace_trust_prompt_with(trusted);
+    }
+
+    /// Drop this workspace's trust record. Split out so the review
+    /// dialog's Revoke button and any future caller share one path.
+    pub fn revoke_workspace_trust(&mut self) {
+        if let Err(e) = crate::workspace_trust::revoke(&self.workspace) {
+            self.toast(format!("could not revoke trust: {e}"));
             return;
         }
-        self.pending_workspace_trust = Some((fp, claims));
-        self.open_workspace_trust_prompt();
+        self.workspace_trust_restricted = true;
+        self.pending_workspace_trust = None;
+        // Honest about the limit: the config keys were applied at
+        // startup and the LSP/formatter processes they named may
+        // already be running. Revoking stops the NEXT launch from
+        // honouring them.
+        self.toast("Trust revoked — restart mnml to stop running this workspace's commands.");
     }
 }
 
@@ -260,6 +297,83 @@ mod tests {
             has_sentinel(&app),
             "granting trust dropped a manifest-derived chip — the config \
              swap must be followed by refresh_integration_manifests()"
+        );
+    }
+
+    /// `review_trust` must SHOW the decision, not destroy it.
+    ///
+    /// It used to revoke outright when the workspace was already
+    /// trusted — no dialog, no list of what had been approved, no
+    /// confirmation. Same defect shape as the wizard's "Skip" that
+    /// silently enabled ghost text: the label promised one thing and
+    /// the code did another.
+    #[test]
+    fn review_trust_on_a_trusted_workspace_opens_a_dialog_and_revokes_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _root = crate::EnvGuard::set("MNML_DATA_ROOT", home.path());
+
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ws.path().join(".mnml")).unwrap();
+        std::fs::write(
+            ws.path().join(".mnml/config.toml"),
+            "[lsp.demo]\ncmd = \"demo-ls\"\nextensions = [\"demo\"]\n",
+        )
+        .unwrap();
+
+        let claims = crate::workspace_trust::scan(ws.path());
+        let fp = crate::workspace_trust::fingerprint(&claims);
+        crate::workspace_trust::trust(ws.path(), &fp).unwrap();
+        assert!(crate::workspace_trust::is_trusted(ws.path(), &fp));
+
+        let cfg = crate::config::Config::load(None, ws.path());
+        let mut app = crate::app::App::new(ws.path().to_path_buf(), cfg).unwrap();
+        app.review_workspace_trust();
+
+        assert_eq!(
+            app.prompt.as_ref().map(|p| p.kind),
+            Some(crate::prompt::PromptKind::WorkspaceTrustReview),
+            "should open the review dialog"
+        );
+        assert!(
+            crate::workspace_trust::is_trusted(ws.path(), &fp),
+            "reviewing must not revoke on its own"
+        );
+        // The claim is shown, so the user can see what they approved.
+        let title = app.prompt.as_ref().map(|p| p.title.clone()).unwrap();
+        assert!(title.contains("demo-ls"), "claims listed: {title}");
+        // Focus sits on the inert button — same slot Esc routes to.
+        assert_eq!(app.prompt.as_ref().unwrap().cursor, 1);
+    }
+
+    #[test]
+    fn revoke_drops_the_record_and_marks_the_workspace_restricted() {
+        let home = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _root = crate::EnvGuard::set("MNML_DATA_ROOT", home.path());
+
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ws.path().join(".mnml")).unwrap();
+        std::fs::write(
+            ws.path().join(".mnml/config.toml"),
+            "[lsp.demo]\ncmd = \"demo-ls\"\nextensions = [\"demo\"]\n",
+        )
+        .unwrap();
+        let fp = crate::workspace_trust::fingerprint(&crate::workspace_trust::scan(ws.path()));
+        crate::workspace_trust::trust(ws.path(), &fp).unwrap();
+
+        let cfg = crate::config::Config::load(None, ws.path());
+        let mut app = crate::app::App::new(ws.path().to_path_buf(), cfg).unwrap();
+        app.revoke_workspace_trust();
+
+        assert!(!crate::workspace_trust::is_trusted(ws.path(), &fp));
+        assert!(
+            app.workspace_trust_restricted,
+            "chip should show restricted"
         );
     }
 
