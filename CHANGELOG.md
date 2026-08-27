@@ -10,6 +10,16 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.18](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.17...mnml-rs-v0.2.18) - 2026-08-27
+
+Security release. Everything below came out of an audit of the
+credential, untrusted-input, and network surfaces; upgrading is
+worthwhile even though none of it is remotely exploitable.
+
+The two changes most likely to be noticed day to day: opening a repo
+that ships its own `.mnml/` config now asks before running anything
+from it, and AI ghost text is off unless you turned it on.
+
 ### Added
 
 - **Workspace trust.** A workspace's own `.mnml/` config could name programs
