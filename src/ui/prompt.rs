@@ -357,6 +357,15 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         // "Don't trust" rather than "Cancel": both are real choices,
         // and the safe one shouldn't read as backing out of a task.
         WorkspaceTrustConfirm => ("  Trust  ", " Don't trust "),
+        // Already trusted. Revoke is PRIMARY and "Keep trusted" is the
+        // cancel side, which looks backwards until you follow Esc:
+        // `Esc` routes to `run_confirm_button(false)`, so whatever sits
+        // in the cancel slot is what a dismissal does. Putting the
+        // inert choice there makes Esc mean "leave it alone". Default
+        // focus is still the cancel side (see `prompt.cursor`), so
+        // Enter is inert too — only an explicit ←/Tab then Enter, or
+        // the `r` hotkey, revokes.
+        WorkspaceTrustReview => ("  Revoke  ", " Keep trusted "),
         PortableChoicePrompt => ("  Portable  ", "  Normal  "),
         _ => return None,
     })

@@ -371,6 +371,18 @@ pub enum PromptKind {
     /// Opened by `App::maybe_prompt_workspace_trust` at startup and by
     /// `workspace.review_trust`. See `src/workspace_trust.rs`.
     WorkspaceTrustConfirm,
+    /// `workspace.review_trust` on a workspace that IS already
+    /// trusted: shows the same claim list plus what was approved, with
+    /// `Keep trusted` / `Revoke`. Both are real choices, so the accept
+    /// handler discriminates on the synthesized verb rather than
+    /// treating one as a cancel.
+    ///
+    /// Distinct from [`Self::WorkspaceTrustConfirm`] purely so
+    /// `confirm_labels` can name the buttons for the opposite starting
+    /// state. Before this existed, `review_trust` on a trusted
+    /// workspace revoked immediately with no dialog — a command called
+    /// "review" that silently destroyed the thing it claimed to show.
+    WorkspaceTrustReview,
     /// #867 — first-ever launch prompt: portable-mode-vs-normal
     /// data-layout choice. Rendered as a button dialog `[ Portable ]
     /// [ Normal ]`. Primary defaults to Portable when

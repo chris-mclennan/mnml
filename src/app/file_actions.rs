@@ -433,15 +433,19 @@ impl App {
                 IntegrationRemoveConfirm => "uninstall".into(),
                 ResetToDefaultsConfirm => "reset".into(),
                 WorkspaceTrustConfirm => "trust".into(),
-                // Both options are valid — primary=portable, cancel=normal.
-                // The accept handler discriminates on the input string.
-                PortableChoicePrompt => {
-                    if primary {
-                        "portable".into()
-                    } else {
-                        "normal".into()
-                    }
-                }
+                // Cancel side ("Keep trusted") synthesizes "" and the
+                // accept handler treats anything but "revoke" as keep,
+                // so Esc — which routes here with primary=false — is
+                // inert. That's why Revoke is the primary label.
+                WorkspaceTrustReview => "revoke".into(),
+                // NB: this arm only ever runs with `primary == true` —
+                // the whole `match` is inside `if primary`. It used to
+                // carry an `else { "normal" }` branch that could never
+                // execute; the cancel side lands on `String::new()`
+                // below, which `dispatch_portable_choice` maps to
+                // normal via its `_` arm. Same outcome, but the dead
+                // branch read as if the cancel verb were wired up.
+                PortableChoicePrompt => "portable".into(),
                 _ => return,
             }
         } else {

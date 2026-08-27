@@ -2153,6 +2153,15 @@ impl App {
                     );
                 }
             }
+            crate::prompt::PromptKind::WorkspaceTrustReview => {
+                // Both options are real; "keep" is the primary so a
+                // reflexive Enter can't drop a standing decision.
+                if p.input.trim().eq_ignore_ascii_case("revoke") {
+                    self.revoke_workspace_trust();
+                } else {
+                    self.toast("Workspace stays trusted.");
+                }
+            }
             crate::prompt::PromptKind::PortableChoicePrompt => {
                 // #867 — both options are valid choices, not
                 // primary/cancel. The synth in run_confirm_button
