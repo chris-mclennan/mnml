@@ -26,7 +26,7 @@ jobs:
       # anymore. The `path: mnml` layout is preserved so downstream
       # `working-directory: mnml` steps don't need to change.
       - name: Checkout mnml
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: mnml
 
