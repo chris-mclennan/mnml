@@ -32,7 +32,13 @@ fn setup() -> (tempfile::TempDir, App, Ipc) {
     // Seed a couple of fixture files so `open` has something to chew on.
     fs::write(d.path().join("alpha.txt"), "Alpha contents\n").unwrap();
     fs::write(d.path().join("beta.md"), "# Beta heading\n").unwrap();
-    let app = App::new(d.path().to_path_buf(), Config::default()).expect("App::new");
+    let mut app = App::new(d.path().to_path_buf(), Config::default()).expect("App::new");
+    // Mirror headless mode, which this file simulates: `[ipc]
+    // write_screen` ships OFF (screen.txt is a verbatim copy of the
+    // UI, and only mnml's own dev tooling reads it), but
+    // `headless::run` forces it on because the dump IS its output.
+    // These tests assert on that dump, so they need the same.
+    app.config.ipc.write_screen = true;
     let ipc = Ipc::init(&app.workspace).expect("Ipc::init");
     (d, app, ipc)
 }

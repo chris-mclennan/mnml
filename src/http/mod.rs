@@ -119,6 +119,14 @@ fn looks_like_http_file(text: &str) -> bool {
 pub struct Response {
     pub status: u16,
     pub status_text: String,
+    /// The URL the response actually came from, after any redirects.
+    ///
+    /// Needed to attribute `Set-Cookie` correctly: the cookie jar was
+    /// keying on the URL the caller *requested*, so a 302 to another
+    /// host stored that host's cookie under the original one and
+    /// replayed it there on later requests — handing site A a session
+    /// credential issued by site B.
+    pub final_url: String,
     pub headers: Vec<(String, String)>,
     /// Best-effort UTF-8 view of the body for the response viewer
     /// (invalid bytes replaced with U+FFFD). Displays HTML / JSON /
@@ -200,6 +208,8 @@ pub fn send(req: &Request) -> Result<Response, String> {
     let recv_start = Instant::now();
     let status = resp.status().as_u16();
     let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
+    // Post-redirect URL — `reqwest` updates this as it follows hops.
+    let final_url = resp.url().to_string();
     let headers = resp
         .headers()
         .iter()
@@ -242,6 +252,7 @@ pub fn send(req: &Request) -> Result<Response, String> {
     Ok(Response {
         status,
         status_text,
+        final_url,
         headers,
         body,
         body_bytes,

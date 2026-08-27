@@ -197,9 +197,11 @@ pub fn run(
             req.headers.push(("Cookie".to_string(), cookie));
         }
         let resp = super::send(&req).map_err(|e| format!("step {}: {e}", i + 1))?;
-        // Record any Set-Cookie headers from the response.
+        // Attribute Set-Cookie to the host that actually sent it —
+        // the post-redirect URL, not the one we requested. See
+        // `http::Response::final_url`.
         if let Some(jar_arc) = cookie_jar.as_ref()
-            && let Some(host) = crate::cookie_jar::CookieJar::host_of(&req.url)
+            && let Some(host) = crate::cookie_jar::CookieJar::host_of(&resp.final_url)
             && let Ok(mut j) = jar_arc.lock()
         {
             for (k, v) in &resp.headers {

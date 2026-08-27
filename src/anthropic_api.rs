@@ -275,6 +275,25 @@ fn dispatch(
 ///
 /// To force SigV4 even when a bearer key is set, unset
 /// `ANTHROPIC_AWS_API_KEY`. To force AWS API key, set it.
+/// Shape-check an AWS region before it's interpolated into a hostname.
+///
+/// `$AWS_REGION` / `$AWS_DEFAULT_REGION` were accepted on a non-empty
+/// check alone and spliced straight into
+/// `aws-external-anthropic.<region>.api.aws`, which the request then
+/// attaches `x-api-key` to. A value containing `/`, `@` or `#` re-points
+/// the authority while the credential still rides along.
+///
+/// This is hygiene rather than a security boundary — the value comes
+/// from the user's own environment, and anyone who can set that already
+/// has code execution. It's cheap, and a malformed region otherwise
+/// produces a baffling DNS error instead of a clear refusal.
+fn is_valid_aws_region(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 32
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 pub fn detect_backend() -> Result<Backend, String> {
     let aws_key = std::env::var("ANTHROPIC_AWS_API_KEY").ok();
     let aws_region = std::env::var("AWS_REGION")
@@ -283,7 +302,7 @@ pub fn detect_backend() -> Result<Backend, String> {
     let aws_workspace = std::env::var("ANTHROPIC_AWS_WORKSPACE_ID").ok();
     let region_ok = aws_region
         .as_deref()
-        .map(|s| !s.is_empty())
+        .map(is_valid_aws_region)
         .unwrap_or(false);
     let workspace_ok = aws_workspace
         .as_deref()
@@ -799,4 +818,38 @@ pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod region_tests {
+    use super::is_valid_aws_region;
+
+    #[test]
+    fn real_regions_are_accepted() {
+        for r in ["us-east-1", "eu-west-2", "ap-southeast-3", "us-gov-west-1"] {
+            assert!(is_valid_aws_region(r), "{r} should be valid");
+        }
+    }
+
+    #[test]
+    fn values_that_could_repoint_the_host_are_rejected() {
+        // The region is interpolated into
+        // `aws-external-anthropic.<region>.api.aws` on a request that
+        // carries `x-api-key`, so anything able to end the hostname
+        // early would send the credential elsewhere.
+        let long = "a".repeat(64);
+        for r in [
+            "",
+            "us-east-1/../..",
+            "evil.com/#",
+            "us-east-1@evil.com",
+            "us-east-1#x",
+            "US-EAST-1",
+            "us east 1",
+            "us-east-1:443",
+            long.as_str(),
+        ] {
+            assert!(!is_valid_aws_region(r), "{r:?} should be rejected");
+        }
+    }
 }
