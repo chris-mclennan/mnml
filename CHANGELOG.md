@@ -49,6 +49,13 @@ block); this file is the curated, user-facing summary.
   `ai.setup_suggestions`, Settings → AI, or `[ai] inline_suggestions =
   true`. A one-time tip after your first save points the way.
 
+- **The screen dump is off by default.** mnml wrote a verbatim copy of
+  the rendered UI to `<workspace>/.mnml/ipc/screen.txt` about ten times
+  a second, in normal terminal use, not just headless. Nothing
+  user-facing ever read it — only mnml's own development tooling does —
+  so it now ships off. Set `[ipc] write_screen = true` if you drive
+  mnml from a script or an agent. Headless mode is unaffected.
+
 ### Fixed
 
 - **First-launch wizard: "Skip for now" now actually skips.** It wrote
@@ -61,6 +68,58 @@ block); this file is the curated, user-facing summary.
   skipped regardless of your settings. Opting into completions isn't
   opting into uploading your AWS credentials. The local FIM backend is
   unaffected; nothing leaves the machine there.
+- **Credential files are owner-only (0600).** Integration tokens and
+  their timestamped backups, the cookie jar, HTTP request history,
+  captured browser traffic, agent transcript exports, saved auth
+  presets, `.env` values written from the HTTP pane, and the IPC files
+  all went to disk at the process umask — world-readable on a stock
+  macOS or Linux box. Existing files are tightened in place, so this
+  applies to what you already have, not only to new writes.
+- **HTTP history no longer records resolved credentials.** Headers were
+  template-expanded before logging, so `Authorization: Bearer {{TOKEN}}`
+  was written out as the real token — into the workspace log *and* a
+  global cross-workspace one. Sensitive headers now persist the
+  unexpanded `{{VAR}}` form, which keeps history entries replayable
+  without storing the secret; a hard-coded literal is redacted instead.
+  Request bodies get the same treatment, plus scrubbing of well-known
+  credential fields (`password`, `client_secret`, …).
+- **`.rqst/` is added to `.gitignore` automatically.** It holds request
+  history, captured traffic and environment values, and only `.mnml/`
+  was being ignored — so `git add -A` could stage credentials. Your
+  `.curl` / `.http` / `.rest` request files are deliberately left
+  tracked; they reference secrets through `{{VAR}}` rather than
+  embedding them.
+- **A repo can no longer overwrite files outside itself through the IPC
+  channel.** The four `.mnml/ipc/` files were written without a symlink
+  check, and git preserves symlinks — so a cloned repo could point one
+  at a file in your home directory and have mnml truncate it. mnml now
+  replaces a symlinked IPC file with a regular one, and refuses to
+  rewrite a symlinked `.gitignore` at all.
+- **Tools no longer receive credentials they have no use for.** Every
+  integration's stored tokens were injected into any process launched
+  from a chip — including `htop`, `btop`, `ncdu`, `lazygit`, `gh` and
+  `dust`, which carry an integration id only so their tab shows the
+  right glyph. An integration now receives another's token only if it
+  declares `[[auth]]` of its own. Shell exports are unaffected.
+- **The Sonos audio stream is no longer open to the network.** While
+  streaming this Mac's audio to a speaker, the server bound every
+  interface and served anyone who connected — a live feed of your
+  system output, call audio included. It now binds only the
+  player-facing interface and accepts only the player itself. Grouped
+  rooms are unaffected.
+- **Cookies are attributed to the host that actually set them.** After a
+  redirect, a `Set-Cookie` from the destination was filed under the
+  originally-requested host and replayed there, sending one site a
+  session cookie issued by another.
+- **Windows: opening a URL can't run a command.** The external-URL
+  opener shelled out through `cmd`, which re-parses its own
+  metacharacters, so a crafted link could start a second command. It
+  now hands the URL to `explorer.exe`, and non-http(s) or
+  quote-bearing URLs are refused outright.
+- **`workspace.review_trust` reviews instead of revoking.** On an
+  already-trusted workspace it used to revoke immediately, with no
+  dialog and no confirmation. It now shows what was approved, with
+  `Revoke` / `Keep trusted`.
 
 ## [0.2.17](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.16...mnml-rs-v0.2.17) - 2026-08-24
 

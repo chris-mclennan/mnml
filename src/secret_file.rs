@@ -123,18 +123,21 @@ pub fn copy_secret(from: &Path, to: &Path) -> io::Result<u64> {
     Ok(n)
 }
 
-#[cfg(test)]
+// Every test here asserts on POSIX mode bits, so the whole module is
+// unix-only. Gating the MODULE rather than each test matters: with
+// only the tests gated, `use super::*` was left unused on Windows and
+// `-D warnings` failed the build — green locally on macOS, red on the
+// windows-latest runner.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     fn mode_of(p: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
         std::fs::metadata(p).unwrap().permissions().mode() & 0o777
     }
 
     #[test]
-    #[cfg(unix)]
     fn new_file_is_owner_only() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("secret.toml");
@@ -144,7 +147,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn existing_world_readable_file_is_tightened() {
         // The case `.mode()` alone misses, and the one every current
         // mnml install is actually in.
@@ -161,7 +163,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn append_creates_owner_only_and_tightens_existing() {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
@@ -184,7 +185,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn copy_tightens_even_from_a_permissive_source() {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
@@ -199,7 +199,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn tighten_leaves_already_private_files_alone() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("s");
