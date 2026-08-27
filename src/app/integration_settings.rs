@@ -134,6 +134,36 @@ impl App {
         // integrations' [auth_values]: the CURRENT integration wins,
         // then in load order for the rest. Rare — usually only one
         // integration owns a given env var.
+        //
+        // 2026-08-26 SCOPE FIX. The cross-share above answered "which
+        // env-var NAMES may be shared" but never "which SPAWNS may
+        // receive them", so every process carrying an integration id
+        // got the entire token pool. `run_external_tool` stamps an id
+        // purely so the pane tab picks up a chip glyph, which meant
+        // launching htop, btop, ncdu, lazygit, gh or dust handed that
+        // process $SLACK_BOT_TOKEN, $JIRA_API_TOKEN,
+        // $BITBUCKET_ACCESS_TOKEN and friends. htop displays process
+        // environments; lazygit runs arbitrary git hooks.
+        //
+        // An integration receives the foreign pool only if its own
+        // manifest declares at least one `[[auth]]` field. Rationale:
+        // declaring no credentials is a statement that you need none.
+        // This keeps the case the cross-share was built for — jira's
+        // Fix Versions view reads the token bitbucket configured, and
+        // jira_fix_versions.toml does declare `[[auth]]` — while
+        // giving nothing to a process monitor.
+        //
+        // An integration that genuinely consumes a foreign token but
+        // declares no auth of its own should declare an `[[auth]]`
+        // field naming that `env_fallback`; the VALUE still comes from
+        // whichever integration stores it, so the user never enters it
+        // twice. A shell `export` also still reaches the child — this
+        // only governs what mnml itself injects.
+        let receives_shared_pool = self
+            .integration_manifests
+            .iter()
+            .any(|m| m.id == integration_id && !m.auth.is_empty());
+
         let mut env_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         // Helper: resolve the effective (key → value) auth-values
@@ -161,11 +191,13 @@ impl App {
             stored
         };
         // Pass 1 — every OTHER integration's auth-values, lowest
-        // priority. Skipped for integrations with no [[auth]].
+        // priority. Skipped entirely unless the RECEIVER declares
+        // `[[auth]]` of its own (see `receives_shared_pool` above);
+        // the inner filter skips SOURCES that have none to give.
         for manifest in self
             .integration_manifests
             .iter()
-            .filter(|m| m.id != integration_id && !m.auth.is_empty())
+            .filter(|m| receives_shared_pool && m.id != integration_id && !m.auth.is_empty())
         {
             let stored = effective_auth_values(manifest);
             for field in &manifest.auth {
@@ -529,5 +561,128 @@ impl App {
                 *slot = buf.original;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod auth_env_scope_tests {
+    use crate::integration_manifest::{AuthField, IntegrationManifest};
+    use std::path::PathBuf;
+
+    /// A manifest with `auth` fields plus matching `[auth_values]`,
+    /// supplied via `override_auth_values` so no disk is needed.
+    fn manifest(id: &str, auth: &[(&str, &str)], values: &[(&str, &str)]) -> IntegrationManifest {
+        IntegrationManifest {
+            id: id.into(),
+            label: id.into(),
+            description: None,
+            version: None,
+            binary: None,
+            category: None,
+            chip: None,
+            commands: vec![],
+            context_menu: vec![],
+            menu_bar: vec![],
+            statusline: None,
+            values_sources: vec![],
+            statusline_segments: vec![],
+            settings: vec![],
+            notifications: None,
+            requires: None,
+            auth: auth
+                .iter()
+                .map(|(key, env)| AuthField {
+                    key: (*key).into(),
+                    label: (*key).into(),
+                    kind: Default::default(),
+                    env_fallback: Some((*env).into()),
+                    help_url: None,
+                    help: None,
+                    required: false,
+                })
+                .collect(),
+            prefetch: vec![],
+            source_path: PathBuf::new(),
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            override_env: std::collections::HashMap::new(),
+            override_auth_values: values
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            auto_update_override: None,
+        }
+    }
+
+    fn app_with_manifests() -> (tempfile::TempDir, crate::app::App) {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::default();
+        let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.integration_manifests = vec![
+            manifest(
+                "slack",
+                &[("bot_token", "SLACK_BOT_TOKEN")],
+                &[("bot_token", "xoxb-SECRET")],
+            ),
+            // Declares auth of its own — the jira/bitbucket case the
+            // cross-share exists for.
+            manifest(
+                "jira",
+                &[("api_token", "JIRA_API_TOKEN")],
+                &[("api_token", "jira-SECRET")],
+            ),
+            // No `[[auth]]` — a process monitor, viewer, or launcher.
+            manifest("btop", &[], &[]),
+        ];
+        (d, app)
+    }
+
+    #[test]
+    fn a_tool_declaring_no_auth_receives_no_tokens() {
+        // The leak this closes: `run_external_tool` stamps an
+        // integration id purely so the pane tab picks up a chip glyph,
+        // and that was enough to hand btop / htop / lazygit / gh the
+        // entire token pool.
+        let (_d, app) = app_with_manifests();
+        let env = app.integration_auth_env("btop");
+        assert!(
+            env.is_empty(),
+            "a no-auth integration must receive nothing, got: {env:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_id_receives_no_tokens() {
+        // `htop` has no manifest at all — the commonest external-tool
+        // shape. Pass 1 previously injected every foreign token anyway.
+        let (_d, app) = app_with_manifests();
+        assert!(app.integration_auth_env("htop").is_empty());
+    }
+
+    #[test]
+    fn cross_sharing_still_works_for_auth_declaring_integrations() {
+        // The behaviour the cross-share was built for must survive.
+        let (_d, app) = app_with_manifests();
+        let env = app.integration_auth_env("jira");
+        let names: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            names.contains(&"SLACK_BOT_TOKEN"),
+            "foreign token should still reach an auth-declaring integration: {names:?}"
+        );
+        assert!(names.contains(&"JIRA_API_TOKEN"), "own token: {names:?}");
+    }
+
+    #[test]
+    fn an_integration_still_gets_its_own_token() {
+        let (_d, app) = app_with_manifests();
+        let env = app.integration_auth_env("slack");
+        assert_eq!(
+            env.iter()
+                .find(|(k, _)| k == "SLACK_BOT_TOKEN")
+                .map(|(_, v)| v.as_str()),
+            Some("xoxb-SECRET")
+        );
     }
 }
