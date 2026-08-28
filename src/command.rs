@@ -384,6 +384,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_first_launch(),
         },
         Command {
+            // #1208 — deliberately reuses the wizard rather than
+            // shipping a second UI over the same probe engine. People
+            // switch terminals, or skip the wizard; this is the
+            // run-it-later door onto the same Keyboard section.
+            id: "keys.doctor",
+            title: "Keyboard doctor (which modifier chords reach mnml?)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_keys_doctor(),
+        },
+        Command {
             id: "integrations.configure_picker",
             title: "Configure integration auth… (pick from installed)",
             group: "integrations",

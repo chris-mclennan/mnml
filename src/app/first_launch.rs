@@ -53,6 +53,12 @@ pub enum WizardSection {
     AiBackend,
     InputStyle,
     NerdFont,
+    /// #1208 (2026-08-27) — key-arrival probe. Sits beside NerdFont
+    /// because it answers the same shape of question: does this
+    /// terminal actually deliver what mnml needs? Both are checked by
+    /// asking the user to look at / press something, because neither
+    /// is detectable from inside the process.
+    Keyboard,
     /// Per-product routing — task #975 (2026-08-17). Two rows inside
     /// (Claude Code + Codex); `focused_ai_route_row` tracks which
     /// one the caret is on.
@@ -73,6 +79,7 @@ impl WizardSection {
     // covered — user hit a chicken-and-egg wall and reported it.
     pub const ALL: &'static [WizardSection] = &[
         Self::NerdFont,
+        Self::Keyboard,
         Self::InputStyle,
         Self::ClaudeCode,
         Self::AiRouting,
@@ -85,6 +92,7 @@ impl WizardSection {
             Self::AiBackend => "AI ghost-text",
             Self::InputStyle => "Input style",
             Self::NerdFont => "Nerd Font",
+            Self::Keyboard => "Keyboard",
             Self::AiRouting => "AI billing preference",
             Self::ClaudeCode => "Claude Code + Codex",
             Self::VscodeShim => "VSCode `code` shim",
@@ -119,6 +127,17 @@ impl WizardSection {
                  older copy that renders some icons — notably git repo-pull \
                  U+EB40 — with the wrong outline. The Homebrew cask install \
                  path bypasses the failing validator."
+            }
+            Self::Keyboard => {
+                "Word and line motion (Option/Ctrl+←/→, Cmd+←/→) depend on your \
+                 terminal actually forwarding those chords — and several don't by \
+                 default. macOS binds Ctrl+←/→ to Mission Control; most macOS \
+                 terminals use Option to type accented characters rather than \
+                 sending Alt. mnml can't detect this on its own (a key that never \
+                 arrives looks identical to one you didn't press), so press each \
+                 chord below and it'll tick off what got through. Anything still \
+                 unticked comes with the fix for your terminal — and on ghostty, \
+                 Space applies it."
             }
             Self::AiRouting => {
                 "For each AI product below, tell mnml where to route calls. \
@@ -189,6 +208,14 @@ pub struct FirstLaunchState {
     /// cycle. j/k move rows within the section; the section-move
     /// arrows (up/down at section boundaries) still cycle sections.
     pub focused_ai_route_row: usize,
+    /// #1208 — which probe chords have actually reached mnml. Lives on
+    /// the wizard state (not `WizardAnswers`) because it is a live
+    /// observation of the environment, not an answer to persist.
+    pub key_doctor: crate::key_doctor::KeyDoctor,
+    /// Result line after the ghostty auto-fix runs, so the section can
+    /// say what happened ("added", "already set") instead of a generic
+    /// success. `None` until Space is pressed.
+    pub keyboard_fix_note: Option<String>,
 }
 
 impl FirstLaunchState {
@@ -197,6 +224,17 @@ impl FirstLaunchState {
             focused_section: 0,
             answers: WizardAnswers::default(),
             focused_ai_route_row: 0,
+            key_doctor: crate::key_doctor::KeyDoctor::new(),
+            keyboard_fix_note: None,
+        }
+    }
+
+    /// Focus a section by kind. Used by `keys.doctor`, which reopens the
+    /// wizard straight onto the Keyboard section rather than shipping a
+    /// second UI over the same probe engine.
+    pub fn focus_section(&mut self, want: WizardSection) {
+        if let Some(i) = WizardSection::ALL.iter().position(|s| *s == want) {
+            self.focused_section = i;
         }
     }
 
@@ -290,6 +328,24 @@ impl App {
         let mut state = FirstLaunchState::new();
         state.answers = self.wizard_snapshot_current();
         self.first_launch = Some(state);
+    }
+
+    /// `keys.doctor` — open the wizard focused on the Keyboard probe.
+    ///
+    /// Unlike `open_first_launch` this re-focuses an ALREADY-open
+    /// wizard rather than bailing, so firing the command while the
+    /// wizard happens to be up takes you to the right section instead
+    /// of appearing to do nothing.
+    pub fn open_keys_doctor(&mut self) {
+        if self.first_launch.is_none() {
+            let mut state = FirstLaunchState::new();
+            state.answers = self.wizard_snapshot_current();
+            self.first_launch = Some(state);
+        }
+        if let Some(s) = self.first_launch.as_mut() {
+            s.focus_section(WizardSection::Keyboard);
+            s.focused_ai_route_row = 0;
+        }
     }
 
     /// Ask-me-later — close without setting the complete flag so
@@ -477,6 +533,57 @@ impl App {
                 "backend".to_string(),
                 toml::Value::String(choice.to_string()),
             );
+        }
+    }
+
+    /// #1208 — apply the one auto-fix we're confident in: ghostty on
+    /// macOS gets `macos-option-as-alt = true` written for it.
+    ///
+    /// Every other terminal shows instructions instead. That asymmetry
+    /// is deliberate: mnml knows ghostty's config path and grammar, and
+    /// guessing at seven other formats is how this becomes a pile of
+    /// fragile writers. The note is phrased around what actually
+    /// happened so "already set" doesn't read as "fixed".
+    pub fn wizard_apply_keyboard_fix(&mut self) {
+        use crate::key_doctor::{AutoFix, FixOutcome};
+        let is_macos = cfg!(target_os = "macos");
+        let term = crate::key_doctor::detect_terminal();
+        // Only offer the fix for a chord that actually failed to arrive.
+        let missing_alt = self
+            .first_launch
+            .as_ref()
+            .map(|s| s.key_doctor.missing().iter().any(|p| p.id == "alt_right"))
+            .unwrap_or(false);
+        let note = if !missing_alt {
+            "Option+→ already arrives — nothing to fix.".to_string()
+        } else if crate::key_doctor::remedy("alt_right", term, is_macos).fix
+            != Some(AutoFix::GhosttyOptionAsAlt)
+        {
+            "No auto-fix for this terminal — see the note above.".to_string()
+        } else {
+            match crate::key_doctor::ghostty_config_path() {
+                None => "Couldn't locate ~/.config/ghostty/config.".to_string(),
+                Some(p) => match crate::key_doctor::apply_ghostty_option_as_alt(&p) {
+                    Err(e) => format!("Couldn't write {}: {e}", p.display()),
+                    Ok(FixOutcome::AlreadySet) => format!(
+                        "{} already has macos-option-as-alt = true — restart ghostty \
+                         for it to take effect.",
+                        p.display()
+                    ),
+                    Ok(FixOutcome::Flipped) => format!(
+                        "Flipped macos-option-as-alt to true in {}. Restart ghostty.",
+                        p.display()
+                    ),
+                    Ok(FixOutcome::Appended) => format!(
+                        "Added macos-option-as-alt = true to {} (original backed up). \
+                         Restart ghostty.",
+                        p.display()
+                    ),
+                },
+            }
+        };
+        if let Some(s) = self.first_launch.as_mut() {
+            s.keyboard_fix_note = Some(note);
         }
     }
 
@@ -694,6 +801,49 @@ pub(crate) fn ai_answer_enables_ghost_text(answer: &str) -> bool {
 #[cfg(test)]
 mod first_launch_tests {
     use super::*;
+
+    /// #1208 — the wizard's number-jump was `'1'..='6'`, hardcoded to
+    /// the section count at the time. Adding a 7th silently orphaned it
+    /// from that shortcut. Assert the RANGE against the actual list so
+    /// the next section to land fails here rather than shipping
+    /// half-reachable.
+    #[test]
+    fn every_section_is_reachable_by_number_jump() {
+        const JUMP_MAX: usize = 7; // keep in sync with overlay.rs '1'..='7'
+        assert!(
+            WizardSection::ALL.len() <= JUMP_MAX,
+            "{} sections but number-jump only covers {JUMP_MAX} — widen the \
+             `'1'..='{JUMP_MAX}'` arm in tui/handlers/overlay.rs",
+            WizardSection::ALL.len()
+        );
+    }
+
+    #[test]
+    fn keyboard_section_is_present_and_described() {
+        assert!(WizardSection::ALL.contains(&WizardSection::Keyboard));
+        assert_eq!(WizardSection::Keyboard.title(), "Keyboard");
+        let d = WizardSection::Keyboard.description();
+        // The copy has to name the two real culprits, since the whole
+        // point of the section is telling the user WHY a key vanished.
+        assert!(d.contains("Mission Control"), "should name the macOS cause");
+        assert!(d.contains("Option"), "should name the Option/Alt cause");
+    }
+
+    #[test]
+    fn focus_section_lands_on_the_requested_section() {
+        let mut s = FirstLaunchState::new();
+        s.focus_section(WizardSection::Keyboard);
+        assert_eq!(s.section(), WizardSection::Keyboard);
+        s.focus_section(WizardSection::NerdFont);
+        assert_eq!(s.section(), WizardSection::NerdFont);
+    }
+
+    #[test]
+    fn a_fresh_wizard_has_recorded_no_probes() {
+        let s = FirstLaunchState::new();
+        assert!(s.key_doctor.nothing_arrived());
+        assert!(s.keyboard_fix_note.is_none());
+    }
 
     #[test]
     fn affirmative_answers_enable_ghost_text() {

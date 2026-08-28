@@ -109,7 +109,10 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
             }
             return;
         }
-        KeyCode::Char(c @ '1'..='6') => {
+        // Widened to '7' when the Keyboard section landed (#1208) —
+        // a hardcoded '6' would have silently orphaned the last
+        // section from number-jump.
+        KeyCode::Char(c @ '1'..='7') => {
             if let Some(s) = app.first_launch.as_mut() {
                 s.focused_section = (c as u8 - b'1') as usize;
                 s.focused_ai_route_row = 0;
@@ -119,8 +122,28 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 
+    // #1208 — the Keyboard section is a live key probe, so it has to
+    // claim its chords BEFORE anything else interprets them. Only
+    // modified arrows and End are claimed; plain arrows still move
+    // between sections, so navigation is unaffected.
+    if matches!(section, WizardSection::Keyboard) {
+        let matched = app
+            .first_launch
+            .as_mut()
+            .map(|s| s.key_doctor.observe(key))
+            .unwrap_or(false);
+        if matched {
+            return;
+        }
+        if key.code == KeyCode::Char(' ') {
+            app.wizard_apply_keyboard_fix();
+            return;
+        }
+    }
+
     // Section-specific handling.
     match section {
+        WizardSection::Keyboard => {}
         WizardSection::AiBackend => match key.code {
             KeyCode::Left | KeyCode::Char('h') => cycle_ai_backend(app, -1),
             KeyCode::Right | KeyCode::Char('l') => cycle_ai_backend(app, 1),

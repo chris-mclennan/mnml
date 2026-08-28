@@ -1,4 +1,4 @@
-//! First-launch wizard renderer — centered modal, 6 sections, keyboard-
+//! First-launch wizard renderer — centered modal, 7 sections, keyboard-
 //! driven. Matches the About / Welcome / Settings overlay idiom
 //! (bordered floating card, Esc-dismissible, non-blocking bg).
 //!
@@ -433,6 +433,55 @@ fn section_widgets<'a>(
             ];
             for (row, tag) in radios.into_iter().zip(tags.iter()) {
                 out.push((row, Some(*tag)));
+            }
+            out
+        }
+        WizardSection::Keyboard => {
+            // A live checklist rather than a radio: the user presses
+            // each chord and watches it tick. Ticks are facts about
+            // the environment, not answers, so nothing here persists.
+            let doc = app.first_launch.as_ref().map(|s| &s.key_doctor);
+            let mut out: Vec<(Line<'a>, Option<FirstLaunchHit>)> = Vec::new();
+            for (i, p) in crate::key_doctor::PROBES.iter().enumerate() {
+                let seen = doc.map(|d| d.is_seen(i)).unwrap_or(false);
+                let mark = if seen { "✓" } else { "·" };
+                let row = format!("  {mark}  {:<14}  {}", p.label, p.purpose);
+                let style = if seen {
+                    Style::default().fg(t.green).bg(t.bg_dark)
+                } else {
+                    Style::default().fg(t.comment).bg(t.bg_dark)
+                };
+                out.push((
+                    Line::from(Span::styled(pad_to(&row, INNER_W as usize), style)),
+                    None,
+                ));
+            }
+            if let Some(d) = doc {
+                out.push((body_line(&crate::key_doctor::summary(d), t), None));
+                // Remedy for the FIRST missing chord — one clear next
+                // step beats a wall of conditional advice.
+                if let Some(first) = d.missing().first() {
+                    let r = crate::key_doctor::remedy(
+                        first.id,
+                        crate::key_doctor::detect_terminal(),
+                        cfg!(target_os = "macos"),
+                    );
+                    for chunk in wrap_body(&r.text, INNER_W as usize - 4) {
+                        out.push((body_line(&format!("  {chunk}"), t), None));
+                    }
+                    if r.fix.is_some() {
+                        out.push((body_line("  Space — apply this fix", t), None));
+                    }
+                }
+                if let Some(note) = app
+                    .first_launch
+                    .as_ref()
+                    .and_then(|s| s.keyboard_fix_note.as_ref())
+                {
+                    for chunk in wrap_body(note, INNER_W as usize - 4) {
+                        out.push((body_line(&format!("  {chunk}"), t), None));
+                    }
+                }
             }
             out
         }
