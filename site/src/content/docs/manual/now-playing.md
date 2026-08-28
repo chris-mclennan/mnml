@@ -123,21 +123,18 @@ When something *is* playing, the click activates the source's own app regardless
 
 The matching row sits in `:settings` under `── UI ──` as **Preferred music app** with options `mixr` / `music` / `spotify`. Editable in the overlay; the change is in-memory until you save the overlay or write the TOML file.
 
-## Mixr panel size chips
+## Opening mixr
 
-When mixr is hosted as a native panel inside mnml (the `mixr.show` palette command, the `♪ mixr` keyboard chord, or a click on the idle chip with `preferred_music_app = "mixr"`), it occupies a regular pane with a 1-row header. The header now carries three right-aligned chips for snapping the panel between its size states:
+`mixr.show` (the `♪ mixr` chord, the palette, or a click on the idle chip
+when `preferred_music_app = "mixr"`) opens mixr as a **Pty pane** — a regular
+tab you can split, move, and close like any other.
 
-| Chip | Target size | Visible when |
-|---|---|---|
-| `⤢` grow | `Full` | Always shown unless already in `Full` |
-| `⤡` shrink | `BottomStrip` | Only shown from `Full` (a `BottomStrip` can't shrink further without minimizing) |
-| `–` minimize | `Minimized` | Always shown while the panel is visible |
-
-Click handlers are registered into `app.rects.mixr_size_{grow,shrink,minimize}_button` and checked **before** the drag detector in `tui.rs`. The chips sit on the header's move-drag region, so without the early check a click would start a window drag instead of firing the chip. The chips are single-cell, painted from the right edge inward with a 1-cell gap between each — a narrow header collapses chips off the left edge before it eats the title.
-
-The `–` minimize chip drops `panel.focused = false` so the keyboard cursor returns to the editor. The `⤢` grow and `⤡` shrink chips keep focus on the panel (you stayed inside mixr; the layout just resized).
-
-The keyboard chord still cycles `Minimized → BottomStrip → Full → Minimized` via `mixr.show`. The transport chips on the statusline still work independently — both surfaces coexist. The chip cluster is the primary mouse affordance for sizing; `mixr.show` is the primary keyboard one.
+It used to be a docked native panel with its own header and `⤢` / `⤡` / `–`
+size chips, sized independently of the layout. That panel went away with the
+tmnl removal on 2026-06-22, when mnml became terminal-agnostic: mixr is a
+terminal app, so it runs in a terminal pane, and the ordinary pane keybinds
+size and place it. The statusline transport chips are unaffected and still
+drive playback from anywhere.
 
 ## Real-world examples
 

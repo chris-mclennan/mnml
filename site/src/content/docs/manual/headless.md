@@ -41,6 +41,24 @@ The IPC directory lives at `<workspace>/.mnml/ipc/`, created on startup. Four fi
 | `status.json` | mnml → host | JSON object | Focus / active pane / active file / cursor row+col / editing mode / tree state / pane list / quit flag. Rewritten every tick. |
 | `events.jsonl` | mnml → host | JSONL, append-only | What happened. `start`, `open`, `key`, `type`, `command_run`, `plugin-command`, `exit`. |
 
+:::note[`screen.txt` in the *interactive* terminal, though, is opt-in]
+A rendered screen is a verbatim dump of whatever is on it — buffer contents,
+file paths, a terminal pane's scrollback — so the interactive terminal loop
+doesn't write one to disk unless you ask:
+
+```toml
+[ipc]
+write_screen = true
+```
+
+That gate does **not** apply here. Headless mode force-enables it
+(`src/headless.rs`), because headless has no terminal — `screen.txt` *is* its
+output, and the `.test` harness reads it. Honouring the opt-out in headless
+would make the mode silently useless. So every example on this page works as
+written; it's a normal `./run.sh` session that won't produce a `screen.txt`
+until you opt in.
+:::
+
 mnml truncates `command`, `screen.txt`, `status.json`, and `events.jsonl` on startup so every session begins clean. The `command` reader keeps a byte offset, so a host that appends a partial line (no trailing newline) won't have it parsed until the newline arrives.
 
 ### The `command` schema

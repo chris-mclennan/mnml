@@ -52,7 +52,23 @@ Each row looks like:
 | `Enter` | On a discrete-choice row, same as `→`. On a text or color row, enters greedy edit mode (printable keys → buffer, `Backspace` → delete, `Enter` → commit, `Esc` → cancel). On the reset-all sentinel row, fires the global reset |
 | `Esc` | While editing a text/color row, cancel the in-progress edit (restore the value the row had on edit-mode entry). Otherwise, cancel the overlay — revert the live config to whatever it was when the overlay opened |
 
-`Enter` (anywhere except the reset row) commits whatever's currently on screen and closes the overlay. The overlay does **not** persist changes to TOML — it writes the in-memory `Config`. If you want a change to survive restarts, also edit the matching TOML key.
+`Enter` (anywhere except the reset row) commits whatever's currently on screen and closes the overlay.
+
+Changes **do** persist. Each row writes its new value straight into
+`<workspace>/.mnml/config.toml` — the per-project overrides file — the moment
+you adjust it, whether by `←`/`→`, by clicking an option, or by resetting the
+row (a reset writes the default as an explicit override, which is the
+per-project intent). You don't need to hand-edit TOML to make a setting
+survive a restart.
+
+Two things work differently:
+
+- **`startup.default_workspace`** is inherently global — "which folder to
+  open" isn't a per-project answer — so it's written to
+  `~/.config/mnml/config.toml`, and only on the `Enter` save path.
+- **`Esc`** restores the workspace file from the snapshot taken when the
+  overlay opened, comments and all, so cancelling really does undo the writes
+  your row edits already made.
 
 ### Number rows (v2)
 
