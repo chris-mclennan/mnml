@@ -178,6 +178,11 @@ impl InputHandler for StandardInputHandler {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // Cmd on macOS. Only some terminals forward it (kitty, WezTerm,
+        // ghostty with an explicit keybind); where it doesn't arrive the
+        // Cmd+arrow arms below are simply dead, and Home/End still cover
+        // line motion. See `keys.doctor` for the per-terminal story.
+        let sup = key.modifiers.contains(KeyModifiers::SUPER);
 
         // A plain typed character (no Ctrl/Alt/Super). vscode-user SEV-2 —
         // SUPER guard prevents Cmd+letter from inserting on Kitty /
@@ -201,6 +206,22 @@ impl InputHandler for StandardInputHandler {
                 }
             } else {
                 InputResult::Ops(vec![SelectClear, op])
+            }
+        };
+
+        // keyboard-round-14 SEV-3 #7 2026-07-17 — VS Code Smart Home.
+        // First press from anywhere past the leading whitespace jumps to
+        // first-non-ws; a second press (cursor already AT first-non-ws)
+        // goes to col 0. Only toggles when the line HAS leading
+        // whitespace; otherwise straight to col 0, no wasted keypress.
+        //
+        // Extracted to a closure in #1208 so Home and Cmd+← share one
+        // implementation instead of two copies drifting apart.
+        let smart_home = || -> InputResult {
+            if ctx.line_first_nonws_col > 0 && ctx.cursor_col != ctx.line_first_nonws_col {
+                mv(MoveLineFirstNonWs)
+            } else {
+                mv(MoveLineStart)
             }
         };
 
@@ -279,8 +300,24 @@ impl InputHandler for StandardInputHandler {
             KeyCode::Delete if ctrl && !alt => InputResult::Ops(vec![DeleteWordRight]),
             KeyCode::Delete => InputResult::Ops(vec![DeleteForward]),
 
+            // #1208 — word / line motion has to be reachable on every
+            // platform, and no single chord survives all of them:
+            // macOS steals Ctrl+←/→ for Mission Control (enabled by
+            // default with >1 Space), while Option+←/→ only arrives as
+            // ALT when the terminal is told to send it (ghostty's
+            // `macos-option-as-alt`, iTerm's "Left Option = Esc+"). So
+            // bind BOTH, plus Cmd for the macOS-native line motion, and
+            // let whichever the environment actually delivers win.
+            // `keys.doctor` reports which ones arrive here.
+            KeyCode::Left if alt && !ctrl => mv(MoveWordLeft),
+            KeyCode::Right if alt && !ctrl => mv(MoveWordRight),
             KeyCode::Left if ctrl && !alt => mv(MoveWordLeft),
             KeyCode::Right if ctrl && !alt => mv(MoveWordRight),
+            // Cmd+←/→ — the macOS-native line motion. Mirrors Home/End
+            // exactly (including VS Code smart-home) rather than jumping
+            // straight to col 0, so the two routes can't drift apart.
+            KeyCode::Left if sup => smart_home(),
+            KeyCode::Right if sup => mv(MoveLineEnd),
             KeyCode::Left => mv(MoveLeft),
             KeyCode::Right => mv(MoveRight),
             // VS Code parity (bug-hunt seed #274 from 2026-06-07):
@@ -334,13 +371,7 @@ impl InputHandler for StandardInputHandler {
             // AT first-non-ws) jumps to col 0. Only fires the
             // smart toggle when the line has leading whitespace;
             // otherwise straight to col 0 (no wasted keypress).
-            KeyCode::Home => {
-                if ctx.line_first_nonws_col > 0 && ctx.cursor_col != ctx.line_first_nonws_col {
-                    mv(MoveLineFirstNonWs)
-                } else {
-                    mv(MoveLineStart)
-                }
-            }
+            KeyCode::Home => smart_home(),
             KeyCode::End => mv(MoveLineEnd),
             KeyCode::PageUp => mv(PageUp),
             KeyCode::PageDown => mv(PageDown),
@@ -445,6 +476,74 @@ mod tests {
             ops(h().handle_key(key(KeyCode::BackTab, KeyModifiers::NONE), &ctx(false))),
             vec![EditOp::Outdent]
         );
+    }
+
+    /// #1208 — word / line motion must survive the fact that no single
+    /// modifier+arrow chord reaches a terminal app on every platform.
+    /// macOS eats Ctrl+←/→ for Mission Control; Option+←/→ only arrives
+    /// as ALT once the terminal is configured to send it. So all three
+    /// modifiers are bound and whichever the environment delivers wins.
+    #[test]
+    fn alt_and_cmd_arrows_cover_the_platforms_ctrl_cannot_reach() {
+        // Option/Alt+arrow — the macOS-native word motion.
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Left, KeyModifiers::ALT), &ctx(false))),
+            vec![EditOp::SelectClear, EditOp::MoveWordLeft]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Right, KeyModifiers::ALT), &ctx(false))),
+            vec![EditOp::SelectClear, EditOp::MoveWordRight]
+        );
+        // Ctrl+arrow keeps working — Linux/Windows native, and macOS
+        // once Mission Control's binding is freed.
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Right, KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::SelectClear, EditOp::MoveWordRight]
+        );
+        // Cmd+arrow — the macOS-native LINE motion, not word motion.
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Right, KeyModifiers::SUPER), &ctx(false))),
+            vec![EditOp::SelectClear, EditOp::MoveLineEnd]
+        );
+        // Shift still extends rather than replaces, on the new chords too.
+        assert_eq!(
+            ops(h().handle_key(
+                key(KeyCode::Left, KeyModifiers::ALT | KeyModifiers::SHIFT),
+                &ctx(false)
+            )),
+            vec![EditOp::SelectStart, EditOp::MoveWordLeft]
+        );
+    }
+
+    /// Cmd+← and Home share one `smart_home` closure so they can't drift
+    /// apart. Asserts they agree in BOTH smart-home states rather than
+    /// just the easy one — the whole point of extracting the closure.
+    #[test]
+    fn cmd_left_and_home_agree_in_both_smart_home_states() {
+        // Line has leading whitespace and the cursor is past it →
+        // first press goes to first-non-ws, not column 0.
+        let indented = || {
+            let mut c = ctx(false);
+            c.line_first_nonws_col = 4;
+            c.cursor_col = 9;
+            c
+        };
+        let home = ops(h().handle_key(key(KeyCode::Home, KeyModifiers::NONE), &indented()));
+        let cmd_left = ops(h().handle_key(key(KeyCode::Left, KeyModifiers::SUPER), &indented()));
+        assert_eq!(home, vec![EditOp::SelectClear, EditOp::MoveLineFirstNonWs]);
+        assert_eq!(cmd_left, home, "Cmd+Left must match Home (indented case)");
+
+        // Cursor already AT first-non-ws → second press goes to col 0.
+        let at_first = || {
+            let mut c = ctx(false);
+            c.line_first_nonws_col = 4;
+            c.cursor_col = 4;
+            c
+        };
+        let home2 = ops(h().handle_key(key(KeyCode::Home, KeyModifiers::NONE), &at_first()));
+        let cmd_left2 = ops(h().handle_key(key(KeyCode::Left, KeyModifiers::SUPER), &at_first()));
+        assert_eq!(home2, vec![EditOp::SelectClear, EditOp::MoveLineStart]);
+        assert_eq!(cmd_left2, home2, "Cmd+Left must match Home (at-first case)");
     }
 
     #[test]
