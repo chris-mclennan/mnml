@@ -282,7 +282,11 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     }
                 }
                 "picker.files" => "search files".into(),
-                "integrations.add" => "add integration".into(),
+                // NB: there used to be an `"integrations.add"` arm here.
+                // `tree_icon_buttons` never contains that id (the tree
+                // header cluster is add-workspace / new-file / new-folder
+                // / refresh / collapse), and nothing ever registered the
+                // command either — a dead label for a dead command.
                 other => other.into(),
             };
             Some((rect, label.into_owned(), None))
@@ -611,7 +615,9 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             Some((
                 rect,
                 "add integration".into(),
-                Some("click: discovery overlay (integrations + custom)".into()),
+                // The discovery overlay this used to promise was dropped
+                // on 2026-07-03; the chip opens the Marketplace tab.
+                Some("click: browse the Marketplace".into()),
             ))
         }
         HoverChip::RightPanelTab(pid) => {

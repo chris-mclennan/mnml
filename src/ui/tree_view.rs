@@ -723,8 +723,12 @@ fn draw_integration_section(
     // overlay. The activity-bar side panel (Installed / Marketplace
     // tabs, filter, per-row Enable/Edit/Move-up/Remove menu) already
     // covers browse + enable + edit + install, so the overlay was
-    // just a redundant second copy. The `integrations.add` command
-    // is still callable from the palette for muscle-memory users.
+    // just a redundant second copy. NB: an earlier version of this
+    // comment claimed `integrations.add` was "still callable from the
+    // palette" — it never was. Nothing ever registered that id, so the
+    // palette-bar `+` chip wired to it just toasted `no such command`
+    // until 2026-08-28. It now runs `integrations.show_marketplace`,
+    // and a test asserts every literal `command::run` id is real.
     let triangle = app.config.ui.expand_indicator == "triangle";
     let chev = section_chev_with_pref(app.integration_section_expanded, nerd, triangle);
     let chev_str = format!(" {chev} ");

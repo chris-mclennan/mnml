@@ -7705,6 +7705,102 @@ fn builtin_commands() -> Vec<Command> {
 }
 
 #[cfg(test)]
+mod dead_call_site_tests {
+    use super::*;
+
+    /// Every `command::run("literal")` in the tree must name a command
+    /// that actually exists.
+    ///
+    /// `run()` on an unknown id doesn't fail loudly at build time — it
+    /// toasts `no such command: <id>` and returns false. So a click
+    /// handler wired to a command that was renamed, or never registered
+    /// in the first place, compiles clean, passes every unit test, and
+    /// is only discoverable by clicking the thing and reading the toast.
+    /// That is how the palette-bar `+` chip shipped firing
+    /// `integrations.add`, an id nothing ever registered.
+    ///
+    /// Greps the source for call sites (there is no compile-time record
+    /// of them) but resolves each against the REAL registry, so renames
+    /// on either side are caught.
+    #[test]
+    fn every_literal_run_call_site_names_a_registered_command() {
+        fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rs_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rs_files(&src, &mut files);
+        assert!(
+            !files.is_empty(),
+            "found no .rs files under {}",
+            src.display()
+        );
+
+        const PAT: &str = "command::run(\"";
+        let reg = registry();
+        let mut dead: Vec<String> = Vec::new();
+        let mut checked = 0usize;
+
+        for f in &files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            // Only scan shipping code. Test modules legitimately invoke
+            // ids that don't live in the static registry — `ipc/mod.rs`
+            // registers a `plugin.x` DynCommand at runtime and then runs
+            // it — and this test's own doc comment quotes the pattern.
+            // Rust convention puts `#[cfg(test)]` last, so truncating
+            // there is both simple and accurate; the `checked` floor
+            // below catches it if that ever stops being true.
+            let body = match text.find("#[cfg(test)]") {
+                Some(i) => &text[..i],
+                None => &text[..],
+            };
+            for (idx, _) in body.match_indices(PAT) {
+                let rest = &body[idx + PAT.len()..];
+                let Some(end) = rest.find('"') else { continue };
+                let id = &rest[..end];
+                // Skip interpolated / computed ids — only bare literals
+                // are checkable here.
+                if id.is_empty() || id.contains('{') {
+                    continue;
+                }
+                checked += 1;
+                if reg.get(id).is_none() {
+                    let rel = f.strip_prefix(&src).unwrap_or(f).display();
+                    dead.push(format!("{rel}: {id}"));
+                }
+            }
+        }
+
+        assert!(
+            checked > 50,
+            "only found {checked} literal run() call sites — the grep pattern \
+             probably stopped matching, which would make this test vacuous"
+        );
+        dead.sort();
+        dead.dedup();
+        assert!(
+            dead.is_empty(),
+            "these call sites fire a command that is not registered — clicking \
+             them shows `no such command` instead of doing anything:\n  {}",
+            dead.join("\n  ")
+        );
+    }
+}
+
+#[cfg(test)]
 mod chord_ownership_tests {
     use super::*;
 

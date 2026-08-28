@@ -1464,7 +1464,10 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.palette_add_integration_button
         && crate::app::dispatch::contains(r, x, y)
     {
-        let _ = crate::command::run("integrations.add", app);
+        // `integrations.add` was never a registered command, so this
+        // click toasted "no such command" instead of doing anything.
+        // The Marketplace tab IS the add-an-integration surface.
+        let _ = crate::command::run("integrations.show_marketplace", app);
         return;
     }
     if let Some(r) = app.rects.palette_back_button

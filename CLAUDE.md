@@ -515,10 +515,10 @@ standard file-manager clipboard + operations that were missing:
   prompt) now respects the Alt modifier at drag-start — Alt-drop
   fires an immediate `copy_recursively` (non-destructive, no
   confirmation). Matches Finder / VS Code convention.
-- **`..` up-navigation row.** New row at the top of the tree (hidden
-  at filesystem root) navigates the workspace root up one level via
-  `set_workspace_to`; tree / repos / git / integrations reload
-  consistently. Palette `view.workspace_up`.
+- **`..` up-navigation row.** *(Shipped here; became a `↑` header chip
+  on 2026-08-24, then removed entirely in v0.2.17 — add-workspace covers
+  the use case. The row, the chip, and `view.workspace_up` are all gone;
+  this bullet is kept as history, not as a description of today's UI.)*
 
 Copy paths use `fs::copy` for files, recursive walk for directories,
 `os::unix::fs::symlink` for symlinks. Same-dir Copy+Paste bumps to

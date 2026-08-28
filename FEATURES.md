@@ -329,10 +329,6 @@ The complete, organised feature inventory. For the front-door overview see
   expansion. Tree drag-and-drop works too — plain drag prompts "Move to X?"
   before renaming, and `Alt`-drag copies immediately without a confirmation
   (Finder / VS Code convention).
-- **`..` tree up-navigation** — a `..` row at the top of the tree (hidden at
-  filesystem root) climbs the workspace root up one level via
-  `set_workspace_to`, so tree / repos / git / integrations / palette-bar
-  workspace chip all follow. Palette command `view.workspace_up`.
 - **Optional right side panel** — a collapsible panel on the right edge; toggle
   with `Ctrl+Shift+B` or click the EC00 icon in the palette bar, or `:set
   rightpanel` (idempotent enable) / `:set rightpanel!` (toggle) / `:set
@@ -427,13 +423,18 @@ The complete, organised feature inventory. For the front-door overview see
   `events.jsonl` out) — the same `App` and draw path as the terminal UI.
 - **Plugins** — out-of-process helpers over the IPC channel can register
   commands that appear in the palette and resolve as keybindings.
-- **Sibling tool integrations** — `:term <binary>` spawns a sibling tool
-  (`mnml-tickets-jira`, `mnml-aws-cloudwatch-logs`, `mnml-aws-amplify`,
-  `mnml-db-dynamodb`, `mnml-aws-lambda`, `mnml-aws-eventbridge`, and ~15
-  more in `family_catalog`) as a Pty pane. The integration-icon rail
-  ships default entries for all of them; palette commands
-  `forge.open_cloudwatch_logs`, `forge.open_amplify`, `forge.open_dynamodb`,
-  `forge.open_lambda`, and `forge.open_eventbridge` are also registered.
+- **Integration tools** — `:term <binary>` spawns an integration
+  (`mnml-tracker-jira`, `mnml-aws-cloudwatch-logs`, `mnml-aws-amplify`,
+  `mnml-db`, `mnml-aws-lambda`, `mnml-aws-eventbridge`, and ~25 more in
+  the `mnml-integrations` monorepo) as a Pty pane.
+
+  Each integration declares its own palette command in the manifest its
+  `--install` writes, so the ids live with the integration, not in mnml
+  core: `lambda.open`, `amplify.open`, `cloudwatch_logs.open`,
+  `eventbridge.open`, `db.open`. They resolve as dynamic commands once
+  that integration is installed, and `integrations.refresh` re-scans
+  without a restart.
+
   Add a custom integration by dropping a `[[ui.integration_icon]]` entry
   in config — no code changes to mnml required.
 - **Settings overlay** — `:settings` / `view.settings` opens a keyboard-driven
@@ -451,20 +452,17 @@ The complete, organised feature inventory. For the front-door overview see
   driven by `[[ui.integration_icon]]` TOML entries (same fields as
   `[[ui.launcher_icon]]`). Each icon launches its sibling binary on click.
   Default entries ship for all first-party siblings; extras can be added via
-  TOML or the `+` overlay — no code changes to mnml required.
-- **`+` "Add integration" discovery overlay** — the `+` chip on the sidebar's
-  INTEGRATIONS header (palette: `integrations.add`) opens a centered overlay
-  listing the full family catalog (15 hardcoded siblings grouped by category:
-  AWS, Databases, Forges, Trackers, Filesystems, Test runners) plus any
-  `mnml-<class>-<name>` binaries auto-discovered on `$PATH` or well-known
-  dirs. Per-row status: ✓ in rail / ✓ installed / ✗ not installed.
-  Keys: `↑↓`/`jk` move, `Enter` add to rail, `i` spawn `cargo install` Pty
-  pane live, `y` yank install command, `Esc` close. `integrations.refresh`
-  clears the detection cache outside the overlay. `Enter` to add also
-  writes the full `[[ui.integration_icon]]` list back to
-  `~/.config/mnml/config.toml` (line-based strip-and-rewrite; other sections
-  and comments preserved). Auto-discovered rows render with a
-  `· auto-discovered` chip; `i`/`y` are no-ops for them (repo URL unknown).
+  TOML or the Marketplace tab — no code changes to mnml required.
+- **`+` "Add integration" chip** — the `+` chip in the palette bar opens the
+  Marketplace tab (`integrations.show_marketplace`), which lists published
+  apps plus any `mnml-<class>-<name>` binaries auto-discovered on `$PATH`,
+  with per-row install / update actions.
+
+  The separate centered "discovery overlay" this chip used to open was
+  dropped on 2026-07-03 — the activity-bar side panel (Installed /
+  Marketplace tabs, filter, per-row Enable / Edit / Move-up / Remove menu)
+  already covered browse + enable + edit + install, so the overlay was a
+  redundant second copy.
 - **Integration `enabled` opt-in** — each integration chip in the palette bar
   carries an `enabled` flag (default `false`; `browser` is enabled by default).
   Right-click a chip → Enable / Disable toggles the flag and persists the change
