@@ -83,7 +83,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let avail = inner.width.saturating_sub(pad) as usize;
     let chars: Vec<char> = input.chars().collect();
     let start = caret_col.saturating_sub(avail.saturating_sub(1));
-    let shown: String = chars.iter().skip(start).take(avail).collect();
+    let shown: String = if p.is_secret() {
+        // Mask one bullet per character so the caret column, the
+        // horizontal scroll window and the visible length all stay
+        // exactly as they are for a normal field. Display-only —
+        // `p.input` still holds the real text for edit and submit.
+        chars.iter().skip(start).take(avail).map(|_| '•').collect()
+    } else {
+        chars.iter().skip(start).take(avail).collect()
+    };
     // Placeholder shown when the input is empty — dimmed hint that
     // clears on the first keystroke. Mirrors browser address-bar
     // + Bruno URL-field semantics. Kind-driven so different prompts
