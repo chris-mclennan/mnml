@@ -142,6 +142,69 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Overnight polish batch — 8 fixes, all user-reported or
+agent-found (2026-08-28).** No single feature; a sweep of things
+that were quietly wrong.
+
+- **#1216** — on a genuine first launch both the welcome card and
+  the wizard are "open", and the wizard paints over the welcome. The
+  welcome's dismiss gestures keyed off the raw `show_welcome` flag,
+  so the user's very first click *and* the Esc that means "ask me
+  later" were consumed retiring a card nobody had seen — and wrote
+  `.mnml/.welcomed`, so the shortcuts cheatsheet was retired before
+  it ever rendered, for every new user. `App::welcome_visible()` is
+  now the single predicate shared by the drawer and both dismiss
+  sites.
+- **#1220** — `nav.back` / `nav.forward` shipped declaring
+  `ctrl+minus`, which `parse_key_spec` rejected. On macOS those are
+  the only nav bindings, so both commands were palette-only from the
+  day they shipped; the only evidence was two eprintlns at startup.
+  The parser now names punctuation keys (minus/underscore/plus/
+  equal/comma/period/slash/backslash/semicolon/quote/grave/brackets)
+  and `every_declared_chord_parses` fails the build on the next one.
+  The pre-existing nav test asserted `!keys.is_empty()` and stayed
+  green through all of it — non-empty is not bound.
+- **#1222** — the per-leaf tab strip's horizontal scroll offset
+  outlives the strip it was scrolled on (a section switch rebuilds
+  the leaf; `open_git_graph` replaces the layout wholesale), so a
+  strip with room for everything painted one chip and `+11 hidden`.
+  Offset is now clamped to the smallest one whose tail still fills
+  the strip, measured at natural width via `tab_chip_spans`. The
+  `+N hidden` chip also registers a click rect now — it opens the
+  buffer picker instead of being a dead end.
+- **#1226** — the View menu's "Command palette", the Go menu's "Go
+  to file…", the tree's empty-state "Open file…", and the startup
+  picker's OpenFile all ran `view.discovery`, which only toggles the
+  F1 click-discovery overlay. Now `palette` / `picker.files`. A
+  "every menu id resolves" test would have stayed green — the guard
+  that catches it pins the label's promise to the command.
+- **#1217** — Claude usage felt unreliable because the endpoint 429s
+  routinely (3 accounts × 5-min poll) and the error branch zeroed the
+  percentages. 0% reads as "you've used nothing", not "unknown", so
+  the chip alternated between a real number and a reassuring lie.
+  Readings now survive an error; `last_error` is the staleness
+  signal and chips append `!`. Em-dash means "never fetched".
+- **#1219** — `tree_view` still subtracted a bottom pad and a
+  separator row for the GIT/INTEGRATIONS sections that were zeroed
+  out on 2026-06-30. Two dead rows in every panel; two more files
+  fit now.
+- **#1221** — SESSIONS was the last activity panel hand-rolling its
+  caps header, so it never got the shared refresh chip. Its refresh
+  drops the two render caches + the port cache.
+- **#1218** — `mnml-fim-engine`'s own README carried crates.io and
+  docs.rs badges for `fim-engine`, a crate that does not exist, plus
+  a CI badge for a repo that went private. The family table linked
+  the same dead repo.
+
+Docs: new `manual/security.md` + `manual/tabs-splits.md`, rewritten
+`manual/activity-panels.md`, refreshed `manual/first-launch.md`.
+`.docs-sync-marker` deliberately NOT bumped — this is one pass over
+a larger backlog. A site content audit landed at
+`.mnml/findings/site-content-audit-20260828.md`; four of its factual
+findings are fixed, and one of ITS findings was itself wrong
+(headless force-enables `write_screen`, so those examples were never
+no-ops).
+
 **Fonts in Marketplace + UI-managed launch profiles (2026-08-25,
 #1202 + #1203 f/u).** `src/font_scan.rs` (seek-based sfnt name-table
 reader; TTF/OTF/TTC) scans platform font dirs, reads "Nerd Fonts
