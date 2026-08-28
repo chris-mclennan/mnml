@@ -538,26 +538,39 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     let mut sparkline = String::new();
     let mut worst: u16 = 0;
     let mut any_error = false;
+    let mut any_stale = false;
     let mut any_fetched_gt_zero = false;
     let mut all_near_empty = true;
     for acc in &app.ai_usage_claude_accounts {
         let u = &acc.usage;
-        if u.last_error.is_some() {
-            sparkline.push('!');
-            any_error = true;
-            all_near_empty = false;
-        } else if u.fetched_at > 0 {
+        // #1217 — an error on an account we HAVE read before is
+        // staleness, not absence. The last reading is still the best
+        // information available, so it keeps its bar; the chip grows a
+        // single `!` to say the numbers stopped updating. Replacing
+        // the bar with `!` (and the value with 0, upstream) threw away
+        // a good reading every time the endpoint rate-limited, which
+        // is what made the chip feel unreliable.
+        //
+        // `!` in the sparkline is now reserved for an account that has
+        // never returned anything — there, the bar would be a lie.
+        if u.fetched_at > 0 {
             sparkline.push(sparkline_char(u.percent));
             worst = worst.max(u.percent);
             any_fetched_gt_zero = true;
             if u.percent < 90 {
                 all_near_empty = false;
             }
+            any_stale |= u.last_error.is_some();
+        } else if u.last_error.is_some() {
+            sparkline.push('!');
+            any_error = true;
+            all_near_empty = false;
         } else {
             sparkline.push('…');
             all_near_empty = false;
         }
     }
+    let stale_mark = if any_stale { "!" } else { "" };
 
     // Suffix strategy (2026-08-19, #1077):
     //   1. Always try to show the reset countdown (⟳Xh) when at
@@ -616,7 +629,7 @@ fn render_claude_chip_all_accounts(app: &App, t: &theme::Theme) -> (String, rata
     } else {
         t.comment
     };
-    let text = format!(" \u{F1E00} {sparkline}{suffix} ");
+    let text = format!(" \u{F1E00} {sparkline}{stale_mark}{suffix} ");
     (text, color)
 }
 
@@ -652,18 +665,24 @@ fn render_single_account_chip(
     } else {
         format!("{letter_prefix} ")
     };
-    if u.last_error.is_some() {
-        // R5 keyboard SEV-3 2026-08-08 — differentiate errors from 0%.
-        return ClaudeChipResult {
-            text: format!(" \u{F1E00} {prefix}—! "),
-        };
-    }
+    // #1217 — only an account that has NEVER returned a reading gets
+    // the em-dash. An error on top of a previous reading is
+    // staleness: the last percent is still the best information
+    // available, so it renders, with a trailing `!` to say it stopped
+    // updating. (R5 keyboard SEV-3 2026-08-08 established `—!` to
+    // differentiate errors from 0%; the distinction it wanted survives
+    // as the `!`, which now sits after a real number.)
     if u.fetched_at == 0 {
-        // Never fetched — no signal yet.
         return ClaudeChipResult {
-            text: format!(" \u{F1E00} {prefix}— "),
+            text: if u.last_error.is_some() {
+                format!(" \u{F1E00} {prefix}—! ")
+            } else {
+                // Never fetched — no signal yet.
+                format!(" \u{F1E00} {prefix}— ")
+            },
         };
     }
+    let stale_mark = if u.last_error.is_some() { "!" } else { "" };
     // Successful fetch. Render per mode; tier color reflects the
     // worst of the shown numbers (0% used ⇒ green).
     //
@@ -682,12 +701,18 @@ fn render_single_account_chip(
         String::new()
     };
     let label = match mode {
-        "weekly" => format!(" \u{F1E00} {prefix}{}%{} ", u.weekly_percent, weekly_r),
+        "weekly" => format!(
+            " \u{F1E00} {prefix}{}%{}{stale_mark} ",
+            u.weekly_percent, weekly_r
+        ),
         "both" => format!(
-            " \u{F1E00} {prefix}{}%{} {}%{} ",
+            " \u{F1E00} {prefix}{}%{} {}%{}{stale_mark} ",
             u.percent, session_r, u.weekly_percent, weekly_r
         ),
-        _ => format!(" \u{F1E00} {prefix}{}%{} ", u.percent, session_r),
+        _ => format!(
+            " \u{F1E00} {prefix}{}%{}{stale_mark} ",
+            u.percent, session_r
+        ),
     };
     ClaudeChipResult { text: label }
 }
@@ -2448,6 +2473,59 @@ fn coverage_glyph(app: &crate::app::App) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// #1217 — the Claude usage endpoint 429s regularly (three
+    /// accounts on a 5-minute cadence), and the error branch used to
+    /// zero the percentages. 0% doesn't read as "unknown", it reads as
+    /// "you've used nothing" — the opposite of a warning — so the chip
+    /// flip-flopped between a real number and a reassuring lie every
+    /// few minutes. A stale reading keeps its number and grows a `!`.
+    #[test]
+    fn a_stale_reading_keeps_its_number_and_is_marked() {
+        let u = crate::ai_usage::ClaudeUsage {
+            percent: 74,
+            fetched_at: 1_700_000_000,
+            last_error: Some("HTTP 429".into()),
+            ..Default::default()
+        };
+        let out = render_single_account_chip(&u, "session", "", false, &theme::cur()).text;
+        assert!(out.contains("74%"), "stale percent was dropped: {out:?}");
+        assert!(out.contains('!'), "stale reading not marked: {out:?}");
+        assert!(
+            !out.contains('\u{2014}'),
+            "em-dash is for accounts that never returned a reading: {out:?}"
+        );
+    }
+
+    /// The complement — an account that has NEVER returned a reading
+    /// still gets the em-dash, because there is no number to show.
+    #[test]
+    fn an_account_that_never_fetched_still_renders_the_em_dash() {
+        let u = crate::ai_usage::ClaudeUsage {
+            fetched_at: 0,
+            last_error: Some("HTTP 401".into()),
+            ..Default::default()
+        };
+        let out = render_single_account_chip(&u, "session", "", false, &theme::cur()).text;
+        assert!(out.contains('\u{2014}'), "expected em-dash: {out:?}");
+        assert!(out.contains('!'), "expected error marker: {out:?}");
+        assert!(!out.contains('%'), "no percent to show: {out:?}");
+    }
+
+    /// A healthy reading must not pick up the stale marker — otherwise
+    /// the two tests above would pass with `!` hardcoded on.
+    #[test]
+    fn a_fresh_reading_carries_no_stale_marker() {
+        let u = crate::ai_usage::ClaudeUsage {
+            percent: 74,
+            fetched_at: 1_700_000_000,
+            last_error: None,
+            ..Default::default()
+        };
+        let out = render_single_account_chip(&u, "session", "", false, &theme::cur()).text;
+        assert!(out.contains("74%"), "{out:?}");
+        assert!(!out.contains('!'), "fresh reading marked stale: {out:?}");
+    }
     use super::*;
 
     #[test]

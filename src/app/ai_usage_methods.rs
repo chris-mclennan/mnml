@@ -201,11 +201,26 @@ impl App {
                     upsert_claude_account(&mut self.ai_usage_claude_accounts, acc);
                 }
                 Err(e) => {
-                    // Preserve any prior snapshot for this account so
-                    // resets_at / weekly_resets_at survive a transient
-                    // failure; overwrite percents to zero so the chip
-                    // color reflects "no fresh data" and the pane's
-                    // empty-state kicks in.
+                    // Preserve the prior snapshot for this account —
+                    // ALL of it.
+                    //
+                    // #1217 (2026-08-28, user: "seems to have become
+                    // very unreliable lately"): this used to zero
+                    // `percent` / `weekly_percent` / `scoped_limits`
+                    // on any error, meaning to signal "no fresh
+                    // data". But the endpoint 429s regularly (three
+                    // accounts polled on a 5-min cadence), so a good
+                    // reading five minutes old was being replaced by
+                    // 0% — which doesn't read as "unknown", it reads
+                    // as "you've used nothing", the opposite of a
+                    // warning. The chip flipped between a real number
+                    // and 0 every few minutes.
+                    //
+                    // Now the numbers survive and `last_error` is the
+                    // staleness signal; `fetched_at` keeps its old
+                    // value so the age stays honest. The renderers
+                    // mark stale readings rather than inventing a
+                    // fresh-looking zero.
                     let mut existing = self
                         .ai_usage_claude_accounts
                         .iter()
@@ -219,9 +234,6 @@ impl App {
                             org_name: None,
                         });
                     existing.is_active = is_active;
-                    existing.usage.percent = 0;
-                    existing.usage.weekly_percent = 0;
-                    existing.usage.scoped_limits.clear();
                     if let Some(secs) = e.retry_after_secs {
                         existing.usage.retry_after_at = now_ts.saturating_add(secs);
                     }

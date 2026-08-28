@@ -5053,8 +5053,19 @@ fn paint_leaf_tab_strip_with_hidden(
             let Some(inputs) = tab_chip_inputs_for(app, id, active, chip_max_name_w) else {
                 continue;
             };
-            let Some((_, w)) = crate::ui::bufferline::tab_chip_spans(&inputs, strip_bg, room, nerd)
-            else {
+            // Budget for THIS chip is whatever the tail hasn't taken.
+            // `tab_chip_spans` truncates a name to fit its
+            // `avail_width`, so measuring every chip against the whole
+            // strip over-reports widths, stops the scan early, and
+            // leaves the clamp short of where it should land — the
+            // paint loop shrinks its `avail` per chip and this has to
+            // match it, from the other end. Caught in pre-push review.
+            let Some((_, w)) = crate::ui::bufferline::tab_chip_spans(
+                &inputs,
+                strip_bg,
+                room.saturating_sub(used),
+                nerd,
+            ) else {
                 break;
             };
             // +1 for the inter-chip gap, charged to every chip but the
