@@ -1,10 +1,15 @@
-# First-launch wizard opens via the palette command and renders its 6
-# sections in the current order (2026-08-17: Nerd Font → Input → Claude+Codex
-# install → AI billing → AI ghost-text → VSCode shim). Interactive rows for
-# sections 1-2 are exercised. Sections 5-6 fall below the 40-row test
-# viewport and aren't scroll-anchored yet, so they aren't asserted (would
+# First-launch wizard opens via the palette command and renders its 7
+# sections in the current order (2026-08-27: Nerd Font → Keyboard →
+# Input → Claude+Codex install → AI billing → AI ghost-text → VSCode
+# shim). Interactive rows for sections 1-3 are exercised. Later sections
+# fall below the 40-row test viewport, so they aren't asserted (would
 # fail with `expect screen contains` even when focused — see comment in
-# src/ui/first_launch_overlay.rs, no scroll offset logic).
+# src/ui/first_launch_overlay.rs).
+#
+# NOTE this walks sections with `key down`, so it is positional: adding
+# a section shifts every assertion after it. #1208 inserting Keyboard at
+# slot 2 is what broke it last — if you add another, re-walk the whole
+# file rather than patching the first failure.
 
 command first_launch.show
 expect screen contains "First-launch setup"
@@ -19,7 +24,17 @@ expect screen contains "Render as boxes"
 # y quick-answers "Render as icons".
 key y
 
-# Section 2 = Input style. Standard is the pre-populated default (from the
+# Section 2 = Keyboard (#1208) — the key-arrival probe. Renders a
+# checklist of the chords mnml binds for word / line motion; every row
+# starts unticked because nothing has been pressed yet. Asserting the
+# labels (not the ticks) keeps this independent of what the CI runner's
+# terminal actually forwards, which is precisely the thing that varies.
+key down
+expect screen contains "Keyboard"
+expect screen contains "Ctrl+"
+expect screen contains "Option/Alt+"
+
+# Section 3 = Input style. Standard is the pre-populated default (from the
 # shipped config), so it should already be selected. Cycle to vim via →.
 key down
 expect screen contains "Input style"
@@ -28,13 +43,13 @@ expect screen contains "standard"
 key right
 expect screen contains "vim"
 
-# Section 3 = Claude Code + Codex install badges. Non-interactive (Space
+# Section 4 = Claude Code + Codex install badges. Non-interactive (Space
 # fires the shell installer Pty pane which we don't want to trigger here).
 key down
 expect screen contains "Claude Code"
 expect screen contains "Codex"
 
-# Section 4 = AI billing preference (per-product routing). Both product
+# Section 5 = AI billing preference (per-product routing). Both product
 # rows + choice chips render.
 key down
 expect screen contains "AI billing preference"
