@@ -440,10 +440,14 @@ fn workspace_action_chip_specs(
         // visible icon, not to upstream codepoint name.
         ("\u{EA80}", "d+", "file.new_folder", t.blue),
         ("\u{EA7F}", "f+", "file.new", t.yellow),
-        // 2026-06-30 — pull (↓) chip. Codicon EAA1 was arrow-UP
-        // (my mistake). Codicon EA9A is actual arrow-down —
-        // matches git's universal pull=down convention.
-        ("\u{EA9A}", "↓", "git.pull", t.green),
+        // Pull chip. 2026-06-30 used the bare arrow-down codicon
+        // EA9A; 2026-08-28 (user ask) swapped it for EB40 —
+        // `cod-repo_pull`, the same glyph the git-graph toolbar's
+        // Pull button uses. Two icons for one verb in two places is
+        // the drift the shared-constant modules exist to prevent, and
+        // the repo-pull glyph reads as "pull a repo" rather than
+        // "something goes down".
+        ("\u{EB40}", "↓", "git.pull", t.green),
         (
             collapse_glyph,
             collapse_ascii,
