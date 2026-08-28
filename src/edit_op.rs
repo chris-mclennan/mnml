@@ -261,6 +261,15 @@ pub enum EditOp {
         forward: bool,
         before: bool,
         inclusive: bool,
+        /// True when this is a `;` / `,` REPEAT of a previous find rather
+        /// than a fresh `f`/`t`. Only matters for the `before` (`t`/`T`)
+        /// forms: a repeat must start scanning one cell further out, or
+        /// `t` immediately re-finds the target it is already sitting
+        /// beside and the cursor never advances. That is vim's default
+        /// (`:h cpo-;` — the `;` flag is OFF by default in Vim 7+ and
+        /// Neovim), and `ct;` / `dt)` are frequent enough that the stall
+        /// was a hard stop, not a nuisance.
+        repeat: bool,
     },
     /// Multi-cursor — add a cursor at the same char-column as the primary
     /// on the row below / above. No-op if there's no row that direction.

@@ -374,6 +374,13 @@ pub struct VimInputHandler {
     /// (repeat in same direction) and `,` (repeat in opposite direction)
     /// can re-fire it. `None` until the user has done one find-char.
     last_find_char: Option<(char, bool, bool)>,
+    /// True when the last search was started with `?` (backward) rather
+    /// than `/` / `*` / `#` (forward). `n` / `N` are defined RELATIVE to
+    /// that direction — after `?pat`, `n` continues backward. #1229 (R17
+    /// nvchad): both mapped straight to `find.next` / `find.prev`, and the
+    /// comment admitted it ("mnml's find is direction-agnostic"), so `n`
+    /// after `?` walked the wrong way through the file.
+    last_search_backward: bool,
     /// Named-register hint set by `"<reg>`. Persists for *one* yank /
     /// paste / delete (or operator combo: `"ayy`, `"ap`, `"add`). Cleared
     /// on use. `None` ⇒ default (unnamed) register.
@@ -433,6 +440,7 @@ impl VimInputHandler {
             tab_width: cfg.editor.tab_width.max(1),
             text_width: cfg.editor.text_width.max(8),
             last_find_char: None,
+            last_search_backward: false,
             pending_register: None,
             insert_waiting_for_register: false,
             insert_literal_next: false,
@@ -1268,6 +1276,17 @@ impl VimInputHandler {
                     KeyCode::Char('D') => {
                         InputResult::App(AppCommand::RunCommand("lsp.goto_declaration".into()))
                     }
+                    // `gr` — LSP references. #1229 (R17 nvchad): this had
+                    // no arm, so it fell into the block's `_ => Consumed`
+                    // catch-all and was swallowed in total silence — no
+                    // pane, no toast, nothing to distinguish "unbound" from
+                    // "the server had no answer". NvChad maps `gr` to
+                    // `vim.lsp.buf.references` and Neovim 0.11 ships `grr`;
+                    // `lsp.references` worked from the palette the whole
+                    // time, so only the chord was missing.
+                    KeyCode::Char('r') => {
+                        InputResult::App(AppCommand::RunCommand("lsp.references".into()))
+                    }
                     // `gf` — open the path under the cursor (vim convention).
                     KeyCode::Char('f') => {
                         InputResult::App(AppCommand::RunCommand("editor.open_at_cursor".into()))
@@ -1394,9 +1413,12 @@ impl VimInputHandler {
                     // find is already substring-based (no `\b` in literal
                     // mode) so we route to the same commands.
                     KeyCode::Char('*') => {
+                        self.last_search_backward = false;
                         InputResult::App(AppCommand::RunCommand("find.word_forward".into()))
                     }
                     KeyCode::Char('#') => {
+                        self.last_search_backward = true;
+                        self.last_search_backward = true;
                         InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
                     }
                     // `gt` / `gT` — vim "next/prev tab page". With a
@@ -1653,6 +1675,12 @@ impl VimInputHandler {
             }
             Prefix::FindChar(forward, before) => {
                 let op = self.op;
+                // #1229 (R17 nvchad) — capture the count BEFORE
+                // `reset_pending` drops it. `2fe` / `3te` / `2Fe` all
+                // behaved as their uncounted forms because the count was
+                // read nowhere on this path, while every other motion went
+                // through `Self::repeated`.
+                let n = self.count1();
                 self.reset_pending();
                 let KeyCode::Char(c) = key.code else {
                     return InputResult::Consumed;
@@ -1666,12 +1694,26 @@ impl VimInputHandler {
                     forward,
                     before,
                     inclusive,
+                    repeat: false,
                 };
                 // Stash for `;` / `,` repeat.
                 self.last_find_char = Some((c, forward, before));
-                // Standalone find — just move the cursor.
+                // Standalone find — just move the cursor. `2fe` is the
+                // first hop plus (n-1) REPEAT hops: the follow-ups have to
+                // carry `repeat: true` for the same reason `;` does, or a
+                // counted `t` stalls after the first one.
                 let Some(op) = op else {
-                    return InputResult::Ops(vec![motion]);
+                    let mut ops = vec![motion];
+                    for _ in 1..n {
+                        ops.push(FindCharOnLine {
+                            ch: c,
+                            forward,
+                            before,
+                            inclusive,
+                            repeat: true,
+                        });
+                    }
+                    return InputResult::Ops(ops);
                 };
                 // Operator + find ("df<c>", "ct<c>", …) — select from cursor
                 // to the find target, then apply the operator. The selection
@@ -3089,27 +3131,37 @@ impl VimInputHandler {
             // opposite direction. No-op until the user has done at least
             // one find-char.
             KeyCode::Char(';') => {
+                let n = self.count1();
                 self.reset_pending();
                 if let Some((c, forward, before)) = self.last_find_char {
-                    InputResult::Ops(vec![FindCharOnLine {
-                        ch: c,
-                        forward,
-                        before,
-                        inclusive: false,
-                    }])
+                    InputResult::Ops(Self::repeated(
+                        FindCharOnLine {
+                            ch: c,
+                            forward,
+                            before,
+                            inclusive: false,
+                            repeat: true,
+                        },
+                        n,
+                    ))
                 } else {
                     InputResult::Consumed
                 }
             }
             KeyCode::Char(',') => {
+                let n = self.count1();
                 self.reset_pending();
                 if let Some((c, forward, before)) = self.last_find_char {
-                    InputResult::Ops(vec![FindCharOnLine {
-                        ch: c,
-                        forward: !forward,
-                        before,
-                        inclusive: false,
-                    }])
+                    InputResult::Ops(Self::repeated(
+                        FindCharOnLine {
+                            ch: c,
+                            forward: !forward,
+                            before,
+                            inclusive: false,
+                            repeat: true,
+                        },
+                        n,
+                    ))
                 } else {
                     InputResult::Consumed
                 }
@@ -3332,23 +3384,37 @@ impl VimInputHandler {
             // cursor. Sets the buffer's find state and jumps.
             KeyCode::Char('*') => {
                 self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("find.word_forward".into()))
+                {
+                    self.last_search_backward = false;
+                    InputResult::App(AppCommand::RunCommand("find.word_forward".into()))
+                }
             }
             KeyCode::Char('#') => {
                 self.reset_pending();
+                self.last_search_backward = true;
                 InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
             }
-            // vim `n` / `N` — step through the active find's matches.
-            // `n` = next, `N` = previous (vim convention; both relative to
-            // search direction, but mnml's find is direction-agnostic so
-            // we map straight to find.next / find.prev).
+            // vim `n` / `N` — step through the active find's matches,
+            // RELATIVE to the direction the search was started in. `n`
+            // continues the way you were going, `N` reverses it: after
+            // `?pat`, `n` walks backward.
             KeyCode::Char('n') => {
                 self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("find.next".into()))
+                let cmd = if self.last_search_backward {
+                    "find.prev"
+                } else {
+                    "find.next"
+                };
+                InputResult::App(AppCommand::RunCommand(cmd.into()))
             }
             KeyCode::Char('N') => {
                 self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("find.prev".into()))
+                let cmd = if self.last_search_backward {
+                    "find.next"
+                } else {
+                    "find.prev"
+                };
+                InputResult::App(AppCommand::RunCommand(cmd.into()))
             }
             // f / F / t / T — find char on the cursor's line. The next char
             // typed is the target; the prefix dispatcher emits the EditOp.
@@ -3415,12 +3481,14 @@ impl VimInputHandler {
             // vim `/` — open the find prompt (forward search).
             KeyCode::Char('/') => {
                 self.reset_pending();
+                self.last_search_backward = false;
                 InputResult::App(AppCommand::RunCommand("find.find".into()))
             }
             // vim `?` — open the find prompt with reverse-search direction
             // (the first accept jumps to the closest match BEFORE the cursor).
             KeyCode::Char('?') => {
                 self.reset_pending();
+                self.last_search_backward = true;
                 InputResult::App(AppCommand::RunCommand("find.find_backward".into()))
             }
             KeyCode::Esc => {
@@ -4439,6 +4507,109 @@ mod tests {
         ] {
             let mut v = h();
             assert_eq!(ops(v.handle_key(kc(code), &ctx())), vec![want.clone()]);
+        }
+    }
+
+    /// #1229 — `;` / `,` repeating a `t`/`T` used to stall forever: the
+    /// cursor sits immediately before the target, so a repeat that starts
+    /// scanning at cur+1 re-finds that same char and lands right back
+    /// where it was. `ct;` / `dt)` are frequent enough that this was a
+    /// hard stop. Vim skips the adjacent target by default (`:h cpo-;`).
+    #[test]
+    fn repeat_of_a_till_find_is_marked_so_it_can_advance() {
+        let mut v = h();
+        // `tX` — a fresh find, not a repeat.
+        v.handle_key(k('t'), &ctx());
+        let first = ops(v.handle_key(k('X'), &ctx()));
+        assert_eq!(
+            first,
+            vec![EditOp::FindCharOnLine {
+                ch: 'X',
+                forward: true,
+                before: true,
+                inclusive: false,
+                repeat: false,
+            }]
+        );
+        // `;` — the repeat. Same target, but flagged so the editor skips
+        // the char the cursor is already parked against.
+        let again = ops(v.handle_key(k(';'), &ctx()));
+        assert_eq!(
+            again,
+            vec![EditOp::FindCharOnLine {
+                ch: 'X',
+                forward: true,
+                before: true,
+                inclusive: false,
+                repeat: true,
+            }]
+        );
+        // `,` reverses direction and is equally a repeat.
+        let back = ops(v.handle_key(k(','), &ctx()));
+        assert!(matches!(
+            back.as_slice(),
+            [EditOp::FindCharOnLine {
+                forward: false,
+                repeat: true,
+                ..
+            }]
+        ));
+    }
+
+    /// #1229 — `2fe` / `3te` / `2Fe` all behaved as their uncounted forms:
+    /// `Prefix::FindChar` called `reset_pending()` (dropping the count)
+    /// before anything read it, while every other motion went through
+    /// `Self::repeated`. Counts worked everywhere else, which is what made
+    /// it easy to miss.
+    #[test]
+    fn counted_find_char_emits_one_hop_per_count() {
+        let mut v = h();
+        v.handle_key(k('2'), &ctx());
+        v.handle_key(k('f'), &ctx());
+        let out = ops(v.handle_key(k('e'), &ctx()));
+        assert_eq!(out.len(), 2, "2fe should be two hops, got {out:?}");
+        assert!(matches!(
+            out[0],
+            EditOp::FindCharOnLine { repeat: false, .. }
+        ));
+        assert!(
+            matches!(out[1], EditOp::FindCharOnLine { repeat: true, .. }),
+            "the follow-up hops must be repeats or a counted `t` stalls"
+        );
+    }
+
+    /// #1229 — `n` / `N` are defined relative to the search direction.
+    /// Both mapped straight to find.next / find.prev, so after `?pat`,
+    /// `n` walked forward through the file — the opposite of what the
+    /// user asked for.
+    #[test]
+    fn n_and_shift_n_follow_the_search_direction() {
+        let cmd = |r: InputResult| match r {
+            InputResult::App(AppCommand::RunCommand(id)) => id,
+            _ => panic!("expected a RunCommand"),
+        };
+        // Forward search: n = next, N = prev.
+        let mut v = h();
+        v.handle_key(k('/'), &ctx());
+        assert_eq!(cmd(v.handle_key(k('n'), &ctx())), "find.next");
+        assert_eq!(cmd(v.handle_key(k('N'), &ctx())), "find.prev");
+        // Backward search: both invert.
+        let mut v = h();
+        v.handle_key(k('?'), &ctx());
+        assert_eq!(cmd(v.handle_key(k('n'), &ctx())), "find.prev");
+        assert_eq!(cmd(v.handle_key(k('N'), &ctx())), "find.next");
+    }
+
+    /// #1229 — `gr` had no arm in the `g` prefix block, so it hit the
+    /// `_ => Consumed` catch-all and vanished silently: no pane, no
+    /// toast, nothing to tell "unbound" from "the server had no answer".
+    #[test]
+    fn gr_runs_lsp_references() {
+        let mut v = h();
+        v.handle_key(k('g'), &ctx());
+        match v.handle_key(k('r'), &ctx()) {
+            InputResult::App(AppCommand::RunCommand(id)) => assert_eq!(id, "lsp.references"),
+            _ => panic!("gr should run lsp.references"),
         }
     }
 

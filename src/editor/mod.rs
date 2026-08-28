@@ -2744,14 +2744,21 @@ impl Editor {
                 forward,
                 before,
                 inclusive,
+                repeat,
             } => {
                 let line = self.current_line();
                 let ls = self.line_start(line);
                 let le = self.line_end(line);
                 let cur = self.cursor;
                 if forward {
-                    // Scan from one char past cursor to end-of-line.
-                    let after = (cur + 1).min(le);
+                    // Scan from one char past cursor to end-of-line —
+                    // TWO past when repeating a `t`. After `tX` the cursor
+                    // sits immediately before X, so a repeat that started
+                    // at cur+1 would re-find that same X and land right
+                    // back where it was: `;` stalled forever. Skipping the
+                    // adjacent target is vim's default (`:h cpo-;`).
+                    let skip = if repeat && before { 2 } else { 1 };
+                    let after = (cur + skip).min(le);
                     if let Some(off) = self.text[after..le].find(ch) {
                         let target = after + off;
                         // `f`: land on target. `t`: one *before* target.
@@ -2772,8 +2779,13 @@ impl Editor {
                     }
                 } else {
                     // Backward scan from start-of-line up to (but not
-                    // including) the cursor.
-                    let before_cur = cur.min(le);
+                    // including) the cursor — one cell shorter when
+                    // repeating a `T`, for the mirror of the forward case
+                    // above.
+                    let mut before_cur = cur.min(le);
+                    if repeat && before {
+                        before_cur = self.prev_char_boundary(before_cur).max(ls);
+                    }
                     let slice = &self.text[ls..before_cur];
                     if let Some(off) = slice.rfind(ch) {
                         let target = ls + off;
@@ -6818,6 +6830,53 @@ mod tests {
         assert_eq!(e.text(), "Hello");
     }
 
+    /// #1229 — the `t` repeat stall, at the layer that actually moves the
+    /// cursor. After `tX` the cursor sits immediately before X; a repeat
+    /// that scanned from cur+1 re-found that same X and landed back on
+    /// the same column, so `;` never advanced. Vim skips the adjacent
+    /// target by default (`:h cpo-;`).
+    #[test]
+    fn repeated_till_find_advances_past_the_adjacent_target() {
+        //          0123456789...
+        let (mut e, mut c) = ed("abcdefXghijklXmnopXqrs");
+        e.cursor = 0;
+        let till = |repeat: bool| EditOp::FindCharOnLine {
+            ch: 'X',
+            forward: true,
+            before: true,
+            inclusive: false,
+            repeat,
+        };
+        e.apply(till(false), 10, &mut c);
+        assert_eq!(e.cursor, 5, "tX from col 0 lands just before the X at 6");
+        e.apply(till(true), 10, &mut c);
+        assert_eq!(e.cursor, 12, "; should reach the X at 13, not stall at 5");
+        e.apply(till(true), 10, &mut c);
+        assert_eq!(e.cursor, 17, "and again to the X at 18");
+    }
+
+    /// The complement — a NON-repeat `t` from the same spot must still
+    /// stall, because that is what a fresh `tX` means. Without this the
+    /// fix could skip a char unconditionally and the test above would
+    /// still pass.
+    #[test]
+    fn a_fresh_till_find_does_not_skip_the_adjacent_target() {
+        let (mut e, mut c) = ed("abcdefXghijklXmnopXqrs");
+        e.cursor = 5; // already parked before the X at 6
+        e.apply(
+            EditOp::FindCharOnLine {
+                ch: 'X',
+                forward: true,
+                before: true,
+                inclusive: false,
+                repeat: false,
+            },
+            10,
+            &mut c,
+        );
+        assert_eq!(e.cursor, 5, "a fresh tX re-finds the adjacent X");
+    }
+
     #[test]
     fn find_char_on_line_forward_and_backward() {
         let (mut e, mut c) = ed("hello world\nfoobar");
@@ -6829,6 +6888,7 @@ mod tests {
                 forward: true,
                 before: false,
                 inclusive: false,
+                repeat: false,
             },
             10,
             &mut c,
@@ -6841,6 +6901,7 @@ mod tests {
                 forward: true,
                 before: false,
                 inclusive: false,
+                repeat: false,
             },
             10,
             &mut c,
@@ -6853,6 +6914,7 @@ mod tests {
                 forward: false,
                 before: false,
                 inclusive: false,
+                repeat: false,
             },
             10,
             &mut c,
@@ -6865,6 +6927,7 @@ mod tests {
                 forward: true,
                 before: true,
                 inclusive: false,
+                repeat: false,
             },
             10,
             &mut c,
@@ -6878,6 +6941,7 @@ mod tests {
                 forward: true,
                 before: false,
                 inclusive: false,
+                repeat: false,
             },
             10,
             &mut c,
