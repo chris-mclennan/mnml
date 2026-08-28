@@ -533,6 +533,47 @@ impl VimInputHandler {
         ) || matches!(op, Repeat(_, inner) if Self::touches_clipboard(inner))
     }
 
+    /// Map an ARROW / Home / End key **plus its modifiers** to a motion.
+    ///
+    /// Deliberately separate from [`Self::motion`], which is also the
+    /// operator-pending table (`d` + key) where `h`/`l`/`w` matter and
+    /// modifiers don't — that function takes only a `KeyCode`, and that
+    /// is exactly the bug: vim mode threw the modifiers away, so every
+    /// word- and line-motion chord collapsed to a single cell and
+    /// `Ctrl+←/→` was dead outright (guarded off by the `!ctrl` gate on
+    /// the plain-motion path). Meanwhile `input/standard.rs` handled all
+    /// of them correctly two files over. #1213 / #1208.
+    ///
+    /// Word motion accepts Ctrl **or** Option/Alt everywhere rather than
+    /// per-platform: macOS gives Ctrl+←/→ to Mission Control so Option is
+    /// the only chord that arrives, Windows/Linux use Ctrl — and a chord
+    /// that works on one platform shouldn't be dead on the other. The
+    /// Shift arms are vim's own (`:h <S-Right>`): Shift+←/→ are `b`/`w`
+    /// and Shift+↑/↓ are page up/down.
+    fn modified_motion(key: KeyEvent) -> Option<EditOp> {
+        use EditOp::*;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let sup = key.modifiers.contains(KeyModifiers::SUPER);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        Some(match key.code {
+            // Cmd = line motion (macOS). `^` rather than `0` — vim's
+            // own smart-home target, and where `I` starts.
+            KeyCode::Left if sup => MoveLineFirstNonWs,
+            KeyCode::Right if sup => MoveLineLastChar,
+            KeyCode::Left if ctrl || alt => MoveWordLeft,
+            KeyCode::Right if ctrl || alt => MoveWordRight,
+            KeyCode::Left if shift => MoveWordLeft,
+            KeyCode::Right if shift => MoveWordRight,
+            KeyCode::Up if shift => PageUp,
+            KeyCode::Down if shift => PageDown,
+            // Ctrl+Home / Ctrl+End — buffer ends, as everywhere else.
+            KeyCode::Home if ctrl || sup => MoveBufferStart,
+            KeyCode::End if ctrl || sup => MoveBufferEnd,
+            _ => return None,
+        })
+    }
+
     /// Map a key to a pure cursor motion (used standalone and after an operator).
     /// `None` ⇒ not a motion.
     fn motion(code: KeyCode) -> Option<EditOp> {
@@ -827,6 +868,14 @@ impl VimInputHandler {
     fn handle_replace(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
         use EditOp::*;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // #1213 — modifier-aware arrows before anything else reads a
+        // bare `key.code`. Ctrl/Option + ←→ is word motion, Cmd + ←→ is
+        // line motion, Shift + arrows are vim's own `b`/`w`/page. Without
+        // this every one of them collapsed to a single cell here, while
+        // `input/standard.rs` handled them correctly.
+        if let Some(m) = Self::modified_motion(key) {
+            return InputResult::Ops(vec![m]);
+        }
         match key.code {
             KeyCode::Esc => {
                 self.enter_normal();
@@ -867,6 +916,14 @@ impl VimInputHandler {
                 KeyCode::Esc => InputResult::Consumed,
                 _ => InputResult::Consumed,
             };
+        }
+        // #1213 — modifier-aware arrows before anything else reads a
+        // bare `key.code`. Ctrl/Option + ←→ is word motion, Cmd + ←→ is
+        // line motion, Shift + arrows are vim's own `b`/`w`/page. Without
+        // this every one of them collapsed to a single cell here, while
+        // `input/standard.rs` handled them correctly.
+        if let Some(m) = Self::modified_motion(key) {
+            return InputResult::Ops(vec![m]);
         }
         // Insert-mode `Ctrl+R <reg>` — paste the named register inline.
         // Was set on the previous keystroke (see the Ctrl+R arm below).
@@ -2725,6 +2782,16 @@ impl VimInputHandler {
         // Skip when ctrl is held — chords like `Ctrl+W` / `Ctrl+H` would
         // otherwise misfire as `w` / `h` motions before the modifier arms
         // below get a chance.
+        // #1213 — modifier-aware arrows FIRST. The plain-motion path
+        // below is gated on `!ctrl` (so `Ctrl+W` doesn't misfire as a
+        // `w` motion), which also made `Ctrl+←/→` and `Ctrl+Home/End`
+        // dead keys in NORMAL. This table reads the modifiers instead of
+        // discarding them, and honours the pending count like any motion.
+        if let Some(m) = Self::modified_motion(key) {
+            let n = self.count1();
+            self.reset_pending();
+            return InputResult::Ops(Self::repeated(m, n));
+        }
         if !ctrl && let Some(m) = Self::motion(key.code) {
             let n = self.count1();
             self.reset_pending();
@@ -3612,6 +3679,14 @@ impl VimInputHandler {
             }
         }
 
+        // #1213 — modifier-aware arrows first, so Ctrl/Option + arrow
+        // extends the selection by a WORD and Cmd + arrow to the line
+        // edge, instead of one cell.
+        if let Some(m) = Self::modified_motion(key) {
+            let n = self.count1();
+            self.count = None;
+            return InputResult::Ops(Self::repeated(m, n));
+        }
         if let Some(m) = Self::motion(key.code) {
             let n = self.count1();
             self.count = None;
@@ -3836,6 +3911,12 @@ impl VimInputHandler {
             let d = c as u32 - '0' as u32;
             self.count = Some(self.count.unwrap().saturating_mul(10).saturating_add(d));
             return InputResult::Consumed;
+        }
+        // #1213 — see `handle_visual`; same reasoning for the rectangle.
+        if let Some(m) = Self::modified_motion(key) {
+            let n = self.count1();
+            self.count = None;
+            return InputResult::Ops(Self::repeated(m, n));
         }
         if let Some(m) = Self::motion(key.code) {
             // Motions extend the rectangle (the cursor moves; the anchor
@@ -4284,6 +4365,80 @@ mod tests {
         match r {
             InputResult::Ops(v) => v,
             _ => panic!("expected Ops"),
+        }
+    }
+
+    fn kmod(code: KeyCode, m: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, m)
+    }
+
+    /// #1213 — `vim.rs` read `key.code` and discarded `key.modifiers`
+    /// for every navigation key, so on a Mac every word- and
+    /// line-motion chord collapsed to a single cell and `Ctrl+←/→` and
+    /// `Ctrl+Home/End` were dead outright. `input/standard.rs` handled
+    /// all of them correctly two files over — this pins vim mode to the
+    /// same table so the two handlers can't drift again.
+    #[test]
+    fn modified_arrows_are_word_and_line_motions_not_single_cells() {
+        use KeyModifiers as M;
+        let cases: [(KeyCode, M, EditOp); 10] = [
+            // Word motion — Ctrl on Win/Linux, Option on macOS, both
+            // accepted everywhere.
+            (KeyCode::Right, M::CONTROL, EditOp::MoveWordRight),
+            (KeyCode::Left, M::CONTROL, EditOp::MoveWordLeft),
+            (KeyCode::Right, M::ALT, EditOp::MoveWordRight),
+            (KeyCode::Left, M::ALT, EditOp::MoveWordLeft),
+            // Cmd = line motion.
+            (KeyCode::Right, M::SUPER, EditOp::MoveLineLastChar),
+            (KeyCode::Left, M::SUPER, EditOp::MoveLineFirstNonWs),
+            // vim's own `<S-Right>` / `<S-Down>`.
+            (KeyCode::Right, M::SHIFT, EditOp::MoveWordRight),
+            (KeyCode::Down, M::SHIFT, EditOp::PageDown),
+            // Buffer ends.
+            (KeyCode::Home, M::CONTROL, EditOp::MoveBufferStart),
+            (KeyCode::End, M::CONTROL, EditOp::MoveBufferEnd),
+        ];
+        for (code, m, want) in cases {
+            let mut v = h();
+            let got = ops(v.handle_key(kmod(code, m), &ctx()));
+            assert_eq!(
+                got,
+                vec![want.clone()],
+                "NORMAL {code:?}+{m:?} should be {want:?}"
+            );
+        }
+    }
+
+    /// The same chords must work from INSERT — that is where a typist
+    /// actually reaches for word-jump.
+    #[test]
+    fn modified_arrows_work_in_insert_mode_too() {
+        use KeyModifiers as M;
+        for (code, m, want) in [
+            (KeyCode::Right, M::CONTROL, EditOp::MoveWordRight),
+            (KeyCode::Left, M::ALT, EditOp::MoveWordLeft),
+            (KeyCode::Left, M::SUPER, EditOp::MoveLineFirstNonWs),
+        ] {
+            let mut v = h();
+            v.handle_key(k('i'), &ctx()); // NORMAL -> INSERT
+            let got = ops(v.handle_key(kmod(code, m), &ctx()));
+            assert_eq!(got, vec![want.clone()], "INSERT {code:?}+{m:?}");
+        }
+    }
+
+    /// The complement: a BARE arrow is still one cell. Without this the
+    /// fix could be "every arrow is a word motion" and the two tests
+    /// above would still pass.
+    #[test]
+    fn bare_arrows_still_move_one_cell() {
+        for (code, want) in [
+            (KeyCode::Right, EditOp::MoveRight),
+            (KeyCode::Left, EditOp::MoveLeft),
+            (KeyCode::Up, EditOp::MoveUp),
+            (KeyCode::Down, EditOp::MoveDown),
+        ] {
+            let mut v = h();
+            assert_eq!(ops(v.handle_key(kc(code), &ctx())), vec![want.clone()]);
         }
     }
 
