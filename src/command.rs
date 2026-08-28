@@ -32,15 +32,22 @@ pub type CommandFn = fn(&mut App);
 //              stays nav (VS Code's own Win/Linux binding).
 // Ctrl+- is offered on every platform so the chord is portable muscle
 // memory even where Alt+← still works.
+//
+// Both spellings of forward are declared because terminals disagree on
+// what Ctrl+Shift+- reports: under the kitty protocol (ghostty, kitty,
+// WezTerm) it disambiguates to `-` + CONTROL|SHIFT, while legacy
+// terminals fold the shift into the character and send `_`. Declaring
+// one of them would leave the chord dead on the other half of the
+// world with nothing on screen to say so.
 #[cfg(target_os = "macos")]
 const NAV_BACK_KEYS: &[&str] = &["ctrl+minus"];
 #[cfg(not(target_os = "macos"))]
 const NAV_BACK_KEYS: &[&str] = &["alt+left", "ctrl+minus"];
 
 #[cfg(target_os = "macos")]
-const NAV_FORWARD_KEYS: &[&str] = &["ctrl+shift+minus"];
+const NAV_FORWARD_KEYS: &[&str] = &["ctrl+shift+minus", "ctrl+underscore"];
 #[cfg(not(target_os = "macos"))]
-const NAV_FORWARD_KEYS: &[&str] = &["alt+right", "ctrl+shift+minus"];
+const NAV_FORWARD_KEYS: &[&str] = &["alt+right", "ctrl+shift+minus", "ctrl+underscore"];
 
 #[derive(Clone)]
 pub struct Command {
@@ -7735,6 +7742,42 @@ mod chord_ownership_tests {
                 !c.keys.is_empty(),
                 "{id} has no keybinding — it would be palette-only"
             );
+            // Non-empty was not enough. #1220: the split shipped
+            // `ctrl+minus` / `ctrl+shift+minus`, which `parse_key_spec`
+            // rejected — the keymap warned on stderr and dropped the
+            // chord, so nav was palette-only on macOS anyway while this
+            // test stayed green.
+            assert!(
+                c.keys
+                    .iter()
+                    .any(|k| crate::input::keymap::parse_key_seq(k).is_some()),
+                "{id} declares only unparseable keys {:?} — the keymap \
+                 drops them and the command is palette-only",
+                c.keys
+            );
         }
+    }
+
+    /// The general form of the above: a declared chord that doesn't
+    /// parse is dropped with nothing but a startup eprintln, which
+    /// nobody reads. Catch it at build time for the whole registry.
+    #[test]
+    fn every_declared_chord_parses() {
+        let mut bad: Vec<String> = Vec::new();
+        for c in registry().all() {
+            for k in c.keys {
+                // Chords are space-separated sequences (`space f f`);
+                // `parse_key_seq` is what the keymap actually calls.
+                if crate::input::keymap::parse_key_seq(k).is_none() {
+                    bad.push(format!("{} → `{k}`", c.id));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "these commands declare keys the keymap can't parse, so the \
+             chords are silently dropped:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }

@@ -429,6 +429,26 @@ fn key_code(token: &str) -> Option<KeyCode> {
         "f10" => KeyCode::F(10),
         "f11" => KeyCode::F(11),
         "f12" => KeyCode::F(12),
+        // Named punctuation. The single-char fallback below already
+        // accepts `ctrl+-`, but a `+`-separated spec makes the literal
+        // form awkward to read and impossible for `+` itself, so the
+        // words are the spellable route. #1220 (2026-08-28): `nav.back`
+        // shipped declaring `ctrl+minus`, which fell through to the
+        // fallback, hit the multi-char guard, and left the command with
+        // no chord at all on macOS — where it is the only nav binding.
+        "minus" | "dash" => KeyCode::Char('-'),
+        "underscore" => KeyCode::Char('_'),
+        "plus" => KeyCode::Char('+'),
+        "equal" | "equals" => KeyCode::Char('='),
+        "comma" => KeyCode::Char(','),
+        "period" | "dot" => KeyCode::Char('.'),
+        "slash" => KeyCode::Char('/'),
+        "backslash" => KeyCode::Char('\\'),
+        "semicolon" => KeyCode::Char(';'),
+        "quote" => KeyCode::Char('\''),
+        "grave" | "backtick" => KeyCode::Char('`'),
+        "bracketleft" => KeyCode::Char('['),
+        "bracketright" => KeyCode::Char(']'),
         _ => {
             let mut chars = token.chars();
             let c = chars.next()?;
@@ -443,6 +463,37 @@ fn key_code(token: &str) -> Option<KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1220 — `ctrl+minus` shipped as a default binding and the
+    /// parser rejected it (multi-char, not a known name), so nav.back
+    /// had no chord at all on macOS where it is the only one declared.
+    #[test]
+    fn punctuation_names_parse_and_agree_with_the_literal_form() {
+        for (name, literal) in [
+            ("minus", "-"),
+            ("dash", "-"),
+            ("underscore", "_"),
+            ("equal", "="),
+            ("comma", ","),
+            ("period", "."),
+            ("slash", "/"),
+            ("semicolon", ";"),
+            ("grave", "`"),
+            ("bracketleft", "["),
+            ("bracketright", "]"),
+        ] {
+            assert_eq!(
+                parse_key_spec(&format!("ctrl+{name}")),
+                parse_key_spec(&format!("ctrl+{literal}")),
+                "`{name}` should name the same key as `{literal}`"
+            );
+        }
+        // `plus` has no literal form — `ctrl++` splits on the wrong `+`.
+        assert_eq!(
+            parse_key_spec("ctrl+plus").unwrap().code,
+            KeyCode::Char('+')
+        );
+    }
 
     #[test]
     fn parses_modified_and_named() {
