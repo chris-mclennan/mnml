@@ -1623,6 +1623,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.context_menu = Some(menu);
         return;
     }
+    // #1222 (2026-08-28) — `+N hidden` chip in a per-leaf tab strip.
+    // Click → focus that leaf + open the buffer picker, which lists
+    // every open pane whether or not it fit on the strip. The chip
+    // shipped as paint-only, so the affordance whose whole job is to
+    // say "these tabs still exist" was the one place you couldn't
+    // reach them from.
+    if let Some(&(_, leaf_active)) = app
+        .rects
+        .split_tab_hidden_chips
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.active = Some(leaf_active);
+        app.focus = crate::focus::Focus::Pane;
+        app.open_buffer_picker();
+        return;
+    }
     // Claude 2×2 auto-tile placeholder card — click fills the BR
     // quadrant with a fresh Claude session.
     if let Some(r) = app.rects.ai_placeholder_card

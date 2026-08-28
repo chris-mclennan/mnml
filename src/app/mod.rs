@@ -2974,6 +2974,13 @@ pub struct PaneRects {
     /// the user can add another buffer as a tab in the same leaf.
     /// one-tab-type 2026-07-18.
     pub split_tab_plus_buttons: Vec<(Rect, PaneId)>,
+    /// `(rect, leaf_active_pane)` for the `+N hidden` chip on a
+    /// per-leaf tab strip. Click → focus that leaf + open the buffer
+    /// picker, which lists every tab including the hidden ones.
+    /// #1222 (2026-08-28): the chip shipped as pure paint with no
+    /// rect, so the one affordance announcing "your tabs are still
+    /// here" was a dead end — user hit `+11 hidden` with no way back.
+    pub split_tab_hidden_chips: Vec<(Rect, PaneId)>,
     /// `+` chip on the empty-state top row (when there are no
     /// panes). Click → open the file picker so the user can pick
     /// their first pane. Same visual as split_tab_plus_buttons but
@@ -3372,6 +3379,7 @@ impl PaneRects {
         check_vec!(split_tab_chips);
         check_vec!(split_tab_close);
         check_vec!(split_tab_plus_buttons);
+        check_vec!(split_tab_hidden_chips);
         check_vec!(pane_bodies);
         check_vec!(pty_tabs);
         check_vec!(context_menu_items);

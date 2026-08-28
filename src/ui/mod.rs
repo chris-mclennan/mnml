@@ -1370,6 +1370,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // this frame.
     app.rects.leaf_tab_arrows.clear();
     app.rects.split_tab_plus_buttons.clear();
+    app.rects.split_tab_hidden_chips.clear();
     app.rects.ai_placeholder_card = None;
     app.rects.tab_insert_hint = None;
     // Note: `split_strip_buttons` / `split_strip_term_buttons` are
@@ -4844,6 +4845,48 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
 /// matching the top bufferline. Layout math (overflow, gap
 /// between chips, right-cluster reservation) stays here.
 /// Click chip → switch active. Click × → close that tab.
+/// Build the chip description for one tab of a per-leaf strip.
+///
+/// Shared by the paint loop and the #1222 scroll clamp, which measures
+/// chips (via `tab_chip_spans`) without drawing them. Keeping one
+/// builder means the clamp can't drift from what actually gets painted
+/// — a measurement that disagreed with the render would strand tabs in
+/// a different way than the bug it fixes.
+fn tab_chip_inputs_for(
+    app: &App,
+    id: crate::layout::PaneId,
+    active: crate::layout::PaneId,
+    name_cap: usize,
+) -> Option<crate::ui::bufferline::TabChipInputs> {
+    use crate::pane::Pane;
+    let nerd = !app.config.ui.ascii_icons;
+    let pane = app.panes.get(id)?;
+    let (glyph, icon_color) = icon_for_pane(app, pane, nerd);
+    let verb_split = if matches!(pane, Pane::Request(_)) {
+        crate::ui::bufferline::split_http_verb(&pane.title())
+    } else {
+        None
+    };
+    let (diag_chip, diag_severity) =
+        crate::ui::bufferline::diag_chip_for(pane, &app.config.ui.bufferline_diag_style);
+    Some(crate::ui::bufferline::TabChipInputs {
+        id,
+        glyph,
+        icon_color,
+        name: pane.title(),
+        is_active: id == active,
+        is_dirty: pane.is_dirty(),
+        is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),
+        is_preview: matches!(pane, Pane::Editor(b) if b.is_preview)
+            || matches!(pane, Pane::Request(rp) if rp.is_preview),
+        is_hovered: app.hovered_bufferline_tab == Some(id),
+        diag_chip,
+        diag_severity,
+        verb_split,
+        name_cap,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_leaf_tab_strip_with_hidden(
     frame: &mut Frame,
@@ -4854,7 +4897,6 @@ fn paint_leaf_tab_strip_with_hidden(
     strip: Rect,
     leaf_focused: bool,
 ) {
-    use crate::pane::Pane;
     use ratatui::style::{Modifier, Style};
     use ratatui::text::{Line, Span};
     use ratatui::widgets::Paragraph;
@@ -4981,44 +5023,68 @@ fn paint_leaf_tab_strip_with_hidden(
     // Realistic at 4+ splits deep. Flagged in pre-push review.
     let arrows_x = tabs_right.saturating_sub(arrows_w).max(strip.x);
     let tabs_right = arrows_x.saturating_sub(PLUS_RESERVE).max(strip.x);
-    let scroll = app
+    // #1222 (2026-08-28) — clamp a stale offset before painting.
+    //
+    // The offset outlives the strip it was scrolled on: the left panel
+    // widens, a section switch rebuilds the leaf (`open_git_graph`
+    // replaces the layout wholesale), a tab closes. Any of those can
+    // leave `scroll` pointing near the end of a strip that now has room
+    // for everything — one chip painted, `+11 hidden`, and a wall of
+    // empty cells to its right. That is exactly what the user hit:
+    // "nothing i can do to get those back".
+    //
+    // So: never scroll further than the offset that still fills the
+    // strip. Measure the chips from the last one backwards to find the
+    // smallest offset whose tail still reaches the right edge, and
+    // clamp to it. Self-healing — it doesn't matter which of the causes
+    // above stranded the offset. The clamp is written back so the
+    // chevrons and their click handlers see the same number.
+    let raw_scroll = app
         .leaf_tab_scroll
         .get(&leaf_key)
         .copied()
         .unwrap_or(0)
         .min(tab_count.saturating_sub(1));
+    let scroll = if raw_scroll > 0 {
+        let room = tabs_right.saturating_sub(strip.x);
+        let mut used: u16 = 0;
+        let mut max_scroll = raw_scroll;
+        for (idx, &id) in tabs.iter().enumerate().rev() {
+            let Some(inputs) = tab_chip_inputs_for(app, id, active, chip_max_name_w) else {
+                continue;
+            };
+            let Some((_, w)) = crate::ui::bufferline::tab_chip_spans(&inputs, strip_bg, room, nerd)
+            else {
+                break;
+            };
+            // +1 for the inter-chip gap, charged to every chip but the
+            // first one placed.
+            let next = used + w + if used > 0 { 1 } else { 0 };
+            if next > room {
+                break;
+            }
+            used = next;
+            max_scroll = idx;
+            if idx == 0 {
+                break;
+            }
+        }
+        let clamped = raw_scroll.min(max_scroll);
+        if clamped != raw_scroll {
+            app.leaf_tab_scroll.insert(leaf_key, clamped);
+        }
+        clamped
+    } else {
+        0
+    };
 
     let mut painted_count: usize = 0;
     for &id in tabs.iter().skip(scroll) {
         if chip_x >= tabs_right {
             break;
         }
-        let Some(pane) = app.panes.get(id) else {
+        let Some(inputs) = tab_chip_inputs_for(app, id, active, chip_max_name_w) else {
             continue;
-        };
-        let (glyph, icon_color) = icon_for_pane(app, pane, nerd);
-        let verb_split = if matches!(pane, Pane::Request(_)) {
-            crate::ui::bufferline::split_http_verb(&pane.title())
-        } else {
-            None
-        };
-        let (diag_chip, diag_severity) =
-            crate::ui::bufferline::diag_chip_for(pane, &app.config.ui.bufferline_diag_style);
-        let inputs = crate::ui::bufferline::TabChipInputs {
-            id,
-            glyph,
-            icon_color,
-            name: pane.title(),
-            is_active: id == active,
-            is_dirty: pane.is_dirty(),
-            is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),
-            is_preview: matches!(pane, Pane::Editor(b) if b.is_preview)
-                || matches!(pane, Pane::Request(rp) if rp.is_preview),
-            is_hovered: app.hovered_bufferline_tab == Some(id),
-            diag_chip,
-            diag_severity,
-            verb_split,
-            name_cap: chip_max_name_w,
         };
         let avail = tabs_right.saturating_sub(chip_x);
         let Some(rects) = crate::ui::bufferline::paint_tab_chip(
@@ -5200,6 +5266,12 @@ fn paint_leaf_tab_strip_with_hidden(
                 ))),
                 chip_rect,
             );
+            // #1222 — the chip exists to say "your tabs are still
+            // here", so it has to be able to show them. Click opens
+            // the buffer picker, which lists every pane regardless of
+            // what fit on the strip. Registered only when the chip
+            // actually painted, so the rect can't outlive its glyph.
+            app.rects.split_tab_hidden_chips.push((chip_rect, active));
         }
     }
 
@@ -5840,14 +5912,27 @@ mod leaf_tab_scroll_tests {
     }
 
     /// As `paint_strip_at`, but also feeds `hidden` to the
-    /// `+N hidden` chip and hands back the rendered buffer. That chip
-    /// registers no rect (it isn't clickable), so reading cells is the
-    /// only way to assert where it landed.
+    /// `+N hidden` chip and hands back the rendered buffer, for
+    /// assertions about where the chip landed on screen.
     fn paint_strip_full(
         x: u16,
         width: u16,
         n: usize,
         hidden: usize,
+    ) -> (App, ratatui::buffer::Buffer) {
+        paint_strip_seeded(x, width, n, hidden, 0)
+    }
+
+    /// As `paint_strip_full`, but seeds the leaf's horizontal tab
+    /// scroll before painting — the #1222 setup, where an offset
+    /// scrolled on a narrower strip is still in the map when a wider
+    /// one paints.
+    fn paint_strip_seeded(
+        x: u16,
+        width: u16,
+        n: usize,
+        hidden: usize,
+        scroll: usize,
     ) -> (App, ratatui::buffer::Buffer) {
         let d = tempfile::tempdir().unwrap();
         for i in 0..n {
@@ -5867,6 +5952,12 @@ mod leaf_tab_scroll_tests {
             .map(|t| t.to_vec())
             .unwrap_or_default();
         let active = app.active.unwrap();
+        if scroll > 0
+            && let Some(&first) = tabs.first()
+        {
+            // Keyed by the leaf's FIRST tab — see `App::leaf_tab_scroll`.
+            app.leaf_tab_scroll.insert(first, scroll);
+        }
         let mut term = Terminal::new(TestBackend::new(x + width, 1)).unwrap();
         term.draw(|f| {
             let strip = Rect {
@@ -5876,11 +5967,70 @@ mod leaf_tab_scroll_tests {
                 height: 1,
             };
             app.rects.leaf_tab_arrows.clear();
+            app.rects.split_tab_hidden_chips.clear();
             paint_leaf_tab_strip_with_hidden(f, &mut app, active, &tabs, hidden, strip, true);
         })
         .unwrap();
         let buf = term.backend().buffer().clone();
         (app, buf)
+    }
+
+    /// #1222 — the bug the user hit: the git panel rebuilt a leaf while
+    /// a scroll offset from an earlier, narrower strip was still in the
+    /// map. The strip painted ONE chip, reported `+11 hidden`, and left
+    /// the rest of its width blank — "nothing i can do to get those
+    /// back". A stale offset must be clamped back to the smallest one
+    /// whose tail still fills the strip.
+    #[test]
+    fn a_stale_scroll_offset_is_clamped_when_the_strip_has_room() {
+        let (app, _) = paint_strip_seeded(0, 200, 4, 0, 3);
+        let painted = app.rects.split_tab_chips.len();
+        assert_eq!(
+            painted,
+            4,
+            "a 200-cell strip fits all 4 tabs; the stale offset stranded {} of them",
+            4 - painted
+        );
+        let first = app.rects.split_tab_chips[0].2;
+        assert_eq!(
+            app.leaf_tab_scroll.get(&first).copied(),
+            Some(0),
+            "the clamp must be written back so the chevrons agree with the paint"
+        );
+    }
+
+    /// The complement — a genuine offset on a strip too narrow to hold
+    /// the tail is left alone. Without this, "clamp to 0 always" would
+    /// pass the test above and break scrolling outright.
+    #[test]
+    fn a_scroll_offset_that_the_strip_still_needs_is_left_alone() {
+        let (app, _) = paint_strip_seeded(0, 40, 8, 0, 4);
+        let first_painted = app.rects.split_tab_chips.first().map(|(_, _, id)| *id);
+        assert!(
+            first_painted.is_some(),
+            "narrow strip should still paint at least one chip"
+        );
+        let leftmost = app
+            .layout()
+            .leaf_containing(app.active.unwrap())
+            .and_then(|t| t.first().copied())
+            .unwrap();
+        let kept = app.leaf_tab_scroll.get(&leftmost).copied().unwrap_or(0);
+        assert!(
+            kept > 0,
+            "a 40-cell strip can't show 8 tabs, so the offset is real and must survive"
+        );
+    }
+
+    /// #1222 — the chip announcing "your tabs are still here" has to be
+    /// able to show them. It shipped as paint-only with no rect.
+    #[test]
+    fn the_hidden_chip_registers_a_click_rect() {
+        let (app, _) = paint_strip_full(0, 200, 2, 5);
+        assert!(
+            !app.rects.split_tab_hidden_chips.is_empty(),
+            "`+5 hidden` painted but registered no click target"
+        );
     }
 
     /// #1209 — the regression that motivated the feature. A strip too
