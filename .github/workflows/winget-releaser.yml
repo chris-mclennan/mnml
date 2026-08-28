@@ -35,7 +35,11 @@ on:
 
 jobs:
   winget:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Only act on a workflow_run that came from a `v*` TAG. See
+    # bump-homebrew-tap.yml — release.yml also runs on pull_request, so
+    # the `head_branch` fallback in the version expression below picked
+    # up PR branch names.
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish to winget-pkgs
