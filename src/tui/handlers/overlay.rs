@@ -833,8 +833,7 @@ pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
         // pre-fix terminal behavior).
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&'r') => {
             if key.modifiers.contains(KeyModifiers::SHIFT) || c == 'R' {
-                app.config = crate::config::Config::default();
-                app.toast("settings: all reset to defaults");
+                app.settings_reset_all();
             } else {
                 app.settings_reset_row();
             }

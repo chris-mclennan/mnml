@@ -1697,11 +1697,9 @@ impl App {
             return;
         }
         if row.row_key() == Some(RESET_ALL_KEY) {
-            // Wipe the live config back to defaults. `original` stays
-            // — Esc would still revert to the pre-open snapshot if
-            // the user changes their mind.
-            self.config = Config::default();
-            self.toast("settings: all reset to defaults");
+            // `original` stays — Esc still reverts to the pre-open
+            // snapshot if the user changes their mind.
+            self.settings_reset_all();
             return;
         }
         // Text + Color rows: Enter starts greedy edit mode. The next
@@ -1942,6 +1940,53 @@ impl App {
 
     /// `r` on the focused row — reset just this row's setting to its
     /// `Config::default()` value.
+    /// `R` — reset every setting the settings UI owns to its default,
+    /// and persist each one, exactly as `r` does for a single row.
+    ///
+    /// This used to be `self.config = Config::default()`, which had two
+    /// problems the R17 keyboard round caught (KB-06):
+    ///
+    /// 1. **Blast radius.** It reset the entire `Config`, not the
+    ///    settings-UI rows — `[[workspaces]]`, `[keys.*]`,
+    ///    `[[bitbucket.repos]]`, integration state, all of it, from one
+    ///    unmodified keystroke. CLAUDE.md's family-settings convention
+    ///    is explicit that this UI never edits those; `R` did anyway.
+    ///    It also silently flipped `[ipc] write_screen` back to false
+    ///    mid-session, which blinds every headless/`.test` runner.
+    /// 2. **It didn't persist.** `r` on one row writes the default into
+    ///    `<workspace>/.mnml/config.toml`; `R` wrote nothing, so the
+    ///    toast promised a reset that evaporated on restart. Two
+    ///    adjacent keys, opposite durability.
+    ///
+    /// Now it walks the same default-derived row list `r` uses, so a
+    /// key is reset by `R` if and only if the UI shows a row for it.
+    /// `Esc` still reverts everything via the open-time snapshot.
+    pub fn settings_reset_all(&mut self) {
+        let default_cfg = Config::default();
+        let default_items = build_settings(&default_cfg);
+        let mut changed_keys: Vec<&'static str> = Vec::new();
+        for item in &default_items {
+            let Some(key) = item.row_key() else { continue };
+            if key == RESET_ALL_KEY {
+                continue;
+            }
+            let changed = match item {
+                SettingItem::Row(d) => apply_setting(&mut self.config, key, d.current_idx),
+                SettingItem::Number(d) => apply_number_setting(&mut self.config, key, d.value),
+                SettingItem::Text(d) => apply_text_setting(&mut self.config, key, &d.value),
+                SettingItem::Color(d) => apply_text_setting(&mut self.config, key, &d.value),
+                _ => false,
+            };
+            if changed {
+                changed_keys.push(key);
+            }
+        }
+        for key in changed_keys {
+            self.persist_setting_to_workspace(key);
+        }
+        self.toast("settings: all rows reset to defaults");
+    }
+
     pub fn settings_reset_row(&mut self) {
         let Some(state) = self.settings_overlay.as_ref() else {
             return;
@@ -2160,6 +2205,76 @@ mod tests {
         app.settings_text_edit_cancel();
         assert!(!app.settings_text_edit_active());
         assert_eq!(app.config.ui.theme, original);
+    }
+
+    /// KB-06 (R17 keyboard round) — `R` used to do
+    /// `self.config = Config::default()`, resetting the ENTIRE config
+    /// rather than the settings-UI rows. One unmodified keystroke wiped
+    /// `[[workspaces]]`, `[keys.*]`, integration state — the exact
+    /// things CLAUDE.md's family-settings convention says this UI never
+    /// edits — and silently flipped `[ipc] write_screen` off, which
+    /// blinds every headless runner mid-session.
+    #[test]
+    fn reset_all_leaves_config_the_settings_ui_does_not_own_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+
+        // Things no settings row shows. `[[workspaces]]` is the case
+        // CLAUDE.md's family-settings convention names explicitly;
+        // `write_screen` is the one with teeth, because headless
+        // force-enables it at startup and a reset used to turn it back
+        // off underneath a running test harness.
+        app.config.ipc.write_screen = true;
+        app.config.workspaces.push(crate::config::WorkspaceConfig {
+            name: "scratch".into(),
+            path: d.path().to_path_buf(),
+            group: None,
+        });
+        let workspaces_before = app.config.workspaces.len();
+
+        // And something a row DOES own, moved off its default.
+        let default_pair = Config::default().editor.auto_pair;
+        app.config.editor.auto_pair = !default_pair;
+
+        app.open_settings_overlay();
+        app.settings_reset_all();
+
+        assert!(
+            app.config.ipc.write_screen,
+            "reset-all clobbered `[ipc] write_screen`, which no settings row shows"
+        );
+        assert_eq!(
+            app.config.workspaces.len(),
+            workspaces_before,
+            "reset-all wiped `[[workspaces]]`, which this UI never edits"
+        );
+        assert_eq!(
+            app.config.editor.auto_pair, default_pair,
+            "reset-all should still reset the rows it DOES own"
+        );
+    }
+
+    /// The other half of KB-06: `r` on one row persists to the
+    /// workspace file and `R` wrote nothing, so the toast promised a
+    /// reset that evaporated on restart.
+    #[test]
+    fn reset_all_persists_like_a_single_row_reset() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.config.editor.auto_pair = !Config::default().editor.auto_pair;
+        app.open_settings_overlay();
+        app.settings_reset_all();
+
+        let ws_cfg = d.path().join(".mnml/config.toml");
+        assert!(
+            ws_cfg.exists(),
+            "reset-all wrote no workspace config — the reset dies on restart"
+        );
+        let text = std::fs::read_to_string(&ws_cfg).unwrap();
+        assert!(
+            text.contains("auto_pair"),
+            "expected the reset row persisted; got:\n{text}"
+        );
     }
 
     #[test]
