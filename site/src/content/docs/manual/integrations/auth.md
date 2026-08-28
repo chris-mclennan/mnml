@@ -198,10 +198,18 @@ if let Some(integ_id) = profile.integration_id.clone() {
 
 The `integration_auth_env` builder walks in two passes:
 
-1. **Pass 1 — every OTHER installed integration** with `[[auth]]` fields whose `env_fallback` is set and whose `[auth_values]` entry is non-empty. Lower priority — first-writer wins on env-var collisions across integrations.
+1. **Pass 1 — every OTHER installed integration** with `[[auth]]` fields whose `env_fallback` is set and whose `[auth_values]` entry is non-empty. Lower priority — first-writer wins on env-var collisions across integrations. **Skipped entirely unless the receiving integration declares at least one `[[auth]]` field of its own** (see below).
 2. **Pass 2 — the CURRENT integration's** auth values. Overwrites any conflicting keys from pass 1.
 
 Cross-integration sharing exists because many siblings read env vars that another sibling owns — Jira's "Fix Versions" view reads `$BITBUCKET_ACCESS_TOKEN` that the Bitbucket sibling configures; git-adjacent tools read `$GITHUB_TOKEN` that the GitHub sibling configures. Without pass 1, each consuming sibling would have to redeclare every foreign env var in its own `[[auth]]` block, and users would type the same token twice.
+
+### Who receives the shared pool
+
+Pass 1 answers "which env-var *names* may be shared". The receiver gate answers "which *spawns* may receive them", and it exists because `run_external_tool` stamps an integration id on a Pty purely so the pane tab can resolve a chip glyph — which meant launching `htop`, `btop`, `ncdu`, `lazygit`, `gh` or `dust` handed that process every credential mnml holds. `htop` displays process environments; `lazygit` runs arbitrary git hooks.
+
+**An integration receives the foreign pool only if its own manifest declares `[[auth]]`.** Declaring no credentials is a statement that you need none. The case the cross-share was built for is preserved — `jira_fix_versions.toml` does declare `[[auth]]` — while `btop` / `iftop` / `browser` / `vscode` / `github` / `amplify` / `codebuild`, which declare none and reference no env var in their manifests, lose nothing they were using.
+
+If your integration genuinely consumes a foreign token but declares no auth of its own, declare an `[[auth]]` field naming that `env_fallback`. The value still comes from whichever integration stores it, so the user never enters it twice. A shell `export` also still reaches the child — this governs only what mnml injects.
 
 Values collide with the caller's `BinaryProfile.env` only for keys the caller hasn't already pushed — an explicit `profile.env.push(("SLACK_BOT_TOKEN", "override"))` from user code (rare) still wins. In practice mnml only pushes bridge env vars (`MNML_WORKSPACE`, `MNML_THEME`, `MNML_IPC_DIR`) before this step, so auth injection is unrestricted.
 
@@ -276,10 +284,11 @@ Only one integration's pane can be open at a time. Opening it for a different in
 
 ## Storage security
 
-Values are stored as plaintext in the manifest file today. Two guardrails:
+Values are stored as plaintext in the manifest file today. Three guardrails:
 
 - **The Configure… pane never re-renders `secret`-kind values in plaintext.** They're masked as bullet chars (`•`), capped at 40 to avoid leaking token-length metadata. This holds for values just typed in (edit-mode still masks) and for values loaded from the manifest.
-- **`~/.config/mnml/integrations/*.toml` is your own filesystem** — mode-0644 by default; adjust umask if you share the machine. mnml doesn't `chmod` the files itself.
+- **Manifests are written owner-only (`0600`)**, and so are the timestamped backups mnml keeps when it rewrites one. The backups matter as much as the live file — clearing a token from the Configure… pane would otherwise leave readable copies of it behind. Files left at `0644` by an older mnml are tightened on the next write. See [Security & hardening](/manual/security/#owner-only-writes).
+- **A workspace-supplied manifest is gated by [workspace trust](/manual/security/#workspace-trust)** before its commands, launch profiles or `[env]` are honoured at all.
 
 Phase 4 will migrate `secret`-kind values into the OS keychain (macOS Keychain, Linux libsecret, Windows DPAPI) using the same schema — the `[auth_values]` file becomes an opaque handle, the keychain holds the actual token. Manifest-authored declarations don't change.
 
