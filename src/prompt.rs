@@ -25,6 +25,8 @@ pub enum PromptKind {
     /// token. Accept writes it to `~/.config/mnml/ai_token` (chmod
     /// 600) via `App::accept_link_claude_token`.
     LinkClaudeToken,
+    // NB: if you add another prompt that takes a credential, add it to
+    // `PromptKind::is_secret` below so it renders masked.
     /// Accept ⇒ `Page.navigate` the active browser pane to the typed URL.
     BrowserNavigate,
     /// Accept ⇒ `Runtime.evaluate` the typed JS in the active browser pane.
@@ -492,6 +494,20 @@ impl Prompt {
         matches!(self.kind, PromptKind::AddWorkspace | PromptKind::FileMoveTo)
     }
 
+    /// Does this prompt hold a credential? Masked on screen if so.
+    ///
+    /// `LinkClaudeToken` takes the `claudeAiOauth` blob, which carries
+    /// a long-lived REFRESH token — not just a short-lived access one.
+    /// It was rendered in clear, so it sat in the terminal scrollback,
+    /// in any screen-share, and (when `[ipc] write_screen` is on) in
+    /// `screen.txt` on disk.
+    ///
+    /// Masking is display-only: `input` still holds the real text, so
+    /// editing, paste and submit are unaffected.
+    pub fn is_secret(&self) -> bool {
+        matches!(self.kind, PromptKind::LinkClaudeToken)
+    }
+
     /// Clear the select-all-on-first-type flag AND (if it was set)
     /// wipe the seed to empty so the next `insert_char`/`insert_str`
     /// starts fresh. Called from `insert_char`/`insert_str` before
@@ -850,6 +866,34 @@ fn split_path_for_browse(input: &str) -> (std::path::PathBuf, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_credential_prompts_are_masked() {
+        let secret = Prompt::new(PromptKind::LinkClaudeToken, "Paste token");
+        assert!(secret.is_secret());
+        for kind in [
+            PromptKind::GitCommit,
+            PromptKind::AddWorkspace,
+            PromptKind::AiAsk,
+            PromptKind::NewBranch,
+        ] {
+            assert!(
+                !Prompt::new(kind, "x").is_secret(),
+                "{kind:?} should not be masked"
+            );
+        }
+    }
+
+    #[test]
+    fn masking_does_not_alter_the_stored_value() {
+        // Display-only: the real text must still submit, or linking a
+        // token would silently break.
+        let mut p = Prompt::new(PromptKind::LinkClaudeToken, "Paste token");
+        p.insert_str("sk-ant-oat-example");
+        assert!(p.is_secret());
+        assert_eq!(p.input, "sk-ant-oat-example");
+        assert_eq!(p.caret_col(), "sk-ant-oat-example".chars().count());
+    }
 
     #[test]
     fn edits_and_caret() {
