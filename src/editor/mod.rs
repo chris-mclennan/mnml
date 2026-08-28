@@ -2757,8 +2757,13 @@ impl Editor {
                     // at cur+1 would re-find that same X and land right
                     // back where it was: `;` stalled forever. Skipping the
                     // adjacent target is vim's default (`:h cpo-;`).
-                    let skip = if repeat && before { 2 } else { 1 };
-                    let after = (cur + skip).min(le);
+                    // Walk char boundaries, never `cur + n`: a raw byte
+                    // bump lands mid-character on any line with an accent,
+                    // CJK, or emoji, and slicing there panics.
+                    let mut after = self.next_char_boundary(cur).min(le);
+                    if repeat && before {
+                        after = self.next_char_boundary(after).min(le);
+                    }
                     if let Some(off) = self.text[after..le].find(ch) {
                         let target = after + off;
                         // `f`: land on target. `t`: one *before* target.
@@ -6875,6 +6880,48 @@ mod tests {
             &mut c,
         );
         assert_eq!(e.cursor, 5, "a fresh tX re-finds the adjacent X");
+    }
+
+    /// The forward scan used to start at `cur + 1` (or `cur + 2` when
+    /// repeating a `t`) as a raw BYTE offset. `cur` is always on a char
+    /// boundary, but `cur + 1` is not when the character under the cursor
+    /// is multi-byte — and slicing a `String` at a non-boundary panics.
+    /// So `f` on any line containing an accent, CJK, or emoji took the
+    /// whole editor down. Every assertion below is a would-be panic, not
+    /// a wrong cursor position.
+    #[test]
+    fn forward_find_does_not_panic_on_multi_byte_characters() {
+        let find = |ch: char, repeat: bool, before: bool| EditOp::FindCharOnLine {
+            ch,
+            forward: true,
+            before,
+            inclusive: false,
+            repeat,
+        };
+
+        // 'é' is 2 bytes: cur+1 lands inside it.
+        let (mut e, mut c) = ed("éxax");
+        e.cursor = 0;
+        e.apply(find('a', false, false), 10, &mut c);
+        assert_eq!(e.cursor, 3, "fa crosses the 2-byte é to the a at byte 3");
+
+        // '日' is 3 bytes, and the t-repeat skip of 2 lands inside it.
+        let (mut e, mut c) = ed("x日axbxc");
+        e.cursor = 1; // on 日
+        e.apply(find('x', true, true), 10, &mut c);
+        assert!(
+            e.cursor > 1,
+            "a repeated t must advance past the 3-byte 日, not panic"
+        );
+
+        // 4-byte emoji, cursor parked on it, plain `f`.
+        let (mut e, mut c) = ed("🎵zz");
+        e.cursor = 0;
+        e.apply(find('z', false, false), 10, &mut c);
+        assert_eq!(
+            e.cursor, 4,
+            "fz crosses the 4-byte emoji to the z at byte 4"
+        );
     }
 
     #[test]

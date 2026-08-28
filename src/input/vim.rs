@@ -1418,7 +1418,6 @@ impl VimInputHandler {
                     }
                     KeyCode::Char('#') => {
                         self.last_search_backward = true;
-                        self.last_search_backward = true;
                         InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
                     }
                     // `gt` / `gT` — vim "next/prev tab page". With a
@@ -1719,6 +1718,19 @@ impl VimInputHandler {
                 // to the find target, then apply the operator. The selection
                 // is cleared at the end (or insert mode entered for Change).
                 let mut ops = vec![SelectStart, motion];
+                // `d2f)` extends the selection to the 2nd `)`, same
+                // first-hop-plus-(n-1)-repeats shape as the standalone path
+                // above. The repeats must carry `repeat: true` or a counted
+                // `dt` stalls on the adjacent target and deletes nothing.
+                for _ in 1..n {
+                    ops.push(FindCharOnLine {
+                        ch: c,
+                        forward,
+                        before,
+                        inclusive,
+                        repeat: true,
+                    });
+                }
                 match op {
                     PendingOp::Delete => ops.push(DeleteSelection),
                     PendingOp::Yank => {
@@ -2578,6 +2590,14 @@ impl VimInputHandler {
             // operator + f / F / t / T → find-char with operator applied.
             if let KeyCode::Char(c @ ('f' | 'F' | 't' | 'T')) = key.code {
                 self.op = Some(op);
+                // Hand the count back so `d2f)` reaches the 2nd `)`, not the
+                // 1st. `reset_pending()` above cleared it; every sibling
+                // transition in this block restores it the same way, and
+                // this arm was the one that forgot — so counted
+                // operator-finds silently behaved as `df)`.
+                if n > 1 {
+                    self.count = Some(n);
+                }
                 self.prefix = match c {
                     'f' => Prefix::FindChar(true, false),
                     'F' => Prefix::FindChar(false, false),
@@ -4576,6 +4596,31 @@ mod tests {
             matches!(out[1], EditOp::FindCharOnLine { repeat: true, .. }),
             "the follow-up hops must be repeats or a counted `t` stalls"
         );
+    }
+
+    /// Reviewer catch on the #1229 find work — the operator-pending
+    /// transition (`d`/`c`/`y` + `f`/`t`) was the one arm in that block
+    /// that never handed the count back after `reset_pending()`, so
+    /// `d2f)` silently ran as `df)` and deleted to the FIRST `)`.
+    #[test]
+    fn counted_operator_find_reaches_the_nth_target() {
+        let mut v = h();
+        v.handle_key(k('d'), &ctx());
+        v.handle_key(k('2'), &ctx());
+        v.handle_key(k('f'), &ctx());
+        let out = ops(v.handle_key(k(')'), &ctx()));
+        let hops = out
+            .iter()
+            .filter(|o| matches!(o, EditOp::FindCharOnLine { .. }))
+            .count();
+        assert_eq!(hops, 2, "d2f) should hop twice, got {out:?}");
+        // The second hop must be a repeat, or a counted `dt` re-finds the
+        // adjacent target and the selection never grows.
+        let repeats = out
+            .iter()
+            .filter(|o| matches!(o, EditOp::FindCharOnLine { repeat: true, .. }))
+            .count();
+        assert_eq!(repeats, 1, "the follow-up hop must carry repeat: true");
     }
 
     /// #1229 — `n` / `N` are defined relative to the search direction.

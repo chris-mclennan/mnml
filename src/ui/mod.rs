@@ -1751,11 +1751,28 @@ fn render_layout(
             // strip. Switching activity brings them back. User asked
             // for this on 2026-07-21: "we don't show files in the
             // http area? what do you think we should do".
+            //
+            // #1229 (R17 nvchad) — the filter must never hide the buffer
+            // you are actually editing. It did: the body showed `f01.txt`,
+            // the statusline said `f01.txt`, and the strip showed only
+            // `GET new request` + `+5 hidden`. Every `:bn` then advanced
+            // the body while the strip stayed frozen and the hidden count
+            // climbed. Vim's `:ls` invariant — the current buffer is
+            // always visible — is the right one here, so `active` is
+            // force-included whatever the section filter says.
             let tabs_owned: Vec<crate::layout::PaneId> =
                 if matches!(app.active_section, crate::app::ActivitySection::Http) {
                     tabs.iter()
                         .filter(|&&pid| {
-                            matches!(app.panes.get(pid), Some(crate::pane::Pane::Request(_)))
+                            // Both the leaf's own active tab AND the app-
+                            // wide focused pane: `:bn` can move `app.active`
+                            // onto a tab this leaf holds without the leaf's
+                            // `active` following, and in that state the
+                            // buffer on screen was exactly the one the
+                            // filter dropped.
+                            pid == *id
+                                || Some(pid) == app.active
+                                || matches!(app.panes.get(pid), Some(crate::pane::Pane::Request(_)))
                         })
                         .copied()
                         .collect()
@@ -5990,6 +6007,48 @@ mod leaf_tab_scroll_tests {
         .unwrap();
         let buf = term.backend().buffer().clone();
         (app, buf)
+    }
+
+    /// #1229 — the HTTP activity filter hid the buffer you were actually
+    /// editing. The body showed `f01.txt`, the statusline agreed, and the
+    /// strip showed only `GET new request` + `+N hidden` — and every
+    /// `:bn` advanced the body while the strip stayed frozen and the
+    /// hidden count climbed. Vim's `:ls` invariant is the right one: the
+    /// current buffer is always visible.
+    #[test]
+    fn the_active_buffer_is_never_filtered_out_of_its_own_strip() {
+        let d = tempfile::tempdir().unwrap();
+        for i in 0..3 {
+            std::fs::write(d.path().join(format!("f{i}.txt")), "x").unwrap();
+        }
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        for i in 0..3 {
+            app.open_path(&d.path().join(format!("f{i}.txt")));
+        }
+        // Enter the HTTP activity — the strip filters to Request panes,
+        // and the editor buffers are hidden behind the `+N hidden` chip.
+        app.set_activity_section(crate::app::ActivitySection::Http);
+        // Now put the cursor back on an editor buffer, the way `:bn` does.
+        let editor_pane = (0..app.panes.len())
+            .find(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::Editor(_))))
+            .expect("an editor pane should still exist");
+        app.active = Some(editor_pane);
+
+        let mut term = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+
+        let painted: Vec<crate::layout::PaneId> = app
+            .rects
+            .split_tab_chips
+            .iter()
+            .map(|(_, _, id)| *id)
+            .collect();
+        assert!(
+            painted.contains(&editor_pane),
+            "the active buffer has no chip on its own strip (painted: {painted:?})"
+        );
     }
 
     /// #1222 — the bug the user hit: the git panel rebuilt a leaf while

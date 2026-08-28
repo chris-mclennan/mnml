@@ -2843,6 +2843,31 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             && ctrl
             && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O'));
+        // #1229 (R17 nvchad SEV-2) — `nav.back` / `nav.forward` are
+        // registered globally with no editing-mode gate, so `Ctrl+-` fired
+        // from INSERT and VISUAL: one keystroke changed which file you were
+        // editing AND dropped you to NORMAL, mid-sentence. Reserve the
+        // chord in those two modes so it reaches the vim handler, which
+        // ignores it — nav stays live in NORMAL, where it belongs.
+        //
+        // This allowlist is the wrong shape for the job and we know it;
+        // every chord missing from it turns a `vim.rs` arm into dead code
+        // you can only find by pressing the key. #1215 (invert dispatch —
+        // let the focused handler decline first) is the real fix.
+        // Listed positively rather than as "not Normal": the first cut of
+        // this said `(insert || normal_or_visual) && !Normal`, which reads
+        // as "every mode but Normal" but silently omitted Replace — a
+        // typing mode with exactly the same problem as Insert.
+        let nav_chord = matches!(key.code, KeyCode::Char('-') | KeyCode::Char('_'));
+        let nav_reserved = matches!(
+            vim_mode,
+            crate::input::EditingMode::Insert
+                | crate::input::EditingMode::Replace
+                | crate::input::EditingMode::Visual
+                | crate::input::EditingMode::VisualLine
+                | crate::input::EditingMode::VisualBlock
+        ) && ctrl
+            && nav_chord;
         // R16 nvchad SEV-2 2026-08-24 — when the vim handler has a pending
         // prefix (`Ctrl+W`, `g`, `y`/`d`/`c`/`>`, `r`, `f`/`t`, `[`/`]`,
         // `m`/`'`/`` ` ``, macro register targets), the NEXT keystroke is
@@ -2855,7 +2880,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             .active_editor()
             .and_then(|b| b.input.pending_display())
             .is_some();
-        normal_reserved || insert_reserved || pending_vim_chord
+        normal_reserved || insert_reserved || nav_reserved || pending_vim_chord
     };
 
     // keyboard-round-14 SEV-2 2026-07-16 — when a Pty pane is
@@ -3210,5 +3235,126 @@ mod welcome_esc_tests {
 
         assert!(!app.show_welcome);
         assert!(d.path().join(".mnml/.welcomed").exists());
+    }
+}
+
+#[cfg(test)]
+mod nav_mode_gate_tests {
+    use super::dispatch_key;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+    fn plain(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    /// Two files open in vim mode, cursor on the second.
+    fn two_file_vim_app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(d.path().join("b.txt"), "beta\n").unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        (d, app)
+    }
+
+    fn active_title(app: &App) -> String {
+        app.active
+            .and_then(|i| app.panes.get(i))
+            .map(|p| p.title())
+            .unwrap_or_default()
+    }
+
+    /// #1229 — `nav.back` is registered globally with no editing-mode
+    /// gate, so `Ctrl+-` fired from INSERT: one keystroke changed which
+    /// file you were editing AND dropped you to NORMAL, mid-sentence.
+    #[test]
+    fn nav_back_is_inert_while_typing_in_insert_mode() {
+        let (_d, mut app) = two_file_vim_app();
+        dispatch_key(&mut app, plain('i')); // NORMAL -> INSERT
+        let before = active_title(&app);
+        let mode_before = app.editing_mode();
+
+        dispatch_key(&mut app, ctrl('-'));
+
+        assert_eq!(
+            active_title(&app),
+            before,
+            "Ctrl+- changed the file out from under an insert"
+        );
+        assert_eq!(
+            app.editing_mode(),
+            mode_before,
+            "Ctrl+- dropped the user out of INSERT"
+        );
+    }
+
+    /// Same for VISUAL — it discarded the selection along with the file.
+    #[test]
+    fn nav_back_is_inert_in_visual_mode() {
+        let (_d, mut app) = two_file_vim_app();
+        dispatch_key(&mut app, plain('v')); // NORMAL -> VISUAL
+        let before = active_title(&app);
+        let mode_before = app.editing_mode();
+
+        dispatch_key(&mut app, ctrl('-'));
+
+        assert_eq!(active_title(&app), before);
+        assert_eq!(app.editing_mode(), mode_before);
+    }
+
+    /// Reviewer catch — REPLACE (`R`) is a typing mode exactly like
+    /// INSERT, and the first cut of the gate said "not Normal" in a way
+    /// that read as "every other mode" but actually omitted it. So
+    /// `Ctrl+-` still yanked the file out from under an overwrite.
+    #[test]
+    fn nav_back_is_inert_in_replace_mode() {
+        let (_d, mut app) = two_file_vim_app();
+        dispatch_key(&mut app, plain('R')); // NORMAL -> REPLACE
+        assert_eq!(
+            app.editing_mode(),
+            crate::input::EditingMode::Replace,
+            "precondition: R enters REPLACE"
+        );
+        let before = active_title(&app);
+
+        dispatch_key(&mut app, ctrl('-'));
+
+        assert_eq!(
+            active_title(&app),
+            before,
+            "Ctrl+- changed the file out from under an overwrite"
+        );
+        assert_eq!(
+            app.editing_mode(),
+            crate::input::EditingMode::Replace,
+            "Ctrl+- dropped the user out of REPLACE"
+        );
+    }
+
+    /// The complement — nav must still WORK in NORMAL, which is where an
+    /// mnml user actually reaches for it. Without this the fix could be
+    /// "reserve the chord everywhere" and both tests above would pass
+    /// while the feature was dead.
+    #[test]
+    fn nav_back_still_navigates_from_normal_mode() {
+        let (_d, mut app) = two_file_vim_app();
+        let before = active_title(&app);
+        assert_eq!(before, "b.txt", "precondition: cursor is on the 2nd file");
+
+        dispatch_key(&mut app, ctrl('-'));
+
+        assert_ne!(
+            active_title(&app),
+            before,
+            "Ctrl+- should navigate back in NORMAL"
+        );
     }
 }
