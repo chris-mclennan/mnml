@@ -126,7 +126,7 @@ The complete, organised feature inventory. For the front-door overview see
   Anthropic Messages API directly (with an agentic read-only tool loop). The
   backend, model name, system prompt, and token cap are all config knobs.
 - **Inline suggestions** — opt-in Copilot-style ghost text: an API backend, or a
-  fully local, in-process FIM model via the sibling `fim-engine` crate (no API
+  fully local, in-process FIM model via the bundled `mnml-fim-engine` crate (no API
   key, offline after a one-time download). Off until you turn it on — via the
   first-launch wizard, `ai.setup_suggestions`, or Settings → AI. The remote
   backends send buffer context around the cursor, so files whose names look

@@ -1,17 +1,18 @@
-# Contributing to fim-engine
+# Contributing to mnml-fim-engine
 
-Thanks for your interest in fim-engine. This guide covers the workflow and
-conventions.
+Thanks for your interest in mnml-fim-engine. This guide covers the workflow and
+conventions. The crate lives inside the mnml workspace at `crates/fim-engine/`;
+its standalone repo was absorbed on 2026-08-10 and is gone.
 
 ## Getting started
 
 ```bash
-git clone https://github.com/chris-mclennan/fim-engine
-cd fim-engine
+git clone https://github.com/chris-mclennan/mnml
+cd mnml/crates/fim-engine
 cargo test
 ```
 
-fim-engine builds on stable Rust (MSRV **1.85**, edition 2024). It has no C/C++
+mnml-fim-engine builds on stable Rust (MSRV **1.85**, edition 2024). It has no C/C++
 build dependencies — candle is pure Rust.
 
 The first run of `examples/smoke.rs` downloads a ~1 GB model to the shared cache

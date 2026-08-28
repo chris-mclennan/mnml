@@ -1,6 +1,6 @@
 <div align="center">
 
-# fim-engine
+# mnml-fim-engine
 
 **Embedded fill-in-the-middle code completion — local, offline, in-process.**
 
@@ -10,16 +10,16 @@ caches it, and runs completion inference in your process via
 [candle](https://github.com/huggingface/candle). No daemon, no API key, no
 network after the first run.
 
-[![Crates.io](https://img.shields.io/crates/v/fim-engine.svg?logo=rust)](https://crates.io/crates/fim-engine)
-[![Documentation](https://docs.rs/fim-engine/badge.svg)](https://docs.rs/fim-engine)
-[![CI](https://github.com/chris-mclennan/fim-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/chris-mclennan/fim-engine/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/mnml-fim-engine.svg?logo=rust)](https://crates.io/crates/mnml-fim-engine)
+[![Documentation](https://docs.rs/mnml-fim-engine/badge.svg)](https://docs.rs/mnml-fim-engine)
+[![CI](https://github.com/chris-mclennan/mnml/actions/workflows/ci.yml/badge.svg)](https://github.com/chris-mclennan/mnml/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 </div>
 
 ---
 
-**fim-engine** gives an editor Copilot-style inline completion without a cloud
+**mnml-fim-engine** gives an editor Copilot-style inline completion without a cloud
 round-trip. "Fill in the middle" means it completes the gap at the cursor given
 the code *before* and the code *after* — exactly the shape an inline suggestion
 needs.

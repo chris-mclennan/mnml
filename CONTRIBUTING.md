@@ -12,11 +12,13 @@ cargo build
 cargo test
 ```
 
-`fim-engine` (the local FIM code-completion engine) is a workspace member at
-`crates/fim-engine/` — a single `cargo build` from the mnml root builds
+`mnml-fim-engine` (the local FIM code-completion engine) is a workspace member
+at `crates/fim-engine/` — a single `cargo build` from the mnml root builds
 everything. There's no external sibling checkout to keep in sync; the crate
 lived in its own repo through 2026-08-10 and was vendored in with full
-git-subtree history preserved.
+git-subtree history preserved. mnml's `Cargo.toml` depends on it under the
+short alias `fim-engine` (`package = "mnml-fim-engine"`), so `use fim_engine::…`
+in the source is expected — `mnml-fim-engine` is the published name.
 
 mnml builds on stable Rust — MSRV **1.87**, edition 2024. A
 [Nerd Font](https://www.nerdfonts.com/) helps when running the UI, but isn't

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **fim-engine** are documented here.
+All notable changes to **mnml-fim-engine** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,8 +9,8 @@ The roadmap lives in [`.local/PLAN.md`](.local/PLAN.md).
 
 ## [Unreleased]
 
-fim-engine has not yet had a tagged release. The `0.1.0` line below summarises
-the current `main`.
+The crate ships from the mnml workspace; `0.1.1` is the current release on
+crates.io. The `0.1.0` line below is the initial published version.
 
 ## [0.1.0]
 
@@ -32,5 +32,8 @@ the current `main`.
 - Pure Rust — candle for inference, rustls for the download; no external daemon,
   no C/C++ build dependencies.
 
-[Unreleased]: https://github.com/chris-mclennan/fim-engine/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/chris-mclennan/fim-engine/releases/tag/v0.1.0
+<!-- The standalone fim-engine repo was absorbed into mnml on 2026-08-10
+     (`crates/fim-engine/`, git-subtree history preserved) and made private,
+     so its compare/tag URLs 404. Releases live on crates.io. -->
+[Unreleased]: https://github.com/chris-mclennan/mnml/commits/main/crates/fim-engine
+[0.1.0]: https://crates.io/crates/mnml-fim-engine/0.1.0

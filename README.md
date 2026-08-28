@@ -243,7 +243,7 @@ mnml is one of a small family of terminal-native Rust tools:
 |---------|-----------|--|
 | **mnml** | A terminal IDE | ← you are here |
 | [**mixr**](https://github.com/chris-mclennan/mixr) | A terminal DJ app | electronic-music mixing |
-| [**fim-engine**](https://github.com/chris-mclennan/fim-engine) | Embedded code completion | powers mnml's inline suggestions |
+| [**mnml-fim-engine**](https://crates.io/crates/mnml-fim-engine) | Embedded code completion | powers mnml's inline suggestions |
 
 mnml runs in any terminal — Apple Terminal, iTerm2, Ghostty, kitty,
 WezTerm, Alacritty, and others.
