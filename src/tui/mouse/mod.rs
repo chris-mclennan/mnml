@@ -1044,7 +1044,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // every item (user hit it on "Set launcher script…") read as
     // dead. Let the modal menu handler below take the click; the next
     // outside-click still dismisses the welcome.
-    if app.show_welcome
+    //
+    // #1216 (2026-08-28) — `welcome_visible()`, not `show_welcome`:
+    // on a genuine first launch the wizard paints over the welcome, so
+    // this swallowed the user's very first click (and wrote
+    // `.mnml/.welcomed`, retiring the cheatsheet they never saw).
+    if app.welcome_visible()
         && app.context_menu.is_none()
         && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
     {
@@ -1656,5 +1661,69 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             crate::app::dispatch::scroll_under(app, x, y, n);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod welcome_swallow_tests {
+    use super::*;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::crossterm::event::KeyModifiers;
+
+    fn left_click(x: u16, y: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn app_on_first_launch() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.maybe_show_welcome_on_launch();
+        assert!(app.show_welcome, "fresh workspace has no .welcomed marker");
+        (d, app)
+    }
+
+    /// #1216 — the wizard paints over the welcome card, so the user's
+    /// very first click belongs to the wizard. It used to be swallowed
+    /// dismissing an overlay nobody had seen, which also wrote
+    /// `.mnml/.welcomed` and retired the shortcut cheatsheet forever.
+    #[test]
+    fn first_click_under_the_wizard_does_not_retire_the_welcome() {
+        let (d, mut app) = app_on_first_launch();
+        app.open_first_launch();
+        assert!(app.first_launch.is_some());
+
+        dispatch_mouse(&mut app, left_click(40, 12));
+
+        assert!(
+            app.show_welcome,
+            "welcome was retired by a click aimed at the wizard"
+        );
+        assert!(
+            !d.path().join(".mnml/.welcomed").exists(),
+            "marker written for an overlay that was never rendered"
+        );
+    }
+
+    /// The complement — with nothing on top, the card IS visible and a
+    /// click still dismisses it. Without this the fix above could be
+    /// "never dismiss" and the test above would still pass.
+    #[test]
+    fn a_click_on_the_visible_welcome_still_dismisses_it() {
+        let (d, mut app) = app_on_first_launch();
+        assert!(app.first_launch.is_none());
+
+        dispatch_mouse(&mut app, left_click(40, 12));
+
+        assert!(!app.show_welcome, "visible welcome should dismiss on click");
+        assert!(
+            d.path().join(".mnml/.welcomed").exists(),
+            "dismissing the visible card should persist the marker"
+        );
     }
 }

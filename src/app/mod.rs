@@ -7276,6 +7276,29 @@ impl App {
         }
     }
 
+    /// Is the welcome card actually painted right now?
+    ///
+    /// `show_welcome` alone is not the answer: the card stands down
+    /// whenever another modal is drawn over it — see
+    /// `ui::welcome_overlay::draw`, which defers to this. Dismiss
+    /// gestures must check this rather than the raw flag. On a genuine
+    /// first launch the wizard covers the (still-`true`) welcome
+    /// completely, so the first click or Esc aimed at the *wizard* used
+    /// to dismiss an overlay nobody had seen and write
+    /// `.mnml/.welcomed` — the shortcut cheatsheet was never shown to
+    /// the one user it exists for. Same shape for a prompt/picker
+    /// opened over it.
+    pub fn welcome_visible(&self) -> bool {
+        self.show_welcome
+            && self.first_launch.is_none()
+            && self.prompt.is_none()
+            && self.picker.is_none()
+            && self.help_overlay.is_none()
+            && self.signature.is_none()
+            && self.completion.is_none()
+            && self.whichkey.is_none()
+    }
+
     /// Toggle the About overlay. Pure in-memory — no marker file (vs the
     /// welcome overlay which only auto-opens once per workspace).
     pub fn toggle_about(&mut self) {

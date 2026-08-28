@@ -14,23 +14,17 @@ use crate::app::App;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
-    if !app.show_welcome {
-        return;
-    }
-    // Stand down whenever another modal/overlay is open. The welcome
-    // panel is centered and tall; without this, opening a prompt
-    // (Ctrl+N → file name, `:` ex-command, `/` find, AI chat) or the
-    // fuzzy picker (Ctrl+P / Ctrl+Shift+P) on first launch would
-    // visibly bury the input under the welcome card and make the
-    // advertised chord targets unreachable. The user still sees the
-    // welcome card on next blank frame.
-    if app.prompt.is_some()
-        || app.picker.is_some()
-        || app.help_overlay.is_some()
-        || app.signature.is_some()
-        || app.completion.is_some()
-        || app.whichkey.is_some()
-    {
+    // `welcome_visible` is `show_welcome` plus the stand-down list:
+    // whenever another modal/overlay is open the welcome card yields.
+    // Without that, opening a prompt (Ctrl+N → file name, `:`
+    // ex-command, `/` find, AI chat), the fuzzy picker (Ctrl+P /
+    // Ctrl+Shift+P), or the first-launch wizard would visibly bury the
+    // input under the welcome card and make the advertised chord
+    // targets unreachable. The user still sees the welcome card on the
+    // next blank frame. The dismiss gestures share the same predicate,
+    // so a click/Esc aimed at whatever is on top can't retire an
+    // overlay that was never on screen.
+    if !app.welcome_visible() {
         return;
     }
     let t = theme::cur();

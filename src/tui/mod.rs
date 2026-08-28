@@ -2298,8 +2298,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         // tooltips/toasts.
         app.show_discovery_overlay = false;
         // Welcome overlay also dismisses on Esc (and persists the marker
-        // so it doesn't auto-reopen next launch).
-        if app.show_welcome {
+        // so it doesn't auto-reopen next launch). Only when it's the
+        // thing on screen — this block runs before the wizard / prompt
+        // handlers below, so `show_welcome` alone would let an Esc
+        // aimed at those retire a card the user never saw (#1216).
+        if app.welcome_visible() {
             app.dismiss_welcome();
         }
         app.show_about = false;
@@ -3159,5 +3162,50 @@ pub(crate) fn send_macos_player(app_name: &str, verb: &str) {
         .spawn();
     if let Err(e) = result {
         eprintln!("mnml: send_macos_player({app_name:?}, {verb:?}) failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod welcome_esc_tests {
+    use super::dispatch_key;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn esc() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    /// #1216, keyboard half — Esc on the wizard means "ask me later".
+    /// The welcome-dismiss block runs earlier in `dispatch_key` than
+    /// the wizard handler, so it used to consume the same Esc and
+    /// write `.mnml/.welcomed` for a card that was never on screen.
+    #[test]
+    fn esc_deferring_the_wizard_leaves_the_welcome_for_afterwards() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.maybe_show_welcome_on_launch();
+        app.open_first_launch();
+
+        dispatch_key(&mut app, esc());
+
+        assert!(app.first_launch.is_none(), "Esc should close the wizard");
+        assert!(
+            app.show_welcome,
+            "the welcome card should now be the thing on screen"
+        );
+        assert!(!d.path().join(".mnml/.welcomed").exists());
+    }
+
+    #[test]
+    fn esc_on_the_bare_welcome_still_dismisses_it() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.maybe_show_welcome_on_launch();
+
+        dispatch_key(&mut app, esc());
+
+        assert!(!app.show_welcome);
+        assert!(d.path().join(".mnml/.welcomed").exists());
     }
 }
