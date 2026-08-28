@@ -49,6 +49,34 @@ pub fn is_ai_session_pane(p: &Pane) -> bool {
     )
 }
 
+thread_local! {
+    /// Transcript-summary lines, keyed by `<session-id>::<max>`.
+    /// 2 s TTL — see `session_card_lines`, which used to open + seek +
+    /// parse a JSONL per session per frame.
+    static TCACHE: std::cell::RefCell<
+        std::collections::HashMap<String, (std::time::Instant, Vec<String>)>
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Sort priority per pane id. 500 ms TTL — see
+    /// `session_state_priority`, called once per session per frame
+    /// from `sort_by_key`.
+    static PCACHE: std::cell::RefCell<
+        std::collections::HashMap<usize, (std::time::Instant, u64, u8)>
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Drop both render caches so the next frame re-derives every card
+/// from the live transcripts. Wired to the panel's refresh chip
+/// (#1221) — the TTLs already expire on their own, so this is the
+/// "don't wait for it" gesture, not a correctness requirement.
+///
+/// Both are `thread_local` and the render loop and mouse dispatch
+/// share a thread, so the clear lands on the same maps the next
+/// `draw` reads.
+pub fn invalidate_render_caches() {
+    TCACHE.with(|c| c.borrow_mut().clear());
+    PCACHE.with(|c| c.borrow_mut().clear());
+}
+
 /// Height in rows for one session tab. 4 rows: name + 3 lines
 /// of session summary. Old row 2 (⎇ branch · cwd) still lives in
 /// the hover tooltip — user report 2026-07-18: "not sure line 2
@@ -67,6 +95,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.session_tabs.clear();
     app.rects.session_new_chip = None;
     app.rects.sessions_panel_filter_input = None;
+    app.rects.sessions_panel_refresh_chip = None;
     // #1184 (2026-08-23) — expose full rail area for wheel routing.
     app.rects.sessions_panel_area = Some(area);
 
@@ -101,16 +130,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let pty_indices = sort_sessions(app, pty_indices);
 
-    // Header — appends `(N of M)` when the filter is active.
-    // Styles come from `panel_chrome` so every activity-panel
-    // caps header stays in sync.
-    let mut header_spans = vec![
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            "SESSIONS",
-            crate::ui::panel_chrome::caps_label_style(&t, bg),
-        ),
-    ];
+    // Header — caps label + count, plus the top-right refresh chip.
+    // Goes through `panel_chrome::draw_caps_header_with_refresh` so
+    // every activity-panel header stays in sync.
+    //
+    // #1221 (2026-08-28, user report) — SESSIONS was the last panel
+    // still hand-rolling its header, and so the only one without the
+    // refresh chip its neighbours all have.
+    //
     // 2026-08-24 — always show count-in-parens (parity with
     // FINDINGS / TODOS / NOTES): total when unfiltered,
     // `M of N` when a filter narrows it.
@@ -119,18 +146,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!("  ({} of {})", pty_indices.len(), all_pty_indices.len())
     };
-    header_spans.push(Span::styled(
-        count_txt,
-        crate::ui::panel_chrome::caps_subtitle_style(&t, bg),
-    ));
-    frame.render_widget(
-        Paragraph::new(Line::from(header_spans)),
+    app.rects.sessions_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+        frame,
         Rect {
             x: area.x,
             y: area.y,
             width: area.width,
             height: 1,
         },
+        "SESSIONS",
+        Some(&count_txt),
+        bg,
+        &t,
+        app.config.ui.ascii_icons,
     );
 
     // Filter row (row 1). Same idiom as HTTP / Agents / TODOs /
@@ -759,14 +787,6 @@ fn session_lines_for_card(app: &App, s: &crate::pty_pane::PtySession, max: usize
         // frame — 200 file opens/sec at N=8, ~6 MB/sec disk reads.
         // Transcripts update on Claude's own cadence (seconds), so
         // 2s stale is invisible.
-        thread_local! {
-            static TCACHE: std::cell::RefCell<
-                std::collections::HashMap<
-                    String,
-                    (std::time::Instant, Vec<String>)
-                >
-            > = std::cell::RefCell::new(std::collections::HashMap::new());
-        }
         const TTL: std::time::Duration = std::time::Duration::from_secs(2);
         let now = std::time::Instant::now();
         let cache_key = format!("{}::{max}", sid);
@@ -807,11 +827,6 @@ fn session_state_priority(app: &App, pid: usize) -> u8 {
     };
     if s.is_exited() {
         return 3;
-    }
-    thread_local! {
-        static PCACHE: std::cell::RefCell<
-            std::collections::HashMap<usize, (std::time::Instant, u64, u8)>
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
     }
     const TTL: std::time::Duration = std::time::Duration::from_millis(500);
     let now = std::time::Instant::now();
@@ -921,5 +936,32 @@ mod tests {
     #[test]
     fn detect_ticket_returns_none_when_no_prefixes() {
         assert_eq!(detect_ticket(&[], None, Some("TKT-9"), "claude code"), None);
+    }
+
+    /// #1221 — SESSIONS hand-rolled its caps header, so it was the one
+    /// activity panel with no refresh chip. It now goes through the
+    /// shared `panel_chrome` helper; assert the chip's click rect is
+    /// registered, since a painted-but-unclickable chip is the failure
+    /// mode this panel's neighbours have already hit twice.
+    #[test]
+    fn the_header_registers_a_refresh_chip() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let mut term = Terminal::new(TestBackend::new(34, 20)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+
+        let chip = app
+            .rects
+            .sessions_panel_refresh_chip
+            .expect("SESSIONS header painted no refresh chip");
+        assert_eq!(chip.y, 0, "the chip belongs on the header row");
+        assert_eq!(
+            chip.x + chip.width,
+            34,
+            "the chip is right-aligned like every other panel's"
+        );
     }
 }

@@ -3270,6 +3270,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.toast("findings: refreshed".to_string());
         return;
     }
+    if let Some(r) = app.rects.sessions_panel_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.sessions_panel_refresh();
+        app.toast("sessions: refreshed".to_string());
+        return;
+    }
     if let Some(&(_, idx)) = app
         .rects
         .todos_panel_rows

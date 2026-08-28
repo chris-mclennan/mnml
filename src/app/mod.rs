@@ -2320,6 +2320,10 @@ pub struct PaneRects {
     /// Re-scans `<workspace>/.mnml/findings/` for new tester
     /// reports. Populated by the header helper.
     pub findings_panel_refresh_chip: Option<Rect>,
+    /// Refresh chip in the SESSIONS panel header. #1221 (2026-08-28) —
+    /// the panel was the last one still hand-rolling its caps header,
+    /// so it was the only one without the chip.
+    pub sessions_panel_refresh_chip: Option<Rect>,
     /// Click target for the `▾` dropdown chevron next to the
     /// workspace name. Toggles `App::workspace_picker_open`.
     pub workspace_picker_chevron: Option<Rect>,
@@ -3454,6 +3458,7 @@ impl PaneRects {
         // 2026-08-24 — new header refresh chips.
         self.notes_panel_refresh_chip = None;
         self.findings_panel_refresh_chip = None;
+        self.sessions_panel_refresh_chip = None;
         self.todos_panel_filter_input = None;
         // Sessions panel.
         self.sessions_panel_filter_input = None;

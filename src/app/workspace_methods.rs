@@ -1372,6 +1372,16 @@ impl App {
         self.notes_panel_scanned_once = true;
     }
 
+    /// SESSIONS panel refresh (#1221). Sessions aren't fetched from
+    /// anywhere — the list is derived from the live Pty panes — so
+    /// this drops the render-side caches that would otherwise hold a
+    /// card stale for up to their TTL, plus the 30 s port cache. The
+    /// next frame re-reads every transcript and re-scans ports.
+    pub fn sessions_panel_refresh(&mut self) {
+        crate::ui::sessions_panel::invalidate_render_caches();
+        self.session_port_cache.clear();
+    }
+
     /// Notes panel `+ New note` action — opens the "New file"
     /// prompt seeded with the next auto-numbered default
     /// (`note-N.md`) so the user can accept it with Enter (fast
