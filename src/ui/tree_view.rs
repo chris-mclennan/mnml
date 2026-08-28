@@ -139,15 +139,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // overflow-indicator row at the bottom of `draw_git_section`,
     // the user can always tell whether they're seeing the full list
     // or a clipped view.
-    let git_bottom_pad: u16 = 1;
+    //
+    // #1219 (2026-08-28, user report + screenshot) — both are now gated
+    // on a section actually being pinned below. With GIT and
+    // INTEGRATIONS zeroed above, the pad and the separator row above it
+    // were spacing the tree away from nothing: two dead rows between
+    // the last file and the hover-help panel, every frame, in every
+    // section. Two more files fit now.
+    let git_bottom_pad: u16 = if git_height > 0 { 1 } else { 0 };
     let git_top_y = area.y + area.height - git_height - git_bottom_pad;
     let integration_top_y = git_top_y.saturating_sub(integration_height + 1); // +1 separator
     // Workspace section gets everything above the integration section
-    // (with a one-row separator immediately above it).
+    // (with a one-row separator immediately above it) — or the whole
+    // rail when neither section is pinned.
     let ws_end_y = if integration_height > 0 {
         integration_top_y.saturating_sub(1)
-    } else {
+    } else if git_height > 0 {
         git_top_y.saturating_sub(1)
+    } else {
+        git_top_y
     };
 
     app.rects.workspace_picker_chevron = None;
@@ -2292,6 +2302,46 @@ mod tests {
             screen.contains("beta.txt"),
             "tree missing beta.txt:\n{screen}"
         );
+    }
+
+    /// #1219 — the tree used to stop two rows short of its own area.
+    /// `git_bottom_pad` plus the separator above the GIT section were
+    /// still being subtracted after both pinned sections were zeroed
+    /// out, so every panel wasted two rows spacing away from nothing.
+    /// The user noticed the gap above the hover-help panel and asked
+    /// for the files back.
+    #[test]
+    fn the_tree_fills_its_area_down_to_the_last_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        // Comfortably more files than rows, so a blank bottom row can
+        // only mean reserved space — never "ran out of content".
+        for i in 0..60 {
+            std::fs::write(ws.join(format!("file{i:02}.txt")), "x\n").unwrap();
+        }
+        let mut app = App::new(ws.clone(), crate::config::Config::default()).unwrap();
+
+        const H: u16 = 24;
+        let mut term = Terminal::new(TestBackend::new(32, H)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+
+        let row_text = |y: u16| -> String {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        };
+        for y in [H - 2, H - 1] {
+            assert!(
+                !row_text(y).trim().is_empty(),
+                "row {y} of {H} is blank — the tree is reserving rows for a \
+                 section that no longer renders:\n{}",
+                (0..H).map(row_text).collect::<Vec<_>>().join("\n")
+            );
+        }
     }
 
     /// Click-rect audit: for every `tree_icon_buttons` rect, every
