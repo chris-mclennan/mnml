@@ -5053,19 +5053,25 @@ fn paint_leaf_tab_strip_with_hidden(
             let Some(inputs) = tab_chip_inputs_for(app, id, active, chip_max_name_w) else {
                 continue;
             };
-            // Budget for THIS chip is whatever the tail hasn't taken.
-            // `tab_chip_spans` truncates a name to fit its
-            // `avail_width`, so measuring every chip against the whole
-            // strip over-reports widths, stops the scan early, and
-            // leaves the clamp short of where it should land — the
-            // paint loop shrinks its `avail` per chip and this has to
-            // match it, from the other end. Caught in pre-push review.
-            let Some((_, w)) = crate::ui::bufferline::tab_chip_spans(
-                &inputs,
-                strip_bg,
-                room.saturating_sub(used),
-                nerd,
-            ) else {
+            // Measure at NATURAL width — pass the whole `room`, not
+            // the remaining budget.
+            //
+            // Two pre-push reviews split on this line, so the reasoning
+            // is worth writing down. The question the scan answers is
+            // "does this whole suffix fit", and a suffix fits exactly
+            // when its untruncated widths plus gaps are within `room`.
+            // `tab_chip_spans` truncates a name to whatever
+            // `avail_width` it's handed, so passing a shrinking budget
+            // would measure the front of the suffix at its *clipped*
+            // width, under-report the total, and accept a suffix that
+            // then clips when painted. Passing the full `room` can only
+            // over-report, which leaves the clamp one notch
+            // conservative — the safe direction. The paint loop's
+            // shrinking `avail` is not the thing to mirror: it narrows
+            // only when a chip is being clipped, which is the case this
+            // scan exists to rule out.
+            let Some((_, w)) = crate::ui::bufferline::tab_chip_spans(&inputs, strip_bg, room, nerd)
+            else {
                 break;
             };
             // +1 for the inter-chip gap, charged to every chip but the

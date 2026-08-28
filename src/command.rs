@@ -384,7 +384,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.discovery",
-            title: "Command palette · Go to file (click discovery overlay)",
+            title: "Click-discovery overlay (highlight what's clickable)",
             group: "view",
             // F1 used to live here too — collided with `view.help` and
             // `palette` (both claim F1). Kept on `view.help` only; the

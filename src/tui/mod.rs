@@ -568,7 +568,10 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
             crate::command::run("file.new", app);
         }
         OpenFile => {
-            crate::command::run("view.discovery", app);
+            // #1226 — was `view.discovery`, the F1 click-discovery
+            // overlay. The variant's own doc comment already called
+            // this "the fuzzy file picker"; now it is one.
+            crate::command::run("picker.files", app);
         }
         OpenFolder => {
             // Opens the AddWorkspace path prompt (`~/` is supported);

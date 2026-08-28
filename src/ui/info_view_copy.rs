@@ -830,11 +830,17 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // vim-style workspace of splits), not a new empty buffer —
         // and its chord is `Ctrl+K n`, not `Ctrl+T` (reserved to
         // avoid colliding with VS Code's Ctrl+T workspace-symbols).
+        // Drift fix (2026-08-28): body claimed `gt` / `gT` switches tab
+        // pages — no such binding exists (`tab.next` / `tab.prev` ship
+        // with `keys: &[]`; the only way to reach them is the `:tabn` /
+        // `:tabp` ex-commands, per src/app/ex_commands.rs). Corrected
+        // to cite the real ex-commands instead of an invented chord.
         BufferlineNewTab => Some(InfoViewCopy {
             title: "New tab page".into(),
             body: "Opens a fresh tab page — a new vim-style workspace of splits, \
                    separate from the buffers open on the current one. Switch \
-                   between tab pages with `gt` / `gT`."
+                   between tab pages with `:tabn` / `:tabp`, or click a tab-page \
+                   pip on the bufferline's right edge."
                 .into(),
             shortcuts: vec![ShortcutHint::new("Ctrl+K n", "New tab page")],
             try_it: vec![PaletteLink::new("tab.new", "New tab page")],
@@ -865,12 +871,15 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/bufferline.rs::draw_tab_close
+        // Drift fix (2026-08-28): try_it pointed at `tab.reopen` (reopens
+        // a closed TAB PAGE, unbound — `keys: &[]`); this chip closes a
+        // single BUFFER, which `Ctrl+Shift+T` / `buffer.reopen` restores.
         BufferlineTabClose(_) => Some(InfoViewCopy {
             title: "Close tab".into(),
             body: "Closes this specific buffer. If it's dirty, mnml prompts \
                    before discarding. `Ctrl+Shift+T` reopens the last closed tab."
                 .into(),
-            try_it: vec![PaletteLink::new("tab.reopen", "Reopen last closed")],
+            try_it: vec![PaletteLink::new("buffer.reopen", "Reopen last closed")],
             ..Default::default()
         }),
         // src: src/ui/palette_bar.rs — top-row integration chip
@@ -994,13 +1003,19 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             docs: Some("https://mnml.sh/manual/activity-bar/".into()),
             ..Default::default()
         }),
-        // src: src/ui/activity_bar.rs::draw_gear
+        // src: src/ui/activity_bar.rs::draw_gear,
+        //      src/tui/mouse/down_left.rs (click → open_settings_overlay)
+        // Drift fix (2026-08-28): try_it pointed at `file.open_settings`
+        // (the raw-TOML escape hatch) — the gear's actual click handler
+        // calls `open_settings_overlay()`, same as `view.settings`
+        // (Ctrl+,), not the TOML editor.
         ActivityBarGear => Some(InfoViewCopy {
             title: "Settings gear".into(),
             body: "Opens the mnml settings overlay — a scrollable list of every \
                    config key with inline pickers for each value."
                 .into(),
-            try_it: vec![PaletteLink::new("file.open_settings", "Open settings")],
+            shortcuts: vec![ShortcutHint::new("Ctrl+,", "Open Settings")],
+            try_it: vec![PaletteLink::new("view.settings", "Open Settings")],
             docs: Some("https://mnml.sh/manual/settings/".into()),
             ..Default::default()
         }),
@@ -1331,10 +1346,18 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                     "Opens the fuzzy file picker over the workspace — type to \
                      match, Enter opens in the active pane.",
                 ),
+                // #1226 (2026-08-28) — the tree's "▸ Open file…" row
+                // used to fire `view.discovery` (the F1 click-discovery
+                // overlay), so this entry documented that mismatch. The
+                // row now calls `picker.files` and is served by the arm
+                // above; this one describes the overlay for wherever
+                // `view.discovery` is legitimately surfaced.
                 "view.discovery" => (
-                    "Open file",
-                    "Opens the file picker so you can jump straight to a file \
-                     without adding a workspace root first.",
+                    "Click-discovery overlay",
+                    "Toggles the F1 click-discovery overlay — every clickable \
+                     chip category with live counts; click a row to flash \
+                     where it lives on screen. A tutorial for the mouse \
+                     surface, not a picker.",
                 ),
                 "view.switch_workspace" => (
                     "Switch workspace",
@@ -1472,6 +1495,10 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::BufferlineTabsLabel
+        // Drift fix (2026-08-28): `gt` / `gT` isn't wired to anything —
+        // `tab.next` / `tab.prev` ship with `keys: &[]`; the ex-commands
+        // `:tabn` / `:tabp` are the only grounded way to cycle tab pages
+        // from the keyboard (src/app/ex_commands.rs).
         BufferlineTabsLabel => Some(InfoViewCopy {
             title: "Tab pages count".into(),
             body: "Shows how many tab pages are open — separate vim-style \
@@ -1479,7 +1506,10 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                    one of them. Click to switch between tab pages; right-click \
                    for the full menu."
                 .into(),
-            shortcuts: vec![ShortcutHint::new("gt / gT", "Next / previous tab page")],
+            shortcuts: vec![ShortcutHint::new(
+                ":tabn / :tabp",
+                "Next / previous tab page",
+            )],
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RightPanelTab
@@ -2058,11 +2088,32 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // reach here; this arm just satisfies the exhaustiveness
         // checker so `chip_copy` stays exhaustive over `HoverChip`.
         MenuBarItem { .. } => None,
-        // Task #875 (R5 SEV-3) — chrome chips whose tooltips carry
-        // all the useful copy; no separate info-panel entry needed.
-        // These arms exist so `chip_copy` stays exhaustive.
-        BufferlineTabPage(_) => None,
-        BufferlineTabPageClose(_) => None,
+        // Fill batch (2026-08-28) — these two shipped as a stale
+        // `None` fallthrough (same pattern the Integrations tab-strip
+        // chips had before the R13 follow-up below). Grounded against
+        // `src/ui/tooltip.rs::HoverChip::BufferlineTabPage(Close)` +
+        // `src/app/dispatch.rs:1021,1029` for behavior, and
+        // `tab.goto_1`..`tab.goto_8` (`alt+1`..`alt+8`) in
+        // src/command.rs for the jump chord.
+        BufferlineTabPage(_) => Some(InfoViewCopy {
+            title: "Tab-page pip".into(),
+            body: "One numbered pip per open tab page — a vim-style workspace \
+                   of splits, separate from the buffers inside any single one. \
+                   Click to switch to it; right-click for the tab-page menu."
+                .into(),
+            aside: Some("Pips 1-9 also jump by keyboard: Alt+<number>.".into()),
+            shortcuts: vec![ShortcutHint::new("Alt+1..9", "Jump to tab page N")],
+            ..Default::default()
+        }),
+        BufferlineTabPageClose(_) => Some(InfoViewCopy {
+            title: "Close tab page".into(),
+            body: "The small `×` on a tab-page pip — only drawn for the \
+                   non-active page. Click closes that whole tab page (every \
+                   split and buffer in it), not just one buffer."
+                .into(),
+            aside: Some("Only appears when more than one tab page is open.".into()),
+            ..Default::default()
+        }),
         // R13 audit follow-up 2026-08-15 — Integrations panel tab-
         // strip chips got a stale `None` fallthrough. Real copy per
         // chip so the info panel matches the mouse target.
@@ -2603,14 +2654,16 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
         }),
         // ── R14 modernize pass (2026-08-16) — Go menu gaps ───────────
         // src: src/menu_bar.rs::go_menu
+        // #1226 (2026-08-28) — this row used to fire `view.discovery`,
+        // the F1 click-discovery overlay, which opens no file. It now
+        // fires `picker.files`, so the copy describes the picker.
         ("Go", i) if i.contains("Go to file") => Some(InfoViewCopy {
             title: "Go → Go to file…".into(),
-            body: "Opens the fuzzy file picker over the workspace — same \
-                   overlay as `Ctrl+P`. Type to match, Enter opens in the \
-                   active pane."
+            body: "Opens the fuzzy file picker over the workspace — type to \
+                   narrow, Enter opens the match in the active pane."
                 .into(),
-            shortcuts: vec![ShortcutHint::new("Ctrl+P", "Go to file")],
-            try_it: vec![PaletteLink::new("view.discovery", "Go to file")],
+            shortcuts: vec![ShortcutHint::new("Ctrl+P", "Fuzzy file picker")],
+            try_it: vec![PaletteLink::new("picker.files", "Go to file (fuzzy)")],
             ..Default::default()
         }),
         ("Go", i) if i.contains("Go to line") => Some(InfoViewCopy {
@@ -2653,13 +2706,17 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
         }),
         // ── R14 modernize pass (2026-08-16) — View menu gaps ─────────
         // src: src/menu_bar.rs::view_menu
+        // #1226 (2026-08-28) — this row used to fire `view.discovery`,
+        // the F1 click-discovery overlay, not the palette. It now fires
+        // `palette`, so the copy describes the palette.
         ("View", i) if i.contains("Command palette") => Some(InfoViewCopy {
             title: "View → Command palette".into(),
-            body: "Opens the universal command palette — every mnml \
-                   command, searchable by name or id. Same overlay `Ctrl+P` \
-                   / Go → Go to file opens (they share `view.discovery`)."
+            body: "Opens the command palette — fuzzy-search every registered \
+                   command by name or id, Enter runs it. The same surface \
+                   `Ctrl+Shift+P` opens."
                 .into(),
-            try_it: vec![PaletteLink::new("view.discovery", "Open palette")],
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+P", "Command palette")],
+            try_it: vec![PaletteLink::new("palette", "Open command palette")],
             ..Default::default()
         }),
         ("View", i) if i.contains("right panel") => Some(InfoViewCopy {

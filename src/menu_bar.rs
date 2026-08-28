@@ -351,7 +351,11 @@ fn view_menu() -> MenuDef {
     MenuDef {
         label: "View".to_string(),
         items: vec![
-            MenuItem::action_with_icon("\u{F4B5}", "Command palette", "view.discovery"),
+            // #1226 (2026-08-28) — was `view.discovery`, which only
+            // toggles the F1 click-discovery overlay. The most
+            // discoverable route to the palette for a mouse user
+            // opened a debug panel instead.
+            MenuItem::action_with_icon("\u{F4B5}", "Command palette", "palette"),
             MenuItem::Separator,
             // Same codicon glyphs as the palette-bar chips
             // (`layout-sidebar-left-off` EC02, `layout-sidebar-right-off`
@@ -404,10 +408,13 @@ fn go_menu() -> MenuDef {
     MenuDef {
         label: "Go".to_string(),
         items: vec![
+            // #1226 — `view.discovery` opened the click-discovery
+            // overlay, not a file picker. `picker.files` is the fuzzy
+            // file picker this label promises.
             MenuItem::action_with_icon(
                 crate::ui::search_glyph::NERD,
                 "Go to file…",
-                "view.discovery",
+                "picker.files",
             ),
             // fa-hashtag — universal "line #N" mark.
             MenuItem::action_with_icon("\u{F292}", "Go to line…", "editor.goto_line"),
@@ -556,5 +563,73 @@ fn help_menu() -> MenuDef {
             MenuItem::Separator,
             MenuItem::action_with_icon("\u{F129}", "About mnml", "view.about"),
         ],
+    }
+}
+
+#[cfg(test)]
+mod wiring_tests {
+    use super::*;
+
+    /// Collect `(label, command_id)` for every action in a menu,
+    /// descending into submenus.
+    fn actions(items: &[MenuItem]) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for it in items {
+            match it {
+                MenuItem::Action {
+                    label, command_id, ..
+                } => out.push((label.clone(), command_id.clone())),
+                MenuItem::Submenu { items, .. } => out.extend(actions(items)),
+                MenuItem::Separator => {}
+            }
+        }
+        out
+    }
+
+    fn command_for(menu: &MenuDef, label: &str) -> String {
+        actions(&menu.items)
+            .into_iter()
+            .find(|(l, _)| l == label)
+            .unwrap_or_else(|| panic!("no `{label}` item in the {} menu", menu.label))
+            .1
+    }
+
+    /// #1226 — these two entries ran `view.discovery`, which only
+    /// toggles the F1 click-discovery overlay. The View menu's
+    /// "Command palette" is the most discoverable route to the palette
+    /// for a mouse user, and it opened a debug panel instead.
+    ///
+    /// A label is a promise. Pin the ones that name a specific surface
+    /// to the command that opens it — "does the id resolve" would have
+    /// stayed green through the entire bug, because `view.discovery`
+    /// resolves fine.
+    #[test]
+    fn menu_labels_that_name_a_surface_fire_the_command_that_opens_it() {
+        assert_eq!(command_for(&view_menu(), "Command palette"), "palette");
+        assert_eq!(command_for(&go_menu(), "Go to file…"), "picker.files");
+    }
+
+    /// Every menu action must resolve to a registered command — a
+    /// typo'd id is a silently dead row.
+    #[test]
+    fn every_menu_action_resolves_to_a_registered_command() {
+        let ids: std::collections::HashSet<&str> = crate::command::registry()
+            .all()
+            .iter()
+            .map(|c| c.id)
+            .collect();
+        let mut dead: Vec<String> = Vec::new();
+        for menu in [view_menu(), go_menu()] {
+            for (label, id) in actions(&menu.items) {
+                if !ids.contains(id.as_str()) {
+                    dead.push(format!("{} → \"{label}\" → `{id}`", menu.label));
+                }
+            }
+        }
+        assert!(
+            dead.is_empty(),
+            "menu rows pointing at unregistered commands:\n  {}",
+            dead.join("\n  ")
+        );
     }
 }

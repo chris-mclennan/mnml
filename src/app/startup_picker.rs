@@ -14,7 +14,7 @@ pub enum StartupPickerAction {
     /// Dismiss the picker; user continues in the workspace mnml was
     /// already launched at.
     NewFile,
-    /// Dismiss + fire `view.discovery` (the fuzzy file picker).
+    /// Dismiss + fire `picker.files` (the fuzzy file picker).
     OpenFile,
     /// Dismiss + fire `view.add_workspace` (the path prompt that
     /// canonicalizes a path + adds it as an extra workspace).

@@ -2202,7 +2202,7 @@ fn is_empty_workspace(app: &App) -> bool {
 /// Paint the vscode-style empty-state panel into `inner`. Lines:
 ///   No workspace open
 ///   (blank)
-///   ▸ Open file…       (registers a click rect → view.discovery)
+///   ▸ Open file…       (registers a click rect → picker.files)
 ///   ▸ Open folder…     (registers a click rect → view.add_workspace)
 fn draw_empty_workspace_state(frame: &mut Frame, app: &mut App, inner: Rect) {
     let t = theme::cur();
@@ -2215,7 +2215,9 @@ fn draw_empty_workspace_state(frame: &mut Frame, app: &mut App, inner: Rect) {
     let mut lines: Vec<(String, Option<&'static str>, ratatui::style::Color)> = vec![
         ("No workspace open".to_string(), None, t.comment),
         (String::new(), None, t.comment),
-        ("▸ Open file…".to_string(), Some("view.discovery"), t.fg),
+        // #1226 — was `view.discovery` (the F1 click-discovery
+        // overlay), which opens no file.
+        ("▸ Open file…".to_string(), Some("picker.files"), t.fg),
         (
             "▸ Open folder…".to_string(),
             Some("view.add_workspace"),
