@@ -16,6 +16,32 @@ use crate::app::App;
 
 pub type CommandFn = fn(&mut App);
 
+// #1208 f/u (R16 SEV-2, 2026-08-28) — nav.back/forward own `alt+left`
+// and `alt+right`, and the chord layer resolves BEFORE the pane input
+// handler. So the `Alt+←/→ → MoveWordLeft/Right` arms added in
+// 5c71669d were dead code, and on macOS — where Mission Control eats
+// Ctrl+←/→ and Option+←/→ is therefore the ONLY word-motion chord that
+// arrives — reaching for word-jump silently changed which file you
+// were editing. Exactly the two-homes-for-one-chord bug the comment on
+// nav.back already documents from 2026-06-28.
+//
+// Split the way VS Code does, because the right answer differs per OS:
+//   macOS      Option+←/→ is the system word-motion binding, so nav
+//              must not claim it; nav gets Ctrl+- / Ctrl+Shift+-.
+//   elsewhere  Ctrl+←/→ already does word motion unimpeded, so Alt+←/→
+//              stays nav (VS Code's own Win/Linux binding).
+// Ctrl+- is offered on every platform so the chord is portable muscle
+// memory even where Alt+← still works.
+#[cfg(target_os = "macos")]
+const NAV_BACK_KEYS: &[&str] = &["ctrl+minus"];
+#[cfg(not(target_os = "macos"))]
+const NAV_BACK_KEYS: &[&str] = &["alt+left", "ctrl+minus"];
+
+#[cfg(target_os = "macos")]
+const NAV_FORWARD_KEYS: &[&str] = &["ctrl+shift+minus"];
+#[cfg(not(target_os = "macos"))]
+const NAV_FORWARD_KEYS: &[&str] = &["alt+right", "ctrl+shift+minus"];
+
 #[derive(Clone)]
 pub struct Command {
     pub id: &'static str,
@@ -2663,7 +2689,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "nav.back",
             title: "Go back (previous cursor / file; in Browser pane: history.back)",
             group: "go",
-            keys: &["alt+left"],
+            keys: NAV_BACK_KEYS,
             // input-handler-reviewer 2026-06-28 SEV-1: Alt+Left
             // had two homes — global nav.back here and a browser
             // arm in pane.rs:565 — the chord layer fired this one
@@ -2682,9 +2708,9 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "nav.forward",
-            title: "Go forward (undo an Alt+Left; in Browser pane: history.forward)",
+            title: "Go forward (undo a nav.back; in Browser pane: history.forward)",
             group: "go",
-            keys: &["alt+right"],
+            keys: NAV_FORWARD_KEYS,
             run: |app| {
                 if matches!(
                     app.active.and_then(|i| app.panes.get(i)),
@@ -7657,4 +7683,58 @@ fn builtin_commands() -> Vec<Command> {
     // too — no in-core caches to aggregate.
     // `aws.*` commands moved to mnml-aws-codebuild in 2026-06.
     cmds
+}
+
+#[cfg(test)]
+mod chord_ownership_tests {
+    use super::*;
+
+    /// #1208 f/u (R16 SEV-2) — the `Alt+←/→ → MoveWordLeft/Right` arms
+    /// in `input/standard.rs` are DEAD unless the chord layer leaves
+    /// those chords unclaimed, because the keymap resolves first.
+    ///
+    /// This is the test that was missing: the unit tests for the input
+    /// handler exercise it in isolation and passed happily while, in
+    /// the running app, Option+← changed which file you were editing.
+    /// Asserting on the registry is the only place the collision is
+    /// visible.
+    #[test]
+    fn no_command_claims_the_macos_word_motion_chords() {
+        // On macOS these MUST be free — Mission Control eats Ctrl+←/→,
+        // so Option+←/→ is the only word-motion chord that arrives.
+        // Elsewhere Ctrl+←/→ works, so Alt+←/→ stays nav (VS Code's
+        // own split), and this assertion doesn't apply.
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        for c in registry().all() {
+            for k in c.keys {
+                assert!(
+                    *k != "alt+left" && *k != "alt+right",
+                    "`{}` claims `{k}`, which shadows macOS word motion — \
+                     the keymap resolves before the pane input handler, so \
+                     the MoveWordLeft/Right arms become dead code",
+                    c.id
+                );
+            }
+        }
+    }
+
+    /// nav must stay reachable on every platform after that split —
+    /// freeing a chord is only correct if the command didn't lose its
+    /// only binding in the process.
+    #[test]
+    fn nav_back_and_forward_keep_a_binding_on_every_platform() {
+        for id in ["nav.back", "nav.forward"] {
+            let c = registry()
+                .all()
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap_or_else(|| panic!("{id} missing from the registry"));
+            assert!(
+                !c.keys.is_empty(),
+                "{id} has no keybinding — it would be palette-only"
+            );
+        }
+    }
 }

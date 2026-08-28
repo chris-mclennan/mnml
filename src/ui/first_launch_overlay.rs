@@ -225,7 +225,7 @@ fn render_lines<'a>(
         section_starts.push(out.len());
         // A subtle rule above each section (skip the first) — turns
         // the run-together wall of text into visually-parseable
-        // sections. The numbers connect with the [1-6] jump hint in
+        // sections. The numbers connect with the [1-N] jump hint in
         // the footer.
         if i > 0 {
             out.push((section_rule(t), None));
@@ -337,11 +337,16 @@ fn body_line<'a>(text: &str, t: &theme::Theme) -> Line<'a> {
 }
 
 fn footer<'a>(t: &theme::Theme) -> Line<'a> {
-    // Six sections now (task #975 added AI billing preference). The
-    // digit hint keeps its 1-6 range — the parser at
-    // `handle_first_launch_key` already accepts `1..='6'`.
-    let text = "   [1-6] jump section  · [↑↓] move  · [Enter] Finish  · [Esc] Ask me later";
-    let padded = pad_to(text, INNER_W as usize);
+    // #1208 2026-08-27 — DERIVED from the section list, not hardcoded.
+    // This read "[1-6]" for a day after the Keyboard section made it
+    // seven: the handler and its test were both widened, but the string
+    // the user actually reads was not, so section 7 was reachable while
+    // the UI said otherwise. Computing it means the next section to
+    // land updates this for free.
+    let n = WizardSection::ALL.len();
+    let text =
+        format!("   [1-{n}] jump section  · [↑↓] move  · [Enter] Finish  · [Esc] Ask me later");
+    let padded = pad_to(&text, INNER_W as usize);
     Line::from(Span::styled(
         padded,
         Style::default().fg(t.comment).bg(t.bg_dark),
@@ -685,5 +690,30 @@ fn pad_to(s: &str, width: usize) -> String {
         s.to_string()
     } else {
         format!("{}{}", s, " ".repeat(width - w))
+    }
+}
+
+#[cfg(test)]
+mod footer_tests {
+    use super::*;
+
+    /// #1208 — the footer advertised "[1-6] jump section" for a day
+    /// after the Keyboard section made it seven. The handler and its
+    /// range test were both widened; the string the user actually reads
+    /// was not, so section 7 was reachable while the UI denied it.
+    ///
+    /// Asserting against `ALL.len()` rather than a literal is the whole
+    /// point — a test that hardcoded "1-7" would rot exactly the same
+    /// way the string did.
+    #[test]
+    fn footer_hint_matches_the_real_section_count() {
+        let t = theme::cur();
+        let line = footer(&t);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let n = WizardSection::ALL.len();
+        assert!(
+            text.contains(&format!("[1-{n}]")),
+            "footer must advertise the actual {n} sections, got: {text:?}"
+        );
     }
 }

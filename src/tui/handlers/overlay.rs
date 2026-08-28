@@ -53,10 +53,29 @@ pub(crate) fn handle_integration_settings_key(app: &mut App, key: KeyEvent) {
 ///   Esc          — Ask me later (does NOT set complete)
 ///   Enter        — Finish (commits + sets complete)
 ///   ↑ ↓ / j k    — Move focused section (or, in AiRouting, sub-row)
-///   1-6          — Jump directly to section N
+///   1-N          — Jump directly to section N (N = WizardSection::ALL.len())
 ///   ← → / h l    — For radio sections: cycle choice; for others: no-op
 ///   Space        — For AiRouting: cycle the focused row's choice
 ///   y / n        — For Nerd Font section: quick yes/no
+/// #1208 f/u (R16 SEV-2, 2026-08-28) — a MODIFIED arrow must never
+/// cycle a wizard radio.
+///
+/// The Keyboard section asks the user to press Ctrl/Option/Cmd+→ as a
+/// probe. One `↓` later they are on Input style, whose arrow arms
+/// matched on `KeyCode::Left | KeyCode::Right` with no modifier guard —
+/// so pressing the probe chord again silently flipped standard → vim,
+/// set `input_style_touched`, and Enter persisted it to disk. A user
+/// running a KEYBOARD DIAGNOSTIC could end up in modal editing on next
+/// launch without ever seeing a prompt.
+///
+/// Plain ←/→ still cycle values; only modified arrows are ignored.
+fn modified_arrow(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Left | KeyCode::Right)
+        && key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
 pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
     use crate::app::first_launch::WizardSection;
     let Some(state) = app.first_launch.as_ref() else {
@@ -145,16 +164,19 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
     match section {
         WizardSection::Keyboard => {}
         WizardSection::AiBackend => match key.code {
+            _ if modified_arrow(key) => {}
             KeyCode::Left | KeyCode::Char('h') => cycle_ai_backend(app, -1),
             KeyCode::Right | KeyCode::Char('l') => cycle_ai_backend(app, 1),
             _ => {}
         },
         WizardSection::InputStyle => match key.code {
+            _ if modified_arrow(key) => {}
             KeyCode::Left | KeyCode::Char('h') => cycle_input_style(app, -1),
             KeyCode::Right | KeyCode::Char('l') => cycle_input_style(app, 1),
             _ => {}
         },
         WizardSection::NerdFont => match key.code {
+            _ if modified_arrow(key) => {}
             KeyCode::Char('y') | KeyCode::Char('Y') => app.wizard_set_nerd_font_ok(true),
             KeyCode::Char('n') | KeyCode::Char('N') => app.wizard_set_nerd_font_ok(false),
             KeyCode::Left | KeyCode::Char('h') => app.wizard_set_nerd_font_ok(true),
@@ -165,6 +187,7 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         },
         WizardSection::AiRouting => match key.code {
+            _ if modified_arrow(key) => {}
             KeyCode::Left | KeyCode::Char('h') => cycle_ai_routing(app, sub_row, -1),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ') => {
                 cycle_ai_routing(app, sub_row, 1)

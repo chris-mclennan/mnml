@@ -237,6 +237,28 @@ pub fn handle_common_text_key<S: ?Sized>(
     // still route them so the caret moves for prompts that don't
     // model selection.
     let _ = shift;
+    // #1208 f/u (R16 SEV-2, 2026-08-28) — Cmd+←/→ is the macOS
+    // system-wide line-start/line-end binding, and this helper had no
+    // SUPER arm at all: `sup` was computed and never used for arrows,
+    // so Cmd+← fell through to the plain-arrow branch and moved ONE
+    // CHARACTER. The editor got this right while every prompt, the
+    // palette and the settings filter disagreed with it and with macOS.
+    // Placed before the word-motion arms so Cmd wins over a stray
+    // Ctrl/Alt if a terminal sends both.
+    if matches!(key.code, KeyCode::Left) && sup {
+        if let Some(f) = ops.move_home {
+            f(ops.state);
+            return TextKeyResult::Handled;
+        }
+        return TextKeyResult::NotHandled;
+    }
+    if matches!(key.code, KeyCode::Right) && sup {
+        if let Some(f) = ops.move_end {
+            f(ops.state);
+            return TextKeyResult::Handled;
+        }
+        return TextKeyResult::NotHandled;
+    }
     if matches!(key.code, KeyCode::Left) && (ctrl || alt) {
         if let Some(f) = ops.move_word_left {
             f(ops.state);

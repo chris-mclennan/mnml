@@ -114,6 +114,7 @@ export default defineConfig({
             { label: 'Bridge & Mount (sibling integration)', slug: 'manual/bridge-mount' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'First-launch wizard', slug: 'manual/first-launch' },
+            { label: 'Word & line motion · keys.doctor', slug: 'manual/keyboard-motion' },
             { label: 'Platform support', slug: 'manual/platform-support' },
             { label: 'Running mnml over SSH', slug: 'manual/remote-ssh' },
             { label: 'Editing', slug: 'manual/editing' },

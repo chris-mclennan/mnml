@@ -250,7 +250,8 @@ pub fn remedy(probe_id: &str, term: TerminalKind, is_macos: bool) -> Remedy {
             "macOS binds Ctrl+←/→ to Mission Control's \"move left/right a space\" \
              whenever you have more than one Space, so it never reaches the \
              terminal. Free it in System Settings → Keyboard → Keyboard Shortcuts \
-             → Mission Control, or just use Option+←/→ instead.",
+             → Mission Control. Option+←/→ is the macOS-native word-motion \
+             chord and needs no system change — prefer it if it ticks above.",
         ),
         "ctrl_right" => none(
             "Ctrl+←/→ is normally forwarded on this platform. Check your terminal \
@@ -399,7 +400,13 @@ pub fn summary(doc: &KeyDoctor) -> String {
     }
     let missing = doc.missing();
     if missing.is_empty() {
-        return "All chords arrive — word and line motion will work everywhere.".to_string();
+        // Scoped to what a probe can actually prove. This previously
+        // read "…word and line motion will work everywhere", which
+        // certified Alt+←/→ as healthy while a keymap collision meant
+        // it changed FILES instead of moving by word (R16 SEV-2,
+        // 2026-08-28). Arrival and correct behaviour are different
+        // claims; only the first one is measured here.
+        return "All chords reach mnml — your terminal isn't intercepting any of them.".to_string();
     }
     let names: Vec<&str> = missing.iter().map(|p| p.label).collect();
     format!(
@@ -667,6 +674,6 @@ mod tests {
         for p in PROBES.iter().filter(|p| !p.is_control) {
             d.observe(ev(p.code, p.mods));
         }
-        assert!(summary(&d).contains("All chords arrive"));
+        assert!(summary(&d).contains("All chords reach mnml"));
     }
 }
