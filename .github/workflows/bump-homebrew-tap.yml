@@ -33,7 +33,15 @@ jobs:
     # github.event.workflow_run.conclusion; skip when it failed.
     # release/workflow_dispatch paths don't have that field, so the
     # `||` short-circuits them to true (always run).
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # The head_branch check is load-bearing, not belt-and-braces.
+    # cargo-dist's release.yml ALSO triggers on `pull_request`, so every
+    # PR runs it — and each completion fires this workflow_run. On a PR
+    # run `head_branch` is the PR branch, so the version derived below
+    # became e.g. `dependabot/npm_and_yarn/site/npm_and_yarn-c084087bd7`
+    # and the bump failed with curl exit 22. Enabling Dependabot turned
+    # that into a guaranteed failure on every dependency PR.
+    # Real releases come from a `v*` tag, so gate on that.
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve version

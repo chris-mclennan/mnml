@@ -23,7 +23,11 @@ permissions:
 
 jobs:
   package:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Only act on a workflow_run that came from a `v*` TAG. See
+    # bump-homebrew-tap.yml for the full rationale: release.yml also
+    # runs on pull_request, so without this every PR reaches the
+    # `head_branch` version-derivation below with a branch name.
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
