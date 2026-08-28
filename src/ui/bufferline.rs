@@ -369,6 +369,12 @@ pub fn paint_tab_chip(
     } else {
         strip_bg
     };
+    // Measured BEFORE `spans` moves into the Paragraph — see the
+    // close-rect guard below.
+    let spans_w: u16 = spans
+        .iter()
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()) as u16)
+        .sum();
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
         chip_rect,
@@ -389,7 +395,20 @@ pub fn paint_tab_chip(
     // Chrome / every mouse-driven tabbed UI paints the `×` on
     // every tab; hover styling still distinguishes. Pinned tabs
     // stay opt-out (need an explicit unpin verb before close).
-    let close = if !inputs.is_pinned && painted_w >= 2 {
+    // R16 vscode-mouse SEV-2 2026-08-28 — `painted_w >= 2` only proved
+    // the chip was two cells WIDE, not that the badge was DRAWN. On a
+    // clipped tab the spans still carry the badge but it overflows
+    // `painted_w` and ratatui hard-clips it, so the rect landed on the
+    // last two characters of the FILENAME: clicking the label of
+    // `notes.txt` closed it instead of focusing it. Measured at 120
+    // cols (rect 99-100 over `x`/`t`), at 100 cols, and inside a
+    // vertical split — non-clipped tabs were pixel-exact throughout,
+    // so it is specifically the clip path.
+    //
+    // Register the rect only when the spans actually fit the chip, so
+    // a badge that got clipped away takes its hit-target with it.
+    let badge_drawn = spans_w <= chip_rect.width;
+    let close = if !inputs.is_pinned && painted_w >= 2 && badge_drawn {
         Some(Rect {
             x: chip_rect.x + chip_rect.width - 2,
             y: chip_rect.y,
@@ -1597,6 +1616,81 @@ mod tests {
                 got_close, expect_close,
                 "close-rect presence mismatch for {label}"
             );
+        }
+    }
+    /// R16 vscode-mouse SEV-2 2026-08-28 — a CLIPPED tab must not
+    /// register a close rect, because the rect is placed at
+    /// `chip.x + width - 2` and on a clipped chip those two cells are
+    /// the last characters of the FILENAME. Measured in the wild:
+    /// clicking col 99 (the `x` and `t` of "notes.txt") CLOSED the tab
+    /// instead of focusing it.
+    ///
+    /// The old guard was `painted_w >= 2`, which only proved the chip
+    /// was two cells wide — never that the badge survived the clip.
+    #[test]
+    fn clipped_chip_registers_no_close_rect_over_the_filename() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let inputs = TabChipInputs {
+            is_active: true,
+            name: "notes.txt".to_string(),
+            ..base_inputs()
+        };
+        // Wide enough for the badge → rect expected.
+        let mut roomy = None;
+        let mut term = Terminal::new(TestBackend::new(40, 1)).unwrap();
+        term.draw(|f| {
+            roomy = paint_tab_chip(
+                f,
+                Rect::new(0, 0, 40, 1),
+                &inputs,
+                theme::cur().bg_darker,
+                40,
+                true,
+            )
+            .and_then(|r| r.close);
+        })
+        .unwrap();
+        assert!(
+            roomy.is_some(),
+            "an unclipped active tab should still be closable in one click"
+        );
+
+        // Squeeze until the chip can no longer carry its badge. Any
+        // width that still yields a chip must either draw the badge or
+        // register no close rect — never a rect over the name.
+        for w in 4u16..=14 {
+            let mut term = Terminal::new(TestBackend::new(w, 1)).unwrap();
+            let mut got: Option<(Rect, Rect)> = None;
+            term.draw(|f| {
+                if let Some(r) = paint_tab_chip(
+                    f,
+                    Rect::new(0, 0, w, 1),
+                    &inputs,
+                    theme::cur().bg_darker,
+                    w,
+                    true,
+                ) {
+                    got = r.close.map(|c| (r.chip, c));
+                }
+            })
+            .unwrap();
+            if let Some((chip, close)) = got {
+                let spans_w: u16 = tab_chip_spans(&inputs, theme::cur().bg_darker, w, true)
+                    .map(|(sp, _)| {
+                        sp.iter()
+                            .map(|s| {
+                                unicode_width::UnicodeWidthStr::width(s.content.as_ref()) as u16
+                            })
+                            .sum()
+                    })
+                    .unwrap_or(0);
+                assert!(
+                    spans_w <= chip.width,
+                    "width {w}: close rect {close:?} registered on a CLIPPED chip                      (spans {spans_w} > chip {}) — those cells are the filename",
+                    chip.width
+                );
+            }
         }
     }
 }
