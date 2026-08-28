@@ -4177,6 +4177,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.notes_panel_refresh(),
         },
         Command {
+            // #1221 f/u — the SESSIONS panel's refresh chip shipped
+            // mouse-only. R16 gave notes / agents / cloud-agents a
+            // palette command each precisely so a keyboard user isn't
+            // stuck reaching for the mouse to refresh a panel; this
+            // closes the same gap for sessions.
+            id: "sessions.refresh",
+            title: "Sessions: re-read session transcripts + ports",
+            group: "view",
+            keys: &[],
+            run: |app| app.sessions_panel_refresh(),
+        },
+        Command {
             id: "agents.refresh",
             title: "Agents: rescan local Claude/Codex sessions",
             group: "view",
