@@ -1519,6 +1519,15 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // within a notch, ~150ms between deliberate notches. Anything
         // arriving within the window below belongs to the notch already
         // handled, so it does not step again.
+        // WHY 2-3 events per notch, confirmed 2026-08-29: the TERMINAL
+        // multiplies them. Ghostty 1.3.1 ships
+        // `mouse-scroll-multiplier = precision:1,discrete:3` by default,
+        // so a notched wheel's every detent arrives as THREE scroll
+        // events. Nothing in mnml or in the user's ghostty config asked
+        // for that. crossterm hands us what the terminal chose to send,
+        // not what the hardware did — so any events-per-notch figure is a
+        // property of the (mouse x terminal) pair, and collapsing by time
+        // is what makes the count stop mattering.
         const TREE_NOTCH_WINDOW_MS: u64 = 60;
         let step_now = std::time::Instant::now();
         let within_same_notch = app
