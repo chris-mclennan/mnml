@@ -1452,7 +1452,7 @@ impl Default for Config {
                 ensure_trailing_newline: true,
                 chord_timeout_ms: 500,
                 wheel_moves_cursor: "auto".to_string(),
-                scroll_accel: "normal".to_string(),
+                scroll_accel: "off".to_string(),
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -2519,7 +2519,7 @@ impl Config {
             // different feel than the user typed.
             self.editor.scroll_accel = match v.as_str() {
                 "off" | "gentle" | "normal" | "fast" => v,
-                _ => "normal".to_string(),
+                _ => "off".to_string(),
             };
         }
         if let Some(v) = raw.ui.theme {

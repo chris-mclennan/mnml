@@ -1197,11 +1197,24 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
         .unwrap_or(std::time::Duration::MAX);
     app.scroll_last_event_at = Some(now);
     let new_gesture = gap > std::time::Duration::from_millis(SCROLL_GESTURE_GAP_MS);
+    // Rate in NOTCHES per second, not events per second.
+    //
+    // #1236 — this was `want_raw / secs`, i.e. it divided the BATCH
+    // SIZE by the gap. But a Logitech MX Master 3 (and macOS
+    // smooth-scrolling generally) emits SEVERAL events per physical
+    // notch, so batch size is hardware granularity, not user speed.
+    // Dividing by it inflated the rate 2-3x on that hardware, pinning
+    // the multiplier at its ceiling from the first notch and making the
+    // stop detector fire on noise — "its not detecting my scrolling
+    // reliably".
+    //
+    // One coalesced batch is one notch, so 1/gap is the notch rate and
+    // it means the same thing on every wheel.
     let rate = if new_gesture {
         0.0
     } else {
         let secs = gap.as_secs_f32().max(0.001);
-        want_raw / secs
+        1.0 / secs
     };
     if new_gesture {
         app.scroll_gesture_peak_rate = 0.0;
@@ -1229,6 +1242,25 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     // Half, not 0.8, because notch timing jitters: a real hand-spin
     // fluctuates and a tight threshold would stutter mid-gesture. A
     // halving is a collapse, not jitter.
+    // #1236 — `off` is a TRUE bypass, byte-identical to pre-#1236.
+    //
+    // 446 real wheel events were logged from a Logitech MX Master 3 and
+    // all three added mechanisms misfire on that stream: the multiplier
+    // pinned at its ceiling on 27% of events (median inter-event gap is
+    // 23ms and p10 is 8ms, so gentle scrolling already exceeds any rate
+    // threshold), the stop detector fired 0/446 times, and the bucket
+    // starved on 45 events — dropping real input. Batch size runs
+    // INVERSELY to the gap (mean 1.89 under 18ms, 3.74 over 60ms), so
+    // neither signal tracks hand speed at all.
+    //
+    // Until there is an input that does, the default is the behaviour
+    // that worked, and it must not touch any of this machinery.
+    if ceiling <= 1.0 {
+        let spend = want_raw.min(app.scroll_bucket).floor();
+        app.scroll_bucket -= spend;
+        app.scroll_last_factor = 1.0;
+        return delta.signum() * (spend as i32);
+    }
     let peak = app.scroll_gesture_peak_rate;
     if rate > peak {
         app.scroll_gesture_peak_rate = rate;
@@ -1243,6 +1275,7 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
         / (SCROLL_ACCEL_FULL_RATE - SCROLL_ACCEL_FLOOR_RATE))
         .clamp(0.0, 1.0);
     let factor = 1.0 + (ceiling - 1.0) * ramp;
+    app.scroll_last_factor = factor;
     let want = want_raw * factor;
 
     // Capacity scales with the setting so the acceleration isn't
@@ -1465,9 +1498,18 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // came from BATCH SIZE, which measured render-loop lag rather
         // than intent. Different input, different trust.
         if accel_on {
-            let rows = list_scroll_clamp_scaled(delta, scroll_ceiling)
-                .unsigned_abs()
-                .max(1) as usize;
+            // Rows come from the ACCELERATION FACTOR, never from the
+            // batch size.
+            //
+            // #1236 — deriving rows from the magnitude reintroduced the
+            // exact bug the 2026-07-01 comment above warns about: an MX
+            // Master 3 fires several events per physical notch, so a
+            // single slow notch moved 2-3 rows ("when i spin slowly it
+            // should go from file to file but its jumping over 2 files
+            // for a single scroll notch"). The factor is 1.0 at slow
+            // speeds by construction, so one notch is one row again,
+            // and only a genuinely fast spin moves more.
+            let rows = app.scroll_last_factor.max(1.0).round() as usize;
             let cur = app.tree.cursor();
             app.tree.set_cursor(if delta < 0 {
                 cur.saturating_sub(rows)
@@ -2449,6 +2491,39 @@ mod scroll_spec_tests {
                 slow, 10,
                 "accel={accel}: a slow deliberate scroll must stay 1:1 (got {slow}                  for 10 notches) so precise positioning still works"
             );
+        }
+    }
+
+    /// MX Master 3 report: "when i spin slowly it should go from file
+    /// to file but its jumping over 2 files for a single scroll notch".
+    ///
+    /// That wheel (and macOS smooth-scrolling generally) emits SEVERAL
+    /// events per physical notch, so a batch of 3 is one notch, not
+    /// three. Rate must therefore be notches/sec, not events/sec —
+    /// dividing by the batch inflated it 2-3x on this hardware, pinned
+    /// the multiplier at its ceiling from the first notch, and made the
+    /// stop detector fire on noise.
+    #[test]
+    fn hardware_that_fires_several_events_per_notch_still_scrolls_one_step() {
+        for batch in [1, 2, 3, 5] {
+            let (_d, mut app) = app_with("normal");
+            let mut t = Instant::now();
+            // Slow, deliberate notches — 150ms apart, whatever the
+            // hardware's events-per-notch happens to be.
+            let mut factors = Vec::new();
+            for _ in 0..5 {
+                t += Duration::from_millis(150);
+                budgeted_scroll_at(&mut app, batch, t);
+                factors.push(app.scroll_last_factor);
+            }
+            for f in &factors {
+                assert!(
+                    (*f - 1.0).abs() < 0.01,
+                    "batch={batch}: slow notches produced factor {f}, so a discrete \
+                     surface would jump {} rows for ONE notch",
+                    f.round()
+                );
+            }
         }
     }
 

@@ -4689,6 +4689,12 @@ pub struct App {
     /// byte-identical to `off`. Always < 1.0 and reset per gesture, so
     /// it cannot accumulate into the coasting this feature avoids.
     pub scroll_frac_carry: f32,
+    /// #1236 — the acceleration multiplier from the most recent wheel
+    /// event. Discrete-row surfaces (the file tree) move by THIS, not
+    /// by the event magnitude: magnitude includes hardware granularity
+    /// (an MX Master 3 emits several events per physical notch) and
+    /// using it made one slow notch jump 2-3 rows.
+    pub scroll_last_factor: f32,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -6401,6 +6407,7 @@ impl App {
             scroll_gesture_peak_rate: 0.0,
             scroll_gesture_released: false,
             scroll_frac_carry: 0.0,
+            scroll_last_factor: 1.0,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,
