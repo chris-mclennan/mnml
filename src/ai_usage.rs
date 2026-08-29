@@ -498,8 +498,14 @@ pub fn spawn_claude_fetch_account_of(
                 // observable, so it is the only place it can be
                 // learned. Pin it here and every later write can be
                 // checked against it.
-                if let Some(email) = profile.as_ref().and_then(|p| p.email.as_deref()) {
-                    pin_account_identity(&name, email);
+                // A collision Err here means several token files are
+                // sharing one credential (the #1232 state). Don't pin
+                // — an unpinned account is correctly "unproven", and
+                // the guard then refuses to write to it.
+                if let Some(email) = profile.as_ref().and_then(|p| p.email.as_deref())
+                    && let Err(clash) = pin_account_identity(&name, email)
+                {
+                    eprintln!("mnml: {clash}");
                 }
                 ClaudeAccountUsage {
                     name: name.clone(),
@@ -579,20 +585,71 @@ pub fn pinned_email_for(name: &str) -> Option<String> {
     load_identity_pins().get(name).cloned()
 }
 
-/// Record `name`'s identity. Idempotent; rewrites only on change so
-/// we're not churning the file every 5-minute poll.
-pub fn pin_account_identity(name: &str, email: &str) {
+/// What recording `name = email` should do, given what's already
+/// pinned. Pure so the decision is testable without touching disk.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PinDecision {
+    /// Already pinned to exactly this — don't churn the file.
+    Unchanged,
+    /// Safe to record.
+    Write,
+    /// `email` is already pinned to a DIFFERENT account. Recording it
+    /// would leave two accounts claiming one identity, and a
+    /// non-unique pin proves nothing — so refuse and name the clash.
+    Collision { other: String },
+}
+
+pub(crate) fn plan_pin(
+    pins: &std::collections::BTreeMap<String, String>,
+    name: &str,
+    email: &str,
+) -> PinDecision {
+    if pins.get(name).is_some_and(|p| same_identity(p, email)) {
+        return PinDecision::Unchanged;
+    }
+    if let Some((other, _)) = pins
+        .iter()
+        .find(|(k, v)| k.as_str() != name && same_identity(v, email))
+    {
+        return PinDecision::Collision {
+            other: other.clone(),
+        };
+    }
+    PinDecision::Write
+}
+
+/// Record `name`'s identity, unless another account already claims it.
+///
+/// The collision case is not hypothetical — it is the state the #1232
+/// bug leaves behind. Once several token files hold ONE credential,
+/// every one of them fetches successfully and reports the same email.
+/// Pinning each in turn would hand all of them the same "proof" of
+/// identity, and the guard downstream would then wave through exactly
+/// the cross-writes it exists to stop. So the first account to fetch
+/// pins; the rest detect the clash, stay unpinned, and are correctly
+/// treated as unproven until re-authed.
+///
+/// Returns `Err(description)` on collision so callers can surface it.
+pub fn pin_account_identity(name: &str, email: &str) -> Result<(), String> {
     let email = email.trim();
     if name.is_empty() || email.is_empty() {
-        return;
+        return Ok(());
     }
     let mut pins = load_identity_pins();
-    if pins.get(name).map(String::as_str) == Some(email) {
-        return;
-    }
-    pins.insert(name.to_string(), email.to_string());
-    if let Ok(json) = serde_json::to_string_pretty(&pins) {
-        let _ = write_secret_file(&identity_pin_path(), json.as_bytes());
+    match plan_pin(&pins, name, email) {
+        PinDecision::Unchanged => Ok(()),
+        PinDecision::Collision { other } => Err(format!(
+            "{name} and {other} both report {email} — their token files are \
+             sharing one credential. Re-auth {name} (`R` in the Claude usage \
+             pane) so it has its own."
+        )),
+        PinDecision::Write => {
+            pins.insert(name.to_string(), email.to_string());
+            if let Ok(json) = serde_json::to_string_pretty(&pins) {
+                let _ = write_secret_file(&identity_pin_path(), json.as_bytes());
+            }
+            Ok(())
+        }
     }
 }
 
@@ -622,20 +679,40 @@ fn identity_of_blob(raw: &str) -> Option<String> {
 /// email, and the other two accounts' refresh tokens were destroyed —
 /// they could not recover without a manual re-seed.
 pub fn verify_blob_belongs_to(name: &str, blob: &str, account_count: usize) -> Result<(), String> {
-    // Single configured account: there is no sibling to clobber, and
-    // gating here would break the "default account Just Works" path
-    // on a fresh install that has no pin yet.
-    if account_count <= 1 {
+    let pins = load_identity_pins();
+    // Whether this is a multi-account install is decided by the live
+    // config OR the durable pin record, not config alone. Reviewer
+    // catch: `[ai]` is whole-table-replaced across config layers
+    // (`config.rs`, `self.ai = v`), so a workspace `.mnml/config.toml`
+    // carrying ANY `[ai]` key drops `claude_accounts()` back to the
+    // single synthetic "default" — which would silently switch this
+    // guard off on a machine that genuinely has several accounts.
+    // The pin file remembers what the config momentarily forgot.
+    if account_count <= 1 && pins.len() <= 1 {
         return Ok(());
     }
-    let Some(pinned) = pinned_email_for(name) else {
+    let Some(pinned) = pins.get(name) else {
         return Err(format!(
             "{name} has no pinned identity yet — refusing to overwrite its token \
              with an unverified blob (it will pin itself on the next successful fetch)"
         ));
     };
+    // A pin is only evidence if it is UNIQUE. If two accounts claim
+    // one identity their token files are already sharing a credential,
+    // and "matches the pin" would wave through the very cross-write
+    // this guard exists to stop.
+    if let Some((other, _)) = pins
+        .iter()
+        .find(|(k, v)| k.as_str() != name && same_identity(v, pinned))
+    {
+        return Err(format!(
+            "{name} and {other} are both pinned to {pinned}, so neither pin proves \
+             anything — re-auth {name} (`R` in the Claude usage pane) before it can \
+             be written"
+        ));
+    }
     match identity_of_blob(blob) {
-        Some(actual) if same_identity(&actual, &pinned) => Ok(()),
+        Some(actual) if same_identity(&actual, pinned) => Ok(()),
         Some(actual) => Err(format!(
             "that credential is {actual}, but {name} is {pinned} — not overwriting"
         )),
@@ -689,11 +766,29 @@ fn recapture_from_keychain_blocking(targets: &[RecaptureTarget]) -> Result<Strin
             .to_string()
     })?;
 
-    let Some(target) = targets.iter().find(|t| {
-        t.pinned_email
-            .as_deref()
-            .is_some_and(|p| same_identity(p, &email))
-    }) else {
+    let matches: Vec<&RecaptureTarget> = targets
+        .iter()
+        .filter(|t| {
+            t.pinned_email
+                .as_deref()
+                .is_some_and(|p| same_identity(p, &email))
+        })
+        .collect();
+    // Reviewer catch: a plain `.find()` would silently route to
+    // whichever account happens to be declared first. When several
+    // accounts claim one identity their files are already sharing a
+    // credential, so "first match wins" is a coin flip on which one
+    // gets repaired — refuse and make the ambiguity visible.
+    if matches.len() > 1 {
+        let names: Vec<&str> = matches.iter().map(|t| t.name.as_str()).collect();
+        return Err(format!(
+            "{} are all pinned to {email}, so it's ambiguous which one this \
+             credential belongs to — their token files are sharing a login. \
+             Re-auth them one at a time from distinct `claude login`s",
+            names.join(" and ")
+        ));
+    }
+    let Some(target) = matches.first().copied() else {
         // Name the accounts we DO know, so the user can see whether
         // they logged in as the wrong one or simply haven't pinned
         // this account yet.
@@ -1566,6 +1661,53 @@ mod identity_guard_tests {
     fn single_account_is_never_gated() {
         assert!(verify_blob_belongs_to("default", "{}", 1).is_ok());
         assert!(verify_blob_belongs_to("", "anything", 0).is_ok());
+    }
+
+    fn pins(entries: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// Reviewer catch, and the most important test here. The #1232
+    /// bug leaves several token files holding ONE credential. Every
+    /// one of them then fetches successfully and reports the same
+    /// email. If each got pinned in turn, all of them would hold
+    /// identical "proof" of identity and the guard would wave through
+    /// exactly the cross-writes it exists to stop — the fix would
+    /// launder the collapse instead of catching it.
+    #[test]
+    fn a_second_account_claiming_one_identity_is_a_collision_not_a_pin() {
+        let existing = pins(&[("personal", "chris@example.com")]);
+        assert_eq!(
+            plan_pin(&existing, "work", "chris@example.com"),
+            PinDecision::Collision {
+                other: "personal".to_string()
+            },
+            "the 2nd account to report an already-claimed email must NOT pin"
+        );
+        // Re-pinning the SAME account is not a collision with itself.
+        assert_eq!(
+            plan_pin(&existing, "personal", "chris@example.com"),
+            PinDecision::Unchanged
+        );
+        // And a genuinely distinct identity still pins.
+        assert_eq!(
+            plan_pin(&existing, "work", "work@example.com"),
+            PinDecision::Write
+        );
+    }
+
+    /// Casing must not be a way to sneak a duplicate past the
+    /// collision check.
+    #[test]
+    fn collision_detection_ignores_case() {
+        let existing = pins(&[("personal", "Chris@Example.com")]);
+        assert!(matches!(
+            plan_pin(&existing, "work", "chris@example.com"),
+            PinDecision::Collision { .. }
+        ));
     }
 
     #[test]
