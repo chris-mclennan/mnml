@@ -2148,6 +2148,15 @@ enabled = true
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        // #1235 — pin the data root explicitly rather than inferring it
+        // from HOME. Since the manifest writer resolves through
+        // `data_root()`, HOME alone does not determine the path: on a
+        // machine with XDG_CONFIG_HOME set (Ubuntu CI) the XDG branch
+        // wins and the write lands elsewhere. This test passed on macOS
+        // and Windows and failed only on ubuntu-latest for exactly that
+        // reason. Pointing MNML_DATA_ROOT at the path the assertions
+        // already expect makes it platform-independent.
+        let _root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config").join("mnml"));
         let icon = IntegrationIcon {
             id: "claude_code".to_string(),
             glyph: "C".to_string(),
