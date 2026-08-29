@@ -755,6 +755,31 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: wmc_idx != wmc_default_idx,
     }));
 
+    // scroll_accel — off / gentle / normal / fast (#1236). Discrete
+    // because the Settings UI is discrete-choice-only in v1, and
+    // because a raw multiplier is a worse control than four tuned
+    // feels for something judged entirely by hand.
+    let accel_idx = |v: &str| match v {
+        "off" => 0,
+        "gentle" => 1,
+        "fast" => 3,
+        _ => 2, // "normal"
+    };
+    let sa_idx = accel_idx(cfg.editor.scroll_accel.as_str());
+    let sa_default_idx = accel_idx(d.editor.scroll_accel.as_str());
+    out.push(SettingItem::Row(SettingRow {
+        key: "editor.scroll_accel",
+        label: "Scroll acceleration",
+        options: vec![
+            "off".into(),
+            "gentle".into(),
+            "normal".into(),
+            "fast".into(),
+        ],
+        current_idx: sa_idx,
+        modified: sa_idx != sa_default_idx,
+    }));
+
     // qa-8th crash SEV-2 2026-06-30 — was a duplicate `editor.tab_width`
     // SettingRow here alongside the NumberRow above. With a NumberRow
     // value out of the {2,4,8} set (e.g. 3), the Row's _ => 1 fallback
@@ -1061,6 +1086,17 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             };
             let changed = cfg.editor.wheel_moves_cursor != new;
             cfg.editor.wheel_moves_cursor = new.to_string();
+            changed
+        }
+        "editor.scroll_accel" => {
+            let new = match opt_idx {
+                0 => "off",
+                1 => "gentle",
+                3 => "fast",
+                _ => "normal",
+            };
+            let changed = cfg.editor.scroll_accel != new;
+            cfg.editor.scroll_accel = new.to_string();
             changed
         }
         "editor.tab_width" => {
@@ -1386,6 +1422,9 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             "wheel_moves_cursor",
             q(&cfg.editor.wheel_moves_cursor),
         )],
+        "editor.scroll_accel" => {
+            vec![("editor", "scroll_accel", q(&cfg.editor.scroll_accel))]
+        }
         "editor.tab_width" => vec![("editor", "tab_width", cfg.editor.tab_width.to_string())],
         "editor.chord_timeout_ms" => vec![(
             "editor",

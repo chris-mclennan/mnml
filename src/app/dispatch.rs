@@ -1108,25 +1108,88 @@ const SCROLL_BUCKET_MAX: f32 = 25.0;
 /// dropping events.
 const SCROLL_BUCKET_REFILL: f32 = 12.0;
 
-/// Apply the leaky-bucket scroll budget. Caller asks for `delta`
-/// lines; we refill the bucket based on elapsed time since the
-/// last call, then spend up to `delta` tokens. Returns the
-/// magnitude that should actually be applied (always same sign
-/// as input). 0 ⇒ drop the event entirely.
+/// Ceiling multiplier for each `[editor] scroll_accel` setting.
+///
+/// #1236 — how much MORE a hard spin travels than a slow one. The
+/// multiplier ramps with the coalesced batch size, so a one-notch
+/// nudge is always 1:1 regardless of setting; only a genuinely fast
+/// spin reaches the ceiling.
+fn scroll_accel_ceiling(setting: &str) -> f32 {
+    match setting {
+        "off" => 1.0,
+        "gentle" => 1.5,
+        "fast" => 4.0,
+        _ => 2.5, // "normal"
+    }
+}
+
+/// Batch size at which the acceleration multiplier reaches its
+/// ceiling. `coalesce_scroll` collapses everything queued in one poll
+/// into a single event, so the batch size IS an instantaneous wheel
+/// velocity estimate — free, and already computed.
+const SCROLL_ACCEL_FULL_AT: f32 = 12.0;
+
+/// Apply acceleration + the leaky-bucket scroll budget.
+///
+/// #1236, and the reason this is one function rather than an accel
+/// stage bolted in front of the dampener: the two interact, and
+/// getting the interaction wrong reintroduces the exact bug
+/// `37074afe` fixed.
+///
+/// The dampener has two parameters and they mean different things:
+///   * CAPACITY  = how far a single flick may travel.
+///   * REFILL    = the sustained lines/sec ceiling.
+///
+/// A free-spin wheel keeps emitting for seconds after the hand lets
+/// go, and it is indistinguishable from real scrolling by rate alone.
+/// What separates them is DURATION: a hand-spin is a burst, inertia is
+/// a long tail. So acceleration scales CAPACITY only — a hard flick
+/// gets a bigger one-shot allowance — while REFILL stays put, so the
+/// tail still drains against the slow trickle and the view stops when
+/// the hand does.
+///
+/// Scaling refill as well would feel identical for the first flick and
+/// then coast past the user for seconds. That asymmetry is the whole
+/// design; don't "simplify" it by multiplying both.
 fn budgeted_scroll(app: &mut App, delta: i32) -> i32 {
+    budgeted_scroll_at(app, delta, std::time::Instant::now())
+}
+
+/// `budgeted_scroll` with the clock injected.
+///
+/// The refill is time-based, so a test that calls back-to-back with no
+/// elapsed time cannot observe refill behaviour at all — verified the
+/// hard way: scaling the refill by 1000x left every assertion green,
+/// because zero elapsed time means zero refill either way. Real
+/// flywheel inertia arrives over SECONDS, which is exactly the regime
+/// the refill governs, so the test has to be able to advance time.
+fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32 {
     if delta == 0 {
         return 0;
     }
-    let now = std::time::Instant::now();
+    let ceiling = scroll_accel_ceiling(&app.config.editor.scroll_accel);
+    let want_raw = delta.unsigned_abs() as f32;
+
+    // Ramp from 1.0 at a single notch up to `ceiling` at a fast spin.
+    // A slow, deliberate scroll is never multiplied — the setting only
+    // changes what a HARD spin does, which is what "fast spin moves
+    // further" asks for.
+    let ramp = ((want_raw - 1.0) / (SCROLL_ACCEL_FULL_AT - 1.0)).clamp(0.0, 1.0);
+    let factor = 1.0 + (ceiling - 1.0) * ramp;
+    let want = want_raw * factor;
+
+    // Capacity scales with the setting so the acceleration isn't
+    // immediately clamped away by the dampener it has to pass through.
+    let cap = SCROLL_BUCKET_MAX * ceiling;
+
     if let Some(prev) = app.scroll_bucket_last_refill {
         let elapsed = now.duration_since(prev).as_secs_f32();
-        app.scroll_bucket =
-            (app.scroll_bucket + elapsed * SCROLL_BUCKET_REFILL).min(SCROLL_BUCKET_MAX);
+        // Refill deliberately NOT scaled — see the doc comment.
+        app.scroll_bucket = (app.scroll_bucket + elapsed * SCROLL_BUCKET_REFILL).min(cap);
     } else {
-        app.scroll_bucket = SCROLL_BUCKET_MAX;
+        app.scroll_bucket = cap;
     }
     app.scroll_bucket_last_refill = Some(now);
-    let want = delta.unsigned_abs() as f32;
     let spend = want.min(app.scroll_bucket).floor();
     app.scroll_bucket -= spend;
     delta.signum() * (spend as i32)
@@ -2065,5 +2128,96 @@ pub(crate) fn pty_key_bytes(key: KeyEvent) -> Vec<u8> {
             format!("\x1b[{code}~").into_bytes()
         }
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod scroll_accel_tests {
+    use super::{SCROLL_BUCKET_MAX, budgeted_scroll, budgeted_scroll_at, scroll_accel_ceiling};
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn app_with(accel: &str) -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.scroll_accel = accel.to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        (d, app)
+    }
+
+    /// The headline ask: a fast spin travels further than a slow one,
+    /// and further still as the setting goes up. Asserts the ORDERING
+    /// rather than exact line counts — the curve is a feel decision
+    /// and will get retuned; the ordering is the contract.
+    #[test]
+    fn a_fast_spin_travels_further_and_scales_with_the_setting() {
+        let big_batch = 12; // a hard spin, coalesced
+        let mut out = Vec::new();
+        for accel in ["off", "gentle", "normal", "fast"] {
+            let (_d, mut app) = app_with(accel);
+            out.push(budgeted_scroll(&mut app, big_batch));
+        }
+        assert!(
+            out.windows(2).all(|w| w[1] >= w[0]),
+            "each setting should scroll at least as far as the one below it: {out:?}"
+        );
+        assert!(
+            out[3] > out[0],
+            "'fast' must actually beat 'off' on a hard spin: {out:?}"
+        );
+    }
+
+    /// A single notch is 1:1 at EVERY setting. Acceleration that also
+    /// multiplied gentle scrolling would make precise positioning
+    /// impossible — the setting is meant to change what a hard spin
+    /// does, nothing else.
+    #[test]
+    fn one_notch_is_never_accelerated() {
+        for accel in ["off", "gentle", "normal", "fast"] {
+            let (_d, mut app) = app_with(accel);
+            assert_eq!(
+                budgeted_scroll(&mut app, 1),
+                1,
+                "a single notch moved more than one line at accel={accel}"
+            );
+        }
+    }
+
+    /// The anti-overshoot property, and the reason acceleration scales
+    /// capacity but NOT refill.
+    ///
+    /// A free-spin wheel keeps emitting for seconds after release. Those
+    /// events must run the bucket dry and stop — not coast further just
+    /// because acceleration is on. Time is advanced explicitly because
+    /// the refill is time-based: an earlier version of this test called
+    /// back-to-back with no elapsed time and stayed green even with the
+    /// refill scaled 1000x, since zero elapsed means zero refill either
+    /// way. Without a moving clock this assertion is decoration.
+    #[test]
+    fn flywheel_inertia_runs_dry_instead_of_coasting() {
+        for accel in ["off", "gentle", "normal", "fast"] {
+            let (_d, mut app) = app_with(accel);
+            let t0 = std::time::Instant::now();
+            let mut total = 0i32;
+            let mut last = i32::MAX;
+            // 3 seconds of post-release inertia, 30 batches of 10 lines.
+            for i in 0..30 {
+                let now = t0 + std::time::Duration::from_millis(100 * i);
+                let got = budgeted_scroll_at(&mut app, 10, now);
+                total += got;
+                last = got;
+            }
+            // One flick's capacity, plus what the UNSCALED refill can
+            // legitimately trickle in over 3s (12 lines/sec), plus slack.
+            let ceiling = scroll_accel_ceiling(accel);
+            let bound = (SCROLL_BUCKET_MAX * ceiling).ceil() as i32 + 3 * 12 + 10;
+            assert!(
+                total <= bound,
+                "at accel={accel}, 3s of inertia moved {total} lines, over the \
+                 {bound} bound — refill is being scaled by acceleration, which \
+                 makes the wheel coast past the hand (the 37074afe regression)"
+            );
+            let _ = last;
+        }
     }
 }

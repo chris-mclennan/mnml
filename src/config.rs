@@ -750,6 +750,18 @@ pub struct EditorConfig {
     /// position). `"always"` and `"never"` force the policy regardless of
     /// input style.
     pub wheel_moves_cursor: String,
+    /// How much a faster wheel spin scrolls per tick — `"off"` (1:1,
+    /// the pre-2026-08-29 behavior) / `"gentle"` / `"normal"`
+    /// (default) / `"fast"`.
+    ///
+    /// Acceleration scales the flywheel dampener's CAPACITY, never its
+    /// refill rate. Capacity is "how far one flick may travel"; refill
+    /// is "sustained lines/sec allowed". Scaling only capacity is what
+    /// lets a hard spin go further while seconds of free-spin inertia
+    /// still drain against the slow refill and stop. Scaling refill
+    /// too would make the wheel coast past the user's hand again —
+    /// the exact regression `37074afe` fixed.
+    pub scroll_accel: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1440,6 +1452,7 @@ impl Default for Config {
                 ensure_trailing_newline: true,
                 chord_timeout_ms: 500,
                 wheel_moves_cursor: "auto".to_string(),
+                scroll_accel: "normal".to_string(),
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -2018,6 +2031,7 @@ struct RawEditor {
     ensure_trailing_newline: Option<bool>,
     chord_timeout_ms: Option<u64>,
     wheel_moves_cursor: Option<String>,
+    scroll_accel: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2497,6 +2511,15 @@ impl Config {
             self.editor.wheel_moves_cursor = match v.as_str() {
                 "auto" | "always" | "never" => v,
                 _ => "auto".to_string(),
+            };
+        }
+        if let Some(v) = raw.editor.scroll_accel {
+            // Validate at merge time, same reasoning as
+            // `wheel_moves_cursor`: a typo must not silently land on a
+            // different feel than the user typed.
+            self.editor.scroll_accel = match v.as_str() {
+                "off" | "gentle" | "normal" | "fast" => v,
+                _ => "normal".to_string(),
             };
         }
         if let Some(v) = raw.ui.theme {
