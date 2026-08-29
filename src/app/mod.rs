@@ -4673,6 +4673,22 @@ pub struct App {
     /// `scroll_bucket_last_refill`, which the dampener advances on
     /// every call including dropped ones.
     pub scroll_last_event_at: Option<std::time::Instant>,
+    /// #1236 — highest wheel rate seen in the CURRENT gesture. Once
+    /// the rate falls meaningfully below this peak the hand has let
+    /// go and the remaining events are inertia, so acceleration stops.
+    /// Reset when a gesture gap elapses.
+    pub scroll_gesture_peak_rate: f32,
+    /// #1236 — set once this gesture's rate collapses below half its
+    /// peak: the wheel has stopped and every remaining event is
+    /// inertia, so they are DROPPED, not merely un-accelerated.
+    /// Cleared when a gesture gap elapses.
+    pub scroll_gesture_released: bool,
+    /// #1236 — sub-line remainder carried between events within one
+    /// gesture. Without it `floor()` discards the fraction on every
+    /// event, so `gentle` (x1.5 on a single notch = 1.5 -> 1) was
+    /// byte-identical to `off`. Always < 1.0 and reset per gesture, so
+    /// it cannot accumulate into the coasting this feature avoids.
+    pub scroll_frac_carry: f32,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -6382,6 +6398,9 @@ impl App {
             scroll_bucket: 25.0,
             scroll_bucket_last_refill: None,
             scroll_last_event_at: None,
+            scroll_gesture_peak_rate: 0.0,
+            scroll_gesture_released: false,
+            scroll_frac_carry: 0.0,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,

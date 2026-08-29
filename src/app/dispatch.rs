@@ -1196,14 +1196,49 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
         .map(|t| now.duration_since(t))
         .unwrap_or(std::time::Duration::MAX);
     app.scroll_last_event_at = Some(now);
-    let rate = if gap > std::time::Duration::from_millis(SCROLL_GESTURE_GAP_MS) {
+    let new_gesture = gap > std::time::Duration::from_millis(SCROLL_GESTURE_GAP_MS);
+    let rate = if new_gesture {
         0.0
     } else {
         let secs = gap.as_secs_f32().max(0.001);
         want_raw / secs
     };
+    if new_gesture {
+        app.scroll_gesture_peak_rate = 0.0;
+        app.scroll_gesture_released = false;
+        app.scroll_frac_carry = 0.0;
+    }
 
-    // Ramp from 1.0 at a slow scroll to `ceiling` at a fast spin.
+    // #1236 — the spec, in the user's words: "if mousewheel moving
+    // slow, scroll slow, if mousewheel moving fast, scroll fast, if
+    // mousewheel was stopped while scrolling no more scrolling should
+    // happen, it means user wanted to stop when wheel stop."
+    //
+    // Rate handles the first two. The third needs its own mechanism,
+    // because a free-spin wheel keeps emitting for seconds after the
+    // hand lets go and rate MAGNITUDE cannot tell that apart from real
+    // scrolling — early in the tail the rate is still high. Rate SHAPE
+    // can: a hand holds or raises the rate, a released wheel decays.
+    //
+    // So once the rate collapses to under half this gesture's peak, the
+    // wheel is judged stopped and every remaining event is DROPPED for
+    // the rest of the gesture. Not de-accelerated — dropped. An earlier
+    // attempt only removed the multiplier, which still moved a line per
+    // event and still read as "it keeps going after I stop."
+    //
+    // Half, not 0.8, because notch timing jitters: a real hand-spin
+    // fluctuates and a tight threshold would stutter mid-gesture. A
+    // halving is a collapse, not jitter.
+    let peak = app.scroll_gesture_peak_rate;
+    if rate > peak {
+        app.scroll_gesture_peak_rate = rate;
+    } else if peak > 0.0 && rate < peak * 0.5 {
+        app.scroll_gesture_released = true;
+    }
+    if app.scroll_gesture_released {
+        return 0;
+    }
+
     let ramp = ((rate - SCROLL_ACCEL_FLOOR_RATE)
         / (SCROLL_ACCEL_FULL_RATE - SCROLL_ACCEL_FLOOR_RATE))
         .clamp(0.0, 1.0);
@@ -1222,7 +1257,12 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
         app.scroll_bucket = cap;
     }
     app.scroll_bucket_last_refill = Some(now);
-    let spend = want.min(app.scroll_bucket).floor();
+    // Carry the sub-line remainder across events in this gesture.
+    // `floor()` alone discarded it every time, which made `gentle`
+    // (1 notch x1.5 = 1.5 -> 1) indistinguishable from `off`.
+    let wanted_with_carry = want + app.scroll_frac_carry;
+    let spend = wanted_with_carry.min(app.scroll_bucket).floor();
+    app.scroll_frac_carry = (wanted_with_carry - spend).clamp(0.0, 1.0);
     app.scroll_bucket -= spend;
     delta.signum() * (spend as i32)
 }
@@ -2352,5 +2392,123 @@ mod scroll_clamp_tests {
         let c = scroll_accel_ceiling("fast");
         assert!(list_scroll_clamp_scaled(-40, c) < 0);
         assert!(list_scroll_clamp_scaled(40, c) > 0);
+    }
+}
+
+#[cfg(test)]
+mod scroll_spec_tests {
+    //! The spec in the user's words (2026-08-29):
+    //!   "if mousewheel moving slow, scroll slow, if mousewheel moving
+    //!    fast, scroll fast, if mousewheel was stopped while scrolling
+    //!    no more scrolling should happen, it means user wanted to stop
+    //!    when wheel stop"
+    //! One test per clause, driven by wheel timing rather than by any
+    //! internal value — earlier tests drove intermediates and passed
+    //! while the feature did nothing.
+
+    use super::budgeted_scroll_at;
+    use crate::app::App;
+    use crate::config::Config;
+    use std::time::{Duration, Instant};
+
+    fn app_with(accel: &str) -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.scroll_accel = accel.to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        (d, app)
+    }
+
+    /// Spin 10 notches at a given inter-notch gap; return lines moved.
+    fn spin(app: &mut App, t: &mut Instant, gap_ms: u64, notches: usize) -> i32 {
+        let mut total = 0;
+        for _ in 0..notches {
+            *t += Duration::from_millis(gap_ms);
+            total += budgeted_scroll_at(app, 1, *t);
+        }
+        total
+    }
+
+    /// Clause 1 + 2: slow wheel scrolls slow, fast wheel scrolls fast.
+    #[test]
+    fn slow_wheel_slow_scroll_fast_wheel_fast_scroll() {
+        for accel in ["gentle", "normal", "fast"] {
+            let (_d, mut app) = app_with(accel);
+            let mut t = Instant::now();
+            let slow = spin(&mut app, &mut t, 120, 10); // ~8/sec
+
+            let (_d2, mut app2) = app_with(accel);
+            let mut t2 = Instant::now();
+            let fast = spin(&mut app2, &mut t2, 8, 10); // ~125/sec
+
+            assert!(
+                fast > slow,
+                "accel={accel}: fast spin moved {fast}, slow moved {slow} — a faster                  wheel must travel further"
+            );
+            assert_eq!(
+                slow, 10,
+                "accel={accel}: a slow deliberate scroll must stay 1:1 (got {slow}                  for 10 notches) so precise positioning still works"
+            );
+        }
+    }
+
+    /// Clause 3, the strict one: when the wheel stops, scrolling stops.
+    /// Not slows — stops. A free-spin wheel keeps emitting for seconds
+    /// after release; those events must move the view zero lines.
+    #[test]
+    fn when_the_wheel_stops_scrolling_stops() {
+        for accel in ["gentle", "normal", "fast"] {
+            let (_d, mut app) = app_with(accel);
+            let mut t = Instant::now();
+            // Hand spinning fast.
+            spin(&mut app, &mut t, 8, 8);
+            // Hand off. Inertia decays: gaps widen.
+            let mut coasted = 0;
+            for gap_ms in [20, 30, 45, 60, 90, 130, 180] {
+                t += Duration::from_millis(gap_ms);
+                coasted += budgeted_scroll_at(&mut app, 1, t);
+            }
+            assert_eq!(
+                coasted, 0,
+                "accel={accel}: the view moved {coasted} more lines after the wheel                  stopped — it must stop when the wheel stops"
+            );
+        }
+    }
+
+    /// The guard must not latch: a fresh gesture after a pause scrolls
+    /// normally again.
+    #[test]
+    fn a_new_gesture_after_a_pause_scrolls_again() {
+        let (_d, mut app) = app_with("fast");
+        let mut t = Instant::now();
+        spin(&mut app, &mut t, 8, 6);
+        for gap_ms in [30, 60, 120] {
+            t += Duration::from_millis(gap_ms);
+            budgeted_scroll_at(&mut app, 1, t);
+        }
+        t += Duration::from_millis(900); // hand back on the wheel
+        let second = spin(&mut app, &mut t, 8, 6);
+        assert!(
+            second > 6,
+            "the second gesture moved only {second} lines for 6 notches — the stop              detector latched instead of resetting per gesture"
+        );
+    }
+
+    /// Steady mid-speed scrolling must not trip the stop detector —
+    /// notch timing jitters, and a false positive would stutter.
+    #[test]
+    fn steady_scrolling_with_jitter_does_not_trip_the_stop_detector() {
+        let (_d, mut app) = app_with("normal");
+        let mut t = Instant::now();
+        let mut total = 0;
+        // Held speed with realistic +/-25% jitter.
+        for gap_ms in [20, 24, 18, 22, 26, 19, 21, 25, 20, 23] {
+            t += Duration::from_millis(gap_ms);
+            total += budgeted_scroll_at(&mut app, 1, t);
+        }
+        assert!(
+            total >= 10,
+            "steady scrolling moved only {total} lines for 10 notches — jitter is              being misread as the wheel stopping"
+        );
     }
 }
