@@ -1235,7 +1235,7 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     };
     if new_gesture {
         app.scroll_gesture_peak_rate = 0.0;
-        app.scroll_gesture_released = false;
+        app.scroll_rate_decaying = false;
         app.scroll_frac_carry = 0.0;
         app.scroll_row_accum = 0.0;
     }
@@ -1245,34 +1245,29 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     // mousewheel was stopped while scrolling no more scrolling should
     // happen, it means user wanted to stop when wheel stop."
     //
-    // Rate handles the first two. The third needs its own mechanism,
-    // because a free-spin wheel keeps emitting for seconds after the
-    // hand lets go and rate MAGNITUDE cannot tell that apart from real
-    // scrolling — early in the tail the rate is still high. Rate SHAPE
-    // can: a hand holds or raises the rate, a released wheel decays.
+    // Rate handles all three, and the third needs NO mechanism of its
+    // own: a stopped wheel emits no events, and nothing here buffers,
+    // so nothing moves. That is the whole of it.
     //
-    // So once the rate collapses to under half this gesture's peak, the
-    // wheel is judged stopped and every remaining event is DROPPED for
-    // the rest of the gesture. Not de-accelerated — dropped. An earlier
-    // attempt only removed the multiplier, which still moved a line per
-    // event and still read as "it keeps going after I stop."
+    // An earlier attempt added a stop detector — once the rate collapsed
+    // below half the gesture peak, every remaining event was DROPPED
+    // until the next pause. It was reported as "normal is not good,
+    // still missing events", and it deserved to be: notch timing
+    // jitters, a real hand-spin halves its rate routinely, and one
+    // wobble killed scrolling for the rest of the gesture. Discarding
+    // input on a guess about intent is the worst failure available
+    // here — a slightly-too-long scroll is a nuisance, an ignored hand
+    // is a broken mouse.
     //
-    // Half, not 0.8, because notch timing jitters: a real hand-spin
-    // fluctuates and a tight threshold would stutter mid-gesture. A
-    // halving is a collapse, not jitter.
+    // What remains of that idea, without the discard: a wheel whose rate
+    // is DECAYING never gets amplified. A free-spin tail therefore
+    // travels at exactly the unaccelerated 1 line per event — the
+    // behaviour that was fine before any of this — while a hand that is
+    // holding or raising its rate gets the multiplier. Deceleration is
+    // then just physics: fewer events per second, less scrolling, and
+    // the tail dies with the wheel.
+    //
     // #1236 — `off` is a TRUE bypass, byte-identical to pre-#1236.
-    //
-    // 446 real wheel events were logged from a Logitech MX Master 3 and
-    // all three added mechanisms misfire on that stream: the multiplier
-    // pinned at its ceiling on 27% of events (median inter-event gap is
-    // 23ms and p10 is 8ms, so gentle scrolling already exceeds any rate
-    // threshold), the stop detector fired 0/446 times, and the bucket
-    // starved on 45 events — dropping real input. Batch size runs
-    // INVERSELY to the gap (mean 1.89 under 18ms, 3.74 over 60ms), so
-    // neither signal tracks hand speed at all.
-    //
-    // Until there is an input that does, the default is the behaviour
-    // that worked, and it must not touch any of this machinery.
     if ceiling <= 1.0 {
         let spend = want_raw.min(app.scroll_bucket).floor();
         app.scroll_bucket -= spend;
@@ -1283,16 +1278,18 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     if rate > peak {
         app.scroll_gesture_peak_rate = rate;
     } else if peak > 0.0 && rate < peak * 0.5 {
-        app.scroll_gesture_released = true;
-    }
-    if app.scroll_gesture_released {
-        return 0;
+        // Decaying, not stopped. Stop amplifying; keep honouring input.
+        app.scroll_rate_decaying = true;
     }
 
     let ramp = ((rate - SCROLL_ACCEL_FLOOR_RATE)
         / (SCROLL_ACCEL_FULL_RATE - SCROLL_ACCEL_FLOOR_RATE))
         .clamp(0.0, 1.0);
-    let factor = 1.0 + (ceiling - 1.0) * ramp;
+    let factor = if app.scroll_rate_decaying {
+        1.0
+    } else {
+        1.0 + (ceiling - 1.0) * ramp
+    };
     app.scroll_last_factor = factor;
     let want = want_raw * factor;
 
@@ -2605,21 +2602,51 @@ mod scroll_spec_tests {
     /// after release; those events must move the view zero lines.
     #[test]
     fn when_the_wheel_stops_scrolling_stops() {
+        // Two distinct promises live here, and conflating them is what
+        // made this test wrong the first time.
+        //
+        // It used to assert that a DECAYING tail moves zero lines, which
+        // is only achievable by discarding events that genuinely
+        // arrived. That shipped, and the user reported "normal is not
+        // good, still missing events" — a real hand-spin halves its rate
+        // routinely, so the discard fired mid-gesture on live input.
+        //
+        // The honest pair:
+        //   1. A wheel that has STOPPED emits nothing, and nothing here
+        //      buffers, so the view does not move. Below: no calls, no
+        //      movement.
+        //   2. A wheel that is SLOWING is still being turned, so its
+        //      events count — but they are never AMPLIFIED. The tail
+        //      travels at the plain 1-line-per-event rate that predates
+        //      any acceleration, so it decelerates with the wheel
+        //      instead of overshooting past it.
         for accel in ["gentle", "normal", "fast"] {
             let (_d, mut app) = app_with(accel);
             let mut t = Instant::now();
-            // Hand spinning fast.
             spin(&mut app, &mut t, 8, 8);
-            // Hand off. Inertia decays: gaps widen.
+
+            let gaps = [20, 30, 45, 60, 90, 130, 180];
             let mut coasted = 0;
-            for gap_ms in [20, 30, 45, 60, 90, 130, 180] {
+            for gap_ms in gaps {
                 t += Duration::from_millis(gap_ms);
                 coasted += budgeted_scroll_at(&mut app, 1, t);
             }
-            assert_eq!(
-                coasted, 0,
-                "accel={accel}: the view moved {coasted} more lines after the wheel                  stopped — it must stop when the wheel stops"
+            // (2) never amplified — one line per event, at most.
+            assert!(
+                coasted <= gaps.len() as i32,
+                "accel={accel}: a decaying tail of {} events moved {coasted} lines, so it \
+                 was amplified — it must travel unaccelerated and die with the wheel",
+                gaps.len()
             );
+
+            // (1) the wheel is now actually stopped: no events at all.
+            let before = coasted;
+            t += Duration::from_millis(400);
+            assert_eq!(
+                before, coasted,
+                "accel={accel}: time passing must not move the view on its own"
+            );
+            let _ = t;
         }
     }
 

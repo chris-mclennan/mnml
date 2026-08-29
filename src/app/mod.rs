@@ -4682,7 +4682,13 @@ pub struct App {
     /// peak: the wheel has stopped and every remaining event is
     /// inertia, so they are DROPPED, not merely un-accelerated.
     /// Cleared when a gesture gap elapses.
-    pub scroll_gesture_released: bool,
+    /// #1236 — this gesture's rate has fallen to under half its peak.
+    /// Suppresses AMPLIFICATION only; the event still scrolls its line.
+    /// It used to gate a `return 0` that discarded input, which ate live
+    /// scrolling whenever a hand's rate jittered — the rate is falling
+    /// within this gesture, which is not the same as the wheel having
+    /// stopped.
+    pub scroll_rate_decaying: bool,
     /// #1236 — sub-line remainder carried between events within one
     /// gesture. Without it `floor()` discards the fraction on every
     /// event, so `gentle` (x1.5 on a single notch = 1.5 -> 1) was
@@ -6421,7 +6427,7 @@ impl App {
             scroll_bucket_last_refill: None,
             scroll_last_event_at: None,
             scroll_gesture_peak_rate: 0.0,
-            scroll_gesture_released: false,
+            scroll_rate_decaying: false,
             scroll_frac_carry: 0.0,
             scroll_last_factor: 1.0,
             scroll_row_accum: 0.0,
