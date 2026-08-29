@@ -82,6 +82,13 @@ pub struct ClaudeUsage {
     /// (shorter for brief blocks, longer for real hour+ blocks).
     /// Zero = no cooldown active.
     pub retry_after_at: u64,
+    /// Set when the last fetch failed because the keychain credential
+    /// belongs to a different account, so mnml declined to write it
+    /// (see `FetchErr::needs_reauth`). Drives the pane's guided
+    /// re-auth block; `last_error` carries the human-readable detail.
+    /// Cleared by any successful fetch, since a fresh snapshot is
+    /// proof the account is authenticated again.
+    pub needs_reauth: bool,
 }
 
 /// One entry from the response's `limits[]` array with
@@ -946,6 +953,14 @@ fn read_refresh_token_at(token_path: &Path) -> Option<String> {
 pub struct FetchErr {
     pub message: String,
     pub retry_after_secs: Option<u64>,
+    /// This account's stored credential can't be repaired
+    /// automatically — the keychain holds someone else's login, so
+    /// only a real `claude login` as this account fixes it. Typed
+    /// rather than sniffed out of `message`: the pane renders a
+    /// different block for it (guided re-auth steps instead of a
+    /// bare error line), and a reworded message must not silently
+    /// downgrade that back to the generic branch.
+    pub needs_reauth: bool,
 }
 
 impl FetchErr {
@@ -953,10 +968,15 @@ impl FetchErr {
         Self {
             message: message.into(),
             retry_after_secs: None,
+            needs_reauth: false,
         }
     }
     fn with_retry_after(mut self, secs: u64) -> Self {
         self.retry_after_secs = Some(secs);
+        self
+    }
+    fn needing_reauth(mut self) -> Self {
+        self.needs_reauth = true;
         self
     }
 }
@@ -1072,7 +1092,7 @@ fn fetch_claude_with_token_for(
                     // Surface it rather than silently declining, so
                     // the pane can tell the user this account needs a
                     // real re-auth and which login is actually loaded.
-                    return Err(FetchErr::new(format!("needs re-auth: {why}")));
+                    return Err(FetchErr::new(why).needing_reauth());
                 }
             }
         }
@@ -1272,6 +1292,10 @@ fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
         fetched_at: now_unix(),
         last_error: None,
         retry_after_at: 0,
+        // A successful fetch is proof this account is authenticated,
+        // so it clears any prior re-auth flag. The `Ok` arm in
+        // `drain_ai_usage` replaces the whole snapshot with this one.
+        needs_reauth: false,
     })
 }
 

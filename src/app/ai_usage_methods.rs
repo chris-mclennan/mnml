@@ -250,6 +250,7 @@ impl App {
                         existing.usage.retry_after_at = now_ts.saturating_add(secs);
                     }
                     existing.usage.last_error = Some(e.message);
+                    existing.usage.needs_reauth = e.needs_reauth;
                     upsert_claude_account(&mut self.ai_usage_claude_accounts, existing);
                 }
             }

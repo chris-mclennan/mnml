@@ -237,10 +237,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
             // user re-authing that account. Say so, and say what to
             // press — a bare "fetch error" here reads as a network
             // blip and leaves the user with no next move.
-            let needs_reauth = usage
-                .last_error
-                .as_deref()
-                .is_some_and(|e| e.starts_with("needs re-auth"));
+            // Typed, not sniffed out of the message text: rewording
+            // the producer's string must not silently drop the user
+            // back to the generic "last fetch error" line.
+            let needs_reauth = usage.needs_reauth;
             if needs_reauth {
                 rows.push(with_gutter(Line::from(Span::styled(
                     "  ⚠ token expired — needs re-auth".to_string(),
@@ -257,11 +257,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                 // The detail carries WHICH account the loaded
                 // credential actually is, which is the whole reason
                 // the write was refused.
-                if let Some(why) = usage
-                    .last_error
-                    .as_deref()
-                    .and_then(|e| e.strip_prefix("needs re-auth: "))
-                {
+                if let Some(why) = usage.last_error.as_deref() {
                     rows.push(with_gutter(Line::from(Span::styled(
                         format!("    {why}"),
                         Style::default().fg(t.comment),
