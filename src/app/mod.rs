@@ -4702,6 +4702,15 @@ pub struct App {
     /// factor of 2.5 yields 2 rows then 3 rows then 2..., averaging
     /// the intended rate without ever jumping on a slow notch.
     pub scroll_row_accum: f32,
+    /// #1236 — when a discrete surface (the file tree) last stepped a
+    /// row. Batch boundaries are a race: a physical notch emits 2-3
+    /// events and whether they land in ONE coalesced batch depends on
+    /// whether the poll caught them together, so "one row per batch"
+    /// gives 1 row sometimes and 2-3 others. The measured timing
+    /// separates cleanly instead — 8-23ms between events inside one
+    /// notch, ~150ms between deliberate notches — so a time threshold
+    /// is reliable where a batch boundary is not.
+    pub tree_last_row_step: Option<std::time::Instant>,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -6416,6 +6425,7 @@ impl App {
             scroll_frac_carry: 0.0,
             scroll_last_factor: 1.0,
             scroll_row_accum: 0.0,
+            tree_last_row_step: None,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,

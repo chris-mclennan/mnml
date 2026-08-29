@@ -1099,14 +1099,28 @@ const LIST_SCROLL_PER_BATCH_CAP: i32 = 8;
 
 /// Bucket capacity (in lines) for the flywheel dampener. One
 /// "good flick" worth of intentional scroll.
-const SCROLL_BUCKET_MAX: f32 = 25.0;
+///
+/// #1236 — raised 25 -> 40 alongside the refill. At 25 with a wheel
+/// emitting 2-3 lines per event, a single second of ordinary
+/// scrolling exhausted it before the refill could keep up.
+const SCROLL_BUCKET_MAX: f32 = 40.0;
 
 /// Refill rate (lines per second) for the flywheel dampener.
-/// Steady-state active scrolling at ~12 lines/sec or slower
-/// stays in the bucket indefinitely; a free-spin wheel that
-/// keeps firing past intent will burn through and start
-/// dropping events.
-const SCROLL_BUCKET_REFILL: f32 = 12.0;
+///
+/// #1236 — was 12.0, which STARVES legitimate input on a
+/// high-resolution wheel. Logged 446 events from a Logitech MX Master
+/// 3: arrival rate 37-128 events/sec, each requesting its batch of
+/// 2-3 lines. Steady deliberate scrolling therefore demands far more
+/// than 12 lines/sec, the bucket empties, and real events are
+/// discarded — measured on 45 of 446 events, 10%, reported as "it
+/// misses a lot of scrolling i do".
+///
+/// 60 covers the observed legitimate range with headroom. The bucket
+/// still bounds a free-spin tail via CAPACITY (one flick's worth),
+/// and the tree additionally collapses same-notch events by time, so
+/// the refill no longer has to be the only brake — which is what
+/// forced it so low originally.
+const SCROLL_BUCKET_REFILL: f32 = 60.0;
 
 /// Ceiling multiplier for each `[editor] scroll_accel` setting.
 ///
@@ -1494,6 +1508,30 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // separate physical swipes still produce separate
         // dispatches; only the WITHIN-batch amplification is
         // gone.
+        // #1236 — one row per NOTCH, using time rather than the batch
+        // boundary to decide what a notch is.
+        //
+        // A physical notch on an MX Master 3 emits 2-3 events. Whether
+        // they arrive inside one coalesced batch is a race with the
+        // event loop, so keying off batches gave 1 row sometimes and
+        // 2-3 others — "its not that reliable". The logged timing
+        // separates the two cases unambiguously: 8-23ms between events
+        // within a notch, ~150ms between deliberate notches. Anything
+        // arriving within the window below belongs to the notch already
+        // handled, so it does not step again.
+        const TREE_NOTCH_WINDOW_MS: u64 = 60;
+        let step_now = std::time::Instant::now();
+        let within_same_notch = app
+            .tree_last_row_step
+            .map(|t| {
+                step_now.duration_since(t) < std::time::Duration::from_millis(TREE_NOTCH_WINDOW_MS)
+            })
+            .unwrap_or(false);
+        if within_same_notch && !accel_on {
+            return;
+        }
+        app.tree_last_row_step = Some(step_now);
+
         // #1236 — with acceleration ON, honour the magnitude: it is
         // now derived from wheel RATE, so it reflects how fast the
         // user is actually spinning. With acceleration OFF this stays
@@ -2380,10 +2418,24 @@ mod scroll_accel_tests {
                 total += got;
                 last = got;
             }
-            // One flick's capacity, plus what the UNSCALED refill can
-            // legitimately trickle in over 3s (12 lines/sec), plus slack.
+            // #1236 — the bucket is no longer the primary brake, and
+            // this bound records why.
+            //
+            // Its refill had to rise from 12 to 60 lines/sec because 12
+            // STARVED real input on a high-resolution wheel (measured:
+            // 10% of events silently dropped, reported as "it misses a
+            // lot of scrolling i do"). A refill high enough not to
+            // starve a hand cannot also throttle a flywheel — one dial
+            // cannot serve both.
+            //
+            // So stopping is the STOP DETECTOR's job now (rate
+            // collapsing below half the gesture peak drops every
+            // remaining event), and the bucket only bounds the worst
+            // case if that detector misses. This bound is therefore
+            // generous on purpose; `when_the_wheel_stops_scrolling_stops`
+            // is the test that actually guards the user-visible promise.
             let ceiling = scroll_accel_ceiling(accel);
-            let bound = (SCROLL_BUCKET_MAX * ceiling).ceil() as i32 + 3 * 12 + 10;
+            let bound = (SCROLL_BUCKET_MAX * ceiling).ceil() as i32 + 3 * 60 + 10;
             assert!(
                 total <= bound,
                 "at accel={accel}, 3s of inertia moved {total} lines, over the \
