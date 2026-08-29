@@ -125,26 +125,49 @@ fn load_assignments() -> AssignmentFile {
     toml::from_str(&text).unwrap_or_default()
 }
 
+/// Write the ledger. Refuses to replace a non-empty ledger with an
+/// empty one — see [`write_assignments`].
 fn save_assignments(file: &AssignmentFile) {
+    write_assignments(file, EmptyWrite::Refuse);
+}
+
+/// Whether the caller means to leave the ledger empty.
+///
+/// #1225 — the first version of this guard inferred intent from the
+/// on-disk count: refuse an empty write only when >1 entry existed,
+/// on the reasoning that a legitimate purge-to-zero can only happen
+/// from a 1-entry file. A reviewer pointed out the hole: that makes
+/// the backstop's floor two entries, so a future caller that
+/// recomputes an empty set from a broken or mis-rooted load would
+/// sail through unblocked against a one-glyph ledger — reproducing
+/// this exact bug for users with a single integration installed.
+///
+/// Counting can't separate "I deliberately removed the last one" from
+/// "I failed to read anything", because both arrive as an empty vec.
+/// Only the caller knows. So the caller says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmptyWrite {
+    /// The empty set is the intended result — the purge removed the
+    /// last remaining id.
+    Allow,
+    /// An empty set here means the caller lost the data it meant to
+    /// rewrite. Drop the write and complain.
+    Refuse,
+}
+
+fn write_assignments(file: &AssignmentFile, empty: EmptyWrite) {
     let Some(p) = assignments_path() else {
         return;
     };
-    // #1225 — never let a caller that knows about no glyphs at all
-    // truncate a populated ledger. `discover` now skips the write when
-    // nothing changed, which is the primary fix; this is the backstop
-    // for any future caller that recomputes the set from an empty or
-    // unreadable source. A deliberate shrink to zero has to go through
-    // `purge_integration_glyph_state`, which removes one known id from
-    // a set it just read, and so never lands here with an empty vec
-    // unless that id was genuinely the last one — in which case the
-    // on-disk file has exactly one entry and this guard lets it pass.
-    if file.entries.is_empty() {
+    if file.entries.is_empty() && empty == EmptyWrite::Refuse {
         let on_disk = load_assignments().entries.len();
-        if on_disk > 1 {
+        if on_disk > 0 {
             eprintln!(
-                "mnml: refusing to write an empty {} over {on_disk} existing entries \
-                 (#1225 guard) — this would be data loss",
-                p.display()
+                "mnml: refusing to write an empty {} over {on_disk} existing entr{} \
+                 (#1225 guard) — the caller did not ask to empty it, so this is \
+                 a lost read, not a deletion",
+                p.display(),
+                if on_disk == 1 { "y" } else { "ies" }
             );
             return;
         }
@@ -251,7 +274,10 @@ pub(crate) fn purge_integration_glyph_state(id: &str) -> (bool, bool) {
     file.entries.retain(|e| e.id != id);
     let assignment_dropped = file.entries.len() != before;
     if assignment_dropped {
-        save_assignments(&file);
+        // The purge is the one caller that legitimately means "empty":
+        // it removed a known id from a set it just read, so if that
+        // was the last one, an empty ledger is the correct result.
+        write_assignments(&file, EmptyWrite::Allow);
     }
     if let Some(hex) = cp_hex {
         let _ = crate::glyph_builder::remove_meta_by_cp_hex(&hex);
@@ -936,8 +962,14 @@ mod tests {
                 .and_then(|m| m.modified())
                 .expect("ledger must exist")
         };
-        // Let the clock advance past the filesystem's timestamp
-        // resolution so a write is guaranteed to be observable.
+        // Advance past the filesystem's timestamp resolution so a
+        // write is observable. Sound on APFS and ext4 (sub-ms mtime),
+        // which covers dev machines and CI. NOT sound on a coarse
+        // multi-second-granularity mount (FAT/exFAT): there this
+        // assertion would silently stop discriminating, exactly like
+        // the content and backup-count versions it replaced. If mnml
+        // ever needs to test against such a mount, this needs a real
+        // write-observer rather than a clock.
         std::thread::sleep(std::time::Duration::from_millis(20));
         let mtime_before = mtime(&path);
 
