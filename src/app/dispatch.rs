@@ -1227,14 +1227,23 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     delta.signum() * (spend as i32)
 }
 
-/// Clamp the (already-coalesced) batched scroll magnitude to a
-/// sane per-tick movement for list/tree surfaces. Replaced the
-/// 80ms time-gate that used to spread bursts over time — that
-/// just delayed the over-scroll instead of stopping it.
-fn list_scroll_clamp(delta: i32) -> i32 {
+/// Clamp the (already-accelerated) scroll magnitude to a sane
+/// per-tick movement for list surfaces.
+///
+/// #1236 — the cap scales with `scroll_accel`, and it has to. The
+/// flat cap of 8 was applied AFTER acceleration, so `normal` asking
+/// for 15 lines and `fast` asking for 34 both arrived as 8 and every
+/// setting felt identical — the user's report. Acceleration that is
+/// computed and then clamped away is not a feature.
+///
+/// The cap still exists: without it one batch could jump hundreds of
+/// rows and read as a teleport rather than a scroll. `off` keeps
+/// exactly the historical value.
+fn list_scroll_clamp_scaled(delta: i32, ceiling: f32) -> i32 {
     let sign = delta.signum();
     let mag = delta.unsigned_abs() as i32;
-    sign * mag.min(LIST_SCROLL_PER_BATCH_CAP)
+    let cap = ((LIST_SCROLL_PER_BATCH_CAP as f32) * ceiling).round() as i32;
+    sign * mag.min(cap.max(LIST_SCROLL_PER_BATCH_CAP))
 }
 
 pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
@@ -1242,6 +1251,10 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if delta == 0 {
         return;
     }
+    // #1236 — the per-surface caps below scale with the setting;
+    // see `list_scroll_clamp_scaled`. Read once so every arm agrees.
+    let scroll_ceiling = scroll_accel_ceiling(&app.config.editor.scroll_accel);
+    let accel_on = scroll_ceiling > 1.0;
     // #polish 2026-07-06 — wheel over the bufferline strip cycles
     // through open buffers (Chrome / Firefox tab-strip convention).
     // Checked first so the strip's overlap with pane rects doesn't
@@ -1272,7 +1285,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         && let Some(ar) = app.rects.sessions_panel_area
         && contains(ar, x, y)
     {
-        let d = list_scroll_clamp(delta);
+        let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
         if d < 0 {
             app.sessions_panel_scroll = app
                 .sessions_panel_scroll
@@ -1290,7 +1303,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         && let Some(ar) = app.rects.agents_panel_area
         && contains(ar, x, y)
     {
-        let d = list_scroll_clamp(delta);
+        let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
         if d < 0 {
             app.agents_panel_scroll = app
                 .agents_panel_scroll
@@ -1309,7 +1322,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     {
         // 2026-08-05 — write to the tab-specific scroll field so
         // Installed / Marketplace remember independent positions.
-        let d = list_scroll_clamp(delta);
+        let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
         let step = 3usize;
         let target: &mut usize = match app.integrations_panel_tab {
             crate::app::IntegrationsPanelTab::Installed => {
@@ -1332,7 +1345,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     // the general tree wheel so a scroll over the panel doesn't
     // fall through and move the file-tree cursor. 2026-07-07.
     if app.active_section == crate::app::ActivitySection::Http {
-        let d = list_scroll_clamp(delta);
+        let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
         let bump = |cur: &mut usize, d: i32| {
             if d < 0 {
                 *cur = cur.saturating_sub(d.unsigned_abs() as usize);
@@ -1404,7 +1417,24 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // separate physical swipes still produce separate
         // dispatches; only the WITHIN-batch amplification is
         // gone.
-        if delta < 0 {
+        // #1236 — with acceleration ON, honour the magnitude: it is
+        // now derived from wheel RATE, so it reflects how fast the
+        // user is actually spinning. With acceleration OFF this stays
+        // exactly one row per batch, preserving the 2026-07-01 fix
+        // above verbatim — that fix was correct for a magnitude that
+        // came from BATCH SIZE, which measured render-loop lag rather
+        // than intent. Different input, different trust.
+        if accel_on {
+            let rows = list_scroll_clamp_scaled(delta, scroll_ceiling)
+                .unsigned_abs()
+                .max(1) as usize;
+            let cur = app.tree.cursor();
+            app.tree.set_cursor(if delta < 0 {
+                cur.saturating_sub(rows)
+            } else {
+                cur.saturating_add(rows)
+            });
+        } else if delta < 0 {
             app.tree.move_up();
         } else {
             app.tree.move_down();
@@ -1442,7 +1472,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             // Find the first open GitGraph pane and scroll it.
             for pane in app.panes.iter_mut() {
                 if let crate::pane::Pane::GitGraph(g) = pane {
-                    let d = list_scroll_clamp(delta);
+                    let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
                     g.move_selection(d as isize);
                     return;
                 }
@@ -1487,7 +1517,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .any(|(r, _)| contains(*r, x, y))
     {
-        let d = list_scroll_clamp(delta);
+        let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
         for _ in 0..d.unsigned_abs() {
             if d < 0 {
                 app.git_rail_move_up();
@@ -2268,5 +2298,59 @@ mod scroll_accel_tests {
             );
             let _ = last;
         }
+    }
+}
+
+#[cfg(test)]
+mod scroll_clamp_tests {
+    use super::{LIST_SCROLL_PER_BATCH_CAP, list_scroll_clamp_scaled, scroll_accel_ceiling};
+
+    /// The bug the user actually hit: acceleration was computed and
+    /// then clamped away by a flat cap of 8, so `normal` (15 lines)
+    /// and `fast` (34) both arrived as 8 and every setting felt the
+    /// same. The cap must scale with the setting or the whole feature
+    /// is inert.
+    #[test]
+    fn the_cap_scales_so_accel_is_not_clamped_away() {
+        let big = 40; // more than any cap, as a hard spin produces
+        let mut out = Vec::new();
+        for accel in ["off", "gentle", "normal", "fast"] {
+            out.push(list_scroll_clamp_scaled(big, scroll_accel_ceiling(accel)));
+        }
+        assert_eq!(
+            out[0], LIST_SCROLL_PER_BATCH_CAP,
+            "'off' must keep the historical cap exactly"
+        );
+        assert!(
+            out.windows(2).all(|w| w[1] >= w[0]),
+            "cap should widen with the setting: {out:?}"
+        );
+        assert!(
+            out[3] > out[0],
+            "'fast' must allow more than 'off': {out:?}"
+        );
+    }
+
+    /// A cap still exists at every setting — unbounded would let one
+    /// batch jump hundreds of rows, which reads as a teleport.
+    #[test]
+    fn a_cap_still_applies_at_every_setting() {
+        for accel in ["off", "gentle", "normal", "fast"] {
+            let ceiling = scroll_accel_ceiling(accel);
+            let got = list_scroll_clamp_scaled(10_000, ceiling);
+            assert!(
+                got < 10_000,
+                "accel={accel} let an absurd magnitude through unclamped ({got})"
+            );
+        }
+    }
+
+    /// Sign is preserved — a clamp that lost direction would scroll
+    /// the wrong way on fast upward spins.
+    #[test]
+    fn sign_survives_the_clamp() {
+        let c = scroll_accel_ceiling("fast");
+        assert!(list_scroll_clamp_scaled(-40, c) < 0);
+        assert!(list_scroll_clamp_scaled(40, c) > 0);
     }
 }
