@@ -295,7 +295,18 @@ pub(crate) fn discover(
     // Merge prior assignments + manifest-declared explicit overrides.
     let mut file = load_assignments();
     // Snapshot for the change check at the end of this fn (#1225).
-    let loaded_snapshot = file.entries.clone();
+    // Sorted, because the comparison target is sorted just before the
+    // check. `load_assignments` does not sort, so comparing against the
+    // raw load would report "changed" for a file whose rows merely sit
+    // in a different order — a hand-edited TOML would then be rewritten
+    // on every `App::new`. Self-healing (one write normalizes it) and
+    // not data loss, but it puts back exactly the churn this guard is
+    // here to remove.
+    let loaded_snapshot = {
+        let mut s = file.entries.clone();
+        s.sort_by(|a, b| a.id.cmp(&b.id));
+        s
+    };
     let mut used: std::collections::HashSet<u32> = file
         .entries
         .iter()
