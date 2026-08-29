@@ -1138,11 +1138,11 @@ fn scroll_accel_ceiling(setting: &str) -> f32 {
 /// Rate is measured as `batch / elapsed_since_last_scroll`, which
 /// reads the same whether the loop is keeping up (batch 1, tiny gaps)
 /// or falling behind (batch 5, larger gaps).
-const SCROLL_ACCEL_FULL_RATE: f32 = 45.0;
+const SCROLL_ACCEL_FULL_RATE: f32 = 120.0;
 
 /// Below this rate there is no acceleration at all — a slow deliberate
 /// scroll must stay 1:1 so precise positioning is unaffected.
-const SCROLL_ACCEL_FLOOR_RATE: f32 = 10.0;
+const SCROLL_ACCEL_FLOOR_RATE: f32 = 45.0;
 
 /// Treat a gap longer than this as a NEW gesture: no inherited
 /// velocity, so the first notch after a pause is never accelerated.
@@ -1197,29 +1197,33 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
         .unwrap_or(std::time::Duration::MAX);
     app.scroll_last_event_at = Some(now);
     let new_gesture = gap > std::time::Duration::from_millis(SCROLL_GESTURE_GAP_MS);
-    // Rate in NOTCHES per second, not events per second.
+    // Event arrival rate = batch / gap.
     //
-    // #1236 — this was `want_raw / secs`, i.e. it divided the BATCH
-    // SIZE by the gap. But a Logitech MX Master 3 (and macOS
-    // smooth-scrolling generally) emits SEVERAL events per physical
-    // notch, so batch size is hardware granularity, not user speed.
-    // Dividing by it inflated the rate 2-3x on that hardware, pinning
-    // the multiplier at its ceiling from the first notch and making the
-    // stop detector fire on noise — "its not detecting my scrolling
-    // reliably".
+    // #1236, calibrated from 446 logged MX Master 3 events rather than
+    // guessed. `coalesce_scroll` drains whatever queued during the gap,
+    // so the batch IS the count of events that arrived in that window —
+    // batch/gap is their arrival rate. That is why batch grows with gap
+    // (mean 1.89 under 18ms, 3.74 over 60ms) while the RATE still falls:
     //
-    // One coalesced batch is one notch, so 1/gap is the notch rate and
-    // it means the same thing on every wheel.
+    //   gap <=18ms  batch 1.89  -> ~105/s
+    //   gap 18-25   batch 2.92  -> ~128/s
+    //   gap 25-60   batch 2.56  -> ~60/s
+    //   gap >60     batch 3.74  -> ~37/s
+    //
+    // A 3x spread, so the signal is real. The earlier failure was scale,
+    // not absence: thresholds of 10/45 sat below the whole range, so
+    // every gesture pinned at the ceiling.
     let rate = if new_gesture {
         0.0
     } else {
         let secs = gap.as_secs_f32().max(0.001);
-        1.0 / secs
+        want_raw / secs
     };
     if new_gesture {
         app.scroll_gesture_peak_rate = 0.0;
         app.scroll_gesture_released = false;
         app.scroll_frac_carry = 0.0;
+        app.scroll_row_accum = 0.0;
     }
 
     // #1236 — the spec, in the user's words: "if mousewheel moving
@@ -1509,7 +1513,15 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             // for a single scroll notch"). The factor is 1.0 at slow
             // speeds by construction, so one notch is one row again,
             // and only a genuinely fast spin moves more.
-            let rows = app.scroll_last_factor.max(1.0).round() as usize;
+            // Accumulate fractionally: `round(factor)` turned a
+            // factor of 2.5 into a hard 2-row jump on EVERY event,
+            // which is what "jumping over 2 files for a single scroll
+            // notch" was. Carrying the remainder means one row per
+            // notch at factor 1.0, and 2-then-3 alternating at 2.5.
+            app.scroll_row_accum += app.scroll_last_factor.max(1.0);
+            let rows = app.scroll_row_accum.floor().max(1.0);
+            app.scroll_row_accum -= rows;
+            let rows = rows as usize;
             let cur = app.tree.cursor();
             app.tree.set_cursor(if delta < 0 {
                 cur.saturating_sub(rows)

@@ -4695,6 +4695,13 @@ pub struct App {
     /// (an MX Master 3 emits several events per physical notch) and
     /// using it made one slow notch jump 2-3 rows.
     pub scroll_last_factor: f32,
+    /// #1236 — sub-row accumulator for DISCRETE surfaces (the file
+    /// tree). Deriving rows from `round(factor)` made every pinned
+    /// event jump exactly 2 rows at `normal` (ceiling 2.5), which is
+    /// the "jumps exactly 2" report. Accumulating instead means a
+    /// factor of 2.5 yields 2 rows then 3 rows then 2..., averaging
+    /// the intended rate without ever jumping on a slow notch.
+    pub scroll_row_accum: f32,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -6408,6 +6415,7 @@ impl App {
             scroll_gesture_released: false,
             scroll_frac_carry: 0.0,
             scroll_last_factor: 1.0,
+            scroll_row_accum: 0.0,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,
