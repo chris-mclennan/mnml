@@ -1313,6 +1313,25 @@ pub struct UiConfig {
     /// `view.toggle_hover_tooltip` / `:set hovertooltip`.
     pub hover_tooltip: bool,
 
+    /// Underline the word under the pointer for ~120ms on click, as a
+    /// "click registered" acknowledgement (`click_echo`, added
+    /// 2026-07-23; the renderer lives in `ui/mod.rs`).
+    ///
+    /// Default OFF as of 2026-08-29, on the user's report that they
+    /// disliked it and it had no off switch. It was unconditional
+    /// before, which is the real defect — a decoration nobody opted
+    /// into should not be unskippable.
+    ///
+    /// Why off rather than on: most clicks already answer themselves.
+    /// The cursor moves, a menu opens, a tab switches — the echo is
+    /// redundant there. Where a click has no other visible result (a
+    /// statusline chip), underlining the WORD is the wrong affordance
+    /// anyway: it reads as a hyperlink or a spellcheck squiggle, not a
+    /// button press. And at 120ms it registers more as a flicker than
+    /// as intent. Kept as opt-in because "did that click land?" is a
+    /// genuine question on a flaky remote terminal.
+    pub click_echo: bool,
+
     /// True once the user has finished the first-launch wizard
     /// (`first_launch.show`). Default false → wizard opens on next
     /// mnml launch. Set true when the user hits Finish OR "Skip
@@ -1641,6 +1660,7 @@ impl Default for Config {
                 // hidden feature. `view.toggle_hover_help` hides it if
                 // the reader dislikes the extra chrome (persists).
                 hover_help: true,
+                click_echo: false,
                 // 2026-08-14 — flipped `true → false`. The
                 // hover-help panel (above) now defaults ON with 49
                 // curated entries, so the popup near the cursor is
@@ -2176,6 +2196,10 @@ struct RawUi {
     /// default — palette command `view.toggle_hover_help`.
     #[serde(default)]
     hover_help: Option<bool>,
+
+    /// See [`UiConfig::click_echo`]. 120ms click-acknowledgement
+    /// underline; OFF by default.
+    click_echo: Option<bool>,
     /// See [`UiConfig::hover_tooltip`]. Small popup near the cursor
     /// after a hover-hold delay. On by default; user can disable
     /// via `view.toggle_hover_tooltip` or `:set nohovertooltip`.
@@ -3038,6 +3062,9 @@ impl Config {
         }
         if let Some(b) = raw.ui.hover_tooltip {
             self.ui.hover_tooltip = b;
+        }
+        if let Some(b) = raw.ui.click_echo {
+            self.ui.click_echo = b;
         }
         if let Some(b) = raw.ui.hover_help {
             self.ui.hover_help = b;

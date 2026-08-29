@@ -2000,6 +2000,27 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "view.toggle_click_echo",
+            title: "Toggle click echo (briefly underline what you clicked)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let on = !app.config.ui.click_echo;
+                app.config.ui.click_echo = on;
+                let _ = crate::app::discovery::persist_ui_bool("click_echo", on);
+                // Name the setting in the toast so the change is
+                // recoverable after it clears — same lesson as
+                // `view.toggle_hover_help` below, where a user reported
+                // the panel "went missing" with no memory of disabling
+                // it.
+                app.toast(if on {
+                    "click echo on — [ui] click_echo = true"
+                } else {
+                    "click echo off — [ui] click_echo = false"
+                });
+            },
+        },
+        Command {
             id: "view.toggle_hover_help",
             title: "Toggle the Ableton-style hover-help info box (bottom of left panel)",
             group: "view",

@@ -1656,7 +1656,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // until a non-word char (space / punctuation-only-if-surrounded
     // by whitespace) or a row edge. Preserves the underline
     // fallback single-cell if the click landed on whitespace.
-    if let Some((x, y, started)) = app.click_echo {
+    if app.config.ui.click_echo
+        && let Some((x, y, started)) = app.click_echo
+    {
         const ECHO_MS: u128 = 120;
         let elapsed = started.elapsed().as_millis();
         if elapsed < ECHO_MS {
@@ -5917,6 +5919,36 @@ fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
             let line: String = "─".repeat(rect.width as usize);
             frame.render_widget(Paragraph::new(Span::styled(line, line_style)), rect);
         }
+    }
+}
+
+#[cfg(test)]
+mod click_echo_gate_tests {
+    /// The user's report: "im not sure i like the thing where i click and
+    /// thing i click gets underlined. how can i turn that off?" — the
+    /// answer was that you could not. It shipped unconditional
+    /// (2026-07-23) with no config key, no Settings row and no palette
+    /// toggle.
+    #[test]
+    fn click_echo_is_off_by_default() {
+        assert!(
+            !crate::config::Config::default().ui.click_echo,
+            "click echo is on by default again — it is a decoration nobody \
+             opted into, and most clicks already answer themselves"
+        );
+    }
+
+    /// A toggle that isn't reachable from Settings is the same bug in a
+    /// different place, so pin the row's presence too.
+    #[test]
+    fn click_echo_has_a_settings_row() {
+        let cfg = crate::config::Config::default();
+        let rows = crate::app::settings::build_settings(&cfg);
+        assert!(
+            rows.iter().any(|r| r.row_key() == Some("ui.click_echo")),
+            "no Settings row for ui.click_echo — the only way to change it \
+             would be hand-editing TOML"
+        );
     }
 }
 
