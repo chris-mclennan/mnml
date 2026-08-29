@@ -196,6 +196,36 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter | KeyCode::Char(' ') => app.tree_activate(),
         KeyCode::Char('R') => app.tree.refresh(),
+        // PageUp/PageDown were the only nav keys missing from this
+        // arm — Up/Down and Home/End were all here, so the tree felt
+        // navigable right up until you reached for a page jump (user
+        // report 2026-08-29). Step matches the git-graph handler's
+        // approximation; the tree does not track its rendered height,
+        // so a real viewport-sized page needs that plumbed first.
+        KeyCode::PageUp | KeyCode::PageDown => {
+            const TREE_PAGE: usize = 20;
+            let up = matches!(key.code, KeyCode::PageUp);
+            if let Some(ws_idx) = app.focused_extra_ws
+                && let Some(ws) = app.extra_workspaces.get_mut(ws_idx)
+            {
+                let cur = ws.tree.cursor();
+                ws.tree.set_cursor(if up {
+                    cur.saturating_sub(TREE_PAGE)
+                } else {
+                    cur.saturating_add(TREE_PAGE)
+                });
+            } else {
+                let cur = app.tree.cursor();
+                app.tree.set_cursor(if up {
+                    cur.saturating_sub(TREE_PAGE)
+                } else {
+                    cur.saturating_add(TREE_PAGE)
+                });
+            }
+            // Same preview-follow as every other tree nav key, so a
+            // page jump lands you in the same state an arrow would.
+            preview_selected_tree_file(app);
+        }
         KeyCode::Home | KeyCode::Char('g') => {
             app.tree.set_cursor(0);
             preview_selected_tree_file(app);
@@ -3190,4 +3220,89 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tree_page_key_tests {
+    use super::handle_tree_key;
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::focus::Focus;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// Seed enough files that a 20-row page jump has somewhere to go.
+    fn app_with_many_files() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        for i in 0..60 {
+            std::fs::write(d.path().join(format!("f{i:03}.txt")), "x").unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.focus = Focus::Tree;
+        app.tree.refresh();
+        (d, app)
+    }
+
+    /// User report 2026-08-29: "arrows up and down work but page up and
+    /// down do not. home and end work currently too so it seems just
+    /// page up and down are not working." The file-tree arm handled
+    /// Up/Down and Home/End but had no PageUp/PageDown case at all, so
+    /// both fell through the catch-all and did nothing.
+    #[test]
+    fn page_down_then_page_up_moves_the_tree_cursor() {
+        let (_d, mut app) = app_with_many_files();
+        assert_eq!(app.tree.cursor(), 0, "setup: cursor starts at top");
+
+        handle_tree_key(&mut app, key(KeyCode::PageDown));
+        let after_down = app.tree.cursor();
+        assert!(
+            after_down > 0,
+            "PageDown did not move the cursor (was the arm added?)"
+        );
+
+        handle_tree_key(&mut app, key(KeyCode::PageUp));
+        assert!(
+            app.tree.cursor() < after_down,
+            "PageUp did not move the cursor back up from {after_down}"
+        );
+    }
+
+    /// A page jump must travel further than a single arrow — otherwise
+    /// the key is "handled" but indistinguishable, which is the shape
+    /// of bug that reads as still-broken to a user.
+    #[test]
+    fn a_page_jump_travels_further_than_one_arrow() {
+        let (_d, mut app) = app_with_many_files();
+        handle_tree_key(&mut app, key(KeyCode::Down));
+        let one_arrow = app.tree.cursor();
+
+        app.tree.set_cursor(0);
+        handle_tree_key(&mut app, key(KeyCode::PageDown));
+        assert!(
+            app.tree.cursor() > one_arrow,
+            "PageDown moved {} rows, no further than a single Down ({one_arrow})",
+            app.tree.cursor()
+        );
+    }
+
+    /// Clamping: paging past either end lands on the boundary rather
+    /// than panicking or wrapping.
+    #[test]
+    fn paging_past_the_ends_clamps() {
+        let (_d, mut app) = app_with_many_files();
+        for _ in 0..20 {
+            handle_tree_key(&mut app, key(KeyCode::PageDown));
+        }
+        let bottom = app.tree.cursor();
+        handle_tree_key(&mut app, key(KeyCode::PageDown));
+        assert_eq!(app.tree.cursor(), bottom, "cursor moved past the last row");
+
+        for _ in 0..20 {
+            handle_tree_key(&mut app, key(KeyCode::PageUp));
+        }
+        assert_eq!(app.tree.cursor(), 0, "cursor did not clamp to the top");
+    }
 }
