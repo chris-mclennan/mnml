@@ -2888,7 +2888,31 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         let insert_reserved = vim_insert
             && ctrl
             && !key.modifiers.contains(KeyModifiers::ALT)
-            && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O'));
+            // #1229 (R17 nvchad) — `p` joins `o` here so vim's INSERT
+            // keyword-completion pair works. `Ctrl+N` was already freed
+            // (it is in keymap.rs's vim removal list) but `Ctrl+P` was
+            // deliberately left bound globally to `picker.files`, so
+            // `vim.rs`'s `editor.keyword_complete_back` arm had never
+            // once run — completion cycled forward only. Reserving it
+            // here rather than removing the global binding keeps
+            // `Ctrl+P` = file picker in NORMAL, where the nvchad muscle
+            // memory actually lives.
+            //
+            // LOWERCASE ONLY, unlike the `o`/`O` pair above:
+            // `Ctrl+Shift+P` is the command palette, and vim users want
+            // that from INSERT too. Reserving `P` would make the
+            // palette dead in INSERT — do not "tidy" this into a pair.
+            && (matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O'))
+                // `p` must additionally reject SHIFT. This guard matches on
+                // the RAW `key.code`, not the SHIFT-normalised `Chord`, so
+                // `Ctrl+Shift+P` arrives here as either `Char('P')` or
+                // `Char('p')` + SHIFT depending on the terminal — and the
+                // second shape would be reserved, killing the command
+                // palette in INSERT. Caught by
+                // `ctrl_shift_p_still_opens_the_palette_from_insert`, which
+                // failed on the first cut of this fix.
+                || (matches!(key.code, KeyCode::Char('p'))
+                    && !key.modifiers.contains(KeyModifiers::SHIFT)));
         // #1229 (R17 nvchad SEV-2) — `nav.back` / `nav.forward` are
         // registered globally with no editing-mode gate, so `Ctrl+-` fired
         // from INSERT and VISUAL: one keystroke changed which file you were
@@ -3316,6 +3340,96 @@ mod nav_mode_gate_tests {
             .and_then(|i| app.panes.get(i))
             .map(|p| p.title())
             .unwrap_or_default()
+    }
+
+    /// #1229 (R17 nvchad) — vim's INSERT keyword-completion pair was
+    /// half-broken: `Ctrl+N` (forward) worked, `Ctrl+P` (back) opened
+    /// the file picker instead, because `ctrl+p` stayed bound globally
+    /// and the chord layer runs before the focused handler. `vim.rs`'s
+    /// `editor.keyword_complete_back` arm had never once run.
+    #[test]
+    fn ctrl_p_in_insert_reaches_the_editor_not_the_file_picker() {
+        let (_d, mut app) = two_file_vim_app();
+        dispatch_key(&mut app, plain('i')); // NORMAL -> INSERT
+        assert!(app.picker.is_none(), "picker open before the test acts");
+
+        dispatch_key(&mut app, ctrl('p'));
+
+        assert!(
+            app.picker.is_none(),
+            "Ctrl+P opened the file picker from INSERT — the global binding \
+             is still shadowing vim's keyword-completion-back"
+        );
+        assert_eq!(
+            app.editing_mode(),
+            crate::input::EditingMode::Insert,
+            "Ctrl+P knocked the user out of INSERT"
+        );
+    }
+
+    /// The counterpart that must keep working — this is the whole reason
+    /// the fix reserves the chord in INSERT instead of unbinding
+    /// `ctrl+p` globally.
+    #[test]
+    fn ctrl_p_in_normal_still_opens_the_file_picker() {
+        let (_d, mut app) = two_file_vim_app();
+        assert_eq!(app.editing_mode(), crate::input::EditingMode::Normal);
+
+        dispatch_key(&mut app, ctrl('p'));
+
+        assert!(
+            app.picker.is_some(),
+            "Ctrl+P stopped opening the picker in NORMAL — nvchad muscle \
+             memory regressed"
+        );
+    }
+
+    /// THE TRAP. `insert_reserved` lists `'o' | 'O'` for Ctrl+O, and
+    /// copying that shape for `p` would reserve `Ctrl+Shift+P` — the
+    /// command palette — leaving it dead in INSERT. The fix is
+    /// deliberately lowercase-only; this test is what stops someone
+    /// "tidying" it into a pair.
+    #[test]
+    fn ctrl_shift_p_still_opens_the_palette_from_insert() {
+        let (_d, mut app) = two_file_vim_app();
+        dispatch_key(&mut app, plain('i')); // NORMAL -> INSERT
+
+        dispatch_key(
+            &mut app,
+            KeyEvent::new(
+                KeyCode::Char('p'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        );
+
+        assert!(
+            app.picker.is_some(),
+            "Ctrl+Shift+P no longer opens the command palette from INSERT — \
+             the insert_reserved allowlist has been widened to include 'P'"
+        );
+    }
+
+    /// The other wire shape for the same chord. Terminals disagree about
+    /// whether `Ctrl+Shift+P` arrives as `Char('p')` + SHIFT or as
+    /// `Char('P')`; `Chord::of` normalises them, but `insert_reserved`
+    /// matches the RAW code, so both need covering.
+    #[test]
+    fn ctrl_shift_p_as_uppercase_char_also_reaches_the_palette() {
+        let (_d, mut app) = two_file_vim_app();
+        dispatch_key(&mut app, plain('i'));
+
+        dispatch_key(
+            &mut app,
+            KeyEvent::new(
+                KeyCode::Char('P'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        );
+
+        assert!(
+            app.picker.is_some(),
+            "Ctrl+Shift+P (uppercase wire form) was swallowed in INSERT"
+        );
     }
 
     /// #1229 — `nav.back` is registered globally with no editing-mode
