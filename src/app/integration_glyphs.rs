@@ -34,7 +34,7 @@ const INTEGRATION_RANGE_START: u32 = 0xF1C00;
 const INTEGRATION_RANGE_END: u32 = 0xF1CFF;
 
 /// One entry in `~/.config/mnml/integration-glyphs.toml`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Assignment {
     /// Integration id (basename of the SVG file).
     id: String,
@@ -129,6 +129,26 @@ fn save_assignments(file: &AssignmentFile) {
     let Some(p) = assignments_path() else {
         return;
     };
+    // #1225 — never let a caller that knows about no glyphs at all
+    // truncate a populated ledger. `discover` now skips the write when
+    // nothing changed, which is the primary fix; this is the backstop
+    // for any future caller that recomputes the set from an empty or
+    // unreadable source. A deliberate shrink to zero has to go through
+    // `purge_integration_glyph_state`, which removes one known id from
+    // a set it just read, and so never lands here with an empty vec
+    // unless that id was genuinely the last one — in which case the
+    // on-disk file has exactly one entry and this guard lets it pass.
+    if file.entries.is_empty() {
+        let on_disk = load_assignments().entries.len();
+        if on_disk > 1 {
+            eprintln!(
+                "mnml: refusing to write an empty {} over {on_disk} existing entries \
+                 (#1225 guard) — this would be data loss",
+                p.display()
+            );
+            return;
+        }
+    }
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -274,6 +294,8 @@ pub(crate) fn discover(
 
     // Merge prior assignments + manifest-declared explicit overrides.
     let mut file = load_assignments();
+    // Snapshot for the change check at the end of this fn (#1225).
+    let loaded_snapshot = file.entries.clone();
     let mut used: std::collections::HashSet<u32> = file
         .entries
         .iter()
@@ -337,9 +359,31 @@ pub(crate) fn discover(
         });
         out.insert(id.clone(), cp);
     }
-    // Persist (idempotent write).
+    // #1225 — persist ONLY when the ledger actually changed.
+    //
+    // This used to write unconditionally, and the comment called it
+    // "idempotent". It is not: `App::new` reaches here (via
+    // `with_integration_manifests_merged` →
+    // `discover_integration_glyphs`), so *constructing an App* wrote
+    // the user's `integration-glyphs.toml`. Any caller pointed at a
+    // pending-glyphs dir with no SVGs in it — every test that builds
+    // an App over a tempdir, for one — loaded the real ledger,
+    // added nothing, and wrote the result straight back. When the
+    // load ALSO missed (different data_root than the write), the
+    // "result" was empty and the real file got truncated.
+    //
+    // Observed: running `cargo test` emptied
+    // `~/.config/mnml/integration-glyphs.toml` on the developer's own
+    // machine, leaving a 0-byte `.pre-assignments-*` backup as
+    // evidence. On CI the file doesn't exist, so the same write read
+    // back as `[]` and looked like a flaky glyph test for three weeks.
+    //
+    // Comparing against the loaded snapshot makes a no-change call a
+    // genuine no-op: no write, no backup churn, nothing to truncate.
     file.entries.sort_by(|a, b| a.id.cmp(&b.id));
-    save_assignments(&file);
+    if file.entries != loaded_snapshot {
+        save_assignments(&file);
+    }
     (svgs, out)
 }
 
@@ -820,6 +864,89 @@ mod tests {
     /// #853 — `purge_integration_glyph_state` deletes the SVG AND drops
     /// the assignments-file entry. Verifies both side-effects and
     /// that unrelated entries survive.
+    /// #1225 — `discover` must not write the ledger when it found
+    /// nothing new. This is the data-loss guard, not a style point:
+    /// `App::new` reaches `discover` via
+    /// `with_integration_manifests_merged`, so before this every
+    /// constructed App re-wrote the user's real
+    /// `integration-glyphs.toml` — and any caller whose load missed
+    /// wrote an EMPTY set over it. Running `cargo test` emptied the
+    /// developer's own file and left a 0-byte `.pre-assignments-*`
+    /// backup as proof; CI never noticed because the file is absent
+    /// there, so the same write read back as `[]` and presented as a
+    /// flaky glyph test.
+    #[test]
+    fn discover_over_an_empty_dir_does_not_touch_the_ledger() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _data_root = crate::EnvGuard::set("MNML_DATA_ROOT", tmp.path().join(".config/mnml"));
+
+        // Seed a populated ledger, exactly like a real user's.
+        let seeded = AssignmentFile {
+            entries: vec![
+                Assignment {
+                    id: "mnml-aws-lambda".into(),
+                    codepoint: "F1C01".into(),
+                },
+                Assignment {
+                    id: "terminal".into(),
+                    codepoint: "F1C02".into(),
+                },
+            ],
+        };
+        save_assignments(&seeded);
+        let path = assignments_path().unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(before.contains("mnml-aws-lambda"), "setup: ledger seeded");
+
+        // An empty pending dir — the shape every App-constructing test has.
+        let empty = tmp.path().join(".cache/mnml/pending-glyphs");
+        fs::create_dir_all(&empty).unwrap();
+        let (svgs, _map) = discover(&empty, &HashMap::new());
+        assert!(svgs.is_empty(), "setup: no SVGs to discover");
+
+        // Assert NO WRITE, not "same content", and not "no new
+        // backup" either — both are vacuous here, verified by
+        // reverting the fix and watching them still pass:
+        //   * an unconditional save serializes identical bytes, so a
+        //     content check sees no difference;
+        //   * `backup_path` stamps at SECOND granularity, so the seed
+        //     write and the discover write collide on one filename and
+        //     the backup COUNT never moves.
+        // mtime is the observable that actually distinguishes "did not
+        // write" from "rewrote the same bytes": a truncate+write bumps
+        // it even when the content is byte-identical.
+        let mtime = |pth: &Path| {
+            std::fs::metadata(pth)
+                .and_then(|m| m.modified())
+                .expect("ledger must exist")
+        };
+        // Let the clock advance past the filesystem's timestamp
+        // resolution so a write is guaranteed to be observable.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mtime_before = mtime(&path);
+
+        let (svgs2, _m2) = discover(&empty, &HashMap::new());
+        assert!(svgs2.is_empty());
+
+        assert_eq!(
+            mtime(&path),
+            mtime_before,
+            "discover() WROTE the ledger despite finding nothing (mtime \
+             moved). With a mis-rooted or failed load, this same write \
+             puts an EMPTY set over real user data."
+        );
+        assert_eq!(
+            before,
+            fs::read_to_string(&path).unwrap(),
+            "ledger content changed"
+        );
+    }
+
     #[test]
     fn purge_integration_glyph_state_drops_svg_and_assignment_entry() {
         let tmp = tempfile::tempdir().unwrap();
