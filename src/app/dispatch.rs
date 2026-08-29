@@ -1268,6 +1268,28 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     // the tail dies with the wheel.
     //
     // #1236 — `off` is a TRUE bypass, byte-identical to pre-#1236.
+    // Refill FIRST, on every path.
+    //
+    // #1236 — this block used to sit below the `off` bypass, which made
+    // the default path deplete-only: the bucket started at capacity,
+    // drained, and never came back, so scrolling died permanently after
+    // ~25 lines and stayed dead for the rest of the session. It was
+    // masked by how often mnml gets restarted during development, since
+    // `App::new` refills it. Caught by
+    // `the_off_path_still_scrolls_after_draining_a_full_bucket`.
+    //
+    // Capacity scales with the setting so acceleration isn't immediately
+    // clamped away by the dampener it has to pass through; `off` keeps
+    // the unscaled capacity it always had.
+    let cap = SCROLL_BUCKET_MAX * ceiling.max(1.0);
+    if let Some(prev) = app.scroll_bucket_last_refill {
+        let elapsed = now.duration_since(prev).as_secs_f32();
+        app.scroll_bucket = (app.scroll_bucket + elapsed * SCROLL_BUCKET_REFILL).min(cap);
+    } else {
+        app.scroll_bucket = cap;
+    }
+    app.scroll_bucket_last_refill = Some(now);
+
     if ceiling <= 1.0 {
         let spend = want_raw.min(app.scroll_bucket).floor();
         app.scroll_bucket -= spend;
@@ -1293,18 +1315,6 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     app.scroll_last_factor = factor;
     let want = want_raw * factor;
 
-    // Capacity scales with the setting so the acceleration isn't
-    // immediately clamped away by the dampener it has to pass through.
-    let cap = SCROLL_BUCKET_MAX * ceiling;
-
-    if let Some(prev) = app.scroll_bucket_last_refill {
-        let elapsed = now.duration_since(prev).as_secs_f32();
-        // Refill deliberately NOT scaled — see the doc comment.
-        app.scroll_bucket = (app.scroll_bucket + elapsed * SCROLL_BUCKET_REFILL).min(cap);
-    } else {
-        app.scroll_bucket = cap;
-    }
-    app.scroll_bucket_last_refill = Some(now);
     // Carry the sub-line remainder across events in this gesture.
     // `floor()` alone discarded it every time, which made `gentle`
     // (1 notch x1.5 = 1.5 -> 1) indistinguishable from `off`.
@@ -2600,6 +2610,32 @@ mod scroll_spec_tests {
     /// Clause 3, the strict one: when the wheel stops, scrolling stops.
     /// Not slows — stops. A free-spin wheel keeps emitting for seconds
     /// after release; those events must move the view zero lines.
+    /// #1236 — `off` is the DEFAULT, so it must keep working forever.
+    ///
+    /// The bypass returns before the refill block, so if the bucket only
+    /// ever depletes on that path, scrolling dies permanently after one
+    /// bucket's worth of lines. Drive far past capacity, spread over real
+    /// time, and require the late events to still move.
+    #[test]
+    fn the_off_path_still_scrolls_after_draining_a_full_bucket() {
+        let (_d, mut app) = app_with("off");
+        let mut t = Instant::now();
+        let mut moved_late = 0;
+        for i in 0..400 {
+            t += Duration::from_millis(25);
+            let got = budgeted_scroll_at(&mut app, 1, t);
+            if i >= 300 {
+                moved_late += got;
+            }
+        }
+        assert!(
+            moved_late > 0,
+            "the last 100 wheel events moved {moved_late} lines — `off` is the \
+             default, so a bucket that never refills on this path means scrolling \
+             stops permanently mid-session"
+        );
+    }
+
     #[test]
     fn when_the_wheel_stops_scrolling_stops() {
         // Two distinct promises live here, and conflating them is what
