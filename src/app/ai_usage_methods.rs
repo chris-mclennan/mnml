@@ -108,9 +108,13 @@ impl App {
             }
             self.ai_usage_claude_last_refresh_at
                 .insert(account.name.clone(), now);
-            let rx = crate::ai_usage::spawn_claude_fetch_account(
+            // #1232 — the fetcher needs the account count to know
+            // whether a keychain resync would be cross-writing over a
+            // sibling account's credential.
+            let rx = crate::ai_usage::spawn_claude_fetch_account_of(
                 account.name.clone(),
                 account.resolved_token_path(),
+                configured.len(),
             );
             self.ai_usage_pending_claude_accounts
                 .push((account.name.clone(), rx));
@@ -414,6 +418,62 @@ impl App {
     /// `:ai.link_claude_token` — open a prompt for the user to
     /// paste their Claude Code OAuth token. Accepting writes to
     /// `~/.config/mnml/ai_token` (chmod 600) + kicks a fresh fetch.
+    /// #1232 — capture the current keychain login and file it under
+    /// whichever configured account it actually belongs to.
+    ///
+    /// Replaces the by-hand `security find-generic-password … >
+    /// ai_token.<name>` step with one that verifies identity before
+    /// writing, so logging in as the wrong account can't silently
+    /// overwrite a good credential.
+    pub fn recapture_claude_token_from_keychain(&mut self) {
+        if self.pending_keychain_recapture.is_some() {
+            self.toast("already capturing…".to_string());
+            return;
+        }
+        let targets: Vec<crate::ai_usage::RecaptureTarget> = self
+            .config
+            .claude_accounts()
+            .iter()
+            .map(|a| crate::ai_usage::RecaptureTarget {
+                name: a.name.clone(),
+                token_path: a.resolved_token_path(),
+                pinned_email: crate::ai_usage::pinned_email_for(&a.name),
+            })
+            .collect();
+        if targets.is_empty() {
+            self.toast("no Claude accounts configured".to_string());
+            return;
+        }
+        self.toast("reading keychain + verifying identity…".to_string());
+        self.pending_keychain_recapture = Some(crate::ai_usage::spawn_keychain_recapture(targets));
+    }
+
+    /// Per-tick drain for [`recapture_claude_token_from_keychain`].
+    /// On success, force an immediate refetch so the repaired account
+    /// lights up without waiting out the 5-minute throttle.
+    pub fn drain_keychain_recapture(&mut self) {
+        let Some(rx) = &self.pending_keychain_recapture else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(msg)) => {
+                self.toast(msg);
+                self.pending_keychain_recapture = None;
+                self.ai_usage_claude_last_refresh_at.clear();
+                self.ai_usage_pending_claude_accounts.clear();
+                self.maybe_refresh_ai_usage();
+            }
+            Ok(Err(e)) => {
+                self.toast(e);
+                self.pending_keychain_recapture = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_keychain_recapture = None;
+            }
+        }
+    }
+
     pub fn open_link_claude_token_prompt(&mut self) {
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::LinkClaudeToken,

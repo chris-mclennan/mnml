@@ -470,26 +470,45 @@ pub fn spawn_claude_fetch_account(
     name: String,
     token_path: PathBuf,
 ) -> mpsc::Receiver<Result<ClaudeAccountUsage, FetchErr>> {
+    spawn_claude_fetch_account_of(name, token_path, 1)
+}
+
+/// As [`spawn_claude_fetch_account`] plus the configured-account
+/// count, which the keychain-resync guard needs to know whether there
+/// are sibling accounts it could damage. #1232.
+pub fn spawn_claude_fetch_account_of(
+    name: String,
+    token_path: PathBuf,
+    account_count: usize,
+) -> mpsc::Receiver<Result<ClaudeAccountUsage, FetchErr>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = fetch_claude_account_blocking(&name, &token_path).map(|usage| {
-            // Best-effort identity fetch — must not fail the whole
-            // account snapshot if it 404s / times out. Reads the
-            // token from the same on-disk file so a fresh refresh
-            // (written by the usage fetch) is picked up. See
-            // `fetch_claude_profile_best_effort`.
-            let profile = std::fs::read_to_string(&token_path)
-                .ok()
-                .and_then(|raw| parse_token_blob(&raw))
-                .and_then(|token| fetch_claude_profile_best_effort(&token));
-            ClaudeAccountUsage {
-                name: name.clone(),
-                usage,
-                is_active: false,
-                email: profile.as_ref().and_then(|p| p.email.clone()),
-                org_name: profile.and_then(|p| p.org_name),
-            }
-        });
+        let result =
+            fetch_claude_account_blocking_of(&name, &token_path, account_count).map(|usage| {
+                // Best-effort identity fetch — must not fail the whole
+                // account snapshot if it 404s / times out. Reads the
+                // token from the same on-disk file so a fresh refresh
+                // (written by the usage fetch) is picked up. See
+                // `fetch_claude_profile_best_effort`.
+                let profile = std::fs::read_to_string(&token_path)
+                    .ok()
+                    .and_then(|raw| parse_token_blob(&raw))
+                    .and_then(|token| fetch_claude_profile_best_effort(&token));
+                // #1232 — this is the ONLY place identity is ever
+                // observable, so it is the only place it can be
+                // learned. Pin it here and every later write can be
+                // checked against it.
+                if let Some(email) = profile.as_ref().and_then(|p| p.email.as_deref()) {
+                    pin_account_identity(&name, email);
+                }
+                ClaudeAccountUsage {
+                    name: name.clone(),
+                    usage,
+                    is_active: false,
+                    email: profile.as_ref().and_then(|p| p.email.clone()),
+                    org_name: profile.and_then(|p| p.org_name),
+                }
+            });
         let _ = tx.send(result);
     });
     rx
@@ -500,13 +519,24 @@ pub fn spawn_claude_fetch_account(
 /// source is an arbitrary file (per-account, chosen by the
 /// caller). Multi-account entry point. 2026-08-16.
 pub fn fetch_claude_account_blocking(
-    _name: &str,
+    name: &str,
     token_path: &Path,
+) -> Result<ClaudeUsage, FetchErr> {
+    fetch_claude_account_blocking_of(name, token_path, 1)
+}
+
+/// As [`fetch_claude_account_blocking`], but told how many accounts
+/// are configured so the keychain resync can refuse to cross-write
+/// when there are siblings to damage. #1232.
+pub fn fetch_claude_account_blocking_of(
+    name: &str,
+    token_path: &Path,
+    account_count: usize,
 ) -> Result<ClaudeUsage, FetchErr> {
     let raw = std::fs::read_to_string(token_path)
         .map_err(|e| FetchErr::new(format!("read token {}: {e}", token_path.display())))?;
     let token = parse_token_blob(&raw).ok_or_else(|| FetchErr::new("not linked"))?;
-    fetch_claude_with_token(&token, Some(token_path))
+    fetch_claude_with_token_for(&token, Some(token_path), name, account_count)
 }
 
 /// Public sibling of [`read_refresh_token_at`] — parses a Keychain
@@ -516,6 +546,180 @@ pub fn fetch_claude_account_blocking(
 /// Claude Code account is currently logged in" (unlike accessToken,
 /// which rotates hourly). Returns `None` for a plain-string token or
 /// any JSON without a refreshToken. #1150 (2026-08-23).
+/// Where each configured account's *identity* is pinned, so mnml can
+/// tell accounts apart offline. #1232.
+///
+/// The token blob itself carries no identity — its keys are
+/// `accessToken` / `refreshToken` / `expiresAt` /
+/// `refreshTokenExpiresAt` / `scopes` / `subscriptionType` /
+/// `rateLimitTier`, and nothing more. Identity only ever arrives over
+/// the wire, from `/api/oauth/profile`. So we record it the first time
+/// a fetch succeeds and treat it as that account's fingerprint from
+/// then on.
+///
+/// Deliberately NOT stored in `config.toml`: this is learned state,
+/// not user intent, and #1190 is a standing objection to code silently
+/// rewriting the user's config.
+fn identity_pin_path() -> PathBuf {
+    crate::data_root::data_root().join("ai_account_identity.json")
+}
+
+/// `{account name → email}`. Missing/corrupt file reads as empty —
+/// a lost pin costs one re-verification, never a wrong write.
+pub fn load_identity_pins() -> std::collections::BTreeMap<String, String> {
+    std::fs::read_to_string(identity_pin_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// The email this account is known to be. `None` until its first
+/// successful fetch.
+pub fn pinned_email_for(name: &str) -> Option<String> {
+    load_identity_pins().get(name).cloned()
+}
+
+/// Record `name`'s identity. Idempotent; rewrites only on change so
+/// we're not churning the file every 5-minute poll.
+pub fn pin_account_identity(name: &str, email: &str) {
+    let email = email.trim();
+    if name.is_empty() || email.is_empty() {
+        return;
+    }
+    let mut pins = load_identity_pins();
+    if pins.get(name).map(String::as_str) == Some(email) {
+        return;
+    }
+    pins.insert(name.to_string(), email.to_string());
+    if let Ok(json) = serde_json::to_string_pretty(&pins) {
+        let _ = write_secret_file(&identity_pin_path(), json.as_bytes());
+    }
+}
+
+/// Case-insensitive, whitespace-tolerant email comparison — the
+/// profile endpoint and a hand-seeded file can disagree on casing.
+fn same_identity(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// Who does this token blob belong to? Costs one profile round-trip.
+/// `None` on any failure, which callers must treat as "unproven" —
+/// never as "matches".
+fn identity_of_blob(raw: &str) -> Option<String> {
+    let token = parse_token_blob(raw)?;
+    fetch_claude_profile_best_effort(&token)?.email
+}
+
+/// Guard for every write that could replace one account's credential
+/// with another's. Returns `Ok(())` only when the blob is *proven* to
+/// belong to `name`.
+///
+/// #1232 — the keychain holds exactly ONE Claude login, and the
+/// resync used to write it into whichever account happened to 401.
+/// With three accounts configured that converged all three token
+/// files onto a single credential (verified: three byte-identical
+/// files), so every account reported the same usage and the same
+/// email, and the other two accounts' refresh tokens were destroyed —
+/// they could not recover without a manual re-seed.
+pub fn verify_blob_belongs_to(name: &str, blob: &str, account_count: usize) -> Result<(), String> {
+    // Single configured account: there is no sibling to clobber, and
+    // gating here would break the "default account Just Works" path
+    // on a fresh install that has no pin yet.
+    if account_count <= 1 {
+        return Ok(());
+    }
+    let Some(pinned) = pinned_email_for(name) else {
+        return Err(format!(
+            "{name} has no pinned identity yet — refusing to overwrite its token \
+             with an unverified blob (it will pin itself on the next successful fetch)"
+        ));
+    };
+    match identity_of_blob(blob) {
+        Some(actual) if same_identity(&actual, &pinned) => Ok(()),
+        Some(actual) => Err(format!(
+            "that credential is {actual}, but {name} is {pinned} — not overwriting"
+        )),
+        None => Err(format!(
+            "could not verify which account that credential belongs to — \
+             not overwriting {name}"
+        )),
+    }
+}
+
+/// One configured account, as far as the recapture worker cares.
+pub struct RecaptureTarget {
+    pub name: String,
+    pub token_path: PathBuf,
+    /// `None` until this account's first successful fetch pins it.
+    pub pinned_email: Option<String>,
+}
+
+/// #1232 — the smart replacement for the by-hand
+/// `security find-generic-password … > ai_token.<name>` seeding step.
+///
+/// That command was account-blind: it copied whatever the keychain
+/// held into whatever filename you typed, and nothing checked the two
+/// matched. Get the account wrong and you silently overwrote a good
+/// credential with a different account's.
+///
+/// This does the same capture, then *identifies* the blob over the
+/// wire and routes it to the account it actually belongs to — so the
+/// user runs `claude login` as whoever they like, presses one key, and
+/// the credential lands in the right file or not at all.
+///
+/// Entirely off the UI thread: `security` can raise a GUI prompt and
+/// the profile call is network.
+pub fn spawn_keychain_recapture(
+    targets: Vec<RecaptureTarget>,
+) -> mpsc::Receiver<Result<String, String>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(recapture_from_keychain_blocking(&targets));
+    });
+    rx
+}
+
+fn recapture_from_keychain_blocking(targets: &[RecaptureTarget]) -> Result<String, String> {
+    let blob = read_keychain_claude_token_blocking().ok_or_else(|| {
+        "no Claude credential in the keychain — run `claude login` first".to_string()
+    })?;
+    let email = identity_of_blob(&blob).ok_or_else(|| {
+        "captured a credential but couldn't verify who it belongs to \
+         (profile lookup failed) — not writing it anywhere"
+            .to_string()
+    })?;
+
+    let Some(target) = targets.iter().find(|t| {
+        t.pinned_email
+            .as_deref()
+            .is_some_and(|p| same_identity(p, &email))
+    }) else {
+        // Name the accounts we DO know, so the user can see whether
+        // they logged in as the wrong one or simply haven't pinned
+        // this account yet.
+        let known: Vec<&str> = targets
+            .iter()
+            .filter_map(|t| t.pinned_email.as_deref())
+            .collect();
+        return Err(if known.is_empty() {
+            format!(
+                "keychain holds {email}, but no account has a known identity yet — \
+                 let a fetch succeed first so mnml learns which account is which"
+            )
+        } else {
+            format!(
+                "keychain holds {email}, which isn't any configured account ({}) — \
+                 log in as the account you want to repair, then retry",
+                known.join(", ")
+            )
+        });
+    };
+
+    write_claude_token_to(&target.token_path, &blob)
+        .map_err(|e| format!("write {}: {e}", target.token_path.display()))?;
+    Ok(format!("{} re-authed as {email}", target.name))
+}
+
 pub fn parse_refresh_token_from_blob(raw: &str) -> Option<String> {
     let s = raw.trim();
     if !s.starts_with('{') {
@@ -618,6 +822,18 @@ fn fetch_claude_with_token(
     token: &str,
     refresh_write_back: Option<&Path>,
 ) -> Result<ClaudeUsage, FetchErr> {
+    // Single-account callers: `account_count = 1` disables the #1232
+    // cross-write guard, which is correct — there is no sibling to
+    // clobber and the legacy path must keep working untouched.
+    fetch_claude_with_token_for(token, refresh_write_back, "", 1)
+}
+
+fn fetch_claude_with_token_for(
+    token: &str,
+    refresh_write_back: Option<&Path>,
+    account_name: &str,
+    account_count: usize,
+) -> Result<ClaudeUsage, FetchErr> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("mnml/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(10))
@@ -680,7 +896,25 @@ fn fetch_claude_with_token(
             .send()
             .map_err(|e| FetchErr::new(format!("fetch (post-keychain-resync): {e}")))?;
         if resp.status().is_success() {
-            let _ = write_claude_token_to(back, &keychain_blob);
+            // #1232 — the blob fetching successfully proves it is a
+            // VALID credential, not that it is THIS account's
+            // credential. There is one keychain entry; before this
+            // guard, whichever account happened to 401 got it written
+            // into its file, and with three accounts configured all
+            // three converged onto one login (three byte-identical
+            // token files) while the other two accounts' refresh
+            // tokens were destroyed.
+            match verify_blob_belongs_to(account_name, &keychain_blob, account_count) {
+                Ok(()) => {
+                    let _ = write_claude_token_to(back, &keychain_blob);
+                }
+                Err(why) => {
+                    // Surface it rather than silently declining, so
+                    // the pane can tell the user this account needs a
+                    // real re-auth and which login is actually loaded.
+                    return Err(FetchErr::new(format!("needs re-auth: {why}")));
+                }
+            }
         }
     }
     let status = resp.status();
@@ -1302,5 +1536,41 @@ mod tests {
         // "@" glyph or double-space where the identity should be.
         let json = r#"{"account":{"email":"  "},"organization":{"name":""}}"#;
         assert!(parse_profile_response(json).is_none());
+    }
+}
+
+#[cfg(test)]
+mod identity_guard_tests {
+    use super::*;
+
+    /// #1232 — the whole point. With more than one account
+    /// configured, an unverifiable blob must NOT be written, because
+    /// the keychain holds exactly one login and writing it into
+    /// whichever account happened to 401 is what silently collapsed
+    /// three distinct credentials onto one.
+    #[test]
+    fn multi_account_refuses_an_unpinned_account() {
+        let err = verify_blob_belongs_to("work", "{}", 3).unwrap_err();
+        assert!(
+            err.contains("no pinned identity"),
+            "expected a refusal naming the missing pin, got: {err}"
+        );
+    }
+
+    /// The complement — a single configured account keeps the old
+    /// behavior exactly. There is no sibling to damage, and gating it
+    /// would break the default-account convenience on a fresh install
+    /// that has no pin yet. Without this the fix could be "refuse
+    /// always" and the test above would still pass.
+    #[test]
+    fn single_account_is_never_gated() {
+        assert!(verify_blob_belongs_to("default", "{}", 1).is_ok());
+        assert!(verify_blob_belongs_to("", "anything", 0).is_ok());
+    }
+
+    #[test]
+    fn identity_comparison_is_case_and_space_insensitive() {
+        assert!(same_identity(" You@Example.com ", "you@example.com"));
+        assert!(!same_identity("you@example.com", "other@example.com"));
     }
 }

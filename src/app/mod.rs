@@ -4225,6 +4225,11 @@ pub struct App {
     /// find-generic-password` doesn't freeze the TUI event loop.
     /// Result is a JSON blob (Ok) or a human-readable error string.
     pub pending_keychain_fetch: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// #1232 — in-flight identity-verified keychain recapture. The
+    /// worker reads the keychain, identifies the blob over the wire,
+    /// and files it under the matching account; this just carries the
+    /// human-readable outcome back to a toast.
+    pub pending_keychain_recapture: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// #1150 f/u (2026-08-23) — autodetected "which Claude account is
     /// the live Claude Code CLI login." Parsed refresh-token pulled
     /// from the current Keychain blob (`Claude Code-credentials`).
@@ -6276,6 +6281,7 @@ impl App {
             ai_usage_codex: None,
             ai_usage_pending_claude_accounts: Vec::new(),
             pending_keychain_fetch: None,
+            pending_keychain_recapture: None,
             keychain_claude_refresh_token: None,
             keychain_active_watch: None,
             cached_autodetected_claude_account: None,

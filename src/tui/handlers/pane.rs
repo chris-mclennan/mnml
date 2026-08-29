@@ -873,6 +873,10 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
             KeyCode::Char('r') => app.refresh_claude_usage_pane(),
+            // #1232 — capture the current `claude login` from the
+            // keychain and file it under whichever account it
+            // actually belongs to, verified over the wire.
+            KeyCode::Char('R') => app.recapture_claude_token_from_keychain(),
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(1);

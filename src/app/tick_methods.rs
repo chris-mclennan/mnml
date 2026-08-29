@@ -121,6 +121,7 @@ impl App {
         // depend on them. See `src/app/statusline_segments.rs`.
         self.drain_statusline_segments();
         self.drain_pending_keychain();
+        self.drain_keychain_recapture();
         self.drain_keychain_active_watch();
         self.drain_suggestions();
         self.maybe_fire_suggestion();

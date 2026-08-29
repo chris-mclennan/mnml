@@ -55,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "· r refresh · esc close".to_string(),
+                "· r refresh · R re-auth from keychain · esc close".to_string(),
                 Style::default()
                     .fg(t.comment)
                     .add_modifier(Modifier::ITALIC),
