@@ -202,6 +202,13 @@ impl App {
             match result {
                 Ok(mut acc) => {
                     acc.is_active = is_active;
+                    // #1232 — a pin collision means several token
+                    // files are sharing one credential. The user has
+                    // to see that; it can't stay a worker-thread
+                    // eprintln behind the alternate screen.
+                    if let Some(w) = acc.warning.take() {
+                        self.toast(w);
+                    }
                     upsert_claude_account(&mut self.ai_usage_claude_accounts, acc);
                 }
                 Err(e) => {
@@ -236,6 +243,7 @@ impl App {
                             is_active,
                             email: None,
                             org_name: None,
+                            warning: None,
                         });
                     existing.is_active = is_active;
                     if let Some(secs) = e.retry_after_secs {

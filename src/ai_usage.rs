@@ -45,6 +45,14 @@ pub struct ClaudeAccountUsage {
     /// e.g. `"Anthropic"` or `"you@example.com's Organization"`.
     /// Same `None` semantics as `email`.
     pub org_name: Option<String>,
+    /// #1232 — a non-fatal warning raised while fetching this account,
+    /// surfaced as a toast by `App::drain_ai_usage`. Today its only
+    /// producer is the identity-pin collision ("two accounts report
+    /// one email"), which the user MUST see: it means their token
+    /// files are sharing a credential. It used to go to `eprintln!`
+    /// from a worker thread, which in raw/alternate-screen mode can
+    /// corrupt the frame and which no user would ever read.
+    pub warning: Option<String>,
 }
 
 /// Last-fetched snapshot for the Claude chip. `percent` is the 5-hour
@@ -501,11 +509,14 @@ pub fn spawn_claude_fetch_account_of(
                 // A collision Err here means several token files are
                 // sharing one credential (the #1232 state). Don't pin
                 // — an unpinned account is correctly "unproven", and
-                // the guard then refuses to write to it.
+                // the guard then refuses to write to it. Carry the
+                // message back for a toast rather than eprintln'ing
+                // into the TUI's screen buffer.
+                let mut warning = None;
                 if let Some(email) = profile.as_ref().and_then(|p| p.email.as_deref())
                     && let Err(clash) = pin_account_identity(&name, email)
                 {
-                    eprintln!("mnml: {clash}");
+                    warning = Some(clash);
                 }
                 ClaudeAccountUsage {
                     name: name.clone(),
@@ -513,6 +524,7 @@ pub fn spawn_claude_fetch_account_of(
                     is_active: false,
                     email: profile.as_ref().and_then(|p| p.email.clone()),
                     org_name: profile.and_then(|p| p.org_name),
+                    warning,
                 }
             });
         let _ = tx.send(result);
@@ -635,6 +647,18 @@ pub fn pin_account_identity(name: &str, email: &str) -> Result<(), String> {
     if name.is_empty() || email.is_empty() {
         return Ok(());
     }
+    // Reviewer catch: the per-account fetches run on CONCURRENT worker
+    // threads (one per account, spawned in the same
+    // `maybe_refresh_ai_usage` pass — and a successful recapture
+    // clears every throttle and re-fires them all at once, i.e. the
+    // races peak during the exact recovery flow this guard serves).
+    // Read-modify-write on one JSON file without this lock let the
+    // later writer clobber the earlier one's insert: a legitimate pin
+    // silently vanished, that account read as unpinned, and it flapped
+    // into "needs re-auth" for a cycle. Fail-safe but wrong.
+    static PIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _hold = PIN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
     let mut pins = load_identity_pins();
     match plan_pin(&pins, name, email) {
         PinDecision::Unchanged => Ok(()),
@@ -646,7 +670,16 @@ pub fn pin_account_identity(name: &str, email: &str) -> Result<(), String> {
         PinDecision::Write => {
             pins.insert(name.to_string(), email.to_string());
             if let Ok(json) = serde_json::to_string_pretty(&pins) {
-                let _ = write_secret_file(&identity_pin_path(), json.as_bytes());
+                let path = identity_pin_path();
+                // Write-then-rename so a concurrent reader never
+                // observes the truncated-but-not-yet-written file that
+                // a plain `truncate + write_all` exposes.
+                let tmp = path.with_extension("json.tmp");
+                if write_secret_file(&tmp, json.as_bytes()).is_ok()
+                    && std::fs::rename(&tmp, &path).is_err()
+                {
+                    let _ = std::fs::remove_file(&tmp);
+                }
             }
             Ok(())
         }
@@ -678,21 +711,44 @@ fn identity_of_blob(raw: &str) -> Option<String> {
 /// files), so every account reported the same usage and the same
 /// email, and the other two accounts' refresh tokens were destroyed —
 /// they could not recover without a manual re-seed.
-pub fn verify_blob_belongs_to(name: &str, blob: &str, account_count: usize) -> Result<(), String> {
-    let pins = load_identity_pins();
+/// What identity, if any, `name` must match before a write is allowed.
+///
+/// Pure so every branch is testable without touching the real pin
+/// file — the reviewer caught two earlier tests reading the developer's
+/// own `~/.config/mnml/ai_account_identity.json`, which made them pass
+/// or fail on ambient disk state, and left the shared-pin branch with
+/// no coverage at all.
+pub(crate) enum GateDecision {
+    /// Nothing to protect — allow without a network round-trip.
+    Bypass,
+    /// The blob must resolve to this identity.
+    MustMatch(String),
+    Refuse(String),
+}
+
+pub(crate) fn gate_decision(
+    pins: &std::collections::BTreeMap<String, String>,
+    name: &str,
+    account_count: usize,
+) -> GateDecision {
     // Whether this is a multi-account install is decided by the live
     // config OR the durable pin record, not config alone. Reviewer
     // catch: `[ai]` is whole-table-replaced across config layers
-    // (`config.rs`, `self.ai = v`), so a workspace `.mnml/config.toml`
+    // (`config.rs`, `self.ai = v`, unlike the field-by-field merge
+    // every other section gets), so a workspace `.mnml/config.toml`
     // carrying ANY `[ai]` key drops `claude_accounts()` back to the
     // single synthetic "default" — which would silently switch this
-    // guard off on a machine that genuinely has several accounts.
-    // The pin file remembers what the config momentarily forgot.
+    // guard off on a machine that genuinely has several accounts. The
+    // pin file remembers what the config momentarily forgot.
+    //
+    // Inherent limit: an account that has never completed one
+    // successful profile fetch has no pin to be remembered by, so a
+    // config collapse before its first fetch is still invisible here.
     if account_count <= 1 && pins.len() <= 1 {
-        return Ok(());
+        return GateDecision::Bypass;
     }
     let Some(pinned) = pins.get(name) else {
-        return Err(format!(
+        return GateDecision::Refuse(format!(
             "{name} has no pinned identity yet — refusing to overwrite its token \
              with an unverified blob (it will pin itself on the next successful fetch)"
         ));
@@ -705,14 +761,23 @@ pub fn verify_blob_belongs_to(name: &str, blob: &str, account_count: usize) -> R
         .iter()
         .find(|(k, v)| k.as_str() != name && same_identity(v, pinned))
     {
-        return Err(format!(
+        return GateDecision::Refuse(format!(
             "{name} and {other} are both pinned to {pinned}, so neither pin proves \
              anything — re-auth {name} (`R` in the Claude usage pane) before it can \
              be written"
         ));
     }
+    GateDecision::MustMatch(pinned.clone())
+}
+
+pub fn verify_blob_belongs_to(name: &str, blob: &str, account_count: usize) -> Result<(), String> {
+    let pinned = match gate_decision(&load_identity_pins(), name, account_count) {
+        GateDecision::Bypass => return Ok(()),
+        GateDecision::Refuse(why) => return Err(why),
+        GateDecision::MustMatch(email) => email,
+    };
     match identity_of_blob(blob) {
-        Some(actual) if same_identity(&actual, pinned) => Ok(()),
+        Some(actual) if same_identity(&actual, &pinned) => Ok(()),
         Some(actual) => Err(format!(
             "that credential is {actual}, but {name} is {pinned} — not overwriting"
         )),
@@ -1639,28 +1704,88 @@ mod identity_guard_tests {
     use super::*;
 
     /// #1232 — the whole point. With more than one account
-    /// configured, an unverifiable blob must NOT be written, because
-    /// the keychain holds exactly one login and writing it into
-    /// whichever account happened to 401 is what silently collapsed
-    /// three distinct credentials onto one.
+    /// configured, an unproven blob must NOT be written: the keychain
+    /// holds exactly one login, and writing it into whichever account
+    /// happened to 401 is what collapsed three credentials onto one.
+    ///
+    /// Reviewer catch: this and the test below used to call
+    /// `verify_blob_belongs_to`, which reads the REAL pin file — so
+    /// they passed or failed on the developer's own ambient disk
+    /// state. Against `gate_decision` they're hermetic.
     #[test]
     fn multi_account_refuses_an_unpinned_account() {
-        let err = verify_blob_belongs_to("work", "{}", 3).unwrap_err();
+        let existing = pins(&[("personal", "chris@example.com")]);
+        let GateDecision::Refuse(why) = gate_decision(&existing, "work", 3) else {
+            panic!("an unpinned account must be refused, not gated in or bypassed");
+        };
         assert!(
-            err.contains("no pinned identity"),
-            "expected a refusal naming the missing pin, got: {err}"
+            why.contains("no pinned identity"),
+            "the refusal should name the missing pin, got: {why}"
         );
     }
 
     /// The complement — a single configured account keeps the old
     /// behavior exactly. There is no sibling to damage, and gating it
     /// would break the default-account convenience on a fresh install
-    /// that has no pin yet. Without this the fix could be "refuse
-    /// always" and the test above would still pass.
+    /// with no pin yet. Without this the fix could be "refuse always"
+    /// and the test above would still pass.
     #[test]
     fn single_account_is_never_gated() {
-        assert!(verify_blob_belongs_to("default", "{}", 1).is_ok());
-        assert!(verify_blob_belongs_to("", "anything", 0).is_ok());
+        assert!(matches!(
+            gate_decision(&pins(&[]), "default", 1),
+            GateDecision::Bypass
+        ));
+        assert!(matches!(
+            gate_decision(&pins(&[("default", "me@example.com")]), "default", 1),
+            GateDecision::Bypass
+        ));
+    }
+
+    /// The branch that had NO test before (it needed two colliding
+    /// entries in the real pin file to reach). A pin shared with
+    /// another account is not evidence — even when the incoming blob
+    /// matches it — because that sharing is itself the symptom of the
+    /// credential collapse this guard exists to stop.
+    #[test]
+    fn a_shared_pin_is_refused_even_though_it_would_match() {
+        let collapsed = pins(&[
+            ("personal", "chris@example.com"),
+            ("work", "chris@example.com"),
+        ]);
+        let GateDecision::Refuse(why) = gate_decision(&collapsed, "work", 3) else {
+            panic!("a pin shared with another account must not be accepted as proof");
+        };
+        assert!(
+            why.contains("personal") && why.contains("neither pin proves"),
+            "the refusal should name the other claimant, got: {why}"
+        );
+        // A UNIQUE pin, by contrast, is what the blob must match.
+        let distinct = pins(&[
+            ("personal", "chris@example.com"),
+            ("work", "work@example.com"),
+        ]);
+        let GateDecision::MustMatch(email) = gate_decision(&distinct, "work", 3) else {
+            panic!("a unique pin should gate on identity, not refuse outright");
+        };
+        assert_eq!(email, "work@example.com");
+    }
+
+    /// The config-collapse case the reviewer found: `[ai]` is
+    /// whole-table-replaced across config layers, so `claude_accounts()`
+    /// can report 1 on a machine that genuinely has several. The
+    /// durable pin record has to override that, or the guard silently
+    /// switches itself off.
+    #[test]
+    fn a_collapsed_config_cannot_switch_the_guard_off() {
+        let two = pins(&[
+            ("personal", "chris@example.com"),
+            ("work", "work@example.com"),
+        ]);
+        // account_count == 1 (config says single) but 2 pins on disk.
+        assert!(
+            !matches!(gate_decision(&two, "work", 1), GateDecision::Bypass),
+            "2 pinned accounts must keep the guard on even when config reports 1"
+        );
     }
 
     fn pins(entries: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
