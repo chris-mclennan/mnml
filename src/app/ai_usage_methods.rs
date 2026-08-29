@@ -14,6 +14,32 @@ use super::*;
 /// `keychain_active_last_kick_at`.
 const KEYCHAIN_ACTIVE_REFRESH_SECS: u64 = 5 * 60;
 
+/// Fold a failed fetch into the account's *existing* snapshot.
+///
+/// The numbers deliberately survive (#1217): the endpoint 429s
+/// routinely with three accounts on a 5-min poll, and zeroing a good
+/// five-minute-old reading doesn't read as "unknown", it reads as
+/// "you've used nothing" — the opposite of a warning. `last_error` is
+/// the staleness signal instead, and `fetched_at` keeps its old value
+/// so the age stays honest.
+///
+/// Extracted from `drain_ai_usage` so the assignment semantics are
+/// testable. Both flag writes are plain assignments, NOT `|=`: an
+/// error that isn't a re-auth failure has to *clear* a prior re-auth
+/// flag, or a single bad keychain state would pin the pane's guided
+/// re-auth block on forever, through every later 429.
+fn apply_fetch_error(
+    usage: &mut crate::ai_usage::ClaudeUsage,
+    e: crate::ai_usage::FetchErr,
+    now: u64,
+) {
+    if let Some(secs) = e.retry_after_secs {
+        usage.retry_after_at = now.saturating_add(secs);
+    }
+    usage.last_error = Some(e.message);
+    usage.needs_reauth = e.needs_reauth;
+}
+
 impl App {
     /// AI usage meter — kick off background fetches if it's been
     /// >5 min since the last spawn AND no fetch is currently in
@@ -246,11 +272,7 @@ impl App {
                             warning: None,
                         });
                     existing.is_active = is_active;
-                    if let Some(secs) = e.retry_after_secs {
-                        existing.usage.retry_after_at = now_ts.saturating_add(secs);
-                    }
-                    existing.usage.last_error = Some(e.message);
-                    existing.usage.needs_reauth = e.needs_reauth;
+                    apply_fetch_error(&mut existing.usage, e, now_ts);
                     upsert_claude_account(&mut self.ai_usage_claude_accounts, existing);
                 }
             }
@@ -559,5 +581,74 @@ impl App {
                 errors.len()
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod fetch_error_tests {
+    use super::apply_fetch_error;
+    use crate::ai_usage::{ClaudeUsage, FetchErr};
+
+    fn err(message: &str, needs_reauth: bool) -> FetchErr {
+        FetchErr {
+            message: message.to_string(),
+            retry_after_secs: None,
+            needs_reauth,
+        }
+    }
+
+    /// The regression this exists for: a later error of a DIFFERENT
+    /// kind has to clear a prior re-auth flag. `needs_reauth` is
+    /// assigned, never OR'd — if someone "preserves more fields"
+    /// while editing the #1217 snapshot-preservation logic directly
+    /// above and reaches for `|=`, the pane would keep telling the
+    /// user to run `claude login` forever, through every later 429,
+    /// long after the credential was fixed.
+    #[test]
+    fn a_later_non_reauth_error_clears_the_reauth_flag() {
+        let mut usage = ClaudeUsage::default();
+
+        apply_fetch_error(&mut usage, err("that credential is other@x", true), 1_000);
+        assert!(usage.needs_reauth, "re-auth failure should raise the flag");
+
+        // A 429 is not a re-auth problem. The guided block must go.
+        apply_fetch_error(&mut usage, err("http 429", false), 2_000);
+        assert!(
+            !usage.needs_reauth,
+            "an unrelated later error must clear the flag, not OR into it"
+        );
+        assert_eq!(usage.last_error.as_deref(), Some("http 429"));
+    }
+
+    /// The readings survive an error — the whole point of #1217.
+    /// A good five-minute-old number beats a fresh-looking zero.
+    #[test]
+    fn an_error_preserves_the_previous_readings() {
+        let mut usage = ClaudeUsage {
+            percent: 57,
+            weekly_percent: 86,
+            fetched_at: 500,
+            ..Default::default()
+        };
+
+        apply_fetch_error(&mut usage, err("http 429", false), 2_000);
+
+        assert_eq!(usage.percent, 57);
+        assert_eq!(usage.weekly_percent, 86);
+        assert_eq!(usage.fetched_at, 500, "age must stay honest");
+    }
+
+    /// `Retry-After` only moves the cooldown when the header was
+    /// present; a plain failure must not silently arm one.
+    #[test]
+    fn retry_after_is_only_applied_when_the_header_was_present() {
+        let mut usage = ClaudeUsage::default();
+        apply_fetch_error(&mut usage, err("boom", false), 2_000);
+        assert_eq!(usage.retry_after_at, 0);
+
+        let mut throttled = err("http 429", false);
+        throttled.retry_after_secs = Some(300);
+        apply_fetch_error(&mut usage, throttled, 2_000);
+        assert_eq!(usage.retry_after_at, 2_300);
     }
 }
