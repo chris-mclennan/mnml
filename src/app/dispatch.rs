@@ -1123,11 +1123,30 @@ fn scroll_accel_ceiling(setting: &str) -> f32 {
     }
 }
 
-/// Batch size at which the acceleration multiplier reaches its
-/// ceiling. `coalesce_scroll` collapses everything queued in one poll
-/// into a single event, so the batch size IS an instantaneous wheel
-/// velocity estimate — free, and already computed.
-const SCROLL_ACCEL_FULL_AT: f32 = 12.0;
+/// Wheel rate (events/sec) at which acceleration reaches its ceiling.
+///
+/// #1236 follow-up — the first version ramped on the coalesced BATCH
+/// SIZE, on the theory that it was a free velocity estimate. It isn't.
+/// `coalesce_scroll` polls with `Duration::ZERO`, so it only collapses
+/// events ALREADY QUEUED; a responsive event loop drains them one at a
+/// time and the batch is 1. Batch size therefore measures how far
+/// behind the render loop is, not how fast the wheel is turning — and
+/// with a batch of 1-2 every setting produced identical output, which
+/// is exactly what the user reported ("normal and fast and gentle seem
+/// the same").
+///
+/// Rate is measured as `batch / elapsed_since_last_scroll`, which
+/// reads the same whether the loop is keeping up (batch 1, tiny gaps)
+/// or falling behind (batch 5, larger gaps).
+const SCROLL_ACCEL_FULL_RATE: f32 = 45.0;
+
+/// Below this rate there is no acceleration at all — a slow deliberate
+/// scroll must stay 1:1 so precise positioning is unaffected.
+const SCROLL_ACCEL_FLOOR_RATE: f32 = 10.0;
+
+/// Treat a gap longer than this as a NEW gesture: no inherited
+/// velocity, so the first notch after a pause is never accelerated.
+const SCROLL_GESTURE_GAP_MS: u64 = 250;
 
 /// Apply acceleration + the leaky-bucket scroll budget.
 ///
@@ -1170,11 +1189,24 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     let ceiling = scroll_accel_ceiling(&app.config.editor.scroll_accel);
     let want_raw = delta.unsigned_abs() as f32;
 
-    // Ramp from 1.0 at a single notch up to `ceiling` at a fast spin.
-    // A slow, deliberate scroll is never multiplied — the setting only
-    // changes what a HARD spin does, which is what "fast spin moves
-    // further" asks for.
-    let ramp = ((want_raw - 1.0) / (SCROLL_ACCEL_FULL_AT - 1.0)).clamp(0.0, 1.0);
+    // Wheel rate in events/sec. A gap longer than one gesture resets
+    // to zero so the first notch after a pause is never accelerated.
+    let gap = app
+        .scroll_last_event_at
+        .map(|t| now.duration_since(t))
+        .unwrap_or(std::time::Duration::MAX);
+    app.scroll_last_event_at = Some(now);
+    let rate = if gap > std::time::Duration::from_millis(SCROLL_GESTURE_GAP_MS) {
+        0.0
+    } else {
+        let secs = gap.as_secs_f32().max(0.001);
+        want_raw / secs
+    };
+
+    // Ramp from 1.0 at a slow scroll to `ceiling` at a fast spin.
+    let ramp = ((rate - SCROLL_ACCEL_FLOOR_RATE)
+        / (SCROLL_ACCEL_FULL_RATE - SCROLL_ACCEL_FLOOR_RATE))
+        .clamp(0.0, 1.0);
     let factor = 1.0 + (ceiling - 1.0) * ramp;
     let want = want_raw * factor;
 
@@ -2133,7 +2165,7 @@ pub(crate) fn pty_key_bytes(key: KeyEvent) -> Vec<u8> {
 
 #[cfg(test)]
 mod scroll_accel_tests {
-    use super::{SCROLL_BUCKET_MAX, budgeted_scroll, budgeted_scroll_at, scroll_accel_ceiling};
+    use super::{SCROLL_BUCKET_MAX, budgeted_scroll_at, scroll_accel_ceiling};
     use crate::app::App;
     use crate::config::Config;
 
@@ -2146,24 +2178,35 @@ mod scroll_accel_tests {
     }
 
     /// The headline ask: a fast spin travels further than a slow one,
-    /// and further still as the setting goes up. Asserts the ORDERING
-    /// rather than exact line counts — the curve is a feel decision
-    /// and will get retuned; the ordering is the contract.
+    /// and further still as the setting goes up.
+    ///
+    /// Drives RATE (events/sec via the injected clock), not batch size.
+    /// The first version of this test drove batch size, which is what
+    /// the code used to read — and that turned out to be ~1 in practice
+    /// because `coalesce_scroll` only collapses ALREADY-QUEUED events
+    /// and a responsive loop never accumulates any. The test passed and
+    /// the feature did nothing, which is exactly what the user saw.
     #[test]
     fn a_fast_spin_travels_further_and_scales_with_the_setting() {
-        let big_batch = 12; // a hard spin, coalesced
+        // 8ms between notches ≈ 125 events/sec — a hard spin.
+        let spin_gap = std::time::Duration::from_millis(8);
         let mut out = Vec::new();
         for accel in ["off", "gentle", "normal", "fast"] {
             let (_d, mut app) = app_with(accel);
-            out.push(budgeted_scroll(&mut app, big_batch));
+            let t0 = std::time::Instant::now();
+            let mut total = 0;
+            for i in 0..10 {
+                total += budgeted_scroll_at(&mut app, 1, t0 + spin_gap * i);
+            }
+            out.push(total);
         }
         assert!(
             out.windows(2).all(|w| w[1] >= w[0]),
-            "each setting should scroll at least as far as the one below it: {out:?}"
+            "each setting should scroll at least as far as the one below: {out:?}"
         );
         assert!(
             out[3] > out[0],
-            "'fast' must actually beat 'off' on a hard spin: {out:?}"
+            "'fast' must beat 'off' on a hard spin: {out:?}"
         );
     }
 
@@ -2175,11 +2218,17 @@ mod scroll_accel_tests {
     fn one_notch_is_never_accelerated() {
         for accel in ["off", "gentle", "normal", "fast"] {
             let (_d, mut app) = app_with(accel);
-            assert_eq!(
-                budgeted_scroll(&mut app, 1),
-                1,
-                "a single notch moved more than one line at accel={accel}"
-            );
+            // Slow, deliberate notches — 400ms apart, past the gesture
+            // gap, so each one starts from zero inherited velocity.
+            let t0 = std::time::Instant::now();
+            for i in 0..4 {
+                let now = t0 + std::time::Duration::from_millis(400 * i);
+                assert_eq!(
+                    budgeted_scroll_at(&mut app, 1, now),
+                    1,
+                    "a slow single notch moved more than one line at accel={accel}"
+                );
+            }
         }
     }
 

@@ -4668,6 +4668,11 @@ pub struct App {
     /// Last instant we refilled the scroll bucket. Used to compute
     /// elapsed seconds for the leaky-bucket refill.
     pub scroll_bucket_last_refill: Option<std::time::Instant>,
+    /// #1236 — when the previous wheel event was applied, for the
+    /// rate-based acceleration input. Distinct from
+    /// `scroll_bucket_last_refill`, which the dampener advances on
+    /// every call including dropped ones.
+    pub scroll_last_event_at: Option<std::time::Instant>,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -6376,6 +6381,7 @@ impl App {
             mouse_down_at: None,
             scroll_bucket: 25.0,
             scroll_bucket_last_refill: None,
+            scroll_last_event_at: None,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,
