@@ -3,7 +3,7 @@ title: Community integrations
 description: mnml integrations don't live in a central directory — they're discovered at runtime via the Marketplace tab. This page explains where to find what's out there, how to contribute a launcher, and how the Official / Community split works.
 ---
 
-mnml doesn't maintain a hardcoded catalog of "official" integrations. The first-party surface is three GitHub repos — `chris-mclennan/mnml`, `chris-mclennan/mnml-integrations`, and `chris-mclennan/mnml-tattle-tests` — and everything else installable comes from the [Marketplace](/manual/integrations/marketplace/). That's a federated discovery model with two shipping sources (crates.io keyword search + one reference GitHub folder) and unlimited user-configurable sources. Any integration in any of those sources is one click away from installed.
+mnml doesn't maintain a hardcoded catalog of "official" integrations. The first-party surface is two GitHub repos — `chris-mclennan/mnml` and `chris-mclennan/mnml-integrations` — and everything else installable comes from the [Marketplace](/manual/integrations/marketplace/). That's a federated discovery model with two shipping sources (crates.io keyword search + one reference GitHub folder) and unlimited user-configurable sources. Any integration in any of those sources is one click away from installed.
 
 This page is the "where do I go to find integrations, and how do I add mine" page.
 
@@ -83,11 +83,10 @@ To see what's currently installable: `:marketplace.refresh` from inside mnml, th
 
 ## The retired 37-sibling ecosystem
 
-Through mid-2026 mnml maintained ~37 first-party sibling repos — one per forge / cloud / database / messaging integration, each shipping its own `cargo install`-able binary. That model was consolidated in 2026-08. The remaining first-party repos are just three:
+Through mid-2026 mnml maintained ~37 first-party sibling repos — one per forge / cloud / database / messaging integration, each shipping its own `cargo install`-able binary. That model was consolidated in 2026-08. The remaining first-party repos are just two:
 
 - **`chris-mclennan/mnml`** — the editor itself + the built-in `browser` / `claude_code` / `codex` chips.
 - **`chris-mclennan/mnml-integrations`** — the reference launcher catalog. Community PRs land here.
-- **`chris-mclennan/mnml-tattle-tests`** — internal test fixtures. Not user-facing.
 
 The dozens of `mnml-forge-*`, `mnml-aws-*`, `mnml-msg-*`, `mnml-tracker-*` repos are gone; the launcher-manifest model absorbed almost every one of them. The handful that needed genuine custom UI (a real database browser, say) are now expected to publish via crates.io under any author, marked with the `mnml-integration` keyword — no first-party gatekeeping.
 

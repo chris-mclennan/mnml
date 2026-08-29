@@ -121,7 +121,7 @@ import sdkInstallGif from '../../assets/tapes/sdk-install-flow.gif';
 
 Before 0.2, mnml core carried default `IntegrationIcon` entries for every community sibling — bitbucket, github, slack, datadog, and 33 more. Users installed the sibling binary and the chip was already in the rail (disabled), because mnml shipped the metadata. That worked but had three costs:
 
-1. **Tattle-branded stragglers.** `mnml-tattle-inbox` shipped as a default chip visible to every crates.io user — a private internal sibling with an "INTERNAL — dev/staging" tooltip. Removed as part of the arc.
+1. **Internal-only stragglers.** A private company-internal sibling shipped as a default chip visible to every crates.io user, tooltip and all. Removed as part of the arc.
 2. **mnml core carried release cycles for every sibling.** Change a sibling's tooltip → mnml core needed a release.
 3. **No first-class registration story.** Community authors couldn't publish a chip; they had to send a PR to mnml.
 
@@ -174,9 +174,9 @@ Every helper is fire-and-forget — silent no-op when `MNML_IPC_DIR` isn't set, 
 - **OS notifications via OSC 9 + OSC 777** — Ghostty / iTerm2 / kitty / WezTerm / Windows Terminal route to native banners. Per-integration `[notifications]` policy: `never` / `error_only` / `always` + rate limit.
 - **`[jira]` + `[cloud_agents]` config** — org-specific Jira wiring (`domain` + `ticket_prefix`) and full config-driven ECS runner for cloud agents. Both empty by default; the whole feature no-ops without config. See [Cloud agents runner](/manual/cloud-agents-config/).
 
-#### `tattle_qwe` → `ecs_runner`
+#### Cloud-agent runner made generic
 
-The AWS-Fargate cloud-agent runner that was hardcoded as Tattle-specific infra is now a generic config-driven feature. `AgentSource::TattleQwe` → `AgentSource::Ecs` etc. Existing users populate `[cloud_agents]` config to keep the feature; empty config = no-op.
+The AWS-Fargate cloud-agent runner was hardcoded against one company's private infra; it's now a generic config-driven feature (`AgentSource::Ecs`). Existing users populate `[cloud_agents]` config to keep the feature; empty config = no-op.
 
 #### The family — 37 siblings, all self-installing
 

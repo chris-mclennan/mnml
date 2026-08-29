@@ -5,7 +5,7 @@ description: mnml's integration model — a rail chip driven by a TOML manifest,
 
 An **integration** in mnml is a `~/.config/mnml/integrations/<id>.toml` manifest that declares a rail chip, some palette commands, and (optionally) statusline / context-menu / menu-bar surfaces. The manifest is the ground truth: mnml core no longer ships a hardcoded list of "known siblings", and installing an integration means dropping a TOML file — usually via the Marketplace tab, occasionally by hand.
 
-This is a different model from the "37 first-party siblings" arrangement mnml shipped through mid-2026. As of 2026-08 the entire first-party ecosystem consists of exactly three GitHub repos — `chris-mclennan/mnml`, `chris-mclennan/mnml-integrations`, and `chris-mclennan/mnml-tattle-tests` — and mnml core carries exactly **three built-in chips**: `browser`, `claude_code`, `codex`. Everything else lives in installable manifests. The catalog you browse from inside mnml is federated: crates.io keyword search + one or more GitHub launcher-manifest folders, both fetched at runtime and merged.
+This is a different model from the "37 first-party siblings" arrangement mnml shipped through mid-2026. As of 2026-08 the entire first-party ecosystem consists of exactly two GitHub repos — `chris-mclennan/mnml` and `chris-mclennan/mnml-integrations` — and mnml core carries exactly **three built-in chips**: `browser`, `claude_code`, `codex`. Everything else lives in installable manifests. The catalog you browse from inside mnml is federated: crates.io keyword search + one or more GitHub launcher-manifest folders, both fetched at runtime and merged.
 
 ## The two flavors
 

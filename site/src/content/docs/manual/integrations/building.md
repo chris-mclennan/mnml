@@ -7,7 +7,7 @@ An integration is either a **launcher TOML** (no code, no binary — the manifes
 
 There's no mnml plugin runtime, no compiled extension format, no shared crate you have to link against. A launcher is a text file; a binary sibling is any Rust CLI you'd write anyway. Both flavors ship through the same [Marketplace](/manual/integrations/marketplace/) — pick whichever fits what you're building.
 
-As of 2026-08, the first-party ecosystem consists of exactly three repos (`chris-mclennan/mnml`, `chris-mclennan/mnml-integrations`, `chris-mclennan/mnml-tattle-tests`). The previous "35+ first-party siblings" model was retired — nearly every real integration turned out to be a wrapper around an existing CLI, and a launcher TOML is a lighter shape for that. The binary-sibling path still exists for genuine custom UI, but it's the escape hatch, not the default.
+As of 2026-08, the first-party ecosystem consists of exactly two repos (`chris-mclennan/mnml`, `chris-mclennan/mnml-integrations`). The previous "35+ first-party siblings" model was retired — nearly every real integration turned out to be a wrapper around an existing CLI, and a launcher TOML is a lighter shape for that. The binary-sibling path still exists for genuine custom UI, but it's the escape hatch, not the default.
 
 ## Which flavor?
 

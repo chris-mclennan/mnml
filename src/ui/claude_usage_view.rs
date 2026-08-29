@@ -230,8 +230,53 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                 rows.push(with_gutter(Line::from("")));
             }
 
+            // #1232 — an account whose token can't be repaired
+            // automatically. The keychain holds ONE Claude login, so a
+            // token that has expired for an account the CLI isn't
+            // currently logged into as cannot be refreshed without the
+            // user re-authing that account. Say so, and say what to
+            // press — a bare "fetch error" here reads as a network
+            // blip and leaves the user with no next move.
+            let needs_reauth = usage
+                .last_error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("needs re-auth"));
+            if needs_reauth {
+                rows.push(with_gutter(Line::from(Span::styled(
+                    "  ⚠ token expired — needs re-auth".to_string(),
+                    Style::default().fg(t.yellow),
+                ))));
+                rows.push(with_gutter(Line::from(Span::styled(
+                    format!("    1. run:  claude login   (as {})", account.name),
+                    Style::default().fg(t.comment),
+                ))));
+                rows.push(with_gutter(Line::from(Span::styled(
+                    "    2. press R to capture it from the keychain".to_string(),
+                    Style::default().fg(t.comment),
+                ))));
+                // The detail carries WHICH account the loaded
+                // credential actually is, which is the whole reason
+                // the write was refused.
+                if let Some(why) = usage
+                    .last_error
+                    .as_deref()
+                    .and_then(|e| e.strip_prefix("needs re-auth: "))
+                {
+                    rows.push(with_gutter(Line::from(Span::styled(
+                        format!("    {why}"),
+                        Style::default().fg(t.comment),
+                    ))));
+                }
+                rows.push(with_gutter(Line::from("")));
+            }
+
             // Per-account empty state / stale-data hint
-            if usage.percent == 0 && usage.weekly_percent == 0 && usage.scoped_limits.is_empty() {
+            if needs_reauth {
+                // Already explained above — don't repeat the raw error.
+            } else if usage.percent == 0
+                && usage.weekly_percent == 0
+                && usage.scoped_limits.is_empty()
+            {
                 rows.push(with_gutter(Line::from(Span::styled(
                     match usage.last_error {
                         Some(ref e) => format!("no data yet · last error: {e}"),
