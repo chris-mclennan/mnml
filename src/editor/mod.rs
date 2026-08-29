@@ -4568,7 +4568,21 @@ impl Editor {
             line - 1
         } else {
             if line + 1 >= self.line_count() {
-                self.cursor = self.text.len();
+                // #1237 — clamp to the end of the last REAL line, not to
+                // `text.len()`.
+                //
+                // For a newline-terminated buffer (every well-formed Unix
+                // file) `text.len()` sits AFTER the final newline, which
+                // puts the cursor on a phantom line that `line_count()`
+                // correctly refuses to count — the trailing newline is a
+                // terminator, not an extra line. The status chip then read
+                // `Ln 48/47`, and the renderer, asked to keep a line past
+                // the end in view, scrolled the viewport clean off the
+                // document and painted blank.
+                //
+                // Only reachable on the LAST line, which is why long files
+                // looked fine: one PageDown never got there.
+                self.cursor = self.line_end(self.line_count().saturating_sub(1));
                 return;
             }
             line + 1
@@ -7581,5 +7595,78 @@ mod tests {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod page_down_eof_tests {
+    use super::*;
+    use crate::edit_op::EditOp;
+
+    /// 47 lines with the Unix-correct trailing newline — exactly the
+    /// user's `crates/fim-engine/Cargo.toml` from the 2026-08-29 report.
+    fn newline_terminated(lines: usize) -> Editor {
+        let mut text = String::new();
+        for i in 1..=lines {
+            text.push_str(&format!("line {i}\n"));
+        }
+        Editor::new(text, 4)
+    }
+
+    #[test]
+    fn page_down_past_the_end_leaves_the_cursor_on_a_real_line() {
+        let mut ed = newline_terminated(47);
+        let mut clip = Clipboard::detached();
+        // One PageDown with a viewport taller than the file — the whole
+        // document is on screen, so this is pure clamping.
+        ed.apply(EditOp::PageDown, 55, &mut clip);
+
+        let line = ed.current_line();
+        let count = ed.line_count();
+        assert_eq!(
+            count, 47,
+            "47 content lines, trailing newline is a terminator"
+        );
+        assert!(
+            line < count,
+            "cursor landed on line {} (displayed as {}) of a {}-line file — a phantom \
+             line past EOF, which scrolls the viewport off the end and paints blank",
+            line,
+            line + 1,
+            count
+        );
+        assert_eq!(
+            line,
+            count - 1,
+            "PageDown should stop on the last real line"
+        );
+    }
+
+    #[test]
+    fn arrow_down_on_the_last_line_does_not_step_onto_the_phantom_line() {
+        // Same clamp, reached one line at a time — MoveDown and PageDown
+        // share move_vertical, so a fix for one must cover the other.
+        let mut ed = newline_terminated(4);
+        let mut clip = Clipboard::detached();
+        for _ in 0..20 {
+            ed.apply(EditOp::MoveDown, 10, &mut clip);
+        }
+        assert!(
+            ed.current_line() < ed.line_count(),
+            "cursor on line {} of {}",
+            ed.current_line(),
+            ed.line_count()
+        );
+    }
+
+    #[test]
+    fn a_buffer_with_no_trailing_newline_still_reaches_its_last_line() {
+        // The clamp must not overshoot in the other direction: here
+        // text.len() IS on the last real line.
+        let mut ed = Editor::new("a\nb\nc", 4);
+        let mut clip = Clipboard::detached();
+        ed.apply(EditOp::PageDown, 40, &mut clip);
+        assert_eq!(ed.current_line(), 2, "should land on 'c'");
+        assert_eq!(ed.cursor, ed.text.len(), "and at its end");
     }
 }
