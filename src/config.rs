@@ -751,16 +751,24 @@ pub struct EditorConfig {
     /// input style.
     pub wheel_moves_cursor: String,
     /// How much a faster wheel spin scrolls per tick — `"off"` (1:1,
-    /// the pre-2026-08-29 behavior) / `"gentle"` / `"normal"`
+    /// the pre-2026-08-29 behaviour) / `"gentle"` / `"normal"`
     /// (default) / `"fast"`.
     ///
-    /// Acceleration scales the flywheel dampener's CAPACITY, never its
-    /// refill rate. Capacity is "how far one flick may travel"; refill
-    /// is "sustained lines/sec allowed". Scaling only capacity is what
-    /// lets a hard spin go further while seconds of free-spin inertia
-    /// still drain against the slow refill and stop. Scaling refill
-    /// too would make the wheel coast past the user's hand again —
-    /// the exact regression `37074afe` fixed.
+    /// Acceleration scales the flywheel dampener's CAPACITY — "how far
+    /// one flick may travel" — and not its refill rate, which is the
+    /// sustained lines/sec allowance.
+    ///
+    /// That split used to be described here as the thing that stops a
+    /// free-spin wheel coasting past the hand. It is not, any more, and
+    /// the correction matters to anyone tuning this: the refill had to
+    /// rise from 12 to 60 lines/sec because 12 STARVED real input on a
+    /// high-resolution wheel (a Logitech MX Master 3 is rated 1000
+    /// lines/sec and delivers 37-128 events/sec), and no single rate can
+    /// both keep up with a hand and hold back a flywheel. Stopping is now
+    /// governed by the fact that nothing here buffers: a stopped wheel
+    /// emits no events, so nothing moves. A DECAYING rate additionally
+    /// forfeits the multiplier, so an inertial tail travels at plain 1:1
+    /// and dies with the wheel.
     pub scroll_accel: String,
 }
 
@@ -1452,7 +1460,7 @@ impl Default for Config {
                 ensure_trailing_newline: true,
                 chord_timeout_ms: 500,
                 wheel_moves_cursor: "auto".to_string(),
-                scroll_accel: "off".to_string(),
+                scroll_accel: "normal".to_string(),
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),

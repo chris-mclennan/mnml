@@ -2610,6 +2610,49 @@ mod scroll_spec_tests {
     /// Clause 3, the strict one: when the wheel stops, scrolling stops.
     /// Not slows — stops. A free-spin wheel keeps emitting for seconds
     /// after release; those events must move the view zero lines.
+    /// #1236 — the SHIPPED DEFAULT must survive sustained scrolling.
+    ///
+    /// Twice now the reported bug was "it misses a lot of scrolling",
+    /// both times because a rate limiter starved live input rather than
+    /// because of anything to do with acceleration. Whatever the default
+    /// is, that class of failure must be caught here and not by the user.
+    ///
+    /// Driven at ~40 events/sec — an ordinary sustained scroll, well
+    /// inside the 37-128/sec measured range — for ten seconds.
+    #[test]
+    fn the_shipped_default_does_not_starve_under_sustained_scrolling() {
+        let default_accel = crate::config::Config::default().editor.scroll_accel;
+        let (_d, mut app) = app_with(&default_accel);
+        let mut t = Instant::now();
+        let mut moved_late = 0;
+        for i in 0..400 {
+            t += Duration::from_millis(25);
+            let got = budgeted_scroll_at(&mut app, 1, t);
+            if i >= 300 {
+                moved_late += got;
+            }
+        }
+        assert!(
+            moved_late >= 50,
+            "default `{default_accel}`: the last 100 of 400 wheel events moved only \
+             {moved_late} lines, so sustained scrolling is being throttled to a crawl"
+        );
+    }
+
+    /// The default is a user-facing feel decision, not an implementation
+    /// detail — pin it so it cannot drift silently. It moved off -> normal
+    /// -> off -> normal across one day of #1236, and each flip changed
+    /// scrolling for every user with no explicit setting.
+    #[test]
+    fn the_default_scroll_accel_is_normal() {
+        assert_eq!(
+            crate::config::Config::default().editor.scroll_accel,
+            "normal",
+            "changing the shipped default changes scrolling for everyone who never \
+             set it — deliberate flips update this test, accidents fail it"
+        );
+    }
+
     /// #1236 — `off` is the DEFAULT, so it must keep working forever.
     ///
     /// The bypass returns before the refill block, so if the bucket only
