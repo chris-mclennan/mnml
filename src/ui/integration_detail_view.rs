@@ -1277,6 +1277,15 @@ mod tests {
     #[test]
     fn toggle_enabled_helper_flips_state_and_toasts() {
         let d = tempfile::tempdir().unwrap();
+        // #1235 — toggling persists an override manifest, and for an id
+        // with no base manifest that is promoted to an AUTHORED one and
+        // written to disk. Without a sandboxed data root that landed in
+        // the developer's real `~/.config/mnml/integrations/slack.toml`
+        // on every `cargo test` run.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _root = crate::EnvGuard::set("MNML_DATA_ROOT", d.path().join("data-root"));
         let mut cfg = Config::default();
         cfg.ui.integration_icons.push(sample_icon());
         let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();

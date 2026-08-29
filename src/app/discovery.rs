@@ -1001,12 +1001,33 @@ pub fn write_authored_manifest_toml(icon: &IntegrationIcon) -> Result<std::path:
     Ok(path)
 }
 
+/// Where authored / override manifests get WRITTEN.
+///
+/// #1235 — this resolved from raw `$HOME/.config/mnml` while every
+/// reader (`load_all_with_user_base`,
+/// `cleanup_retired_id_manifests`) goes through
+/// `data_root()`. `data_root.rs`'s own module doc states the rule:
+/// use the helper, never `env::var_os("HOME")`.
+///
+/// The divergence is not cosmetic, and it is the same shape as
+/// #1225 — a load and a write resolving to different roots:
+///
+/// - A PORTABLE install reads manifests from the portable root and
+///   wrote authored ones to `~/.config/mnml`, where nothing would
+///   ever load them. Toggling an integration silently did nothing
+///   across restarts.
+/// - Same for anyone on the XDG layout.
+/// - And in tests, `MNML_DATA_ROOT` (the hermetic-sandbox override,
+///   #1041) was ignored on the write path, so
+///   `toggle_enabled_helper_flips_state_and_toasts` created
+///   `slack.toml` in the DEVELOPER's real config dir on every
+///   `cargo test` run. That is a strong candidate for the
+///   long-unexplained "Slack installed without consent" reports
+///   (#940 / #1083) and "why slack keep coming back" — the file
+///   appears, `cleanup_retired_id_manifests` deletes it at next
+///   startup, and it comes back on the next test run.
 fn integrations_dir_or_err() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("no $HOME set — can't locate integrations dir")?;
-    Ok(std::path::PathBuf::from(home)
-        .join(".config")
-        .join("mnml")
-        .join("integrations"))
+    Ok(crate::data_root::data_root().join("integrations"))
 }
 
 /// Persist the launcher_icons array to the user's mnml config
@@ -1850,6 +1871,59 @@ color = \"blue\"
     /// prior `remove_integration_by_id` only trimmed the rail chip,
     /// leaving `~/.config/mnml/integrations/<id>.toml` on disk so the
     /// integration resurrected itself on the next manifest scan.
+    /// #1235 — the manifest WRITE path must resolve through
+    /// `data_root()` like every reader does.
+    ///
+    /// While it read raw `$HOME`, a portable or XDG install wrote
+    /// authored manifests where nothing would load them, and the test
+    /// suite wrote `slack.toml` into the developer's real config dir.
+    #[test]
+    fn authored_manifest_writes_honour_the_sandboxed_data_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // A HOME that is NOT the data root — this is the divergence that
+        // let writes escape. Reads follow MNML_DATA_ROOT; the write must
+        // too, and must ignore HOME entirely.
+        let fake_home = tmp.path().join("home");
+        let root = tmp.path().join("data-root");
+        std::fs::create_dir_all(&fake_home).unwrap();
+        let _home = crate::EnvGuard::set("HOME", &fake_home);
+        let _dr = crate::EnvGuard::set("MNML_DATA_ROOT", &root);
+
+        let icon = crate::config::IntegrationIcon {
+            id: "testwrite".to_string(),
+            glyph: "T".to_string(),
+            fallback: "T".to_string(),
+            command: "testwrite.open".to_string(),
+            color: "cyan".to_string(),
+            label: Some("Test Write".to_string()),
+            enabled: false,
+            in_palette_bar: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
+        };
+        let written = write_authored_manifest_toml(&icon).expect("write should succeed");
+
+        assert!(
+            written.starts_with(&root),
+            "manifest written to {} — outside the sandboxed data root {}",
+            written.display(),
+            root.display()
+        );
+        assert!(
+            !fake_home.join(".config").join("mnml").exists(),
+            "the write created {}/.config/mnml — it is still resolving from $HOME",
+            fake_home.display()
+        );
+    }
+
     #[test]
     fn remove_integration_by_id_deletes_installed_manifest() {
         let tmp = tempfile::tempdir().unwrap();
