@@ -4809,6 +4809,18 @@ pub struct App {
     /// skips repos in this set; a future `+ Reopen…` menu will let the
     /// user pull them back.
     pub git_closed_repos: std::collections::HashSet<std::path::PathBuf>,
+    /// #1229 — the layout that was on screen before the user entered the
+    /// Git section, so leaving Git can put it back.
+    ///
+    /// Entering Git replaces the layout wholesale with a GitGraph tab per
+    /// repo (2026-08-24 design). Leaving used to set the layout to
+    /// `Empty`, which threw away the user's editor tabs along with the
+    /// git ones — a section switch silently closed their work. The git
+    /// PANES stay in `self.panes` either way, so their scroll/filter
+    /// state survives a round trip; only their presence in the layout is
+    /// scoped to the section, which is what "the git tabs should
+    /// disappear until the user returns" means.
+    pub pre_git_layout: Option<(crate::layout::Layout, Option<usize>)>,
     /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
     /// Persisted in session.json. Default `true`.
     pub git_section_expanded: bool,
@@ -6551,6 +6563,7 @@ impl App {
             repos,
             active_repo,
             git_closed_repos: std::collections::HashSet::new(),
+            pre_git_layout: None,
             git_section_expanded: git_section_expanded_default,
             integration_section_expanded: integrations_section_expanded_default,
             git_branches_expanded: false,

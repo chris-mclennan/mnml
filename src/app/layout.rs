@@ -2391,8 +2391,32 @@ impl App {
                 .into_iter()
                 .any(|id| matches!(self.panes.get(id), Some(crate::pane::Pane::GitGraph(_))));
             if has_git {
-                *self.layout_mut() = crate::layout::Layout::Empty;
-                self.active = None;
+                // #1229 — restore whatever was on screen before Git took
+                // the layout over. This used to unconditionally set
+                // `Empty`, so leaving the Git section threw away the
+                // user's editor tabs along with the git ones: a section
+                // switch silently closed their work.
+                //
+                // The GitGraph panes themselves stay in `self.panes`, so
+                // scroll / expanded / filter state survives the round
+                // trip — `open_git_graph` deliberately reuses them. Only
+                // their presence in the LAYOUT is scoped to the section.
+                match self.pre_git_layout.take() {
+                    Some((layout, active)) => {
+                        *self.layout_mut() = layout;
+                        // The stashed index may have been closed while we
+                        // were in Git; fall back to whatever the restored
+                        // layout actually contains.
+                        let panes_now = self.layout().all_panes();
+                        self.active = active
+                            .filter(|i| panes_now.contains(i))
+                            .or_else(|| panes_now.first().copied());
+                    }
+                    None => {
+                        *self.layout_mut() = crate::layout::Layout::Empty;
+                        self.active = None;
+                    }
+                }
             }
         }
         // 2026-08-24 — entering Git auto-builds the multi-repo tab
@@ -2402,6 +2426,19 @@ impl App {
         // rail-click call was removed; palette flow still works
         // because it also calls set_activity_section under the hood.
         if entering_git {
+            // #1229 — stash the outgoing layout so leaving Git can put it
+            // back. Guarded on the layout not already containing GitGraph
+            // panes: without that, a re-entry that somehow lands here
+            // would overwrite the real stash with a git-only layout and
+            // strand the user's editor tabs permanently.
+            let already_git = self
+                .layout()
+                .all_panes()
+                .into_iter()
+                .any(|id| matches!(self.panes.get(id), Some(crate::pane::Pane::GitGraph(_))));
+            if !already_git {
+                self.pre_git_layout = Some((self.layout().clone(), self.active));
+            }
             self.open_git_graph();
         }
         // Entering HTTP from another section → land the user
@@ -2515,6 +2552,81 @@ mod layout_tests {
         cfg.editor.input_style = "vim".to_string();
         let app = App::new(d.path().to_path_buf(), cfg).unwrap();
         (d, app)
+    }
+
+    /// #1229 — leaving the Git section used to set the layout to
+    /// `Empty`, which threw away the user's EDITOR tabs along with the
+    /// git ones. A section switch silently closed their work.
+    ///
+    /// User's spec: "when leaving git area the git tabs should disappear
+    /// until user returns to git view" — the git tabs are scoped to the
+    /// section, everything else is not.
+    #[test]
+    fn leaving_git_restores_the_editor_tabs_it_replaced() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        let editor_panes = app.layout().all_panes();
+        assert_eq!(editor_panes.len(), 2, "two editor tabs before Git");
+
+        app.set_activity_section(crate::app::ActivitySection::Git);
+        let in_git = app.layout().all_panes();
+        assert!(
+            in_git
+                .iter()
+                .any(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::GitGraph(_)))),
+            "entering Git should put a GitGraph pane in the layout"
+        );
+
+        app.set_activity_section(crate::app::ActivitySection::Explorer);
+        let after = app.layout().all_panes();
+        assert_eq!(
+            after, editor_panes,
+            "leaving Git did not restore the editor tabs it replaced"
+        );
+        assert!(
+            !after
+                .iter()
+                .any(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::GitGraph(_)))),
+            "git tabs are still in the layout after leaving the Git section"
+        );
+        assert!(
+            app.active.is_some_and(|i| after.contains(&i)),
+            "active pane should point into the restored layout"
+        );
+    }
+
+    /// The other half of the spec — "until user returns". Git state is
+    /// kept in `self.panes` across the round trip, so returning must
+    /// bring the SAME pane back rather than a fresh one.
+    #[test]
+    fn returning_to_git_reuses_the_same_pane() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+
+        app.set_activity_section(crate::app::ActivitySection::Git);
+        let git_ids: Vec<usize> = app
+            .layout()
+            .all_panes()
+            .into_iter()
+            .filter(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::GitGraph(_))))
+            .collect();
+        assert!(!git_ids.is_empty(), "no git pane after entering Git");
+
+        app.set_activity_section(crate::app::ActivitySection::Explorer);
+        app.set_activity_section(crate::app::ActivitySection::Git);
+
+        let git_ids_again: Vec<usize> = app
+            .layout()
+            .all_panes()
+            .into_iter()
+            .filter(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::GitGraph(_))))
+            .collect();
+        assert_eq!(
+            git_ids, git_ids_again,
+            "returning to Git built new panes instead of reusing the existing \
+             ones — scroll/filter state would be lost on every round trip"
+        );
     }
 
     #[test]
