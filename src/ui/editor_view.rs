@@ -423,6 +423,46 @@ pub fn draw_pane(
         });
     }
 
+    // PERF pre-pass — build each visible LINE's render data once.
+    //
+    // With wrap on, one very long line occupies every visual row, so
+    // anything computed per row was being computed ~40 times over the
+    // same line. The killer was the syntax colour grid: each row walked
+    // EVERY span on the line, and a 545K-character minified-JSON line
+    // carries tens of thousands. Measured at 745ms per frame with syntax
+    // and wrap both on, against ~30ms with either alone.
+    //
+    // The rows of one line cover a contiguous span of characters, so the
+    // union of their windows is all any of them can need. Building that
+    // once drops the span walk from once-per-row to once-per-line.
+    let mut line_windows: std::collections::HashMap<usize, (usize, usize)> =
+        std::collections::HashMap::new();
+    for vr in &vis_rows {
+        if vr.line_no >= line_count {
+            continue;
+        }
+        let e = line_windows
+            .entry(vr.line_no)
+            .or_insert((vr.char_start, vr.char_start + tw));
+        e.0 = e.0.min(vr.char_start);
+        e.1 = e.1.max(vr.char_start + tw);
+    }
+    let line_render: std::collections::HashMap<usize, LineRender> = line_windows
+        .iter()
+        .map(|(&ln, &(lo, hi))| {
+            let raw = buf.editor.line_str(ln);
+            let spans: &[crate::highlight::ColoredSpan] = if app.config.ui.syntax {
+                buf.line_spans(ln)
+            } else {
+                &[]
+            };
+            (
+                ln,
+                LineRender::build(raw, spans, lo, hi, app.config.ui.highlight_trailing_ws),
+            )
+        })
+        .collect();
+
     for (r, vis_row) in vis_rows.iter().enumerate() {
         let line_no = vis_row.line_no;
         let view_col_start = vis_row.char_start;
@@ -703,16 +743,18 @@ pub fn draw_pane(
             })
             .unwrap_or_default();
 
-        let raw = buf.editor.line_str(line_no);
-        let chars: Vec<char> = raw.chars().collect();
-        let n = chars.len();
-        let indent_cols = chars.iter().take_while(|c| **c == ' ').count();
-        let has_content = indent_cols < n;
-        let spans_for_line: &[crate::highlight::ColoredSpan] = if app.config.ui.syntax {
-            buf.line_spans(line_no)
-        } else {
-            &[]
+        // Everything below comes from the per-LINE pre-pass above.
+        // Nothing here may walk the whole line or all of its spans: with
+        // wrap on this block runs once per visual row, and that is what
+        // made a 545K-character line freeze mnml for minutes.
+        let Some(lr) = line_render.get(&line_no) else {
+            continue;
         };
+        let n = lr.n;
+        let indent_cols = lr.indent_cols;
+        let has_content = lr.has_content;
+        let win_lo = lr.win_lo;
+        let chars = &lr.chars;
         // Project semantic tokens to just this line (sorted by
         // start_char) so the per-cell loop below can binary-search
         // instead of linear-scanning the whole buffer's token list.
@@ -728,20 +770,12 @@ pub fn draw_pane(
         // it instead of doing a reverse linear scan over every span.
         // Worth ~5-10x on Rust files with many small identifier spans
         // per line (typical 50-80 spans on a dense line).
-        let line_color_grid = line_color_grid(spans_for_line, n);
+        let line_color_grid = &lr.color_grid;
         // When `highlight_trailing_ws` is on, find where the trailing-ws run
         // begins. `None` ⇒ no trailing ws on this line (or a blank line —
         // we don't highlight pure-whitespace lines since the user isn't
         // looking at "stray" trailing space, just intentional indentation).
-        let trailing_start = if app.config.ui.highlight_trailing_ws && has_content {
-            let mut idx = n;
-            while idx > 0 && matches!(chars.get(idx - 1), Some(' ') | Some('\t')) {
-                idx -= 1;
-            }
-            if idx < n { Some(idx) } else { None }
-        } else {
-            None
-        };
+        let trailing_start = lr.trailing_start;
 
         // Per-visible-cell (char, fg, bg, modifier), then coalesce into
         // spans. The modifier carries BOLD / DIM / ITALIC / CROSSED_OUT
@@ -817,7 +851,9 @@ pub fn draw_pane(
                 }
             };
             let (ch, mut fg, mut style_mod) = if c < n {
-                let raw_ch = chars[c];
+                // `chars` and `line_color_grid` cover only this row's
+                // window, so both index by the window offset.
+                let raw_ch = chars[c - win_lo];
                 if raw_ch == ' '
                     && has_content
                     && c >= tab_w
@@ -839,14 +875,13 @@ pub fn draw_pane(
                     let (fg, sem_mod) = match semantic_style(&line_sem_tokens, c) {
                         Some((c, m)) => (c, m),
                         None => (
-                            // O(1) grid lookup; falls back to the
-                            // original linear-scan helper for cells
-                            // past the grid (shouldn't happen in
-                            // practice — `n` covers the line).
+                            // O(1) grid lookup, window-relative; falls
+                            // back to the linear-scan helper for cells
+                            // past the grid (shouldn't happen — the
+                            // window covers exactly this row).
                             line_color_grid
-                                .get(c)
+                                .get(c - win_lo)
                                 .and_then(|x| *x)
-                                .or_else(|| syntax_color(spans_for_line, c))
                                 .unwrap_or(theme::cur().fg),
                             ratatui::style::Modifier::empty(),
                         ),
@@ -1535,14 +1570,6 @@ fn find_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
     crate::editor::find_whole_word_occurrences(text, word)
 }
 
-fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Color> {
-    spans
-        .iter()
-        .rev()
-        .find(|&&(s, e, _)| c >= s && c < e)
-        .map(|&(_, _, color)| color)
-}
-
 /// Precompute the per-cell syntax color for one line. Iterates spans
 /// in source order, writing each span's color to every covered cell —
 /// so later (more specific / innermost) spans overwrite earlier ones.
@@ -1553,22 +1580,88 @@ fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Col
 /// `line_width_chars` caps the array — spans extending past EOL get
 /// clipped (cheap to do here vs. checking per-cell). Returns an empty
 /// vec when there are no spans (caller short-circuits to theme fg).
-fn line_color_grid(
+/// [`line_color_grid`] for one row's visible window only.
+///
+/// The whole-line variant allocated one slot per character on the line,
+/// which on a 545K-character minified-JSON line meant a multi-megabyte
+/// allocation per visual row, per frame. A row paints at most `tw` cells,
+/// so that is all the grid needs to be. Spans outside the window are
+/// skipped; spans straddling it are clipped and rebased to window
+/// coordinates, so the caller indexes with `c - lo`.
+fn line_color_grid_window(
     spans: &[crate::highlight::ColoredSpan],
-    line_width_chars: usize,
+    lo: usize,
+    hi: usize,
 ) -> Vec<Option<Color>> {
-    if spans.is_empty() || line_width_chars == 0 {
+    let width = hi.saturating_sub(lo);
+    if spans.is_empty() || width == 0 {
         return Vec::new();
     }
-    let mut grid: Vec<Option<Color>> = vec![None; line_width_chars];
+    let mut grid: Vec<Option<Color>> = vec![None; width];
     for &(s, e, color) in spans {
-        let lo = s.min(line_width_chars);
-        let hi = e.min(line_width_chars);
-        for slot in &mut grid[lo..hi] {
+        if e <= lo || s >= hi {
+            continue;
+        }
+        let a = s.max(lo) - lo;
+        let b = e.min(hi) - lo;
+        for slot in &mut grid[a..b] {
             *slot = Some(color);
         }
     }
     grid
+}
+
+/// Everything the visual rows of ONE line need, built once.
+///
+/// Wrapped rows of a single line all share a `line_no`, so anything
+/// derived from the line belongs here rather than in the per-row loop.
+/// `chars` and `color_grid` cover the UNION of that line's row windows —
+/// the rows of a line cover a contiguous character range, so the union is
+/// all any of them can ask for, and it is bounded by the viewport rather
+/// than by the length of the line.
+struct LineRender {
+    n: usize,
+    indent_cols: usize,
+    has_content: bool,
+    trailing_start: Option<usize>,
+    /// First character of the union window; `chars` and `color_grid` are
+    /// indexed by `c - win_lo`.
+    win_lo: usize,
+    chars: Vec<char>,
+    color_grid: Vec<Option<Color>>,
+}
+
+impl LineRender {
+    fn build(
+        raw: &str,
+        spans: &[crate::highlight::ColoredSpan],
+        lo: usize,
+        hi: usize,
+        want_trailing: bool,
+    ) -> Self {
+        let n = raw.chars().count();
+        let indent_cols = raw.chars().take_while(|c| *c == ' ').count();
+        let has_content = indent_cols < n;
+        let trailing_start = if want_trailing && has_content {
+            let kept = raw.trim_end_matches([' ', '\t']);
+            // Only pay for the trailing run, not another pass over the
+            // line.
+            let trimmed = raw[kept.len()..].chars().count();
+            (trimmed > 0).then(|| n - trimmed)
+        } else {
+            None
+        };
+        let chars: Vec<char> = raw.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+        LineRender {
+            n,
+            indent_cols,
+            has_content,
+            trailing_start,
+            win_lo: lo,
+            chars,
+            color_grid: line_color_grid_window(spans, lo, hi),
+        }
+    }
 }
 
 /// LSP semantic-tokens style override for cell `(line, c)`. Returns `Some`
@@ -1742,6 +1835,60 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// PERF REGRESSION GUARD — a single very long line.
+    ///
+    /// The user opened `data/nerd-glyphnames.json` (545,559 characters on
+    /// ONE line) and mnml froze for minutes: "i'm going to have to force
+    /// close it". The per-visual-row loop was doing per-LINE work, so with
+    /// wrap on — where one long line occupies every row on screen — a
+    /// 40-row viewport allocated 40 x 545K chars and 40 x 545K colours,
+    /// then filled the colour grid across the whole line each time, every
+    /// frame.
+    ///
+    /// The bound is deliberately loose (a second for 20 frames) so the
+    /// test does not go flaky on a loaded CI box. It is not measuring
+    /// microseconds; it is catching the reintroduction of whole-line work
+    /// in a per-row loop, which costs seconds per frame, not milliseconds.
+    #[test]
+    fn a_very_long_single_line_renders_without_whole_line_work_per_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        // Same shape as the file that triggered it: one line, no newline,
+        // dense punctuation so the highlighter produces many spans.
+        let f = d.path().join("huge.json");
+        let mut line = String::from("{");
+        while line.len() < 545_000 {
+            line.push_str(r#""key_name":{"char":"x","code":"eb99"},"#);
+        }
+        line.push('}');
+        std::fs::write(&f, &line).unwrap();
+
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        // Wrap ON is the pathological case: every visual row lands on the
+        // same enormous line.
+        app.config.ui.wrap = true;
+        app.config.ui.syntax = true;
+        app.open_path(&f);
+
+        let mut term = Terminal::new(TestBackend::new(160, 44)).unwrap();
+        // One warm-up frame so highlighting is not counted as render cost.
+        term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+
+        let t0 = std::time::Instant::now();
+        for _ in 0..20 {
+            term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+        }
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "20 frames on a {}-char single line took {elapsed:?} — that is \
+             whole-line work happening once per visual row again",
+            line.chars().count()
+        );
+    }
     use ratatui::style::Modifier;
 
     #[test]
@@ -1794,12 +1941,7 @@ mod tests {
             (0, 10, Color::Red),
             (4, 7, Color::Blue), // inner
         ];
-        let grid = line_color_grid(&spans, 10);
-        for c in 0..10 {
-            let expected = syntax_color(&spans, c);
-            let got = grid.get(c).copied().unwrap_or(None);
-            assert_eq!(got, expected, "mismatch at col {c}");
-        }
+        let grid = line_color_grid_window(&spans, 0, 10);
         // The blue inner span won the overlap (cols 4..7).
         assert_eq!(grid[5], Some(Color::Blue));
         // Outer span owns the edges.
@@ -1807,11 +1949,36 @@ mod tests {
         assert_eq!(grid[9], Some(Color::Red));
     }
 
+    /// The window variant must be identical to a whole-line grid over
+    /// the same range, just rebased — and must never allocate more than
+    /// the window, which is the entire point of it existing.
+    #[test]
+    fn line_color_grid_window_clips_and_rebases() {
+        let spans: Vec<crate::highlight::ColoredSpan> = vec![
+            (0, 4, Color::Red),
+            (10, 20, Color::Blue),
+            (100, 200, Color::Green),
+        ];
+        // Window [10, 25) — the first span is entirely before it, the
+        // last entirely after, the middle one lands rebased at 0.
+        let grid = line_color_grid_window(&spans, 10, 25);
+        assert_eq!(grid.len(), 15, "allocated beyond the window");
+        assert_eq!(grid[0], Some(Color::Blue), "span not rebased to the window");
+        assert_eq!(grid[9], Some(Color::Blue));
+        assert_eq!(grid[10], None, "a span past its end bled into the window");
+
+        // A span straddling the low edge is clipped, not dropped.
+        let grid = line_color_grid_window(&[(0, 12, Color::Red)], 10, 20);
+        assert_eq!(grid[0], Some(Color::Red));
+        assert_eq!(grid[1], Some(Color::Red));
+        assert_eq!(grid[2], None);
+    }
+
     #[test]
     fn line_color_grid_empty_when_no_spans() {
-        let grid = line_color_grid(&[], 10);
+        let grid = line_color_grid_window(&[], 0, 10);
         assert!(grid.is_empty());
-        let grid = line_color_grid(&[(0, 5, Color::Red)], 0);
+        let grid = line_color_grid_window(&[(0, 5, Color::Red)], 0, 0);
         assert!(grid.is_empty());
     }
 
@@ -1819,7 +1986,7 @@ mod tests {
     fn line_color_grid_clips_spans_past_eol() {
         // A span extending past EOL shouldn't OOB the grid.
         let spans: Vec<crate::highlight::ColoredSpan> = vec![(2, 50, Color::Green)];
-        let grid = line_color_grid(&spans, 5);
+        let grid = line_color_grid_window(&spans, 0, 5);
         assert_eq!(grid.len(), 5);
         assert_eq!(grid[0], None);
         assert_eq!(grid[1], None);

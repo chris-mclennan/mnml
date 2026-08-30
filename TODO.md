@@ -146,36 +146,31 @@ that reflows the strip):
 
 ## PERF — a single very long line freezes the editor
 
-**User hit this hard 2026-08-30:** opening `data/nerd-glyphnames.json`
-(545,559 characters on ONE line, 532K) froze mnml for minutes — "i'm
-going to have to force close it". Reproducible: any minified JSON/JS.
+**FIXED 2026-08-30.** Opening `data/nerd-glyphnames.json` (545,559
+characters on ONE line) froze mnml for minutes — "i'm going to have to
+force close it".
 
-Diagnosed, not yet fixed. In `src/ui/editor_view.rs`, the per-visual-row
-loop does per-LINE work for every ROW:
+Cause: `src/ui/editor_view.rs`'s per-VISUAL-ROW loop did per-LINE work.
+With wrap on, one long line occupies every row on screen, so a ~40-row
+viewport rebuilt a whole-line `Vec<char>` and a whole-line colour grid
+forty times a frame, each pass walking every span on the line.
 
-```rust
-let raw = buf.editor.line_str(line_no);
-let chars: Vec<char> = raw.chars().collect();              // 545K elements
-let n = chars.len();
-let line_color_grid = line_color_grid(spans_for_line, n);  // 545K elements
-```
+Measured, syntax + wrap both on: **745ms per frame → 25ms.** Either
+setting alone was already ~25ms, which is what pointed at the
+interaction rather than at either one.
 
-With wrap ON a single 545K-char line occupies every visual row on
-screen, so a ~40-row viewport allocates ~40 x 545K chars AND ~40 x 545K
-`Option<Color>` per frame, then fills the colour grid across the whole
-line each time. Tens of millions of ops and hundreds of MB of churn per
-frame, repeated every keystroke and every redraw.
+Fix: a per-LINE pre-pass (`LineRender`) building the char vector and the
+colour grid once, over the UNION of that line's row windows — the rows
+of a line cover a contiguous character range, so the union is all any of
+them can need, and it is bounded by the viewport instead of by the
+length of the line. Guarded by
+`a_very_long_single_line_renders_without_whole_line_work_per_row`, which
+fails at ~9.5s if the whole-line shape comes back.
 
-Fix direction: the row only ever paints `tw` (~130) cells starting at
-`char_start`, so both the char vector and the colour grid should be
-built for the VISIBLE WINDOW, not the whole line. `indent_cols` /
-`has_content` / trailing-whitespace need line-level facts but can be
-derived without collecting the line. Check `line_start`/`line_end` too —
-if they scan the buffer they are O(file) per call.
-
-Guard it with a timing test on a synthetic long line, so the next
-refactor cannot quietly reintroduce whole-line work in a per-row loop.
-
+Still O(file) and not addressed here: `Editor::line_start` scans the
+text byte-by-byte counting newlines, so `line_str` is O(file) per call.
+It stopped mattering once the call moved out of the per-row loop, but a
+line-offset index is the real fix if it shows up again.
 
 ## Toasts and notifications
 
