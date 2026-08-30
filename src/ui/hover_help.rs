@@ -134,8 +134,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .take(title_body_avail.saturating_sub(1) as usize)
         .collect();
     let title_body = pad_line(&title_text, title_body_avail as usize);
+    // #1229 (user report) — the leading cell keeps the PANEL bg, not the
+    // lighter `title_bg`.
+    //
+    // "the hover help area is encroaching on the activity bar, remember
+    // activity bar has an empty 1 cell on right of those icons". The
+    // title band is deliberately lighter than the panel so it reads as a
+    // titled header — but painted from `area.x` it butted straight
+    // against the activity-bar icons, so the light band looked stuck onto
+    // the bar. The bar-adjacent column is off limits.
+    //
+    // Same remedy as tree_view under #970 f/u (2026-08-20) and the git
+    // palette earlier in #1229: give up exactly ONE cell, which is what
+    // the #970 follow-up settled on after two looked over-trimmed.
     let mut title_spans = vec![
-        Span::styled(" ", Style::default().bg(title_bg)),
+        Span::styled(" ", Style::default().bg(body_bg)),
         Span::styled(
             title_body,
             Style::default()
@@ -1035,6 +1048,54 @@ fn one_line_trunc(s: &str, max: usize) -> String {
 mod tests {
     use super::wrap_words;
     use super::*;
+
+    /// #1229 — the column next to the activity bar is off limits.
+    ///
+    /// The title band is deliberately lighter than the panel body so it
+    /// reads as a titled header, but painted from `area.x` it butted
+    /// against the activity-bar icons and looked stuck onto the bar.
+    /// Asserted on the rendered BUFFER, so it measures the cell the user
+    /// sees rather than restating the span list.
+    #[test]
+    fn the_title_band_leaves_the_activity_bar_column_alone() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let t = theme::cur();
+
+        let mut term = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 8,
+        };
+        term.draw(|f| draw(f, &mut app, area)).unwrap();
+
+        let buf = term.backend().buffer();
+        // Row 1 is the title band (row 0 is the divider).
+        let first = buf[(area.x, area.y + 1)].bg;
+        assert_eq!(
+            first, t.bg_darker,
+            "the title band's first cell painted {first:?}; it must keep the \
+             panel bg ({:?}) so the lighter band never touches the activity bar",
+            t.bg_darker
+        );
+        // And the band must still actually BE a lighter band — a fix that
+        // simply removed the highlight would pass the check above.
+        let second = buf[(area.x + 1, area.y + 1)].bg;
+        assert_eq!(
+            second, t.bg2,
+            "the title band lost its own fill — the header no longer reads \
+             as a titled band at all"
+        );
+    }
 
     #[test]
     fn wrap_preserves_word_boundaries() {
