@@ -690,6 +690,29 @@ impl App {
         self.open_path(&path);
     }
 
+    /// Two Files panes side by side — the commander layout.
+    ///
+    /// #files — the first version ran `open_files_pane` then
+    /// `view.split_right` then `open_files_pane`, and `split_active`
+    /// creates a PLACEHOLDER pane for the new side (a scratch buffer)
+    /// when it has nothing to move there. The second Files pane then
+    /// landed as a TAB beside that placeholder, so the right leaf opened
+    /// showing `[scratch]` next to the browser. User report, with a
+    /// screenshot: "whenever i open the dual browser the right side one
+    /// gets a scratch tab, why?"
+    ///
+    /// `split_leaf_with` takes the pane to put on the new side, so the
+    /// second browser IS the new side and no placeholder is ever created.
+    pub fn open_dual_files_panes(&mut self) {
+        let dir = self.workspace.clone();
+        self.open_files_pane(Some(dir.clone()));
+        let Some(left) = self.active else { return };
+        let right = crate::pane::Pane::Files(crate::file_browser::FileBrowserPane::open(&dir));
+        let id = self.split_leaf_with(left, crate::layout::SplitDir::Horizontal, right);
+        self.active = Some(id);
+        self.focus = crate::focus::Focus::Pane;
+    }
+
     /// Open a Files pane at `dir` (defaults to the workspace root).
     pub fn open_files_pane(&mut self, dir: Option<std::path::PathBuf>) {
         let dir = dir.unwrap_or_else(|| self.workspace.clone());
@@ -813,7 +836,7 @@ mod open_split_tests {
     /// shipped — verify it really produces TWO Files panes side by side
     /// rather than two tabs of one leaf.
     #[test]
-    fn open_split_yields_two_files_panes_in_a_split() {
+    fn open_split_yields_exactly_two_panes_and_nothing_else() {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -823,25 +846,47 @@ mod open_split_tests {
 
         crate::command::run("files.open_split", &mut app);
 
-        let files: Vec<usize> = app
-            .layout()
-            .all_panes()
-            .into_iter()
-            .filter(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::Files(_))))
-            .collect();
+        let ids = app.layout().all_panes();
+        let files = ids
+            .iter()
+            .filter(|&&i| matches!(app.panes.get(i), Some(crate::pane::Pane::Files(_))))
+            .count();
+        assert_eq!(files, 2, "expected two Files panes, got {files}");
+
+        // THE ASSERTION THAT WAS MISSING. The first version of this test
+        // checked only "two Files panes exist in a split" and passed while
+        // the right leaf also carried a `[scratch]` placeholder tab —
+        // `split_active` creates one when it has nothing to move to the new
+        // side. Counting Files panes could never see it; counting EVERY
+        // pane in the layout can.
         assert_eq!(
-            files.len(),
+            ids.len(),
             2,
-            "expected two Files panes in the layout, got {}",
-            files.len()
+            "the layout holds {} panes, not 2 — something extra came along: {:?}",
+            ids.len(),
+            ids.iter()
+                .map(|&i| app.panes.get(i).map(|p| p.title()))
+                .collect::<Vec<_>>()
         );
-        // And they must be in a SPLIT, not tabs of one leaf — otherwise
-        // only one is visible and the whole point is lost.
-        let is_split = matches!(app.layout(), crate::layout::Layout::Split { .. });
+
+        // Every leaf must hold exactly ONE tab, or a browser is hidden
+        // behind a tab strip instead of being visible side by side.
+        for &id in &ids {
+            let tabs = app
+                .layout()
+                .leaf_containing(id)
+                .map(|t| t.len())
+                .unwrap_or(0);
+            assert_eq!(
+                tabs, 1,
+                "leaf containing pane {id} has {tabs} tabs; the second pane \
+                 is a tab rather than a split side"
+            );
+        }
+
         assert!(
-            is_split,
-            "the two panes are not in a split — layout is {:?}",
-            std::mem::discriminant(app.layout())
+            matches!(app.layout(), crate::layout::Layout::Split { .. }),
+            "the two panes are not in a split"
         );
     }
 }
