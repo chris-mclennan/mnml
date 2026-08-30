@@ -261,7 +261,7 @@ impl App {
         // buffer stays pinned to its original path so no LSP re-open
         // fires (write goes to a different file that we're not editing).
         self.git.refresh();
-        self.tree.refresh();
+        self.refresh_after_fs_change();
         self.toast(format!("wrote to {}", rel_path(&self.workspace, &abs)));
     }
 
@@ -296,7 +296,7 @@ impl App {
         }
         // Best-effort: refresh subsystems that care about file paths.
         self.git.refresh();
-        self.tree.refresh();
+        self.refresh_after_fs_change();
         self.refresh_md_previews(&abs);
         self.refresh_blame_for(&abs);
         // LSP: close the old `path` (if any) and open the new one with the

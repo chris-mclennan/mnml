@@ -210,6 +210,24 @@ pub enum MenuAction {
     Delete(PathBuf),
     /// Stage `path` on `App.file_clipboard` with cut semantics — a
     /// subsequent `FilePaste` will MOVE it into the target dir.
+    /// #files — MOUSE PATH TO MARKING, and the mark set as a menu
+    /// subject.
+    ///
+    /// The mouse tester found marking to be keyboard-only: the pane's
+    /// headline gesture had no click, and the right-click menu silently
+    /// acted on the one row under the cursor even with a set marked, so
+    /// "mark five, right-click, Copy" copied exactly one file. These three
+    /// give the mouse both halves — a way to build the set, and a menu
+    /// that respects it.
+    ///
+    /// Toggle carries the path (not the row index) for the same reason
+    /// `marked` is a set of paths: a reload between opening the menu and
+    /// choosing the item re-sorts the rows, and an index would then point
+    /// at a different file.
+    FilesToggleMark(PaneId, PathBuf),
+    /// Cut / copy every marked path in the pane, as one clipboard stage.
+    FilesCutMarked(PaneId),
+    FilesCopyMarked(PaneId),
     FileCut(PathBuf),
     /// Stage `path` on `App.file_clipboard` with copy semantics — a
     /// subsequent `FilePaste` DUPLICATES it into the target dir.

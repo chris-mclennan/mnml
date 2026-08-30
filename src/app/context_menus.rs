@@ -2106,7 +2106,7 @@ impl App {
         self.run_menu_action(item.action);
     }
 
-    fn run_menu_action(&mut self, action: crate::context_menu::MenuAction) {
+    pub(crate) fn run_menu_action(&mut self, action: crate::context_menu::MenuAction) {
         use crate::context_menu::MenuAction::*;
         match action {
             OpenPath(p) => self.open_path(&p),
@@ -2676,6 +2676,21 @@ impl App {
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),
             Delete(path) => self.open_fs_delete_prompt(path),
+            FilesToggleMark(pane_id, path) => {
+                if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_id)
+                    && !f.marked.remove(&path)
+                {
+                    f.marked.insert(path);
+                }
+            }
+            FilesCutMarked(pane_id) => {
+                let paths = self.files_pane_marked_paths(pane_id);
+                self.file_stage_clipboard_many(paths, true);
+            }
+            FilesCopyMarked(pane_id) => {
+                let paths = self.files_pane_marked_paths(pane_id);
+                self.file_stage_clipboard_many(paths, false);
+            }
             FileCut(path) => self.file_stage_clipboard(path, true),
             FileCopy(path) => self.file_stage_clipboard(path, false),
             FilePaste(target) => self.file_paste_into(target),

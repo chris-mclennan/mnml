@@ -149,7 +149,7 @@ impl App {
             self.toast(format!("create failed: {e}"));
             return;
         }
-        self.tree.refresh();
+        self.refresh_after_fs_change();
         self.toast(format!("created {}", rel_path(&self.workspace, &target)));
         self.open_path(&target);
     }
@@ -172,7 +172,7 @@ impl App {
             self.toast(format!("mkdir failed: {e}"));
             return;
         }
-        self.tree.refresh();
+        self.refresh_after_fs_change();
         self.toast(format!("created {}/", rel_path(&self.workspace, &target)));
     }
 
@@ -283,7 +283,7 @@ impl App {
             self.file_clipboard.clear();
             self.file_clipboard_cut = false;
         }
-        self.tree.refresh();
+        self.refresh_after_fs_change();
         if ok > 0 {
             self.toast(format!(
                 "{} {ok} item{} into {}",
@@ -300,7 +300,7 @@ impl App {
         let dest = collision_free_copy_name(&path);
         match copy_recursively(&path, &dest) {
             Ok(()) => {
-                self.tree.refresh();
+                self.refresh_after_fs_change();
                 self.toast(format!(
                     "duplicated {} \u{2192} {}",
                     rel_path(&self.workspace, &path),
@@ -364,7 +364,7 @@ impl App {
         }
         match std::fs::rename(&source, &dest) {
             Ok(()) => {
-                self.tree.refresh();
+                self.refresh_after_fs_change();
                 self.toast(format!(
                     "moved {} \u{2192} {}",
                     rel_path(&self.workspace, &source),
@@ -486,7 +486,7 @@ impl App {
     /// just the primary one. 2026-07-12 fix for stale row after
     /// delete-in-extra-workspace.
     pub fn refresh_trees_for_path(&mut self, path: &Path) {
-        self.tree.refresh();
+        self.refresh_after_fs_change();
         for extra in self.extra_workspaces.iter_mut() {
             if path.starts_with(&extra.root) {
                 extra.tree.refresh();
@@ -655,6 +655,18 @@ impl App {
     ///
     /// `file_clipboard` was always a `Vec` — `file_stage_clipboard` simply
     /// only ever put one path in it, so paste already handles a set.
+    /// The paths a Files-pane menu item should act on — the mark set when
+    /// there is one, else the row under the cursor.
+    ///
+    /// #files — delegates to `action_paths` so the mouse menu and the
+    /// keyboard chords cannot disagree about the subject of an operation.
+    pub fn files_pane_marked_paths(&self, pane_id: crate::layout::PaneId) -> Vec<PathBuf> {
+        match self.panes.get(pane_id) {
+            Some(crate::pane::Pane::Files(f)) => f.action_paths(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn file_stage_clipboard_many(&mut self, paths: Vec<std::path::PathBuf>, cut: bool) {
         if paths.is_empty() {
             return;
@@ -690,14 +702,26 @@ impl App {
         })
     }
 
-    /// Re-read every Files pane showing `dir`, after an operation changed
-    /// its contents. Without this a copy or delete appears not to have
-    /// happened until the user presses `r`.
-    pub fn refresh_files_panes_for(&mut self, dir: &std::path::Path) {
+    /// Re-read the tree AND every Files pane after a filesystem change.
+    ///
+    /// #files — the single place a mutation announces itself. The mouse
+    /// tester's headline finding was that the pane "does not refresh after
+    /// its own operations": deleting a file through the pane's own
+    /// Delete… left the row painted, and clicking that ghost row opened an
+    /// empty DIRTY buffer for the deleted path, offering to save it back.
+    /// Duplicate, Paste-here and New file… were the same — "the effect is
+    /// on disk, the listing is a lie until you re-navigate".
+    ///
+    /// Every Files pane reloads, not just one showing a given directory.
+    /// A move changes TWO directories (source and destination), so the
+    /// earlier per-directory variant was wrong by construction: it
+    /// refreshed where the file landed and left the place it came from
+    /// still showing it. Panes are few and `reload()` is one `read_dir`,
+    /// so refreshing all of them is both simpler and correct.
+    pub fn refresh_after_fs_change(&mut self) {
+        self.tree.refresh();
         for p in self.panes.iter_mut() {
-            if let crate::pane::Pane::Files(f) = p
-                && f.cwd == dir
-            {
+            if let crate::pane::Pane::Files(f) = p {
                 f.reload();
             }
         }
@@ -910,9 +934,17 @@ mod target_path_tests {
     }
 
     /// An operation that changes a directory must be reflected without the
-    /// user pressing `r`.
+    /// user pressing `r` — in EVERY Files pane, not just the one whose cwd
+    /// matches.
+    ///
+    /// This replaces an earlier test that asserted the opposite (refresh
+    /// only the panes showing the touched directory). That scoping is
+    /// wrong by construction: a move changes two directories at once, so
+    /// the destination pane kept showing a stale listing. `refresh_files_panes_for`
+    /// went with it rather than stay as an API that looks scoped and
+    /// silently ignores its argument.
     #[test]
-    fn refresh_reloads_only_the_panes_showing_that_directory() {
+    fn a_refresh_reaches_every_files_pane_not_just_the_touched_directory() {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -925,22 +957,16 @@ mod target_path_tests {
         };
 
         std::fs::write(d.path().join("sub").join("added.txt"), "z").unwrap();
-        // A refresh for an UNRELATED directory must not pick it up...
-        app.refresh_files_panes_for(d.path());
-        let mid = match app.panes.get(pid) {
-            Some(crate::pane::Pane::Files(f)) => f.entries.len(),
-            _ => panic!(),
-        };
-        assert_eq!(mid, before, "refreshed a pane showing a different dir");
-
-        // ...but a refresh for its own directory must.
-        let sub = d.path().join("sub");
-        app.refresh_files_panes_for(&sub);
+        app.refresh_after_fs_change();
         let after = match app.panes.get(pid) {
             Some(crate::pane::Pane::Files(f)) => f.entries.len(),
             _ => panic!(),
         };
-        assert_eq!(after, before + 1, "the pane did not re-read its directory");
+        assert_eq!(
+            after,
+            before + 1,
+            "the pane did not re-read its directory after an fs change"
+        );
     }
 }
 
@@ -1380,6 +1406,86 @@ mod preview_tests {
             app.panes.len(),
             before,
             "a directory was opened as a preview"
+        );
+    }
+}
+
+#[cfg(test)]
+mod refresh_after_ops_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// Mouse tester SEV-2 (headline) — "the effect is on disk, the
+    /// listing is a lie until you re-navigate". Deleting through the
+    /// pane's own menu left the row painted, and clicking that ghost row
+    /// opened an empty DIRTY buffer for the deleted path, offering to save
+    /// it back.
+    #[test]
+    fn deleting_a_file_removes_its_row_without_a_manual_refresh() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("doomed.txt"), "x").unwrap();
+        std::fs::write(d.path().join("keeper.txt"), "y").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+
+        std::fs::remove_file(d.path().join("doomed.txt")).unwrap();
+        app.refresh_after_fs_change();
+
+        let names: Vec<String> = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.entries.iter().map(|e| e.name.clone()).collect(),
+            _ => panic!(),
+        };
+        assert!(
+            !names.contains(&"doomed.txt".to_string()),
+            "the deleted file is still listed — clicking it opens a dirty \
+             buffer for a path that no longer exists: {names:?}"
+        );
+        assert!(names.contains(&"keeper.txt".to_string()), "{names:?}");
+    }
+
+    /// A MOVE changes two directories. The earlier per-directory refresh
+    /// was wrong by construction: it updated where the file landed and
+    /// left the place it came from still showing it.
+    #[test]
+    fn a_move_refreshes_both_the_source_and_destination_panes() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        let dst = d.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("moving.txt"), "x").unwrap();
+
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_files_pane(Some(src.clone()));
+        let src_pane = app.active.unwrap();
+        app.open_files_pane(Some(dst.clone()));
+        let dst_pane = app.active.unwrap();
+
+        std::fs::rename(src.join("moving.txt"), dst.join("moving.txt")).unwrap();
+        app.refresh_after_fs_change();
+
+        let listed = |app: &App, pid: usize| -> Vec<String> {
+            match app.panes.get(pid) {
+                Some(crate::pane::Pane::Files(f)) => {
+                    f.entries.iter().map(|e| e.name.clone()).collect()
+                }
+                _ => panic!(),
+            }
+        };
+        assert!(
+            !listed(&app, src_pane).contains(&"moving.txt".to_string()),
+            "the SOURCE pane still lists the file it no longer holds"
+        );
+        assert!(
+            listed(&app, dst_pane).contains(&"moving.txt".to_string()),
+            "the destination pane did not pick up the arrival"
         );
     }
 }

@@ -867,16 +867,11 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 _ => None,
             };
             if let Some(cmd) = cmd {
-                let dir = match app.panes.get(i) {
-                    Some(Pane::Files(f)) => Some(f.cwd.clone()),
-                    _ => None,
-                };
                 crate::command::run(cmd, app);
-                // The operation changed this directory — re-read it, or
-                // the pane shows stale contents until `r`.
-                if let Some(d) = dir {
-                    app.refresh_files_panes_for(&d);
-                }
+                // The operation changed the filesystem — re-read, or the
+                // pane shows stale contents until `r`. Every Files pane,
+                // not just this one: a move changes two directories.
+                app.refresh_after_fs_change();
                 return;
             }
         }
@@ -976,14 +971,8 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('P') if !standard => {
                 app.files_pending_op = None;
-                let dir = match app.panes.get(i) {
-                    Some(Pane::Files(f)) => Some(f.cwd.clone()),
-                    _ => None,
-                };
                 crate::command::run("file.paste", app);
-                if let Some(d) = dir {
-                    app.refresh_files_panes_for(&d);
-                }
+                app.refresh_after_fs_change();
             }
             // `p` — preview without leaving the listing. NOT Space,
             // which marks (settled before either shipped, since retraining

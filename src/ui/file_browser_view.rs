@@ -635,6 +635,7 @@ mod render_tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::KeyModifiers;
 
     /// End-to-end: a Files pane opened through the App renders its
     /// directory. Compiling is not the same as rendering — this is the
@@ -1103,6 +1104,214 @@ mod render_tests {
                 .iter()
                 .any(|(_, p, idx)| *p == pid && *idx == 0),
             "entry rows lost their rects when the parent row was added"
+        );
+    }
+
+    /// #files — the mouse tester's sharpest finding: marking is the
+    /// pane's headline feature and had NO mouse path at all. Ctrl-click,
+    /// shift-click, middle-click and clicking the green mark gutter were
+    /// all dead, and the only guidance on screen was three chords in a
+    /// footer that does not appear until something is already marked.
+    ///
+    /// These four tests drive the real `dispatch_mouse`, so they fail if
+    /// the handler is reordered behind an earlier `return` — which is how
+    /// the `+ dock` chip already shadows this pane's last row.
+    fn marking_fixture() -> (tempfile::TempDir, crate::app::App, crate::layout::PaneId) {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+            std::fs::write(d.path().join(n), "x").unwrap();
+        }
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(Some(d.path().to_path_buf()));
+        let pid = app.active.unwrap();
+        (d, app, pid)
+    }
+
+    /// Render once so `file_pane_rows` is populated, then return the
+    /// click point for listing row `idx`.
+    fn row_point(app: &mut crate::app::App, pid: crate::layout::PaneId, idx: usize) -> (u16, u16) {
+        // Full-chrome draw, not a pane-local one: the point is that the
+        // click survives the real `PaneRects`, where other widgets'
+        // hit-rects compete for the same cell.
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| crate::ui::draw(f, app)).unwrap();
+        let (r, _, _) = *app
+            .rects
+            .file_pane_rows
+            .iter()
+            .find(|(_, p, i)| *p == pid && *i == idx)
+            .unwrap_or_else(|| panic!("no click rect for row {idx}"));
+        (r.x + 1, r.y)
+    }
+
+    fn click(app: &mut crate::app::App, at: (u16, u16), mods: KeyModifiers) {
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        crate::tui::dispatch_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: at.0,
+                row: at.1,
+                modifiers: mods,
+            },
+        );
+    }
+
+    fn marked_names(app: &crate::app::App, pid: crate::layout::PaneId) -> Vec<String> {
+        let Some(crate::pane::Pane::Files(f)) = app.panes.get(pid) else {
+            panic!("not a Files pane");
+        };
+        let mut v: Vec<String> = f
+            .marked
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn ctrl_click_toggles_a_mark() {
+        let (_d, mut app, pid) = marking_fixture();
+        let at = row_point(&mut app, pid, 1);
+
+        click(&mut app, at, KeyModifiers::CONTROL);
+        assert_eq!(
+            marked_names(&app, pid).len(),
+            1,
+            "ctrl-click did not mark — marking is still keyboard-only"
+        );
+
+        // And it must TOGGLE, not just accumulate: a mouse user with no
+        // way to unmark is worse off than before.
+        let at = row_point(&mut app, pid, 1);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        assert!(
+            marked_names(&app, pid).is_empty(),
+            "ctrl-click on a marked row did not unmark it: {:?}",
+            marked_names(&app, pid)
+        );
+    }
+
+    /// A plain click must still OPEN. If the modifier branch swallowed
+    /// every click the pane would be unusable, and a test that only
+    /// checked marking would not notice.
+    #[test]
+    fn a_plain_click_still_activates_and_marks_nothing() {
+        let (_d, mut app, pid) = marking_fixture();
+        let at = row_point(&mut app, pid, 1);
+        click(&mut app, at, KeyModifiers::empty());
+        assert!(
+            marked_names(&app, pid).is_empty(),
+            "an unmodified click marked a row: {:?}",
+            marked_names(&app, pid)
+        );
+    }
+
+    #[test]
+    fn shift_click_extends_a_range_from_the_cursor() {
+        let (_d, mut app, pid) = marking_fixture();
+        // Put the cursor on row 0 the way a user would — by clicking it.
+        let at = row_point(&mut app, pid, 0);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        let at = row_point(&mut app, pid, 2);
+        click(&mut app, at, KeyModifiers::SHIFT);
+
+        let names = marked_names(&app, pid);
+        assert_eq!(
+            names.len(),
+            3,
+            "shift-click marked {} rows, not the 3 spanned: {names:?}",
+            names.len()
+        );
+    }
+
+    /// Finding #6 — the right-click menu reused the tree's, which is
+    /// path-based, so "mark five, right-click, Copy" copied exactly one
+    /// file with no indication the other four were ignored.
+    #[test]
+    fn the_context_menu_acts_on_the_mark_set_when_the_clicked_row_is_in_it() {
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let (_d, mut app, pid) = marking_fixture();
+        for idx in [0usize, 1, 2] {
+            let at = row_point(&mut app, pid, idx);
+            click(&mut app, at, KeyModifiers::CONTROL);
+        }
+        let at = row_point(&mut app, pid, 1);
+        crate::tui::dispatch_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: at.0,
+                row: at.1,
+                modifiers: KeyModifiers::empty(),
+            },
+        );
+        let labels: Vec<String> = app
+            .context_menu
+            .as_ref()
+            .expect("no context menu opened")
+            .items
+            .iter()
+            .map(|i| i.label.clone())
+            .collect();
+        assert!(
+            labels.iter().any(|l| l == "Copy 3 selected"),
+            "menu does not offer the mark set — it would act on one row: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l == "Unmark"),
+            "no mark toggle in the menu: {labels:?}"
+        );
+
+        // And choosing it must stage all three, not just the clicked row.
+        let idx = labels.iter().position(|l| l == "Copy 3 selected").unwrap();
+        let action = app.context_menu.as_ref().unwrap().items[idx].action.clone();
+        app.run_menu_action(action);
+        assert_eq!(
+            app.file_clipboard.len(),
+            3,
+            "staged {} paths from a 3-file selection",
+            app.file_clipboard.len()
+        );
+    }
+
+    /// The other half of the same rule: right-clicking a row you did NOT
+    /// mark is you pointing at that row. Silently acting on a set aimed
+    /// elsewhere is the bug, not a feature to generalise.
+    #[test]
+    fn the_context_menu_ignores_marks_when_the_clicked_row_is_not_one() {
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let (_d, mut app, pid) = marking_fixture();
+        let at = row_point(&mut app, pid, 0);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        let at = row_point(&mut app, pid, 2);
+        crate::tui::dispatch_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: at.0,
+                row: at.1,
+                modifiers: KeyModifiers::empty(),
+            },
+        );
+        let labels: Vec<String> = app
+            .context_menu
+            .as_ref()
+            .expect("no context menu opened")
+            .items
+            .iter()
+            .map(|i| i.label.clone())
+            .collect();
+        assert!(
+            !labels.iter().any(|l| l.ends_with("selected")),
+            "offered the mark set on a row that is not marked: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l == "Mark"),
+            "no way to add this row to the set: {labels:?}"
         );
     }
 

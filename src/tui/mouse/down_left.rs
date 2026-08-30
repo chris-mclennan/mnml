@@ -3549,6 +3549,45 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         app.active = Some(pane_id);
         app.focus_pane();
+        // #files — MOUSE PATH TO MARKING.
+        //
+        // The mouse tester's sharpest finding: marking is the pane's
+        // headline feature and had no mouse path whatsoever — ctrl-click,
+        // shift-click, middle-click and clicking the green mark gutter all
+        // did nothing, and the footer's only guidance was three chords.
+        //
+        // Ctrl/Cmd+click toggles one, Shift+click extends a range from the
+        // cursor. Both are the file-manager conventions (Finder, Explorer,
+        // VS Code's explorer), so nothing new has to be learned.
+        let ctrl = m.modifiers.contains(KeyModifiers::CONTROL)
+            || m.modifiers.contains(KeyModifiers::SUPER);
+        let shift = m.modifiers.contains(KeyModifiers::SHIFT);
+        if (ctrl || shift) && idx != crate::ui::file_browser_view::PARENT_ROW {
+            if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) {
+                if shift {
+                    let (lo, hi) = if idx >= f.selected {
+                        (f.selected, idx)
+                    } else {
+                        (idx, f.selected)
+                    };
+                    let paths: Vec<std::path::PathBuf> = f
+                        .entries
+                        .get(lo..=hi)
+                        .map(|slice| slice.iter().map(|e| e.path.clone()).collect())
+                        .unwrap_or_default();
+                    for p in paths {
+                        f.marked.insert(p);
+                    }
+                } else if let Some(e) = f.entries.get(idx) {
+                    let p = e.path.clone();
+                    if !f.marked.remove(&p) {
+                        f.marked.insert(p);
+                    }
+                }
+                f.selected = idx;
+            }
+            return;
+        }
         // The pinned `..` row is not an entry index — it means "go up".
         if idx == crate::ui::file_browser_view::PARENT_ROW {
             if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) {

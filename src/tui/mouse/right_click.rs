@@ -2028,7 +2028,38 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             _ => None,
         };
         if let Some((path, is_dir)) = target {
-            app.open_tree_context_menu(path, is_dir, (x, y));
+            app.open_tree_context_menu(path.clone(), is_dir, (x, y));
+            // #files — the tree's menu is path-based and knows nothing
+            // about marks, so prepend the two things only a Files pane
+            // can offer. Prepending to the built menu rather than forking
+            // `open_tree_context_menu` keeps ONE definition of the file-op
+            // items; a Cut added to the tree menu shows up here for free.
+            let (marked_here, marked_count) = match app.panes.get(pane_id) {
+                Some(crate::pane::Pane::Files(f)) => (f.marked.contains(&path), f.marked.len()),
+                _ => (false, 0),
+            };
+            if let Some(menu) = app.context_menu.as_mut() {
+                let mut head = vec![crate::context_menu::MenuItem::new(
+                    if marked_here { "Unmark" } else { "Mark" },
+                    crate::context_menu::MenuAction::FilesToggleMark(pane_id, path),
+                )];
+                // Only when the clicked row is IN the set: right-clicking
+                // an unmarked row is the user pointing at that row, and
+                // silently acting on a set they aimed away from is the
+                // bug this is fixing, not a feature to generalise.
+                if marked_here && marked_count > 0 {
+                    head.push(crate::context_menu::MenuItem::new(
+                        format!("Cut {marked_count} selected"),
+                        crate::context_menu::MenuAction::FilesCutMarked(pane_id),
+                    ));
+                    head.push(crate::context_menu::MenuItem::new(
+                        format!("Copy {marked_count} selected"),
+                        crate::context_menu::MenuAction::FilesCopyMarked(pane_id),
+                    ));
+                }
+                head.append(&mut menu.items);
+                menu.items = head;
+            }
         }
         return;
     }
