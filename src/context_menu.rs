@@ -10,6 +10,14 @@ use crate::layout::PaneId;
 /// What a menu entry does when chosen.
 #[derive(Debug, Clone)]
 pub enum MenuAction {
+    /// Curation of the `+` menu, fired from a row's kebab.
+    ///
+    /// Command ids, not labels or indices: a relabelled or regrouped row
+    /// must keep the user's curation, and an index would point at a
+    /// different row the moment anything moves.
+    PlusMenuPin(String),
+    PlusMenuUnpin(String),
+    PlusMenuHide(String),
     /// A row that exists only to open a child menu. Never dispatched —
     /// `run_menu_action` must never see it, because a submenu row is
     /// inert by construction: clicking it opens the child, it does not
@@ -533,6 +541,13 @@ impl MenuItem {
 }
 
 pub struct ContextMenu {
+    /// Set when this menu's rows may be curated by the user, which
+    /// surfaces a kebab on the focused row.
+    ///
+    /// Only the `+` menu opts in. Pin and Hide are meaningful for a
+    /// launcher you own; offering them on, say, a file's right-click menu
+    /// would be nonsense, so this is opt-in rather than universal.
+    pub curatable: bool,
     /// Optional heading shown above the items (e.g. the file name).
     pub title: Option<String>,
     pub items: Vec<MenuItem>,
@@ -551,6 +566,7 @@ pub struct ContextMenu {
 impl ContextMenu {
     pub fn new(title: Option<String>, anchor: (u16, u16), items: Vec<MenuItem>) -> Self {
         ContextMenu {
+            curatable: false,
             title,
             items,
             anchor,

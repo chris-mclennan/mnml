@@ -924,6 +924,14 @@ pub struct UiConfig {
     /// 2026-07-20 user report: "I only wanted a fucking launcher
     /// icon in the activity bar" — this field is that surface.
     pub activity_bar_pinned_integrations: Vec<String>,
+    /// The `+` menu, curated by the user via each row's kebab.
+    ///
+    /// Command ids. Pinned ids float to the top level in the order
+    /// given, above the groups; hidden ids vanish from the menu
+    /// entirely. Both are ids rather than labels so a relabelled row
+    /// keeps the user's curation.
+    pub plus_menu_pinned: Vec<String>,
+    pub plus_menu_hidden: Vec<String>,
     /// #1102 (2026-08-20) — user-controlled reorder for dynamic
     /// statusline segments (`[[statusline_segments]]` from any
     /// installed integration manifest, plus IPC-set segments).
@@ -1512,6 +1520,8 @@ impl Default for Config {
                 // via `:perf.toggle_stress` or Settings › UI.
                 stress_meter: false,
                 activity_bar_pinned_integrations: Vec::new(),
+                plus_menu_pinned: Vec::new(),
+                plus_menu_hidden: Vec::new(),
                 statusline_segment_order: Vec::new(),
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,

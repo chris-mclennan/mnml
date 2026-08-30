@@ -2676,8 +2676,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Right | KeyCode::Char('l') => {
                 if let Some(m) = app.context_menu.as_ref() {
                     let i = m.selected;
+                    let curatable = m.curatable;
                     if app.context_menu_row_has_submenu(i) {
                         app.open_context_submenu(i);
+                    } else if curatable {
+                        // `→` means "more about this row" either way, so
+                        // the kebab is not mouse-only.
+                        app.open_menu_row_options(i);
                     }
                 }
             }

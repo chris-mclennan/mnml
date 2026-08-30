@@ -2122,6 +2122,43 @@ impl App {
         self.run_menu_action(item.action);
     }
 
+    /// Open the per-row options for row `i` of a curatable menu.
+    ///
+    /// Reuses the submenu machinery rather than inventing a second kind
+    /// of floating list: it anchors, clamps and dismisses identically,
+    /// and the arrows already know to follow the child.
+    pub fn open_menu_row_options(&mut self, i: usize) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(menu) = self.context_menu.as_ref() else {
+            return;
+        };
+        if !menu.curatable {
+            return;
+        }
+        let Some(item) = menu.items.get(i) else {
+            return;
+        };
+        let Some(cmd) = (match &item.action {
+            MenuAction::Command(c) => Some((*c).to_string()),
+            MenuAction::RunCmd(c) => Some(c.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        let pinned = self.config.ui.plus_menu_pinned.contains(&cmd);
+        let items = vec![
+            if pinned {
+                MenuItem::new("Unpin", MenuAction::PlusMenuUnpin(cmd.clone()))
+            } else {
+                MenuItem::new("Pin to top", MenuAction::PlusMenuPin(cmd.clone()))
+            },
+            MenuItem::new("Hide this row", MenuAction::PlusMenuHide(cmd.clone())),
+            MenuItem::new("Copy command id", MenuAction::CopyPath(cmd)),
+        ];
+        self.context_menu_select(i);
+        self.context_submenu = Some((i, ContextMenu::new(None, (0, 0), items)));
+    }
+
     /// `\u{2190}` — step back out of a child menu without losing the parent.
     pub fn close_context_submenu(&mut self) {
         self.context_submenu = None;
@@ -2751,6 +2788,9 @@ impl App {
             // row opens its child instead of dispatching. Reaching here
             // means the caller lost track of that.
             Submenu => {}
+            PlusMenuPin(id) => self.plus_menu_curate(&id, PlusCuration::Pin),
+            PlusMenuUnpin(id) => self.plus_menu_curate(&id, PlusCuration::Unpin),
+            PlusMenuHide(id) => self.plus_menu_curate(&id, PlusCuration::Hide),
             FilesToggleMark(pane_id, path) => {
                 if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_id) {
                     f.toggle_mark_path(path);
@@ -3084,5 +3124,65 @@ mod submenu_tests {
             1,
             "the parent's selection moved out from under the open child"
         );
+    }
+}
+
+/// Which way a `+` menu row is being curated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlusCuration {
+    Pin,
+    Unpin,
+    Hide,
+}
+
+impl crate::app::App {
+    /// Apply one curation to the `+` menu and write it to user config.
+    ///
+    /// In-memory AND persisted together: a curation that reverts on
+    /// restart is worse than none, because the user stops trusting the
+    /// menu. This is the gap the 2026-08-09 persist sweep was chasing.
+    pub fn plus_menu_curate(&mut self, id: &str, how: PlusCuration) {
+        let ui = &mut self.config.ui;
+        match how {
+            PlusCuration::Pin => {
+                ui.plus_menu_hidden.retain(|x| x != id);
+                if !ui.plus_menu_pinned.iter().any(|x| x == id) {
+                    ui.plus_menu_pinned.push(id.to_string());
+                }
+            }
+            PlusCuration::Unpin => ui.plus_menu_pinned.retain(|x| x != id),
+            PlusCuration::Hide => {
+                // Hiding something pinned has to unpin it too, or it
+                // stays on screen and the row appears to do nothing.
+                ui.plus_menu_pinned.retain(|x| x != id);
+                if !ui.plus_menu_hidden.iter().any(|x| x == id) {
+                    ui.plus_menu_hidden.push(id.to_string());
+                }
+            }
+        }
+        let pinned = self.config.ui.plus_menu_pinned.clone();
+        let hidden = self.config.ui.plus_menu_hidden.clone();
+        let mut err = None;
+        if let Err(e) = crate::app::discovery::persist_ui_string_array("plus_menu_pinned", &pinned)
+        {
+            err = Some(e);
+        }
+        if let Err(e) = crate::app::discovery::persist_ui_string_array("plus_menu_hidden", &hidden)
+        {
+            err = Some(e);
+        }
+        match err {
+            Some(e) => self.toast(format!("could not save + menu layout: {e}")),
+            None => {
+                let what = match how {
+                    PlusCuration::Pin => "pinned",
+                    PlusCuration::Unpin => "unpinned",
+                    // Name the way back, or a hidden row is a row the
+                    // user cannot work out how to recover.
+                    PlusCuration::Hide => "hidden — restore via :config or Settings",
+                };
+                self.toast(format!("{id} {what}"));
+            }
+        }
     }
 }

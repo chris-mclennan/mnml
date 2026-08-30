@@ -32,7 +32,7 @@ mod cdp;
 mod cdp_prompt_methods;
 mod claude_usage_pane;
 mod codex_usage_pane;
-mod context_menus;
+pub(crate) mod context_menus;
 mod coverage_methods;
 mod dap;
 pub mod discovery;
@@ -3312,6 +3312,9 @@ pub struct PaneRects {
     /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
     pub context_menu_box: Option<Rect>,
     pub context_menu_items: Vec<(Rect, usize)>,
+    /// The kebab on the focused row of a curatable menu, and which row
+    /// it belongs to. At most one exists — only the focused row shows it.
+    pub context_menu_kebab: Option<(Rect, usize)>,
     pub context_submenu_box: Option<Rect>,
     pub context_submenu_items: Vec<(Rect, usize)>,
     /// `(body_rect, pane_id)` per visible layout leaf — recorded by

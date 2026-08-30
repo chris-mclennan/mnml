@@ -125,7 +125,75 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
             ),
         );
     }
-    items
+    apply_plus_menu_curation(app, items)
+}
+
+/// Command id a row acts on, for curation. `None` for rows that are not
+/// curatable (a parent, or anything without a command behind it).
+fn menu_row_command(item: &crate::context_menu::MenuItem) -> Option<String> {
+    match &item.action {
+        crate::context_menu::MenuAction::Command(c) => Some((*c).to_string()),
+        crate::context_menu::MenuAction::RunCmd(c) => Some(c.clone()),
+        _ => None,
+    }
+}
+
+/// Drop hidden rows and float pinned ones to the top.
+///
+/// Runs over the WHOLE tree, so hiding a row inside a group works and a
+/// pinned row escapes its group to the top level — which is the point of
+/// pinning. A group left empty by hiding is dropped too, since a parent
+/// that opens nothing is a dead click.
+fn apply_plus_menu_curation(
+    app: &App,
+    items: Vec<crate::context_menu::MenuItem>,
+) -> Vec<crate::context_menu::MenuItem> {
+    use crate::context_menu::MenuItem;
+    let hidden = &app.config.ui.plus_menu_hidden;
+    let pinned = &app.config.ui.plus_menu_pinned;
+    if hidden.is_empty() && pinned.is_empty() {
+        return items;
+    }
+    let is_hidden = |it: &MenuItem| menu_row_command(it).is_some_and(|c| hidden.contains(&c));
+    // Collect the pinned rows wherever they live, in the order the user
+    // pinned them rather than the order the menu happens to list them.
+    let mut found: Vec<(usize, MenuItem)> = Vec::new();
+    let rank =
+        |it: &MenuItem| menu_row_command(it).and_then(|c| pinned.iter().position(|p| *p == c));
+    let mut keep: Vec<MenuItem> = Vec::new();
+    for mut it in items {
+        if is_hidden(&it) {
+            continue;
+        }
+        if let Some(kids) = it.submenu.take() {
+            let mut kept_kids = Vec::new();
+            for k in kids {
+                if is_hidden(&k) {
+                    continue;
+                }
+                match rank(&k) {
+                    Some(r) => found.push((r, k)),
+                    None => kept_kids.push(k),
+                }
+            }
+            if kept_kids.is_empty() {
+                // Every child pinned away or hidden — the parent would
+                // open an empty menu.
+                continue;
+            }
+            it.submenu = Some(kept_kids);
+            keep.push(it);
+            continue;
+        }
+        match rank(&it) {
+            Some(r) => found.push((r, it)),
+            None => keep.push(it),
+        }
+    }
+    found.sort_by_key(|(r, _)| *r);
+    let mut out: Vec<MenuItem> = found.into_iter().map(|(_, it)| it).collect();
+    out.extend(keep);
+    out
 }
 
 /// Max gap between two clicks at the same (x, y) that still counts
@@ -1555,6 +1623,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         use crate::context_menu::ContextMenu;
         let items = plus_menu_items(app);
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        // Only the `+` menu opts into curation — Pin / Hide make sense
+        // for a launcher you own, not for a file's right-click menu.
+        menu.curatable = true;
         menu.selected = 0;
         menu.interacted = true;
         app.context_menu = Some(menu);
@@ -1666,6 +1737,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         use crate::context_menu::ContextMenu;
         let items = plus_menu_items(app);
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        // Only the `+` menu opts into curation — Pin / Hide make sense
+        // for a launcher you own, not for a file's right-click menu.
+        menu.curatable = true;
         menu.selected = 0;
         menu.interacted = true;
         app.context_menu = Some(menu);
@@ -1709,6 +1783,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // Anchor the menu near the chip so it doesn't fly to the
         // screen center — sits just below-left of the click.
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        // Only the `+` menu opts into curation — Pin / Hide make sense
+        // for a launcher you own, not for a file's right-click menu.
+        menu.curatable = true;
         // Default highlight = New scratch (index 0). Force
         // interacted=true so the highlight is visible immediately.
         menu.selected = 0;
@@ -4074,6 +4151,113 @@ mod plus_menu_tests {
                 );
             }
         }
+    }
+
+    /// Hiding a row must remove it wherever it lives, including inside a
+    /// group — the whole point of curation is that the user does not have
+    /// to know how the menu is organised.
+    #[test]
+    fn hiding_a_row_removes_it_from_inside_its_group() {
+        let (_d, mut app) = app();
+        assert!(
+            reachable_commands(&app).iter().any(|c| c == "http.new"),
+            "precondition"
+        );
+        app.config.ui.plus_menu_hidden = vec!["http.new".into()];
+        assert!(
+            !reachable_commands(&app).iter().any(|c| c == "http.new"),
+            "hidden row survived: {:?}",
+            reachable_commands(&app)
+        );
+    }
+
+    /// Pinning floats a row OUT of its group to the top level. A pin that
+    /// left the row where it was would be indistinguishable from doing
+    /// nothing.
+    #[test]
+    fn pinning_lifts_a_row_out_of_its_group_to_the_top() {
+        let (_d, mut app) = app();
+        assert!(
+            !labels(&app).iter().any(|l| l == "Shell"),
+            "precondition: Shell starts inside the New group"
+        );
+        app.config.ui.plus_menu_pinned = vec!["term.shell".into()];
+        let l = labels(&app);
+        assert_eq!(
+            l.first().map(String::as_str),
+            Some("Shell"),
+            "pinned row did not reach the top: {l:?}"
+        );
+    }
+
+    /// Pins apply in the order the user pinned them, not the order the
+    /// menu happens to list them.
+    #[test]
+    fn pins_keep_the_users_order() {
+        let (_d, mut app) = app();
+        app.config.ui.plus_menu_pinned = vec!["term.shell".into(), "scratch.new".into()];
+        let l = labels(&app);
+        assert_eq!(
+            &l[..2],
+            &["Shell".to_string(), "Scratch buffer".to_string()],
+            "{l:?}"
+        );
+    }
+
+    /// A group emptied by hiding or pinning must go too — a parent row
+    /// whose `▸` opens nothing is a dead click.
+    #[test]
+    fn a_group_emptied_by_curation_disappears() {
+        let (_d, mut app) = app();
+        assert!(labels(&app).iter().any(|l| l == "AI"), "precondition");
+        app.config.ui.plus_menu_hidden = vec!["ai.claude_code_new".into(), "ai.codex_new".into()];
+        assert!(
+            !labels(&app).iter().any(|l| l == "AI"),
+            "an empty group survived: {:?}",
+            labels(&app)
+        );
+    }
+
+    /// Hiding something already pinned has to unpin it, or it stays on
+    /// screen and the Hide row looks broken.
+    ///
+    /// `plus_menu_curate` PERSISTS, so this test redirects HOME to a
+    /// tempdir first. Without that it writes to the developer's own
+    /// `~/.config/mnml/config.toml` — which it did, once, and actually
+    /// hid a row from their real `+` menu.
+    #[test]
+    fn hiding_a_pinned_row_also_unpins_it() {
+        // `MNML_DATA_ROOT` is the established redirect for this — added
+        // in #1041 after `cargo test` was found silently mutating the
+        // developer's real `~/.config/mnml/config.toml` through exactly
+        // this kind of persisted toggle. Without it this test writes a
+        // real `plus_menu_hidden` entry and actually hides a row from
+        // the developer's own `+` menu, which is what it did before this
+        // line existed.
+        let root = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _h = crate::EnvGuard::set("MNML_DATA_ROOT", root.path());
+        let (_d, mut app) = app();
+
+        app.plus_menu_curate("term.shell", crate::app::context_menus::PlusCuration::Pin);
+        assert!(labels(&app).iter().any(|l| l == "Shell"), "precondition");
+        app.plus_menu_curate("term.shell", crate::app::context_menus::PlusCuration::Hide);
+        assert!(
+            !labels(&app).iter().any(|l| l == "Shell"),
+            "a hidden row stayed visible because it was still pinned: {:?}",
+            labels(&app)
+        );
+
+        // And it must have gone to disk, under the redirected HOME. A
+        // curation that reverts on restart is worse than none.
+        let written = std::fs::read_to_string(root.path().join("config.toml"))
+            .expect("nothing was persisted");
+        assert!(
+            written.contains("term.shell"),
+            "curation did not reach the config file:\n{written}"
+        );
     }
 
     /// The flat menu was ~15 rows and grew by one per enabled

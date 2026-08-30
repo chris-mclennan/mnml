@@ -1427,6 +1427,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     app.context_submenu_accept(i);
                     return;
                 }
+                // The kebab sits inside the row, so it must be tested
+                // BEFORE the row or the row always wins.
+                if let Some((kr, krow)) = app.rects.context_menu_kebab
+                    && crate::app::dispatch::contains(kr, x, y)
+                {
+                    app.open_menu_row_options(krow);
+                    return;
+                }
                 if let Some(&(_, i)) = app
                     .rects
                     .context_menu_items

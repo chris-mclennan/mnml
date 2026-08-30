@@ -15,6 +15,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         return;
     };
     app.rects.context_menu_items.clear();
+    app.rects.context_menu_kebab = None;
     app.rects.context_menu_box = None;
     if menu.items.is_empty() || screen.width < 4 || screen.height < 3 {
         return;
@@ -48,6 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         return;
     }
 
+    let curatable = menu.curatable;
     let visible = (inner.height as usize).min(menu.items.len());
     for (row, item) in menu.items.iter().take(visible).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
@@ -75,7 +77,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // affordance that is the whole reason to prefer a submenu over a
         // right-click for grouping.
         let want = inner.width as usize;
-        let marker = if item.has_submenu() { "\u{25b8} " } else { "" };
+        // A curatable row shows its kebab ONLY while focused — the
+        // hover-reveal idiom (GitHub, Slack). Discoverable when you are
+        // on the row, and it does not put a marker on all fifteen rows
+        // the way making every row a submenu parent would.
+        let kebab = curatable && selected && !item.has_submenu();
+        let marker = if item.has_submenu() {
+            "\u{25b8} "
+        } else if kebab {
+            "\u{22ee} "
+        } else {
+            ""
+        };
         let mut label = format!(" {} ", item.label);
         let room = want.saturating_sub(marker.chars().count());
         if label.chars().count() < room {
@@ -83,6 +96,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         }
         label.push_str(marker);
         frame.render_widget(Paragraph::new(Line::from(Span::styled(label, style))), r);
+        if kebab {
+            // Its own hit-rect: clicking the row runs it, clicking the
+            // kebab opens the options. Two outcomes in one row means the
+            // targets must not overlap.
+            app.rects.context_menu_kebab =
+                Some((Rect::new(r.x + r.width.saturating_sub(2), r.y, 2, 1), row));
+        }
         app.rects.context_menu_items.push((r, row));
     }
     app.rects.context_menu_box = Some(area);
