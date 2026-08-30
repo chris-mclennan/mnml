@@ -177,6 +177,12 @@ impl App {
             self.agents_panel_scroll = scroll;
             return;
         }
+        // #1229 — the git rail's scroll lives on an App field too, not on
+        // a pane.
+        if matches!(kind, ScrollbarKind::GitPalette) {
+            self.git_palette_scroll = scroll;
+            return;
+        }
         // Resolved up-front: a scrollbar drag follows the same policy
         // as the mouse wheel (see `Self::cursor_follows_wheel`). Read
         // before the &mut borrow on `self.panes` below.

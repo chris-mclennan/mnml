@@ -2107,6 +2107,10 @@ pub enum ScrollbarKind {
     /// The agents rail panel (`app.agents_panel_scroll`) — not a pane.
     /// `total` = content-row count; `viewport` = panel body height.
     AgentsPanel,
+    /// #1229 — the git rail's own scroll (`App::git_palette_scroll`).
+    /// `total` = item rows across all sections; `viewport` = item rows the
+    /// panel can show.
+    GitPalette,
 }
 
 impl ScrollbarKind {
@@ -4829,6 +4833,27 @@ pub struct App {
     /// tick would see a still-focused graph belonging to the OLD repo and
     /// immediately undo the user's choice.
     pub last_rail_synced_pane: Option<usize>,
+
+    /// #1229 — how many leading ITEM rows the git rail scrolls past.
+    ///
+    /// The panel had no scroll state at all, so with 29 tags and 13
+    /// branches everything past the panel height was simply unreachable —
+    /// three separate user reports ("i have no way to scroll down to see
+    /// more branches or tags if they go too long").
+    ///
+    /// Counted in ITEMS, not screen rows, and applied by trimming the
+    /// front of each section's list rather than by translating paint
+    /// coordinates. That choice matters: the draw function is ~800 lines
+    /// with 26 coordinate touch-points and 17 "have I run out of room"
+    /// guards, and translating all of them would have risked misplacing
+    /// click rects — a click landing on the wrong branch is worse than no
+    /// scrolling. Trimming data keeps the layout strictly top-down, so
+    /// every existing guard stays correct and rect registration is
+    /// automatically consistent with the paint.
+    ///
+    /// Section headers are always drawn, so a partially-scrolled section
+    /// keeps its label.
+    pub git_palette_scroll: usize,
     /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
     /// Persisted in session.json. Default `true`.
     pub git_section_expanded: bool,
@@ -6573,6 +6598,7 @@ impl App {
             git_closed_repos: std::collections::HashSet::new(),
             pre_git_layout: None,
             last_rail_synced_pane: None,
+            git_palette_scroll: 0,
             git_section_expanded: git_section_expanded_default,
             integration_section_expanded: integrations_section_expanded_default,
             git_branches_expanded: false,

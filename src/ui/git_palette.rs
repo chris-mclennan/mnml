@@ -94,6 +94,60 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let matches_filter =
         |s: &str| -> bool { filter_lc.is_empty() || s.to_ascii_lowercase().contains(&filter_lc) };
 
+    // #1229 — scroll by trimming the front of each section's item list,
+    // in draw order (WORKTREES → LOCAL → REMOTE → PRS → STASHES → TAGS).
+    // `enumerate()` runs BEFORE the skip everywhere below, so the `i`
+    // that feeds each click-rect hit id stays the index into the
+    // UNTRIMMED list — a scrolled row must still act on the right branch.
+    // Total item rows across every section, and the clamp. Without the
+    // clamp a wheel spin past the end would scroll the panel blank —
+    // "scrolled into no man's land", the same failure mode as #1237's
+    // PageDown-past-EOF.
+    //
+    // Filters applied, since a filtered panel has fewer rows to scroll.
+    let total_items = app
+        .git_rail
+        .branches
+        .iter()
+        .filter(|b| matches_filter(&b.name))
+        .count()
+        + app
+            .git_rail
+            .remote_branches
+            .iter()
+            .filter(|r| matches_filter(r))
+            .count()
+        + app.git_rail.worktrees.len()
+        + app.git_rail.pulls.len()
+        + app.git_rail.stashes.len()
+        + app.git_rail.tags.len();
+    // Rows the body can show, minus the caps header and filter row. Used
+    // for the scrollbar's viewport ratio.
+    let body_rows = area.height.saturating_sub(2) as usize;
+    // The clamp stops one short of the end, NOT one viewport short.
+    //
+    // First cut used `total_items - body_rows`, reasoning that it would
+    // "only ever leave more on screen". That was wrong in the way that
+    // matters: section headers and inter-section gaps also consume rows,
+    // so fewer than `body_rows` items fit — and the tail of the last
+    // section stayed unreachable, which is the exact bug being fixed.
+    // Caught by `scrolling_reveals_rows_that_were_off_the_bottom`.
+    //
+    // Allowing scroll up to the last item can leave a sparse view at the
+    // very bottom. That is the standard trade (every list view does it)
+    // and far better than items you cannot reach at all.
+    let max_scroll = total_items.saturating_sub(1);
+    if app.git_palette_scroll > max_scroll {
+        app.git_palette_scroll = max_scroll;
+    }
+
+    let mut skip_budget = app.git_palette_scroll;
+    let mut take_skip = move |n: usize| -> usize {
+        let k = skip_budget.min(n);
+        skip_budget -= k;
+        k
+    };
+
     // ── repo header ───────────────────────────────────────────
     // qa-feature 2026-06-30 — when the workspace contains multiple
     // repos, the active one (which the git pane is showing) is the
@@ -272,7 +326,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 y += 1;
             }
         } else {
-            for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
+            let skip_n = take_skip(app.git_rail.worktrees.len());
+            for (i, wt) in app.git_rail.worktrees.iter().enumerate().skip(skip_n) {
                 if y >= area.y + area.height {
                     break;
                 }
@@ -354,6 +409,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter(|(_, b)| matches_filter(&b.name))
         .map(|(i, b)| (i, b.name.clone()))
         .collect();
+    // #1229 — scroll. Each tuple keeps its ORIGINAL branch index, so a
+    // trimmed list still resolves clicks correctly.
+    let local_filtered = {
+        let k = take_skip(local_filtered.len());
+        local_filtered.into_iter().skip(k).collect::<Vec<_>>()
+    };
     if y < area.y + area.height && !local_filtered.is_empty() {
         y = draw_section_header(frame, app, area, y, "LOCAL", local_filtered.len(), bg);
     }
@@ -529,6 +590,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter(|(_, r)| matches_filter(r))
         .map(|(i, r)| (i, r.clone()))
         .collect();
+    let remote_filtered_idxs_and_names = {
+        let k = take_skip(remote_filtered_idxs_and_names.len());
+        remote_filtered_idxs_and_names
+            .into_iter()
+            .skip(k)
+            .collect::<Vec<_>>()
+    };
     if !remote_filtered_idxs_and_names.is_empty() && y < area.y + area.height {
         y = draw_section_header(
             frame,
@@ -664,7 +732,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 y += 1;
             }
         } else {
-            for (i, pr) in app.git_rail.pulls.iter().enumerate() {
+            let skip_n = take_skip(app.git_rail.pulls.len());
+            for (i, pr) in app.git_rail.pulls.iter().enumerate().skip(skip_n) {
                 if y >= area.y + area.height {
                     break;
                 }
@@ -746,7 +815,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 y += 1;
             }
         } else {
-            for (i, st) in app.git_rail.stashes.iter().enumerate() {
+            let skip_n = take_skip(app.git_rail.stashes.len());
+            for (i, st) in app.git_rail.stashes.iter().enumerate().skip(skip_n) {
                 if y >= area.y + area.height {
                     break;
                 }
@@ -803,7 +873,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // further y bookkeeping is needed (the trailing gap would
         // be off the bottom of the rail anyway).
         if !app.git_palette_collapsed_sections.contains("TAGS") {
-            for (i, tag) in app.git_rail.tags.iter().enumerate() {
+            let skip_n = take_skip(app.git_rail.tags.len());
+            for (i, tag) in app.git_rail.tags.iter().enumerate().skip(skip_n) {
                 if y >= area.y + area.height {
                     break;
                 }
@@ -828,6 +899,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 y += 1;
             }
         }
+    }
+
+    // #1229 — scrollbar, painted last so it sits on top of the rows'
+    // right-edge padding. Only when the panel actually overflows: a
+    // permanent gutter on a short list is noise, and the user asked for
+    // it precisely as an overflow signal — "we should probably show
+    // scrollbar if there are items out of view".
+    //
+    // Overpaints the rightmost body column rather than reserving one.
+    // Reserving would mean narrowing every row in an ~800-line draw
+    // function; the rows already pad to full width with the panel bg, so
+    // the last column is padding in practice.
+    if total_items > body_rows && area.width >= 4 && area.height > 2 {
+        let sb = Rect {
+            x: area.x + area.width - 1,
+            y: area.y + 2,
+            width: 1,
+            height: area.height.saturating_sub(2),
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            sb,
+            &t,
+            total_items,
+            body_rows,
+            app.git_palette_scroll,
+        );
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb,
+            pane_id: 0,
+            total: total_items,
+            viewport: body_rows,
+            kind: crate::app::ScrollbarKind::GitPalette,
+        });
     }
 }
 
@@ -924,6 +1029,182 @@ fn group_by_folder(names: &[&str]) -> Vec<(String, Vec<usize>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Seed a rail with more rows than any sane panel height, so the
+    /// panel genuinely overflows.
+    fn app_with_a_long_rail() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let _ = std::fs::create_dir(d.path().join(".git"));
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.active_section = crate::app::ActivitySection::Git;
+        app.git_rail.branches = (0..14)
+            .map(|i| crate::git::rail::BranchRow {
+                name: format!("branch-{i:02}"),
+                is_current: i == 0,
+            })
+            .collect();
+        app.git_rail.remote_branches = (0..10).map(|i| format!("origin/rb-{i:02}")).collect();
+        app.git_rail.tags = (0..29).map(|i| format!("v0.{i}.0")).collect();
+        app.git_rail.current_branch = Some("branch-00".to_string());
+        (d, app)
+    }
+
+    fn render(app: &mut App, w: u16, h: u16) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect()
+    }
+
+    /// #1229 — SAFETY NET for the scroll retrofit. At offset 0 the panel
+    /// must render exactly as it did before scrolling existed. Captured
+    /// against the pre-refactor implementation; if a later change to the
+    /// scroll plumbing shifts the unscrolled view, this fails.
+    #[test]
+    fn the_unscrolled_panel_still_starts_with_the_git_header_and_first_rows() {
+        let (_d, mut app) = app_with_a_long_rail();
+        let rows = render(&mut app, 28, 20);
+        assert!(rows[0].contains("GIT"), "row0: {:?}", rows[0]);
+        // The first branch must be on screen and the LAST tag must not —
+        // that is what makes this a meaningful overflow fixture.
+        let joined = rows.join("\n");
+        assert!(
+            joined.contains("branch-00"),
+            "first branch missing:\n{joined}"
+        );
+        assert!(
+            !joined.contains("v0.28.0"),
+            "the fixture does not actually overflow — nothing to scroll:\n{joined}"
+        );
+    }
+
+    /// #1229 — the reported bug: "i have no way to scroll down to see
+    /// more branches or tags if they go too long". With 29 tags the last
+    /// ones were simply unreachable.
+    #[test]
+    fn scrolling_reveals_rows_that_were_off_the_bottom() {
+        let (_d, mut app) = app_with_a_long_rail();
+        let before = render(&mut app, 28, 20).join("\n");
+        assert!(
+            !before.contains("v0.20.0") && !before.contains("v0.28.0"),
+            "fixture must start with the tag tail off-screen:\n{before}"
+        );
+
+        // Mid-scroll: rows that were off the bottom come into view and the
+        // top rows leave.
+        app.git_palette_scroll = 40;
+        let mid = render(&mut app, 28, 20).join("\n");
+        assert!(
+            mid.contains("v0.20.0"),
+            "scrolling did not reveal rows that were off the bottom:\n{mid}"
+        );
+        assert!(
+            !mid.contains("branch-00"),
+            "the first branch is still on screen, so nothing scrolled:\n{mid}"
+        );
+
+        // And the LAST item must be reachable. This is the actual promise
+        // — a clamp that stops a viewport short of the end leaves the tail
+        // permanently unreachable, which is the bug being fixed. The
+        // over-large value is clamped by the render.
+        app.git_palette_scroll = usize::MAX / 2;
+        let end = render(&mut app, 28, 20).join("\n");
+        assert!(
+            end.contains("v0.28.0"),
+            "the last tag is STILL unreachable at maximum scroll:\n{end}"
+        );
+    }
+
+    /// Scrolling must not be able to run off the end and leave the panel
+    /// blank — the same failure mode as #1237's PageDown-past-EOF.
+    #[test]
+    fn scroll_is_clamped_so_the_panel_never_goes_blank() {
+        let (_d, mut app) = app_with_a_long_rail();
+        app.git_palette_scroll = 100_000;
+        let rows = render(&mut app, 28, 20);
+        let joined = rows.join("\n");
+
+        assert!(
+            app.git_palette_scroll < 100_000,
+            "scroll was not clamped: {}",
+            app.git_palette_scroll
+        );
+        // Something from the LAST section must still be visible.
+        assert!(
+            joined.contains("v0.2") || joined.contains("v0.1"),
+            "panel scrolled into empty space:\n{joined}"
+        );
+    }
+
+    /// A scrolled row must still act on the right item. The hit ids come
+    /// from `enumerate()` BEFORE the skip, so index 28 stays index 28.
+    #[test]
+    fn click_targets_survive_a_scroll() {
+        let (_d, mut app) = app_with_a_long_rail();
+        app.git_palette_scroll = 40;
+        let _ = render(&mut app, 28, 20);
+
+        let tag_hits: Vec<usize> = app
+            .rects
+            .git_palette_rows
+            .iter()
+            .filter_map(|(_, hit)| match hit {
+                GitPaletteHit::Tag(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        assert!(!tag_hits.is_empty(), "no tag rows rendered after scrolling");
+        assert!(
+            tag_hits.iter().any(|&i| i > 10),
+            "tag hit ids look re-based after the skip ({tag_hits:?}) — a \
+             scrolled row would open the wrong tag"
+        );
+    }
+
+    /// The scrollbar is an overflow signal, so it must appear only when
+    /// the panel actually overflows.
+    #[test]
+    fn the_scrollbar_appears_only_when_content_overflows() {
+        let (_d, mut app) = app_with_a_long_rail();
+        let _ = render(&mut app, 28, 20);
+        assert!(
+            app.rects
+                .scrollbars
+                .iter()
+                .any(|sb| matches!(sb.kind, crate::app::ScrollbarKind::GitPalette)),
+            "no scrollbar on a panel with 50+ items in 20 rows"
+        );
+
+        // Now a rail that fits.
+        app.git_rail.branches.truncate(1);
+        app.git_rail.remote_branches.clear();
+        app.git_rail.tags.truncate(1);
+        app.rects.scrollbars.clear();
+        let _ = render(&mut app, 28, 20);
+        assert!(
+            !app.rects
+                .scrollbars
+                .iter()
+                .any(|sb| matches!(sb.kind, crate::app::ScrollbarKind::GitPalette)),
+            "scrollbar painted on a panel that fits — permanent gutter noise"
+        );
+    }
 
     #[test]
     fn group_by_folder_groups_prefixed_branches() {

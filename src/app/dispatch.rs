@@ -1617,14 +1617,24 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             .max()
             .unwrap_or(row_rect.y);
         if x >= bbox_x && x < bbox_x + bbox_w && y >= bbox_y0 && y <= bbox_y1 {
-            // Find the first open GitGraph pane and scroll it.
-            for pane in app.panes.iter_mut() {
-                if let crate::pane::Pane::GitGraph(g) = pane {
-                    let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
-                    g.move_selection(d as isize);
-                    return;
-                }
+            // #1229 — the palette scrolls ITSELF now.
+            //
+            // This used to forward the wheel to the first open GitGraph
+            // pane's commit selection, and the comment above said why:
+            // the palette had no scroll of its own, so the wheel did
+            // "the obvious thing" instead. The consequence was that a
+            // panel with 29 tags could not be scrolled at all, reported
+            // three separate times. `App::git_palette_scroll` exists now,
+            // and the render clamps it every frame.
+            let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
+            if d < 0 {
+                app.git_palette_scroll = app
+                    .git_palette_scroll
+                    .saturating_sub(d.unsigned_abs() as usize);
+            } else {
+                app.git_palette_scroll = app.git_palette_scroll.saturating_add(d as usize);
             }
+            return;
         }
     }
     // Wheel over an extra workspace's tree body (the file list under
