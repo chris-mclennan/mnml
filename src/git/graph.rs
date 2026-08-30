@@ -27,6 +27,28 @@ pub struct GitGraphPane {
     /// Top visible row in the virtual list (the renderer keeps
     /// `selected` on screen).
     pub scroll: usize,
+    /// #1229 — "this selection came from a JUMP, centre it if it is not
+    /// already on screen."
+    ///
+    /// Set by [`Self::jump_to`], consumed by the renderer. Exists because
+    /// the two ways `selected` moves want opposite scroll policies:
+    ///
+    /// - Incremental motion (`j`/`k`, wheel) wants MINIMAL scroll — the
+    ///   view should not reflow under a user who is stepping through rows.
+    /// - A discontinuous jump (clicking a branch in the rail) wants
+    ///   CONTEXT — you have lost your place by definition, and a commit
+    ///   pinned flush against the top or bottom edge is hard to read.
+    ///
+    /// The renderer applied the minimal-scroll rule to both, so a
+    /// branch-click landed its commit at whichever edge it entered from.
+    /// User report, with a screenshot: "its often at the very bottom ...
+    /// and sometimes its at the top. shoudl it be centered".
+    ///
+    /// Only centres when the target is OUTSIDE the viewport — the same
+    /// rule as VS Code's `revealRangeInCenterIfOutsideViewport`. Centring
+    /// unconditionally would yank the view for a branch whose tip was
+    /// already visible, which is its own annoyance.
+    pub center_on_next_draw: bool,
     pub detail: Option<CommitDetail>,
     /// `/` filter — accumulating hash prefix to fuzzy-jump to a commit.
     /// Empty when inactive. The renderer shows a chip in the header row when
@@ -106,6 +128,7 @@ impl GitGraphPane {
         let commits = log::load(workspace, LIMIT);
         let has_wip = working_tree_has_changes(workspace);
         let mut p = GitGraphPane {
+            center_on_next_draw: false,
             workspace: workspace.to_path_buf(),
             commits,
             // Start at row 0 — that's the WIP row when changes exist,
@@ -223,6 +246,8 @@ impl GitGraphPane {
             return false;
         }
         self.selected = clamped;
+        // A jump, not a step — ask the renderer for context around it.
+        self.center_on_next_draw = true;
         self.reload_detail();
         true
     }
@@ -479,5 +504,61 @@ fn working_tree_has_changes(workspace: &Path) -> bool {
     {
         Ok(out) if out.status.success() => !out.stdout.is_empty(),
         _ => false,
+    }
+}
+#[cfg(test)]
+mod jump_reveal_tests {
+    use super::*;
+
+    fn pane_with_rows(n: usize) -> GitGraphPane {
+        let d = tempfile::tempdir().unwrap();
+        let mut p = GitGraphPane::open(d.path());
+        // Synthesise a long list — the reveal policy only cares about
+        // counts, not commit content.
+        p.commits = (0..n)
+            .map(|i| crate::git::log::Commit {
+                hash: format!("{i:040x}"),
+                short: format!("{i:07x}"),
+                parents: Vec::new(),
+                author: "T".into(),
+                time: 0,
+                subject: format!("commit {i}"),
+                refs: Vec::new(),
+                graph: Vec::new(),
+                lane: 0,
+            })
+            .collect();
+        p.has_wip = false;
+        p.selected = 0;
+        p.scroll = 0;
+        p.center_on_next_draw = false;
+        p
+    }
+
+    /// #1229 — a jump must ASK to be centred. Stepping must not.
+    #[test]
+    fn jump_to_requests_centring_but_the_flag_starts_clear() {
+        let mut p = pane_with_rows(200);
+        assert!(
+            !p.center_on_next_draw,
+            "a freshly opened pane must not request centring — that would \
+             yank the view on first paint"
+        );
+        assert!(p.jump_to(150));
+        assert!(
+            p.center_on_next_draw,
+            "jump_to did not flag the selection as a jump, so the renderer \
+             will fall back to minimal scroll and pin it to an edge"
+        );
+    }
+
+    /// A no-op jump (already selected) must not set the flag — otherwise
+    /// re-clicking the branch you are already on re-centres for no reason.
+    #[test]
+    fn re_jumping_to_the_current_row_does_not_request_centring() {
+        let mut p = pane_with_rows(200);
+        p.selected = 42;
+        assert!(!p.jump_to(42), "same row should report no change");
+        assert!(!p.center_on_next_draw, "a no-op jump asked for a re-centre");
     }
 }

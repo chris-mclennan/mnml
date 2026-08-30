@@ -193,12 +193,26 @@ pub fn draw(
     let lane_pad: usize = app.config.git_graph.lane_spacing as usize;
 
     // ── scrolling math (operates on the virtual list = WIP + commits) ─
+    //
+    // #1229 — TWO policies, because `selected` moves for two different
+    // reasons and they want opposite things:
+    //
+    // - Stepping (`j`/`k`, wheel): scroll the MINIMUM needed. The view
+    //   must not reflow under someone moving row by row.
+    // - Jumping (clicking a branch in the rail): CENTRE it, because the
+    //   user has lost their place by definition and a commit flush
+    //   against the top or bottom edge is hard to read. This is what was
+    //   reported — "its often at the very bottom ... and sometimes its at
+    //   the top" — and it happened because the minimal rule was applied
+    //   to both, so a jump landed at whichever edge it entered from.
+    //
+    // Centring is conditional on the target being OUTSIDE the viewport
+    // (VS Code's `revealRangeInCenterIfOutsideViewport`). Unconditional
+    // centring would yank the view when you click a branch whose tip was
+    // already on screen, trading one annoyance for another.
     let h = body_area.height as usize;
-    if g.selected < g.scroll {
-        g.scroll = g.selected;
-    } else if g.selected >= g.scroll + h {
-        g.scroll = g.selected + 1 - h;
-    }
+    let wants_center = std::mem::take(&mut g.center_on_next_draw);
+    g.scroll = reveal_scroll(g.selected, g.scroll, h, wants_center);
     let total = g.total_rows();
     let max_scroll = total.saturating_sub(h.min(total));
     g.scroll = g.scroll.min(max_scroll);
@@ -2146,6 +2160,49 @@ fn right_align(s: &str, width: usize) -> String {
     }
 }
 
+/// Where the commit list should scroll to, given where the selection is.
+///
+/// #1229 — TWO policies, because `selected` moves for two different
+/// reasons that want opposite things:
+///
+/// - Stepping (`j`/`k`, wheel): scroll the MINIMUM needed. The view must
+///   not reflow under someone moving row by row.
+/// - Jumping (clicking a branch in the rail): give it CONTEXT. The user
+///   has lost their place by definition, and a commit flush against the
+///   top or bottom edge is hard to read. Reported with a screenshot —
+///   "its often at the very bottom ... and sometimes its at the top" —
+///   which happened because the minimal rule was applied to both, so a
+///   jump landed at whichever edge it entered from.
+///
+/// `want_center` only takes effect when the target is OUTSIDE the
+/// viewport, the same rule as VS Code's
+/// `revealRangeInCenterIfOutsideViewport`. Unconditional centring would
+/// yank the view when you click a branch whose tip was already on screen,
+/// trading one annoyance for another.
+///
+/// Pure so the placement itself is testable — the flag being set is a
+/// mechanism, the resulting scroll is the behaviour.
+fn reveal_scroll(selected: usize, scroll: usize, h: usize, want_center: bool) -> usize {
+    if h == 0 {
+        return scroll;
+    }
+    let already_visible = selected >= scroll && selected < scroll + h;
+    if want_center && !already_visible {
+        // Biased ABOVE centre: in a git graph the rows BELOW a commit are
+        // its history, which is the context you want when landing on a
+        // branch tip. `h / 3` shows more of that than `h / 2` while still
+        // keeping the target well clear of the edge.
+        return selected.saturating_sub(h / 3);
+    }
+    if selected < scroll {
+        selected
+    } else if selected >= scroll + h {
+        selected + 1 - h
+    } else {
+        scroll
+    }
+}
+
 /// Draw the GitGraph top toolbar — a single-row strip of clickable
 /// git action buttons (Pull / Push / Fetch / Branch / Commit / Stash
 /// / Pop / Terminal / Reflog). Each button renders as ` <icon>
@@ -2783,5 +2840,92 @@ mod reflow_tests {
         let out = reflow_commit_message("chore: bump deps");
         assert_eq!(out.len(), 1, "{out:?}");
         assert_eq!(out[0].0, "chore: bump deps");
+    }
+}
+
+#[cfg(test)]
+mod reveal_scroll_tests {
+    use super::reveal_scroll;
+
+    const H: usize = 30;
+
+    /// The reported bug. A jump to a row far below the viewport used to
+    /// land it on the LAST visible line (`selected + 1 - h`); a jump above
+    /// landed it on the FIRST. Now both give it context.
+    #[test]
+    fn a_jump_below_the_viewport_is_not_pinned_to_the_bottom_edge() {
+        let scroll = reveal_scroll(500, 0, H, true);
+        let row_on_screen = 500 - scroll;
+        assert_ne!(
+            row_on_screen,
+            H - 1,
+            "target landed on the last visible row — the old edge-pinning"
+        );
+        assert!(
+            row_on_screen > 2 && row_on_screen < H - 2,
+            "target at screen row {row_on_screen} of {H} — too close to an edge"
+        );
+    }
+
+    #[test]
+    fn a_jump_above_the_viewport_is_not_pinned_to_the_top_edge() {
+        let scroll = reveal_scroll(10, 400, H, true);
+        let row_on_screen = 10 - scroll;
+        assert_ne!(row_on_screen, 0, "target landed on the first visible row");
+        assert!(
+            row_on_screen > 2,
+            "target at screen row {row_on_screen} — too close to the top"
+        );
+    }
+
+    /// The conditional half. Clicking a branch whose tip is already on
+    /// screen must not move the view at all.
+    #[test]
+    fn a_jump_to_an_already_visible_row_does_not_scroll() {
+        // Chosen so centring would MOVE the view: 105 - H/3 = 95 != 100.
+        // An earlier version used selected = 110, where 110 - H/3 lands
+        // exactly on the existing scroll of 100 — so centring and not
+        // centring gave the same answer and the test could not fail.
+        let before = 100;
+        let after = reveal_scroll(105, before, H, true);
+        assert_eq!(
+            after, before,
+            "centred a target that was already visible — the view yanked \
+             for no reason"
+        );
+    }
+
+    /// Stepping keeps the minimal-scroll policy: exactly one row of
+    /// movement when walking off the bottom edge.
+    #[test]
+    fn stepping_off_the_bottom_scrolls_exactly_one_row() {
+        let scroll = 100;
+        // `selected` just past the last visible row.
+        let after = reveal_scroll(scroll + H, scroll, H, false);
+        assert_eq!(
+            after,
+            scroll + 1,
+            "stepping should scroll one row, not jump or centre"
+        );
+    }
+
+    #[test]
+    fn stepping_off_the_top_scrolls_exactly_one_row() {
+        let scroll = 100;
+        let after = reveal_scroll(scroll - 1, scroll, H, false);
+        assert_eq!(after, scroll - 1);
+    }
+
+    /// Jumping near the very top cannot scroll to a negative offset.
+    #[test]
+    fn a_jump_near_the_start_clamps_at_zero() {
+        assert_eq!(reveal_scroll(2, 400, H, true), 0);
+    }
+
+    /// A zero-height body (window collapsed mid-frame) must not panic or
+    /// invent a scroll position.
+    #[test]
+    fn a_zero_height_viewport_leaves_scroll_untouched() {
+        assert_eq!(reveal_scroll(500, 42, 0, true), 42);
     }
 }
