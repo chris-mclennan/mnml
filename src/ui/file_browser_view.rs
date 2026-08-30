@@ -81,14 +81,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     // tail identifies where you are. The dropped prefix renders as `…`,
     // which stays clickable and jumps to the deepest hidden ancestor —
     // otherwise narrowing the pane would silently remove navigation.
-    let cwd = match app.panes.get(pane_id) {
-        Some(crate::pane::Pane::Files(f)) => f.cwd.clone(),
+    // #files item 5 — git status per row.
+    //
+    // `GitStatus::snapshot().files` is a path -> state map that mnml
+    // already maintains on a TTL for the tree tint and statusline chips,
+    // keyed ABSOLUTELY. So badges cost one hash lookup per visible row and
+    // nothing else — no extra `git` invocation, no new cache.
+    //
+    // This is the thing a standalone file manager cannot do, and the
+    // strongest argument for a browser INSIDE the editor rather than
+    // beside one.
+    //
+    // Read before the &mut borrow of `panes` below.
+    let git_files = app.git.snapshot().files.clone();
+    let (cwd, sort_kind) = match app.panes.get(pane_id) {
+        Some(crate::pane::Pane::Files(f)) => (f.cwd.clone(), f.sort),
         _ => return,
     };
     let chain = crate::places::breadcrumb(&cwd);
     let chevron = if nerd { "\u{25BE}" } else { "v" };
-    // Reserve the chevron plus its pads.
-    let avail = area.width.saturating_sub(3) as usize;
+    let sort_label = match sort_kind {
+        crate::file_browser::Sort::DirsFirstName => "name",
+        crate::file_browser::Sort::Size => "size",
+        crate::file_browser::Sort::Modified => "modified",
+    };
+    let sort_text = format!(" {sort_label} \u{25BE} ");
+    // Reserve the chevron AND the sort label before laying out the
+    // breadcrumb.
+    //
+    // The first version appended the sort label afterwards using whatever
+    // width was left, so on a long path there was none left and the label
+    // silently vanished — which is precisely when you have most trouble
+    // telling why the listing is ordered as it is. Fixed-width chrome
+    // gets its space first; the PATH is the elastic part, and it already
+    // knows how to elide.
+    let avail = (area.width as usize)
+        .saturating_sub(3)
+        .saturating_sub(sort_text.chars().count());
     // Widest suffix of the chain that fits, always keeping the last
     // segment even if it alone overflows.
     let mut first = 0usize;
@@ -158,6 +187,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     }
     spans.push(Span::styled(
         format!(" {chevron} "),
+        Style::default().fg(t.comment).bg(hdr_bg),
+    ));
+    // #files — the active SORT, right-aligned in the header.
+    //
+    // `s` cycles name → size → modified and used to announce itself with
+    // a toast only, so a second later the active sort was invisible and
+    // the listing order looked arbitrary. A gap introduced by the
+    // foundation commit; state a mode is in, do not just announce the
+    // transition.
+    let used: usize = spans.iter().map(|sp| sp.content.chars().count()).sum();
+    let pad = (area.width as usize)
+        .saturating_sub(used)
+        .saturating_sub(sort_text.chars().count());
+    if pad > 0 {
+        spans.push(Span::styled(" ".repeat(pad), Style::default().bg(hdr_bg)));
+    }
+    spans.push(Span::styled(
+        sort_text,
         Style::default().fg(t.comment).bg(hdr_bg),
     ));
     app.rects.file_pane_places_chevron = Some((
@@ -298,8 +345,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     let show_mod = area.width >= W_FOR_MODIFIED;
     let show_size = area.width >= W_FOR_SIZE;
     let sb_w: u16 = if f.entries.len() > h { 1 } else { 0 };
+    let badge_w = if git_files.is_empty() { 0 } else { 2 };
     let name_w = (area.width.saturating_sub(sb_w) as usize)
         .saturating_sub(4) // icon + pads
+        .saturating_sub(badge_w)
         .saturating_sub(if show_size { SIZE_COL + 1 } else { 0 })
         .saturating_sub(if show_mod { MOD_COL + 1 } else { 0 });
 
@@ -345,6 +394,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
                 ),
                 Span::styled(" ".repeat(pad), Style::default().bg(row_bg)),
             ];
+            // Badge: one cell, always reserved when the repo has ANY
+            // changes, so rows do not shift horizontally as files change
+            // state underneath the cursor.
+            if !git_files.is_empty() {
+                let (ch, fg) = match git_files.get(&e.path) {
+                    Some(crate::git::status::FileState::Conflicted) => ("!", t.red),
+                    Some(crate::git::status::FileState::Staged) => ("+", t.green),
+                    Some(crate::git::status::FileState::Modified) => ("~", t.yellow),
+                    Some(crate::git::status::FileState::Untracked) => ("?", t.comment),
+                    None => (" ", t.comment),
+                };
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default()
+                        .fg(fg)
+                        .bg(row_bg)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(" ", Style::default().bg(row_bg)));
+            }
             if show_size {
                 let s = e.size.map(human_size).unwrap_or_else(|| "—".into());
                 spans.push(Span::styled(
@@ -542,6 +611,175 @@ mod render_tests {
         assert!(
             app.rects.file_pane_rows.iter().any(|(_, p, _)| *p == pid),
             "no click rects registered for the Files pane"
+        );
+    }
+
+    /// #files — the active sort must be VISIBLE, not just announced by a
+    /// toast that vanishes.
+    #[test]
+    fn the_header_names_the_active_sort() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::fs::write(d.path().join("a.txt"), "a").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+
+        let header = |app: &mut crate::app::App| -> String {
+            let mut term = Terminal::new(TestBackend::new(70, 6)).unwrap();
+            term.draw(|f| {
+                draw(
+                    f,
+                    app,
+                    pid,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 70,
+                        height: 6,
+                    },
+                )
+            })
+            .unwrap();
+            let buf = term.backend().buffer();
+            (0..70).map(|x| buf[(x, 0)].symbol()).collect()
+        };
+
+        assert!(header(&mut app).contains("name"), "default sort not shown");
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.set_sort(crate::file_browser::Sort::Size);
+        }
+        let h = header(&mut app);
+        assert!(h.contains("size"), "sort change not reflected: {h:?}");
+        assert!(!h.contains("name "), "stale sort label left behind: {h:?}");
+    }
+
+    /// #files item 5 — git state per row, from the snapshot mnml already
+    /// maintains. Uses a REAL repo, because the whole value is that the
+    /// states come from git rather than from a fixture.
+    #[test]
+    fn rows_show_their_git_state() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(d.path())
+                .output()
+                .expect("git");
+        };
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "t@t"]);
+        run(&["config", "user.name", "T"]);
+        std::fs::write(d.path().join("tracked.txt"), "one").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "init"]);
+        // Now: one modified, one untracked, one unchanged.
+        std::fs::write(d.path().join("tracked.txt"), "two").unwrap();
+        std::fs::write(d.path().join("brand_new.txt"), "x").unwrap();
+        std::fs::write(d.path().join("staged.txt"), "s").unwrap();
+        run(&["add", "staged.txt"]);
+
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.git.refresh();
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(70, 10)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 70,
+                    height: 10,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let rows: Vec<String> = (0..10)
+            .map(|y| (0..70).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+
+        let row_for = |name: &str| -> String {
+            rows.iter()
+                .find(|r| r.contains(name))
+                .unwrap_or_else(|| panic!("no row for {name}:\n{}", rows.join("\n")))
+                .clone()
+        };
+        assert!(
+            row_for("tracked.txt").contains('~'),
+            "modified file has no `~` badge: {:?}",
+            row_for("tracked.txt")
+        );
+        assert!(
+            row_for("brand_new.txt").contains('?'),
+            "untracked file has no `?` badge: {:?}",
+            row_for("brand_new.txt")
+        );
+        assert!(
+            row_for("staged.txt").contains('+'),
+            "staged file has no `+` badge: {:?}",
+            row_for("staged.txt")
+        );
+    }
+
+    /// Outside a repo — or in a clean one — no badge column, and no
+    /// crash. A file browser must work on any directory on the machine.
+    #[test]
+    fn a_directory_with_no_git_changes_shows_no_badges() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::fs::write(d.path().join("plain.txt"), "x").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(70, 8)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 70,
+                    height: 8,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..70).map(|x| buf[(x, 2)].symbol()).collect::<String>();
+        assert!(
+            row.contains("plain.txt"),
+            "listing did not render outside a repo: {row:?}"
         );
     }
 
