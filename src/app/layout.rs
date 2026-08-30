@@ -1335,6 +1335,7 @@ impl App {
             | Pane::Grep(_)
             | Pane::Flaky(_)
             | Pane::Outline(_)
+            | Pane::Files(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
             | Pane::Cheatsheet(_)

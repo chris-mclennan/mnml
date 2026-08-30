@@ -1728,6 +1728,12 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // restores the prior "3 lines per tick" feel).
         const EDITOR_WHEEL_GAIN: usize = 3;
         match app.panes.get_mut(pid) {
+            // Files pane: the wheel moves the cursor, same as every other
+            // list pane. `list_scroll_clamp_scaled` keeps the notch->rows
+            // rate consistent with the rest of the app (#1236).
+            Some(Pane::Files(f)) => {
+                f.move_selection(list_scroll_clamp_scaled(delta, scroll_ceiling) as isize);
+            }
             Some(Pane::Editor(b)) => {
                 // Two policies per `[editor] wheel_moves_cursor`:
                 //   - cursor follows ⇒ apply MoveUp/MoveDown N times;

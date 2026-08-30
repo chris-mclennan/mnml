@@ -780,6 +780,91 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // ── Files pane (the file-manager foundation) ──
+    //
+    // Keys deliberately mirror BOTH idioms, because this pane is reached
+    // from a vim workflow and a mouse workflow alike: j/k and arrows both
+    // move, h/Backspace/Left ascend, l/Enter/Right descend. That is the
+    // ranger / superfile convention and costs nothing to support.
+    if matches!(app.panes.get(i), Some(Pane::Files(_))) {
+        let vp = viewport.max(1) as isize;
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.move_selection(1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.move_selection(-1);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.move_selection(vp);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.move_selection(-vp);
+                }
+            }
+            KeyCode::Home => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.select_first();
+                }
+            }
+            KeyCode::End => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.select_last();
+                }
+            }
+            KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.go_parent();
+                }
+            }
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                app.files_pane_activate(i);
+            }
+            // `.` — dotfiles, the ranger/superfile binding.
+            KeyCode::Char('.') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.toggle_hidden();
+                }
+            }
+            // `r` — reload, matching the outline pane's refresh key.
+            KeyCode::Char('r') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.reload();
+                }
+            }
+            // `s` cycles sort: name → size → modified.
+            KeyCode::Char('s') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    use crate::file_browser::Sort;
+                    let next = match f.sort {
+                        Sort::DirsFirstName => Sort::Size,
+                        Sort::Size => Sort::Modified,
+                        Sort::Modified => Sort::DirsFirstName,
+                    };
+                    f.set_sort(next);
+                    let label = match next {
+                        Sort::DirsFirstName => "name",
+                        Sort::Size => "size",
+                        Sort::Modified => "modified",
+                    };
+                    app.toast(format!("sort: {label}"));
+                }
+            }
+            KeyCode::Esc => app.focus = crate::focus::Focus::Tree,
+            // Anything else falls through to the chord / cmdline layers —
+            // returning early here would trap a vim user (the same trap
+            // `handle_md_preview_key` had before its `_ => {}` was fixed).
+            _ => return,
+        }
+        return;
+    }
     // The outline pane: ↑↓ select, Enter → jump to the symbol in target editor,
     // r → refire documentSymbol for the target, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Outline(_))) {

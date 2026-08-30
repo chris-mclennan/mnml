@@ -2111,6 +2111,8 @@ pub enum ScrollbarKind {
     /// `total` = item rows across all sections; `viewport` = item rows the
     /// panel can show.
     GitPalette,
+    /// A `Pane::Files` listing — drags move its `selected` cursor.
+    FilesPane,
 }
 
 impl ScrollbarKind {
@@ -2308,6 +2310,9 @@ pub struct PaneRects {
     /// panel shown when `ActivitySection::Git` is active). Cleared
     /// + repopulated every frame by `git_palette::draw`.
     pub git_palette_rows: Vec<(Rect, crate::ui::git_palette::GitPaletteHit)>,
+    /// #files — one entry per visible row of every `Pane::Files`:
+    /// `(rect, pane_id, entry_index)`. Cleared each frame by the drawer.
+    pub file_pane_rows: Vec<(Rect, PaneId, usize)>,
     /// Click rect for the git palette's filter input. Click to
     /// focus + start typing; Esc clears + unfocuses.
     pub git_palette_filter_input: Option<Rect>,
@@ -10628,6 +10633,7 @@ impl App {
             Pane::Grep(g) => Some((g.tab_title(), false)),
             Pane::Flaky(f) => Some((f.tab_title(), false)),
             Pane::Outline(o) => Some((o.tab_title(), false)),
+            Pane::Files(f) => Some((f.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),

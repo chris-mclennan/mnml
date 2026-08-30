@@ -183,6 +183,17 @@ impl App {
             self.git_palette_scroll = scroll;
             return;
         }
+        if matches!(kind, ScrollbarKind::FilesPane) {
+            // A Files pane's scroll is derived from `selected` each frame,
+            // so a drag must move the CURSOR — setting `scroll` alone
+            // would be reverted by the next render's keep-cursor-in-view
+            // pass. Same reasoning as the tree's scrollbar (#qa 2026-07-01).
+            if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_id) {
+                f.scroll = scroll;
+                f.selected = scroll.min(f.entries.len().saturating_sub(1));
+            }
+            return;
+        }
         // Resolved up-front: a scrollbar drag follows the same policy
         // as the mouse wheel (see `Self::cursor_follows_wheel`). Read
         // before the &mut borrow on `self.panes` below.

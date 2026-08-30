@@ -2000,6 +2000,28 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "files.open",
+            title: "Files: open a file-browser pane (workspace root)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_files_pane(None),
+        },
+        Command {
+            id: "files.open_split",
+            title: "Files: open a second file-browser pane beside this one",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                // The commander shape, without a mode: two Files panes in
+                // a vertical split. `split_right` then `open_files_pane`
+                // would land the new pane as a TAB of the existing leaf,
+                // so split first and let the new pane fill the new side.
+                app.open_files_pane(None);
+                crate::command::run("view.split_right", app);
+                app.open_files_pane(None);
+            },
+        },
+        Command {
             id: "bookmarks.open",
             title: "Bookmarks: open a site (env-grouped web bookmarks)",
             group: "view",

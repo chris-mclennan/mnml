@@ -70,6 +70,7 @@ pub mod diagnostics_view;
 pub mod diff_view;
 pub mod discovery;
 pub mod editor_view;
+pub mod file_browser_view;
 pub mod fim_progress_overlay;
 pub mod first_launch_overlay;
 pub mod flaky_view;
@@ -1363,6 +1364,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // `Minimized` = hidden (just the ♪ chip).
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
+    // Files-pane row rects live for one frame, like editor_panes.
+    app.rects.file_pane_rows.clear();
     // (md preview / editor chip rects are cleared earlier — see the
     // note above `bufferline::draw`.)
     app.rects.pane_bodies.clear();
@@ -1913,6 +1916,7 @@ fn render_layout(
                 Some(crate::pane::Pane::IntegrationDetail(_)) => 41,
                 Some(crate::pane::Pane::ClaudeUsage(_)) => 42,
                 Some(crate::pane::Pane::CodexUsage(_)) => 43,
+                Some(crate::pane::Pane::Files(_)) => 44,
                 _ => 0,
             };
             match kind {
@@ -1930,6 +1934,10 @@ fn render_layout(
                 13 => flaky_view::draw(frame, app, *id, area, focused),
                 14 => outline_view::draw(frame, app, *id, area, focused),
                 15 => cmdline_history_view::draw(frame, app, *id, area, focused),
+                44 => {
+                    file_browser_view::draw(frame, app, *id, area);
+                    None
+                }
                 // Quickfix shares the Grep view — same shape, different
                 // pane identity so `:grep` results don't clobber it.
                 16 => grep_view::draw(frame, app, *id, area, focused),
@@ -5901,6 +5909,10 @@ fn icon_for_pane(
         Pane::Grep(_) => s(if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().yellow),
         Pane::Flaky(_) => s(if nerd { "\u{f0668}" } else { "≋" }, theme::cur().purple),
         Pane::Outline(_) => s(if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
+        // Open-folder glyph, in the same blue the tree uses for
+        // directories — a Files pane IS a directory, and the tab should
+        // read that way at a glance.
+        Pane::Files(_) => s(if nerd { "\u{f0770}" } else { "▤" }, theme::cur().blue),
         Pane::Quickfix(_) => s(if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
         Pane::CmdlineHistory(_) => s(if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
         Pane::Cheatsheet(_) => s(if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),

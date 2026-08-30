@@ -611,3 +611,37 @@ impl App {
         ));
     }
 }
+
+impl App {
+    /// Enter the selected directory, or open the selected file.
+    ///
+    /// The two are one gesture (`Enter` / `l` / double-click) because that
+    /// is how every file manager behaves — the user is saying "go to this
+    /// thing", and whether that means descend or open is the pane's
+    /// problem, not theirs.
+    pub fn files_pane_activate(&mut self, pane_idx: usize) {
+        let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_idx) else {
+            return;
+        };
+        if f.enter_selected() {
+            return;
+        }
+        // Not a directory — open it. `open_path` already routes by
+        // extension (Request panes for .http, image panes for images,
+        // editor otherwise), so a Files pane inherits all of that.
+        let Some(path) = f.selected_entry().map(|e| e.path.clone()) else {
+            return;
+        };
+        self.open_path(&path);
+    }
+
+    /// Open a Files pane at `dir` (defaults to the workspace root).
+    pub fn open_files_pane(&mut self, dir: Option<std::path::PathBuf>) {
+        let dir = dir.unwrap_or_else(|| self.workspace.clone());
+        let pane = crate::pane::Pane::Files(crate::file_browser::FileBrowserPane::open(&dir));
+        self.panes.push(pane);
+        let id = self.panes.len() - 1;
+        self.reveal_pane(id);
+        self.focus = crate::focus::Focus::Pane;
+    }
+}

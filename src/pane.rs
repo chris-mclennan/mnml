@@ -50,6 +50,10 @@ pub enum Pane {
     /// A persistent symbol outline for one editor — the `documentSymbol` reply,
     /// rendered as an indented list with click/Enter-to-jump.
     Outline(OutlinePane),
+    /// A directory listing as a pane — the file-manager foundation
+    /// (design conversation 2026-08-30, shape "C": no mode, just a pane,
+    /// so side-by-side panels come free from `Layout::Split`).
+    Files(crate::file_browser::FileBrowserPane),
     /// A Chrome the IDE is driving over CDP — a console / nav / eval log.
     Browser(BrowserPane),
     /// A workspace-wide LSP-diagnostics ("Problems") list.
@@ -708,6 +712,7 @@ impl Pane {
             Pane::Tests(t) => t.tab_title(),
             Pane::Flaky(f) => f.tab_title(),
             Pane::Outline(o) => o.tab_title(),
+            Pane::Files(f) => f.tab_title(),
             Pane::Browser(b) => b.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
             Pane::Grep(g) => g.tab_title(),
@@ -744,6 +749,7 @@ impl Pane {
             | Pane::Tests(_)
             | Pane::Flaky(_)
             | Pane::Outline(_)
+            | Pane::Files(_)
             | Pane::Browser(_)
             | Pane::Diagnostics(_)
             | Pane::Grep(_)
