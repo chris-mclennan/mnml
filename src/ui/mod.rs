@@ -5017,7 +5017,19 @@ fn paint_leaf_tab_strip_with_hidden(
     //
     // Keyed by the leaf's FIRST tab, not its active one — see
     // `App::leaf_tab_scroll`.
-    const ARROW_W: u16 = 2;
+    /// Per-arrow slot width. 3 cells = ` glyph ` — one blank cell on
+    /// each side, matching the ` + ` chip beside it.
+    ///
+    /// Was 2 with the glyph rendered as `"{glyph} "` (trailing pad
+    /// only), so the pair sat flush against the left edge of its own
+    /// background block while the neighbouring `+` had air on both
+    /// sides. User report 2026-08-29: "see how plus has 1 empty cell on
+    /// left and right of it, the arrows should be same way."
+    ///
+    /// The click rects derive from this constant, so they widen with
+    /// the paint — the padding is part of the target, which is what you
+    /// want for a 1-cell glyph.
+    const ARROW_W: u16 = 3;
     /// Width of the ` + ` chip painted after the last tab.
     const PLUS_RESERVE: u16 = 3;
     let leaf_key = tabs.first().copied().unwrap_or(active);
@@ -5192,7 +5204,7 @@ fn paint_leaf_tab_strip_with_hidden(
                 height: 1,
             };
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(format!("{glyph} "), style))),
+                Paragraph::new(Line::from(Span::styled(format!(" {glyph} "), style))),
                 rect,
             );
             if enabled {
@@ -5918,6 +5930,87 @@ fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
             // pane width.
             let line: String = "─".repeat(rect.width as usize);
             frame.render_widget(Paragraph::new(Span::styled(line, line_style)), rect);
+        }
+    }
+}
+
+#[cfg(test)]
+mod leaf_tab_arrow_padding_tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// User report 2026-08-29: "see how plus has 1 empty cell on left and
+    /// right of it, the arrows should be same way." The `+` chip renders
+    /// ` + ` (3 cells) but each overflow chevron rendered `"{glyph} "` —
+    /// trailing pad only — so the pair sat flush against the left edge of
+    /// its background block while its neighbour had air on both sides.
+    ///
+    /// Asserted on the rendered BUFFER rather than on `ARROW_W`, so the
+    /// test measures what the user sees instead of restating the
+    /// constant.
+    #[test]
+    fn overflow_chevrons_are_padded_like_the_plus_chip() {
+        let d = tempfile::tempdir().unwrap();
+        for i in 0..6 {
+            std::fs::write(d.path().join(format!("file{i}.rs")), "fn main() {}").unwrap();
+        }
+        let mut cfg = crate::config::Config::default();
+        cfg.ui.ascii_icons = true; // `<` / `>` so we can find them by char
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        for i in 0..6 {
+            app.open_path(&d.path().join(format!("file{i}.rs")));
+        }
+        let tabs: Vec<crate::layout::PaneId> = (0..app.panes.len()).collect();
+        let active = tabs[0];
+
+        // A strip narrow enough that 6 tabs cannot fit, forcing overflow.
+        let mut term = Terminal::new(TestBackend::new(40, 3)).unwrap();
+        term.draw(|f| {
+            let strip = Rect {
+                x: 0,
+                y: 0,
+                width: 40,
+                height: 1,
+            };
+            paint_leaf_tab_strip_with_hidden(f, &mut app, active, &tabs, 0, strip, true);
+        })
+        .unwrap();
+
+        let buf = term.backend().buffer();
+        let row: String = (0..40).map(|x| buf[(x, 0)].symbol()).collect::<String>();
+
+        // Assert on the arrow's OWN SLOT, not on "is there a space
+        // somewhere to the left" — the first cut of this test did the
+        // latter and passed against the old single-sided padding,
+        // because the neighbouring element happened to end in a blank.
+        // The slot is also the click rect, so this measures the thing
+        // the user both sees and clicks.
+        let arrows = app.rects.leaf_tab_arrows.clone();
+        assert!(
+            !arrows.is_empty(),
+            "no chevron rects registered — the strip did not overflow, so \
+             this test is not exercising the padding at all. row: {row:?}"
+        );
+        for (rect, _leaf, is_left) in arrows {
+            let side = if is_left { "left" } else { "right" };
+            assert_eq!(
+                rect.width, 3,
+                "{side} chevron slot is {} cells — ` glyph ` needs 3",
+                rect.width
+            );
+            let first = buf[(rect.x, rect.y)].symbol().to_string();
+            let last = buf[(rect.x + rect.width - 1, rect.y)].symbol().to_string();
+            assert_eq!(
+                first, " ",
+                "{side} chevron has no blank cell on its LEFT (slot starts \
+                 with {first:?}) — row: {row:?}"
+            );
+            assert_eq!(
+                last, " ",
+                "{side} chevron has no blank cell on its RIGHT (slot ends \
+                 with {last:?}) — row: {row:?}"
+            );
         }
     }
 }
