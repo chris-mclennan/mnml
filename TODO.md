@@ -137,6 +137,44 @@ that reflows the strip):
 - **File operations register no `pending_undo`** even though the app has
   the mechanism — a delete from the pane is unrecoverable.
 
+### 7. Archives — view inside, extract out
+
+**User ask 2026-08-30:** "thinking about being able to view and extract
+compressed files."
+
+The Files pane makes this natural: an archive is a directory you cannot
+`read_dir`. Every file manager worth using treats it as one.
+
+Shape, in the order it is worth building:
+
+- **Descend into an archive like a directory.** `Enter` on `foo.zip`
+  lists its entries in the same pane, breadcrumb showing
+  `… / foo.zip / subdir`. `..` climbs back out to the real filesystem.
+  This falls out of `FileBrowserPane` if `cwd` becomes an enum of
+  "real directory" vs "path inside an archive" — the listing, sort,
+  filter, marks and preview all work unchanged.
+- **Extract.** `x` / context menu, and it is a `TransferKind` — the
+  worker already reports progress, speed and cancellation, and an
+  archive is exactly the case where a user needs all three. Extract
+  here / extract to… / extract selected entries.
+- **View one entry without extracting.** `p` on an entry streams it to
+  a scratch buffer or a preview pane. Read-only, and it should SAY so —
+  a buffer you can edit but not save back is a trap.
+- **Create.** Mark files, "Compress to…". Lower value than the other
+  three; a shell one-liner already does it.
+
+Formats: `zip` and `tar` (+ gz/bz2/xz) cover almost everything.
+`7z`/`rar` need external binaries — surface them only when the binary
+is present, rather than offering a row that fails.
+
+Deliberately NOT: writing INTO an archive (drag a file onto a `.zip` to
+add it). It is the gesture most likely to corrupt an archive, and the
+value is low next to extract.
+
+Prior art to check before designing: mnml already reads `.tar.gz`
+somewhere for the workspace fixture (`demo/workspace-git.tar.gz`), and
+the sixel/image path shows how a non-text pane hangs off `Pane`.
+
 ### Deferred until the tracker exists
 - **Cross-pane drag and drop.** Today drag-drop is tree-internal;
   hit-testing a drop across arbitrary panes plus the mis-drop undo story
