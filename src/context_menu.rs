@@ -27,6 +27,10 @@ pub enum MenuAction {
     /// folder, or a right-clicked file's parent folder) — VS Code's
     /// "Open in Integrated Terminal".
     OpenTerminal(PathBuf),
+    /// #files — open this directory as a `Pane::Files`. Path-carrying so
+    /// the browser lands where the user right-clicked, rather than at the
+    /// workspace root and making them navigate back down.
+    OpenFilesPane(PathBuf),
     /// Copy `text` (a workspace-relative path) to the clipboard.
     CopyPath(String),
     /// Promote the right-clicked folder to the primary workspace.

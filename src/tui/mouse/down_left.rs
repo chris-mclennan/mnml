@@ -41,6 +41,16 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
         MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
         MenuItem::new("New shell", MenuAction::Command("term.shell")),
         MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
+        // #files (user ask: "i was thinking it might go on the + icon's
+        // choices") — the `+` menu is where every other "new pane of kind
+        // X" lives, so a file browser belongs beside them. The dual form
+        // gets its own row because the commander layout is the reason the
+        // pane exists, and building it by hand means open, split, open.
+        MenuItem::new("New file browser", MenuAction::Command("files.open")),
+        MenuItem::new(
+            "Dual file panes (commander)",
+            MenuAction::Command("files.open_split"),
+        ),
         MenuItem::new(
             "New Claude Code session",
             MenuAction::Command("ai.claude_code_new"),

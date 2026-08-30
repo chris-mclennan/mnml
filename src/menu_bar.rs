@@ -351,6 +351,12 @@ fn view_menu() -> MenuDef {
     MenuDef {
         label: "View".to_string(),
         items: vec![
+            MenuItem::action_with_icon("\u{F0770}", "File browser pane", "files.open"),
+            MenuItem::action_with_icon(
+                "\u{F0770}",
+                "Dual file panes (commander)",
+                "files.open_split",
+            ),
             // #1226 (2026-08-28) — was `view.discovery`, which only
             // toggles the F1 click-discovery overlay. The most
             // discoverable route to the palette for a mouse user

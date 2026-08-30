@@ -803,3 +803,131 @@ mod target_path_tests {
         assert_eq!(after, before + 1, "the pane did not re-read its directory");
     }
 }
+
+#[cfg(test)]
+mod open_split_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// `files.open_split` is the commander shape. Never tested when it
+    /// shipped — verify it really produces TWO Files panes side by side
+    /// rather than two tabs of one leaf.
+    #[test]
+    fn open_split_yields_two_files_panes_in_a_split() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.txt"), "a").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+
+        crate::command::run("files.open_split", &mut app);
+
+        let files: Vec<usize> = app
+            .layout()
+            .all_panes()
+            .into_iter()
+            .filter(|&i| matches!(app.panes.get(i), Some(crate::pane::Pane::Files(_))))
+            .collect();
+        assert_eq!(
+            files.len(),
+            2,
+            "expected two Files panes in the layout, got {}",
+            files.len()
+        );
+        // And they must be in a SPLIT, not tabs of one leaf — otherwise
+        // only one is visible and the whole point is lost.
+        let is_split = matches!(app.layout(), crate::layout::Layout::Split { .. });
+        assert!(
+            is_split,
+            "the two panes are not in a split — layout is {:?}",
+            std::mem::discriminant(app.layout())
+        );
+    }
+}
+
+#[cfg(test)]
+mod entry_point_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// #files — every advertised route must actually resolve to a
+    /// registered command. mnml has shipped menu rows pointing at
+    /// non-existent command ids twice (#1226 View/Go menus, and the
+    /// palette-bar `+` chip), and both times the label promised something
+    /// the wiring could not deliver.
+    #[test]
+    fn every_files_entry_point_names_a_registered_command() {
+        for id in ["files.open", "files.open_split"] {
+            assert!(
+                crate::command::registry().all().iter().any(|c| c.id == id),
+                "`{id}` is advertised in a menu but is not registered"
+            );
+        }
+    }
+
+    /// The View menu rows specifically — a menu label is a promise.
+    #[test]
+    fn the_view_menu_offers_both_file_pane_rows() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let menus = crate::menu_bar::bar(&app);
+        let view = menus
+            .iter()
+            .find(|m| m.label == "View")
+            .expect("no View menu");
+        let ids: Vec<&str> = view
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                crate::menu_bar::MenuItem::Action { command_id, .. } => Some(command_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            ids.contains(&"files.open"),
+            "View menu has no file-browser row: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"files.open_split"),
+            "View menu has no dual-pane row: {ids:?}"
+        );
+    }
+
+    /// A folder's right-click must offer to open it AS a browser, at that
+    /// folder — not at the workspace root, which would make the user
+    /// navigate back down to where they already were.
+    #[test]
+    fn a_folder_right_click_opens_the_browser_at_that_folder() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("deep")).unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let dir = d.path().join("deep");
+        app.open_tree_context_menu(dir.clone(), true, (2, 2));
+        let menu = app.context_menu.take().expect("no menu");
+        let action = menu
+            .items
+            .iter()
+            .find(|i| i.label.contains("file browser"))
+            .map(|i| i.action.clone())
+            .expect("no 'Open in file browser' row on a folder");
+        // The action must CARRY the right-clicked directory. Asserted on
+        // the payload rather than by firing it, because opening at the
+        // workspace root instead would still produce a Files pane — the
+        // failure this guards against is a pane at the WRONG place.
+        match action {
+            crate::context_menu::MenuAction::OpenFilesPane(p) => assert_eq!(
+                p.canonicalize().unwrap(),
+                dir.canonicalize().unwrap(),
+                "the row carries the wrong directory"
+            ),
+            other => panic!("wrong action on the row: {other:?}"),
+        }
+    }
+}

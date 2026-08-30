@@ -258,6 +258,10 @@ impl App {
         let items = if is_dir {
             let mut items = vec![
                 MenuItem::new("Set as workspace", MenuAction::SetAsWorkspace(path.clone())),
+                MenuItem::new(
+                    "Open in file browser",
+                    MenuAction::OpenFilesPane(path.clone()),
+                ),
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent.clone())),
                 MenuItem::new(
@@ -2718,6 +2722,7 @@ impl App {
             OpenBookmarks(env) => {
                 self.open_bookmarks_picker(env.as_deref());
             }
+            OpenFilesPane(dir) => self.open_files_pane(Some(dir)),
             CopyText(text) => {
                 self.clipboard.set(text.clone(), false);
                 self.toast("copied URL");
