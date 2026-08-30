@@ -80,6 +80,13 @@ solid.
 **User ask 2026-08-30:** "we might need somewhere to show transfer info
 like progress and speed."
 
+**Core landed 2026-08-30 (`src/transfer.rs`, commit fa05e031)** — the
+model, the sizing walk, the worker and the formatters, with 14 tests. NOT
+yet wired into `App`: the file operations still run synchronously on the
+render thread. Remaining: `App::transfers`, the mpsc drain in the tick,
+routing `file.paste` / delete through `transfer::spawn`, the statusline
+chip, the Transfers view, and the Files-pane footer.
+
 This is also the GATE on everything bulk. The fs operations are currently
 SYNCHRONOUS on the render thread: `copy_recursively` on a 4 GB directory
 freezes mnml and reports via a toast when it eventually finishes. That is
@@ -112,11 +119,64 @@ that reflows the strip):
 - **Files pane footer**: the superfile shape — selection count + size on
   the left, active transfer on the right — when a Files pane is focused.
 
+### Known, not yet fixed — from the mouse-tester round
+- **The `+ dock` chip's hit-rect sits on top of a pane's last row.**
+  Clicking a file at the bottom-right of a Files pane creates a sticky
+  note instead. Not Files-specific — the chip is checked at
+  `src/tui/mouse/down_left.rs:2718`, long before any pane-body rect, so
+  it shadows the last row of whatever pane is beneath it. The fix is
+  placement (don't paint a floating affordance over pane content), not
+  ordering, which is why it was left rather than patched at the Files
+  branch.
+- **Dates render UTC, not local**, in the Files pane's modified column —
+  `TZ_OFFSET_HOURS` defaults to 0. Consistent with the git graph, wrong
+  for a file manager.
+- **Names truncate without an ellipsis**, so a clipped name reads as a
+  real filename.
+- **The Files pane registers no click rects for F1 Click Discovery.**
+- **File operations register no `pending_undo`** even though the app has
+  the mechanism — a delete from the pane is unrecoverable.
+
 ### Deferred until the tracker exists
 - **Cross-pane drag and drop.** Today drag-drop is tree-internal;
   hit-testing a drop across arbitrary panes plus the mis-drop undo story
   is the expensive part, and it is the gesture most likely to move a lot
   of data by accident.
+
+
+## Toasts and notifications
+
+**User ask 2026-08-30:** "make way of seeing latest toasts" and "do we
+need a notification system? do toast and notifications coexist".
+
+Neither has shipped. Today a toast is fire-and-forget: it paints, it
+times out, and it is gone with no record. `toast.dismiss_current` and
+`toast.dismiss_all` are the only commands. So an error that arrives while
+the user is looking at another part of the screen is simply lost, and
+there is no way to answer "what did that say?".
+
+**Recommendation: one store, two surfaces — not two systems.** A
+notification centre that is a separate concept from toasts means every
+call site has to choose, and call sites choose wrong. Instead every
+`app.toast(...)` already-existing call appends to a bounded ring
+(`App::toast_log`, ~200 entries, with level + timestamp + optional
+source), and the toast is just the transient VIEW of the newest entry.
+Nothing at the call sites changes.
+
+- **History view** — the second surface over the same ring. Reachable
+  from the palette (`toast.history`) and by clicking the toast itself.
+  Level-filtered, newest first, timestamps relative ("2m ago").
+- **Unread count** — a statusline chip showing errors/warnings since the
+  history was last opened, following the Sonos chip rule: constant
+  width, hidden entirely at zero, colour carries level.
+- **Persistence** is the real dividing line, and it is what "do we need a
+  notification system" is really asking. Session-only is right for v1:
+  a toast log that survives restart raises questions (dedup across runs,
+  ageing, per-workspace vs global) that nothing currently needs.
+
+Deliberately NOT in v1: OS-level notifications. `mnml-bridge` already
+ships `notify` (OSC 9 / OSC 777) for integrations that want to reach the
+user outside the terminal, so there is no gap to fill.
 
 
 ## HTTP
