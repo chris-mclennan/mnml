@@ -3497,6 +3497,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         app.active = Some(pane_id);
         app.focus_pane();
+        // The pinned `..` row is not an entry index — it means "go up".
+        if idx == crate::ui::file_browser_view::PARENT_ROW {
+            if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) {
+                f.go_parent();
+            }
+            return;
+        }
         let was_selected = matches!(
             app.panes.get(pane_id),
             Some(crate::pane::Pane::Files(f)) if f.selected == idx

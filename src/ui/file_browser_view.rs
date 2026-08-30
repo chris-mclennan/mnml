@@ -20,6 +20,9 @@ use crate::ui::theme;
 const W_FOR_MODIFIED: u16 = 46;
 const W_FOR_SIZE: u16 = 30;
 const SIZE_COL: usize = 8;
+/// Entry index used for the pinned `..` row's click rect. Not a real
+/// index into `entries` — the click handler maps it to `go_parent`.
+pub const PARENT_ROW: usize = usize::MAX;
 const MOD_COL: usize = 12;
 
 /// Human-readable size in the same idiom as `ls -h`.
@@ -134,6 +137,68 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
             body,
         );
         return;
+    }
+
+    // ── `..` parent row ──
+    //
+    // User, having navigated into assets/: "how do i go up a level i wnt
+    // into this folder and coudlnt get back up to mnml folder".
+    //
+    // Backspace / Left / h already worked — verified by probe — so this is
+    // purely a DISCOVERABILITY failure: I shipped a file browser with no
+    // visible way up. Every file manager has this row (ranger, mc,
+    // superfile), and a keybinding nobody can see is not an affordance.
+    //
+    // Rendered by the VIEW and PINNED above the listing rather than
+    // injected into `entries`, for two reasons: a synthetic entry in the
+    // model would be a target for file operations ("delete .."), and
+    // pinning means the way out never scrolls off the top of a long
+    // directory. The cursor therefore only ever sits on real entries.
+    let has_parent = f.cwd.parent().is_some();
+    let (parent_row, body) = if has_parent && body.height > 1 {
+        (
+            Some(Rect {
+                x: body.x,
+                y: body.y,
+                width: body.width,
+                height: 1,
+            }),
+            Rect {
+                x: body.x,
+                y: body.y + 1,
+                width: body.width,
+                height: body.height - 1,
+            },
+        )
+    } else {
+        (None, body)
+    };
+    if let Some(r) = parent_row {
+        let (icon, _) = crate::ui::icons::for_path(&f.cwd, true, false, nerd);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(
+                    format!("{icon} "),
+                    Style::default().fg(t.blue).bg(t.bg_dark),
+                ),
+                Span::styled(
+                    "..",
+                    Style::default()
+                        .fg(t.blue)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                // Name the keys inline. The row itself is the affordance;
+                // the hint teaches the keyboard route from it.
+                Span::styled(
+                    "   (⌫ / ← / h)",
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ),
+            ])),
+            r,
+        );
+        app.rects.file_pane_rows.push((r, pane_id, PARENT_ROW));
     }
 
     // ── scroll ──
@@ -357,6 +422,108 @@ mod render_tests {
         assert!(
             app.rects.file_pane_rows.iter().any(|(_, p, _)| *p == pid),
             "no click rects registered for the Files pane"
+        );
+    }
+
+    /// #1229 f/u — the way out must be VISIBLE.
+    ///
+    /// User: "how do i go up a level i wnt into this folder and coudlnt
+    /// get back up to mnml folder". Backspace / Left / h all worked
+    /// (verified by probe), so this was purely discoverability: a file
+    /// browser with no `..` row.
+    #[test]
+    fn a_parent_row_is_rendered_and_clickable() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::fs::create_dir(d.path().join("assets")).unwrap();
+        std::fs::write(d.path().join("assets").join("demo.gif"), "x").unwrap();
+
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(Some(d.path().join("assets")));
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 8,
+        };
+        term.draw(|f| draw(f, &mut app, pid, area)).unwrap();
+        let screen: String = {
+            let buf = term.backend().buffer();
+            (0..8)
+                .map(|y| (0..60).map(|x| buf[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        assert!(
+            screen.contains(".."),
+            "no `..` row — the only way up is an invisible keybinding:\n{screen}"
+        );
+        // And it must be a click target, not just paint.
+        assert!(
+            app.rects
+                .file_pane_rows
+                .iter()
+                .any(|(_, p, idx)| *p == pid && *idx == PARENT_ROW),
+            "the `..` row registered no click rect"
+        );
+        // The real entry rows must still be registered and NOT collide
+        // with the sentinel.
+        assert!(
+            app.rects
+                .file_pane_rows
+                .iter()
+                .any(|(_, p, idx)| *p == pid && *idx == 0),
+            "entry rows lost their rects when the parent row was added"
+        );
+    }
+
+    /// The root of the filesystem has no parent, so no row — otherwise it
+    /// is a dead click.
+    #[test]
+    fn the_filesystem_root_shows_no_parent_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.open_files_pane(Some(std::path::PathBuf::from("/")));
+        let pid = app.active.unwrap();
+        let mut term = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 60,
+                    height: 8,
+                },
+            )
+        })
+        .unwrap();
+        assert!(
+            !app.rects
+                .file_pane_rows
+                .iter()
+                .any(|(_, p, idx)| *p == pid && *idx == PARENT_ROW),
+            "`/` has no parent, so a `..` row there would be a dead click"
         );
     }
 
