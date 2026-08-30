@@ -92,6 +92,17 @@ pub struct FileBrowserPane {
     /// pane for the duration of the call, which is the mechanism working
     /// as documented rather than around it.
     pub preview_pane: Option<crate::layout::PaneId>,
+    /// Type-to-narrow filter over the listing.
+    ///
+    /// #files — mnml's house idiom: the tree, Outline, Agents, Cloud
+    /// Agents and the HTTP panel all bind `/` to a filter, and
+    /// `filter_placeholder` is a shared design-system module. The Files
+    /// pane was the only list without one, which the vim tester flagged:
+    /// in a 60-entry directory with no filter, no count prefix and no
+    /// `G`, holding `j` is the only tool.
+    pub filter: String,
+    /// Is the filter row taking keystrokes?
+    pub filter_focused: bool,
     /// Last read error, surfaced in the pane rather than as a toast — a
     /// permission-denied directory should say so where you are looking.
     pub error: Option<String>,
@@ -109,6 +120,8 @@ impl FileBrowserPane {
             center_on_next_draw: false,
             marked: std::collections::HashSet::new(),
             preview_pane: None,
+            filter: String::new(),
+            filter_focused: false,
             error: None,
         };
         p.reload();
@@ -135,6 +148,13 @@ impl FileBrowserPane {
                 for ent in rd.flatten() {
                     let name = ent.file_name().to_string_lossy().to_string();
                     if !self.show_hidden && name.starts_with('.') {
+                        continue;
+                    }
+                    // Case-insensitive substring, matching every other
+                    // filter in the app.
+                    if !self.filter.is_empty()
+                        && !name.to_lowercase().contains(&self.filter.to_lowercase())
+                    {
                         continue;
                     }
                     // `symlink_metadata` so a dangling symlink still
@@ -220,6 +240,19 @@ impl FileBrowserPane {
             self.selected = i;
         }
         self.clamp();
+    }
+
+    /// Set the filter and re-read. Kept as one method so the listing can
+    /// never disagree with the filter that produced it.
+    pub fn set_filter(&mut self, f: String) {
+        self.filter = f;
+        self.reload();
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.filter_focused = false;
+        self.reload();
     }
 
     pub fn toggle_hidden(&mut self) {
@@ -586,6 +619,54 @@ mod tests {
 
     /// #files item 2 — marks are stored by PATH, so a re-sort must not
     /// re-point them at different files.
+    /// Vim tester SEV-2 — the Files pane was the only list in mnml with
+    /// no `/` filter, despite it being the house idiom (tree, Outline,
+    /// Agents, Cloud Agents, HTTP panel all have one).
+    #[test]
+    fn the_filter_narrows_the_listing_case_insensitively() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        let all = p.entries.len();
+        p.set_filter("A_FILE".to_string());
+        let names: Vec<&str> = p.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a_file.txt"],
+            "filter did not narrow: {names:?}"
+        );
+        p.clear_filter();
+        assert_eq!(p.entries.len(), all, "clearing the filter did not restore");
+    }
+
+    /// The filter composes with the hidden toggle rather than overriding
+    /// it — a dotfile must stay hidden even when it matches.
+    #[test]
+    fn the_filter_does_not_reveal_hidden_files() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.set_filter("hidden".to_string());
+        assert!(
+            p.entries.is_empty(),
+            "the filter surfaced a hidden file: {:?}",
+            p.entries.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        p.toggle_hidden();
+        assert_eq!(p.entries.len(), 1, "with hidden shown it should match");
+    }
+
+    /// A filter that matches nothing must leave a usable pane, not panic
+    /// on a cursor pointing past the end.
+    #[test]
+    fn a_filter_matching_nothing_leaves_a_valid_cursor() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p.entries.len() - 1;
+        p.set_filter("no-such-file-anywhere".to_string());
+        assert!(p.entries.is_empty());
+        assert_eq!(p.selected, 0, "cursor left dangling past the end");
+        assert!(p.selected_entry().is_none());
+    }
+
     #[test]
     fn marks_survive_a_re_sort() {
         let d = fixture();

@@ -106,8 +106,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     // checker genuinely demands it — here it does not, because the
     // lookups all happen before `app.rects` is touched.
     let git_files = &app.git.snapshot().files;
-    let (cwd, sort_kind) = match app.panes.get(pane_id) {
-        Some(crate::pane::Pane::Files(f)) => (f.cwd.clone(), f.sort),
+    let (cwd, sort_kind, filter_q, filter_on) = match app.panes.get(pane_id) {
+        Some(crate::pane::Pane::Files(f)) => (
+            f.cwd.clone(),
+            f.sort,
+            f.filter.clone(),
+            f.filter_focused || !f.filter.is_empty(),
+        ),
         _ => return,
     };
     let chain = crate::places::breadcrumb(&cwd);
@@ -273,6 +278,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     };
     let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) else {
         return;
+    };
+
+    // ── filter row ──
+    //
+    // Only while filtering. A permanent row would cost a listing row to
+    // say "not filtering", the same reasoning as the marked footer.
+    let body = if filter_on && body.height > 2 {
+        let r = Rect {
+            x: body.x,
+            y: body.y,
+            width: body.width,
+            height: 1,
+        };
+        let glyph = crate::ui::search_glyph::for_ascii(!nerd);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!(" {glyph} "), Style::default().fg(t.cyan).bg(t.bg2)),
+                Span::styled(
+                    if filter_q.is_empty() {
+                        crate::ui::filter_placeholder::for_state(true).to_string()
+                    } else {
+                        filter_q.clone()
+                    },
+                    Style::default().fg(t.fg).bg(t.bg2),
+                ),
+            ]))
+            .style(Style::default().bg(t.bg2)),
+            r,
+        );
+        Rect {
+            x: body.x,
+            y: body.y + 1,
+            width: body.width,
+            height: body.height - 1,
+        }
+    } else {
+        body
     };
 
     // ── `..` parent row ──

@@ -811,6 +811,44 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         // vim users get the ranger vocabulary instead (`yy` copy, `dd`
         // cut, `pp` paste) below, which is what a modal file manager is
         // supposed to use.
+        // Filter mode takes keystrokes first — type-to-narrow beats every
+        // navigation binding while it is active, the same precedence the
+        // tree and Outline use.
+        if matches!(app.panes.get(i), Some(Pane::Files(f)) if f.filter_focused) {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                        f.clear_filter();
+                    }
+                }
+                KeyCode::Enter => {
+                    // Keep the filter, leave the row — narrowing then
+                    // navigating is the point.
+                    if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                        f.filter_focused = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                        let mut q = f.filter.clone();
+                        q.pop();
+                        f.set_filter(q);
+                    }
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                        let q = format!("{}{c}", f.filter);
+                        f.set_filter(q);
+                    }
+                }
+                _ => return,
+            }
+            return;
+        }
+
         let standard = app.config.editor.input_style == "standard";
         // A pending `y`/`d` must not survive an unrelated key, or a stray
         // press days later completes an operation the user has forgotten
@@ -965,6 +1003,12 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('G') => {
                 if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
                     f.select_last();
+                }
+            }
+            // `/` — type-to-narrow, mnml's house idiom.
+            KeyCode::Char('/') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.filter_focused = true;
                 }
             }
             // `b` — browse to a destination ("go to" is spoken for). Same
