@@ -3425,7 +3425,17 @@ mod git_tests {
 
     /// Build a real repo with a commit that gets orphaned by a hard
     /// reset — the actual situation reflog recovery exists for.
-    fn repo_with_a_lost_commit() -> (tempfile::TempDir, App, String) {
+    #[allow(clippy::type_complexity)]
+    fn repo_with_a_lost_commit() -> (
+        tempfile::TempDir,
+        App,
+        String,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        // See `two_repo_workspace` — App::new reads global env.
+        let lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let d = tempfile::tempdir().unwrap();
         let run = |args: &[&str]| {
             std::process::Command::new("git")
@@ -3466,14 +3476,14 @@ mod git_tests {
         // The accident.
         run(&["reset", "--hard", "-q", &base]);
         let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        (d, app, lost)
+        (d, app, lost, lk)
     }
 
     /// #1229 — before this, the reflog picker could only SHOW the lost
     /// commit and print `HEAD@{N}` for the user to paste into a terminal.
     #[test]
     fn recovering_a_reflog_entry_puts_it_on_a_branch() {
-        let (d, mut app, lost) = repo_with_a_lost_commit();
+        let (d, mut app, lost, _lk) = repo_with_a_lost_commit();
         let before = crate::git::branch::local_branches(d.path());
 
         app.recover_reflog_entry(&lost);
@@ -3511,7 +3521,7 @@ mod git_tests {
     /// `reset --hard`.
     #[test]
     fn recovery_leaves_head_and_the_working_tree_alone() {
-        let (d, mut app, lost) = repo_with_a_lost_commit();
+        let (d, mut app, lost, _lk) = repo_with_a_lost_commit();
         // Uncommitted work, exactly what checkout would endanger.
         fs::write(d.path().join("wip.txt"), "precious").unwrap();
         let head_before = String::from_utf8_lossy(
@@ -3548,7 +3558,7 @@ mod git_tests {
     /// Recovering the same commit twice must not fail on a name clash.
     #[test]
     fn recovering_twice_picks_a_free_branch_name() {
-        let (d, mut app, lost) = repo_with_a_lost_commit();
+        let (d, mut app, lost, _lk) = repo_with_a_lost_commit();
         app.recover_reflog_entry(&lost);
         app.recover_reflog_entry(&lost);
         let names = crate::git::branch::local_branches(d.path());
@@ -3565,7 +3575,16 @@ mod git_tests {
 
     /// #1229 — build two real repos and a GitGraph tab for each, the
     /// shape the multi-repo git view creates.
-    fn two_repo_workspace() -> (tempfile::TempDir, App) {
+    fn two_repo_workspace() -> (tempfile::TempDir, App, std::sync::MutexGuard<'static, ()>) {
+        // `App::new` resolves its data root from process-global env, and
+        // `discover` can WRITE the integration-glyph ledger. Without this
+        // lock a fixture can land inside another test's env window and
+        // write into that test's sandbox — which is how
+        // `discover_over_an_empty_dir_does_not_touch_the_ledger` was seen
+        // to flake. Any test that constructs an App owes this lock.
+        let lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let d = tempfile::tempdir().unwrap();
         for name in ["repo_a", "repo_b"] {
             let r = d.path().join(name);
@@ -3585,7 +3604,7 @@ mod git_tests {
             run(&["commit", "-qm", "init"]);
         }
         let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        (d, app)
+        (d, app, lk)
     }
 
     /// User ask: "when switching tabs on the toolbar it should change the
@@ -3593,7 +3612,7 @@ mod git_tests {
     /// moved `App::active`; the rail kept listing the previous repo.
     #[test]
     fn focusing_a_repo_tab_retargets_the_git_rail() {
-        let (d, mut app) = two_repo_workspace();
+        let (d, mut app, _lk) = two_repo_workspace();
         let a = d.path().join("repo_a");
         let b = d.path().join("repo_b");
         app.repos = vec![
@@ -3640,7 +3659,7 @@ mod git_tests {
     /// so a stray `true` means git subprocesses on every frame.
     #[test]
     fn the_rail_sync_is_idempotent() {
-        let (d, mut app) = two_repo_workspace();
+        let (d, mut app, _lk) = two_repo_workspace();
         let a = d.path().join("repo_a");
         app.repos = vec![crate::git::repos::RepoEntry {
             name: "repo_a".into(),
@@ -3662,7 +3681,7 @@ mod git_tests {
     /// resetting it.
     #[test]
     fn focusing_an_editor_does_not_disturb_the_rail() {
-        let (d, mut app) = two_repo_workspace();
+        let (d, mut app, _lk) = two_repo_workspace();
         let a = d.path().join("repo_a");
         app.repos = vec![crate::git::repos::RepoEntry {
             name: "repo_a".into(),
