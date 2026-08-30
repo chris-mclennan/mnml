@@ -112,6 +112,23 @@ impl Layout {
     /// Immutable counterpart to `leaf_containing_mut` — returns the
     /// leaf's tab list (the per-split tab group `pane` is part of)
     /// for read-only queries like "what tabs share this split?".
+    /// Which pane a leaf is currently SHOWING, given any pane in it.
+    ///
+    /// Distinct from `App::active`, which is the input target. The two
+    /// diverging is a real failure mode: a Files pane preview once left
+    /// the leaf showing the preview while the keyboard drove the hidden
+    /// listing behind it, so keystrokes acted on a selection nothing on
+    /// screen indicated.
+    pub fn leaf_active_for(&self, pane: PaneId) -> Option<PaneId> {
+        match self {
+            Layout::Empty => None,
+            Layout::Leaf { active, tabs } => tabs.contains(&pane).then_some(*active),
+            Layout::Split { first, second, .. } => first
+                .leaf_active_for(pane)
+                .or_else(|| second.leaf_active_for(pane)),
+        }
+    }
+
     pub fn leaf_containing(&self, pane: PaneId) -> Option<&[PaneId]> {
         match self {
             Layout::Leaf { tabs, .. } if tabs.contains(&pane) => Some(tabs.as_slice()),

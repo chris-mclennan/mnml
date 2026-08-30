@@ -162,11 +162,19 @@ impl FileBrowserPane {
                 }
             }
             Err(e) => {
-                self.error = Some(format!("{}: {e}", self.cwd.display()));
+                // REASON first. This led with the absolute path, which
+                // the breadcrumb one row above already shows — so the row
+                // clipped at the pane edge before ever reaching "Permission
+                // denied", and conveyed nothing. Reported by the vim
+                // tester.
+                self.error = Some(format!("{e}"));
             }
         }
         self.entries = out;
         self.apply_sort();
+        // An operation that consumed the marks (cut+paste) leaves them
+        // pointing at paths that have moved.
+        self.marked.retain(|p| p.exists());
         // Restore the cursor by name; fall back to clamping.
         if let Some(name) = keep
             && let Some(i) = self.entries.iter().position(|e| e.name == name)
@@ -324,13 +332,42 @@ impl FileBrowserPane {
     /// `(count, total_bytes)` for the marked set — the footer summary.
     /// Directories contribute no bytes, matching the listing.
     pub fn marked_summary(&self) -> (usize, u64) {
+        // Bytes come from the WHOLE mark set, not just the visible
+        // listing.
+        //
+        // The count already did, so after marking three files and
+        // navigating elsewhere the footer read "3 selected  0 B" — which
+        // says the selection is empty, the opposite of the truth, in
+        // exactly the state where the next paste moves files you cannot
+        // see. Reported by the vim tester; the original test only covered
+        // the single-directory case, where both halves agree.
+        //
+        // Sizes for marks outside the listing come from a stat, which is
+        // one syscall per off-screen mark and only while a footer is
+        // being drawn.
         let bytes = self
-            .entries
+            .marked
             .iter()
-            .filter(|e| self.marked.contains(&e.path))
-            .filter_map(|e| e.size)
+            .filter_map(|p| match self.entries.iter().find(|e| &e.path == p) {
+                Some(e) => e.size,
+                None => std::fs::metadata(p)
+                    .ok()
+                    .filter(|m| m.is_file())
+                    .map(|m| m.len()),
+            })
             .sum();
         (self.marked.len(), bytes)
+    }
+
+    /// Drop marks whose paths no longer exist.
+    ///
+    /// After a cut+paste the marked paths are gone, but the set still
+    /// held them: the footer kept claiming "3 selected", a second cut
+    /// reported "cut 3 items" for files that had moved, and the paste
+    /// then failed with "already exists" for a source that was not
+    /// there. Reported by the vim tester.
+    pub fn prune_missing_marks(&mut self) {
+        self.marked.retain(|p| p.exists());
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
@@ -682,6 +719,59 @@ mod tests {
         assert_eq!(p.marked.len(), 1, "marks were dropped by navigation");
         // And they still surface as action targets from the new directory.
         assert_eq!(p.action_paths().len(), 1);
+    }
+
+    /// Vim tester SEV-3 — the count was global but the byte total was
+    /// local, so after navigating away the footer read "3 selected  0 B":
+    /// "the selection is empty", the opposite of the truth, in exactly
+    /// the state where the next paste moves files you cannot see.
+    #[test]
+    fn marked_bytes_include_marks_outside_the_current_listing() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "a_file.txt")
+            .unwrap();
+        p.toggle_mark(); // 4 bytes
+        let (n_here, bytes_here) = p.marked_summary();
+        assert_eq!((n_here, bytes_here), (1, 4), "setup");
+
+        p.navigate_to(&d.path().join("zeta_dir"));
+        let (n, bytes) = p.marked_summary();
+        assert_eq!(n, 1, "count should survive navigation");
+        assert_eq!(
+            bytes, 4,
+            "byte total collapsed to 0 after navigating — the footer would \
+             claim the selection is empty"
+        );
+    }
+
+    /// Vim tester SEV-3 — after a cut+paste the marks pointed at paths
+    /// that had moved, so the footer kept claiming a selection, a second
+    /// cut reported "cut 3 items" for files that were gone, and the paste
+    /// failed with "already exists" for a source that did not exist.
+    #[test]
+    fn reload_drops_marks_whose_files_have_gone() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "a_file.txt")
+            .unwrap();
+        p.toggle_mark();
+        assert_eq!(p.marked.len(), 1);
+
+        std::fs::remove_file(d.path().join("a_file.txt")).unwrap();
+        p.reload();
+
+        assert!(
+            p.marked.is_empty(),
+            "a mark survived the file being removed: {:?}",
+            p.marked
+        );
     }
 
     #[test]

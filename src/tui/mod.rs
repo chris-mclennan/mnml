@@ -3431,6 +3431,147 @@ mod files_pane_modifier_tests {
 }
 
 #[cfg(test)]
+mod files_pane_vim_safety {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::tui::handlers::pane::handle_pane_key;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn pane(style: &str) -> (tempfile::TempDir, App, usize) {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["one.txt", "two.txt"] {
+            std::fs::write(d.path().join(n), n).unwrap();
+        }
+        let mut cfg = Config::default();
+        cfg.editor.input_style = style.to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+        (d, app, pid)
+    }
+
+    fn entries(d: &std::path::Path) -> usize {
+        std::fs::read_dir(d).map(|r| r.count()).unwrap_or(0)
+    }
+
+    /// SEV-1 from the vim tester: `Ctrl+D` is vim's half-page-down, and it
+    /// was bound to `file.duplicate` — an immediate, unconfirmed,
+    /// un-undoable write. They pressed it and duplicated a file the screen
+    /// gave no indication was selected.
+    #[test]
+    fn ctrl_d_does_not_write_to_disk_in_vim_style() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app, _pid) = pane("vim");
+        let before = entries(d.path());
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            entries(d.path()),
+            before,
+            "Ctrl+D duplicated a file in vim style — that is half-page-down"
+        );
+    }
+
+    /// `Ctrl+V` is visual-block. It was bound to paste, and the tester
+    /// moved three off-screen files with it.
+    #[test]
+    fn ctrl_v_does_not_move_files_in_vim_style() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app, pid) = pane("vim");
+        // Arm the clipboard the way the tester did, then fire Ctrl+V.
+        let paths: Vec<std::path::PathBuf> = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.entries.iter().map(|e| e.path.clone()).collect(),
+            _ => panic!(),
+        };
+        app.file_stage_clipboard_many(paths, true);
+        let before = entries(d.path());
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            entries(d.path()),
+            before,
+            "Ctrl+V moved files in vim style — that is visual-block"
+        );
+    }
+
+    /// Standard style KEEPS the VS Code chords — the fix must not remove
+    /// the feature for the users it was built for.
+    #[test]
+    fn standard_style_still_has_the_ctrl_clipboard() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, _pid) = pane("standard");
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            !app.file_clipboard.is_empty(),
+            "Ctrl+C stopped staging the clipboard in standard style"
+        );
+    }
+
+    /// Vim users get the ranger vocabulary instead, and it is TWO-KEY so a
+    /// single stray press cannot move anything.
+    #[test]
+    fn vim_style_yy_copies_but_a_single_y_does_not() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, _pid) = pane("vim");
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert!(
+            app.file_clipboard.is_empty(),
+            "one `y` staged the clipboard — a stray press must do nothing"
+        );
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert!(!app.file_clipboard.is_empty(), "`yy` did not copy");
+    }
+
+    /// A pending `y` must not survive an unrelated key, or a stray press
+    /// later completes an operation the user forgot starting.
+    #[test]
+    fn a_pending_operation_is_cancelled_by_any_other_key() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, _pid) = pane("vim");
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+        );
+        assert!(app.files_pending_op.is_none(), "pending op survived `j`");
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert!(
+            app.file_clipboard.is_empty(),
+            "a `y` after an unrelated key completed the earlier `y`"
+        );
+    }
+}
+
+#[cfg(test)]
 mod files_pane_review_fixes {
     use super::dispatch_key;
     use crate::app::App;

@@ -798,11 +798,29 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
 
-        // #files — file-manager clipboard shortcuts, the same ones
-        // `handle_tree_key` exposes from tree focus. They live here too
-        // because `target_path()` now resolves to the focused Files pane,
-        // so the commands do the right thing from either place.
-        if ctrl && !alt {
+        // #files — file-manager clipboard shortcuts.
+        //
+        // STANDARD INPUT STYLE ONLY. In vim style these chords belong to
+        // the editor's own vocabulary: `Ctrl+V` is visual-block, `Ctrl+D`
+        // is half-page-down, `Ctrl+C` is "get me back to normal". Binding
+        // them to filesystem writes meant a vim user's reflex silently
+        // moved files — the tester pressed `Ctrl+V` expecting visual-block
+        // and moved three files out of the directory, none of them on
+        // screen, with no confirmation and no undo.
+        //
+        // vim users get the ranger vocabulary instead (`yy` copy, `dd`
+        // cut, `pp` paste) below, which is what a modal file manager is
+        // supposed to use.
+        let standard = app.config.editor.input_style == "standard";
+        // A pending `y`/`d` must not survive an unrelated key, or a stray
+        // press days later completes an operation the user has forgotten
+        // starting. Cleared here; the two arms below re-arm it.
+        let pending = app.files_pending_op.take();
+        app.files_pending_op = pending;
+        if !matches!(key.code, KeyCode::Char('y') | KeyCode::Char('d')) {
+            app.files_pending_op = None;
+        }
+        if ctrl && !alt && standard {
             let cmd = match key.code {
                 KeyCode::Char('x') => Some("file.cut"),
                 KeyCode::Char('c') => Some("file.copy"),
@@ -893,6 +911,40 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     f.mark_all();
                     let (n, _) = f.marked_summary();
                     app.toast(format!("{n} selected"));
+                }
+            }
+            // ranger vocabulary for vim style: `yy` copy, `dd` cut,
+            // `pp` paste. Two-key so a single stray press cannot move
+            // anything, which is the property `Ctrl+V` lacked.
+            KeyCode::Char('y') if !standard => {
+                if app.files_pending_op == Some('y') {
+                    app.files_pending_op = None;
+                    let paths = app.target_paths();
+                    app.file_stage_clipboard_many(paths, false);
+                } else {
+                    app.files_pending_op = Some('y');
+                    app.toast("y — press again to copy");
+                }
+            }
+            KeyCode::Char('d') if !standard => {
+                if app.files_pending_op == Some('d') {
+                    app.files_pending_op = None;
+                    let paths = app.target_paths();
+                    app.file_stage_clipboard_many(paths, true);
+                } else {
+                    app.files_pending_op = Some('d');
+                    app.toast("d — press again to cut");
+                }
+            }
+            KeyCode::Char('P') if !standard => {
+                app.files_pending_op = None;
+                let dir = match app.panes.get(i) {
+                    Some(Pane::Files(f)) => Some(f.cwd.clone()),
+                    _ => None,
+                };
+                crate::command::run("file.paste", app);
+                if let Some(d) = dir {
+                    app.refresh_files_panes_for(&d);
                 }
             }
             // `p` — preview without leaving the listing. NOT Space,

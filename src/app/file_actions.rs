@@ -773,27 +773,60 @@ impl App {
         }
         let path = e.path.clone();
         let prev = f.preview_pane;
-        // Point `active` at the previous preview so `open_path_preview`
-        // replaces it. Only when it is still a live preview editor — the
-        // user may have closed it, edited it (which promotes it out of
-        // preview), or replaced the layout since.
+
+        // The preview must land in a DIFFERENT LEAF from the browser.
+        //
+        // The first version let it open into the browser's own leaf and
+        // then restored `App::active` to the browser. That set input focus
+        // and the leaf's visible tab to DIFFERENT panes: the leaf showed
+        // the preview while every keystroke drove the now-invisible
+        // listing. A second `p` then replaced that preview in place and
+        // evicted the browser from the layout entirely — in the dual-pane
+        // layout it collapsed both halves into one editor. Found by the
+        // vim tester, who could still fire `Ctrl+D` and duplicate a file
+        // the screen gave no indication was selected.
+        //
+        // A preview that covers the listing is not a preview; netrw and
+        // oil.nvim both open into a split for the same reason.
+        let browser_leaf: Vec<crate::layout::PaneId> = self
+            .layout()
+            .leaf_containing(pane_idx)
+            .map(|t| t.to_vec())
+            .unwrap_or_default();
         let reusable = prev.filter(|&id| {
             self.layout().contains(id)
+                && !browser_leaf.contains(&id)
                 && matches!(self.panes.get(id), Some(crate::pane::Pane::Editor(b)) if b.is_preview)
         });
-        if let Some(id) = reusable {
-            self.active = Some(id);
+        match reusable {
+            // Previous preview still lives in its own leaf — replace it
+            // there.
+            Some(id) => self.active = Some(id),
+            None => {
+                // Give the preview a leaf of its own. Seeded with a
+                // preview-marked scratch so `open_path_preview` REPLACES
+                // it rather than leaving a `[scratch]` tab behind — the
+                // same trap that produced a stray scratch pane in
+                // `open_dual_files_panes`.
+                let mut b = crate::buffer::Buffer::scratch(&self.config);
+                b.is_preview = true;
+                let new_id = self.split_leaf_with(
+                    pane_idx,
+                    crate::layout::SplitDir::Horizontal,
+                    crate::pane::Pane::Editor(b),
+                );
+                self.active = Some(new_id);
+            }
         }
         self.open_path_preview(&path);
         let opened = self.active;
         if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_idx) {
             f.preview_pane = opened;
         }
-        // Hand focus BACK. `open_path_preview` focuses what it opened,
-        // which is right for a tree click and wrong here: it would move
-        // the cursor out of the listing after every preview, so the next
-        // `j` would scroll the previewed file instead of the browser.
-        self.active = Some(pane_idx);
+        // Hand focus back to the browser — and via `reveal_pane`, so the
+        // browser's LEAF shows it too. Setting `App::active` alone is what
+        // caused the invisible-cursor bug above.
+        self.reveal_pane(pane_idx);
         self.focus = crate::focus::Focus::Pane;
     }
 
@@ -1224,6 +1257,72 @@ mod preview_tests {
              scroll the previewed file instead"
         );
         assert_eq!(app.focus, Focus::Pane);
+    }
+
+    /// SEV-1 from the vim tester — the invariant they proposed, and it
+    /// is the right one: after a preview, the pane that owns the keyboard
+    /// must still be IN the layout, and must be the visible tab of its
+    /// leaf. Otherwise keystrokes drive an invisible pane, and `Ctrl+D`
+    /// duplicates a file nothing on screen says is selected.
+    #[test]
+    fn the_browser_stays_visible_and_in_the_layout_after_previews() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture("standard");
+        for _ in 0..3 {
+            app.files_pane_preview(pid);
+            if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+                f.move_selection(1);
+            }
+
+            let active = app.active.expect("no active pane");
+            assert!(
+                app.layout().contains(active),
+                "active pane {active} is not in the layout — keystrokes are \
+                 driving something invisible"
+            );
+            assert_eq!(active, pid, "focus left the browser");
+            // And the browser must be its leaf's VISIBLE tab, not just
+            // the input target.
+            let leaf_active = app.layout().leaf_active_for(pid);
+            assert_eq!(
+                leaf_active,
+                Some(pid),
+                "the browser owns the keyboard but its leaf is showing a \
+                 different pane"
+            );
+            assert!(
+                app.layout().contains(pid),
+                "the browser was evicted from the layout by a preview"
+            );
+        }
+    }
+
+    /// And the preview has to be somewhere you can actually see — its own
+    /// leaf, beside the listing.
+    #[test]
+    fn the_preview_lands_in_a_different_leaf_from_the_browser() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture("standard");
+        app.files_pane_preview(pid);
+        let preview = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.preview_pane.expect("no preview recorded"),
+            _ => panic!(),
+        };
+        let browser_leaf = app
+            .layout()
+            .leaf_containing(pid)
+            .map(|t| t.to_vec())
+            .unwrap_or_default();
+        assert!(
+            !browser_leaf.contains(&preview),
+            "the preview opened INTO the browser's leaf, so it covers the \
+             listing it is supposed to preview from"
+        );
+        assert!(app.layout().contains(preview), "preview not in the layout");
     }
 
     /// And it must actually open something.

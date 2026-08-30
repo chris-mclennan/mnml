@@ -5734,6 +5734,14 @@ pub struct App {
     /// `false` for Copy (paste = duplicate). Meaningless when
     /// `file_clipboard` is empty. 2026-07-07.
     pub file_clipboard_cut: bool,
+    /// #files — first key of a pending two-key file operation in a Files
+    /// pane (`y` for copy, `d` for cut), vim style only.
+    ///
+    /// Two-key because the single-key Ctrl equivalents were vim's own
+    /// `Ctrl+V` / `Ctrl+D`, so a reflex moved files with no confirmation.
+    /// A pending key is cleared by any other keystroke, so it cannot
+    /// linger into an unrelated action.
+    pub files_pending_op: Option<char>,
     /// The LSP hover popup, when open (set when a `textDocument/hover` reply
     /// arrives). The next key dismisses it (j/k/arrows scroll it first).
     pub hover: Option<crate::hover::HoverPopup>,
@@ -6806,6 +6814,7 @@ impl App {
             context_menu: None,
             file_clipboard: Vec::new(),
             file_clipboard_cut: false,
+            files_pending_op: None,
             hover: None,
             mouse_hover_at: None,
             mouse_hover_screen: None,
