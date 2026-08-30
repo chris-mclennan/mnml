@@ -1124,11 +1124,25 @@ mod multi_select_tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let (d, mut app, pid) = fixture();
+        // Mark the three FILES explicitly.
+        //
+        // The first version started at index 0 and toggled three times,
+        // which silently included `dest` — directories sort first — so it
+        // pasted `dest` INTO `dest`. That recursed until the stack ran out
+        // and CI aborted with `fatal runtime error: stack overflow`. The
+        // crash was a real product bug (now guarded in `copy_recursively`),
+        // but this test should be deliberate about what it marks rather
+        // than depending on sort order.
         if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
-            f.selected = 0;
-            f.toggle_mark();
-            f.toggle_mark();
-            f.toggle_mark();
+            for name in ["one.txt", "two.txt", "three.txt"] {
+                f.selected = f.entries.iter().position(|e| e.name == name).unwrap();
+                f.toggle_mark();
+            }
+            assert!(
+                f.marked.iter().all(|p| p.is_file()),
+                "a directory got marked: {:?}",
+                f.marked
+            );
         }
         crate::command::run("file.copy", &mut app);
         assert_eq!(app.file_clipboard.len(), 3, "setup: three staged");

@@ -155,6 +155,10 @@ pub enum PickerKind {
     /// #files item 3 — `id` = a destination directory. Accept ⇒ navigate
     /// the focused Files pane there.
     FilesDestinations,
+    /// #toast-history — `id` is the log index. Accept copies the message
+    /// to the clipboard; the value is READING it, so accept does the one
+    /// useful thing rather than nothing.
+    Messages,
     /// `id` = a branch name (or `"--all"` for the reset entry). Accept ⇒
     /// narrow the active `Pane::GitGraph`'s commit listing to commits
     /// reachable from that branch. Populated by `git.graph_filter_branch`.

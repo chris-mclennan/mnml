@@ -3498,6 +3498,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     //
     // Checked BEFORE the row list because the header sits above the rows
     // and a stale row rect must never win over a live header rect.
+    if let Some((r, pane_id)) = app.rects.file_pane_sort_label
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.active = Some(pane_id);
+        app.focus_pane();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) {
+            use crate::file_browser::Sort;
+            let next = match f.sort {
+                Sort::DirsFirstName => Sort::Size,
+                Sort::Size => Sort::Modified,
+                Sort::Modified => Sort::DirsFirstName,
+            };
+            f.set_sort(next);
+        }
+        return;
+    }
     if let Some((r, pane_id)) = app.rects.file_pane_places_chevron
         && crate::app::dispatch::contains(r, x, y)
     {

@@ -292,6 +292,13 @@ fn is_view_only_pane(pane: Option<&Pane>) -> bool {
             | Some(Pane::Quickfix(_))
             | Some(Pane::CmdlineHistory(_))
             | Some(Pane::Outline(_))
+            // #files — a Files pane is a pure listing, exactly like the
+            // panes around it in this list. Omitting it meant `:` never
+            // opened the cmdline and vim's Ctrl+W window-nav did nothing
+            // while a browser was focused: chord dispatch runs BEFORE
+            // `handle_pane_key`, so a key the Files branch does not name
+            // is simply dropped, not passed on.
+            | Some(Pane::Files(_))
             | Some(Pane::Tests(_))
             | Some(Pane::Flaky(_))
             | Some(Pane::Debug(_))
@@ -819,25 +826,18 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
 
         // Bare-character arms below must not fire on a modified key.
-        // Without this guard `Ctrl+S` (save) cycled the SORT, and
-        // `Ctrl+H` walked to the parent directory — the same
-        // modifier-blind matching as #1213.
-        if (ctrl || alt)
-            && matches!(
-                key.code,
-                KeyCode::Char('j')
-                    | KeyCode::Char('k')
-                    | KeyCode::Char('h')
-                    | KeyCode::Char('l')
-                    | KeyCode::Char('.')
-                    | KeyCode::Char('r')
-                    | KeyCode::Char('s')
-                    | KeyCode::Char('a')
-                    | KeyCode::Char(' ')
-                    | KeyCode::Char('g')
-                    | KeyCode::Char('p')
-            )
-        {
+        // Without this guard `Ctrl+S` (save) cycled the SORT and `Ctrl+H`
+        // walked to the parent — the same modifier-blind matching as
+        // #1213.
+        //
+        // A BLOCKLIST, not an allowlist. The first version listed the
+        // eleven bare chars used below, which was complete on the day but
+        // is a second list with nothing keeping it in sync: the next bare
+        // binding added to the match would silently reintroduce the bug.
+        // Anything needing a modified char (the clipboard ops) is handled
+        // above and has already returned, so every remaining modified char
+        // is inert by construction and new arms are covered automatically.
+        if (ctrl || alt) && matches!(key.code, KeyCode::Char(_)) {
             return;
         }
         match key.code {
@@ -899,10 +899,25 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // which marks (settled before either shipped, since retraining
             // a key later is worse than choosing once).
             KeyCode::Char('p') => app.files_pane_preview(i),
-            // `g` — go to a destination. The keyboard route to the same
-            // picker the breadcrumb's `▾` opens, so the feature is not
-            // mouse-only.
-            KeyCode::Char('g') => app.open_files_destinations_picker(),
+            // `g` / `G` — top and bottom, matching EVERY other listing
+            // pane in this file (Outline, Tests, IntegrationDetail,
+            // ClaudeUsage, Browser). `g` originally opened the
+            // destinations picker here, which would have made the file
+            // browser the one pane where a user's `g`-means-top reflex
+            // popped a modal instead.
+            KeyCode::Char('g') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.select_first();
+                }
+            }
+            KeyCode::Char('G') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.select_last();
+                }
+            }
+            // `b` — browse to a destination ("go to" is spoken for). Same
+            // picker the breadcrumb's `▾` opens, so it is not mouse-only.
+            KeyCode::Char('b') => app.open_files_destinations_picker(),
             // `.` — dotfiles, the ranger/superfile binding.
             KeyCode::Char('.') => {
                 if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
@@ -950,9 +965,19 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.focus = crate::focus::Focus::Tree;
                 }
             }
-            // Anything else falls through to the chord / cmdline layers —
-            // returning early here would trap a vim user (the same trap
-            // `handle_md_preview_key` had before its `_ => {}` was fixed).
+            // Unhandled keys end dispatch here.
+            //
+            // An earlier comment claimed these "fall through to the chord
+            // / cmdline layers", citing `handle_md_preview_key`. That was
+            // WRONG on both counts: chord dispatch runs BEFORE
+            // `handle_pane_key`, so there is nothing downstream to fall
+            // through to, and that precedent works only because it is a
+            // `-> bool` helper whose `false` lets the caller keep going.
+            // This branch has no such shape.
+            //
+            // What actually makes `:` and Ctrl+W work is `Pane::Files`
+            // being listed in `is_view_only_pane` above, which is checked
+            // before we ever get here.
             _ => return,
         }
         return;

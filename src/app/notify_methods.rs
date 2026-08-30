@@ -29,7 +29,13 @@ impl App {
                 self.toast_stack.pop_back();
             }
         }
-        self.message_log.push(s);
+        // Recorded even when `:silent` suppressed the visible toast —
+        // that is the point of a log.
+        self.message_log.push(crate::app::LoggedMessage {
+            text: s,
+            level,
+            at: crate::app::now_unix(),
+        });
         if self.message_log.len() > MESSAGE_LOG_MAX {
             let drop = self.message_log.len() - MESSAGE_LOG_MAX;
             self.message_log.drain(..drop);
@@ -52,7 +58,11 @@ impl App {
     ) {
         let id: String = id.into();
         let s: String = msg.into();
-        self.message_log.push(s.clone());
+        self.message_log.push(crate::app::LoggedMessage {
+            text: s.clone(),
+            level,
+            at: crate::app::now_unix(),
+        });
         if self.message_log.len() > MESSAGE_LOG_MAX {
             let drop = self.message_log.len() - MESSAGE_LOG_MAX;
             self.message_log.drain(..drop);

@@ -1901,16 +1901,12 @@ impl App {
             // mode).
             // `:messages` / `:mes` — show the most-recent N toasts
             // (vim canonical). Joined with `↵` for the toast preview.
-            "messages" | "mes" => {
-                if self.message_log.is_empty() {
-                    self.toast(":messages — none yet");
-                } else {
-                    let recent: Vec<String> =
-                        self.message_log.iter().rev().take(8).cloned().collect();
-                    let joined = recent.join("  ↵  ");
-                    self.toast(format!(":mes · {joined}"));
-                }
-            }
+            // #toast-history — was: join the last EIGHT messages with
+            // `↵` into a single toast. Unreadable, and it expired like any
+            // other toast, so the way to review a message you missed was
+            // itself a message you would miss. Now the same searchable
+            // picker the palette's `messages.show` opens.
+            "messages" | "mes" => self.open_messages_picker(),
             "ls" | "files" | "buffers" | "buf" => self.open_buffer_picker(),
             // fzf.vim-style aliases — wide adoption among vim users.
             "Files" => self.open_file_picker(),
@@ -2368,7 +2364,12 @@ impl App {
                     self.toast(":Messages! — empty log");
                     return;
                 }
-                let text = self.message_log.join("\n");
+                let text = self
+                    .message_log
+                    .iter()
+                    .map(|m| m.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 self.open_scratch_with_text("[messages]".into(), text);
             }
             "Sum" | "sum" => self.ex_sum(rest),
@@ -5507,7 +5508,7 @@ mod ex_commands_tests {
         app.run_ex_command("version");
         let user_msgs: Vec<_> = app.message_log[before..].to_vec();
         assert!(
-            user_msgs.iter().any(|m| m.starts_with("mnml ")),
+            user_msgs.iter().any(|m| m.text.starts_with("mnml ")),
             "user-typed 'version' should emit a `mnml <sha>` toast; log tail = {user_msgs:?}"
         );
 
@@ -5517,11 +5518,11 @@ mod ex_commands_tests {
         app.run_ex_command(":version");
         let manifest_msgs: Vec<_> = app.message_log[before..].to_vec();
         assert!(
-            manifest_msgs.iter().any(|m| m.starts_with("mnml ")),
+            manifest_msgs.iter().any(|m| m.text.starts_with("mnml ")),
             "manifest ':version' should emit a `mnml <sha>` toast; log tail = {manifest_msgs:?}"
         );
         assert!(
-            manifest_msgs.iter().all(|m| !m.contains("unknown")),
+            manifest_msgs.iter().all(|m| !m.text.contains("unknown")),
             "manifest ':version' should NOT toast 'unknown command'; log tail = {manifest_msgs:?}"
         );
     }
@@ -5567,7 +5568,7 @@ mod ex_commands_tests {
         app.run_ex_command("spawn");
         let msgs: Vec<_> = app.message_log[before..].to_vec();
         assert!(
-            msgs.iter().any(|m| m.contains("need a command")),
+            msgs.iter().any(|m| m.text.contains("need a command")),
             ":spawn with no args should toast a hint; log tail = {msgs:?}"
         );
     }

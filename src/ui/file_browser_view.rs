@@ -92,8 +92,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     // strongest argument for a browser INSIDE the editor rather than
     // beside one.
     //
-    // Read before the &mut borrow of `panes` below.
-    let git_files = app.git.snapshot().files.clone();
+    // BORROWED, not cloned. All three reviewers flagged the clone: it
+    // copied the entire repo-wide `HashMap<PathBuf, FileState>` — every
+    // key a fresh heap allocation — on EVERY draw, while only the handful
+    // of visible rows ever look into it. In a monorepo with thousands of
+    // dirty files that is an allocation storm per frame, doubled in the
+    // dual-pane commander layout.
+    //
+    // `tree_view` does the identical badge lookup by reference in a
+    // function with the same interleaved-borrow shape, which is what
+    // proved the clone was habit rather than necessity. The snapshot is
+    // cloned into a local `Rc`-free owned map only where the borrow
+    // checker genuinely demands it — here it does not, because the
+    // lookups all happen before `app.rects` is touched.
+    let git_files = &app.git.snapshot().files;
     let (cwd, sort_kind) = match app.panes.get(pane_id) {
         Some(crate::pane::Pane::Files(f)) => (f.cwd.clone(), f.sort),
         _ => return,
@@ -203,9 +215,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     if pad > 0 {
         spans.push(Span::styled(" ".repeat(pad), Style::default().bg(hdr_bg)));
     }
+    let sort_w = sort_text.chars().count() as u16;
+    let sort_x = area.x + (area.width.saturating_sub(sort_w));
     spans.push(Span::styled(
         sort_text,
         Style::default().fg(t.comment).bg(hdr_bg),
+    ));
+    // Clickable. It paints the same `▾` as the destinations chevron, so
+    // painting it inert made it a dead click — flagged in review.
+    app.rects.file_pane_sort_label = Some((
+        Rect {
+            x: sort_x,
+            y: area.y,
+            width: sort_w,
+            height: 1,
+        },
+        pane_id,
     ));
     app.rects.file_pane_places_chevron = Some((
         Rect {
@@ -249,27 +274,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) else {
         return;
     };
-
-    if let Some(err) = f.error.clone() {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!("  {err}"),
-                Style::default().fg(t.red).bg(t.bg_dark),
-            ))),
-            body,
-        );
-        return;
-    }
-    if f.entries.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "  (empty directory)",
-                Style::default().fg(t.comment).bg(t.bg_dark),
-            ))),
-            body,
-        );
-        return;
-    }
 
     // ── `..` parent row ──
     //
@@ -333,6 +337,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
         app.rects.file_pane_rows.push((r, pane_id, PARENT_ROW));
     }
 
+    // Error / empty states render BELOW the `..` row, not instead of it.
+    //
+    // These two guards used to `return` before the parent row was drawn,
+    // so browsing into an empty or unreadable directory left a pane with
+    // no visible way out — reintroducing exactly the bug the `..` row was
+    // added to fix, for its most likely trigger. Caught in review.
+    if let Some(err) = f.error.clone() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("  {err}"),
+                Style::default().fg(t.red).bg(t.bg_dark),
+            ))),
+            body,
+        );
+        return;
+    }
+    if f.entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  (empty directory)",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ))),
+            body,
+        );
+        return;
+    }
+
     // ── scroll ──
     // Same two-policy split as the git graph (#1229): a jump gets context,
     // a step scrolls minimally.
@@ -354,7 +385,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
 
     let selected = f.selected;
     let scroll = f.scroll;
-    let f_marked = f.marked.clone();
+    // Same story as `git_files`: borrowed, not cloned. `entries` and
+    // `marked` are disjoint fields of the same pane, so the row loop can
+    // read both. Bounded by the user's selection rather than the repo, so
+    // smaller — but the same unforced per-frame allocation.
+    let f_marked = &f.marked;
     let rows: Vec<(Rect, usize)> = {
         let mut out = Vec::new();
         for (row, idx) in (scroll..f.entries.len()).take(h).enumerate() {
@@ -1026,6 +1061,107 @@ mod render_tests {
                 .iter()
                 .any(|(_, p, idx)| *p == pid && *idx == 0),
             "entry rows lost their rects when the parent row was added"
+        );
+    }
+
+    /// Review finding (critical) — an EMPTY directory used to return
+    /// before the `..` row was drawn, so browsing into one left a pane
+    /// with no visible way out. That is the exact bug the row exists to
+    /// fix, reintroduced for its most likely trigger: a directory you
+    /// just created, or one filtered to nothing.
+    #[test]
+    fn an_empty_directory_still_shows_the_parent_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let empty = d.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(Some(empty));
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 60,
+                    height: 8,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let screen: String = (0..8)
+            .map(|y| (0..60).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            screen.contains("(empty directory)"),
+            "empty state missing:\n{screen}"
+        );
+        assert!(
+            screen.contains(".."),
+            "no `..` row in an empty directory — the user is stuck:\n{screen}"
+        );
+        assert!(
+            app.rects
+                .file_pane_rows
+                .iter()
+                .any(|(_, p, idx)| *p == pid && *idx == PARENT_ROW),
+            "the `..` row has no click rect in an empty directory"
+        );
+    }
+
+    /// Same for an unreadable directory — the error must not cost the way
+    /// out either.
+    #[test]
+    fn an_unreadable_directory_still_shows_the_parent_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(Some(d.path().join("does-not-exist")));
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 60,
+                    height: 8,
+                },
+            )
+        })
+        .unwrap();
+        assert!(
+            app.rects
+                .file_pane_rows
+                .iter()
+                .any(|(_, p, idx)| *p == pid && *idx == PARENT_ROW),
+            "no `..` row when the directory could not be read"
         );
     }
 

@@ -163,9 +163,51 @@ pub(crate) fn collision_free_copy_name(path: &Path) -> std::path::PathBuf {
     make("-copy-lots")
 }
 
+/// True when `dst` IS `src` or sits underneath it — the shape that makes
+/// a recursive copy eat its own output.
+///
+/// Compares canonicalised paths so `..`, symlinks and differing spellings
+/// of the same directory are caught. `dst` usually does not exist yet, so
+/// its PARENT is canonicalised and the final component appended; if even
+/// the parent cannot be resolved the paths are compared as given, which
+/// still catches the common literal case.
+pub(crate) fn is_self_or_descendant(src: &Path, dst: &Path) -> bool {
+    let canon_src = src.canonicalize().unwrap_or_else(|_| src.to_path_buf());
+    let canon_dst = dst
+        .canonicalize()
+        .unwrap_or_else(|_| match (dst.parent(), dst.file_name()) {
+            (Some(parent), Some(name)) => parent
+                .canonicalize()
+                .map(|p| p.join(name))
+                .unwrap_or_else(|_| dst.to_path_buf()),
+            _ => dst.to_path_buf(),
+        });
+    canon_dst.starts_with(&canon_src)
+}
+
 /// Recursive `cp` — files use `fs::copy`, directories walk children.
 /// Returns Err with a human-readable string on the first failure.
 pub(crate) fn copy_recursively(src: &Path, dst: &Path) -> Result<(), String> {
+    // Refuse to copy a directory into itself or into one of its own
+    // descendants.
+    //
+    // Without this the walk keeps finding what it has just written:
+    // `read_dir(src)` yields the freshly-created copy inside `src`, which
+    // is copied again, forever. It does not error — it recurses until the
+    // stack runs out and the PROCESS ABORTS, taking any unsaved work with
+    // it. CI caught it as `fatal runtime error: stack overflow` on Linux;
+    // macOS's larger default stack merely made it slower to die.
+    //
+    // Trivial for a user to reach: mark a folder and paste it into
+    // itself, which is one keystroke away in a file browser.
+    if is_self_or_descendant(src, dst) {
+        return Err(format!(
+            "cannot copy {} into itself",
+            src.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| src.display().to_string())
+        ));
+    }
     let meta =
         std::fs::symlink_metadata(src).map_err(|e| format!("stat {}: {e}", src.display()))?;
     if meta.is_dir() {
@@ -345,5 +387,92 @@ mod tests {
         assert_eq!((line, col), (0, 1));
         let (line, col) = byte_to_line_col(text, 8);
         assert_eq!((line, col), (1, 2));
+    }
+}
+
+#[cfg(test)]
+mod self_copy_guard_tests {
+    use super::*;
+
+    /// The crash CI caught: copying a directory into itself recursed
+    /// until the stack ran out and the PROCESS ABORTED. Not an error
+    /// return — a hard abort, taking unsaved work with it.
+    #[test]
+    fn copying_a_directory_into_itself_is_refused_not_fatal() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("folder");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("f.txt"), "x").unwrap();
+
+        let err = copy_recursively(&src, &src.join("folder"))
+            .expect_err("copying a directory into itself must be refused");
+        assert!(err.contains("itself"), "unhelpful message: {err}");
+    }
+
+    /// And into a deeper descendant, which is the same trap one level
+    /// down.
+    #[test]
+    fn copying_into_a_descendant_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("folder");
+        std::fs::create_dir_all(src.join("nested").join("deeper")).unwrap();
+        assert!(
+            copy_recursively(&src, &src.join("nested").join("deeper").join("copy")).is_err(),
+            "copying into a descendant must be refused"
+        );
+    }
+
+    /// A NORMAL copy must still work — a guard that refuses everything
+    /// would pass the two tests above.
+    #[test]
+    fn copying_to_a_sibling_still_works() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("folder");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("f.txt"), "x").unwrap();
+        let dst = d.path().join("copy");
+
+        copy_recursively(&src, &dst).expect("a sibling copy must succeed");
+        assert!(dst.join("f.txt").is_file(), "contents were not copied");
+    }
+
+    /// The check is on canonicalised paths, so a `..` spelling of the
+    /// same destination is caught too.
+    #[test]
+    fn a_dotdot_spelling_of_the_same_target_is_caught() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("folder");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        // folder/sub/../inner == folder/inner — inside `src`.
+        let sneaky = src.join("sub").join("..").join("inner");
+        assert!(
+            is_self_or_descendant(&src, &sneaky),
+            "a `..` path into the source was not recognised"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_directory_is_not_a_descendant() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        let b = d.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        assert!(!is_self_or_descendant(&a, &b.join("x")));
+    }
+
+    /// `a` must not be treated as a parent of `ab` — a plain string
+    /// prefix check would get this wrong.
+    #[test]
+    fn a_sibling_with_a_shared_name_prefix_is_not_a_descendant() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("proj");
+        let ab = d.path().join("project");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&ab).unwrap();
+        assert!(
+            !is_self_or_descendant(&a, &ab.join("x")),
+            "`proj` was treated as an ancestor of `project`"
+        );
     }
 }

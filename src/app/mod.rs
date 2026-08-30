@@ -224,6 +224,39 @@ const CLOSED_TAB_LAYOUTS_MAX: usize = 20;
 /// Cap on `App.message_log` — vim `:messages` shows up to this many recent toasts.
 const MESSAGE_LOG_MAX: usize = 200;
 
+/// Unix seconds now. Local helper so the message log can carry a
+/// wall-clock time without depending on `ai_usage`'s private one.
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `HH:MM` in the user's local timezone, using the same `TZ_OFFSET_HOURS`
+/// knob the statusline clock and git-graph dates read — so every time in
+/// the UI agrees.
+pub fn hhmm_local(secs: u64) -> String {
+    let off = std::env::var("TZ_OFFSET_HOURS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|h| h * 3600)
+        .unwrap_or(0);
+    let local = (secs as i64).saturating_add(off).rem_euclid(86_400);
+    format!("{:02}:{:02}", local / 3600, (local / 60) % 60)
+}
+
+/// One entry in [`App::message_log`].
+#[derive(Debug, Clone)]
+pub struct LoggedMessage {
+    pub text: String,
+    pub level: ToastLevel,
+    /// Unix seconds. Wall-clock rather than `Instant` because the log is
+    /// read minutes later and "14:32" is what a user can act on;
+    /// `Instant` cannot be formatted as a time of day.
+    pub at: u64,
+}
+
 /// One entry on a navigation stack — a file + a `(row, col)` so we can jump
 /// back even if the buffer's text has shifted since (the precise byte offset
 /// would be stale; row/col is a more forgiving anchor).
@@ -2320,6 +2353,11 @@ pub struct PaneRects {
     /// The `▾` at the end of a Files pane's breadcrumb — opens the
     /// destinations picker.
     pub file_pane_places_chevron: Option<(Rect, PaneId)>,
+    /// The sort label at the right of a Files pane's header — clicking it
+    /// cycles the sort. It paints a `▾`, the same "opens/changes
+    /// something" glyph as the destinations chevron, so it has to BE a
+    /// target; review flagged it as a dead click.
+    pub file_pane_sort_label: Option<(Rect, PaneId)>,
     /// Click rect for the git palette's filter input. Click to
     /// focus + start typing; Esc clears + unfocuses.
     pub git_palette_filter_input: Option<Rect>,
@@ -4567,7 +4605,15 @@ pub struct App {
     /// Recent toasts (oldest first, capped at `MESSAGE_LOG_MAX`). Vim
     /// `:messages` shows them. Keeps a history beyond the live toast
     /// (which expires after `TOAST_TTL`).
-    pub message_log: Vec<String>,
+    /// Every toast ever shown this session, newest last, capped at
+    /// [`MESSAGE_LOG_MAX`].
+    ///
+    /// #toast-history (user: "make way of seeing latest toasts"). Was
+    /// `Vec<String>`, which meant the log could say WHAT happened but not
+    /// when or how badly — so an error and a routine confirmation read
+    /// identically ten minutes later, which is exactly when you are
+    /// looking for the error.
+    pub message_log: Vec<LoggedMessage>,
     /// Vim `:silent <cmd>` nesting depth. While > 0, `toast()` skips
     /// the visible toast (still records into `message_log`).
     pub silent_depth: usize,

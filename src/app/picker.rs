@@ -719,6 +719,53 @@ impl App {
     /// `OpenPullRequests`: cross-nav from a PR to its pipeline/build
     /// via the matching `mnml-forge-*` integration's
     /// `--find-pipeline-for-pr --json` headless mode.
+    /// #toast-history — a searchable view of every toast this session.
+    ///
+    /// User: "make way of seeing latest toasts". `:messages` already
+    /// existed but crammed the last EIGHT into a single toast joined by
+    /// `↵` — unreadable, and it expired like any other toast, so the way
+    /// to review a message you missed was itself a message you would
+    /// miss. `:Messages!` dumped the lot into a scratch buffer, which is
+    /// better but is vim-only and unsearchable.
+    ///
+    /// A picker gives filtering and scrolling for free, and is reachable
+    /// from the palette, so standard-mode users can find it at all.
+    pub fn open_messages_picker(&mut self) {
+        if self.message_log.is_empty() {
+            self.toast("no messages yet");
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = self
+            .message_log
+            .iter()
+            .enumerate()
+            .rev() // newest first — the one you missed is the recent one
+            .map(|(i, m)| {
+                let icon = match m.level {
+                    crate::app::ToastLevel::Error => "\u{f071}",
+                    crate::app::ToastLevel::Warn => "\u{f071}",
+                    crate::app::ToastLevel::Info => "\u{f05a}",
+                };
+                let icon = if self.config.ui.ascii_icons {
+                    match m.level {
+                        crate::app::ToastLevel::Error => "!",
+                        crate::app::ToastLevel::Warn => "*",
+                        crate::app::ToastLevel::Info => "-",
+                    }
+                } else {
+                    icon
+                };
+                let detail = format!("{icon}  {}", crate::app::hhmm_local(m.at));
+                crate::picker::PickerItem::new(i.to_string(), m.text.clone(), detail)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Messages,
+            format!("Messages ({})", items.len()),
+            items,
+        ));
+    }
+
     /// #files item 3 — destinations for the Files pane's `▾`.
     pub fn open_files_destinations_picker(&mut self) {
         let workspaces: Vec<(String, std::path::PathBuf)> = self
@@ -1140,6 +1187,12 @@ impl App {
                     "",
                 ));
                 self.pending_stash_drop = Some((stash_ref, label));
+            }
+            PickerKind::Messages => {
+                // Copy, because a log entry is text you usually want to
+                // paste into an issue or a search.
+                self.clipboard.set(item.label.clone(), false);
+                self.toast("message copied");
             }
             PickerKind::FilesDestinations => {
                 let dir = std::path::PathBuf::from(&item.id);

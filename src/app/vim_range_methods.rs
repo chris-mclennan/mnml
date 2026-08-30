@@ -247,7 +247,11 @@ impl App {
                 .filter_map(|&r| b.editor.text().split('\n').nth(r).map(|s| s.to_string()))
                 .collect();
             for line in &lines {
-                self.message_log.push(line.clone());
+                self.message_log.push(crate::app::LoggedMessage {
+                    text: line.clone(),
+                    level: crate::app::ToastLevel::Info,
+                    at: crate::app::now_unix(),
+                });
             }
             if self.message_log.len() > MESSAGE_LOG_MAX {
                 let drop = self.message_log.len() - MESSAGE_LOG_MAX;

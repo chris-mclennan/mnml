@@ -3431,6 +3431,105 @@ mod files_pane_modifier_tests {
 }
 
 #[cfg(test)]
+mod files_pane_review_fixes {
+    use super::dispatch_key;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn files_pane(style: &str) -> (tempfile::TempDir, App, usize) {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["a.txt", "b.txt"] {
+            std::fs::write(d.path().join(n), n).unwrap();
+        }
+        let mut cfg = Config::default();
+        cfg.editor.input_style = style.to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+        (d, app, pid)
+    }
+
+    /// Review finding (critical) — `Pane::Files` was missing from
+    /// `is_view_only_pane`, so `:` never reached the ex-cmdline. Chord
+    /// dispatch runs BEFORE `handle_pane_key`, so a key the Files branch
+    /// does not name is dropped, not passed on: a vim user was trapped.
+    #[test]
+    fn colon_opens_the_cmdline_from_a_files_pane() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, _pid) = files_pane("vim");
+        dispatch_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE),
+        );
+        assert!(
+            app.no_pane_cmdline.is_some(),
+            "`:` was swallowed by the Files pane — a vim user cannot reach \
+             the ex-cmdline from it"
+        );
+    }
+
+    /// Review finding — `g` meant "destinations picker" here while EVERY
+    /// other listing pane in mnml binds it to "go to top". Now `g`/`G`
+    /// are top/bottom and `b` browses.
+    #[test]
+    fn g_goes_to_the_top_like_every_other_listing_pane() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = files_pane("standard");
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = f.entries.len() - 1;
+        }
+        crate::tui::handlers::pane::handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
+        );
+        let sel = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.selected,
+            _ => panic!(),
+        };
+        assert_eq!(sel, 0, "`g` did not go to the top");
+        assert!(
+            app.picker.is_none(),
+            "`g` opened a picker — the destinations binding is still on it"
+        );
+    }
+
+    /// The modifier guard is now a blocklist, so a NEW bare-char binding
+    /// is covered without anyone remembering to update a second list.
+    /// `Ctrl+<any letter>` must be inert in the pane.
+    #[test]
+    fn every_modified_char_is_inert_in_the_files_pane() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for ch in ['s', 'h', 'g', 'b', 'a', 'p', 'r', '.'] {
+            let (_d, mut app, pid) = files_pane("standard");
+            let before = match app.panes.get(pid) {
+                Some(crate::pane::Pane::Files(f)) => (f.cwd.clone(), f.sort, f.selected),
+                _ => panic!(),
+            };
+            crate::tui::handlers::pane::handle_pane_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL),
+            );
+            let after = match app.panes.get(pid) {
+                Some(crate::pane::Pane::Files(f)) => (f.cwd.clone(), f.sort, f.selected),
+                _ => panic!(),
+            };
+            assert_eq!(
+                before, after,
+                "Ctrl+{ch} changed the pane — a modified key reached a \
+                 bare-char arm"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod menu_dismiss_tests {
     use super::dispatch_key;
     use crate::app::App;

@@ -2000,6 +2000,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "messages.show",
+            title: "Messages: recent toasts (searchable log)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_messages_picker(),
+        },
+        Command {
             id: "files.open",
             title: "Files: open a file-browser pane (workspace root)",
             group: "view",
