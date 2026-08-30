@@ -772,8 +772,21 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
     // mnemonic, but `try_open_menu_from_key` also bailed because
     // `menu_open.is_some()`, so nothing ever ran. Close the menu,
     // return false so `dispatch_chord_chain` gets the key.
-    let is_ctrl_letter = key.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(key.code, KeyCode::Char(c) if c.is_ascii_alphabetic());
+    // #1229 — ANY Ctrl+char, not just letters.
+    //
+    // This was `c.is_ascii_alphabetic()`, which silently excluded the
+    // punctuation chords. `ctrl+;` is bound to `palette`, so with a menu
+    // open the palette DID open (this fn returned false and the chord
+    // dispatcher ran it) but the menu stayed up and kept eating every
+    // subsequent keystroke — reported as "i see the command panel but
+    // cant type as focus still on the file menu i had open".
+    //
+    // Punctuation chords are exactly the ones an alphabetic guard misses,
+    // and #1220 was the same shape: `nav.back`/`nav.forward` shipped on
+    // `ctrl+minus` and were dead for months because the parser did not
+    // name punctuation keys.
+    let is_ctrl_char =
+        key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char(_));
     let is_fkey = matches!(
         key.code,
         KeyCode::F(1)
@@ -789,7 +802,7 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             | KeyCode::F(11)
             | KeyCode::F(12)
     );
-    if is_ctrl_letter || is_fkey {
+    if is_ctrl_char || is_fkey {
         app.menu_open = None;
         return false;
     }
@@ -3305,6 +3318,111 @@ mod welcome_esc_tests {
 
         assert!(!app.show_welcome);
         assert!(d.path().join(".mnml/.welcomed").exists());
+    }
+}
+
+#[cfg(test)]
+mod menu_dismiss_tests {
+    use super::dispatch_key;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app_in_tmp() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let _ = std::fs::write(d.path().join("a.txt"), "a");
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "standard".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        (d, app)
+    }
+
+    /// #1229 (user report) — "if i have file menu open and then ctrl ; to
+    /// type a command i see the command panel but cant type as focus still
+    /// on the file menu i had open."
+    ///
+    /// The palette opened, but the menu stayed up and kept consuming keys,
+    /// because the close-the-menu guard only covered Ctrl+LETTER and
+    /// `ctrl+;` is Ctrl+punctuation.
+    #[test]
+    fn a_ctrl_punctuation_chord_releases_the_menu() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Asserts the RELEASE, not what the chord goes on to do. `ctrl+;`
+        // is not bound by default — the user has some route to a command
+        // input on it — and the bug was never about which command ran: the
+        // menu kept ownership of the keyboard afterwards either way. So
+        // this pins the invariant that actually broke, for every
+        // Ctrl+punctuation chord rather than one binding.
+        for ch in [';', ',', '.', '-', '/', '\''] {
+            let (_d, mut app) = app_in_tmp();
+            app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(0));
+            dispatch_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL),
+            );
+            assert!(
+                app.menu_open.is_none(),
+                "Ctrl+{ch} left the menu open — it keeps ownership of the \
+                 keyboard, so whatever the chord opened cannot be typed into"
+            );
+        }
+    }
+
+    /// The alphabetic case already worked (R6 vscode-keyboard F8); the fix
+    /// widened that guard, so keep it covered.
+    #[test]
+    fn ctrl_shift_p_still_closes_the_menu() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app) = app_in_tmp();
+        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(0));
+        dispatch_key(
+            &mut app,
+            KeyEvent::new(
+                KeyCode::Char('p'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        );
+        assert!(app.picker.is_some(), "palette did not open");
+        assert!(app.menu_open.is_none(), "menu stayed open");
+    }
+
+    /// A bare letter must still belong to the MENU as a mnemonic —
+    /// widening the guard must not steal ordinary menu navigation.
+    #[test]
+    fn a_plain_letter_does_not_trip_the_global_chord_escape() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app) = app_in_tmp();
+        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(0));
+        dispatch_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        );
+        assert!(
+            app.picker.is_none(),
+            "a bare letter opened a picker — the guard is now too wide"
+        );
+    }
+
+    /// Belt-and-braces: `open_picker` is the chokepoint all 72 picker
+    /// callers go through, so any other route to a picker inherits this.
+    #[test]
+    fn opening_any_picker_dismisses_the_menu() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app) = app_in_tmp();
+        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(0));
+        app.open_file_picker();
+        assert!(
+            app.menu_open.is_none(),
+            "open_picker did not dismiss the menu"
+        );
     }
 }
 

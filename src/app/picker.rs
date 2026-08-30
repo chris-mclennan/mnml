@@ -8,6 +8,22 @@ use super::*;
 impl App {
     pub fn open_picker(&mut self, picker: Picker) {
         self.whichkey = None;
+        // #1229 (user report) — dismiss an open MENU too.
+        //
+        // "if i have file menu open and then ctrl ; to type a command i
+        // see the command panel but cant type as focus still on the file
+        // menu i had open." The menu owns keys while it is open, so the
+        // palette appeared and then swallowed nothing: every keystroke
+        // went to the File menu behind it.
+        //
+        // Fixed here rather than in `open_command_palette` because this is
+        // the single chokepoint every picker goes through (72 callers), so
+        // the file picker, bookmarks, reflog and the rest all inherit it.
+        // `open_command_palette` already dismissed `prompt` for exactly
+        // this reason (R9 vscode-keyboard SEV-3) — the menu was the same
+        // bug with a different overlay, missed because the fix was applied
+        // one caller deep instead of at the chokepoint.
+        self.menu_open = None;
         // 2026-06-20 — themes picker captures the pre-preview theme
         // so Esc restores it. set when the kind is Themes; cleared on
         // accept or restored on close.
