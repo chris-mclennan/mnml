@@ -340,6 +340,13 @@ impl Reporter {
 /// Run one transfer to completion on this thread. `spawn` wraps it; this
 /// is separate so tests can drive it synchronously and assert on the
 /// exact message sequence rather than racing a thread.
+///
+/// `items` is `(source, destination)` pairs; the destination is ignored
+/// for a delete. Explicit pairs rather than a destination DIRECTORY
+/// because the caller has already resolved collisions —
+/// `file_paste_into` bumps a same-directory copy to `-copy`, and
+/// re-deriving the name here would either lose that rule or duplicate
+/// it.
 /// Whether a copy ran to completion or stopped early on cancel.
 ///
 /// This distinction is the whole reason the type exists. `copy_one` used
@@ -359,8 +366,7 @@ pub enum CopyOutcome {
 pub fn run(
     id: u64,
     kind: TransferKind,
-    sources: Vec<PathBuf>,
-    dest: Option<PathBuf>,
+    items: Vec<(PathBuf, PathBuf)>,
     cancel: Arc<AtomicBool>,
     tx: Sender<TransferMsg>,
 ) {
@@ -369,9 +375,9 @@ pub fn run(
     // own size. Crediting the whole transfer's total (what it used to do)
     // showed 100% after the first of several sources, then counted past
     // the total as the rest copied.
-    let per_source: Vec<(u64, usize)> = sources
+    let per_source: Vec<(u64, usize)> = items
         .iter()
-        .map(|p| measure(std::slice::from_ref(p), &cancel))
+        .map(|(src, _)| measure(std::slice::from_ref(src), &cancel))
         .collect();
     let bytes_total: u64 = per_source.iter().map(|(b, _)| *b).sum();
     let files_total: usize = per_source.iter().map(|(_, f)| *f).sum();
@@ -402,7 +408,7 @@ pub fn run(
     // transfer that quietly leaves files behind must still say so.
     let mut skipped = 0usize;
 
-    for (src, (src_bytes, src_files)) in sources.iter().zip(per_source.iter()) {
+    for ((src, target), (src_bytes, src_files)) in items.iter().zip(per_source.iter()) {
         if cancel.load(Ordering::Relaxed) {
             finish_cancelled(id, &created, &tx);
             return;
@@ -410,29 +416,11 @@ pub fn run(
         let res: Result<CopyOutcome, String> = match kind {
             TransferKind::Delete => delete_one(src, &mut rep, &cancel),
             TransferKind::Copy | TransferKind::Move => {
-                let Some(dir) = dest.as_ref() else {
-                    let _ = tx.send(TransferMsg::Failed {
-                        id,
-                        err: "no destination".into(),
-                        cleaned_up: cleanup(&created),
-                    });
-                    return;
-                };
-                let Some(name) = src.file_name() else {
-                    // A source with no final component (a bare root).
-                    // Counted as skipped rather than silently dropped, or
-                    // its measured bytes strand the progress short.
-                    skipped += 1;
-                    rep.bytes_done = rep.bytes_done.saturating_add(*src_bytes);
-                    rep.files_done += *src_files;
-                    continue;
-                };
-                let target = dir.join(name);
                 let target_existed = target.exists();
                 // A move within one filesystem is a rename — no bytes
                 // cross the disk, so never fall back to copy+delete when
                 // the cheap path is available.
-                if kind == TransferKind::Move && std::fs::rename(src, &target).is_ok() {
+                if kind == TransferKind::Move && std::fs::rename(src, target).is_ok() {
                     if !target_existed {
                         created.push(target.clone());
                     }
@@ -444,7 +432,7 @@ pub fn run(
                     rep.tick(true);
                     Ok(CopyOutcome::Completed)
                 } else {
-                    match copy_one(src, &target, &mut rep, &cancel, &mut created, &mut skipped) {
+                    match copy_one(src, target, &mut rep, &cancel, &mut created, &mut skipped) {
                         // A cross-filesystem move removes the source ONLY
                         // on a genuine full completion. `Stopped` means
                         // the user cancelled mid-tree and the destination
@@ -496,12 +484,11 @@ fn finish_cancelled(id: u64, created: &[PathBuf], tx: &Sender<TransferMsg>) {
 pub fn spawn(
     id: u64,
     kind: TransferKind,
-    sources: Vec<PathBuf>,
-    dest: Option<PathBuf>,
+    items: Vec<(PathBuf, PathBuf)>,
     cancel: Arc<AtomicBool>,
     tx: Sender<TransferMsg>,
 ) {
-    std::thread::spawn(move || run(id, kind, sources, dest, cancel, tx));
+    std::thread::spawn(move || run(id, kind, items, cancel, tx));
 }
 
 /// Remove the destinations this transfer created. Returns whether every
@@ -877,8 +864,7 @@ mod tests {
         run(
             1,
             TransferKind::Copy,
-            vec![src.clone()],
-            Some(dst.clone()),
+            vec![(src.clone(), dst.join("src"))],
             Arc::new(AtomicBool::new(false)),
             tx,
         );
@@ -1061,8 +1047,7 @@ mod tests {
         run(
             1,
             TransferKind::Move,
-            vec![a.clone(), b.clone()],
-            Some(dst.clone()),
+            vec![(a.clone(), dst.join("a")), (b.clone(), dst.join("b"))],
             Arc::new(AtomicBool::new(false)),
             tx,
         );
@@ -1117,8 +1102,7 @@ mod tests {
         run(
             1,
             TransferKind::Copy,
-            vec![src.clone()],
-            Some(src.clone()),
+            vec![(src.clone(), src.join("src"))],
             Arc::new(AtomicBool::new(false)),
             tx,
         );

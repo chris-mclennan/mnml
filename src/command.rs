@@ -3040,6 +3040,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |_app| {},
         },
         Command {
+            id: "transfer.cancel_all",
+            title: "Transfers: cancel all running",
+            group: "transfer",
+            keys: &[],
+            run: |app| app.cancel_all_transfers(),
+        },
+        Command {
             id: "toast.dismiss_current",
             title: "Toast: dismiss the right-clicked toast",
             group: "toast",

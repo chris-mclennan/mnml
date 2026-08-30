@@ -58,6 +58,7 @@ mod picker;
 mod portable;
 mod reset;
 mod sonos;
+mod transfers;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
 pub(crate) mod cmdline_methods;
@@ -5726,6 +5727,12 @@ pub struct App {
     /// key input like the picker.
     pub prompt: Option<crate::prompt::Prompt>,
     /// The right-click context menu, when open. Steals key + mouse input.
+    /// In-flight background file transfers (#files item 6). Every file
+    /// operation goes through these — there is no synchronous path.
+    pub transfers: Vec<crate::transfer::Transfer>,
+    pub transfer_tx: std::sync::mpsc::Sender<crate::transfer::TransferMsg>,
+    pub transfer_rx: std::sync::mpsc::Receiver<crate::transfer::TransferMsg>,
+    pub next_transfer_id: u64,
     pub context_menu: Option<crate::context_menu::ContextMenu>,
     /// The open child of `context_menu`, plus the parent row it hangs
     /// off. One level only: a second level of nesting in a menu this
@@ -6420,6 +6427,10 @@ impl App {
                 }
             });
         }
+        // ONE channel: every worker gets a `Sender` clone and the render
+        // loop drains a single receiver per tick. (Built from two separate
+        // channels first — it compiled, and no message could ever arrive.)
+        let (transfer_tx, transfer_rx) = std::sync::mpsc::channel();
         Ok(App {
             workspace,
             config,
@@ -6820,6 +6831,10 @@ impl App {
             glyph_builder: None,
             help_overlay: None,
             prompt: None,
+            transfers: Vec::new(),
+            transfer_tx,
+            transfer_rx,
+            next_transfer_id: 1,
             context_menu: None,
             context_submenu: None,
             file_clipboard: Vec::new(),

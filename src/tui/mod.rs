@@ -263,15 +263,27 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             ipc::drain_commands(ipc, app);
             ipc::drain_plugin_events(ipc, app);
         }
+        // #files item 6 — drain the transfer workers. Cheap when idle
+        // (an empty `try_recv`), and it must run every tick regardless
+        // of input: progress that only advances when the user happens to
+        // press a key reads as a hang, which is the thing moving the
+        // copies off the render thread exists to prevent.
+        app.poll_transfers();
         if app.should_quit {
             app.save_session_on_quit();
             break;
         }
+        // Poll faster while a transfer is running, so the chip's
+        // percentage moves smoothly rather than in 120ms steps.
         // Poll faster while a pty is open so streaming output stays smooth.
         // DAP sessions also need fast polling so stopped/output events
         // surface promptly.
         let timeout = Duration::from_millis(
-            if app.has_pty_pane() || app.has_pending_ai() || app.dap.is_some() {
+            if app.has_pty_pane()
+                || app.has_pending_ai()
+                || app.dap.is_some()
+                || !app.transfers.is_empty()
+            {
                 40
             } else {
                 120

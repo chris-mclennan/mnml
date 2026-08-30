@@ -1677,6 +1677,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // chip_label = "hover" | "always"` opts back in — and when it does,
     // the cluster grows LEFTWARD, which is what keeps hover-expansion
     // from oscillating: a pointer inside the cluster stays inside it.
+    // #files item 6 — the transfer chip. Hidden entirely at rest, so it
+    // costs nothing in the common case; the lane is right-aligned, so a
+    // chip that were always present would shift every neighbour to show
+    // "nothing is happening".
+    if let Some(text) = app.transfer_chip() {
+        right.push(Seg::new(
+            format!(" {text} "),
+            theme::cur().bg_darker,
+            theme::cur().cyan,
+        ));
+    }
     let mut sonos_seg_idx: Option<usize> = None;
     let mut sonos_play_seg_idx: Option<usize> = None;
     let mut sonos_next_seg_idx: Option<usize> = None;

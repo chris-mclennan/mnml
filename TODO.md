@@ -80,12 +80,22 @@ solid.
 **User ask 2026-08-30:** "we might need somewhere to show transfer info
 like progress and speed."
 
-**Core landed 2026-08-30 (`src/transfer.rs`, commit fa05e031)** — the
-model, the sizing walk, the worker and the formatters, with 14 tests. NOT
-yet wired into `App`: the file operations still run synchronously on the
-render thread. Remaining: `App::transfers`, the mpsc drain in the tick,
-routing `file.paste` / delete through `transfer::spawn`, the statusline
-chip, the Transfers view, and the Files-pane footer.
+**Landed 2026-08-30.** `src/transfer.rs` (model, sizing walk, worker,
+formatters) + `src/app/transfers.rs` (App state, per-tick drain,
+`start_transfer` / `cancel_all_transfers` / `transfer_chip`). Paste and
+move route through the worker — the user chose "everything async" over a
+size threshold, so there is ONE path. Statusline chip is hidden at rest
+and shows `⇄ 62% 12M/s` while running; `transfer.cancel_all` in the
+palette; the event loop polls at 40ms while a transfer runs.
+
+Cost of the always-async choice, accepted deliberately: a paste no
+longer completes before the next frame, so the listing refreshes a tick
+later and the toast says "copying" rather than "copied".
+
+**Still to do here:** the Transfers detail view (per-operation bar, ETA,
+a cancel target per transfer — the chip only cancels ALL today), the
+Files-pane footer showing the active transfer beside the selection
+count, and per-transfer cancel from the chip's right-click.
 
 This is also the GATE on everything bulk. The fs operations are currently
 SYNCHRONOUS on the render thread: `copy_recursively` on a 4 GB directory

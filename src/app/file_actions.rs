@@ -243,7 +243,12 @@ impl App {
         }
         let sources = self.file_clipboard.clone();
         let cut = self.file_clipboard_cut;
-        let mut ok = 0usize;
+        // Resolve every (source, destination) pair FIRST — collision
+        // bumping, same-directory rules, skips — then hand the whole set
+        // to one background transfer. The worker never re-derives a
+        // destination name, so this stays the single place those rules
+        // live.
+        let mut items: Vec<(PathBuf, PathBuf)> = Vec::new();
         for src in &sources {
             let Some(name) = src.file_name() else {
                 self.toast(format!("skip (no filename): {}", src.display()));
@@ -264,34 +269,31 @@ impl App {
                 ));
                 continue;
             }
-            let result = if cut {
-                std::fs::rename(src, &dest).map_err(|e| e.to_string())
-            } else {
-                copy_recursively(src, &dest)
-            };
-            if let Err(e) = result {
-                self.toast(format!(
-                    "{} failed for {}: {e}",
-                    if cut { "move" } else { "copy" },
-                    rel_path(&self.workspace, src)
-                ));
-                continue;
-            }
-            ok += 1;
+            items.push((src.clone(), dest));
         }
         if cut {
             self.file_clipboard.clear();
             self.file_clipboard_cut = false;
         }
-        self.refresh_after_fs_change();
-        if ok > 0 {
-            self.toast(format!(
-                "{} {ok} item{} into {}",
-                if cut { "moved" } else { "copied" },
-                if ok == 1 { "" } else { "s" },
-                rel_path(&self.workspace, &target_dir)
-            ));
+        if items.is_empty() {
+            return;
         }
+        let n = items.len();
+        let kind = if cut {
+            crate::transfer::TransferKind::Move
+        } else {
+            crate::transfer::TransferKind::Copy
+        };
+        self.start_transfer(kind, items);
+        // The listing refreshes when the transfer reports Done, a tick
+        // or more from now — the cost of running off the render thread,
+        // and the reason the toast says "started".
+        self.toast(format!(
+            "{} {n} item{} into {}",
+            if cut { "moving" } else { "copying" },
+            if n == 1 { "" } else { "s" },
+            rel_path(&self.workspace, &target_dir)
+        ));
     }
 
     /// Duplicate `path` in place with a `-copy` suffix; falls back to
@@ -1208,6 +1210,19 @@ mod multi_select_tests {
 
         let dest = d.path().join("dest");
         app.file_paste_into(dest.clone());
+
+        // Paste is ASYNC now (#files item 6 — every file operation goes
+        // through the background worker, so a large copy can never freeze
+        // the editor). The test drives the tick the event loop would.
+        let t0 = std::time::Instant::now();
+        while !app.transfers.is_empty() && t0.elapsed() < std::time::Duration::from_secs(10) {
+            app.poll_transfers();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            app.transfers.is_empty(),
+            "the paste transfer never finished"
+        );
 
         let landed = std::fs::read_dir(&dest).unwrap().count();
         assert_eq!(
