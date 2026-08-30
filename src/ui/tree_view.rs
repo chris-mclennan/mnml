@@ -514,7 +514,20 @@ fn workspace_header_chips(
     // cluster doesn't paint over where the body's vertical scrollbar
     // sits below.
     let right_margin = 1usize;
-    let refresh_gap = 1usize;
+    // #1229 (user report) — ZERO, not 1.
+    //
+    // Every chip renders as `" {glyph} "`, so the previous chip's
+    // trailing pad plus the refresh chip's leading pad already give the
+    // same 2-cell separation the action chips have between themselves. An
+    // extra gap cell on top made it 3, so the refresh chip sat one cell
+    // further right than the rhythm — "where the refresh is here is thre
+    // an extra empt space on its left?". Measured: chip rects stepped
+    // 26 → 29 → 32 → 36, a step of 4 where every other step was 3.
+    //
+    // Kept as a named constant rather than deleted because it still
+    // participates in the fit calculation above, and a future design that
+    // wants a deliberate separation should change this one value.
+    let refresh_gap = 0usize;
     let min_separation = 1usize;
     // Narrow the cluster from the LEFT if the panel is too tight
     // to fit label + full-cluster + refresh (refresh wins).
@@ -2273,6 +2286,76 @@ fn draw_empty_workspace_state(frame: &mut Frame, app: &mut App, inner: Rect) {
         if let Some(cmd_id) = cmd {
             app.rects.tree_icon_buttons.push((row, *cmd_id));
         }
+    }
+}
+
+#[cfg(test)]
+mod header_chip_spacing_tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// #1229 (user report) — "where the refresh is here is thre an extra
+    /// empt space on its left?". There was: `refresh_gap = 1` sat on top
+    /// of the padding every chip already carries, so the refresh chip was
+    /// one cell further right than the rhythm of the cluster.
+    ///
+    /// Asserted on the CHIP RECTS rather than by scanning the row for
+    /// spaces, because the rects are what both the paint and the click
+    /// targets derive from — if they step evenly, the glyphs do too.
+    #[test]
+    fn the_header_chips_are_evenly_spaced_including_refresh() {
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.tree_visible = true;
+        let w = 40u16;
+        let mut term = Terminal::new(TestBackend::new(w, 6)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 6,
+                },
+            )
+        })
+        .unwrap();
+
+        // Header cluster only — `view.add_workspace` is a different row.
+        let mut xs: Vec<u16> = app
+            .rects
+            .tree_icon_buttons
+            .iter()
+            .filter(|(_, id)| *id != "view.add_workspace")
+            .map(|(r, _)| r.x)
+            .collect();
+        xs.sort_unstable();
+        assert!(
+            xs.len() >= 3,
+            "expected the action chips + refresh, got {xs:?}"
+        );
+        assert!(
+            xs.iter().any(|&x| {
+                app.rects
+                    .tree_icon_buttons
+                    .iter()
+                    .any(|(r, id)| *id == "tree.refresh" && r.x == x)
+            }),
+            "refresh chip missing from the cluster: {xs:?}"
+        );
+        let steps: Vec<u16> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            steps.windows(2).all(|s| s[0] == s[1]),
+            "chip spacing is uneven — steps {steps:?} from xs {xs:?}; the \
+             refresh chip used to sit one cell further right than the rest"
+        );
     }
 }
 
