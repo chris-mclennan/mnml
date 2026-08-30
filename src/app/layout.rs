@@ -454,10 +454,12 @@ impl App {
     /// In **vim** input style this behaves identically to
     /// [`Self::open_path`] (every file is its own tab).
     ///
-    /// Only the tree-click handler in `ui::tree_view` (routed via
-    /// `tui.rs`) should call this. Every other caller — `:edit`, picker
-    /// dispatch, grep hits, definition jumps, session restore — wants
-    /// pinned semantics.
+    /// Two callers only: the tree-click handler in `ui::tree_view`
+    /// (routed via `tui.rs`), and the Files pane's `p` preview
+    /// (`App::files_pane_preview`) — added #files item 4, because that is
+    /// the same gesture: "show me this, I am still browsing". Every other
+    /// caller — `:edit`, picker dispatch, grep hits, definition jumps,
+    /// session restore — wants pinned semantics.
     pub fn open_path_preview(&mut self, path: &Path) {
         self.open_path_inner(path, true, false);
     }

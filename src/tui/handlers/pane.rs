@@ -835,6 +835,7 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     | KeyCode::Char('a')
                     | KeyCode::Char(' ')
                     | KeyCode::Char('g')
+                    | KeyCode::Char('p')
             )
         {
             return;
@@ -894,6 +895,10 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.toast(format!("{n} selected"));
                 }
             }
+            // `p` — preview without leaving the listing. NOT Space,
+            // which marks (settled before either shipped, since retraining
+            // a key later is worse than choosing once).
+            KeyCode::Char('p') => app.files_pane_preview(i),
             // `g` — go to a destination. The keyboard route to the same
             // picker the breadcrumb's `▾` opens, so the feature is not
             // mouse-only.

@@ -748,6 +748,55 @@ impl App {
         self.focus = crate::focus::Focus::Pane;
     }
 
+    /// Preview the selected file WITHOUT leaving the Files pane.
+    ///
+    /// #files item 4. The flow this exists for is "arrow down a listing
+    /// glancing at each file", so two things matter: the preview must
+    /// REPLACE the previous one rather than stacking tabs, and focus must
+    /// stay in the browser so the next arrow keeps working.
+    ///
+    /// Reuses `open_path_preview`, whose docstring said only the
+    /// tree-click handler should call it — that comment is now updated,
+    /// because this IS the same gesture: "show me this, I am still
+    /// browsing". Everything it routes by extension comes free (images to
+    /// the image pane, markdown to MdPreview, the rest to an editor).
+    ///
+    /// A directory previews as nothing. Descending is what Enter is for,
+    /// and opening a directory in an editor pane is not a preview.
+    pub fn files_pane_preview(&mut self, pane_idx: usize) {
+        let Some(crate::pane::Pane::Files(f)) = self.panes.get(pane_idx) else {
+            return;
+        };
+        let Some(e) = f.selected_entry() else { return };
+        if e.is_dir {
+            return;
+        }
+        let path = e.path.clone();
+        let prev = f.preview_pane;
+        // Point `active` at the previous preview so `open_path_preview`
+        // replaces it. Only when it is still a live preview editor — the
+        // user may have closed it, edited it (which promotes it out of
+        // preview), or replaced the layout since.
+        let reusable = prev.filter(|&id| {
+            self.layout().contains(id)
+                && matches!(self.panes.get(id), Some(crate::pane::Pane::Editor(b)) if b.is_preview)
+        });
+        if let Some(id) = reusable {
+            self.active = Some(id);
+        }
+        self.open_path_preview(&path);
+        let opened = self.active;
+        if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_idx) {
+            f.preview_pane = opened;
+        }
+        // Hand focus BACK. `open_path_preview` focuses what it opened,
+        // which is right for a tree click and wrong here: it would move
+        // the cursor out of the listing after every preview, so the next
+        // `j` would scroll the previewed file instead of the browser.
+        self.active = Some(pane_idx);
+        self.focus = crate::focus::Focus::Pane;
+    }
+
     /// Open a Files pane at `dir` (defaults to the workspace root).
     pub fn open_files_pane(&mut self, dir: Option<std::path::PathBuf>) {
         let dir = dir.unwrap_or_else(|| self.workspace.clone());
@@ -1114,6 +1163,110 @@ mod multi_select_tests {
         assert!(
             paths.len() <= 1,
             "an unfocused pane's marks leaked into the target set: {paths:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::focus::Focus;
+
+    fn fixture(style: &str) -> (tempfile::TempDir, App, usize) {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["one.txt", "two.txt", "three.txt"] {
+            std::fs::write(d.path().join(n), n).unwrap();
+        }
+        std::fs::create_dir(d.path().join("adir")).unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = style.to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+        // Cursor onto the first FILE. Directories sort first, so index 0
+        // is `adir` — an earlier version of these tests previewed a
+        // directory and then asserted about panes that were never opened.
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = f.entries.iter().position(|e| !e.is_dir).unwrap();
+        }
+        (d, app, pid)
+    }
+
+    /// #files item 4 — the flow is "arrow down glancing at each file", so
+    /// focus must STAY in the browser. `open_path_preview` focuses what it
+    /// opens, which is right for a tree click and wrong here.
+    #[test]
+    fn previewing_keeps_focus_in_the_files_pane() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture("standard");
+        app.files_pane_preview(pid);
+        assert_eq!(
+            app.active,
+            Some(pid),
+            "preview moved focus out of the listing; the next `j` would \
+             scroll the previewed file instead"
+        );
+        assert_eq!(app.focus, Focus::Pane);
+    }
+
+    /// And it must actually open something.
+    #[test]
+    fn previewing_opens_the_selected_file() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture("standard");
+        let before = app.panes.len();
+        app.files_pane_preview(pid);
+        assert!(app.panes.len() > before, "no pane opened");
+    }
+
+    /// Previewing several files in a row must REPLACE, not stack — the
+    /// whole point of using the preview-tab mechanism.
+    #[test]
+    fn previewing_several_files_reuses_one_tab() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture("standard");
+        app.files_pane_preview(pid);
+        let after_first = app.panes.len();
+        for _ in 0..3 {
+            if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+                f.move_selection(1);
+            }
+            app.files_pane_preview(pid);
+        }
+        assert_eq!(
+            app.panes.len(),
+            after_first,
+            "each preview opened a new pane — arrowing through a directory \
+             would bury the browser in tabs"
+        );
+    }
+
+    /// A directory is not previewable — Enter descends into it, and
+    /// opening a folder in an editor pane is not a preview.
+    #[test]
+    fn previewing_a_directory_does_nothing() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture("standard");
+        // Back onto the directory (`adir` sorts first).
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = 0;
+            assert!(f.selected_entry().unwrap().is_dir, "setup: cursor on a dir");
+        }
+        let before = app.panes.len();
+        app.files_pane_preview(pid);
+        assert_eq!(
+            app.panes.len(),
+            before,
+            "a directory was opened as a preview"
         );
     }
 }

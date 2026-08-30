@@ -79,6 +79,19 @@ pub struct FileBrowserPane {
     /// "gather from several directories, then act" possible — the reason
     /// multi-select exists in a file manager.
     pub marked: std::collections::HashSet<PathBuf>,
+    /// The pane this browser last previewed into.
+    ///
+    /// #files item 4 — `open_path_preview` finds the tab to REPLACE by
+    /// looking at `App::active`. That works for a tree click, where focus
+    /// follows the preview. It cannot work here, because the whole point
+    /// is that focus stays in the listing so you can keep arrowing — so
+    /// by the second preview `active` is the browser, the lookup finds no
+    /// preview tab, and every glance opens another pane.
+    ///
+    /// Remembering the id lets the browser point `active` at the right
+    /// pane for the duration of the call, which is the mechanism working
+    /// as documented rather than around it.
+    pub preview_pane: Option<crate::layout::PaneId>,
     /// Last read error, surfaced in the pane rather than as a toast — a
     /// permission-denied directory should say so where you are looking.
     pub error: Option<String>,
@@ -95,6 +108,7 @@ impl FileBrowserPane {
             show_hidden: false,
             center_on_next_draw: false,
             marked: std::collections::HashSet::new(),
+            preview_pane: None,
             error: None,
         };
         p.reload();
