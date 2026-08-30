@@ -1631,15 +1631,6 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
-        // src: src/ui/tooltip.rs::HoverChip::DockEmptyChip
-        DockEmptyChip => Some(InfoViewCopy {
-            title: "Create first dock widget".into(),
-            body: "Shown when the dock has no widgets yet. Click to choose \
-                   what kind of widget to add — the dock stays empty (and \
-                   hidden) until you place one."
-                .into(),
-            ..Default::default()
-        }),
         // src: src/ui/tooltip.rs::HoverChip::GutterMark
         // R14 modernize pass (2026-08-16) — `GutterMark` carries a
         // `GutterMarkKind` (src/lib.rs:615-626); this used to be one

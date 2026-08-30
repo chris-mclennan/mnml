@@ -779,14 +779,6 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.dock_widget_kebabs.first().map(|(r, _)| *r)?;
             Some((rect, "widget options".into(), None))
         }
-        HoverChip::DockEmptyChip => {
-            let rect = app.rects.dock_empty_chip?;
-            Some((
-                rect,
-                "create first dock widget".into(),
-                Some("click: choose widget kind".into()),
-            ))
-        }
         HoverChip::StatuslineMixrPlay => {
             let rect = app.rects.statusline_mixr_play_chip?;
             Some((rect, "play / pause".into(), None))

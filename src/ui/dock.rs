@@ -27,18 +27,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
     app.rects.dock_widget_close_buttons.clear();
     app.rects.dock_widget_titles.clear();
     app.rects.dock_widget_kebabs.clear();
-    app.rects.dock_empty_chip = None;
     if app.dock_widgets.is_empty() {
-        // Empty-state discoverability chip — a faint `+ dock` at
-        // the very bottom-right of the editor body. Click → open
-        // the kebab-style new-widget picker (a stripped-down
-        // menu with just the `Add` actions). Disappears the
-        // moment any widget exists. Only render if there's
-        // enough room AND no overlay is active that would
-        // visually compete.
-        if editor_area.width >= 14 && editor_area.height >= 2 {
-            paint_empty_state_chip(frame, app, editor_area);
-        }
+        // No empty-state chip. It used to paint a faint `+ dock` over the
+        // bottom-right of the editor body — on top of the last row of
+        // whatever pane was there, with a hit-rect that beat every pane
+        // row, so clicking a file in a Files pane made a sticky note.
+        // "New dock note" lives in the `+` menu instead, which is both a
+        // permanent home and one that covers nothing.
         return;
     }
     if editor_area.width < 12 || editor_area.height < 4 {
@@ -466,31 +461,6 @@ fn paint_drag_preview(
         ))),
         chip_rect,
     );
-}
-
-/// Paint the empty-state discoverability chip — a faint
-/// `+ dock` at the bottom-right of the editor body. Click target
-/// stored in `app.rects.dock_empty_chip` so the mouse handler
-/// can fire `dock.new_text`.
-fn paint_empty_state_chip(frame: &mut Frame, app: &mut App, area: Rect) {
-    let t = theme::cur();
-    let label = " + dock ";
-    let lw = label.chars().count() as u16;
-    if area.width <= lw + 2 {
-        return;
-    }
-    let chip_rect = Rect {
-        x: area.x + area.width - lw - 1,
-        y: area.y + area.height - 1,
-        width: lw,
-        height: 1,
-    };
-    let line = Line::from(Span::styled(
-        label,
-        Style::default().fg(t.comment).bg(t.bg2),
-    ));
-    frame.render_widget(Paragraph::new(line), chip_rect);
-    app.rects.dock_empty_chip = Some(chip_rect);
 }
 
 /// Paint the open kebab menu (if any). Anchored below the `⋮`

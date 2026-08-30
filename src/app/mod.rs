@@ -2445,8 +2445,6 @@ pub struct PaneRects {
     pub dock_kebab_rows: Vec<(Rect, usize)>,
     /// Click rect for the bottom-right `+ dock` empty-state chip
     /// (shown only when `dock_widgets.is_empty()`). Click → fires
-    /// `dock.new_text`.
-    pub dock_empty_chip: Option<Rect>,
     /// `(rect, pane_id)` per session tab in the cmux-style
     /// `ActivitySection::Sessions` panel. Click → focus that
     /// Pty pane.

@@ -51,6 +51,30 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
             "Dual file panes (commander)",
             MenuAction::Command("files.open_split"),
         ),
+        // The dock's only discoverability affordance used to be a faint
+        // `+ dock` chip painted at the bottom-right of the editor body —
+        // i.e. ON TOP of the last row of whatever pane sat there, with a
+        // hit-rect checked long before any pane row. Clicking a file in a
+        // Files pane's bottom row created a sticky note (mouse-tester
+        // finding). It also only appeared while the dock was EMPTY, so it
+        // advertised the feature exclusively to people who had not used
+        // it, by covering their content.
+        //
+        // User: "what if we put it in the plus menu?" — right call. This
+        // is already the "new thing of kind X" surface, so the dock gets
+        // a permanent, discoverable home and the overlap disappears with
+        // the chip rather than being arbitrated against it.
+        // Both KINDS, because kind is the only genuine creation-time
+        // choice: the widget's own kebab already offers "Move to" with
+        // every corner, so the chip's four corner rows were redundant the
+        // moment a widget existed. User flagged the loss — "right click
+        // on it has additional options" — and this is the half worth
+        // keeping.
+        MenuItem::new("New dock note", MenuAction::Command("dock.new_text")),
+        MenuItem::new(
+            "New dock log tail",
+            MenuAction::Command("dock.new_log_tail"),
+        ),
         MenuItem::new(
             "New Claude Code session",
             MenuAction::Command("ai.claude_code_new"),
@@ -2715,12 +2739,6 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // (BottomLeft), but the chip itself is painted at bottom-RIGHT
     // (`ui/dock.rs:482-486`). Corner mismatch surprised users who
     // expect the button to act where it sits.
-    if let Some(r) = app.rects.dock_empty_chip
-        && crate::app::dispatch::contains(r, x, y)
-    {
-        crate::command::run("dock.new_text_br", app);
-        return;
-    }
     // Open kebab-menu row click → apply choice + close.
     // Checked FIRST so a click on a menu row wins over
     // anything underneath (the menu is an overlay).

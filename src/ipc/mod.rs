@@ -1446,7 +1446,6 @@ pub fn rects_dump_json(app: &App) -> String {
         app.rects.integrations_tab_refresh
     );
     one!("integrations_tab_sort", app.rects.integrations_tab_sort);
-    one!("dock_empty_chip", app.rects.dock_empty_chip);
     one!("statusline_file_chip", app.rects.statusline_file_chip);
     one!(
         "statusline_diagnostics_chip",

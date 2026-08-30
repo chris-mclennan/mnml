@@ -449,7 +449,6 @@ pub enum HoverChip {
     /// Dock kebab (⋮) menu trigger.
     DockKebab,
     /// Dock empty-state `+ dock` chip.
-    DockEmptyChip,
     /// Statusline play / pause chip (mixr controls).
     StatuslineMixrPlay,
     /// Statusline fast-forward chip (mixr controls).
