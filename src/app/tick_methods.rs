@@ -18,6 +18,11 @@ impl App {
         // refreshes on a 3s TTL). Capture the branch snapshot
         // before+after the tick; if it changed, refresh git_rail
         // so the LOCAL `●` current-branch dot follows.
+        // #1229 — keep the git rail pointed at the focused repo tab.
+        // Runs before the branch-snapshot capture below so a retarget
+        // this frame is reflected in it rather than fighting it. Costs
+        // one path comparison when nothing changed.
+        self.sync_rail_to_focused_repo();
         let before_branch = self.git.snapshot().branch.clone();
         self.git.tick();
         if self.git.snapshot().branch != before_branch {

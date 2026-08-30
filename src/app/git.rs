@@ -2685,6 +2685,52 @@ impl App {
         }
     }
 
+    /// Point the git rail (LOCAL / REMOTE / STASHES / TAGS) at whichever
+    /// repo the focused GitGraph tab belongs to.
+    ///
+    /// #1229 (user ask) — "when switching tabs on the toolbar it should
+    /// change the left panel view for that repo too". Git activity opens
+    /// one GitGraph tab per discovered repo (the 2026-08-24 multi-repo
+    /// design), but switching tabs only moves `App::active`; nothing
+    /// touched `active_repo`. So the rail kept listing the previous
+    /// repo's branches and tags while the graph beside it showed a
+    /// different repo — two panels disagreeing about which repo you were
+    /// looking at.
+    ///
+    /// Deliberately NOT `set_active_repo`: that retargets EVERY open
+    /// GitGraph pane to one repo, which is the older single-repo model
+    /// and would collapse all the per-repo tabs onto the same history.
+    /// Here only the shared, genuinely-single-valued state moves — the
+    /// rail, the status snapshot and the pull counts.
+    ///
+    /// Returns true when it actually retargeted, so callers (and tests)
+    /// can tell a real switch from the idempotent case. Cheap when
+    /// nothing changed: one path comparison, no subprocesses.
+    pub fn sync_rail_to_focused_repo(&mut self) -> bool {
+        let Some(ws) = self.active.and_then(|i| match self.panes.get(i) {
+            Some(Pane::GitGraph(g)) => Some(g.workspace.clone()),
+            _ => None,
+        }) else {
+            return false;
+        };
+        if ws == self.active_repo_path() {
+            return false;
+        }
+        let Some(idx) = self.repos.iter().position(|r| r.path == ws) else {
+            // A GitGraph on a repo that is not in `repos` (e.g. the
+            // single-repo fallback path). Nothing to select.
+            return false;
+        };
+        self.active_repo = idx;
+        // The previous repo's highlighted branch does not exist in the
+        // new one — same reasoning as `set_active_repo`.
+        self.git_palette_selected = None;
+        self.git.retarget(&ws);
+        self.git_rail.refresh(&ws);
+        self.refresh_rail_pulls();
+        true
+    }
+
     /// Reflog recovery — put a lost commit back on a named branch.
     ///
     /// #1229 (user ask). The reflog picker could only ever SHOW you the
@@ -3515,6 +3561,123 @@ mod git_tests {
             2,
             "second recovery did not create a distinct branch: {names:?}"
         );
+    }
+
+    /// #1229 — build two real repos and a GitGraph tab for each, the
+    /// shape the multi-repo git view creates.
+    fn two_repo_workspace() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        for name in ["repo_a", "repo_b"] {
+            let r = d.path().join(name);
+            fs::create_dir_all(&r).unwrap();
+            let run = |args: &[&str]| {
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&r)
+                    .output()
+                    .expect("git");
+            };
+            run(&["init", "-q", "-b", &format!("branch_{name}")]);
+            run(&["config", "user.email", "t@t"]);
+            run(&["config", "user.name", "T"]);
+            fs::write(r.join("f.txt"), name).unwrap();
+            run(&["add", "."]);
+            run(&["commit", "-qm", "init"]);
+        }
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// User ask: "when switching tabs on the toolbar it should change the
+    /// left panel view for that repo too". Switching a repo tab only
+    /// moved `App::active`; the rail kept listing the previous repo.
+    #[test]
+    fn focusing_a_repo_tab_retargets_the_git_rail() {
+        let (d, mut app) = two_repo_workspace();
+        let a = d.path().join("repo_a");
+        let b = d.path().join("repo_b");
+        app.repos = vec![
+            crate::git::repos::RepoEntry {
+                name: "repo_a".into(),
+                path: a.clone(),
+                is_workspace_root: false,
+            },
+            crate::git::repos::RepoEntry {
+                name: "repo_b".into(),
+                path: b.clone(),
+                is_workspace_root: false,
+            },
+        ];
+        app.active_repo = 0;
+        // One GitGraph pane per repo, as `open_git_graph` builds.
+        app.panes
+            .push(Pane::GitGraph(crate::git::graph::GitGraphPane::open(&a)));
+        let b_pane = app.panes.len();
+        app.panes
+            .push(Pane::GitGraph(crate::git::graph::GitGraphPane::open(&b)));
+
+        // Focus repo_b's tab.
+        app.active = Some(b_pane);
+        let moved = app.sync_rail_to_focused_repo();
+
+        assert!(moved, "focusing repo_b's tab did not retarget anything");
+        assert_eq!(app.active_repo_path(), b.as_path());
+        assert!(
+            app.git_rail
+                .branches
+                .iter()
+                .any(|br| br.name == "branch_repo_b"),
+            "rail still lists the wrong repo's branches: {:?}",
+            app.git_rail
+                .branches
+                .iter()
+                .map(|b| &b.name)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The sync must be a no-op when nothing moved — it runs every tick,
+    /// so a stray `true` means git subprocesses on every frame.
+    #[test]
+    fn the_rail_sync_is_idempotent() {
+        let (d, mut app) = two_repo_workspace();
+        let a = d.path().join("repo_a");
+        app.repos = vec![crate::git::repos::RepoEntry {
+            name: "repo_a".into(),
+            path: a.clone(),
+            is_workspace_root: false,
+        }];
+        app.active_repo = 0;
+        app.panes
+            .push(Pane::GitGraph(crate::git::graph::GitGraphPane::open(&a)));
+        app.active = Some(app.panes.len() - 1);
+
+        assert!(
+            !app.sync_rail_to_focused_repo(),
+            "reported a retarget when the focused tab already matches"
+        );
+    }
+
+    /// Focusing a non-git pane must leave the rail alone rather than
+    /// resetting it.
+    #[test]
+    fn focusing_an_editor_does_not_disturb_the_rail() {
+        let (d, mut app) = two_repo_workspace();
+        let a = d.path().join("repo_a");
+        app.repos = vec![crate::git::repos::RepoEntry {
+            name: "repo_a".into(),
+            path: a.clone(),
+            is_workspace_root: false,
+        }];
+        app.active_repo = 0;
+        fs::write(d.path().join("x.txt"), "x").unwrap();
+        app.open_path(&d.path().join("x.txt"));
+
+        assert!(
+            !app.sync_rail_to_focused_repo(),
+            "an editor pane retargeted the git rail"
+        );
+        assert_eq!(app.active_repo, 0);
     }
 
     /// #1229 — `open_git_graph` used to pin
