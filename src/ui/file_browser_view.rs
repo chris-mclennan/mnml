@@ -108,11 +108,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
         header,
     );
 
-    let body = Rect {
+    let mut body = Rect {
         x: area.x,
         y: area.y + 1,
         width: area.width,
         height: area.height - 1,
+    };
+    // #files item 2 — a footer row while anything is marked. Only then:
+    // a permanent status row would cost a listing row for information
+    // that is usually "nothing selected".
+    let marked_count = match app.panes.get(pane_id) {
+        Some(crate::pane::Pane::Files(f)) => f.marked.len(),
+        _ => 0,
+    };
+    let footer = if marked_count > 0 && body.height > 2 {
+        let r = Rect {
+            x: body.x,
+            y: body.y + body.height - 1,
+            width: body.width,
+            height: 1,
+        };
+        body.height -= 1;
+        Some(r)
+    } else {
+        None
     };
     let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) else {
         return;
@@ -220,6 +239,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
 
     let selected = f.selected;
     let scroll = f.scroll;
+    let f_marked = f.marked.clone();
     let rows: Vec<(Rect, usize)> = {
         let mut out = Vec::new();
         for (row, idx) in (scroll..f.entries.len()).take(h).enumerate() {
@@ -232,11 +252,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
                 name.push('@');
             }
             let pad = name_w.saturating_sub(name.chars().count());
+            // Mark glyph occupies the leading cell, which otherwise keeps
+            // the pane bg so a selected row never butts against the pane's
+            // left edge (#970 / #1229). A marked row shows `▌` in green
+            // there — visible at a glance down the column, and it cannot be
+            // confused with the cursor highlight, which is a background.
+            let is_marked = f_marked.contains(&e.path);
+            let lead = if is_marked {
+                Span::styled("\u{258C}", Style::default().fg(t.green).bg(t.bg_dark))
+            } else {
+                Span::styled(" ", Style::default().bg(t.bg_dark))
+            };
             let mut spans = vec![
-                // Leading cell keeps the pane bg so a selected row never
-                // butts against the pane's left edge — the same rule the
-                // tree and git palette follow (#970 / #1229).
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                lead,
                 Span::styled(format!("{icon} "), Style::default().fg(icon_fg).bg(row_bg)),
                 Span::styled(
                     name,
@@ -277,6 +305,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
         out
     };
 
+    if let Some(r) = footer {
+        let (n, bytes) = f.marked_summary();
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {n} selected"),
+                    Style::default()
+                        .fg(t.bg_darker)
+                        .bg(t.green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  {}  ", human_size(bytes)),
+                    Style::default().fg(t.fg).bg(t.bg2),
+                ),
+                // Name the clearing key: a mode you cannot get out of is
+                // worse than no mode.
+                Span::styled(
+                    "Esc clears · Ctrl+C/X acts on the set ",
+                    Style::default().fg(t.comment).bg(t.bg2),
+                ),
+            ]))
+            .style(Style::default().bg(t.bg2)),
+            r,
+        );
+    }
     let total = f.entries.len();
     if sb_w > 0 {
         let sb = Rect {
@@ -422,6 +476,68 @@ mod render_tests {
         assert!(
             app.rects.file_pane_rows.iter().any(|(_, p, _)| *p == pid),
             "no click rects registered for the Files pane"
+        );
+    }
+
+    /// #files item 2 — a mark has to be VISIBLE, and the footer has to
+    /// say how many. A selection you cannot see is a way to delete the
+    /// wrong thing.
+    #[test]
+    fn marked_rows_show_a_marker_and_a_footer_count() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for n in ["one.txt", "two.txt"] {
+            std::fs::write(d.path().join(n), "xx").unwrap();
+        }
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        };
+        let render = |app: &mut crate::app::App| -> String {
+            let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+            term.draw(|f| draw(f, app, pid, area)).unwrap();
+            let buf = term.backend().buffer();
+            (0..10)
+                .map(|y| (0..60).map(|x| buf[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let before = render(&mut app);
+        assert!(
+            !before.contains("selected"),
+            "footer showed with nothing marked — it costs a listing row:\n{before}"
+        );
+
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = 0;
+            f.toggle_mark();
+        }
+        let after = render(&mut app);
+        assert!(
+            after.contains("\u{258C}"),
+            "no mark glyph on the marked row:\n{after}"
+        );
+        assert!(
+            after.contains("1 selected"),
+            "footer does not report the count:\n{after}"
+        );
+        assert!(
+            after.contains("Esc clears"),
+            "footer does not name the way out of the selection:\n{after}"
         );
     }
 

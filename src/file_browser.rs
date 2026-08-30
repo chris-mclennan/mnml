@@ -70,6 +70,15 @@ pub struct FileBrowserPane {
     /// split as the git graph's `center_on_next_draw` (#1229): stepping
     /// wants minimal scroll, a jump wants context.
     pub center_on_next_draw: bool,
+    /// Marked entries, by PATH rather than index.
+    ///
+    /// #files item 2 — indices shift under a re-sort, a reload, or a
+    /// hidden-files toggle, so an index-based mark set would silently
+    /// re-point at different files. Paths survive all three. Marks also
+    /// deliberately survive navigating away and back, which is what makes
+    /// "gather from several directories, then act" possible — the reason
+    /// multi-select exists in a file manager.
+    pub marked: std::collections::HashSet<PathBuf>,
     /// Last read error, surfaced in the pane rather than as a toast — a
     /// permission-denied directory should say so where you are looking.
     pub error: Option<String>,
@@ -85,6 +94,7 @@ impl FileBrowserPane {
             sort: Sort::default(),
             show_hidden: false,
             center_on_next_draw: false,
+            marked: std::collections::HashSet::new(),
             error: None,
         };
         p.reload();
@@ -232,6 +242,81 @@ impl FileBrowserPane {
             self.selected = self.entries.len() - 1;
             self.center_on_next_draw = true;
         }
+    }
+
+    /// Toggle the mark on the cursor row, then advance.
+    ///
+    /// Advancing is what makes marking a run of files one keypress each —
+    /// ranger, mc and superfile all do it. Without it every mark costs
+    /// `Space` plus `j`.
+    pub fn toggle_mark(&mut self) {
+        let Some(e) = self.entries.get(self.selected) else {
+            return;
+        };
+        let p = e.path.clone();
+        if !self.marked.remove(&p) {
+            self.marked.insert(p);
+        }
+        self.move_selection(1);
+    }
+
+    /// Mark every entry in the current listing. Respects the FILTER of
+    /// what is currently listed — a hidden file you cannot see must not be
+    /// swept into an operation.
+    pub fn mark_all(&mut self) {
+        for e in &self.entries {
+            self.marked.insert(e.path.clone());
+        }
+    }
+
+    pub fn clear_marks(&mut self) {
+        self.marked.clear();
+    }
+
+    pub fn is_marked(&self, path: &Path) -> bool {
+        self.marked.contains(path)
+    }
+
+    /// The paths an operation should act on: the marked set when there is
+    /// one, otherwise the cursor row.
+    ///
+    /// Marks WIN over the cursor. If they did not, a user who marked ten
+    /// files and then moved the cursor would delete one file and wonder
+    /// where the other nine went.
+    pub fn action_paths(&self) -> Vec<PathBuf> {
+        if !self.marked.is_empty() {
+            // Listing order, not HashSet order, so any confirmation
+            // prompt reads in the order the user sees.
+            return self
+                .entries
+                .iter()
+                .filter(|e| self.marked.contains(&e.path))
+                .map(|e| e.path.clone())
+                .chain(
+                    // Marks from OTHER directories still count.
+                    self.marked
+                        .iter()
+                        .filter(|p| !self.entries.iter().any(|e| &e.path == *p))
+                        .cloned(),
+                )
+                .collect();
+        }
+        self.selected_entry()
+            .map(|e| e.path.clone())
+            .into_iter()
+            .collect()
+    }
+
+    /// `(count, total_bytes)` for the marked set — the footer summary.
+    /// Directories contribute no bytes, matching the listing.
+    pub fn marked_summary(&self) -> (usize, u64) {
+        let bytes = self
+            .entries
+            .iter()
+            .filter(|e| self.marked.contains(&e.path))
+            .filter_map(|e| e.size)
+            .sum();
+        (self.marked.len(), bytes)
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
@@ -446,6 +531,154 @@ mod tests {
             Some("b_file.txt"),
             "an unrelated new entry moved the user's selection"
         );
+    }
+
+    /// #files item 2 — marks are stored by PATH, so a re-sort must not
+    /// re-point them at different files.
+    #[test]
+    fn marks_survive_a_re_sort() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "a_file.txt")
+            .unwrap();
+        p.toggle_mark();
+        assert_eq!(p.marked.len(), 1);
+
+        p.set_sort(Sort::Size);
+
+        let marked: Vec<&str> = p
+            .entries
+            .iter()
+            .filter(|e| p.is_marked(&e.path))
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(
+            marked,
+            vec!["a_file.txt"],
+            "the mark moved to a different file after sorting"
+        );
+    }
+
+    /// And a reload that shifts every index must not move them either.
+    #[test]
+    fn marks_survive_a_reload_that_shifts_indices() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "b_file.txt")
+            .unwrap();
+        p.toggle_mark();
+        std::fs::create_dir(d.path().join("aaa_first")).unwrap();
+        p.reload();
+        let marked: Vec<&str> = p
+            .entries
+            .iter()
+            .filter(|e| p.is_marked(&e.path))
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(marked, vec!["b_file.txt"]);
+    }
+
+    /// Marking advances the cursor, so a run of files is one keypress each.
+    #[test]
+    fn marking_advances_the_cursor() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = 0;
+        p.toggle_mark();
+        assert_eq!(p.selected, 1, "toggle_mark did not advance");
+        p.toggle_mark();
+        assert_eq!(p.marked.len(), 2, "two rows marked in two keypresses");
+    }
+
+    /// Marks WIN over the cursor. Otherwise a user who marks ten files and
+    /// then moves the cursor deletes one and loses track of the rest.
+    #[test]
+    fn action_paths_prefers_marks_over_the_cursor() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "a_file.txt")
+            .unwrap();
+        p.toggle_mark();
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "b_file.txt")
+            .unwrap();
+
+        let paths = p.action_paths();
+        assert_eq!(paths.len(), 1, "{paths:?}");
+        assert!(
+            paths[0].ends_with("a_file.txt"),
+            "action used the cursor instead of the mark: {paths:?}"
+        );
+    }
+
+    /// With nothing marked, the cursor is the target — so every operation
+    /// still works without ever touching Space.
+    #[test]
+    fn action_paths_falls_back_to_the_cursor() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "b_file.txt")
+            .unwrap();
+        let paths = p.action_paths();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("b_file.txt"));
+    }
+
+    /// `mark_all` must respect what is LISTED — a hidden file you cannot
+    /// see must not be swept into an operation.
+    #[test]
+    fn mark_all_ignores_entries_that_are_not_listed() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.mark_all();
+        assert!(
+            !p.marked.iter().any(|q| q.ends_with(".hidden")),
+            "mark_all swept in a hidden file the user cannot see"
+        );
+        assert_eq!(p.marked.len(), p.entries.len());
+    }
+
+    /// Marks made in one directory survive navigating elsewhere — that is
+    /// what makes "gather, then act" possible.
+    #[test]
+    fn marks_persist_across_navigation() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.selected = p
+            .entries
+            .iter()
+            .position(|e| e.name == "a_file.txt")
+            .unwrap();
+        p.toggle_mark();
+        p.navigate_to(&d.path().join("zeta_dir"));
+        assert_eq!(p.marked.len(), 1, "marks were dropped by navigation");
+        // And they still surface as action targets from the new directory.
+        assert_eq!(p.action_paths().len(), 1);
+    }
+
+    #[test]
+    fn marked_summary_counts_files_and_bytes() {
+        let d = fixture();
+        let mut p = FileBrowserPane::open(d.path());
+        p.mark_all();
+        let (n, bytes) = p.marked_summary();
+        assert_eq!(n, p.entries.len());
+        // a_file.txt (4) + b_file.txt (2); dirs contribute nothing.
+        assert_eq!(bytes, 6, "byte total wrong: {bytes}");
     }
 
     #[test]

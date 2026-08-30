@@ -635,6 +635,41 @@ impl App {
         self.tree.selected_file()
     }
 
+    /// Every path an operation should act on.
+    ///
+    /// #files item 2 — the marked set when a focused Files pane has one,
+    /// otherwise whatever [`Self::target_path`] resolves to. This is what
+    /// makes marking mean anything: without it `Space` would decorate rows
+    /// and Ctrl+C would still copy one file.
+    pub fn target_paths(&self) -> Vec<std::path::PathBuf> {
+        if self.focus == crate::focus::Focus::Pane
+            && let Some(i) = self.active
+            && let Some(crate::pane::Pane::Files(f)) = self.panes.get(i)
+        {
+            return f.action_paths();
+        }
+        self.target_path().into_iter().collect()
+    }
+
+    /// Stage several paths on the file clipboard.
+    ///
+    /// `file_clipboard` was always a `Vec` — `file_stage_clipboard` simply
+    /// only ever put one path in it, so paste already handles a set.
+    pub fn file_stage_clipboard_many(&mut self, paths: Vec<std::path::PathBuf>, cut: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        if paths.len() == 1 {
+            let p = paths.into_iter().next().unwrap();
+            self.file_stage_clipboard(p, cut);
+            return;
+        }
+        let n = paths.len();
+        self.file_clipboard = paths;
+        self.file_clipboard_cut = cut;
+        self.toast(format!("{} {n} items", if cut { "cut" } else { "copied" }));
+    }
+
     /// The DIRECTORY a new file / paste should land in.
     ///
     /// Distinct from [`Self::target_path`] because "paste here" means the
@@ -974,5 +1009,111 @@ mod entry_point_tests {
             ),
             other => panic!("wrong action on the row: {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod multi_select_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn fixture() -> (tempfile::TempDir, App, usize) {
+        let d = tempfile::tempdir().unwrap();
+        for n in ["one.txt", "two.txt", "three.txt"] {
+            std::fs::write(d.path().join(n), n).unwrap();
+        }
+        std::fs::create_dir(d.path().join("dest")).unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_files_pane(None);
+        let pid = app.active.unwrap();
+        (d, app, pid)
+    }
+
+    /// #files item 2 — the whole point: Ctrl+C must stage the MARKED SET,
+    /// not one file. Without this, `Space` would just decorate rows.
+    #[test]
+    fn copy_stages_every_marked_path() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = 0;
+            f.toggle_mark(); // marks + advances
+            f.toggle_mark();
+        }
+        crate::command::run("file.copy", &mut app);
+        assert_eq!(
+            app.file_clipboard.len(),
+            2,
+            "clipboard holds {:?}, expected the two marked paths",
+            app.file_clipboard
+        );
+        assert!(!app.file_clipboard_cut, "copy must not be a cut");
+    }
+
+    /// And with nothing marked it still stages the cursor row, so every
+    /// operation works without ever pressing Space.
+    #[test]
+    fn copy_without_marks_stages_the_cursor_row() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = 1;
+        }
+        crate::command::run("file.copy", &mut app);
+        assert_eq!(app.file_clipboard.len(), 1, "{:?}", app.file_clipboard);
+    }
+
+    /// A marked set must actually paste — the clipboard being a Vec is not
+    /// proof that paste iterates it.
+    #[test]
+    fn pasting_a_marked_set_copies_every_file() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app, pid) = fixture();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = 0;
+            f.toggle_mark();
+            f.toggle_mark();
+            f.toggle_mark();
+        }
+        crate::command::run("file.copy", &mut app);
+        assert_eq!(app.file_clipboard.len(), 3, "setup: three staged");
+
+        let dest = d.path().join("dest");
+        app.file_paste_into(dest.clone());
+
+        let landed = std::fs::read_dir(&dest).unwrap().count();
+        assert_eq!(
+            landed, 3,
+            "only {landed} of 3 marked files were pasted — paste does not \
+             iterate the clipboard"
+        );
+    }
+
+    /// An unfocused Files pane must not contribute its marks — same
+    /// reasoning as `target_path`: a bulk delete aimed at the wrong set is
+    /// the worst outcome in this area.
+    #[test]
+    fn an_unfocused_panes_marks_are_ignored() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = fixture();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = 0;
+            f.toggle_mark();
+            f.toggle_mark();
+        }
+        app.focus = crate::focus::Focus::Tree;
+        let paths = app.target_paths();
+        assert!(
+            paths.len() <= 1,
+            "an unfocused pane's marks leaked into the target set: {paths:?}"
+        );
     }
 }

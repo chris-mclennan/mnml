@@ -2531,9 +2531,10 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.target_path() {
-                    app.file_stage_clipboard(p, true);
-                }
+                // #files item 2 — acts on the MARKED SET when there is
+                // one, so Space + Ctrl+X moves ten files.
+                let paths = app.target_paths();
+                app.file_stage_clipboard_many(paths, true);
             },
         },
         Command {
@@ -2542,9 +2543,8 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.target_path() {
-                    app.file_stage_clipboard(p, false);
-                }
+                let paths = app.target_paths();
+                app.file_stage_clipboard_many(paths, false);
             },
         },
         Command {

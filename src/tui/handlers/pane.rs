@@ -832,6 +832,8 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     | KeyCode::Char('.')
                     | KeyCode::Char('r')
                     | KeyCode::Char('s')
+                    | KeyCode::Char('a')
+                    | KeyCode::Char(' ')
             )
         {
             return;
@@ -875,6 +877,22 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                 app.files_pane_activate(i);
             }
+            // #files item 2 — `Space` marks and advances, `a` marks all.
+            // Space rather than preview (settled up front): bulk work is
+            // the reason a file manager has panels at all, and ranger, mc
+            // and superfile all put marking here.
+            KeyCode::Char(' ') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.toggle_mark();
+                }
+            }
+            KeyCode::Char('a') => {
+                if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                    f.mark_all();
+                    let (n, _) = f.marked_summary();
+                    app.toast(format!("{n} selected"));
+                }
+            }
             // `.` — dotfiles, the ranger/superfile binding.
             KeyCode::Char('.') => {
                 if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
@@ -905,7 +923,23 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.toast(format!("sort: {label}"));
                 }
             }
-            KeyCode::Esc => app.focus = crate::focus::Focus::Tree,
+            // Esc clears marks first and only leaves the pane once there
+            // are none — otherwise one Esc both drops a ten-file selection
+            // AND moves focus, and the user cannot tell which happened.
+            KeyCode::Esc => {
+                let had_marks = matches!(
+                    app.panes.get(i),
+                    Some(Pane::Files(f)) if !f.marked.is_empty()
+                );
+                if had_marks {
+                    if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
+                        f.clear_marks();
+                    }
+                    app.toast("selection cleared");
+                } else {
+                    app.focus = crate::focus::Focus::Tree;
+                }
+            }
             // Anything else falls through to the chord / cmdline layers —
             // returning early here would trap a vim user (the same trap
             // `handle_md_preview_key` had before its `_ => {}` was fixed).
