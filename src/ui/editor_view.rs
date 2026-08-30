@@ -1639,6 +1639,16 @@ struct LineRender {
     color_grid: Vec<Option<Color>>,
 }
 
+// Counts `LineRender::build` calls, for the regression guard.
+//
+// Thread-local, so it is isolated per test thread — a global would be
+// polluted by every other test rendering in parallel.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LINE_RENDER_BUILDS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl LineRender {
     fn build(
         raw: &str,
@@ -1647,6 +1657,8 @@ impl LineRender {
         hi: usize,
         want_trailing: bool,
     ) -> Self {
+        #[cfg(test)]
+        LINE_RENDER_BUILDS.with(|c| c.set(c.get() + 1));
         let n = raw.chars().count();
         let indent_cols = raw.chars().take_while(|c| *c == ' ').count();
         let has_content = indent_cols < n;
@@ -1899,22 +1911,33 @@ mod tests {
     /// ONE line) and mnml froze for minutes: "i'm going to have to force
     /// close it". The per-visual-row loop was doing per-LINE work, so with
     /// wrap on — where one long line occupies every row on screen — a
-    /// 40-row viewport allocated 40 x 545K chars and 40 x 545K colours,
-    /// then filled the colour grid across the whole line each time, every
-    /// frame.
+    /// 40-row viewport rebuilt a whole-line char vector and a whole-line
+    /// colour grid on each of ~44 rows, every frame. 745ms per frame.
     ///
-    /// The bound is deliberately loose (a second for 20 frames) so the
-    /// test does not go flaky on a loaded CI box. It is not measuring
-    /// microseconds; it is catching the reintroduction of whole-line work
-    /// in a per-row loop, which costs seconds per frame, not milliseconds.
+    /// Asserted STRUCTURALLY, by counting `LineRender::build` calls, not
+    /// by timing. Two earlier attempts to guard this by clock both
+    /// failed, and the second failed silently:
+    ///
+    /// - An absolute bound broke CI at 1.0998s against a 1s limit, and
+    ///   raising it to 10s stopped catching the regression at all. No
+    ///   absolute number both survives a slow runner and fails a fast
+    ///   broken one.
+    /// - A syntax-on/syntax-off RATIO passed at 1.04x and failed at
+    ///   10.3x, which looked convincing — but `LineRender::build`'s
+    ///   `raw.chars().count()` is O(line) and NOT syntax-gated, so a
+    ///   regression that moves `build` back into the row loop costs the
+    ///   same on both sides and leaves the ratio at ~1.0. It was blind to
+    ///   the exact bug it was named for.
+    ///
+    /// The invariant is what actually matters and it is exact: per-line
+    /// work happens once per visible LINE, never once per visual ROW.
+    /// One long line wrapped across 44 rows must build exactly once.
     #[test]
-    fn a_very_long_single_line_renders_without_whole_line_work_per_row() {
+    fn per_line_render_work_happens_once_per_line_not_once_per_row() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
         let d = tempfile::tempdir().unwrap();
-        // Same shape as the file that triggered it: one line, no newline,
-        // dense punctuation so the highlighter produces many spans.
         let f = d.path().join("huge.json");
         let mut line = String::from("{");
         while line.len() < 545_000 {
@@ -1932,19 +1955,50 @@ mod tests {
         app.open_path(&f);
 
         let mut term = Terminal::new(TestBackend::new(160, 44)).unwrap();
-        // One warm-up frame so highlighting is not counted as render cost.
         term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
 
-        let t0 = std::time::Instant::now();
-        for _ in 0..20 {
-            term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
-        }
-        let elapsed = t0.elapsed();
-        assert!(
-            elapsed < std::time::Duration::from_secs(1),
-            "20 frames on a {}-char single line took {elapsed:?} — that is \
-             whole-line work happening once per visual row again",
+        // Count ONE frame, after the first has settled any lazy state.
+        LINE_RENDER_BUILDS.with(|c| c.set(0));
+        term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+        let builds = LINE_RENDER_BUILDS.with(|c| c.get());
+
+        assert_eq!(
+            builds,
+            1,
+            "the file is ONE line filling every visual row, so per-line \
+             work must happen once — it happened {builds} times, i.e. once \
+             per row. Each of those walks all {} characters.",
             line.chars().count()
+        );
+    }
+
+    /// The counter is only meaningful if it moves at all — a guard whose
+    /// instrument is dead reports success forever.
+    #[test]
+    fn the_line_render_counter_actually_counts() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("many.txt");
+        std::fs::write(
+            &f,
+            (0..50).map(|i| format!("line {i}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.open_path(&f);
+        let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+
+        LINE_RENDER_BUILDS.with(|c| c.set(0));
+        term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+        let builds = LINE_RENDER_BUILDS.with(|c| c.get());
+        assert!(
+            builds > 1,
+            "50 short lines should build many LineRenders, got {builds} — \
+             the counter is not wired to anything"
         );
     }
     use ratatui::style::Modifier;
