@@ -3565,26 +3565,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         if (ctrl || shift) && idx != crate::ui::file_browser_view::PARENT_ROW {
             if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) {
                 if shift {
-                    let (lo, hi) = if idx >= f.selected {
-                        (f.selected, idx)
-                    } else {
-                        (idx, f.selected)
-                    };
-                    let paths: Vec<std::path::PathBuf> = f
-                        .entries
-                        .get(lo..=hi)
-                        .map(|slice| slice.iter().map(|e| e.path.clone()).collect())
-                        .unwrap_or_default();
-                    for p in paths {
-                        f.marked.insert(p);
+                    f.shift_extend_to(idx);
+                } else {
+                    if let Some(e) = f.entries.get(idx) {
+                        let p = e.path.clone();
+                        f.toggle_mark_path(p);
                     }
-                } else if let Some(e) = f.entries.get(idx) {
-                    let p = e.path.clone();
-                    if !f.marked.remove(&p) {
-                        f.marked.insert(p);
-                    }
+                    f.selected = idx;
                 }
-                f.selected = idx;
             }
             return;
         }

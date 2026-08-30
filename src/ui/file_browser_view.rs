@@ -1228,6 +1228,77 @@ mod render_tests {
         );
     }
 
+    /// The other direction. The `lo`/`hi` swap is the only thing standing
+    /// between an upward shift-click and an empty range, and the
+    /// downward-only test above would not notice it going wrong.
+    #[test]
+    fn shift_click_above_the_anchor_spans_the_same_rows() {
+        let (_d, mut app, pid) = marking_fixture();
+        let at = row_point(&mut app, pid, 3);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        let at = row_point(&mut app, pid, 1);
+        click(&mut app, at, KeyModifiers::SHIFT);
+
+        let names = marked_names(&app, pid);
+        assert_eq!(
+            names.len(),
+            3,
+            "an upward shift-click spanned {} rows, not 3: {names:?}",
+            names.len()
+        );
+    }
+
+    /// Review finding — the range used to only ever GROW, and the anchor
+    /// drifted to wherever you last clicked, so shift-clicking a nearer
+    /// row could not take the selection back. Finder, Explorer and VS Code
+    /// all recompute from a stable anchor; a user who overshoots by one
+    /// row otherwise has to clear and start again.
+    #[test]
+    fn a_second_shift_click_shrinks_the_range_instead_of_only_growing_it() {
+        let (_d, mut app, pid) = marking_fixture();
+        let at = row_point(&mut app, pid, 0);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        let at = row_point(&mut app, pid, 3);
+        click(&mut app, at, KeyModifiers::SHIFT);
+        assert_eq!(marked_names(&app, pid).len(), 4, "setup: expected 0..=3");
+
+        // Overshot by two — pull it back.
+        let at = row_point(&mut app, pid, 1);
+        click(&mut app, at, KeyModifiers::SHIFT);
+        let names = marked_names(&app, pid);
+        assert_eq!(
+            names.len(),
+            2,
+            "shift-click could not shrink the range — still {} marked: {names:?}",
+            names.len()
+        );
+    }
+
+    /// A mark made deliberately, outside the shift range, must survive a
+    /// later shift-click that spans it. Taking back "what the last
+    /// shift-click added" must mean exactly that.
+    #[test]
+    fn shrinking_a_shift_range_keeps_marks_made_separately() {
+        let (_d, mut app, pid) = marking_fixture();
+        // Mark row 3 on its own first.
+        let at = row_point(&mut app, pid, 3);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        // Anchor at 0, sweep 0..=3 (which spans the separate mark), then
+        // pull back to 0..=1.
+        let at = row_point(&mut app, pid, 0);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        let at = row_point(&mut app, pid, 3);
+        click(&mut app, at, KeyModifiers::SHIFT);
+        let at = row_point(&mut app, pid, 1);
+        click(&mut app, at, KeyModifiers::SHIFT);
+
+        let names = marked_names(&app, pid);
+        assert!(
+            names.iter().any(|n| n == "d.txt"),
+            "shrinking the range swept away a mark the user made separately: {names:?}"
+        );
+    }
+
     /// Finding #6 — the right-click menu reused the tree's, which is
     /// path-based, so "mark five, right-click, Copy" copied exactly one
     /// file with no indication the other four were ignored.

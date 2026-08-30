@@ -2677,10 +2677,8 @@ impl App {
             Rename(path) => self.open_fs_rename_prompt(path),
             Delete(path) => self.open_fs_delete_prompt(path),
             FilesToggleMark(pane_id, path) => {
-                if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_id)
-                    && !f.marked.remove(&path)
-                {
-                    f.marked.insert(path);
+                if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_id) {
+                    f.toggle_mark_path(path);
                 }
             }
             FilesCutMarked(pane_id) => {

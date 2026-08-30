@@ -79,6 +79,21 @@ pub struct FileBrowserPane {
     /// "gather from several directories, then act" possible — the reason
     /// multi-select exists in a file manager.
     pub marked: std::collections::HashSet<PathBuf>,
+    /// Where a shift-click range measures FROM. Set by a plain or
+    /// ctrl-click, never by a shift-click.
+    ///
+    /// A path, not an index, for the same reason `marked` is: a reload
+    /// re-sorts the listing and an index would then anchor at a different
+    /// file. `None` falls back to the cursor.
+    pub mark_anchor: Option<PathBuf>,
+    /// What the LAST shift-click contributed, so the next one can take it
+    /// back before laying down its own range.
+    ///
+    /// Without this the range only ever grows: shift-clicking a nearer row
+    /// adds nothing and removes nothing, so there is no way back to a
+    /// smaller selection — which is not how Finder, Explorer or VS Code
+    /// behave, and reads as "why won't shift-click shrink my selection".
+    pub shift_added: std::collections::HashSet<PathBuf>,
     /// The pane this browser last previewed into.
     ///
     /// #files item 4 — `open_path_preview` finds the tab to REPLACE by
@@ -119,6 +134,8 @@ impl FileBrowserPane {
             show_hidden: false,
             center_on_next_draw: false,
             marked: std::collections::HashSet::new(),
+            mark_anchor: None,
+            shift_added: std::collections::HashSet::new(),
             preview_pane: None,
             filter: String::new(),
             filter_focused: false,
@@ -195,6 +212,7 @@ impl FileBrowserPane {
         // An operation that consumed the marks (cut+paste) leaves them
         // pointing at paths that have moved.
         self.marked.retain(|p| p.exists());
+        self.shift_added.retain(|p| self.marked.contains(p));
         // Restore the cursor by name; fall back to clamping.
         if let Some(name) = keep
             && let Some(i) = self.entries.iter().position(|e| e.name == name)
@@ -309,10 +327,62 @@ impl FileBrowserPane {
             return;
         };
         let p = e.path.clone();
-        if !self.marked.remove(&p) {
-            self.marked.insert(p);
-        }
+        self.toggle_mark_path(p);
         self.move_selection(1);
+    }
+
+    /// Toggle one path's mark and re-anchor there.
+    ///
+    /// The single definition: the keyboard's `Space`, the mouse's
+    /// ctrl-click and the context menu's Mark / Unmark all land here, so
+    /// they cannot drift apart on what "toggle" means or on where a
+    /// subsequent shift-range measures from.
+    pub fn toggle_mark_path(&mut self, path: PathBuf) {
+        self.mark_anchor = Some(path.clone());
+        // A fresh anchor invalidates the previous shift range: the next
+        // shift-click measures from here, so it must not also undo a
+        // range the user laid down before moving the anchor.
+        self.shift_added.clear();
+        if !self.marked.remove(&path) {
+            self.marked.insert(path);
+        }
+    }
+
+    /// Mark everything between the anchor and `idx`, replacing whatever
+    /// the previous shift-click contributed.
+    ///
+    /// Recomputed rather than accumulated, so shift-clicking a nearer row
+    /// SHRINKS the selection — the behaviour of every file manager the
+    /// gesture is borrowed from. Marks made by other means survive: only
+    /// this pane's own last shift range is taken back.
+    pub fn shift_extend_to(&mut self, idx: usize) {
+        if idx >= self.entries.len() {
+            return;
+        }
+        let anchor = self
+            .mark_anchor
+            .as_ref()
+            .and_then(|a| self.entries.iter().position(|e| &e.path == a))
+            .unwrap_or(self.selected)
+            .min(self.entries.len().saturating_sub(1));
+
+        for p in self.shift_added.drain() {
+            self.marked.remove(&p);
+        }
+        let (lo, hi) = if idx >= anchor {
+            (anchor, idx)
+        } else {
+            (idx, anchor)
+        };
+        for e in &self.entries[lo..=hi] {
+            // Only record paths this range actually ADDS. A row the user
+            // marked separately must not be swept away by a later
+            // shift-click that happens to span it.
+            if self.marked.insert(e.path.clone()) {
+                self.shift_added.insert(e.path.clone());
+            }
+        }
+        self.selected = idx;
     }
 
     /// Mark every entry in the current listing. Respects the FILTER of
@@ -401,6 +471,7 @@ impl FileBrowserPane {
     /// there. Reported by the vim tester.
     pub fn prune_missing_marks(&mut self) {
         self.marked.retain(|p| p.exists());
+        self.shift_added.retain(|p| self.marked.contains(p));
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {

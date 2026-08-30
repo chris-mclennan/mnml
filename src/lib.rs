@@ -123,6 +123,7 @@ pub(crate) mod shell_prompt;
 pub(crate) mod signature;
 pub(crate) mod snippets;
 pub(crate) mod tools;
+pub mod transfer;
 pub(crate) mod tree;
 pub mod tui;
 pub mod ui;
