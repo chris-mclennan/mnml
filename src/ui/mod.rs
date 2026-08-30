@@ -478,13 +478,37 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             width: bar_w,
             height: ta.height,
         };
+        // #1229 (user ask) — a 1-cell border column between the activity
+        // bar and the panel, in the same `t.line` grey as the divider on
+        // the right of the whole left area.
+        //
+        // Given its OWN column rather than painted onto the bar's last
+        // cell, because the bar's trailing pad is load-bearing: the user
+        // wants "an empty 1 cell on right of those icons". Taking that
+        // cell for the border would swap one encroachment for another.
+        //
+        // This also removes the whole class structurally. Three separate
+        // fixes — tree_view (#970), the git palette, hover-help — were
+        // all "a lighter fill butts against the bar". With a real border
+        // column between them, there is nothing for a panel fill to touch.
+        let border_w: u16 = if ta.width > bar_w + 2 { 1 } else { 0 };
         let content_area = Rect {
-            x: ta.x + bar_w,
+            x: ta.x + bar_w + border_w,
             y: ta.y,
-            width: ta.width.saturating_sub(bar_w),
+            width: ta.width.saturating_sub(bar_w + border_w),
             height: ta.height,
         };
         crate::ui::activity_bar::draw(frame, app, bar_area);
+        if border_w > 0 {
+            let t = theme::cur();
+            let line_style = Style::default().fg(t.line).bg(t.bg_dark);
+            for dy in 0..ta.height {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(ratatui::text::Span::styled("│", line_style)),
+                    Rect::new(ta.x + bar_w, ta.y + dy, 1, 1),
+                );
+            }
+        }
         // qa-feature 2026-06-30 — clear the repo-switch rect when
         // the Git palette isn't the active section so a stale rect
         // from a previous frame doesn't catch clicks elsewhere.
@@ -5931,6 +5955,63 @@ fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
             let line: String = "─".repeat(rect.width as usize);
             frame.render_widget(Paragraph::new(Span::styled(line, line_style)), rect);
         }
+    }
+}
+
+#[cfg(test)]
+mod activity_bar_border_tests {
+    use super::*;
+
+    /// #1229 (user ask) — "can we get a dark grey border for the right
+    /// vertical edge of the activity bar, same color as the border on
+    /// right of left area".
+    ///
+    /// Also the structural end of a bug class: three separate fixes
+    /// (tree_view #970, the git palette, hover-help) were all "a lighter
+    /// panel fill butts against the activity bar". With a real border
+    /// column there is nothing for a fill to touch.
+    #[test]
+    fn a_line_coloured_border_sits_between_the_bar_and_the_panel() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.tree_visible = true;
+        let t = theme::cur();
+
+        let mut term = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+
+        // Find the border column: the `│` run in `t.line` within the
+        // first few columns.
+        let bar_w = crate::ui::activity_bar::ACTIVITY_BAR_WIDTH;
+        let mut found = None;
+        for x in 0..(bar_w + 3) {
+            let hits = (0..24)
+                .filter(|&y| {
+                    let c = &buf[(x, y)];
+                    c.symbol() == "│" && c.fg == t.line
+                })
+                .count();
+            if hits >= 5 {
+                found = Some((x, hits));
+                break;
+            }
+        }
+        let (bx, hits) = found
+            .unwrap_or_else(|| panic!("no `│` border column in `t.line` near the activity bar"));
+        assert!(
+            bx >= bar_w,
+            "the border landed at column {bx}, inside the activity bar's own \
+             {bar_w} cells — its trailing pad must stay empty"
+        );
+        assert!(hits >= 10, "border column only {hits} cells tall");
     }
 }
 
