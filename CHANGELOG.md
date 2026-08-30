@@ -10,6 +10,118 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.20](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.19...mnml-rs-v0.2.20) - 2026-08-30
+
+### Added
+
+- *(#files)* file operations run off the render thread
+- *(menu)* per-row kebab on the `+` menu — pin, hide, copy id
+- *(menu)* submenus, and the `+` menu grouped from 15 rows into 5
+- *(#files)* give the mouse a path to marking, and a menu that respects it
+- *(files)* `/` type-to-narrow filter
+- *(files)* git status badges per row + visible sort indicator
+- *(files)* `p` previews the selected file without leaving the listing
+- *(files)* clickable breadcrumb + destinations picker
+- *(files)* multi-select — Space marks, operations act on the set
+- *(files)* surface the file panes — `+` menu, View menu, folder right-click
+- *(files)* file operations in the Files pane + right-click; queue the rest
+- Pane::Files — a directory listing as a pane (file-manager foundation)
+- *(#1229)* env-grouped web bookmarks on the browser chip
+- *(#1229)* dark grey border on the activity bar's right edge
+- *(#1229)* the git rail scrolls, with a scrollbar when it overflows
+- a real Button design component; centre + style the git toolbar
+- *(#1229)* reflog recovers to a branch; remove the dead Blame toolbar button
+- make click echo optional, and default it off
+- *(#1236)* default scroll_accel to normal, and pin the default in a test
+- *(#1236)* configurable scroll acceleration that still stops when the wheel does
+- *(#1232)* the pane now names the fix instead of showing a bare error; drop a private repo name from the site
+- *(#1221 f/u)* sessions.refresh palette command
+- *(#1221)* SESSIONS panel gets the top-right refresh chip
+- *(#1208)* Keyboard section in the wizard + keys.doctor
+- *(#1208)* bind Alt/Cmd arrows + add the key-arrival probe engine
+
+### Fixed
+
+- *(test)* guard the long-line perf fix structurally, not by clock
+- four review findings, incl. horizontal scroll rendering nothing
+- *(#files)* two data-loss bugs in the transfer worker, from review
+- *(#dock)* retire the `+ dock` chip; the `+` menu is its home now
+- *(#files)* shift-click shrinks too, and one definition of "toggle a mark"
+- *(files)* vim tester round — two SEV-1s, both mine
+- *(files)* review round — a crash, two swallowed keys, and per-frame clones
+- *(ai-usage)* stop hammering Anthropic — back off, stagger, poll by need
+- *(files)* dual browser no longer opens a stray [scratch] tab
+- the Files pane had no visible way up
+- *(#1229)* an open menu kept the keyboard after a Ctrl+punctuation chord
+- *(#1229)* clicking a branch reveals its commit with context, not pinned to an edge
+- *(#1229)* a collapsed git section no longer loses count or eats scroll
+- *(#1229)* drop the extra cell left of the tree header's refresh chip
+- *(#1229)* dividers no longer render as a lighter stripe
+- *(#1229)* hover-help title band no longer touches the activity bar
+- *(#1229)* repo dropdown produced N identical tabs
+- *(#1229)* the git rail now follows the focused repo tab
+- *(#1229)* git rail — newest tags first, and stop the highlight touching the activity bar
+- *(#1229)* reflow commit messages before wrapping — no more ragged short lines
+- *(#1229)* restore auto-resize + word wrap on the git detail panel
+- pad the tab-strip overflow chevrons like the `+` chip beside them
+- *(#1229)* leaving the Git section closed your editor tabs
+- *(#1229)* free Ctrl+P in vim INSERT — keyword-completion-back had never run
+- *(#1235)* pin the promotion test's data root — it was implicitly platform-dependent
+- *(#1235)* manifest writes bypassed data_root() — portable/XDG installs wrote where nothing reads
+- *(#1236)* the `off` path drained its bucket and never refilled it
+- *(#1236)* stop discarding wheel events — the stop detector ate live scrolling
+- *(#1237)* PageDown on a short file parked the cursor past EOF and painted blank
+- *(#1236)* stop starving real input — the bucket was tuned for a quieter wheel
+- *(#1236)* recalibrate from the logged data — the signal was there, my scale was 3x off
+- *(#1236)* default scroll_accel to off — measured data says the signal isn't there
+- *(#1236)* when the wheel stops, scrolling stops — drop the tail, don't just slow it
+- *(#1236)* the accelerated magnitude was being clamped away downstream
+- PageUp/PageDown do nothing in the file tree
+- *(#1236)* accelerate on wheel RATE, not coalesced batch size
+- *(#1225)* let the caller declare an empty write instead of inferring it
+- *(#1225)* compare the change-check snapshot in the same order as its target
+- *(#1225)* App::new was rewriting the user's glyph ledger — and could empty it
+- *(tui)* restore the terminal when the app panics
+- *(editor)* clear extra anchors with extra cursors
+- *(clipboard)* notice when another app copies something
+- *(editor)* don't panic reloading an externally-changed file
+- *(editor)* don't panic on Ctrl+D over a word with non-ASCII characters
+- *(editor)* don't panic on Ctrl+A/Ctrl+X on a line with non-ASCII text
+- *(#1232)* lock the pin write, toast the collision, make the gate testable
+- *(#1232)* a shared pin is not proof — the guard would have laundered the collapse it exists to catch
+- *(#1232)* all three Claude accounts reported the same usage — one token, copied three ways
+- the palette-bar `+` chip fired a command that was never registered
+- *(#1229)* `f` panicked on non-ASCII lines; nav gate missed REPLACE
+- *(#1229)* four vim find/search correctness bugs
+- Settings `R` resets the rows it owns, not the entire config
+- *(#1213)* vim mode reads arrow modifiers instead of throwing them away
+- *(#1226)* "Command palette" and "Go to file…" open what they say
+- *(#1217)* a rate-limited Claude usage reading goes stale, not to zero
+- tree-header pull chip uses the git toolbar's pull glyph (EB40)
+- *(#1219)* file tree reclaims the two dead rows above the hover-help panel
+- *(#1222)* stale tab-scroll no longer strands tabs behind "+N hidden"
+- *(#1220)* ctrl+minus parses, so nav.back/forward have a chord again
+- *(#1216)* first click/Esc on the wizard no longer retires the welcome
+- *(#1209)* clipped tab no longer registers its close rect on the filename
+- *(#1208)* free Alt+←/→ on macOS + stop probe chords mutating the wizard
+- *(security)* show full command at the AI approval gate; mask token entry
+
+### Other
+
+- *(#files)* queue archive view + extract as item 7 [skip docs]
+- *(editor)* a 545K-character single line froze mnml for minutes
+- diagnose the long-line editor freeze (545K chars on one line) [skip docs]
+- *(#files)* record the transfer-tracker state, the toast design, and 5 open tester findings [skip docs]
+- hold the env lock in the App fixtures I added; document the wider race
+- *(#1236)* record the real root cause — ghostty triples every notch [skip docs]
+- *(http)* fix stale promotion in leaving_http_keeps_promoted_request_pane
+- *(contributing)* correct MSRV and document zig as a build prerequisite
+- *(#1232)* cover the assign-vs-OR invariant on the re-auth flag
+- *(#1232)* type the needs-re-auth signal instead of sniffing the message
+- CLAUDE.md status block for the 2026-08-28 polish batch
+- *(#1228)* clear both open Dependabot alerts
+- *(#1218)* call the crate mnml-fim-engine, and stop linking a repo that 404s
+
 ## [0.2.19](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.17...mnml-rs-v0.2.19) - 2026-08-27
 
 Security release. Everything below came out of an audit of the

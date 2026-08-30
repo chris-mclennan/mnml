@@ -1,6 +1,6 @@
 [package]
 name = "mnml-fim-engine"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle, in-process and offline. Powers mnml's local ghost-text."

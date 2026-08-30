@@ -10,7 +10,7 @@ resolver = "2"
 
 [package]
 name = "mnml-rs"
-version = "0.2.19"
+version = "0.2.20"
 edition = "2024"
 rust-version = "1.90"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
@@ -98,7 +98,7 @@ ratatui = { version = "0.30", features = ["crossterm"] }
 # `package =` maps the local alias `fim-engine` to the published crate name
 # `mnml-fim-engine` (family branding on crates.io); Rust code stays
 # `use fim_engine::…` unchanged because the crate's [lib] name is `fim_engine`.
-fim-engine = { package = "mnml-fim-engine", path = "crates/fim-engine", version = "0.1.1", default-features = false }
+fim-engine = { package = "mnml-fim-engine", path = "crates/fim-engine", version = "0.1.2", default-features = false }
 # File enumeration honoring .gitignore.
 ignore = "0.4"
 # Temp workspaces for the `.test` E2E runner (and unit tests).
@@ -223,7 +223,7 @@ resvg = { version = "0.47.0", default-features = false }
 # the Apple Metal stack (objc2 etc.), which doesn't build on Linux. Elsewhere
 # fim-engine falls back to CPU candle (see the `default-features = false` above).
 [target.'cfg(target_os = "macos")'.dependencies]
-fim-engine = { package = "mnml-fim-engine", path = "crates/fim-engine", version = "0.1.1", default-features = false, features = ["metal"] }
+fim-engine = { package = "mnml-fim-engine", path = "crates/fim-engine", version = "0.1.2", default-features = false, features = ["metal"] }
 
 # Windows AF_UNIX support (Win10 build 17063+) — Rust's std doesn't
 # expose `UnixStream`/`UnixListener` on Windows even though the OS
