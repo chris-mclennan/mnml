@@ -271,12 +271,30 @@ impl App {
             }
             items.push((src.clone(), dest));
         }
+        if items.is_empty() {
+            // Nothing resolved — every source was skipped (a cut pasted
+            // back into its own directory is the easy way to get here,
+            // one "Paste here" on the source's own row). The clipboard
+            // must SURVIVE: clearing it before this check meant the cut
+            // silently evaporated with no operation and no toast, and
+            // there was no way to get it back.
+            self.toast("nothing to paste here");
+            return;
+        }
+        // A destination already being written by a running transfer is
+        // refused rather than raced. Two workers targeting one tree each
+        // track their own "I created this" list, so a cancel or failure
+        // in one can delete the other's finished output.
+        if let Some(clash) = self.transfer_target_clash(&items) {
+            self.toast(format!(
+                "already {} — wait for it to finish",
+                rel_path(&self.workspace, &clash)
+            ));
+            return;
+        }
         if cut {
             self.file_clipboard.clear();
             self.file_clipboard_cut = false;
-        }
-        if items.is_empty() {
-            return;
         }
         let n = items.len();
         let kind = if cut {
@@ -1175,6 +1193,40 @@ mod multi_select_tests {
         }
         crate::command::run("file.copy", &mut app);
         assert_eq!(app.file_clipboard.len(), 1, "{:?}", app.file_clipboard);
+    }
+
+    /// Review finding — the clipboard was cleared in the `cut` branch
+    /// BEFORE checking whether anything resolved. A cut pasted back into
+    /// its own directory (one "Paste here" on the source's own row)
+    /// skipped every source, returned with no toast, and wiped the cut.
+    /// The user's clipboard silently evaporated with nothing done.
+    #[test]
+    fn a_cut_pasted_into_its_own_directory_keeps_the_clipboard() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app, pid) = fixture();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = f.entries.iter().position(|e| e.name == "one.txt").unwrap();
+            f.toggle_mark();
+        }
+        crate::command::run("file.cut", &mut app);
+        assert_eq!(app.file_clipboard.len(), 1, "setup: one staged");
+        assert!(app.file_clipboard_cut, "setup: staged as a cut");
+
+        // Paste back into the directory it already lives in.
+        app.file_paste_into(d.path().to_path_buf());
+
+        assert_eq!(
+            app.file_clipboard.len(),
+            1,
+            "the cut clipboard was wiped by a paste that did nothing"
+        );
+        assert!(app.file_clipboard_cut, "the cut flag was cleared too");
+        assert!(
+            app.transfers.is_empty(),
+            "a no-op paste still started a transfer"
+        );
     }
 
     /// A marked set must actually paste — the clipboard being a Vec is not

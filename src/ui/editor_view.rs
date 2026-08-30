@@ -409,7 +409,15 @@ pub fn draw_pane(
             }
             vis_rows.push(VisRow {
                 line_no: walk_line,
-                char_start: chunk * tw,
+                // Wrap off ⇒ the window starts at the horizontal scroll
+                // offset. It used to be a flat `chunk * tw`, which with
+                // `chunks == 1` is always 0: the render window was pinned
+                // to `[0, tw)` forever, so a long line could not be
+                // scrolled sideways at all and the terminal cursor —
+                // which DOES subtract `h_scroll` — drifted off the glyph
+                // it was on. Pre-existing; found reviewing the
+                // `LineRender` work, which preserved it faithfully.
+                char_start: if wrap_on { chunk * tw } else { buf.h_scroll },
                 is_continuation: chunk > 0,
             });
         }
@@ -1835,6 +1843,56 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Horizontal scroll must actually move the render window.
+    ///
+    /// It did not. `VisRow::char_start` was a flat `chunk * tw`, and with
+    /// wrap off `chunks == 1`, so the window was pinned to `[0, tw)` no
+    /// matter where the cursor went: everything past the viewport width
+    /// on a long line was unreachable, and the terminal cursor — which
+    /// DOES subtract `h_scroll` — drifted off the glyph under it.
+    ///
+    /// Pre-existing (identical on origin/main), found while reviewing the
+    /// `LineRender` work. The perf test beside this one only exercises
+    /// wrap ON, which is why nothing caught it.
+    #[test]
+    fn horizontal_scroll_moves_the_rendered_window() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("wide.txt");
+        let line: String = ["A"; 100].concat()
+            + &["B"; 100].concat()
+            + &["C"; 100].concat()
+            + &["D"; 100].concat();
+        std::fs::write(&f, &line).unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.wrap = false;
+        app.open_path(&f);
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+
+        let mut seen = Vec::new();
+        for target_col in [0usize, 150, 350] {
+            if let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(app.active.unwrap()) {
+                b.editor.set_cursor_byte(target_col); // ascii: byte == char
+            }
+            term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+            let buf = term.backend().buffer();
+            let row: String = (0..60).map(|x| buf[(x, 2)].symbol().to_string()).collect();
+            // Which block of repeated letters is on screen?
+            let letter = row
+                .chars()
+                .find(|c| ['A', 'B', 'C', 'D'].contains(c))
+                .unwrap_or('?');
+            seen.push(letter);
+        }
+        assert_eq!(
+            seen,
+            vec!['A', 'B', 'D'],
+            "the window did not follow the cursor — scrolling right showed \
+             the same characters, so the rest of the line is unreachable"
+        );
+    }
     /// PERF REGRESSION GUARD — a single very long line.
     ///
     /// The user opened `data/nerd-glyphnames.json` (545,559 characters on

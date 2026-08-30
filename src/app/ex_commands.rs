@@ -1342,6 +1342,17 @@ impl App {
             "qa" | "qall" | "quitall" => {
                 if self.panes.iter().any(Pane::is_dirty) {
                     self.toast("unsaved changes — use :qa! to discard");
+                } else if let Some(n) = self.running_transfer_count() {
+                    // #files item 6 — quitting kills the detached worker
+                    // threads mid-copy, so a half-written destination is
+                    // left with no chance to clean up or report. An
+                    // explicit cancel promises "cleaned up, or I say so";
+                    // a quit can promise nothing, so it has to ask. Same
+                    // shape as the dirty-buffer guard above.
+                    self.toast(format!(
+                        "{n} transfer{} still running — use :qa! to abandon",
+                        if n == 1 { "" } else { "s" }
+                    ));
                 } else {
                     self.should_quit = true;
                 }

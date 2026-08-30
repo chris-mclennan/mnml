@@ -337,16 +337,6 @@ impl Reporter {
     }
 }
 
-/// Run one transfer to completion on this thread. `spawn` wraps it; this
-/// is separate so tests can drive it synchronously and assert on the
-/// exact message sequence rather than racing a thread.
-///
-/// `items` is `(source, destination)` pairs; the destination is ignored
-/// for a delete. Explicit pairs rather than a destination DIRECTORY
-/// because the caller has already resolved collisions —
-/// `file_paste_into` bumps a same-directory copy to `-copy`, and
-/// re-deriving the name here would either lose that rule or duplicate
-/// it.
 /// Whether a copy ran to completion or stopped early on cancel.
 ///
 /// This distinction is the whole reason the type exists. `copy_one` used

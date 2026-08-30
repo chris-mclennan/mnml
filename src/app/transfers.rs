@@ -31,11 +31,46 @@ impl crate::app::App {
         self.next_transfer_id += 1;
         let cancel = Arc::new(AtomicBool::new(false));
         let sources: Vec<std::path::PathBuf> = items.iter().map(|(s, _)| s.clone()).collect();
-        let dest = items.first().map(|(_, d)| d.clone());
+        // The common parent of every destination, so the clash check
+        // covers the whole tree this transfer writes rather than only its
+        // first entry.
+        let dest = items
+            .iter()
+            .map(|(_, d)| d.clone())
+            .reduce(|a, b| common_ancestor(&a, &b))
+            .filter(|p| !p.as_os_str().is_empty());
         self.transfers
             .push(Transfer::new(id, kind, sources, dest, Arc::clone(&cancel)));
         crate::transfer::spawn(id, kind, items, cancel, self.transfer_tx.clone());
         id
+    }
+
+    /// The first destination in `items` that a running transfer is
+    /// already writing, if any.
+    ///
+    /// `file_paste_into` resolves destinations against a live
+    /// `exists()` check, which a not-yet-started worker has not satisfied
+    /// yet — so a double paste passes the check twice and starts two
+    /// transfers into the same tree. Each worker tracks its own
+    /// "destinations I created" list for cleanup, so a cancel or failure
+    /// in one can delete output the other has already finished writing.
+    pub fn transfer_target_clash(
+        &self,
+        items: &[(std::path::PathBuf, std::path::PathBuf)],
+    ) -> Option<std::path::PathBuf> {
+        for (_, dst) in items {
+            for t in self.transfers.iter().filter(|t| !t.state.is_terminal()) {
+                let Some(running) = t.dest.as_ref() else {
+                    continue;
+                };
+                // Same target, or either one inside the other: a copy
+                // into `a/b` collides with one into `a`.
+                if dst == running || dst.starts_with(running) || running.starts_with(dst) {
+                    return Some(dst.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Drain worker messages. Called once per tick from the event loop.
@@ -93,6 +128,19 @@ impl crate::app::App {
         // Transfers detail view (deferred) is where a history would live.
         self.transfers.retain(|t| !t.state.is_terminal());
         changed
+    }
+
+    /// How many transfers are still running, or `None` when none are.
+    ///
+    /// `Option` rather than a bare count so callers read as a guard
+    /// rather than remembering to compare against zero.
+    pub fn running_transfer_count(&self) -> Option<usize> {
+        let n = self
+            .transfers
+            .iter()
+            .filter(|t| !t.state.is_terminal())
+            .count();
+        (n > 0).then_some(n)
     }
 
     /// Cancel every running transfer. Bound to the chip and the palette.
@@ -153,6 +201,18 @@ impl crate::app::App {
     }
 }
 
+/// Longest shared prefix of two paths. Empty when they share nothing.
+fn common_ancestor(a: &std::path::Path, b: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for (x, y) in a.components().zip(b.components()) {
+        if x != y {
+            break;
+        }
+        out.push(x);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +258,79 @@ mod tests {
             app.transfers.is_empty(),
             "a finished transfer was never retired"
         );
+    }
+
+    /// Review finding — a double paste passed the `exists()` check twice
+    /// (the first worker had not created anything yet) and started two
+    /// transfers into one tree. Each tracks its OWN "I created this"
+    /// list, so a cancel in one can delete the other's finished output.
+    #[test]
+    fn a_second_transfer_into_a_running_destination_is_refused() {
+        let (d, mut app) = app();
+        let src = d.path().join("a.txt");
+        std::fs::write(&src, vec![0u8; 1024]).unwrap();
+        let out = d.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let items = vec![(src.clone(), out.join("a.txt"))];
+
+        assert!(
+            app.transfer_target_clash(&items).is_none(),
+            "clash reported with nothing running"
+        );
+        app.start_transfer(TransferKind::Copy, items.clone());
+        assert!(
+            app.transfer_target_clash(&items).is_some(),
+            "a second transfer into the same destination was allowed"
+        );
+        app.cancel_all_transfers();
+    }
+
+    /// A destination INSIDE a running transfer's tree collides too — a
+    /// copy into `out/sub` races the one already writing `out`.
+    #[test]
+    fn a_nested_destination_also_clashes() {
+        let (d, mut app) = app();
+        let src = d.path().join("a.txt");
+        std::fs::write(&src, vec![0u8; 1024]).unwrap();
+        let out = d.path().join("out");
+        std::fs::create_dir_all(out.join("sub")).unwrap();
+
+        app.start_transfer(TransferKind::Copy, vec![(src.clone(), out.join("tree"))]);
+        // Running dest resolves to `out/tree`; a paste into `out/tree/x`
+        // is inside it.
+        assert!(
+            app.transfer_target_clash(&[(src, out.join("tree/x"))])
+                .is_some(),
+            "a nested destination was not treated as a clash"
+        );
+        app.cancel_all_transfers();
+    }
+
+    /// Quitting kills the detached workers mid-copy, so it has to ask —
+    /// an explicit cancel promises "cleaned up or I say so", a quit
+    /// cannot promise anything.
+    #[test]
+    fn quitting_is_refused_while_a_transfer_runs() {
+        let (d, mut app) = app();
+        let src = d.path().join("big");
+        std::fs::create_dir(&src).unwrap();
+        for i in 0..200 {
+            std::fs::write(src.join(format!("f{i}")), vec![0u8; 8192]).unwrap();
+        }
+        let out = d.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        app.start_transfer(TransferKind::Copy, vec![(src, out.join("big"))]);
+
+        assert!(app.running_transfer_count().is_some(), "precondition");
+        app.run_ex_command("qa");
+        assert!(
+            !app.should_quit,
+            "quit went through while a transfer was still writing"
+        );
+        // The force form must still work, or the user is trapped.
+        app.run_ex_command("qa!");
+        assert!(app.should_quit, ":qa! did not force the quit");
+        app.cancel_all_transfers();
     }
 
     /// The whole point of moving off the render thread: starting a
