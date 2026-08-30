@@ -144,6 +144,39 @@ that reflows the strip):
   of data by accident.
 
 
+## PERF — a single very long line freezes the editor
+
+**User hit this hard 2026-08-30:** opening `data/nerd-glyphnames.json`
+(545,559 characters on ONE line, 532K) froze mnml for minutes — "i'm
+going to have to force close it". Reproducible: any minified JSON/JS.
+
+Diagnosed, not yet fixed. In `src/ui/editor_view.rs`, the per-visual-row
+loop does per-LINE work for every ROW:
+
+```rust
+let raw = buf.editor.line_str(line_no);
+let chars: Vec<char> = raw.chars().collect();              // 545K elements
+let n = chars.len();
+let line_color_grid = line_color_grid(spans_for_line, n);  // 545K elements
+```
+
+With wrap ON a single 545K-char line occupies every visual row on
+screen, so a ~40-row viewport allocates ~40 x 545K chars AND ~40 x 545K
+`Option<Color>` per frame, then fills the colour grid across the whole
+line each time. Tens of millions of ops and hundreds of MB of churn per
+frame, repeated every keystroke and every redraw.
+
+Fix direction: the row only ever paints `tw` (~130) cells starting at
+`char_start`, so both the char vector and the colour grid should be
+built for the VISIBLE WINDOW, not the whole line. `indent_cols` /
+`has_content` / trailing-whitespace need line-level facts but can be
+derived without collecting the line. Check `line_start`/`line_end` too —
+if they scan the buffer they are O(file) per call.
+
+Guard it with a timing test on a synthetic long line, so the next
+refactor cannot quietly reintroduce whole-line work in a per-row loop.
+
+
 ## Toasts and notifications
 
 **User ask 2026-08-30:** "make way of seeing latest toasts" and "do we
