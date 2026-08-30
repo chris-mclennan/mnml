@@ -409,20 +409,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter(|(_, b)| matches_filter(&b.name))
         .map(|(i, b)| (i, b.name.clone()))
         .collect();
+    // #1229 — the header must report the FULL count, not the trimmed one.
+    // User report: "i see the count next to remote decrease but its
+    // collapsed it shouldnt reduce on scroll".
+    let local_collapsed = app.git_palette_collapsed_sections.contains("LOCAL");
+    let local_total = local_filtered.len();
     // #1229 — scroll. Each tuple keeps its ORIGINAL branch index, so a
     // trimmed list still resolves clicks correctly.
-    let local_filtered = {
+    //
+    // A COLLAPSED section consumes no scroll budget: none of its rows are
+    // on screen, so scrolling "past" them would burn the budget on
+    // nothing and the panel would appear not to scroll at all.
+    let local_filtered = if local_collapsed {
+        local_filtered
+    } else {
         let k = take_skip(local_filtered.len());
         local_filtered.into_iter().skip(k).collect::<Vec<_>>()
     };
     if y < area.y + area.height && !local_filtered.is_empty() {
-        y = draw_section_header(frame, app, area, y, "LOCAL", local_filtered.len(), bg);
+        y = draw_section_header(frame, app, area, y, "LOCAL", local_total, bg);
     }
     // qa-feature 2026-06-30 — skip body when LOCAL collapsed.
     // The trailing "1-row gap between sections" below handles the
     // spacer; no extra add here (was doubling the gap on collapsed
     // LOCAL — visible as a bigger gap than WORKTREES/REMOTE/etc.).
-    let local_collapsed = app.git_palette_collapsed_sections.contains("LOCAL");
     // Folder-group local branches by their `/` prefix so a repo
     // with `bugfix/*`, `chore/*`, `feature/*` collapses into a
     // few folder rows instead of dumping 50+ branches flat.
@@ -590,7 +600,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter(|(_, r)| matches_filter(r))
         .map(|(i, r)| (i, r.clone()))
         .collect();
-    let remote_filtered_idxs_and_names = {
+    let remote_total = remote_filtered_idxs_and_names.len();
+    let remote_filtered_idxs_and_names = if app.git_palette_collapsed_sections.contains("REMOTE") {
+        remote_filtered_idxs_and_names
+    } else {
         let k = take_skip(remote_filtered_idxs_and_names.len());
         remote_filtered_idxs_and_names
             .into_iter()
@@ -598,15 +611,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .collect::<Vec<_>>()
     };
     if !remote_filtered_idxs_and_names.is_empty() && y < area.y + area.height {
-        y = draw_section_header(
-            frame,
-            app,
-            area,
-            y,
-            "REMOTE",
-            remote_filtered_idxs_and_names.len(),
-            bg,
-        );
+        y = draw_section_header(frame, app, area, y, "REMOTE", remote_total, bg);
         if app.git_palette_collapsed_sections.contains("REMOTE") {
             if y < area.y + area.height {
                 y += 1;
@@ -1032,10 +1037,25 @@ mod tests {
 
     /// Seed a rail with more rows than any sane panel height, so the
     /// panel genuinely overflows.
-    fn app_with_a_long_rail() -> (tempfile::TempDir, App) {
+    #[allow(clippy::type_complexity)]
+    fn app_with_a_long_rail() -> (tempfile::TempDir, App, std::sync::MutexGuard<'static, ()>) {
+        // #1229 f/u — hold the env lock and pin the collapse state.
+        //
+        // Without this, `App::new` picked up the developer's REAL session
+        // and config: on my machine REMOTE happened to be collapsed, which
+        // changed how the scroll budget was spent and failed two of these
+        // tests for reasons unrelated to the code under test. A render test
+        // that reads ambient user state is not a test. Same class as the
+        // 141 unguarded `App::new` sites noted in a1636035.
+        let lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let d = tempfile::tempdir().unwrap();
         let _ = std::fs::create_dir(d.path().join(".git"));
         let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        // Every section expanded, explicitly — the scroll budget's
+        // distribution across sections depends on it.
+        app.git_palette_collapsed_sections.clear();
         app.active_section = crate::app::ActivitySection::Git;
         app.git_rail.branches = (0..14)
             .map(|i| crate::git::rail::BranchRow {
@@ -1046,7 +1066,7 @@ mod tests {
         app.git_rail.remote_branches = (0..10).map(|i| format!("origin/rb-{i:02}")).collect();
         app.git_rail.tags = (0..29).map(|i| format!("v0.{i}.0")).collect();
         app.git_rail.current_branch = Some("branch-00".to_string());
-        (d, app)
+        (d, app, lk)
     }
 
     fn render(app: &mut App, w: u16, h: u16) -> Vec<String> {
@@ -1078,7 +1098,7 @@ mod tests {
     /// scroll plumbing shifts the unscrolled view, this fails.
     #[test]
     fn the_unscrolled_panel_still_starts_with_the_git_header_and_first_rows() {
-        let (_d, mut app) = app_with_a_long_rail();
+        let (_d, mut app, _lk) = app_with_a_long_rail();
         let rows = render(&mut app, 28, 20);
         assert!(rows[0].contains("GIT"), "row0: {:?}", rows[0]);
         // The first branch must be on screen and the LAST tag must not —
@@ -1094,12 +1114,113 @@ mod tests {
         );
     }
 
+    /// #1229 f/u — user report: "when remote section is collapsed and i
+    /// scroll i see the count next to remote decrease but its collapsed
+    /// it shouldnt reduce on scroll as its collapsed".
+    ///
+    /// Two distinct bugs behind that one sentence, and this pins both.
+    /// #1229 f/u — the OTHER half of the count bug, which the collapsed
+    /// case cannot observe.
+    ///
+    /// The user saw a collapsed REMOTE's count fall while scrolling. The
+    /// direct cause was that collapsed sections were being trimmed at all
+    /// (fixed separately) — but the header ALSO read its count from the
+    /// trimmed list, which is wrong for an EXPANDED section too: a section
+    /// header states how many branches the repo has, not how many survived
+    /// the viewport. That is invisible in the collapsed case, because an
+    /// untrimmed list's length already equals the total.
+    #[test]
+    fn an_expanded_sections_count_is_the_repo_total_not_the_visible_rows() {
+        let (_d, mut app, _lk) = app_with_a_long_rail();
+        // LOCAL expanded (the default) with 14 branches.
+        let unscrolled = render(&mut app, 28, 20).join("\n");
+        assert!(
+            unscrolled
+                .lines()
+                .any(|l| l.contains("LOCAL") && l.contains("14")),
+            "setup: LOCAL should report 14:\n{unscrolled}"
+        );
+
+        // Scroll into the middle of LOCAL — its header stays on screen
+        // because headers are always drawn.
+        app.git_palette_scroll = 6;
+        let scrolled = render(&mut app, 28, 20).join("\n");
+        let local_line = scrolled
+            .lines()
+            .find(|l| l.contains("LOCAL"))
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            local_line.contains("14"),
+            "LOCAL's count fell to the visible-row count while scrolling: \
+             {local_line:?}"
+        );
+        // And prove the scroll actually happened, or the assertion above
+        // is trivially satisfied.
+        assert!(
+            !scrolled.contains("branch-00"),
+            "nothing scrolled, so the count assertion proves nothing:\n{scrolled}"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_sections_count_is_stable_and_it_eats_no_scroll() {
+        let (_d, mut app, _lk) = app_with_a_long_rail();
+        // Both collapsed: LOCAL so REMOTE's header is on screen at all,
+        // REMOTE because it is what the user reported.
+        app.git_palette_collapsed_sections
+            .insert("LOCAL".to_string());
+        app.git_palette_collapsed_sections
+            .insert("REMOTE".to_string());
+
+        let unscrolled = render(&mut app, 28, 20).join("\n");
+        assert!(
+            unscrolled
+                .lines()
+                .any(|l| l.contains("REMOTE") && l.contains("10")),
+            "collapsed REMOTE should report its full count of 10:\n{unscrolled}"
+        );
+
+        // MUST exceed LOCAL's 14 items, or the scroll budget never reaches
+        // REMOTE and neither half of this test can fail. An earlier
+        // version used 12 and was vacuous — it passed with both bugs
+        // deliberately reintroduced.
+        app.git_palette_scroll = 20;
+        let scrolled = render(&mut app, 28, 20).join("\n");
+
+        // (1) The count is a property of the repo, not the viewport. With
+        // the bug, LOCAL would eat 14 and REMOTE 6, so this read "4".
+        let remote_line = scrolled
+            .lines()
+            .find(|l| l.contains("REMOTE"))
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            remote_line.contains("10"),
+            "collapsed REMOTE's count changed on scroll: {remote_line:?}"
+        );
+
+        // (2) Collapsed sections consume no budget, so all 20 rows of
+        // scroll land on TAGS and the view starts at v0.20.0. With the
+        // bug, LOCAL+REMOTE would swallow all 20 and TAGS would still
+        // start at v0.0.0 — so assert the SPECIFIC tag, not just "a tag".
+        assert!(
+            scrolled.contains("v0.20.0"),
+            "hidden rows of collapsed sections are still eating the scroll \
+             budget — TAGS did not advance:\n{scrolled}"
+        );
+        assert!(
+            !scrolled.contains("v0.0.0"),
+            "TAGS is still showing its first row, so nothing scrolled:\n{scrolled}"
+        );
+    }
+
     /// #1229 — the reported bug: "i have no way to scroll down to see
     /// more branches or tags if they go too long". With 29 tags the last
     /// ones were simply unreachable.
     #[test]
     fn scrolling_reveals_rows_that_were_off_the_bottom() {
-        let (_d, mut app) = app_with_a_long_rail();
+        let (_d, mut app, _lk) = app_with_a_long_rail();
         let before = render(&mut app, 28, 20).join("\n");
         assert!(
             !before.contains("v0.20.0") && !before.contains("v0.28.0"),
@@ -1135,7 +1256,7 @@ mod tests {
     /// blank — the same failure mode as #1237's PageDown-past-EOF.
     #[test]
     fn scroll_is_clamped_so_the_panel_never_goes_blank() {
-        let (_d, mut app) = app_with_a_long_rail();
+        let (_d, mut app, _lk) = app_with_a_long_rail();
         app.git_palette_scroll = 100_000;
         let rows = render(&mut app, 28, 20);
         let joined = rows.join("\n");
@@ -1156,7 +1277,7 @@ mod tests {
     /// from `enumerate()` BEFORE the skip, so index 28 stays index 28.
     #[test]
     fn click_targets_survive_a_scroll() {
-        let (_d, mut app) = app_with_a_long_rail();
+        let (_d, mut app, _lk) = app_with_a_long_rail();
         app.git_palette_scroll = 40;
         let _ = render(&mut app, 28, 20);
 
@@ -1181,7 +1302,7 @@ mod tests {
     /// the panel actually overflows.
     #[test]
     fn the_scrollbar_appears_only_when_content_overflows() {
-        let (_d, mut app) = app_with_a_long_rail();
+        let (_d, mut app, _lk) = app_with_a_long_rail();
         let _ = render(&mut app, 28, 20);
         assert!(
             app.rects
