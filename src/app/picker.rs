@@ -718,6 +718,15 @@ impl App {
                 self.picker = None;
                 self.accept_pr_picker_secondary(&item.id);
             }
+            PickerKind::Reflog => {
+                // #1229 — Tab recovers, Enter inspects. Enter stays the
+                // primary because you want to CONFIRM the commit is the
+                // one you lost before acting on it; recovery is the
+                // deliberate second gesture.
+                let hash = item.id.clone();
+                self.picker = None;
+                self.recover_reflog_entry(&hash);
+            }
             _ => self.toast("Tab → no secondary action for this picker"),
         }
     }

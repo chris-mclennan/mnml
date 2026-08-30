@@ -9871,9 +9871,6 @@ impl App {
             crate::GitToolbarAction::SwitchRepo => {
                 crate::command::run("git.next_repo", self);
             }
-            crate::GitToolbarAction::BlameToggle => {
-                crate::command::run("git.blame_toggle", self);
-            }
             crate::GitToolbarAction::Undo => self.git_undo_last_commit(),
             crate::GitToolbarAction::Redo => self.git_redo_commit(),
         }

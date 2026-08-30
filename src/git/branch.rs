@@ -208,6 +208,19 @@ pub fn create(workspace: &Path, name: &str) -> Result<(), String> {
 pub fn create_from(workspace: &Path, name: &str, source: &str) -> Result<(), String> {
     run(workspace, &["checkout", "-b", name, source, "--"])
 }
+/// `git branch -- <name> <start_point>` — create a branch at a commit
+/// WITHOUT switching to it.
+///
+/// Distinct from [`create_from`], which is `checkout -b` and moves HEAD.
+/// The non-switching form is what reflog recovery wants: the user has
+/// just lost commits and may have uncommitted work in the tree, so
+/// checking out would either fail or drag that work onto the rescue
+/// branch. Verified against real git that `--` before the name is
+/// accepted and that HEAD stays put.
+pub fn create_at(workspace: &Path, name: &str, start_point: &str) -> Result<(), String> {
+    run(workspace, &["branch", "--", name, start_point])
+}
+
 /// `git branch -D -- <name>` — force-delete a local branch (the rail's confirm
 /// prompt already gated this on a name match; soft-delete would refuse
 /// unmerged branches and surface as a generic git error).

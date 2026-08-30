@@ -1592,10 +1592,17 @@ impl App {
         ));
     }
 
-    /// `git.reflog` — fuzzy picker over recent reflog entries. Accept ⇒
-    /// open that entry's commit as a diff pane. The selector
-    /// (`HEAD@{N}`) is shown as the dim detail so the user can copy it
-    /// for a manual `git reset --hard HEAD@{N}` from a pty.
+    /// `git.reflog` — fuzzy picker over recent reflog entries.
+    ///
+    /// Enter ⇒ open that entry's commit as a diff pane (confirm it is
+    /// the commit you lost). Tab ⇒ [`Self::recover_reflog_entry`], which
+    /// puts it on a `recovered/<sha>` branch.
+    ///
+    /// The `HEAD@{N}` selector is still shown as dim detail for anyone
+    /// who wants to drive git directly, but it is no longer the only
+    /// route: before #1229 this picker could only SHOW you the lost
+    /// commit and leave you to type `git reset --hard HEAD@{N}` in a
+    /// terminal yourself.
     pub fn open_git_reflog(&mut self) {
         let entries = crate::git::reflog::list(self.active_repo_path(), 200);
         if entries.is_empty() {
@@ -1621,7 +1628,13 @@ impl App {
             .collect();
         self.open_picker(crate::picker::Picker::new(
             crate::picker::PickerKind::Reflog,
-            format!("Reflog ({} entries)", entries.len()),
+            // #1229 — the title carries the recovery affordance. A Tab
+            // action nobody knows about is worth no more than the
+            // palette command it replaces.
+            format!(
+                "Reflog ({} entries) · Enter = view diff · Tab = recover to a branch",
+                entries.len()
+            ),
             items,
         ));
     }
@@ -2672,6 +2685,51 @@ impl App {
         }
     }
 
+    /// Reflog recovery — put a lost commit back on a named branch.
+    ///
+    /// #1229 (user ask). The reflog picker could only ever SHOW you the
+    /// lost commit: Enter opened its diff and the `HEAD@{N}` selector was
+    /// printed as dim detail so you could copy it and run
+    /// `git reset --hard` yourself in a terminal. So the one surface
+    /// whose whole job is rescuing work handed the rescue back to the
+    /// user at the exact moment they were panicking.
+    ///
+    /// `git branch <name> <sha>`, deliberately NOT
+    /// `reset --hard`/`checkout`:
+    /// - `reset --hard` is destructive. Recovering one thing must not
+    ///   risk destroying another; a rescue path that can itself lose
+    ///   work is not a rescue path.
+    /// - `checkout -b` moves HEAD, which either fails or drags
+    ///   uncommitted changes onto the rescue branch. The user is mid-
+    ///   accident; leave their working tree exactly where it is.
+    ///
+    /// Creating a branch is non-destructive, always valid, and makes the
+    /// commits reachable — so they survive GC and show up in the branch
+    /// list where the rest of the Git UI can act on them.
+    pub fn recover_reflog_entry(&mut self, full_hash: &str) {
+        let short: String = full_hash.chars().take(8).collect();
+        let repo = self.active_repo_path().to_path_buf();
+        // Don't collide with an existing branch (recovering the same
+        // commit twice, or a `recovered/` name the user already has).
+        let existing = crate::git::branch::local_branches(&repo);
+        let base = format!("recovered/{short}");
+        let name = if existing.iter().any(|b| b == &base) {
+            (2..)
+                .map(|n| format!("{base}-{n}"))
+                .find(|cand| !existing.iter().any(|b| b == cand))
+                .unwrap_or(base)
+        } else {
+            base
+        };
+        match crate::git::branch::create_at(&repo, &name, full_hash) {
+            Ok(()) => {
+                self.toast(format!("recovered {short} → branch {name}"));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git branch {name}: {e}")),
+        }
+    }
+
     /// Open a picker over `git worktree list`; accept ⇒ a shell pane in that dir.
     pub fn open_worktree_picker(&mut self) {
         use crate::picker::PickerItem;
@@ -3317,6 +3375,146 @@ mod git_tests {
         fs::write(d.path().join("b.txt"), "beta").unwrap();
         let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         (d, app)
+    }
+
+    /// Build a real repo with a commit that gets orphaned by a hard
+    /// reset — the actual situation reflog recovery exists for.
+    fn repo_with_a_lost_commit() -> (tempfile::TempDir, App, String) {
+        let d = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(d.path())
+                .output()
+                .expect("git");
+        };
+        run(&["init", "-q", "."]);
+        run(&["config", "user.email", "t@t"]);
+        run(&["config", "user.name", "T"]);
+        fs::write(d.path().join("a.txt"), "a").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "first"]);
+        let base = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        fs::write(d.path().join("b.txt"), "b").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "the commit we are about to lose"]);
+        let lost = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        // The accident.
+        run(&["reset", "--hard", "-q", &base]);
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app, lost)
+    }
+
+    /// #1229 — before this, the reflog picker could only SHOW the lost
+    /// commit and print `HEAD@{N}` for the user to paste into a terminal.
+    #[test]
+    fn recovering_a_reflog_entry_puts_it_on_a_branch() {
+        let (d, mut app, lost) = repo_with_a_lost_commit();
+        let before = crate::git::branch::local_branches(d.path());
+
+        app.recover_reflog_entry(&lost);
+
+        let after = crate::git::branch::local_branches(d.path());
+        let new: Vec<&String> = after.iter().filter(|b| !before.contains(b)).collect();
+        assert_eq!(new.len(), 1, "expected exactly one new branch: {after:?}");
+        assert!(
+            new[0].starts_with("recovered/"),
+            "branch not named for recovery: {:?}",
+            new[0]
+        );
+
+        // The branch must actually point at the lost commit, or the
+        // "recovery" is theatre.
+        let tip = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", new[0]])
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        assert_eq!(
+            tip, lost,
+            "recovered branch does not point at the lost commit"
+        );
+    }
+
+    /// Recovery must not move HEAD or touch the working tree — the user
+    /// is mid-accident and may have uncommitted work. This is why the
+    /// implementation is `git branch`, not `checkout -b` or
+    /// `reset --hard`.
+    #[test]
+    fn recovery_leaves_head_and_the_working_tree_alone() {
+        let (d, mut app, lost) = repo_with_a_lost_commit();
+        // Uncommitted work, exactly what checkout would endanger.
+        fs::write(d.path().join("wip.txt"), "precious").unwrap();
+        let head_before = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        app.recover_reflog_entry(&lost);
+
+        let head_after = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(d.path())
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        assert_eq!(head_before, head_after, "recovery moved HEAD");
+        assert_eq!(
+            fs::read_to_string(d.path().join("wip.txt")).unwrap(),
+            "precious",
+            "recovery clobbered uncommitted work"
+        );
+    }
+
+    /// Recovering the same commit twice must not fail on a name clash.
+    #[test]
+    fn recovering_twice_picks_a_free_branch_name() {
+        let (d, mut app, lost) = repo_with_a_lost_commit();
+        app.recover_reflog_entry(&lost);
+        app.recover_reflog_entry(&lost);
+        let names = crate::git::branch::local_branches(d.path());
+        let recovered: Vec<&String> = names
+            .iter()
+            .filter(|b| b.starts_with("recovered/"))
+            .collect();
+        assert_eq!(
+            recovered.len(),
+            2,
+            "second recovery did not create a distinct branch: {names:?}"
+        );
     }
 
     /// #1229 — `open_git_graph` used to pin

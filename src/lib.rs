@@ -161,8 +161,14 @@ pub enum GitToolbarAction {
     /// `[[workspaces]]` or detected git roots. Fires the
     /// `git.next_repo` palette command.
     SwitchRepo,
-    /// Toggle the per-line blame gutter (`git.blame_toggle`).
-    BlameToggle,
+    // #1229 — `BlameToggle` removed 2026-08-29. It was a git-toolbar
+    // button, but `App::toggle_blame` requires the ACTIVE pane to be an
+    // Editor, and the toolbar lives on the GitGraph pane — so in the Git
+    // section the active pane is always the graph and the button's only
+    // possible outcome was the toast "blame: not an editor". Proven by
+    // probe, not inferred. Blame itself is unaffected and still reachable
+    // three correct ways: palette `git.blame_toggle`, the `<leader>gb`
+    // whichkey chord, and the editor right-click menu.
     /// Undo the last commit — `git reset --soft HEAD~1` (keeps the
     /// changes staged; never touches the working tree). The undone
     /// commit's hash is captured so `Redo` can re-point HEAD back.
@@ -186,7 +192,6 @@ impl GitToolbarAction {
             Self::Reflog => "reflog (recover a lost commit)",
             Self::RefreshRepos => "refresh all repos",
             Self::SwitchRepo => "switch active repo",
-            Self::BlameToggle => "toggle blame gutter",
             Self::Undo => "undo last commit (soft-reset HEAD~1)",
             Self::Redo => "redo last undone commit",
         }

@@ -1229,17 +1229,6 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("git.next_repo", "Next repo")],
             ..Default::default()
         }),
-        GitToolbarChip(GitToolbarAction::BlameToggle) => Some(InfoViewCopy {
-            title: "Git toolbar: Blame".into(),
-            body: "Toggles the per-line blame gutter on the active editor pane — \
-                   author + relative commit time next to each line, computed in \
-                   the background. Click again (or toggle) to turn it off."
-                .into(),
-            aside: Some("Needs a saved file open in an editor pane; no-ops otherwise.".into()),
-            shortcuts: vec![ShortcutHint::new("Ctrl+K b", "Toggle blame gutter")],
-            try_it: vec![PaletteLink::new("git.blame_toggle", "Toggle blame")],
-            ..Default::default()
-        }),
         GitToolbarChip(GitToolbarAction::Undo) => Some(InfoViewCopy {
             title: "Git toolbar: Undo".into(),
             body: "Reverses the most recent commit or branch checkout made \

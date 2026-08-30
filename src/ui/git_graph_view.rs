@@ -2260,13 +2260,6 @@ pub fn draw_git_toolbar(
         // multi-repo tabs auto-open (one tab per repo) and the left
         // panel already carries a repo switcher, having a third
         // switch affordance up here is redundant.
-        (
-            "Blame",
-            "\u{F02A0}",
-            "B",
-            crate::GitToolbarAction::BlameToggle,
-            t.yellow,
-        ),
     ];
     // Pop inserted after Stash only when there's actually a stash
     // to pop — otherwise the button is a dead action.
