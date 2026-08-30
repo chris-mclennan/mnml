@@ -788,6 +788,77 @@ struct ColAutoSize {
     author_override: Option<usize>,
 }
 
+/// Reflow a commit message into logical paragraphs before wrapping.
+///
+/// #1229 f/u — commit messages are hard-wrapped at ~72 columns by
+/// convention, so wrapping each SOURCE line again at the (narrower)
+/// detail-panel width leaves a ragged remainder after every full line:
+/// "full line / three words / full line / two words". User report, with
+/// a screenshot: "whats up wiht the lines iwht a few words?"
+///
+/// Joining a paragraph's hard-wrapped lines back into one logical line
+/// first, then wrapping once, is what tig and every web git UI do.
+///
+/// What is NOT joined, because joining would corrupt it:
+/// - The subject line. It is its own paragraph by git convention.
+/// - Blank lines. They are the paragraph separator.
+/// - Indented lines. In practice these are code blocks, diffs and
+///   command snippets — reflowing them destroys the alignment that is
+///   their entire content.
+/// - List items (`- `, `* `, `• `). Each bullet is its own paragraph, or
+///   they all run together into one blob.
+///
+/// Returns `(text, preformatted)` per emitted paragraph; `preformatted`
+/// lines must be passed through verbatim rather than wrapped.
+fn reflow_commit_message(message: &str) -> Vec<(String, bool)> {
+    fn is_preformatted(line: &str) -> bool {
+        line.starts_with(' ') || line.starts_with('\t')
+    }
+    fn is_list_item(line: &str) -> bool {
+        let t = line.trim_start();
+        t.starts_with("- ") || t.starts_with("* ") || t.starts_with("\u{2022} ")
+    }
+
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let mut para = String::new();
+    let flush = |para: &mut String, out: &mut Vec<(String, bool)>| {
+        if !para.is_empty() {
+            out.push((std::mem::take(para), false));
+        }
+    };
+
+    for (i, raw) in message.lines().enumerate() {
+        if i == 0 {
+            // Subject stands alone.
+            out.push((raw.to_string(), false));
+            continue;
+        }
+        if raw.trim().is_empty() {
+            flush(&mut para, &mut out);
+            out.push((String::new(), true));
+            continue;
+        }
+        if is_preformatted(raw) {
+            flush(&mut para, &mut out);
+            out.push((raw.to_string(), true));
+            continue;
+        }
+        if is_list_item(raw) {
+            flush(&mut para, &mut out);
+            para.push_str(raw.trim_end());
+            continue;
+        }
+        if para.is_empty() {
+            para.push_str(raw.trim_end());
+        } else {
+            para.push(' ');
+            para.push_str(raw.trim());
+        }
+    }
+    flush(&mut para, &mut out);
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_detail(
     frame: &mut Frame,
@@ -832,18 +903,19 @@ fn draw_detail(
     // 1 Line == 1 row. Letting `Paragraph` wrap would reflow the
     // changed-file rows out from under their own click targets — every
     // file row below a long message would open the wrong file.
-    {
-        let body: Vec<Line> = detail
-            .message
-            .lines()
-            .map(|raw| {
-                Line::from(Span::styled(
-                    format!("  {raw}"),
-                    Style::default().fg(t.fg).bg(t.bg),
-                ))
-            })
-            .collect();
-        lines.extend(crate::ui::md_preview::wrap_lines(body, w));
+    for (text, preformatted) in reflow_commit_message(&detail.message) {
+        let styled = |s: String| Line::from(Span::styled(s, Style::default().fg(t.fg).bg(t.bg)));
+        if preformatted {
+            // Verbatim — code blocks and blank separators keep their
+            // own shape. Clipping a long code line is the right
+            // trade: reflowing it would destroy the alignment.
+            lines.push(styled(format!("  {text}")));
+        } else {
+            lines.extend(crate::ui::md_preview::wrap_lines(
+                vec![styled(format!("  {text}"))],
+                w,
+            ));
+        }
     }
     if !c.parents.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -2597,5 +2669,119 @@ mod tests {
         assert_ne!(lane_color(&t, 0), lane_color(&t, 1));
         // The 6th slot is the orange fallback.
         assert_eq!(lane_color(&t, 5), t.orange);
+    }
+}
+
+#[cfg(test)]
+mod reflow_tests {
+    use super::reflow_commit_message;
+
+    /// Fixtures are built by joining explicit lines. An earlier version
+    /// used Rust `\`-continuations inside a string literal, which
+    /// silently injected the source file's own indentation into every
+    /// line — so the whole body looked preformatted and the test failed
+    /// for a reason that had nothing to do with the code. Verified
+    /// separately that `git show -s --format=%B` (what feeds
+    /// `CommitDetail::message`) emits body lines with NO leading
+    /// whitespace, so the indent heuristic only ever sees real indents.
+    fn msg(lines: &[&str]) -> String {
+        lines.join("\n")
+    }
+
+    /// The reported symptom: hard-wrapped at ~72 cols, so re-wrapping the
+    /// raw lines at a ~62-col panel gave "full line / few words / full
+    /// line / few words". After reflow the paragraph is ONE logical line,
+    /// so the wrapper produces an even block.
+    #[test]
+    fn hard_wrapped_prose_becomes_one_paragraph() {
+        let m = msg(&[
+            "fix: subject line",
+            "",
+            "That field is the runtime DIVIDER-DRAG override: it sits at the",
+            "top of the width precedence in `git_graph_view` (drag → config →",
+            "auto-size), and it is persisted to session.json.",
+        ]);
+        let out = reflow_commit_message(&m);
+        let paras: Vec<&String> = out
+            .iter()
+            .filter(|(t, pre)| !*pre && !t.is_empty())
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(paras.len(), 2, "subject + one body paragraph, got {out:?}");
+        assert_eq!(paras[0], "fix: subject line");
+        assert!(
+            paras[1].contains("override: it sits at the top of the width"),
+            "body was not rejoined across its hard wrap: {:?}",
+            paras[1]
+        );
+        assert!(
+            !paras[1].contains('\n'),
+            "paragraph still contains a newline"
+        );
+    }
+
+    /// Indented lines are code/diffs in practice. Reflowing them destroys
+    /// the alignment that IS their content, so they pass through verbatim
+    /// — and must not absorb the prose around them.
+    #[test]
+    fn indented_blocks_are_preformatted_and_never_joined() {
+        let m = msg(&[
+            "subject",
+            "",
+            "prose before",
+            "    *self.layout_mut() = Layout::Empty;",
+            "    self.active = None;",
+            "prose after",
+        ]);
+        let out = reflow_commit_message(&m);
+        assert!(
+            out.iter()
+                .any(|(t, pre)| *pre && t.contains("Layout::Empty")),
+            "code line was not marked preformatted: {out:?}"
+        );
+        assert!(
+            out.iter().any(|(t, pre)| !*pre && t == "prose before"),
+            "prose before the block was lost or merged: {out:?}"
+        );
+        assert!(
+            out.iter().any(|(t, pre)| !*pre && t == "prose after"),
+            "prose after the block was lost or merged: {out:?}"
+        );
+    }
+
+    /// Each bullet is its own paragraph; otherwise a list reflows into one
+    /// unreadable blob.
+    #[test]
+    fn list_items_stay_separate() {
+        let m = msg(&[
+            "subject",
+            "",
+            "- first item",
+            "- second item",
+            "- third item",
+        ]);
+        let out = reflow_commit_message(&m);
+        let items: Vec<&String> = out
+            .iter()
+            .filter(|(t, _)| t.starts_with("- "))
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(items.len(), 3, "bullets merged: {out:?}");
+    }
+
+    #[test]
+    fn blank_lines_survive_as_paragraph_breaks() {
+        let m = msg(&["subject", "", "first para", "", "second para"]);
+        let out = reflow_commit_message(&m);
+        let blanks = out.iter().filter(|(t, p)| *p && t.is_empty()).count();
+        assert!(blanks >= 2, "paragraph breaks collapsed: {out:?}");
+    }
+
+    /// A single-line message must not gain spurious paragraphs.
+    #[test]
+    fn a_one_line_message_is_one_paragraph() {
+        let out = reflow_commit_message("chore: bump deps");
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].0, "chore: bump deps");
     }
 }
