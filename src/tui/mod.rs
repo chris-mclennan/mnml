@@ -2669,6 +2669,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.context_menu_move(-1),
             KeyCode::Down | KeyCode::Char('j') => app.context_menu_move(1),
+            // `\u{2192}` / `l` opens the focused row's child; `\u{2190}` / `h`
+            // steps back out to the parent without losing it. Esc still
+            // closes the whole chain, because a user reaching for Esc
+            // wants out of the menu, not one level of it.
+            KeyCode::Right | KeyCode::Char('l') => {
+                if let Some(m) = app.context_menu.as_ref() {
+                    let i = m.selected;
+                    if app.context_menu_row_has_submenu(i) {
+                        app.open_context_submenu(i);
+                    }
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => app.close_context_submenu(),
             KeyCode::Enter => app.context_menu_accept(),
             KeyCode::Esc => app.context_menu_cancel(),
             _ => {} // keep the menu up

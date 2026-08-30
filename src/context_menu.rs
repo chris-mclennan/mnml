@@ -10,6 +10,12 @@ use crate::layout::PaneId;
 /// What a menu entry does when chosen.
 #[derive(Debug, Clone)]
 pub enum MenuAction {
+    /// A row that exists only to open a child menu. Never dispatched —
+    /// `run_menu_action` must never see it, because a submenu row is
+    /// inert by construction: clicking it opens the child, it does not
+    /// "do" anything of its own. That inertness is exactly why the `+`
+    /// menu's ACTION rows must not become submenu rows.
+    Submenu,
     /// Open the file (in the focused leaf).
     OpenPath(PathBuf),
     /// #polish 2026-07-06 — force-open a `.http`/`.curl`/`.rest`
@@ -481,6 +487,9 @@ pub enum MenuAction {
 pub struct MenuItem {
     pub label: String,
     pub action: MenuAction,
+    /// Child rows. When present the row paints a `▸`, opens on hover or
+    /// `→`, and its own `action` is ignored.
+    pub submenu: Option<Vec<MenuItem>>,
     /// Render the row's fg as `t.red` when idle (selection style still
     /// wins) — matches the widget-kebab "Close" affordance. Used for
     /// destructive actions (Close / Delete) so a mouse user can spot
@@ -493,6 +502,7 @@ impl MenuItem {
         MenuItem {
             label: label.into(),
             action,
+            submenu: None,
             destructive: false,
         }
     }
@@ -502,8 +512,23 @@ impl MenuItem {
         MenuItem {
             label: label.into(),
             action,
+            submenu: None,
             destructive: true,
         }
+    }
+
+    /// A row that opens a child menu instead of doing something itself.
+    pub fn submenu(label: impl Into<String>, items: Vec<MenuItem>) -> Self {
+        MenuItem {
+            label: label.into(),
+            action: MenuAction::Submenu,
+            submenu: Some(items),
+            destructive: false,
+        }
+    }
+
+    pub fn has_submenu(&self) -> bool {
+        self.submenu.is_some()
     }
 }
 
@@ -559,7 +584,9 @@ impl ContextMenu {
         let longest = self
             .items
             .iter()
-            .map(|i| i.label.chars().count())
+            // +2 for the trailing ` \u{25b8}` a submenu row paints, so the
+            // marker never overlaps a long label.
+            .map(|i| i.label.chars().count() + if i.has_submenu() { 2 } else { 0 })
             .chain(self.title.iter().map(|t| t.chars().count()))
             .max()
             .unwrap_or(8);

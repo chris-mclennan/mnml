@@ -2077,9 +2077,66 @@ impl App {
 
     pub fn context_menu_cancel(&mut self) {
         self.context_menu = None;
+        self.context_submenu = None;
+    }
+
+    pub fn context_menu_row_has_submenu(&self, i: usize) -> bool {
+        self.context_menu
+            .as_ref()
+            .and_then(|m| m.items.get(i))
+            .is_some_and(|it| it.has_submenu())
+    }
+
+    /// Open row `i`'s child menu, or close any open child when that row
+    /// has none.
+    ///
+    /// Idempotent on the row already open, so pointer jitter inside a
+    /// parent row does not reset the child's own selection out from
+    /// under the user.
+    pub fn open_context_submenu(&mut self, i: usize) {
+        if self.context_submenu.as_ref().is_some_and(|(p, _)| *p == i) {
+            return;
+        }
+        let items = self
+            .context_menu
+            .as_ref()
+            .and_then(|m| m.items.get(i))
+            .and_then(|it| it.submenu.clone());
+        self.context_submenu = items.map(|items| {
+            (
+                i,
+                crate::context_menu::ContextMenu::new(None, (0, 0), items),
+            )
+        });
+    }
+
+    /// Run row `i` of the open child menu, then close the whole chain.
+    pub fn context_submenu_accept(&mut self, i: usize) {
+        let Some((_, menu)) = self.context_submenu.take() else {
+            return;
+        };
+        self.context_menu = None;
+        let Some(item) = menu.items.into_iter().nth(i) else {
+            return;
+        };
+        self.run_menu_action(item.action);
+    }
+
+    /// `\u{2190}` — step back out of a child menu without losing the parent.
+    pub fn close_context_submenu(&mut self) {
+        self.context_submenu = None;
     }
 
     pub fn context_menu_move(&mut self, delta: isize) {
+        // The child owns the arrows while it is open.
+        if let Some((_, m)) = &mut self.context_submenu {
+            if delta < 0 {
+                m.move_up();
+            } else {
+                m.move_down();
+            }
+            return;
+        }
         if let Some(m) = &mut self.context_menu {
             if delta < 0 {
                 m.move_up();
@@ -2097,6 +2154,20 @@ impl App {
 
     /// Run the highlighted context-menu item and close the menu.
     pub fn context_menu_accept(&mut self) {
+        if let Some((_, m)) = self.context_submenu.as_ref() {
+            let i = m.selected;
+            self.context_submenu_accept(i);
+            return;
+        }
+        // Enter on a parent row opens it rather than firing — same rule
+        // as the click path, since the row has no action of its own.
+        if let Some(m) = self.context_menu.as_ref() {
+            let i = m.selected;
+            if m.items.get(i).is_some_and(|it| it.has_submenu()) {
+                self.open_context_submenu(i);
+                return;
+            }
+        }
         let Some(menu) = self.context_menu.take() else {
             return;
         };
@@ -2676,6 +2747,10 @@ impl App {
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),
             Delete(path) => self.open_fs_delete_prompt(path),
+            // Inert by construction — the click that lands on a submenu
+            // row opens its child instead of dispatching. Reaching here
+            // means the caller lost track of that.
+            Submenu => {}
             FilesToggleMark(pane_id, path) => {
                 if let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(pane_id) {
                     f.toggle_mark_path(path);
@@ -2877,5 +2952,137 @@ impl App {
             }
             Err(e) => self.toast(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod submenu_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+
+    fn app_with_menu() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let items = vec![
+            MenuItem::new("Plain", MenuAction::Command("scratch.new")),
+            MenuItem::submenu(
+                "Group",
+                vec![
+                    MenuItem::new("Child A", MenuAction::Command("tab.new")),
+                    MenuItem::new("Child B", MenuAction::Command("term.shell")),
+                ],
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(None, (0, 0), items));
+        (d, app)
+    }
+
+    #[test]
+    fn opening_a_parent_row_makes_its_children_available() {
+        let (_d, mut app) = app_with_menu();
+        assert!(app.context_submenu.is_none());
+        app.open_context_submenu(1);
+        let (parent, m) = app.context_submenu.as_ref().expect("no child opened");
+        assert_eq!(*parent, 1);
+        assert_eq!(m.items.len(), 2);
+    }
+
+    /// A row with no children must CLOSE any open child, or the child
+    /// lingers beside an unrelated row and its rows dispatch from the
+    /// wrong context.
+    #[test]
+    fn moving_to_a_row_without_children_closes_the_open_child() {
+        let (_d, mut app) = app_with_menu();
+        app.open_context_submenu(1);
+        assert!(app.context_submenu.is_some(), "precondition");
+        app.open_context_submenu(0);
+        assert!(
+            app.context_submenu.is_none(),
+            "a childless row left the previous child on screen"
+        );
+    }
+
+    /// Re-opening the row already open must not reset the child's own
+    /// selection — pointer jitter inside a parent row would otherwise
+    /// yank the highlight back to the first child mid-reach.
+    #[test]
+    fn reopening_the_same_row_preserves_the_childs_selection() {
+        let (_d, mut app) = app_with_menu();
+        app.open_context_submenu(1);
+        if let Some((_, m)) = app.context_submenu.as_mut() {
+            m.set_selected(1);
+        }
+        app.open_context_submenu(1);
+        assert_eq!(
+            app.context_submenu.as_ref().unwrap().1.selected,
+            1,
+            "jitter inside the parent row reset the child's selection"
+        );
+    }
+
+    /// Enter on a parent OPENS it. Firing `MenuAction::Submenu` would
+    /// dismiss the menu and do nothing at all — a dead keypress on the
+    /// row whose `▸` promises more.
+    #[test]
+    fn enter_on_a_parent_opens_it_rather_than_dismissing() {
+        let (_d, mut app) = app_with_menu();
+        app.context_menu_select(1);
+        app.context_menu_accept();
+        assert!(app.context_menu.is_some(), "Enter dismissed the menu");
+        assert!(
+            app.context_submenu.is_some(),
+            "Enter on a parent row did nothing"
+        );
+    }
+
+    /// Accepting a child runs the CHILD's action and closes the whole
+    /// chain — not the parent's, and not leaving the parent up.
+    #[test]
+    fn accepting_a_child_closes_the_whole_chain() {
+        let (_d, mut app) = app_with_menu();
+        app.open_context_submenu(1);
+        app.context_submenu_accept(0);
+        assert!(app.context_submenu.is_none(), "child stayed open");
+        assert!(app.context_menu.is_none(), "parent stayed open");
+    }
+
+    /// `←` steps out one level, keeping the parent. Esc closes
+    /// everything — a user reaching for Esc wants out of the menu, not
+    /// out of one level of it.
+    #[test]
+    fn left_closes_only_the_child_but_esc_closes_everything() {
+        let (_d, mut app) = app_with_menu();
+        app.open_context_submenu(1);
+        app.close_context_submenu();
+        assert!(app.context_submenu.is_none());
+        assert!(app.context_menu.is_some(), "`←` closed the parent too");
+
+        app.open_context_submenu(1);
+        app.context_menu_cancel();
+        assert!(
+            app.context_submenu.is_none() && app.context_menu.is_none(),
+            "Esc left part of the chain on screen"
+        );
+    }
+
+    /// Arrows belong to the child while it is open, or the highlight
+    /// moves in the parent behind a menu the user is looking at.
+    #[test]
+    fn arrows_drive_the_child_while_it_is_open() {
+        let (_d, mut app) = app_with_menu();
+        app.context_menu_select(1);
+        app.open_context_submenu(1);
+        app.context_menu_move(1);
+        assert_eq!(
+            app.context_submenu.as_ref().unwrap().1.selected,
+            1,
+            "the child did not take the arrow"
+        );
+        assert_eq!(
+            app.context_menu.as_ref().unwrap().selected,
+            1,
+            "the parent's selection moved out from under the open child"
+        );
     }
 }

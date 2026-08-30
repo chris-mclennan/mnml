@@ -674,15 +674,35 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         // which meant the dedicated context-menu hover block at
         // ~line 4762 never ran. Check the menu FIRST and update
         // its selection before falling through to tooltip logic.
-        if app.context_menu.is_some()
-            && let Some(&(_, i)) = app
+        if app.context_menu.is_some() {
+            // The child paints over the parent, so a cell inside it is
+            // the child's. Hovering it must NOT re-run the parent's
+            // hover rule, or crossing into the child would close it.
+            if let Some(&(_, i)) = app
+                .rects
+                .context_submenu_items
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                if let Some((_, m)) = app.context_submenu.as_mut() {
+                    m.set_selected(i);
+                }
+                return;
+            }
+            if let Some(&(_, i)) = app
                 .rects
                 .context_menu_items
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.context_menu_select(i);
-            return;
+            {
+                app.context_menu_select(i);
+                // Hover opens a child and closes the previous one, the
+                // way every menu bar behaves. `open_context_submenu` is
+                // a no-op on the row already open, so jitter inside a
+                // parent row does not reset the child's selection.
+                app.open_context_submenu(i);
+                return;
+            }
         }
         // Same for the menu-bar dropdown — hovering an item should
         // move the highlight to that row. Without this, the cyan
@@ -1396,14 +1416,34 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         // block now.
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // The CHILD is checked first: it paints over the parent,
+                // so a cell inside it belongs to it.
+                if let Some(&(_, i)) = app
+                    .rects
+                    .context_submenu_items
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                {
+                    app.context_submenu_accept(i);
+                    return;
+                }
                 if let Some(&(_, i)) = app
                     .rects
                     .context_menu_items
                     .iter()
                     .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                 {
-                    app.context_menu_select(i);
-                    app.context_menu_accept();
+                    // Clicking a parent row OPENS it rather than firing —
+                    // a submenu row is inert by construction, and
+                    // dismissing the menu here would make the `\u{25b8}`
+                    // a lie.
+                    if app.context_menu_row_has_submenu(i) {
+                        app.context_menu_select(i);
+                        app.open_context_submenu(i);
+                    } else {
+                        app.context_menu_select(i);
+                        app.context_menu_accept();
+                    }
                 } else {
                     app.context_menu_cancel();
                 }

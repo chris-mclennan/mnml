@@ -3312,6 +3312,8 @@ pub struct PaneRects {
     /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
     pub context_menu_box: Option<Rect>,
     pub context_menu_items: Vec<(Rect, usize)>,
+    pub context_submenu_box: Option<Rect>,
+    pub context_submenu_items: Vec<(Rect, usize)>,
     /// `(body_rect, pane_id)` per visible layout leaf — recorded by
     /// `render_layout` for ALL pane kinds. Used to hit-test a tab drag-drop
     /// onto a pane body (drag-to-split). Cleared + rebuilt each frame.
@@ -3439,6 +3441,7 @@ impl PaneRects {
         check_vec!(pane_bodies);
         check_vec!(pty_tabs);
         check_vec!(context_menu_items);
+        check_vec!(context_submenu_items);
         check_vec!(menu_bar_words);
         if let Some((r, _)) = self.menu_bar_overflow
             && hit(r)
@@ -5721,6 +5724,11 @@ pub struct App {
     pub prompt: Option<crate::prompt::Prompt>,
     /// The right-click context menu, when open. Steals key + mouse input.
     pub context_menu: Option<crate::context_menu::ContextMenu>,
+    /// The open child of `context_menu`, plus the parent row it hangs
+    /// off. One level only: a second level of nesting in a menu this
+    /// small buys nothing and multiplies the ways a pointer can fall out
+    /// of the chain on its way to a row.
+    pub context_submenu: Option<(usize, crate::context_menu::ContextMenu)>,
     /// File-manager clipboard — paths staged by `file.cut` / `file.copy`
     /// for a later `file.paste`. `Vec<_>` so a future multi-select
     /// can stage several paths at once. Empty when nothing is
@@ -6810,6 +6818,7 @@ impl App {
             help_overlay: None,
             prompt: None,
             context_menu: None,
+            context_submenu: None,
             file_clipboard: Vec::new(),
             file_clipboard_cut: false,
             files_pending_op: None,

@@ -30,65 +30,92 @@ use crate::pane::Pane;
 /// to promise.
 fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
     use crate::context_menu::{MenuAction, MenuItem};
+    // Grouped into submenus rather than one flat list.
+    //
+    // The flat form had grown to ~15 rows and gained one more per enabled
+    // integration, so it got taller forever and scanning it cost more than
+    // the palette it was meant to shortcut. Grouping is what submenus are
+    // actually for — and the `▸` is a VISIBLE affordance, which a
+    // right-click never is.
+    //
+    // What deliberately does NOT become a submenu: the action rows. A row
+    // carrying `▸` conventionally means "clicking me does nothing, I just
+    // open more", so making an action row a parent would make it lie about
+    // itself. Per-row extras hang off the row's own `⋮` instead.
     let mut items = vec![
-        MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
-        MenuItem::new("Open file…", MenuAction::Command("picker.files")),
-        MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
-        MenuItem::new(
-            "From clipboard",
-            MenuAction::Command("scratch.from_clipboard"),
+        MenuItem::submenu(
+            "New",
+            vec![
+                MenuItem::new("Scratch buffer", MenuAction::Command("scratch.new")),
+                MenuItem::new(
+                    "From clipboard",
+                    MenuAction::Command("scratch.from_clipboard"),
+                ),
+                MenuItem::new("HTTP request", MenuAction::Command("http.new")),
+                MenuItem::new("Shell", MenuAction::Command("term.shell")),
+                MenuItem::new("Browser tab", MenuAction::Command("browser.open")),
+                MenuItem::new("Tab page", MenuAction::Command("tab.new")),
+            ],
         ),
-        MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
-        MenuItem::new("New shell", MenuAction::Command("term.shell")),
-        MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
-        // #files (user ask: "i was thinking it might go on the + icon's
-        // choices") — the `+` menu is where every other "new pane of kind
-        // X" lives, so a file browser belongs beside them. The dual form
-        // gets its own row because the commander layout is the reason the
-        // pane exists, and building it by hand means open, split, open.
-        MenuItem::new("New file browser", MenuAction::Command("files.open")),
-        MenuItem::new(
-            "Dual file panes (commander)",
-            MenuAction::Command("files.open_split"),
+        MenuItem::submenu(
+            "Open",
+            vec![
+                MenuItem::new("File…", MenuAction::Command("picker.files")),
+                MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
+                MenuItem::new("File browser", MenuAction::Command("files.open")),
+                MenuItem::new(
+                    "Dual file panes (commander)",
+                    MenuAction::Command("files.open_split"),
+                ),
+            ],
         ),
-        // The dock's only discoverability affordance used to be a faint
-        // `+ dock` chip painted at the bottom-right of the editor body —
-        // i.e. ON TOP of the last row of whatever pane sat there, with a
-        // hit-rect checked long before any pane row. Clicking a file in a
-        // Files pane's bottom row created a sticky note (mouse-tester
-        // finding). It also only appeared while the dock was EMPTY, so it
-        // advertised the feature exclusively to people who had not used
-        // it, by covering their content.
-        //
-        // User: "what if we put it in the plus menu?" — right call. This
-        // is already the "new thing of kind X" surface, so the dock gets
-        // a permanent, discoverable home and the overlap disappears with
-        // the chip rather than being arbitrated against it.
-        // Both KINDS, because kind is the only genuine creation-time
-        // choice: the widget's own kebab already offers "Move to" with
-        // every corner, so the chip's four corner rows were redundant the
-        // moment a widget existed. User flagged the loss — "right click
-        // on it has additional options" — and this is the half worth
-        // keeping.
-        MenuItem::new("New dock note", MenuAction::Command("dock.new_text")),
-        MenuItem::new(
-            "New dock log tail",
-            MenuAction::Command("dock.new_log_tail"),
+        MenuItem::submenu(
+            "AI",
+            vec![
+                MenuItem::new(
+                    "Claude Code session",
+                    MenuAction::Command("ai.claude_code_new"),
+                ),
+                MenuItem::new("Codex session", MenuAction::Command("ai.codex_new")),
+            ],
         ),
-        MenuItem::new(
-            "New Claude Code session",
-            MenuAction::Command("ai.claude_code_new"),
+        MenuItem::submenu(
+            "Dock",
+            vec![
+                MenuItem::new("Note", MenuAction::Command("dock.new_text")),
+                MenuItem::new("Log tail", MenuAction::Command("dock.new_log_tail")),
+            ],
         ),
-        MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
-        MenuItem::new("New tab page", MenuAction::Command("tab.new")),
     ];
-    // Every row above opens something NEW. After closing your tabs
-    // the thing you actually want is them BACK, and the only route
-    // was Ctrl+Shift+T (undiscoverable) or restarting mnml, which
-    // restores the session. Prepended so it's first under the
-    // cursor, and only when there IS something to reopen — an
-    // always-present row that usually toasts "nothing to reopen"
-    // just teaches people to skip it.
+    // Integrations get their own group, which is the whole reason the
+    // flat list could not stay flat: this one grows without bound as the
+    // user enables more.
+    let integrations: Vec<MenuItem> = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .filter(|i| i.enabled)
+        .map(|icon| {
+            let label = icon
+                .label
+                .clone()
+                .unwrap_or_else(|| icon.id.replace('_', " "));
+            MenuItem::new(label, MenuAction::RunCmd(icon.command.clone()))
+        })
+        .collect();
+    if !integrations.is_empty() {
+        items.push(MenuItem::submenu("Integrations", integrations));
+    }
+    // Every row above opens something NEW. After closing your tabs the
+    // thing you actually want is them BACK, and the only route was
+    // Ctrl+Shift+T (undiscoverable) or restarting mnml, which restores the
+    // session. Prepended so it's first under the cursor, and only when
+    // there IS something to reopen — an always-present row that usually
+    // toasts "nothing to reopen" just teaches people to skip it.
+    //
+    // Stays a top-level ACTION row, not a submenu member: it is the one
+    // thing here you want in a single click.
     if !app.closed_buffers.is_empty() {
         items.insert(
             0,
@@ -97,22 +124,6 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
                 MenuAction::Command("buffer.reopen"),
             ),
         );
-    }
-    // 2026-07-19 — append every enabled integration chip as its own
-    // "Open <tooltip>" row so users can launch a rail integration
-    // from the `+` menu without hunting for its chip. The chip's own
-    // command string is dispatched identically to a chip click
-    // (`:<ex>` runs as ex-command, anything else through the
-    // command registry).
-    for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
-        let label = icon
-            .label
-            .clone()
-            .unwrap_or_else(|| icon.id.replace('_', " "));
-        items.push(MenuItem::new(
-            format!("Open {label}"),
-            MenuAction::RunCmd(icon.command.clone()),
-        ));
     }
     items
 }
@@ -3973,6 +3984,28 @@ mod plus_menu_tests {
         );
     }
 
+    /// Every command reachable from the menu, at any depth.
+    ///
+    /// Grouping moved rows into submenus, so a flat label check stopped
+    /// meaning anything. This asks the question that actually matters —
+    /// can the user still GET to it — and keeps meaning it if the
+    /// grouping is rearranged again.
+    fn reachable_commands(app: &App) -> Vec<String> {
+        fn walk(items: &[crate::context_menu::MenuItem], out: &mut Vec<String>) {
+            for it in items {
+                if let crate::context_menu::MenuAction::Command(c) = &it.action {
+                    out.push((*c).to_string());
+                }
+                if let Some(kids) = &it.submenu {
+                    walk(kids, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&plus_menu_items(app), &mut out);
+        out
+    }
+
     /// The top-right `+` traded an immediate `tab_new` for this menu,
     /// so the action it used to perform has to still be reachable —
     /// otherwise the change is a straight regression for anyone with
@@ -3980,7 +4013,76 @@ mod plus_menu_tests {
     #[test]
     fn new_tab_page_survives_the_move_to_a_menu() {
         let (_d, app) = app();
-        let l = labels(&app);
-        assert!(l.iter().any(|s| s == "New tab page"), "menu was: {l:?}");
+        let cmds = reachable_commands(&app);
+        assert!(cmds.iter().any(|c| c == "tab.new"), "menu was: {cmds:?}");
+    }
+
+    /// Grouping must not silently drop anything. Every command the flat
+    /// menu offered is still reachable at some depth.
+    #[test]
+    fn grouping_did_not_lose_a_single_command() {
+        let (_d, app) = app();
+        let cmds = reachable_commands(&app);
+        for want in [
+            "scratch.new",
+            "scratch.from_clipboard",
+            "picker.files",
+            "picker.recent",
+            "http.new",
+            "term.shell",
+            "browser.open",
+            "files.open",
+            "files.open_split",
+            "ai.claude_code_new",
+            "ai.codex_new",
+            "tab.new",
+            // The dock's rows, which the retired `+ dock` chip used to
+            // be the only mouse route to.
+            "dock.new_text",
+            "dock.new_log_tail",
+        ] {
+            assert!(
+                cmds.iter().any(|c| c == want),
+                "{want} unreachable: {cmds:?}"
+            );
+        }
+    }
+
+    /// A parent row must never carry an action of its own — clicking it
+    /// opens its child. If one ever gained a real action, the click
+    /// would both open and fire, which is how a menu loses your trust.
+    #[test]
+    fn every_parent_row_is_inert_and_every_leaf_acts() {
+        let (_d, app) = app();
+        for it in plus_menu_items(&app) {
+            if it.has_submenu() {
+                assert!(
+                    matches!(it.action, crate::context_menu::MenuAction::Submenu),
+                    "parent row {:?} carries a real action",
+                    it.label
+                );
+                assert!(
+                    !it.submenu.as_ref().unwrap().is_empty(),
+                    "parent row {:?} opens an empty menu — a dead click",
+                    it.label
+                );
+            } else {
+                assert!(
+                    !matches!(it.action, crate::context_menu::MenuAction::Submenu),
+                    "row {:?} is marked as a parent but has no children",
+                    it.label
+                );
+            }
+        }
+    }
+
+    /// The flat menu was ~15 rows and grew by one per enabled
+    /// integration. Grouping is worth nothing if the top level creeps
+    /// back up.
+    #[test]
+    fn the_top_level_stays_short() {
+        let (_d, app) = app();
+        let n = plus_menu_items(&app).len();
+        assert!(n <= 7, "top level is back to {n} rows: {:?}", labels(&app));
     }
 }
