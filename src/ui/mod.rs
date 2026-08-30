@@ -501,7 +501,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         crate::ui::activity_bar::draw(frame, app, bar_area);
         if border_w > 0 {
             let t = theme::cur();
-            let line_style = Style::default().fg(t.line).bg(t.bg_dark);
+            // Matches BOTH neighbours: the activity bar and the panel are
+            // each `bg_darker`, so anything else reads as a stripe.
+            let line_style = Style::default().fg(t.line).bg(t.bg_darker);
             for dy in 0..ta.height {
                 frame.render_widget(
                     ratatui::widgets::Paragraph::new(ratatui::text::Span::styled("│", line_style)),
@@ -672,7 +674,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // that split panes use.
         if let Some(divider) = tree_edge_area {
             let hover = app.hover_tree_edge || app.dragging_tree_edge;
-            draw_divider(frame, divider, crate::layout::SplitDir::Horizontal, hover);
+            draw_divider(
+                frame,
+                divider,
+                crate::layout::SplitDir::Horizontal,
+                hover,
+                theme::cur().bg_darker,
+            );
         }
     } else {
         app.rects.tree = None;
@@ -1227,7 +1235,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // dividers). Idle = subtle line; hover / drag = cyan.
         if let Some(divider) = right_panel_edge_area {
             let hover = app.hover_right_panel_edge || app.dragging_right_panel_edge;
-            draw_divider(frame, divider, crate::layout::SplitDir::Horizontal, hover);
+            draw_divider(
+                frame,
+                divider,
+                crate::layout::SplitDir::Horizontal,
+                hover,
+                theme::cur().bg_darker,
+            );
         }
         let _ = t;
     }
@@ -1984,7 +1998,7 @@ fn render_layout(
             if divider.width > 0 && divider.height > 0 {
                 let divider_idx = app.rects.split_dividers.len();
                 let is_hover = app.hover_divider_idx == Some(divider_idx) || app.dragging.is_some();
-                draw_divider(frame, divider, *dir, is_hover);
+                draw_divider(frame, divider, *dir, is_hover, theme::cur().bg_dark);
                 app.rects.split_dividers.push(crate::layout::DividerHit {
                     rect: divider,
                     dir: *dir,
@@ -5929,7 +5943,21 @@ pub(crate) fn clip_to_cells(s: &str, max_cells: usize) -> String {
     out
 }
 
-fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
+/// `bg` is the background of what the divider SITS BETWEEN.
+///
+/// #1229 (user report, zoomed screenshot) — this used to hardcode
+/// `t.bg_dark`, the editor-body shade. Correct between two editor panes,
+/// wrong on the panel edges: the tree rail and activity bar are
+/// `bg_darker`, so the divider column rendered as a slightly LIGHTER
+/// vertical band than the chrome on either side of it. "it looks like
+/// thre is a differnt bg color where those thin grey lines are."
+fn draw_divider(
+    frame: &mut Frame,
+    rect: Rect,
+    dir: SplitDir,
+    hover: bool,
+    bg: ratatui::style::Color,
+) {
     let t = theme::cur();
     // 2026-07-08 — grip glyphs removed. Hover state paints the WHOLE
     // divider in the accent color (was yellow, now cyan for parity
@@ -5938,7 +5966,7 @@ fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
     // `━` grip cue in the middle. Matches the tree / right-panel
     // edge treatment.
     let line_fg = if hover { t.cyan } else { t.line };
-    let line_style = Style::default().fg(line_fg).bg(t.bg_dark);
+    let line_style = Style::default().fg(line_fg).bg(bg);
     match dir {
         SplitDir::Horizontal => {
             // Vertical divider — one column of `│` glyphs.
@@ -6012,6 +6040,26 @@ mod activity_bar_border_tests {
              {bar_w} cells — its trailing pad must stay empty"
         );
         assert!(hits >= 10, "border column only {hits} cells tall");
+
+        // #1229 f/u — the column's BACKGROUND must match its neighbours.
+        // It first shipped with `t.bg_dark` (copied from draw_divider,
+        // the editor-body shade) while the activity bar and the panel are
+        // both `bg_darker`, so it rendered as a lighter vertical stripe.
+        // Spotted in a zoomed screenshot: "it looks like thre is a
+        // differnt bg color where those thin grey lines are".
+        let border_bg = buf[(bx, 5)].bg;
+        let bar_bg = buf[(0, 5)].bg;
+        assert_eq!(
+            border_bg, bar_bg,
+            "border column bg {border_bg:?} differs from the activity bar's \
+             {bar_bg:?} — it reads as a stripe"
+        );
+        let panel_bg = buf[(bx + 2, 5)].bg;
+        assert_eq!(
+            border_bg, panel_bg,
+            "border column bg {border_bg:?} differs from the panel's \
+             {panel_bg:?} — it reads as a stripe"
+        );
     }
 }
 
