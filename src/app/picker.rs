@@ -703,6 +703,58 @@ impl App {
     /// `OpenPullRequests`: cross-nav from a PR to its pipeline/build
     /// via the matching `mnml-forge-*` integration's
     /// `--find-pipeline-for-pr --json` headless mode.
+    /// #1229 — open a bookmarks picker, optionally scoped to one env.
+    ///
+    /// A picker rather than a nested context menu because the context
+    /// menu is flat (no submenu support) and the user expects this list to
+    /// grow — "probably more coming". A picker also brings fuzzy search,
+    /// which a twelve-row submenu would not.
+    pub fn open_bookmarks_picker(&mut self, env: Option<&str>) {
+        let all = crate::bookmarks::load(&self.workspace);
+        if all.is_empty() {
+            let p = crate::bookmarks::paths(&self.workspace)
+                .first()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            // Name the file: an empty picker with no explanation is a
+            // dead end, and this feature is useless until the user
+            // writes that file.
+            self.toast(format!("no bookmarks yet — define them in {p}"));
+            return;
+        }
+        let picked: Vec<&crate::bookmarks::Bookmark> = match env {
+            Some(e) => crate::bookmarks::in_env(&all, e),
+            None => all.iter().collect(),
+        };
+        if picked.is_empty() {
+            self.toast(format!("no bookmarks in env `{}`", env.unwrap_or("")));
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = picked
+            .iter()
+            .map(|b| {
+                // Label carries the env when showing all of them, so the
+                // three same-named rows of a 3-env site stay tellable
+                // apart.
+                let label = if env.is_some() {
+                    b.label.clone()
+                } else {
+                    format!("{}  ·  {}", b.env, b.label)
+                };
+                crate::picker::PickerItem::new(&b.url, label, b.url.clone())
+            })
+            .collect();
+        let title = match env {
+            Some(e) => format!("Bookmarks · {e} ({})", items.len()),
+            None => format!("Bookmarks ({})", items.len()),
+        };
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Bookmarks,
+            title,
+            items,
+        ));
+    }
+
     pub fn picker_accept_secondary(&mut self) {
         let Some(picker) = self.picker.as_ref() else {
             return;
@@ -1020,6 +1072,11 @@ impl App {
                     "",
                 ));
                 self.pending_stash_drop = Some((stash_ref, label));
+            }
+            PickerKind::Bookmarks => {
+                // `id` is the URL — hand it to the OS browser.
+                crate::app::open_url_external(&item.id);
+                self.toast(format!("opened {}", item.label));
             }
             PickerKind::Reflog => {
                 // `id` is the full hash — open it as a commit-diff pane.

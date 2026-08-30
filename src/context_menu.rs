@@ -321,6 +321,11 @@ pub enum MenuAction {
     /// Open a URL via the OS default browser. Used by the git rail's
     /// `Pull` row context menu.
     OpenUrl(String),
+    /// #1229 — open the bookmarks picker scoped to one environment.
+    /// `None` = every env. Surfaced on the browser chip's right-click
+    /// menu; the context menu has no submenus, so each env is a row that
+    /// opens a fuzzy picker rather than a nested list.
+    OpenBookmarks(Option<String>),
     /// Copy a literal string to the clipboard. Used by the git rail's
     /// `Pull` row context menu ("Copy URL").
     CopyText(String),

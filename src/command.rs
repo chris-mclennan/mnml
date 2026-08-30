@@ -2000,6 +2000,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "bookmarks.open",
+            title: "Bookmarks: open a site (env-grouped web bookmarks)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_bookmarks_picker(None),
+        },
+        Command {
             id: "view.toggle_click_echo",
             title: "Toggle click echo (briefly underline what you clicked)",
             group: "view",

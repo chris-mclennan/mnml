@@ -148,6 +148,10 @@ pub enum PickerKind {
     /// `id` = a full commit hash. Accept ⇒ open the commit's diff
     /// (`DiffScope::Commit`). Populated by `git.reflog`.
     Reflog,
+    /// #1229 — `id` = the URL. Accept ⇒ open it in the OS browser.
+    /// Opened from the browser chip's right-click env rows and the
+    /// `bookmarks.open` palette command.
+    Bookmarks,
     /// `id` = a branch name (or `"--all"` for the reset entry). Accept ⇒
     /// narrow the active `Pane::GitGraph`'s commit listing to commits
     /// reachable from that branch. Populated by `git.graph_filter_branch`.

@@ -735,6 +735,35 @@ impl App {
             "Edit…",
             MenuAction::EditIntegration(id.clone()),
         ));
+        // #1229 (user ask) — env-grouped bookmarks on the browser chip:
+        // "right click it and shoose from list of defined sites by env".
+        //
+        // One row per env, each opening a fuzzy picker, because the
+        // context menu has no submenus and the user expects this list to
+        // grow ("probably more coming"). A flat twelve-row menu would not
+        // survive that; a picker does, and brings search with it.
+        //
+        // Rows appear only when bookmarks exist, so a user who has never
+        // written the file sees no dead entries. The palette command
+        // `bookmarks.open` names the file path when the list is empty.
+        if id == "browser" {
+            let marks = crate::bookmarks::load(&self.workspace);
+            if !marks.is_empty() {
+                for env in crate::bookmarks::envs(&marks) {
+                    let n = crate::bookmarks::in_env(&marks, &env).len();
+                    items.push(MenuItem::new(
+                        format!("{env} ({n})\u{2026}"),
+                        MenuAction::OpenBookmarks(Some(env.clone())),
+                    ));
+                }
+                if crate::bookmarks::envs(&marks).len() > 1 {
+                    items.push(MenuItem::new(
+                        "All bookmarks\u{2026}",
+                        MenuAction::OpenBookmarks(None),
+                    ));
+                }
+            }
+        }
         // Phase 2B (task #892) — surface "Configure…" only when the
         // integration declares [[auth]] fields. Opens the per-
         // integration Settings pane with a form of those fields.
@@ -2685,6 +2714,9 @@ impl App {
             OpenUrl(url) => {
                 open_url_external(&url);
                 self.toast("opened in browser");
+            }
+            OpenBookmarks(env) => {
+                self.open_bookmarks_picker(env.as_deref());
             }
             CopyText(text) => {
                 self.clipboard.set(text.clone(), false);
