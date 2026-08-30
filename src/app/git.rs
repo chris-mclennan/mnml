@@ -1718,11 +1718,24 @@ impl App {
             self.tree_width = target_tree;
             self.tree_visible = true;
         }
-        // Detail panel = 20% of screen ≈ 25% of the graph pane.
-        let target_detail = (screen_w as u32 * 20 / 100) as u16;
-        if target_detail >= 20 {
-            self.git_graph_detail_col_override = Some(target_detail);
-        }
+        // #1229 — the detail panel is NOT pinned here any more.
+        //
+        // This used to write `git_graph_detail_col_override = 20% of
+        // screen` on every single Git entry (a 2026-06-30 "snap the
+        // layout" feature). But that field is the runtime DRAG override,
+        // it sits at the top of the width precedence in
+        // `git_graph_view` (drag → config → auto-size `width/3`), AND it
+        // is persisted to session.json. So the newer auto-size could
+        // never run, and the panel stopped responding to terminal
+        // resizes — permanently, across restarts, since the pinned value
+        // was saved. User report: "what happened to auto resize ... on
+        // right panel on git tab".
+        //
+        // Leaving the field alone rather than clearing it: a value here
+        // may be a deliberate divider drag, and re-entering Git should
+        // not throw that away. An existing stale pin from the old
+        // behaviour is cleared by dragging the divider or by removing
+        // `git_graph_detail_col` from session.json.
         // 2026-08-24 — Git activity now auto-opens one GitGraph pane
         // per discovered repo as sibling tabs. Reuse existing panes
         // (preserves scroll/expanded/filter state across enter+leave)
@@ -3304,6 +3317,50 @@ mod git_tests {
         fs::write(d.path().join("b.txt"), "beta").unwrap();
         let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         (d, app)
+    }
+
+    /// #1229 — `open_git_graph` used to pin
+    /// `git_graph_detail_col_override` to 20% of screen width on EVERY
+    /// entry. That field is the runtime drag override and sits at the
+    /// top of the width precedence (drag → config → auto-size), and it
+    /// is persisted to session.json — so the auto-size never ran and the
+    /// panel stopped tracking terminal resizes, permanently.
+    ///
+    /// User report: "what happened to auto resize ... on right panel on
+    /// git tab".
+    #[test]
+    fn opening_the_git_graph_does_not_pin_the_detail_panel_width() {
+        let (_d, mut app) = app_with_files();
+        assert!(
+            app.git_graph_detail_col_override.is_none(),
+            "fixture starts with an override — test cannot detect a pin"
+        );
+
+        app.open_git_graph();
+
+        assert!(
+            app.git_graph_detail_col_override.is_none(),
+            "opening the git graph pinned the detail width to {:?}, which \
+             outranks the auto-size and gets persisted to session.json",
+            app.git_graph_detail_col_override
+        );
+    }
+
+    /// The other half: an override the USER set (by dragging the
+    /// divider) must survive re-entering Git. The fix must not "solve"
+    /// the pin by clearing the field.
+    #[test]
+    fn a_deliberate_detail_width_survives_reopening_the_git_graph() {
+        let (_d, mut app) = app_with_files();
+        app.git_graph_detail_col_override = Some(42);
+
+        app.open_git_graph();
+
+        assert_eq!(
+            app.git_graph_detail_col_override,
+            Some(42),
+            "re-entering Git discarded the user's divider drag"
+        );
     }
 
     #[test]

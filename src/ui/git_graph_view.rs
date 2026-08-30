@@ -818,12 +818,32 @@ fn draw_detail(
         Span::styled("─".repeat(dashes), Style::default().fg(t.line).bg(t.bg)),
     ]));
 
-    // commit message body
-    for raw in detail.message.lines() {
-        lines.push(Line::from(Span::styled(
-            format!("  {raw}"),
-            Style::default().fg(t.fg).bg(t.bg),
-        )));
+    // commit message body — WRAPPED to the panel width.
+    //
+    // #1229 — was emitted one Line per source line and rendered by a
+    // `Paragraph` with no `.wrap(..)`, so any commit message longer than
+    // the panel was silently clipped at the edge. User report: "what
+    // happened to ... auto wordwrap on right panel on git tab".
+    //
+    // Wrapped HERE rather than by setting `Paragraph::wrap` on the
+    // render below, and that distinction is load-bearing:
+    // `pending_file_rows` stores `lines.len() - 1` and the click rects
+    // treat it as a visual row offset, so the renderer requires
+    // 1 Line == 1 row. Letting `Paragraph` wrap would reflow the
+    // changed-file rows out from under their own click targets — every
+    // file row below a long message would open the wrong file.
+    {
+        let body: Vec<Line> = detail
+            .message
+            .lines()
+            .map(|raw| {
+                Line::from(Span::styled(
+                    format!("  {raw}"),
+                    Style::default().fg(t.fg).bg(t.bg),
+                ))
+            })
+            .collect();
+        lines.extend(crate::ui::md_preview::wrap_lines(body, w));
     }
     if !c.parents.is_empty() {
         lines.push(Line::from(Span::styled(
