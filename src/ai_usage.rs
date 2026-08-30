@@ -73,6 +73,15 @@ pub struct ClaudeUsage {
     pub tokens_5h: u64,
     pub fetched_at: u64,
     pub last_error: Option<String>,
+    /// Consecutive failed fetches for this account, for exponential
+    /// backoff. Reset to 0 on any success.
+    ///
+    /// #ai-429 (user: "dont hammer anthropic, look like we are making
+    /// 429's"). Three accounts on a fixed 5-minute poll meant that once
+    /// the endpoint started rate-limiting, mnml kept knocking at exactly
+    /// the same cadence forever — the retry pressure never eased, so the
+    /// limit never cleared.
+    pub consecutive_failures: u32,
     /// 2026-08-16 — Unix seconds when we should retry after a 429.
     /// Populated from Anthropic's `Retry-After` header (which is a
     /// delta in seconds); the render loop's `maybe_refresh_ai_usage`
@@ -1283,6 +1292,9 @@ fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
     let (weekly_percent, weekly_resets_at) = extract_weekly(&v);
     let scoped_limits = extract_scoped_limits(&v);
     Ok(ClaudeUsage {
+        // A successful parse means the endpoint answered: clear the
+        // backoff so the next poll returns to the normal cadence.
+        consecutive_failures: 0,
         percent,
         weekly_percent,
         resets_at,

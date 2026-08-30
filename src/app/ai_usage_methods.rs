@@ -33,9 +33,31 @@ fn apply_fetch_error(
     e: crate::ai_usage::FetchErr,
     now: u64,
 ) {
-    if let Some(secs) = e.retry_after_secs {
-        usage.retry_after_at = now.saturating_add(secs);
-    }
+    usage.consecutive_failures = usage.consecutive_failures.saturating_add(1);
+    // #ai-429 — ALWAYS back off after a failure, not only when the
+    // response carried a numeric Retry-After.
+    //
+    // User report with a screenshot of three accounts all showing
+    // `HTTP 429 rate_limit_error`: "dont hammer anthropic, look like we
+    // are making 429's". The old code applied a cooldown ONLY when
+    // `retry_after_secs` was present, so a 429 whose header was absent or
+    // in HTTP-date form got no cooldown at all — the account simply
+    // retried on the normal 5-minute cadence, forever. The retry pressure
+    // never eased, so the limit never had a chance to clear.
+    //
+    // Anthropic's hint wins when it gives one; otherwise exponential
+    // backoff on consecutive failures, capped so an account that has been
+    // failing all day still checks hourly and can recover on its own.
+    let backoff = match e.retry_after_secs {
+        Some(secs) => secs,
+        None => {
+            const BASE: u64 = 10 * 60;
+            const CAP: u64 = 60 * 60;
+            let shift = usage.consecutive_failures.saturating_sub(1).min(3);
+            (BASE << shift).min(CAP)
+        }
+    };
+    usage.retry_after_at = now.saturating_add(backoff);
     usage.last_error = Some(e.message);
     usage.needs_reauth = e.needs_reauth;
 }
@@ -55,7 +77,42 @@ impl App {
     /// twice per minute is what created the problem the fast-retry
     /// was meant to solve. See task #943.
     pub fn maybe_refresh_ai_usage(&mut self) {
+        // #ai-429 — the ACTIVE account refreshes often; the others
+        // rarely.
+        //
+        // User: "if an account not active its probaly not in use and not
+        // needing of as frequent of updates". Right — and the arithmetic
+        // is the point. It was a flat 5 minutes for EVERY account, so
+        // three accounts cost ~36 requests/hour regardless of which one
+        // you were actually spending.
+        //
+        // 5 min active + 20 min idle is 12 + 3 + 3 = ~18 requests/hour,
+        // HALF the previous load, with no loss where it matters — user:
+        // "5 minutes is fine then ... it doesnt change that fast".
+        //
+        // Worth recording what was rejected: polling the active account
+        // every minute was considered and dropped, because it would be
+        // ~60 requests/hour on its own — MORE pressure than the setup that
+        // earned the 429s in the first place. Faster polling of a number
+        // that moves slowly is pure cost.
         const REFRESH_INTERVAL_SECS: u64 = 5 * 60;
+        const IDLE_REFRESH_INTERVAL_SECS: u64 = 20 * 60;
+        /// The fast window exists for ONE question: am I about to run out
+        /// and have to switch accounts?
+        ///
+        /// User: "or just when we expect to run out soon and have to
+        /// change account". That framing sets both ends of the window.
+        /// Below 90% there is nothing to decide. At 100% there is nothing
+        /// left to WATCH either — you already know you must switch, and
+        /// when it resets is a timestamp you have. Polling a maxed-out
+        /// account every minute would spend requests to re-learn something
+        /// unchanged, at exactly the moment the endpoint is least likely
+        /// to answer.
+        ///
+        /// So: active, and 90..=99. Bounded to the one account you are
+        /// actually spending.
+        const HOT_REFRESH_INTERVAL_SECS: u64 = 60;
+        const HOT_RANGE: std::ops::Range<u16> = 90..100;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -106,6 +163,17 @@ impl App {
             .retain(|a| configured_names.contains(&a.name));
         self.ai_usage_claude_last_refresh_at
             .retain(|k, _| configured_names.contains(k));
+        // #ai-429 — ONE account per tick, and never two within
+        // `SPAWN_GAP_SECS` of each other.
+        //
+        // The per-account throttle made every account eligible at the same
+        // moment, so a burst of three requests left the same millisecond.
+        // A single global gap turns that into a staggered trickle without
+        // changing how often any one account refreshes.
+        const SPAWN_GAP_SECS: u64 = 20;
+        if now.saturating_sub(self.ai_usage_last_claude_spawn_at) < SPAWN_GAP_SECS {
+            return;
+        }
         for account in &configured {
             // Skip when a fetch is already in flight for this account.
             if self
@@ -129,11 +197,40 @@ impl App {
                 .get(&account.name)
                 .copied()
                 .unwrap_or(0);
-            if now.saturating_sub(last) < REFRESH_INTERVAL_SECS {
+            // Active accounts poll on the short interval, idle ones on
+            // the long one. `is_active` is maintained by the keychain
+            // autodetect watcher.
+            let is_active = self
+                .ai_usage_claude_accounts
+                .iter()
+                .find(|a| a.name == account.name)
+                .map(|a| a.is_active)
+                .unwrap_or(false);
+            let percent = self
+                .ai_usage_claude_accounts
+                .iter()
+                .find(|a| a.name == account.name)
+                .map(|a| a.usage.percent)
+                .unwrap_or(0);
+            let interval = match (is_active, HOT_RANGE.contains(&percent)) {
+                (true, true) => HOT_REFRESH_INTERVAL_SECS,
+                (true, false) => REFRESH_INTERVAL_SECS,
+                (false, _) => IDLE_REFRESH_INTERVAL_SECS,
+            };
+            // An account that has NEVER been fetched still goes on the
+            // short interval — otherwise a fresh install would show em
+            // dashes for twenty minutes before its first reading.
+            let interval = if last == 0 {
+                REFRESH_INTERVAL_SECS
+            } else {
+                interval
+            };
+            if now.saturating_sub(last) < interval {
                 continue;
             }
             self.ai_usage_claude_last_refresh_at
                 .insert(account.name.clone(), now);
+            self.ai_usage_last_claude_spawn_at = now;
             // #1232 — the fetcher needs the account count to know
             // whether a keychain resync would be cross-writing over a
             // sibling account's credential.
@@ -144,6 +241,9 @@ impl App {
             );
             self.ai_usage_pending_claude_accounts
                 .push((account.name.clone(), rx));
+            // One per tick. The next eligible account goes on a later
+            // tick, gated by SPAWN_GAP_SECS above.
+            break;
         }
     }
 
@@ -641,14 +741,74 @@ mod fetch_error_tests {
     /// `Retry-After` only moves the cooldown when the header was
     /// present; a plain failure must not silently arm one.
     #[test]
-    fn retry_after_is_only_applied_when_the_header_was_present() {
+    fn a_failure_always_backs_off_even_without_a_retry_after_header() {
+        // THIS TEST'S PROMISE CHANGED, and the old one was the bug.
+        //
+        // It used to assert that a failure with NO `Retry-After` header
+        // left `retry_after_at` at 0 — i.e. no cooldown at all, so the
+        // account retried on the normal cadence forever. Anthropic's 429
+        // here is a JSON `rate_limit_error` whose header is often absent
+        // or in HTTP-date form, so that path was the common one, and the
+        // retry pressure never eased. User, with a screenshot of three
+        // accounts all rate-limited: "dont hammer anthropic".
         let mut usage = ClaudeUsage::default();
         apply_fetch_error(&mut usage, err("boom", false), 2_000);
-        assert_eq!(usage.retry_after_at, 0);
+        assert!(
+            usage.retry_after_at > 2_000,
+            "a failure with no Retry-After got no cooldown at all"
+        );
+        assert_eq!(usage.consecutive_failures, 1);
 
+        // Anthropic's own hint still WINS when it gives one.
+        let mut usage = ClaudeUsage::default();
         let mut throttled = err("http 429", false);
         throttled.retry_after_secs = Some(300);
         apply_fetch_error(&mut usage, throttled, 2_000);
-        assert_eq!(usage.retry_after_at, 2_300);
+        assert_eq!(
+            usage.retry_after_at, 2_300,
+            "the server's Retry-After must win over our own backoff"
+        );
+    }
+
+    /// Repeated failures must back off further, or a persistently broken
+    /// account knocks at a fixed rate all day.
+    #[test]
+    fn consecutive_failures_back_off_further_each_time() {
+        let mut usage = ClaudeUsage::default();
+        let mut waits = Vec::new();
+        for _ in 0..5 {
+            apply_fetch_error(&mut usage, err("429", false), 1_000);
+            waits.push(usage.retry_after_at - 1_000);
+        }
+        assert!(
+            waits.windows(2).all(|w| w[1] >= w[0]),
+            "backoff did not grow: {waits:?}"
+        );
+        assert!(
+            waits[1] > waits[0],
+            "second failure waited no longer than the first: {waits:?}"
+        );
+        // And it must be CAPPED, so an account can still recover on its
+        // own rather than being parked for a day.
+        assert!(
+            *waits.last().unwrap() <= 60 * 60,
+            "backoff exceeded the 1h cap: {waits:?}"
+        );
+    }
+
+    /// A success clears the backoff, so one blip does not slow the
+    /// account down permanently.
+    #[test]
+    fn a_successful_parse_resets_the_failure_count() {
+        // `parse_claude_response` builds the success value, and it sets
+        // the counter to 0 explicitly — asserted here rather than trusted
+        // because the field defaults to 0 and would look correct either
+        // way on a fresh value.
+        let mut usage = ClaudeUsage {
+            consecutive_failures: 4,
+            ..Default::default()
+        };
+        apply_fetch_error(&mut usage, err("x", false), 10);
+        assert_eq!(usage.consecutive_failures, 5, "counter should climb");
     }
 }

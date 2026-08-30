@@ -4285,6 +4285,14 @@ pub struct App {
     /// `maybe_refresh_ai_usage` when it spawns each per-account
     /// worker. Task #944, 2026-08-16.
     pub ai_usage_claude_last_refresh_at: std::collections::HashMap<String, u64>,
+    /// #ai-429 — unix seconds of the last Claude usage fetch spawned for
+    /// ANY account, so requests are staggered rather than bursting.
+    ///
+    /// User: "maybe we shoudl not do all of htem in 1 tick". Three
+    /// accounts became eligible on the same tick and fired together, so
+    /// every cycle hit the endpoint three times in a few milliseconds —
+    /// which is exactly the shape that earns a 429.
+    pub ai_usage_last_claude_spawn_at: u64,
     /// Tattle Feature Coverage trends — read from
     /// `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`.
     /// None until first load; hidden UI if the file doesn't exist.
@@ -6395,6 +6403,7 @@ impl App {
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
             ai_usage_claude_last_refresh_at: std::collections::HashMap::new(),
+            ai_usage_last_claude_spawn_at: 0,
             coverage_trends: None,
             istanbul_trends: None,
             coverage_trends_last_loaded_at: 0,
