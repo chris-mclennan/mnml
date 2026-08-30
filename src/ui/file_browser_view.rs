@@ -70,41 +70,107 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
         width: area.width,
         height: 1,
     };
-    let path_text = {
-        let full = app
-            .panes
-            .get(pane_id)
-            .and_then(|p| match p {
-                crate::pane::Pane::Files(f) => Some(f.cwd.display().to_string()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        // Elide from the LEFT — the tail of a path is the part that
-        // identifies where you are.
-        let avail = area.width.saturating_sub(2) as usize;
-        if full.chars().count() > avail {
-            let tail: String = full
-                .chars()
-                .rev()
-                .take(avail.saturating_sub(1))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            format!("…{tail}")
-        } else {
-            full
-        }
+    // #files item 3 — CLICKABLE BREADCRUMB instead of a flat path.
+    //
+    // Each segment navigates to that ancestor, and a trailing `▾` opens
+    // the destinations picker. The old header was an elided string: it
+    // told you where you were and gave you nothing to do about it, so the
+    // only way to move up several levels was pressing `h` repeatedly.
+    //
+    // Segments are dropped from the LEFT when they do not fit, because the
+    // tail identifies where you are. The dropped prefix renders as `…`,
+    // which stays clickable and jumps to the deepest hidden ancestor —
+    // otherwise narrowing the pane would silently remove navigation.
+    let cwd = match app.panes.get(pane_id) {
+        Some(crate::pane::Pane::Files(f)) => f.cwd.clone(),
+        _ => return,
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            format!(" {path_text}"),
+    let chain = crate::places::breadcrumb(&cwd);
+    let chevron = if nerd { "\u{25BE}" } else { "v" };
+    // Reserve the chevron plus its pads.
+    let avail = area.width.saturating_sub(3) as usize;
+    // Widest suffix of the chain that fits, always keeping the last
+    // segment even if it alone overflows.
+    let mut first = 0usize;
+    loop {
+        let width: usize = chain[first..]
+            .iter()
+            .map(|(l, _)| l.chars().count() + 1)
+            .sum::<usize>()
+            + if first > 0 { 2 } else { 0 };
+        if width <= avail || first + 1 >= chain.len() {
+            break;
+        }
+        first += 1;
+    }
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut x = area.x;
+    let hdr_bg = t.bg_darker;
+    if first > 0 {
+        let lbl = "… ".to_string();
+        let w = lbl.chars().count() as u16;
+        spans.push(Span::styled(lbl, Style::default().fg(t.comment).bg(hdr_bg)));
+        // Clicking `…` goes to the deepest ancestor that was dropped.
+        app.rects.file_pane_breadcrumbs.push((
+            Rect {
+                x,
+                y: area.y,
+                width: w,
+                height: 1,
+            },
+            pane_id,
+            chain[first - 1].1.clone(),
+        ));
+        x += w;
+    }
+    for (i, (label, path)) in chain.iter().enumerate().skip(first) {
+        let is_last = i + 1 == chain.len();
+        let text = if label == "/" {
+            "/".to_string()
+        } else if is_last {
+            label.clone()
+        } else {
+            format!("{label}/")
+        };
+        let w = text.chars().count() as u16;
+        spans.push(Span::styled(
+            text,
             Style::default()
-                .fg(t.blue)
-                .bg(t.bg_darker)
-                .add_modifier(Modifier::BOLD),
-        )))
-        .style(Style::default().bg(t.bg_darker)),
+                .fg(if is_last { t.blue } else { t.comment })
+                .bg(hdr_bg)
+                .add_modifier(if is_last {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ));
+        app.rects.file_pane_breadcrumbs.push((
+            Rect {
+                x,
+                y: area.y,
+                width: w,
+                height: 1,
+            },
+            pane_id,
+            path.clone(),
+        ));
+        x += w;
+    }
+    spans.push(Span::styled(
+        format!(" {chevron} "),
+        Style::default().fg(t.comment).bg(hdr_bg),
+    ));
+    app.rects.file_pane_places_chevron = Some((
+        Rect {
+            x,
+            y: area.y,
+            width: 3,
+            height: 1,
+        },
+        pane_id,
+    ));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(hdr_bg)),
         header,
     );
 
@@ -476,6 +542,127 @@ mod render_tests {
         assert!(
             app.rects.file_pane_rows.iter().any(|(_, p, _)| *p == pid),
             "no click rects registered for the Files pane"
+        );
+    }
+
+    /// #files item 3 — every breadcrumb segment must be a real click
+    /// target pointing at the RIGHT ancestor. A breadcrumb that renders
+    /// but does not navigate is decoration.
+    #[test]
+    fn breadcrumb_segments_are_clickable_and_point_at_their_ancestor() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let deep = d.path().join("a").join("b");
+        std::fs::create_dir_all(&deep).unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(Some(deep.clone()));
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(80, 8)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 80,
+                    height: 8,
+                },
+            )
+        })
+        .unwrap();
+
+        let crumbs = &app.rects.file_pane_breadcrumbs;
+        assert!(!crumbs.is_empty(), "no breadcrumb segments registered");
+        // The last segment is the current directory...
+        let last = crumbs.last().unwrap();
+        assert_eq!(last.2, deep, "final segment is not the cwd");
+        // ...and its predecessor is the real parent, not some prefix
+        // string that happens to render correctly.
+        let parent = crumbs[crumbs.len() - 2].2.clone();
+        assert_eq!(
+            parent,
+            deep.parent().unwrap(),
+            "segment before the cwd points at {parent:?}, not its parent"
+        );
+        // Every segment must be an ancestor of the cwd.
+        for (_, _, p) in crumbs {
+            assert!(
+                deep.starts_with(p),
+                "segment {p:?} is not an ancestor of {deep:?}"
+            );
+        }
+        // And the `▾` must be registered, or the destinations list is
+        // keyboard-only.
+        assert!(
+            app.rects.file_pane_places_chevron.is_some(),
+            "no chevron rect — the destinations picker has no mouse route"
+        );
+    }
+
+    /// A narrow pane must drop segments from the LEFT and keep the current
+    /// directory visible — the tail is what tells you where you are.
+    #[test]
+    fn a_narrow_breadcrumb_keeps_the_current_directory() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let deep = d
+            .path()
+            .join("aaaaaaaaaa")
+            .join("bbbbbbbbbb")
+            .join("cccccccccc");
+        std::fs::create_dir_all(&deep).unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.open_files_pane(Some(deep.clone()));
+        let pid = app.active.unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                pid,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 30,
+                    height: 8,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let header: String = (0..30).map(|x| buf[(x, 0)].symbol()).collect();
+
+        assert!(
+            header.contains("cccccccccc"),
+            "the current directory was elided away: {header:?}"
+        );
+        assert!(
+            header.contains('\u{2026}'),
+            "no ellipsis marking the dropped prefix: {header:?}"
+        );
+        // The ellipsis must still navigate somewhere, or narrowing the
+        // pane silently removes navigation.
+        assert!(
+            app.rects.file_pane_breadcrumbs.len() >= 2,
+            "narrow breadcrumb registered too few targets"
         );
     }
 

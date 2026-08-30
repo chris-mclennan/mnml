@@ -36,6 +36,7 @@ pub mod cookie_jar;
 pub mod cookies;
 pub mod file_browser;
 pub mod jwt;
+pub mod places;
 /// Sonos speakers — statusline chip, UPnP control, and the two ways
 /// a Mac can send it audio (Music.app AirPlay, or a local stream).
 pub mod sonos;

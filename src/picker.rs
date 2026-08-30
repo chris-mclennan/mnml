@@ -152,6 +152,9 @@ pub enum PickerKind {
     /// Opened from the browser chip's right-click env rows and the
     /// `bookmarks.open` palette command.
     Bookmarks,
+    /// #files item 3 — `id` = a destination directory. Accept ⇒ navigate
+    /// the focused Files pane there.
+    FilesDestinations,
     /// `id` = a branch name (or `"--all"` for the reset entry). Accept ⇒
     /// narrow the active `Pane::GitGraph`'s commit listing to commits
     /// reachable from that branch. Populated by `git.graph_filter_branch`.

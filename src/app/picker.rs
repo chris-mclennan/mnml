@@ -719,6 +719,58 @@ impl App {
     /// `OpenPullRequests`: cross-nav from a PR to its pipeline/build
     /// via the matching `mnml-forge-*` integration's
     /// `--find-pipeline-for-pr --json` headless mode.
+    /// #files item 3 — destinations for the Files pane's `▾`.
+    pub fn open_files_destinations_picker(&mut self) {
+        let workspaces: Vec<(String, std::path::PathBuf)> = self
+            .config
+            .workspaces
+            .iter()
+            .map(|w| (w.name.clone(), w.path.clone()))
+            .collect();
+        let recents: Vec<std::path::PathBuf> = self
+            .recent_files
+            .iter()
+            .filter_map(|p| p.parent().map(|q| q.to_path_buf()))
+            .collect();
+        let places = crate::places::all(&workspaces, &recents);
+        if places.is_empty() {
+            self.toast("no destinations found");
+            return;
+        }
+        let ascii = self.config.ui.ascii_icons;
+        let items: Vec<crate::picker::PickerItem> = places
+            .iter()
+            .map(|p| {
+                let group = match p.group {
+                    crate::places::Group::Standard => "",
+                    crate::places::Group::Volume => "volume",
+                    crate::places::Group::Workspace => "workspace",
+                    crate::places::Group::Recent => "recent",
+                };
+                // Group name in the DETAIL column rather than as section
+                // headers: the picker filters as you type, and headers
+                // that survive filtering while their rows vanish read as
+                // noise.
+                let label = if ascii {
+                    p.label.clone()
+                } else {
+                    format!("{}  {}", p.glyph, p.label)
+                };
+                let detail = if group.is_empty() {
+                    p.path.display().to_string()
+                } else {
+                    format!("{group}  ·  {}", p.path.display())
+                };
+                crate::picker::PickerItem::new(p.path.display().to_string(), label, detail)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::FilesDestinations,
+            format!("Go to ({} destinations)", items.len()),
+            items,
+        ));
+    }
+
     /// #1229 — open a bookmarks picker, optionally scoped to one env.
     ///
     /// A picker rather than a nested context menu because the context
@@ -1088,6 +1140,21 @@ impl App {
                     "",
                 ));
                 self.pending_stash_drop = Some((stash_ref, label));
+            }
+            PickerKind::FilesDestinations => {
+                let dir = std::path::PathBuf::from(&item.id);
+                // Navigate the pane the picker was opened FROM, which is
+                // still `active` — the picker does not move focus.
+                if let Some(i) = self.active
+                    && let Some(crate::pane::Pane::Files(f)) = self.panes.get_mut(i)
+                {
+                    f.navigate_to(&dir);
+                } else {
+                    // No Files pane focused any more (the user switched
+                    // panes with the picker open) — open one rather than
+                    // silently doing nothing.
+                    self.open_files_pane(Some(dir));
+                }
             }
             PickerKind::Bookmarks => {
                 // `id` is the URL — hand it to the OS browser.

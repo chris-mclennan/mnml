@@ -3494,6 +3494,32 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // Git-palette row (the GitKraken-style panel shown when
     // `ActivitySection::Git` is active). Maps to the same
     // `GitRailHit` dispatch as the legacy rail.
+    // ── Files pane breadcrumb ──
+    //
+    // Checked BEFORE the row list because the header sits above the rows
+    // and a stale row rect must never win over a live header rect.
+    if let Some((r, pane_id)) = app.rects.file_pane_places_chevron
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.active = Some(pane_id);
+        app.focus_pane();
+        app.open_files_destinations_picker();
+        return;
+    }
+    if let Some((_, pane_id, dir)) = app
+        .rects
+        .file_pane_breadcrumbs
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        app.active = Some(pane_id);
+        app.focus_pane();
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pane_id) {
+            f.navigate_to(&dir);
+        }
+        return;
+    }
     // ── Files pane rows ──
     //
     // First click selects, a click on the ALREADY-selected row activates

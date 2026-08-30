@@ -2313,6 +2313,13 @@ pub struct PaneRects {
     /// #files — one entry per visible row of every `Pane::Files`:
     /// `(rect, pane_id, entry_index)`. Cleared each frame by the drawer.
     pub file_pane_rows: Vec<(Rect, PaneId, usize)>,
+    /// #files item 3 — one entry per breadcrumb SEGMENT in a Files pane's
+    /// header: `(rect, pane_id, that ancestor's path)`. Clicking a segment
+    /// navigates there.
+    pub file_pane_breadcrumbs: Vec<(Rect, PaneId, std::path::PathBuf)>,
+    /// The `▾` at the end of a Files pane's breadcrumb — opens the
+    /// destinations picker.
+    pub file_pane_places_chevron: Option<(Rect, PaneId)>,
     /// Click rect for the git palette's filter input. Click to
     /// focus + start typing; Esc clears + unfocuses.
     pub git_palette_filter_input: Option<Rect>,

@@ -834,6 +834,7 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     | KeyCode::Char('s')
                     | KeyCode::Char('a')
                     | KeyCode::Char(' ')
+                    | KeyCode::Char('g')
             )
         {
             return;
@@ -893,6 +894,10 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.toast(format!("{n} selected"));
                 }
             }
+            // `g` — go to a destination. The keyboard route to the same
+            // picker the breadcrumb's `▾` opens, so the feature is not
+            // mouse-only.
+            KeyCode::Char('g') => app.open_files_destinations_picker(),
             // `.` — dotfiles, the ranger/superfile binding.
             KeyCode::Char('.') => {
                 if let Some(Pane::Files(f)) = app.panes.get_mut(i) {
