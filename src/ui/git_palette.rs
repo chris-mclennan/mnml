@@ -460,17 +460,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     width: area.width,
                     height: 1,
                 };
-                // Paint the whole row bg first when selected so the
-                // highlight extends past the rendered text to the
-                // right edge.
+                // Paint the row bg first when selected so the highlight
+                // extends past the rendered text to the right edge — but
+                // INSET BY ONE CELL on the left.
+                //
+                // #1229 (user report) — the highlight used to start at
+                // `area.x`, i.e. the column immediately right of the
+                // activity bar, so a selected branch read as "stuck onto
+                // the activity bar". Same bug tree_view fixed under #970
+                // f/u (2026-08-20); this panel never got the treatment.
+                // The activity-bar-adjacent column is off limits: it
+                // always keeps the panel's own bg.
+                //
+                // Only the FIRST cell is given up, matching the #970
+                // follow-up where pulling two cells looked over-trimmed.
+                // `row_rect` itself is unchanged so the click target
+                // still covers the full row.
                 if is_selected {
-                    frame.render_widget(
-                        Block::default().style(Style::default().bg(row_bg)),
-                        row_rect,
-                    );
+                    let hl = Rect {
+                        x: row_rect.x.saturating_add(1),
+                        y: row_rect.y,
+                        width: row_rect.width.saturating_sub(1),
+                        height: 1,
+                    };
+                    frame.render_widget(Block::default().style(Style::default().bg(bg)), row_rect);
+                    frame.render_widget(Block::default().style(Style::default().bg(row_bg)), hl);
                 }
+                // Leading cell of the indent keeps the PANEL bg so the
+                // highlight cannot touch the activity bar; the rest of
+                // the indent carries the row bg.
+                let (indent_head, indent_tail) = indent_branch
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| indent_branch.split_at(i))
+                    .unwrap_or((indent_branch, ""));
                 let line = Line::from(vec![
-                    Span::styled(indent_branch, Style::default().bg(row_bg)),
+                    Span::styled(indent_head, Style::default().bg(bg)),
+                    Span::styled(indent_tail, Style::default().bg(row_bg)),
                     Span::styled(marker, Style::default().fg(marker_color).bg(row_bg)),
                     Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(display_name, name_style),

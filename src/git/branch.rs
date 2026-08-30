@@ -45,12 +45,29 @@ pub fn local_branches_by_recent(workspace: &Path) -> Vec<String> {
 
 /// Tag names, lex-sorted.
 pub fn tags(workspace: &Path) -> Vec<String> {
-    let mut t = lines_of(
+    // #1229 — NEWEST FIRST, by tag creation date.
+    //
+    // Was a lexicographic `sort()`, which buried the releases you
+    // actually care about: on mnml's own history that puts
+    // `mnml-libghostty-vt-sys-v0.2.3` at the top and `v0.2.19` far
+    // enough down to be off-screen in the git rail. User report: "i have
+    // more tags than can be shown and is showing older ones on top so
+    // the new ones are unaccessible".
+    //
+    // `-creatordate` handles both lightweight and annotated tags (it
+    // falls back to the commit date for lightweight ones), so mixed
+    // repos still order sensibly. Version-number sorting would be wrong
+    // here: this repo tags several independent crates, so their numbers
+    // are not comparable with each other.
+    lines_of(
         workspace,
-        &["for-each-ref", "--format=%(refname:short)", "refs/tags"],
-    );
-    t.sort();
-    t
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "--sort=-creatordate",
+            "refs/tags",
+        ],
+    )
 }
 
 /// One row in `git stash list` — `(stash_id, summary)`. The
@@ -318,5 +335,50 @@ mod tests {
             .output();
         assert!(create_from(d.path(), "hotfix/y", "main").is_ok());
         assert_eq!(current(d.path()).as_deref(), Some("hotfix/y"));
+    }
+
+    /// #1229 — tags must come back NEWEST FIRST. They used to be sorted
+    /// lexicographically, which on a repo that tags several independent
+    /// crates buries the release you care about: `v0.2.19` sorted below
+    /// `mnml-libghostty-vt-sys-v0.2.3`, far enough down to be off-screen
+    /// in the git rail. User report: "showing older ones on top so the
+    /// new ones are unaccessible".
+    #[test]
+    fn tags_come_back_newest_first() {
+        let d = init_repo();
+        // Distinct commit dates. Lightweight tags take their creatordate
+        // from the commit, so pinning one fixed date for every command
+        // (an earlier version of this test) made both tags tie and the
+        // sort fall back to refname — failing even against the correct
+        // implementation.
+        let run_at = |args: &[&str], date: &str| {
+            Command::new("git")
+                .args(args)
+                .current_dir(d.path())
+                .env("GIT_COMMITTER_DATE", date)
+                .env("GIT_AUTHOR_DATE", date)
+                .output()
+                .expect("git");
+        };
+        std::fs::write(d.path().join("f.txt"), "1").unwrap();
+        run_at(&["add", "."], "2020-01-01T00:00:00");
+        run_at(&["commit", "-qm", "one"], "2020-01-01T00:00:00");
+        // The names make the two orderings DISAGREE: the older tag sorts
+        // FIRST alphabetically, so refname order (git's for-each-ref
+        // default, and the old `sort()`) puts it on top while date order
+        // puts it last.
+        run_at(&["tag", "aaa-old"], "2020-01-01T00:00:00");
+        std::fs::write(d.path().join("f.txt"), "2").unwrap();
+        run_at(&["add", "."], "2024-06-01T00:00:00");
+        run_at(&["commit", "-qm", "two"], "2024-06-01T00:00:00");
+        run_at(&["tag", "zzz-new"], "2024-06-01T00:00:00");
+
+        let got = tags(d.path());
+        assert_eq!(
+            got,
+            vec!["zzz-new".to_string(), "aaa-old".to_string()],
+            "tags not ordered newest-first (alphabetical order is the \
+             reverse of this, which is the bug)"
+        );
     }
 }
