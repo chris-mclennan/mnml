@@ -3322,6 +3322,115 @@ mod welcome_esc_tests {
 }
 
 #[cfg(test)]
+mod files_pane_modifier_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::file_browser::Sort;
+    use crate::tui::handlers::pane::handle_pane_key;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn pane(dir: &std::path::Path) -> (tempfile::TempDir, App, usize) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        std::fs::write(d.path().join("a.txt"), "a").unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "standard".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let target = if dir.as_os_str().is_empty() {
+            d.path().to_path_buf()
+        } else {
+            dir.to_path_buf()
+        };
+        app.open_files_pane(Some(target));
+        let pid = app.active.unwrap();
+        (d, app, pid)
+    }
+
+    /// Drives `handle_pane_key` DIRECTLY rather than `dispatch_key`.
+    ///
+    /// Going through `dispatch_key` made these tests vacuous: `Ctrl+S` is
+    /// bound globally to `file.save`, so the chord layer consumed it and
+    /// it never reached the Files branch — the tests passed with the guard
+    /// deliberately disabled. Testing the handler directly exercises the
+    /// guard itself, which is the thing being asserted.
+    ///
+    /// #files — the bare-char arms were modifier-BLIND, so `Ctrl+S` (save)
+    /// cycled the sort order and `Ctrl+H` walked to the parent directory.
+    /// Same class as #1213, where vim mode read arrow modifiers instead of
+    /// discarding them.
+    #[test]
+    fn ctrl_s_does_not_cycle_the_sort_order() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = pane(std::path::Path::new(""));
+        let before = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.sort,
+            _ => panic!(),
+        };
+        assert_eq!(before, Sort::DirsFirstName, "setup");
+
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+
+        let after = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.sort,
+            _ => panic!(),
+        };
+        assert_eq!(
+            after, before,
+            "Ctrl+S cycled the sort — the bare-char arm is modifier-blind"
+        );
+    }
+
+    /// And bare `s` must still cycle it, or the guard went too far.
+    #[test]
+    fn bare_s_still_cycles_the_sort_order() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, mut app, pid) = pane(std::path::Path::new(""));
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        );
+        let after = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.sort,
+            _ => panic!(),
+        };
+        assert_ne!(after, Sort::DirsFirstName, "bare `s` stopped working");
+    }
+
+    /// `Ctrl+H` must not be read as the vim-style "go up".
+    #[test]
+    fn ctrl_h_does_not_navigate_to_the_parent() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app, pid) = pane(std::path::Path::new(""));
+        let sub = d.path().join("sub");
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.navigate_to(&sub);
+        }
+        let before = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.cwd.clone(),
+            _ => panic!(),
+        };
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        );
+        let after = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.cwd.clone(),
+            _ => panic!(),
+        };
+        assert_eq!(before, after, "Ctrl+H navigated up");
+    }
+}
+
+#[cfg(test)]
 mod menu_dismiss_tests {
     use super::dispatch_key;
     use crate::app::App;

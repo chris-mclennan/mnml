@@ -788,6 +788,54 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // ranger / superfile convention and costs nothing to support.
     if matches!(app.panes.get(i), Some(Pane::Files(_))) {
         let vp = viewport.max(1) as isize;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        // #files — file-manager clipboard shortcuts, the same ones
+        // `handle_tree_key` exposes from tree focus. They live here too
+        // because `target_path()` now resolves to the focused Files pane,
+        // so the commands do the right thing from either place.
+        if ctrl && !alt {
+            let cmd = match key.code {
+                KeyCode::Char('x') => Some("file.cut"),
+                KeyCode::Char('c') => Some("file.copy"),
+                KeyCode::Char('v') => Some("file.paste"),
+                KeyCode::Char('d') => Some("file.duplicate"),
+                _ => None,
+            };
+            if let Some(cmd) = cmd {
+                let dir = match app.panes.get(i) {
+                    Some(Pane::Files(f)) => Some(f.cwd.clone()),
+                    _ => None,
+                };
+                crate::command::run(cmd, app);
+                // The operation changed this directory — re-read it, or
+                // the pane shows stale contents until `r`.
+                if let Some(d) = dir {
+                    app.refresh_files_panes_for(&d);
+                }
+                return;
+            }
+        }
+
+        // Bare-character arms below must not fire on a modified key.
+        // Without this guard `Ctrl+S` (save) cycled the SORT, and
+        // `Ctrl+H` walked to the parent directory — the same
+        // modifier-blind matching as #1213.
+        if (ctrl || alt)
+            && matches!(
+                key.code,
+                KeyCode::Char('j')
+                    | KeyCode::Char('k')
+                    | KeyCode::Char('h')
+                    | KeyCode::Char('l')
+                    | KeyCode::Char('.')
+                    | KeyCode::Char('r')
+                    | KeyCode::Char('s')
+            )
+        {
+            return;
+        }
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(Pane::Files(f)) = app.panes.get_mut(i) {

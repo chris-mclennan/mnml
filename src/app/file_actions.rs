@@ -613,6 +613,61 @@ impl App {
 }
 
 impl App {
+    /// The path the user means RIGHT NOW, for a file operation.
+    ///
+    /// #files — every `file.*` command used to read
+    /// `app.tree.selected_file()` directly, so a `Pane::Files` was
+    /// read-only: no cut, copy, paste, rename, delete or right-click,
+    /// however many rows it showed. The underlying methods already take
+    /// paths, so the whole gap was this resolver not existing.
+    ///
+    /// Precedence is FOCUS, not pane existence: a Files pane only wins
+    /// while it has focus. Otherwise having one open anywhere would
+    /// silently retarget the tree's own Ctrl+X, and a delete aimed at the
+    /// wrong file is the worst outcome in this whole area.
+    pub fn target_path(&self) -> Option<std::path::PathBuf> {
+        if self.focus == crate::focus::Focus::Pane
+            && let Some(i) = self.active
+            && let Some(crate::pane::Pane::Files(f)) = self.panes.get(i)
+        {
+            return f.selected_entry().map(|e| e.path.clone());
+        }
+        self.tree.selected_file()
+    }
+
+    /// The DIRECTORY a new file / paste should land in.
+    ///
+    /// Distinct from [`Self::target_path`] because "paste here" means the
+    /// current directory when a file is selected, not a sibling of it.
+    pub fn target_dir(&self) -> Option<std::path::PathBuf> {
+        if self.focus == crate::focus::Focus::Pane
+            && let Some(i) = self.active
+            && let Some(crate::pane::Pane::Files(f)) = self.panes.get(i)
+        {
+            return Some(f.cwd.clone());
+        }
+        self.tree.selected_file().map(|p| {
+            if p.is_dir() {
+                p
+            } else {
+                p.parent().map(|q| q.to_path_buf()).unwrap_or(p)
+            }
+        })
+    }
+
+    /// Re-read every Files pane showing `dir`, after an operation changed
+    /// its contents. Without this a copy or delete appears not to have
+    /// happened until the user presses `r`.
+    pub fn refresh_files_panes_for(&mut self, dir: &std::path::Path) {
+        for p in self.panes.iter_mut() {
+            if let crate::pane::Pane::Files(f) = p
+                && f.cwd == dir
+            {
+                f.reload();
+            }
+        }
+    }
+
     /// Enter the selected directory, or open the selected file.
     ///
     /// The two are one gesture (`Enter` / `l` / double-click) because that
@@ -643,5 +698,108 @@ impl App {
         let id = self.panes.len() - 1;
         self.reveal_pane(id);
         self.focus = crate::focus::Focus::Pane;
+    }
+}
+
+#[cfg(test)]
+mod target_path_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::focus::Focus;
+
+    fn fixture() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        std::fs::write(d.path().join("sub").join("inner.txt"), "x").unwrap();
+        std::fs::write(d.path().join("root.txt"), "y").unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// #files — the resolver is why a Files pane can do anything at all.
+    /// Every `file.*` command read `tree.selected_file()` directly, so the
+    /// pane was read-only however many rows it showed.
+    #[test]
+    fn a_focused_files_pane_owns_the_target() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app) = fixture();
+        app.open_files_pane(Some(d.path().join("sub")));
+        assert_eq!(app.focus, Focus::Pane, "open_files_pane should focus it");
+
+        let got = app.target_path().expect("no target");
+        assert_eq!(
+            got.file_name().unwrap(),
+            "inner.txt",
+            "target should be the Files pane's selection, got {got:?}"
+        );
+    }
+
+    /// Precedence is FOCUS, not existence. An open-but-unfocused Files
+    /// pane must not retarget the tree's own Ctrl+X — a delete aimed at
+    /// the wrong file is the worst outcome in this area.
+    #[test]
+    fn an_unfocused_files_pane_does_not_steal_the_target() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app) = fixture();
+        app.open_files_pane(Some(d.path().join("sub")));
+        // User moves focus back to the tree.
+        app.focus = Focus::Tree;
+
+        let got = app.target_path();
+        assert!(
+            got.is_none_or(|p| p.file_name().unwrap() != "inner.txt"),
+            "an unfocused Files pane hijacked the tree's target"
+        );
+    }
+
+    /// "Paste here" means the current directory, not a sibling of the
+    /// selected file.
+    #[test]
+    fn target_dir_is_the_panes_cwd_not_the_selections_parent() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app) = fixture();
+        app.open_files_pane(Some(d.path().join("sub")));
+        let got = app.target_dir().expect("no target dir");
+        assert_eq!(got.file_name().unwrap(), "sub", "got {got:?}");
+    }
+
+    /// An operation that changes a directory must be reflected without the
+    /// user pressing `r`.
+    #[test]
+    fn refresh_reloads_only_the_panes_showing_that_directory() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (d, mut app) = fixture();
+        app.open_files_pane(Some(d.path().join("sub")));
+        let pid = app.active.unwrap();
+        let before = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.entries.len(),
+            _ => panic!(),
+        };
+
+        std::fs::write(d.path().join("sub").join("added.txt"), "z").unwrap();
+        // A refresh for an UNRELATED directory must not pick it up...
+        app.refresh_files_panes_for(d.path());
+        let mid = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.entries.len(),
+            _ => panic!(),
+        };
+        assert_eq!(mid, before, "refreshed a pane showing a different dir");
+
+        // ...but a refresh for its own directory must.
+        let sub = d.path().join("sub");
+        app.refresh_files_panes_for(&sub);
+        let after = match app.panes.get(pid) {
+            Some(crate::pane::Pane::Files(f)) => f.entries.len(),
+            _ => panic!(),
+        };
+        assert_eq!(after, before + 1, "the pane did not re-read its directory");
     }
 }

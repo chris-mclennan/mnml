@@ -4,6 +4,121 @@ Living list of work that's been considered but deliberately deferred.
 Not a wishlist — only items where the scope/shape is already understood
 and the only thing missing is a session to do it in.
 
+
+## Files pane / file manager
+
+Foundation shipped 2026-08-30 (`Pane::Files`, `src/file_browser.rs` +
+`src/ui/file_browser_view.rs`): navigation, sort, hidden toggle, `..`
+row, wheel + scrollbar, `files.open` / `files.open_split`. Design shape
+"C" — a file browser is just a pane, so side-by-side comes free from
+`Layout::Split` and the commander/superfile arrangements become layout
+presets rather than a mode.
+
+The queue below is in build order, agreed with the user 2026-08-30.
+Each item is independently useful; nothing here is speculative.
+
+### 1. `target_path()` + file operations in the pane
+**The unlock.** The `file.*` commands all read `app.tree.selected_file()`,
+so a Files pane is read-only today. The underlying methods already take
+paths (`file_stage_clipboard(p)`, `open_fs_delete_prompt(p)`), so this is
+one resolver — "the path the user means right now" = focused Files pane's
+selection, else the tree's — and then every command works in both places,
+including Ctrl+X/C/V.
+
+Right-click comes with it: `open_tree_context_menu(path, is_dir, anchor)`
+is already path-based, so the menu is one call. Doing the resolver FIRST
+matters: right-click alone would give mouse users operations while
+keyboard users still had none.
+
+### 2. Multi-select
+`Space` marks (decided — NOT preview; see 4), `a` all, `Esc` clears,
+footer shows count + total size. Everything else in a file manager is
+downstream of this: without it, operations are one-at-a-time and the
+multi-panel layout buys little.
+
+### 3. Breadcrumb header + destinations dropdown
+Each path segment clickable (jump to that ancestor) plus a `▾` opening a
+picker of Home / Downloads / Documents / Pictures / Videos / Music /
+disks / workspaces / recent dirs. That picker is the same list
+`ActivitySection::Places` wants, so building it here leaves Places mostly
+done.
+
+### 4. Preview
+`Pane::Image` (sixel) and `MdPreview` already exist, so the cheap version
+opens the existing pane type in the split beside you — images, markdown
+and highlighted text on day one. A dedicated superfile-style preview
+COLUMN is better for "arrow down 50 files glancing at each" but mostly
+duplicates those panes; only do it if the pane-reuse version proves
+annoying in practice.
+
+Keybinding: `Tab` or `p`, NOT `Space` — Space belongs to multi-select
+(ranger and superfile both do this). Settled up front because retraining
+a key later is worse than picking now.
+
+### 5. Git status badges per row
+`M` / `A` / `?` / `!` per entry. mnml already knows the repo state and no
+standalone file manager can do this — it is the strongest argument for a
+file browser INSIDE the IDE rather than beside one. After operations are
+solid.
+
+### Smaller items, same area
+- **Sort indicator in the header.** `s` cycles name → size → modified
+  with only a toast, so the active sort is invisible a second later.
+  Should read `name ▾` in the header, clickable. (A gap introduced by the
+  foundation commit.)
+- **Inline rename** (`F2` / `r`) instead of a prompt.
+- **Open terminal here** — `MenuAction::OpenTerminal` already exists, so
+  it is a menu row.
+- **Directory size on demand** (`S` on a folder → compute + cache).
+  Deliberately not automatic: a recursive stat per listing is the classic
+  reason a file manager feels slow.
+- **Follow the active editor** — toggle so the pane tracks the file being
+  edited.
+- **Disk-usage bar per row** — useful when size-sorted.
+
+### 6. Transfer tracker — progress + speed
+**User ask 2026-08-30:** "we might need somewhere to show transfer info
+like progress and speed."
+
+This is also the GATE on everything bulk. The fs operations are currently
+SYNCHRONOUS on the render thread: `copy_recursively` on a 4 GB directory
+freezes mnml and reports via a toast when it eventually finishes. That is
+unacceptable for a file manager, so this has to land before cross-pane
+drag or multi-select operations on large sets.
+
+Shape:
+- `App::transfers: Vec<Transfer>` — id, kind (copy/move/delete), src, dst,
+  `bytes_total`, `bytes_done`, `started_at`, state (running / done /
+  failed / cancelled). Speed and ETA are DERIVED from bytes+elapsed, not
+  stored, so they cannot go stale.
+- One worker thread per transfer, reporting progress over the existing
+  mpsc channel pattern (same shape as `git_loader_tx` / the Sonos worker).
+  The render loop never blocks on the filesystem.
+- Byte-level progress means walking the tree for a total FIRST, which
+  costs a stat pass — acceptable here because the user has explicitly
+  asked for an operation, unlike the per-listing size problem that makes
+  browsing slow.
+- Cancel must actually stop mid-copy, and a cancelled copy must clean up
+  its partial destination or say clearly that it did not.
+
+Where it shows, following the family idiom (the Sonos chip is the
+precedent — constant-width chip, detail on hover / in a view, nothing
+that reflows the strip):
+- **Statusline chip**: aggregate, constant width, e.g. `⇄ 62% 12M/s`.
+  Colour carries state; hidden entirely when nothing is running.
+- **Detail**: a Transfers view listing each operation with its own bar,
+  speed, ETA and a cancel target. Reachable from the chip and from the
+  palette.
+- **Files pane footer**: the superfile shape — selection count + size on
+  the left, active transfer on the right — when a Files pane is focused.
+
+### Deferred until the tracker exists
+- **Cross-pane drag and drop.** Today drag-drop is tree-internal;
+  hit-testing a drop across arbitrary panes plus the mis-drop undo story
+  is the expensive part, and it is the gesture most likely to move a lot
+  of data by accident.
+
+
 ## HTTP
 
 ### WebSocket support

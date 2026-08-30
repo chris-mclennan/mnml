@@ -2002,6 +2002,37 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     // Right-click on a git-palette row.
+    // ── Files pane rows ──
+    //
+    // #files — reuses `open_tree_context_menu`, which is already
+    // PATH-based rather than tree-row-based, so the whole New / Rename /
+    // Delete / Cut / Copy / Paste / Duplicate / Move-to / Reveal menu
+    // comes across as one call. Selects the row first so the menu and the
+    // cursor cannot disagree about which file is being acted on.
+    if let Some(&(_, pane_id, idx)) = app
+        .rects
+        .file_pane_rows
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if idx == crate::ui::file_browser_view::PARENT_ROW {
+            return;
+        }
+        app.active = Some(pane_id);
+        app.focus_pane();
+        let target = match app.panes.get_mut(pane_id) {
+            Some(crate::pane::Pane::Files(f)) => {
+                f.selected = idx;
+                f.selected_entry().map(|e| (e.path.clone(), e.is_dir))
+            }
+            _ => None,
+        };
+        if let Some((path, is_dir)) = target {
+            app.open_tree_context_menu(path, is_dir, (x, y));
+        }
+        return;
+    }
+
     if let Some(&(_, hit)) = app
         .rects
         .git_palette_rows

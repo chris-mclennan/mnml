@@ -2539,7 +2539,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.file_stage_clipboard(p, true);
                 }
             },
@@ -2550,7 +2550,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.file_stage_clipboard(p, false);
                 }
             },
@@ -2561,7 +2561,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.file_paste_into(p);
                 } else {
                     let ws = app.workspace.clone();
@@ -2575,7 +2575,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.file_duplicate(p);
                 }
             },
@@ -2591,7 +2591,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.open_fs_rename_prompt(p);
                 }
             },
@@ -2602,7 +2602,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &["delete"],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.open_fs_delete_prompt(p);
                 }
             },
@@ -2692,7 +2692,7 @@ fn builtin_commands() -> Vec<Command> {
             group: "file",
             keys: &[],
             run: |app| {
-                if let Some(p) = app.tree.selected_file() {
+                if let Some(p) = app.target_path() {
                     app.file_open_move_to_picker(p);
                 }
             },
