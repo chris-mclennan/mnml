@@ -2287,65 +2287,72 @@ pub fn draw_git_toolbar(
     // chars which made 'Pop' (3) → 3 trailing spaces vs 'Fetch'
     // (5) → 1 trailing space, making the row look uneven.
     //
-    // Button = ` icon label ` (icon(1) + 2 spaces + label chars + 1 trailing).
-    // Divider = ` │ ` normal / `│` compact.
-    let button_widths: Vec<u16> = buttons
+    // #1229 (user ask) — CENTRED, and styled as real buttons via the
+    // shared `action_button::Button` component.
+    //
+    // Was: transparent labels on the strip bg, separated by ` │ `
+    // dividers, packed against the left edge. Two complaints, both fair
+    // — "they are always left aligned ... when zoomed out it looks
+    // pretty bad", and "can we try styling them too so they look like
+    // buttons". A wide window left the right half of the toolbar empty,
+    // and nothing about the row said "clickable".
+    //
+    // Buttons now carry the neutral `bg2` chip fill with their accent on
+    // the icon, so the row reads as a row of controls and stays
+    // scannable by colour. Dividers are gone — chips with their own fill
+    // do not need them, and dropping ` │ ` (3 cells) for a 1-cell gap
+    // means MORE buttons fit than before.
+    use crate::ui::action_button::{Button, ButtonState, centred_row};
+    const GAP: u16 = 1;
+    let specs: Vec<Button> = buttons
         .iter()
-        .map(|(label, _, _, _, _)| 3u16 + label.chars().count() as u16 + 1)
+        .map(|(label, nerd_icon, ascii_icon, _, color)| {
+            Button::toolbar(t, label)
+                .icon(if nerd { nerd_icon } else { ascii_icon })
+                .accent(*color)
+        })
         .collect();
-    let normal_div_w: u16 = 3;
-    let compact_div_w: u16 = 1;
-    let total_at = |div: u16| -> u16 {
-        let btns: u16 = button_widths.iter().sum();
-        btns + (button_widths.len() as u16).saturating_sub(1) * div
-    };
-    let use_compact = total_at(normal_div_w) > area.width;
-    let div_w = if use_compact {
-        compact_div_w
-    } else {
-        normal_div_w
-    };
-    // Fit as many buttons as we can from the left; drop from the right.
+
+    // Fit as many as we can, dropping from the right.
     let n = {
         let mut used = 0u16;
         let mut n = 0usize;
-        for (i, w) in button_widths.iter().enumerate() {
-            let extra = if i > 0 { div_w } else { 0 };
-            if used + extra + w > area.width {
+        for (i, b) in specs.iter().enumerate() {
+            let extra = if i > 0 { GAP } else { 0 };
+            if used + extra + b.width() > area.width {
                 break;
             }
-            used += extra + w;
+            used += extra + b.width();
             n += 1;
         }
         n.max(1)
     };
+    let shown = &specs[..n.min(specs.len())];
+    let (lead, xs) = centred_row(shown, area.width, GAP);
+
     let mut spans: Vec<Span> = Vec::new();
-    let mut x = area.x;
-    for (i, (label, nerd_icon, ascii_icon, action, color)) in buttons.iter().take(n).enumerate() {
-        let icon = if nerd { *nerd_icon } else { *ascii_icon };
-        // ` <icon> ` — icon column in the accent color.
+    if lead > 0 {
         spans.push(Span::styled(
-            format!(" {icon} "),
-            Style::default()
-                .fg(*color)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            " ".repeat(lead as usize),
+            Style::default().bg(bg),
         ));
-        // `<label> ` — natural width + 1 trailing space so the
-        // divider isn't flush against the last letter.
-        spans.push(Span::styled(
-            format!("{label} "),
-            Style::default()
-                .fg(t.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        buttons_out.push((Rect::new(x, area.y, button_widths[i], 1), pane_id, *action));
-        x += button_widths[i];
-        if i + 1 < n {
-            let div_str = if use_compact { "│" } else { " │ " };
-            spans.push(Span::styled(div_str, Style::default().fg(t.grey).bg(bg)));
-            x += div_w;
+    }
+    for (i, b) in shown.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(
+                " ".repeat(GAP as usize),
+                Style::default().bg(bg),
+            ));
+        }
+        spans.extend(b.spans(t));
+        // Click rect matches the painted chip, pads included.
+        let (_, _, _, action, _) = &buttons[i];
+        if b.state != ButtonState::Disabled {
+            buttons_out.push((
+                Rect::new(area.x + xs[i], area.y, b.width(), 1),
+                pane_id,
+                *action,
+            ));
         }
     }
     frame.render_widget(
