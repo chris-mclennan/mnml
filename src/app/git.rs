@@ -482,15 +482,38 @@ impl App {
         self.git.retarget(&root);
         self.git_rail.refresh(&root);
         self.refresh_rail_pulls();
-        // Retarget every open GitStatus / GitGraph pane so they follow the
-        // new active repo. Other panes (BB / GH / GL / AZ pipelines etc.)
-        // aren't repo-scoped so they don't need to move.
+        // Retarget the single-repo panes. GitStatus is scoped to "the
+        // active repo" and must follow.
+        //
+        // #1229 — GitGraph panes deliberately do NOT follow any more.
+        // Git activity opens ONE GitGraph tab PER REPO (the 2026-08-24
+        // multi-repo design), so retargeting them all pointed every tab
+        // at the same repo: the user picked a repo from the dropdown and
+        // got eleven identical tabs. Reported with a screenshot showing
+        // exactly that. The retarget loop predates per-repo tabs and was
+        // never revisited when they landed.
+        //
+        // Instead, bring the chosen repo's EXISTING tab forward — which
+        // is what picking a repo should do — and only create one if the
+        // Git section is open and it is missing.
         for pane in &mut self.panes {
-            match pane {
-                Pane::GitStatus(g) => g.retarget(&root),
-                Pane::GitGraph(g) => g.retarget(&root),
-                _ => {}
+            if let Pane::GitStatus(g) = pane {
+                g.retarget(&root);
             }
+        }
+        let existing = (0..self.panes.len())
+            .find(|&i| matches!(self.panes.get(i), Some(Pane::GitGraph(g)) if g.workspace == root));
+        match existing {
+            Some(i) => {
+                self.reveal_pane(i);
+                // Claim the sync slot: this focus change IS the
+                // reconciliation, so the tick must not re-derive it.
+                self.last_rail_synced_pane = self.active;
+            }
+            None if matches!(self.active_section, crate::app::ActivitySection::Git) => {
+                self.open_git_graph();
+            }
+            None => {}
         }
         self.toast(format!("active repo → {name}"));
     }
@@ -2707,6 +2730,15 @@ impl App {
     /// can tell a real switch from the idempotent case. Cheap when
     /// nothing changed: one path comparison, no subprocesses.
     pub fn sync_rail_to_focused_repo(&mut self) -> bool {
+        // Only react to a TAB CHANGE. The left-panel repo dropdown
+        // (`switch_active_repo`) sets `active_repo` itself and brings that
+        // repo's tab forward; without this guard the next tick would see
+        // the previously-focused graph, decide the rail was wrong, and
+        // undo the user's selection.
+        if self.active == self.last_rail_synced_pane {
+            return false;
+        }
+        self.last_rail_synced_pane = self.active;
         let Some(ws) = self.active.and_then(|i| match self.panes.get(i) {
             Some(Pane::GitGraph(g)) => Some(g.workspace.clone()),
             _ => None,
@@ -3857,10 +3889,20 @@ mod git_tests {
 
     #[test]
     fn switching_active_repo_retargets_open_git_panes() {
-        // Two sibling sub-repos; open both a GitStatus and a GitGraph pane
-        // while on proj-a, then switch to proj-b. Each pane should follow
-        // the switch (verified via the pane's `workspace` field).
+        // #1229 — this test's promise CHANGED, and the old one was the
+        // bug. It used to require that switching repos retargeted every
+        // open GitStatus AND GitGraph pane. But git activity opens one
+        // GitGraph tab PER REPO (2026-08-24), so retargeting them all
+        // pointed every tab at the same repo: the user picked a repo from
+        // the dropdown and got eleven identical tabs, reported with a
+        // screenshot. The retarget loop predates per-repo tabs.
+        //
+        // The promise now: GitStatus follows (it is scoped to "the active
+        // repo"), GitGraph tabs do NOT (each owns its own repo).
         let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         for name in ["proj-a", "proj-b"] {
             let p = d.path().join(name);
             std::fs::create_dir(&p).unwrap();
@@ -3870,30 +3912,76 @@ mod git_tests {
         let proj_a = app.repos[0].path.clone();
         let proj_b = app.repos[1].path.clone();
 
-        // Open status + graph panes while proj-a is active.
-        let status = Pane::GitStatus(crate::git::stage::GitStatusPane::open(&proj_a));
-        let graph = Pane::GitGraph(crate::git::graph::GitGraphPane::open(&proj_a));
-        app.panes.push(status);
-        app.panes.push(graph);
-
-        // Sanity: both currently point at proj-a.
-        for pane in &app.panes {
-            match pane {
-                Pane::GitStatus(g) => assert_eq!(g.workspace, proj_a),
-                Pane::GitGraph(g) => assert_eq!(g.workspace, proj_a),
-                _ => {}
-            }
-        }
+        app.panes
+            .push(Pane::GitStatus(crate::git::stage::GitStatusPane::open(
+                &proj_a,
+            )));
+        app.panes
+            .push(Pane::GitGraph(crate::git::graph::GitGraphPane::open(
+                &proj_a,
+            )));
 
         app.switch_active_repo(1);
-        // Both panes should now point at proj-b.
+
         for pane in &app.panes {
             match pane {
+                // Single-repo pane: follows the active repo.
                 Pane::GitStatus(g) => assert_eq!(g.workspace, proj_b),
-                Pane::GitGraph(g) => assert_eq!(g.workspace, proj_b),
+                // Per-repo tab: must keep its own repo, or every tab
+                // collapses onto one history.
+                Pane::GitGraph(g) => assert_eq!(
+                    g.workspace, proj_a,
+                    "a GitGraph tab was retargeted — this is the eleven- \
+                     identical-tabs bug"
+                ),
                 _ => {}
             }
         }
+    }
+
+    /// The other half of the dropdown's job: picking a repo should bring
+    /// that repo's existing tab forward, not rewrite panes.
+    #[test]
+    fn switching_active_repo_focuses_that_repos_existing_tab() {
+        let d = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for name in ["proj-a", "proj-b"] {
+            let p = d.path().join(name);
+            std::fs::create_dir(&p).unwrap();
+            std::fs::create_dir(p.join(".git")).unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let proj_a = app.repos[0].path.clone();
+        let proj_b = app.repos[1].path.clone();
+        app.panes
+            .push(Pane::GitGraph(crate::git::graph::GitGraphPane::open(
+                &proj_a,
+            )));
+        let b_pane = app.panes.len();
+        app.panes
+            .push(Pane::GitGraph(crate::git::graph::GitGraphPane::open(
+                &proj_b,
+            )));
+        app.reveal_pane(b_pane - 1);
+
+        app.switch_active_repo(1);
+
+        assert_eq!(
+            app.active,
+            Some(b_pane),
+            "picking proj-b did not bring its tab forward"
+        );
+        // And the tick sync must not then undo it.
+        assert!(
+            !app.sync_rail_to_focused_repo(),
+            "the tick re-derived a repo switch the dropdown had already made"
+        );
+        assert_eq!(
+            app.active_repo, 1,
+            "the tick reverted the dropdown's choice"
+        );
     }
 
     #[test]

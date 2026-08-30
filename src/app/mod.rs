@@ -4821,6 +4821,14 @@ pub struct App {
     /// scoped to the section, which is what "the git tabs should
     /// disappear until the user returns" means.
     pub pre_git_layout: Option<(crate::layout::Layout, Option<usize>)>,
+    /// #1229 — the pane id `sync_rail_to_focused_repo` last reconciled.
+    ///
+    /// The rail follows the focused repo TAB, so the sync must fire on a
+    /// tab change and nothing else. Without this it also fired after the
+    /// left-panel repo dropdown, which sets `active_repo` directly — the
+    /// tick would see a still-focused graph belonging to the OLD repo and
+    /// immediately undo the user's choice.
+    pub last_rail_synced_pane: Option<usize>,
     /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
     /// Persisted in session.json. Default `true`.
     pub git_section_expanded: bool,
@@ -6564,6 +6572,7 @@ impl App {
             active_repo,
             git_closed_repos: std::collections::HashSet::new(),
             pre_git_layout: None,
+            last_rail_synced_pane: None,
             git_section_expanded: git_section_expanded_default,
             integration_section_expanded: integrations_section_expanded_default,
             git_branches_expanded: false,
