@@ -192,6 +192,27 @@ the sixel/image path shows how a non-text pane hangs off `Pane`.
   of data by accident.
 
 
+### Question: gutter width on the activity panels
+
+**User asked 2026-08-31:** "do you think we should have a 1 cell buffer
+from todo text on left bar and the vertical line border?"
+
+**My answer: not for TODOs alone.** There is already one cell of gutter
+— column 0 is panel background, the selection band starts at column 1,
+and the text at column 2. FINDINGS and NOTES list rows use the same
+figures, which is what the earlier "shift 1 cell right" fix aligned them
+to.
+
+Widening TODOs to two cells was tried and reverted: it looks slightly
+better in isolation and puts TODOs out of step with its siblings again,
+which is the exact complaint that started this. If the gutter should be
+wider it should be wider in all three, which is a deliberate
+design-system change to `panel_chrome` rather than a tweak to one panel
+— and worth doing with all three on screen to compare, not from a
+single screenshot.
+
+Left for the user to decide with that context.
+
 ### Editor breadcrumb should be clickable
 
 **User ask 2026-08-31:** "should this line with breadcrumb be clickable

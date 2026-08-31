@@ -417,7 +417,48 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.git_repo_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        crate::command::run("git.switch_repo", app);
+        // A MENU, not a straight switch.
+        //
+        // It used to fire `git.switch_repo`, which toasts "only one repo
+        // in this workspace" — exactly when the user has closed their
+        // repo tabs and is looking for the way back. `git.reopen_repo`
+        // existed but had no keybinding and lived only in the palette,
+        // so the one place they looked was the one place that told them
+        // no. User: "i closed the tabs for the repos and now i cant
+        // bring one back, any of them, i tried dropdown at top left."
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let mut items: Vec<MenuItem> = Vec::new();
+        for (i, repo) in app.repos.iter().enumerate() {
+            let marker = if i == app.active_repo { "● " } else { "  " };
+            items.push(MenuItem::new(
+                format!("{marker}{}", repo.name),
+                MenuAction::GitSwitchRepo(i),
+            ));
+        }
+        let mut closed: Vec<std::path::PathBuf> = app.git_closed_repos.iter().cloned().collect();
+        closed.sort();
+        for p in closed {
+            let name = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("repo")
+                .to_string();
+            items.push(MenuItem::new(
+                format!("  Reopen: {name}"),
+                MenuAction::GitReopenRepo(p),
+            ));
+        }
+        // Always last, and always present: the answer when the workspace
+        // holds nothing to switch to or reopen.
+        items.push(MenuItem::new(
+            "  Add workspace\u{2026}",
+            MenuAction::Command("view.add_workspace"),
+        ));
+        app.context_menu = Some(ContextMenu::new(
+            Some("Repos".into()),
+            (r.x, r.y + 1),
+            items,
+        ));
         return;
     }
     // #polish 2026-07-06 — click the right-panel `+` chip opens

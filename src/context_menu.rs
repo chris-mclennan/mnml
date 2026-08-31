@@ -26,6 +26,10 @@ pub enum MenuAction {
         prefix: String,
         codex: bool,
     },
+    /// Switch the GIT rail to repo `n`, or reopen a closed one. Both
+    /// hang off the repo chip's menu.
+    GitSwitchRepo(usize),
+    GitReopenRepo(PathBuf),
     /// A row that exists only to open a child menu. Never dispatched —
     /// `run_menu_action` must never see it, because a submenu row is
     /// inert by construction: clicking it opens the child, it does not

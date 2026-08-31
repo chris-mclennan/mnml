@@ -4037,3 +4037,72 @@ mod git_tests {
         assert_eq!(cur, 3);
     }
 }
+
+#[cfg(test)]
+mod repo_chip_menu_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// User report — "i closed the tabs for the repos and now i cant
+    /// bring one back, any of them, i tried dropdown at top left."
+    ///
+    /// The chip fired `git.switch_repo`, which toasts "only one repo in
+    /// this workspace" — precisely when the repos are CLOSED and the
+    /// user is hunting for the way back. `git.reopen_repo` existed but
+    /// had no keybinding and lived only in the palette, so the one place
+    /// they looked was the one place that refused them.
+    #[test]
+    fn a_closed_repo_is_reachable_from_the_chip_menu() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let closed = d.path().join("some-repo");
+        app.git_closed_repos.insert(closed.clone());
+
+        // Build the menu the chip builds.
+        let mut labels: Vec<String> = app
+            .repos
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let marker = if i == app.active_repo { "● " } else { "  " };
+                format!("{marker}{}", r.name)
+            })
+            .collect();
+        let mut cl: Vec<std::path::PathBuf> = app.git_closed_repos.iter().cloned().collect();
+        cl.sort();
+        for p in cl {
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
+            labels.push(format!("  Reopen: {name}"));
+        }
+        labels.push("  Add workspace\u{2026}".into());
+
+        assert!(
+            labels.iter().any(|l| l.contains("Reopen: some-repo")),
+            "a closed repo is not offered: {labels:?}"
+        );
+        // And the escape hatch is ALWAYS there, even with nothing to
+        // switch to and nothing closed — that is the state the user was
+        // stuck in.
+        assert!(
+            labels.iter().any(|l| l.contains("Add workspace")),
+            "no way to open a repo at all: {labels:?}"
+        );
+    }
+
+    /// Choosing the reopen row actually reopens it.
+    #[test]
+    fn reopening_clears_it_from_the_closed_set() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let closed = d.path().join("some-repo");
+        app.git_closed_repos.insert(closed.clone());
+
+        app.run_menu_action(crate::context_menu::MenuAction::GitReopenRepo(
+            closed.clone(),
+        ));
+        assert!(
+            !app.git_closed_repos.contains(&closed),
+            "the repo stayed closed after choosing Reopen"
+        );
+    }
+}

@@ -2788,6 +2788,14 @@ impl App {
             // row opens its child instead of dispatching. Reaching here
             // means the caller lost track of that.
             Submenu => {}
+            GitSwitchRepo(i) => self.switch_active_repo(i),
+            GitReopenRepo(path) => {
+                if self.git_closed_repos.remove(&path) {
+                    self.open_git_graph();
+                    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
+                    self.toast(format!("reopened {name}"));
+                }
+            }
             TodoAction { row, prefix, codex } => self.todos_run_action(row, &prefix, codex),
             PlusMenuPin(id) => self.plus_menu_curate(&id, PlusCuration::Pin),
             PlusMenuUnpin(id) => self.plus_menu_curate(&id, PlusCuration::Unpin),
