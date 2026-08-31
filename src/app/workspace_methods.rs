@@ -862,17 +862,24 @@ impl App {
             return;
         }
         self.todos_panel_cursor = (self.todos_panel_cursor + 1).min(n - 1);
+        self.todos_panel_preview();
     }
 
     pub fn todos_panel_cursor_up(&mut self) {
         self.todos_panel_cursor = self.todos_panel_cursor.saturating_sub(1);
+        self.todos_panel_preview();
     }
 
-    pub fn todos_panel_activate(&mut self) {
+    /// The TODO hits currently listed, in display order.
+    ///
+    /// One definition of "what the filter shows". The predicate lived in
+    /// three places — the renderer, `todos_panel_activate`, and the click
+    /// handler — and `todos_panel_cursor` indexes into THIS list, not
+    /// into `todos_hits`, so any drift between them moves the selection
+    /// to a different TODO than the highlighted one.
+    pub fn todos_filtered(&self) -> Vec<&crate::ui::todos_panel::TodoHit> {
         let f = self.todos_panel_filter.to_ascii_lowercase();
-        let idx = self.todos_panel_cursor;
-        let picked = self
-            .todos_hits
+        self.todos_hits
             .iter()
             .filter(|h| {
                 f.is_empty()
@@ -880,11 +887,38 @@ impl App {
                     || h.path.to_string_lossy().to_ascii_lowercase().contains(&f)
                     || h.title.to_ascii_lowercase().contains(&f)
             })
-            .nth(idx)
-            .cloned();
-        if let Some(hit) = picked {
-            let path = hit.path.clone();
-            let line = hit.line.to_string();
+            .collect()
+    }
+
+    /// Show the highlighted TODO without leaving the panel.
+    ///
+    /// Opens as a PREVIEW tab, so arrowing through twenty entries reuses
+    /// one tab instead of opening twenty, and restores panel focus after
+    /// — `open_path` sets `Focus::Pane`, which is what stopped the arrows
+    /// working after a click (user report: "i cant click and arrow from
+    /// there").
+    pub fn todos_panel_preview(&mut self) {
+        let picked = self
+            .todos_filtered()
+            .get(self.todos_panel_cursor)
+            .map(|h| (h.path.clone(), h.line.to_string()));
+        let Some((path, line)) = picked else {
+            return;
+        };
+        let before = self.focus;
+        self.open_path_preview(&path);
+        self.goto_line_str(&line);
+        self.focus = before;
+    }
+
+    /// Open the highlighted TODO and move INTO it — the Enter gesture,
+    /// as opposed to arrowing, which previews and stays put.
+    pub fn todos_panel_activate(&mut self) {
+        let picked = self
+            .todos_filtered()
+            .get(self.todos_panel_cursor)
+            .map(|h| (h.path.clone(), h.line.to_string()));
+        if let Some((path, line)) = picked {
             self.open_path(&path);
             self.goto_line_str(&line);
         }
@@ -1664,5 +1698,128 @@ mod findings_walk_tests {
         let mut out = Vec::new();
         walk_findings(&d.path().join("does-not-exist"), 0, &mut out);
         assert!(out.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod todos_nav_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::focus::Focus;
+    use crate::ui::todos_panel::TodoHit;
+
+    fn app_with_todos() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("src")).unwrap();
+        for n in ["a.rs", "b.rs", "c.rs"] {
+            std::fs::write(
+                d.path().join("src").join(n),
+                "one\ntwo\nthree\nfour\nfive\n",
+            )
+            .unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = vec![
+            TodoHit {
+                tag: "TODO",
+                path: d.path().join("src/a.rs"),
+                line: 1,
+                title: "aaa".into(),
+            },
+            TodoHit {
+                tag: "FIXME",
+                path: d.path().join("src/b.rs"),
+                line: 2,
+                title: "bbb".into(),
+            },
+            TodoHit {
+                tag: "TODO",
+                path: d.path().join("src/c.rs"),
+                line: 3,
+                title: "ccc".into(),
+            },
+        ];
+        (d, app)
+    }
+
+    /// User report — "i should be able to click on todo on left and arrow
+    /// up and down and keep focus on left panel... right now i cant click
+    /// and arrow from there."
+    ///
+    /// Previewing must not steal focus. `open_path` sets `Focus::Pane`,
+    /// which is precisely what broke the arrows after a click.
+    #[test]
+    fn previewing_a_todo_keeps_focus_in_the_panel() {
+        let (_d, mut app) = app_with_todos();
+        app.focus = Focus::Tree;
+        app.todos_panel_cursor = 1;
+        app.todos_panel_preview();
+
+        assert_eq!(
+            app.focus,
+            Focus::Tree,
+            "preview stole focus — the arrows now drive the editor"
+        );
+        // ...and it really did open the file.
+        assert!(
+            app.panes.iter().any(|p| matches!(
+                p,
+                crate::pane::Pane::Editor(b) if b.path.as_deref().is_some_and(|q| q.ends_with("b.rs"))
+            )),
+            "preview did not open the highlighted TODO's file"
+        );
+    }
+
+    /// Enter is the "commit to this one" gesture and SHOULD move focus
+    /// into the editor — otherwise there is no way in from the keyboard.
+    #[test]
+    fn enter_moves_focus_into_the_editor() {
+        let (_d, mut app) = app_with_todos();
+        app.focus = Focus::Tree;
+        app.todos_panel_cursor = 0;
+        app.todos_panel_activate();
+        assert_eq!(app.focus, Focus::Pane, "Enter left focus in the panel");
+    }
+
+    /// Arrowing walks the list rather than opening a tab per step —
+    /// hence preview, which reuses one tab.
+    #[test]
+    fn arrowing_through_todos_does_not_open_a_tab_each_time() {
+        let (_d, mut app) = app_with_todos();
+        app.focus = Focus::Tree;
+        app.todos_panel_cursor = 0;
+        app.todos_panel_preview();
+        let after_first = app.panes.len();
+        app.todos_panel_cursor_down();
+        app.todos_panel_cursor_down();
+        assert_eq!(
+            app.panes.len(),
+            after_first,
+            "arrowing opened a tab per TODO instead of reusing the preview"
+        );
+        assert_eq!(app.focus, Focus::Tree, "arrowing lost panel focus");
+    }
+
+    /// `todos_panel_cursor` indexes the FILTERED list. When a filter is
+    /// active, resolving it against `todos_hits` lands on a different
+    /// TODO than the highlighted one.
+    #[test]
+    fn the_cursor_resolves_against_the_filtered_list() {
+        let (_d, mut app) = app_with_todos();
+        app.todos_panel_filter = "fixme".into();
+        assert_eq!(app.todos_filtered().len(), 1, "filter setup");
+
+        app.focus = Focus::Tree;
+        app.todos_panel_cursor = 0;
+        app.todos_panel_preview();
+        assert!(
+            app.panes.iter().any(|p| matches!(
+                p,
+                crate::pane::Pane::Editor(b) if b.path.as_deref().is_some_and(|q| q.ends_with("b.rs"))
+            )),
+            "filtered cursor 0 opened the wrong file — it resolved against \
+             the unfiltered list"
+        );
     }
 }

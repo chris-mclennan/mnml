@@ -3405,18 +3405,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.toast("sessions: refreshed".to_string());
         return;
     }
-    if let Some(&(_, idx)) = app
+    if let Some(&(_, row)) = app
         .rects
         .todos_panel_rows
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        if let Some(hit) = app.todos_hits.get(idx) {
-            let path = hit.path.clone();
-            let line = hit.line.to_string();
-            app.open_path(&path);
-            app.goto_line_str(&line);
-        }
+        // Move the panel's selection to the clicked row and PREVIEW it,
+        // staying in the panel. Clicking used to `open_path`, which sets
+        // `Focus::Pane`, so the arrows immediately afterwards drove the
+        // editor instead of the list — and the panel cursor was never
+        // updated either, so arrowing resumed from wherever it had last
+        // been. User: "i should be able to click on todo on left and
+        // arrow up and down and keep focus on left panel".
+        app.focus = crate::focus::Focus::Tree;
+        app.active_section = crate::app::ActivitySection::Todos;
+        app.todos_panel_cursor = row;
+        app.todos_panel_preview();
         return;
     }
     // Agents rail panel — filter input, + New, and row

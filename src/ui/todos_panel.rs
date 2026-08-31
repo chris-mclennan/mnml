@@ -270,7 +270,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 ])),
                 row_rect,
             );
-            app.rects.todos_panel_rows.push((row_rect, idx));
+            // The FILTERED position, not the index into `todos_hits`.
+            // `todos_panel_cursor` indexes the filtered list, so storing
+            // the raw index made a click set the cursor to a different
+            // TODO than the one clicked whenever a filter was active.
+            let _ = idx;
+            app.rects.todos_panel_rows.push((row_rect, row_i));
             y += 1;
         }
         y += 1;
