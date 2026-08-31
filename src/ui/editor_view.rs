@@ -1250,7 +1250,9 @@ pub fn draw_pane(
     if app.config.ui.sticky_context
         && let Some(ext) = buf.language_ext.as_deref()
     {
-        let symbols = crate::regex_outline::extract_symbols(buf.editor.text(), ext);
+        let _ = ext;
+        // Cached on the buffer — see `Buffer::outline_symbols`.
+        let symbols = buf.outline_symbols();
         if !symbols.is_empty() {
             // Build the enclosing chain by walking symbols in source order
             // and maintaining a depth-monotonic stack. A symbol `s` enters

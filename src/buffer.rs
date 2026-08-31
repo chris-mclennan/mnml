@@ -305,6 +305,15 @@ pub struct Buffer {
     /// highlights while the user is typing rapidly (avoids re-parsing the
     /// whole buffer on every keystroke for large files).
     pub highlights_dirty: bool,
+    /// Cached `regex_outline::extract_symbols` over the whole buffer.
+    ///
+    /// A regex pass over the ENTIRE text, and it ran once per frame for
+    /// the statusline breadcrumb (`[ui] breadcrumb` is on by default)
+    /// plus again for sticky context — 45.7ms per call on a 13k-line
+    /// file, which was essentially all of that file's 52ms frame time.
+    /// Invalidated wherever `highlights_dirty` is set, i.e. on every
+    /// edit.
+    outline_cache: std::cell::RefCell<Option<Vec<crate::lsp::DocumentSymbol>>>,
     /// Cached tree-sitter parse tree for incremental reparse. `None` until the
     /// first successful parse; cleared when an untracked edit happens (see
     /// `pending_tree_edits` below).
@@ -425,6 +434,7 @@ impl Buffer {
             last_edited: None,
             yank_flash: None,
             highlights_dirty: false,
+            outline_cache: std::cell::RefCell::new(None),
             parse_tree: None,
             injection_trees: crate::highlight::InjectionTreeCache::new(),
             prev_line_starts: Vec::new(),
@@ -497,6 +507,7 @@ impl Buffer {
                     last_edited: None,
                     yank_flash: None,
                     highlights_dirty: false,
+                    outline_cache: std::cell::RefCell::new(None),
                     parse_tree: None,
                     injection_trees: crate::highlight::InjectionTreeCache::new(),
                     prev_line_starts: Vec::new(),
@@ -575,6 +586,7 @@ impl Buffer {
             last_edited: None,
             yank_flash: None,
             highlights_dirty: false,
+            outline_cache: std::cell::RefCell::new(None),
             parse_tree: None,
             injection_trees: crate::highlight::InjectionTreeCache::new(),
             prev_line_starts: Vec::new(),
@@ -610,6 +622,23 @@ impl Buffer {
 
     /// hint. Untracked edits drop `parse_tree` to `None` at the time the edit
     /// is processed, so this method falls back to a full reparse.
+    /// Outline symbols for this buffer, cached until the next edit.
+    ///
+    /// Callers previously ran `extract_symbols` over the whole text
+    /// themselves, once per frame each. Returns a clone because the
+    /// borrow cannot outlive the `RefCell` guard; the vector is small
+    /// (symbols, not lines) next to the regex pass it replaces.
+    pub fn outline_symbols(&self) -> Vec<crate::lsp::DocumentSymbol> {
+        let Some(ext) = self.language_ext.as_deref() else {
+            return Vec::new();
+        };
+        if self.outline_cache.borrow().is_none() {
+            let syms = crate::regex_outline::extract_symbols(self.editor.text(), ext);
+            *self.outline_cache.borrow_mut() = Some(syms);
+        }
+        self.outline_cache.borrow().clone().unwrap_or_default()
+    }
+
     pub fn refresh_highlights(&mut self) {
         self.highlights_dirty = false;
         let text = self.editor.text();
@@ -945,6 +974,7 @@ impl Buffer {
                     // short idle. Holds the previous frame's highlights
                     // during rapid typing for big files.
                     self.highlights_dirty = true;
+                    self.outline_cache.borrow_mut().take();
                     self.refresh_find_matches();
                     self.last_edited = Some(Instant::now());
                     self.note_edit_position();
@@ -1016,6 +1046,7 @@ impl Buffer {
         if changed {
             self.recompute_dirty();
             self.highlights_dirty = true;
+            self.outline_cache.borrow_mut().take();
             self.refresh_find_matches();
             self.last_edited = Some(Instant::now());
             // Folds shifted per-op above; no need to wholesale-clear here.
@@ -1827,5 +1858,83 @@ mod tests {
         let b = Buffer::open_or_new_empty(&p, &cfg).expect("real file opens");
         assert_eq!(b.editor.text(), "exists\n");
         assert!(!b.dirty, "real file load should be clean");
+    }
+}
+
+#[cfg(test)]
+mod outline_cache_tests {
+    use super::*;
+
+    fn buf_with(text: &str) -> Buffer {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        std::fs::write(&p, text).unwrap();
+        let b = Buffer::open(&p, &crate::config::Config::default()).unwrap();
+        std::mem::forget(d); // keep the file alive for the buffer's lifetime
+        b
+    }
+
+    /// The cache must not go stale. A breadcrumb naming a function you
+    /// just renamed is worse than a slow one.
+    #[test]
+    fn editing_the_buffer_refreshes_the_outline() {
+        let mut b = buf_with("fn alpha() {}\n");
+        assert!(
+            b.outline_symbols().iter().any(|s| s.name.contains("alpha")),
+            "outline did not find the original symbol: {:?}",
+            b.outline_symbols()
+                .iter()
+                .map(|s| &s.name)
+                .collect::<Vec<_>>()
+        );
+
+        // Rename it through the normal edit path.
+        b.editor.set_cursor_byte(0);
+        let mut clip = Clipboard::default();
+        let del: Vec<crate::edit_op::EditOp> = (0.."fn alpha".len())
+            .map(|_| crate::edit_op::EditOp::DeleteForward)
+            .collect();
+        b.apply_edit_ops(del, &mut clip, 40);
+        let ins: Vec<crate::edit_op::EditOp> = "fn beta"
+            .chars()
+            .map(crate::edit_op::EditOp::InsertChar)
+            .collect();
+        b.apply_edit_ops(ins, &mut clip, 40);
+
+        let names: Vec<String> = b.outline_symbols().iter().map(|s| s.name.clone()).collect();
+        assert!(
+            names.iter().any(|n| n.contains("beta")),
+            "outline is stale after an edit: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains("alpha")),
+            "outline still names the old symbol: {names:?}"
+        );
+    }
+
+    /// Repeated reads with no edit must not re-run the regex pass —
+    /// that is the whole point. Counted via the elapsed cost of the
+    /// second read relative to the first, which is the only observable
+    /// difference without instrumenting the extractor.
+    #[test]
+    fn repeated_reads_without_an_edit_do_not_rescan() {
+        let text: String = (0..4000).map(|i| format!("fn f{i}() {{}}\n")).collect();
+        let b = buf_with(&text);
+
+        let t0 = std::time::Instant::now();
+        let first = b.outline_symbols().len();
+        let cold = t0.elapsed();
+        let t1 = std::time::Instant::now();
+        for _ in 0..20 {
+            let _ = b.outline_symbols();
+        }
+        let warm = t1.elapsed();
+
+        assert!(first > 0, "no symbols extracted at all");
+        assert!(
+            warm < cold * 10,
+            "20 cached reads ({warm:?}) cost more than 10x one cold read \
+             ({cold:?}) — the outline is being re-extracted every call"
+        );
     }
 }

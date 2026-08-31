@@ -986,7 +986,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // render for typical files). Only paints when the buffer has
             // a recognized language and at least one symbol.
             if let Some(ext) = b.language_ext.as_deref() {
-                let symbols = crate::regex_outline::extract_symbols(b.editor.text(), ext);
+                let _ = ext;
+                // Cached on the buffer — this ran a regex pass over the
+                // WHOLE file every frame (45.7ms on a 13k-line file).
+                let symbols = b.outline_symbols();
                 let row = b.editor.row_col().0 as u32;
                 if let Some(s) = symbols.iter().rev().find(|s| s.line <= row) {
                     let label: String = s.name.chars().take(40).collect();
