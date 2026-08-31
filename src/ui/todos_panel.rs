@@ -241,11 +241,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let title: String = hit.title.chars().take(40).collect();
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    // Two cells, matching FINDINGS / NOTES list rows and
-                    // this panel's own hint + empty-state rows, which
-                    // were already at two. The list was the only thing
-                    // sitting a cell to their left (user report).
-                    Span::styled("  ", Style::default().bg(row_bg)),
+                    // The selection highlight is INSET by one cell rather
+                    // than running to the panel edge, and closes one cell
+                    // past the last character. It used to start at column
+                    // 0, so a focused row read as a full-width band
+                    // welded to the panel's left edge (user report).
+                    //
+                    // Text still begins at column 2, matching FINDINGS /
+                    // NOTES list rows and this panel's own hint rows —
+                    // the first of those two cells is simply outside the
+                    // highlight now.
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(
                         hit.tag,
                         Style::default()
@@ -256,6 +263,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(path_line, Style::default().fg(t.comment).bg(row_bg)),
                     Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(title, Style::default().fg(t.fg).bg(row_bg)),
+                    // One cell past the last character, so the highlight
+                    // closes around the text instead of ending flush on
+                    // its final glyph.
+                    Span::styled(" ", Style::default().bg(row_bg)),
                 ])),
                 row_rect,
             );
@@ -407,6 +418,90 @@ pub fn scan_file(path: &std::path::Path) -> Vec<TodoHit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// User report — the focused row's highlight started at column 0, so
+    /// it read as a full-width band welded to the panel's left edge.
+    /// It should be inset by one cell and close one cell past the last
+    /// character, not run to the panel edge.
+    #[test]
+    fn the_focused_rows_highlight_is_inset_and_closes_past_the_text() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = vec![TodoHit {
+            tag: "TODO",
+            path: d.path().join("a.rs"),
+            line: 1,
+            title: "x".into(),
+        }];
+
+        let w = 80u16;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 12,
+                },
+            )
+        })
+        .unwrap();
+
+        let buf = term.backend().buffer();
+        let panel_bg = theme::cur().bg_darker;
+        let hl = theme::cur().bg2;
+        // Find the list row.
+        let mut row_y = None;
+        for y in 0..12u16 {
+            let line: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
+            if line.contains("TODO") && !line.contains("TODOS") {
+                row_y = Some(y);
+                break;
+            }
+        }
+        let y = row_y.expect("no list row rendered");
+
+        assert_eq!(
+            buf[(0, y)].bg,
+            panel_bg,
+            "column 0 is highlighted — the band still touches the panel edge"
+        );
+        assert_eq!(
+            buf[(1, y)].bg,
+            hl,
+            "the highlight does not start at column 1"
+        );
+
+        // Walk to the end of the highlight run and check it closes just
+        // past the text rather than continuing to the panel edge.
+        let mut end = 1u16;
+        while end + 1 < w && buf[(end + 1, y)].bg == hl {
+            end += 1;
+        }
+        assert!(
+            end < w - 1,
+            "the highlight runs to the panel edge (ends at {end} of {w})"
+        );
+        assert_eq!(
+            buf[(end, y)].symbol(),
+            " ",
+            "the highlight should close on a blank cell one past the text"
+        );
+        assert_ne!(
+            buf[(end - 1, y)].symbol(),
+            " ",
+            "more than one blank cell of highlight after the text"
+        );
+    }
 
     /// User report — "the list appears too far left, shift 1 cell right".
     ///
