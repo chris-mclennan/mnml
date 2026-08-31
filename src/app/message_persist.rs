@@ -144,13 +144,50 @@ fn format_entry(m: &LoggedMessage) -> String {
     )
 }
 
+/// One JSONL line → an entry, dropping anything older than `cutoff`.
+///
+/// `None` for a line that will not parse, which includes the truncated
+/// final line a crash mid-write leaves. Skipping it beats failing the
+/// load — that crash is the reason this file exists.
+fn parse_line(l: &str, cutoff: u64) -> Option<LoggedMessage> {
+    let at = num_field(l, "at")?;
+    if at < cutoff {
+        return None;
+    }
+    Some(LoggedMessage {
+        text: unesc(field(l, "text")?),
+        level: level_of(field(l, "level").unwrap_or("info")),
+        at,
+    })
+}
+
+/// Temp file plus rename. A truncating write interrupted midway leaves
+/// an EMPTY file, losing the whole history to exactly the crash this log
+/// exists to survive.
+///
+/// The temp name carries the pid: two mnml instances on one workspace is
+/// a pattern this project expects, and a shared fixed name would let
+/// them clobber each other's temp file mid-write.
+fn write_atomically(path: &Path, body: String) {
+    let tmp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// How many appends before the file is pruned again.
+const PRUNE_EVERY: usize = 200;
+
 impl crate::app::App {
     /// Append one entry to the on-disk log.
     ///
     /// Failures are SILENT. A toast that cannot be written is not worth a
     /// second toast about the write failing — that path leads to a loop,
     /// since the failure toast would also try to write.
-    pub fn persist_message(&self, m: &LoggedMessage) {
+    pub fn persist_message(&mut self, m: &LoggedMessage) {
+        if !self.persist_messages {
+            return;
+        }
         let path = message_log_path(&self.workspace);
         // Try the open FIRST and only create the directory if that
         // fails. `create_dir_all` on every toast is a wasted syscall
@@ -174,10 +211,39 @@ impl crate::app::App {
         if let Some(mut f) = f {
             let _ = f.write_all(line.as_bytes());
         }
+        // Prune periodically, not only at startup. mnml sessions are
+        // long-lived by design (`./run.sh watch`), and a chatty source —
+        // the Claude usage endpoint 429s on a 5-minute poll across three
+        // accounts — appends steadily. Pruning only on launch let the
+        // file grow for the life of the session.
+        self.messages_since_prune += 1;
+        if self.messages_since_prune >= PRUNE_EVERY {
+            self.messages_since_prune = 0;
+            self.prune_persisted_messages(crate::app::MESSAGE_LOG_MAX);
+        }
     }
 
-    /// Read the persisted log, dropping stale entries and keeping the
-    /// newest `cap`.
+    /// Drop stale and overflow entries from the FILE, leaving the
+    /// in-memory log alone. Shared by the startup load and the periodic
+    /// prune so the two cannot drift on what "stale" means.
+    fn prune_persisted_messages(&self, cap: usize) {
+        let path = message_log_path(&self.workspace);
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let read_lines = body.lines().count();
+        let cutoff = now_unix().saturating_sub(MAX_AGE_SECS);
+        let mut kept: Vec<LoggedMessage> =
+            body.lines().filter_map(|l| parse_line(l, cutoff)).collect();
+        if kept.len() > cap {
+            kept.drain(..kept.len() - cap);
+        }
+        if kept.len() != read_lines {
+            write_atomically(&path, kept.iter().map(format_entry).collect());
+        }
+    }
+
+    /// Read the persisted log into `message_log`, pruning as it goes.
     ///
     /// Unparseable lines are skipped rather than failing the load: a
     /// truncated final line from a crash mid-write is exactly the case
@@ -188,39 +254,15 @@ impl crate::app::App {
         let Ok(body) = std::fs::read_to_string(&path) else {
             return;
         };
-        let cutoff = now_unix().saturating_sub(MAX_AGE_SECS);
         let read_lines = body.lines().count();
-        let mut out: Vec<LoggedMessage> = body
-            .lines()
-            .filter_map(|l| {
-                let at = num_field(l, "at")?;
-                if at < cutoff {
-                    return None;
-                }
-                Some(LoggedMessage {
-                    text: unesc(field(l, "text")?),
-                    level: level_of(field(l, "level").unwrap_or("info")),
-                    at,
-                })
-            })
-            .collect();
+        let cutoff = now_unix().saturating_sub(MAX_AGE_SECS);
+        let mut out: Vec<LoggedMessage> =
+            body.lines().filter_map(|l| parse_line(l, cutoff)).collect();
         if out.len() > cap {
             out.drain(..out.len() - cap);
         }
-        // Rewrite whenever pruning changed anything, so the file cannot
-        // grow without bound across sessions.
         if out.len() != read_lines {
-            let rewritten: String = out.iter().map(format_entry).collect();
-            // Temp file + rename, not a truncating write. A plain
-            // `fs::write` that is interrupted between truncate and write
-            // leaves an EMPTY file — losing the entire history to
-            // exactly the crash this log exists to survive. Rename is
-            // atomic within a filesystem, so a reader sees either the
-            // old file or the new one.
-            let tmp = path.with_extension("jsonl.tmp");
-            if std::fs::write(&tmp, rewritten).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
-            }
+            write_atomically(&path, out.iter().map(format_entry).collect());
         }
         // Persisted entries go BEFORE anything this session produced.
         out.append(&mut self.message_log);
@@ -444,6 +486,78 @@ mod tests {
             !p.with_extension("jsonl.tmp").exists(),
             "the temp file was not renamed away"
         );
+    }
+
+    /// Review finding — the prune only ran at startup, so a long-lived
+    /// session (which is how mnml is normally used) appended forever.
+    #[test]
+    fn the_file_is_pruned_during_a_session_not_only_at_startup() {
+        let (d, mut app) = app();
+        // Enough to cross the prune threshold TWICE. The first crossing
+        // is a no-op (the file is still under the cap), so a test that
+        // only reached it proves nothing — the first version of this
+        // test passed with pruning disabled entirely.
+        let n = PRUNE_EVERY * 3;
+        for i in 0..n {
+            app.toast_leveled(format!("msg {i}"), ToastLevel::Info);
+        }
+        let lines = std::fs::read_to_string(message_log_path(d.path()))
+            .unwrap()
+            .lines()
+            .count();
+        // Pruned, the file settles at the cap (200). Unpruned it holds
+        // every entry (600). The bound sits clear of both — an earlier
+        // version picked one BELOW the pruned result, so it failed
+        // whether the fix was present or not.
+        assert!(
+            lines <= crate::app::MESSAGE_LOG_MAX + 50,
+            "wrote {n} entries and the file still holds {lines} lines — it \
+             is never pruned mid-session"
+        );
+    }
+
+    /// Review finding — a pinned toast refreshed in place by repeat
+    /// calls with the same id wrote a new disk line and bumped the badge
+    /// each time. A flaky integration polling every few minutes turned
+    /// the badge into a poll counter and flooded the log with restated
+    /// duplicates, evicting real messages.
+    #[test]
+    fn restating_the_same_pinned_message_does_not_inflate_the_badge() {
+        let (_d, mut app) = app();
+        for _ in 0..5 {
+            app.toast_persistent("claude-usage", "HTTP 429", ToastLevel::Error);
+        }
+        assert_eq!(
+            app.unread_message_count(),
+            1,
+            "five restatements of one problem counted as {} unread",
+            app.unread_message_count()
+        );
+
+        // A CHANGED message on the same id is a new fact and must count.
+        app.toast_persistent("claude-usage", "HTTP 500", ToastLevel::Error);
+        assert_eq!(
+            app.unread_message_count(),
+            2,
+            "a genuinely new message on the same id was swallowed"
+        );
+    }
+
+    /// Review finding — `--sandbox` refuses to READ the log so the user
+    /// gets a brand-new-user view, but still wrote to it. A throwaway
+    /// session on a real workspace permanently contaminated the next
+    /// normal session with noise the sandbox never displayed.
+    #[test]
+    fn sandbox_mode_does_not_write_to_the_workspaces_history() {
+        let (d, mut app) = app();
+        app.persist_messages = false;
+        app.toast_leveled("throwaway", ToastLevel::Error);
+        assert!(
+            !message_log_path(d.path()).exists(),
+            "sandbox wrote into the real workspace's history"
+        );
+        // The in-memory log still works — only the disk is off limits.
+        assert!(app.message_log.iter().any(|m| m.text == "throwaway"));
     }
 
     /// The badge is the only on-screen sign the log has anything in it,

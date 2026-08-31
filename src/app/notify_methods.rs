@@ -34,7 +34,12 @@ impl App {
         self.record_message(s, level);
     }
 
-    /// The single place a message enters the log, the badge and the disk.
+    /// Where a NOTIFICATION enters the log, the badge and the disk.
+    ///
+    /// One exception, deliberate: `:g/p` in `vim_range_methods` pushes
+    /// its matched lines straight into `message_log`. Those are command
+    /// OUTPUT, not notifications — persisting a thousand grep hits to
+    /// disk and counting them as unread would be wrong twice over.
     ///
     /// Both `toast_leveled` and `toast_persistent` land here. They used
     /// to each push to `message_log` themselves, and only the first also
@@ -85,7 +90,19 @@ impl App {
     ) {
         let id: String = id.into();
         let s: String = msg.into();
-        self.record_message(s.clone(), level);
+        // Only a NEW problem is recorded. A pinned toast is refreshed in
+        // place by repeat calls with the same id — a flaky integration
+        // polling every few minutes restates the same message — and
+        // recording each refresh turned the badge into a poll counter
+        // and flooded the 200-entry log with duplicates, evicting real
+        // messages from `:messages` within one session.
+        let restated = self
+            .persistent_toasts
+            .iter()
+            .any(|t| t.persistent_id.as_deref() == Some(id.as_str()) && t.text == s);
+        if !restated {
+            self.record_message(s.clone(), level);
+        }
         if self.silent_depth > 0 {
             return;
         }

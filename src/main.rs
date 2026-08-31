@@ -746,6 +746,12 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         // store just persisted"). Skipped in sandbox for the same reason
         // session restore is — that mode wants a brand-new-user view.
         app.load_persisted_messages(mnml::app::MESSAGE_LOG_MAX);
+    } else {
+        // ...and the WRITE side has to be skipped with it. Sandbox
+        // honours an explicitly-passed workspace, so persisting there
+        // would contaminate that workspace's real history with
+        // throwaway-session noise the sandbox never displayed.
+        app.persist_messages = false;
     }
     // #878 step 2 (2026-08-19) — apply the declarative
     // `[[startup.layout]]` block, gated internally on layout-empty +

@@ -4636,6 +4636,18 @@ pub struct App {
     /// an Error pushed the Error out of the window and painted the badge
     /// yellow for an error.
     pub unread_errors: usize,
+    /// Whether messages reach `.mnml/messages.jsonl`.
+    ///
+    /// False under `--sandbox`. That mode already refuses to READ the
+    /// persisted log so the user gets a brand-new-user view; writing to
+    /// it anyway meant a throwaway sandbox session on a real workspace
+    /// permanently contaminated the next normal session's history with
+    /// noise the sandbox itself never showed.
+    pub persist_messages: bool,
+    /// Entries appended since the log was last pruned. The prune only
+    /// ran at startup, so a long-lived session — which is the normal way
+    /// mnml is used — appended forever.
+    pub messages_since_prune: usize,
     /// Vim `:silent <cmd>` nesting depth. While > 0, `toast()` skips
     /// the visible toast (still records into `message_log`).
     pub silent_depth: usize,
@@ -6561,6 +6573,8 @@ impl App {
             message_log: Vec::new(),
             unread_messages: 0,
             unread_errors: 0,
+            persist_messages: true,
+            messages_since_prune: 0,
             silent_depth: 0,
             recent_commands: Vec::new(),
             user_ex_commands: std::collections::HashMap::new(),
