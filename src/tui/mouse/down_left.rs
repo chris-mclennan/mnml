@@ -2242,6 +2242,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // LSP chip → :LspStatus toast (breakdown of running servers).
+    // The notification badge opens the message history — the badge is
+    // the only on-screen sign the log has anything in it, so it has to be
+    // the way in as well.
+    if let Some(r) = app.rects.statusline_notif_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::command::run("messages.show", app);
+        return;
+    }
     if let Some(r) = app.rects.statusline_lsp_chip
         && crate::app::dispatch::contains(r, x, y)
     {

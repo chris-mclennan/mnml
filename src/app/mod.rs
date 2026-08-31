@@ -53,6 +53,7 @@ pub(crate) mod integration_detail;
 mod layout;
 mod lsp;
 mod macros_marks;
+mod message_persist;
 mod now_playing;
 mod picker;
 mod portable;
@@ -223,7 +224,7 @@ const CLOSED_BUFFERS_MAX: usize = 20;
 const CLOSED_TAB_LAYOUTS_MAX: usize = 20;
 
 /// Cap on `App.message_log` — vim `:messages` shows up to this many recent toasts.
-const MESSAGE_LOG_MAX: usize = 200;
+pub const MESSAGE_LOG_MAX: usize = 200;
 
 /// Unix seconds now. Local helper so the message log can carry a
 /// wall-clock time without depending on `ai_usage`'s private one.
@@ -3315,6 +3316,9 @@ pub struct PaneRects {
     pub context_menu_items: Vec<(Rect, usize)>,
     /// The kebab on the focused row of a curatable menu, and which row
     /// it belongs to. At most one exists — only the focused row shows it.
+    /// The notification badge — unread warnings and errors. Click opens
+    /// the message history.
+    pub statusline_notif_chip: Option<Rect>,
     pub context_menu_kebab: Option<(Rect, usize)>,
     pub context_submenu_box: Option<Rect>,
     pub context_submenu_items: Vec<(Rect, usize)>,
@@ -4619,6 +4623,11 @@ pub struct App {
     /// identically ten minutes later, which is exactly when you are
     /// looking for the error.
     pub message_log: Vec<LoggedMessage>,
+    /// Warnings and errors since the history was last opened — the
+    /// notification badge's count. A counter rather than a timestamp
+    /// because entries carry whole-second times, and either direction of
+    /// a clock comparison is wrong at the boundary.
+    pub unread_messages: usize,
     /// Vim `:silent <cmd>` nesting depth. While > 0, `toast()` skips
     /// the visible toast (still records into `message_log`).
     pub silent_depth: usize,
@@ -6542,6 +6551,7 @@ impl App {
             arglist: Vec::new(),
             arglist_index: None,
             message_log: Vec::new(),
+            unread_messages: 0,
             silent_depth: 0,
             recent_commands: Vec::new(),
             user_ex_commands: std::collections::HashMap::new(),

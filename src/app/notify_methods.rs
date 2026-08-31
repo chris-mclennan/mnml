@@ -36,6 +36,16 @@ impl App {
             level,
             at: crate::app::now_unix(),
         });
+        if matches!(level, ToastLevel::Warn | ToastLevel::Error) {
+            self.unread_messages += 1;
+        }
+        // Straight to disk, per entry rather than dumped on quit: a crash
+        // is exactly when you want to know what the last message said,
+        // and a quit-time dump loses that case.
+        if let Some(m) = self.message_log.last() {
+            let m = m.clone();
+            self.persist_message(&m);
+        }
         if self.message_log.len() > MESSAGE_LOG_MAX {
             let drop = self.message_log.len() - MESSAGE_LOG_MAX;
             self.message_log.drain(..drop);

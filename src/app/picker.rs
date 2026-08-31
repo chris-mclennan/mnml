@@ -731,6 +731,8 @@ impl App {
     /// A picker gives filtering and scrolling for free, and is reachable
     /// from the palette, so standard-mode users can find it at all.
     pub fn open_messages_picker(&mut self) {
+        // Reading the history is what clears the notification badge.
+        self.mark_messages_seen();
         if self.message_log.is_empty() {
             self.toast("no messages yet");
             return;

@@ -742,6 +742,10 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // from the real ~/Projects/mnml/.mnml/session.json.
     if !args.sandbox {
         app.try_restore_session();
+        // The message history outlives the process (user ask: "same
+        // store just persisted"). Skipped in sandbox for the same reason
+        // session restore is — that mode wants a brand-new-user view.
+        app.load_persisted_messages(mnml::app::MESSAGE_LOG_MAX);
     }
     // #878 step 2 (2026-08-19) — apply the declarative
     // `[[startup.layout]]` block, gated internally on layout-empty +

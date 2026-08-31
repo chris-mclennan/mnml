@@ -222,38 +222,51 @@ line-offset index is the real fix if it shows up again.
 
 ## Toasts and notifications
 
-**User ask 2026-08-30:** "make way of seeing latest toasts" and "do we
-need a notification system? do toast and notifications coexist".
+**User ask 2026-08-30:** "make way of seeing latest toasts", "do we need
+a notification system? do toast and notifications coexist", then "same
+store just persisted and accessed with a notifications icon somewhere?".
 
-Neither has shipped. Today a toast is fire-and-forget: it paints, it
-times out, and it is gone with no record. `toast.dismiss_current` and
-`toast.dismiss_all` are the only commands. So an error that arrives while
-the user is looking at another part of the screen is simply lost, and
-there is no way to answer "what did that say?".
+**Shipped 2026-08-30.** Answer to the design question: one store, two
+surfaces — not two systems. A notification centre that is a separate
+CONCEPT from toasts forces every call site to choose, and call sites
+choose wrong.
 
-**Recommendation: one store, two surfaces — not two systems.** A
-notification centre that is a separate concept from toasts means every
-call site has to choose, and call sites choose wrong. Instead every
-`app.toast(...)` already-existing call appends to a bounded ring
-(`App::toast_log`, ~200 entries, with level + timestamp + optional
-source), and the toast is just the transient VIEW of the newest entry.
-Nothing at the call sites changes.
+NOTE — an earlier version of this entry claimed "neither has shipped".
+That was wrong and unverified. Most of it already existed: `message_log`
+(200-cap, level, wall-clock time), `:messages` / `:mes`, the
+`messages.show` palette command, and a picker showing entries newest
+first with level icons and local times. Every `toast_leveled` already
+recorded into it, including under `:silent`.
 
-- **History view** — the second surface over the same ring. Reachable
-  from the palette (`toast.history`) and by clicking the toast itself.
-  Level-filtered, newest first, timestamps relative ("2m ago").
-- **Unread count** — a statusline chip showing errors/warnings since the
-  history was last opened, following the Sonos chip rule: constant
-  width, hidden entirely at zero, colour carries level.
-- **Persistence** is the real dividing line, and it is what "do we need a
-  notification system" is really asking. Session-only is right for v1:
-  a toast log that survives restart raises questions (dedup across runs,
-  ageing, per-workspace vs global) that nothing currently needs.
+What was actually missing, and is now built (`src/app/message_persist.rs`):
 
-Deliberately NOT in v1: OS-level notifications. `mnml-bridge` already
+- **Persistence.** `<workspace>/.mnml/messages.jsonl`, per workspace
+  rather than global — most messages name workspace files, so they are
+  meaningless in another project. Appended per entry rather than dumped
+  on quit: a crash is exactly when you want to know what the last message
+  said. Entries older than 7 days are dropped on load and the file is
+  rewritten, so it cannot grow without bound. A torn final line from a
+  crash mid-write is skipped, not fatal.
+- **The notification badge.** Statusline chip showing unread warnings and
+  errors, hidden entirely at zero, red for errors and yellow for warnings
+  only. Click opens the history — it is the only on-screen sign the log
+  has anything in it, so it has to be the way in too.
+
+Info deliberately does not light the badge: one that flashes for "saved
+foo.rs" trains you to ignore it, and then it is not there when an error
+arrives.
+
+The unread count is a COUNTER, not a timestamp comparison. Entries carry
+whole-second times, so "seen at T" either misses a warning raised in the
+same second as the open (badge silent on a real error) or keeps counting
+one from earlier in that second (badge stuck lit). Both were hit while
+building this. It is in-memory only: the badge means "since you last
+looked", and a new session is a fresh look — the HISTORY is the durable
+part.
+
+Deliberately NOT done: OS-level notifications. `mnml-bridge` already
 ships `notify` (OSC 9 / OSC 777) for integrations that want to reach the
 user outside the terminal, so there is no gap to fill.
-
 
 ## HTTP
 

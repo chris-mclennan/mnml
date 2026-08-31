@@ -1677,6 +1677,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // chip_label = "hover" | "always"` opts back in — and when it does,
     // the cluster grows LEFTWARD, which is what keeps hover-expansion
     // from oscillating: a pointer inside the cluster stays inside it.
+    let mut notif_seg_idx: Option<usize> = None;
+    // Notification badge — unread warnings and errors.
+    //
+    // Hidden entirely at zero, like every other chip in this lane: an
+    // always-present bell reporting "nothing wrong" is noise, and the
+    // lane is right-aligned so it would shift every neighbour to say it.
+    // Red for errors, yellow when it is warnings only — colour carries
+    // the level so the count does not have to.
+    let unread = app.unread_message_count();
+    if unread > 0 {
+        let worst_is_error = app
+            .message_log
+            .iter()
+            .rev()
+            .take(unread)
+            .any(|m| matches!(m.level, crate::app::ToastLevel::Error));
+        let glyph = if app.config.ui.ascii_icons {
+            "!"
+        } else {
+            "\u{f0f3}"
+        };
+        let bg = if worst_is_error {
+            theme::cur().red
+        } else {
+            theme::cur().yellow
+        };
+        let seg_idx = right.len();
+        right.push(Seg::new(
+            format!(" {glyph} {unread} "),
+            theme::cur().bg_darker,
+            bg,
+        ));
+        notif_seg_idx = Some(seg_idx);
+    }
     // #files item 6 — the transfer chip. Hidden entirely at rest, so it
     // costs nothing in the common case; the lane is right-aligned, so a
     // chip that were always present would shift every neighbour to show
@@ -2130,6 +2164,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_sonos_next_chip = to_rect(sonos_next_seg_idx, &right_rects);
     app.rects.statusline_sonos_label_chip = to_rect(sonos_label_seg_idx, &right_rects);
     app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);
+    app.rects.statusline_notif_chip = to_rect(notif_seg_idx, &right_rects);
     app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
     app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);
     app.rects.statusline_filesize_chip = to_rect(filesize_seg_idx, &right_rects);
