@@ -241,7 +241,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let title: String = hit.title.chars().take(40).collect();
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(" ", Style::default().bg(row_bg)),
+                    // Two cells, matching FINDINGS / NOTES list rows and
+                    // this panel's own hint + empty-state rows, which
+                    // were already at two. The list was the only thing
+                    // sitting a cell to their left (user report).
+                    Span::styled("  ", Style::default().bg(row_bg)),
                     Span::styled(
                         hit.tag,
                         Style::default()
@@ -403,6 +407,61 @@ pub fn scan_file(path: &std::path::Path) -> Vec<TodoHit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// User report — "the list appears too far left, shift 1 cell right".
+    ///
+    /// The list rows carried a one-cell indent while FINDINGS and NOTES
+    /// list rows, and this panel's own hint and empty-state rows, all
+    /// used two. Asserted against a sibling panel rather than a literal
+    /// so the two cannot drift apart again silently.
+    #[test]
+    fn list_rows_are_indented_like_the_sibling_panels() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true; // don't kick off a rescan
+        app.todos_hits = vec![TodoHit {
+            tag: "TODO",
+            path: d.path().join("src/thing.rs"),
+            line: 12,
+            title: "wire the thing".into(),
+        }];
+
+        let mut term = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 80,
+                    height: 12,
+                },
+            )
+        })
+        .unwrap();
+
+        let buf = term.backend().buffer();
+        let rows: Vec<String> = (0..12)
+            .map(|y| (0..80).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect();
+        // "TODOS" is the caps header; the list row is the other one.
+        let todo_row = rows
+            .iter()
+            .find(|r| r.contains("TODO") && !r.contains("TODOS"))
+            .unwrap_or_else(|| panic!("no TODO row rendered:\n{}", rows.join("\n")));
+        let indent = todo_row.len() - todo_row.trim_start().len();
+        assert_eq!(
+            indent, 2,
+            "list row indented {indent} cells; FINDINGS and NOTES use 2, \
+             and so do this panel's own hint rows:\n{todo_row:?}"
+        );
+    }
 
     #[test]
     fn playwright_scanner_picks_up_fixme_and_fail_and_skip() {
