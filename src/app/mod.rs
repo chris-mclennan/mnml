@@ -9038,6 +9038,18 @@ impl App {
         near: Option<PaneId>,
         focus_preview: bool,
     ) {
+        self.open_md_preview_for_path_opts(path, near, focus_preview, false);
+    }
+
+    /// `as_preview` marks the pane replaceable, the way an editor
+    /// preview tab is.
+    pub fn open_md_preview_for_path_opts(
+        &mut self,
+        path: PathBuf,
+        near: Option<PaneId>,
+        focus_preview: bool,
+        as_preview: bool,
+    ) {
         if !is_markdown_path(&path) {
             self.toast("not a markdown file");
             return;
@@ -9067,6 +9079,7 @@ impl App {
             })
             .unwrap_or_else(|| std::fs::read_to_string(&path).unwrap_or_default());
         let preview = Pane::MdPreview(crate::pane::MdPreview {
+            is_preview: as_preview,
             path,
             source,
             scroll: 0,
@@ -9084,6 +9097,25 @@ impl App {
         //   focus_preview = false ⇒ passive auto-open
         //     (`[ui] auto_md_preview`). Split alongside so the user can edit
         //     and read at the same time.
+        // Replace an existing preview tab in the active layout rather
+        // than stacking beside it — the same rule editor previews follow
+        // (`open_path_inner`'s `preview_idx`). Without this, arrowing
+        // past five markdown files left five permanent tabs.
+        if as_preview
+            && let Some(idx) = self.active.filter(|&id| {
+                self.layout().contains(id)
+                    && match self.panes.get(id) {
+                        Some(Pane::MdPreview(mp)) => mp.is_preview,
+                        Some(Pane::Editor(b)) => b.is_preview,
+                        _ => false,
+                    }
+            })
+        {
+            self.panes[idx] = preview;
+            self.active = Some(idx);
+            self.reveal_pane(idx);
+            return;
+        }
         if focus_preview {
             self.panes.push(preview);
             let new_id = self.panes.len() - 1;
@@ -9190,6 +9222,9 @@ impl App {
             }
         };
         self.panes[pane_id] = Pane::MdPreview(crate::pane::MdPreview {
+            // Swapping an open editor to its preview keeps the tab you
+            // already had; it is not a throwaway.
+            is_preview: false,
             path,
             source,
             scroll: 0,

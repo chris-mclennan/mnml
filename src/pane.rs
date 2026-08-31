@@ -525,6 +525,14 @@ impl CmdlineHistoryPane {
 
 pub struct MdPreview {
     pub path: PathBuf,
+    /// Replaceable preview tab, like `Buffer::is_preview`.
+    ///
+    /// Markdown opens as THIS pane rather than an editor, and the flag
+    /// only existed on `Buffer` — so previewing a `.md` file from the
+    /// tree produced a permanent tab: never italic, never replaced by
+    /// the next preview. Arrowing past five markdown files left five
+    /// tabs (user report: End on TODO.md, "notice its not italic").
+    pub is_preview: bool,
     pub source: String,
     pub scroll: usize,
     /// Cache of loaded images for inline embedding. Keyed by the absolute

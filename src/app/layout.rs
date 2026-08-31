@@ -498,7 +498,11 @@ impl App {
         // raw) is the same either way for markdown UNLESS the caller
         // is vim's `:e` (force_editor=true), which opens raw.
         if !force_editor && is_markdown_path(&path) {
-            self.open_md_preview_for_path(path.clone(), None, true);
+            // Carry the preview intent. It used to be dropped here, so a
+            // markdown file opened from the tree was ALWAYS a permanent
+            // tab — never italic, never replaced.
+            let as_preview = preview && self.config.editor.input_style == "standard";
+            self.open_md_preview_for_path_opts(path.clone(), None, true, as_preview);
             return;
         }
         // #polish 2026-07-06 — `.http` / `.curl` / `.rest` open as
@@ -3385,5 +3389,89 @@ mod layout_tests {
         });
         assert_eq!(leaves.len(), 5);
         assert_eq!(dividers.len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod md_preview_tab_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::pane::Pane;
+
+    fn app_with_md() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "standard".into();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        for n in ["a.md", "b.md", "c.md"] {
+            std::fs::write(app.workspace.join(n), format!("# {n}\n")).unwrap();
+        }
+        (d, app)
+    }
+
+    /// USER REPORT — End in the tree landed on TODO.md and opened a
+    /// PERMANENT tab: "notice its not italic on the tab like it would be
+    /// if i just pressed page down a bunch instead of end."
+    ///
+    /// The cause was not End. Markdown opens as `Pane::MdPreview`, and
+    /// `is_preview` only existed on `Buffer` — so the preview intent was
+    /// dropped for every `.md` file regardless of which key opened it.
+    #[test]
+    fn previewing_a_markdown_file_makes_a_preview_tab() {
+        let (_d, mut app) = app_with_md();
+        app.open_path_preview(&app.workspace.join("a.md"));
+        let previewish = app.panes.iter().any(|p| match p {
+            Pane::MdPreview(mp) => mp.is_preview,
+            _ => false,
+        });
+        assert!(
+            previewish,
+            "a markdown preview opened as a permanent tab: {:?}",
+            app.panes.iter().map(|p| p.title()).collect::<Vec<_>>()
+        );
+    }
+
+    /// ...and the next preview REPLACES it rather than stacking, which
+    /// is what makes it a preview at all.
+    #[test]
+    fn a_second_markdown_preview_replaces_the_first() {
+        let (_d, mut app) = app_with_md();
+        app.open_path_preview(&app.workspace.join("a.md"));
+        let after_first = app.panes.len();
+        app.open_path_preview(&app.workspace.join("b.md"));
+        app.open_path_preview(&app.workspace.join("c.md"));
+        assert_eq!(
+            app.panes.len(),
+            after_first,
+            "three markdown previews left {} tabs: {:?}",
+            app.panes.len(),
+            app.panes.iter().map(|p| p.title()).collect::<Vec<_>>()
+        );
+        assert!(
+            app.panes
+                .iter()
+                .any(|p| matches!(p, Pane::MdPreview(mp) if mp.path.ends_with("c.md"))),
+            "the last preview is not the one showing"
+        );
+    }
+
+    /// A PERMANENT open (`:e`, the picker, a double-click) must still be
+    /// permanent — otherwise the next preview would eat it.
+    #[test]
+    fn a_permanent_markdown_open_is_not_replaceable() {
+        let (_d, mut app) = app_with_md();
+        app.open_path(&app.workspace.join("a.md"));
+        let replaceable = app.panes.iter().any(|p| match p {
+            Pane::MdPreview(mp) => mp.is_preview,
+            _ => false,
+        });
+        assert!(!replaceable, "a permanent open produced a throwaway tab");
+
+        app.open_path_preview(&app.workspace.join("b.md"));
+        assert_eq!(
+            app.panes.len(),
+            2,
+            "the preview replaced a permanently-opened tab"
+        );
     }
 }
