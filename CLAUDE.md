@@ -142,487 +142,63 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-**Overnight polish batch — 8 fixes, all user-reported or
-agent-found (2026-08-28).** No single feature; a sweep of things
-that were quietly wrong.
+**v0.2.20 — the file-manager release (2026-08-31).** 130 commits since
+v0.2.19. Three things dominate.
 
-- **#1216** — on a genuine first launch both the welcome card and
-  the wizard are "open", and the wizard paints over the welcome. The
-  welcome's dismiss gestures keyed off the raw `show_welcome` flag,
-  so the user's very first click *and* the Esc that means "ask me
-  later" were consumed retiring a card nobody had seen — and wrote
-  `.mnml/.welcomed`, so the shortcuts cheatsheet was retired before
-  it ever rendered, for every new user. `App::welcome_visible()` is
-  now the single predicate shared by the drawer and both dismiss
-  sites.
-- **#1220** — `nav.back` / `nav.forward` shipped declaring
-  `ctrl+minus`, which `parse_key_spec` rejected. On macOS those are
-  the only nav bindings, so both commands were palette-only from the
-  day they shipped; the only evidence was two eprintlns at startup.
-  The parser now names punctuation keys (minus/underscore/plus/
-  equal/comma/period/slash/backslash/semicolon/quote/grave/brackets)
-  and `every_declared_chord_parses` fails the build on the next one.
-  The pre-existing nav test asserted `!keys.is_empty()` and stayed
-  green through all of it — non-empty is not bound.
-- **#1222** — the per-leaf tab strip's horizontal scroll offset
-  outlives the strip it was scrolled on (a section switch rebuilds
-  the leaf; `open_git_graph` replaces the layout wholesale), so a
-  strip with room for everything painted one chip and `+11 hidden`.
-  Offset is now clamped to the smallest one whose tail still fills
-  the strip, measured at natural width via `tab_chip_spans`. The
-  `+N hidden` chip also registers a click rect now — it opens the
-  buffer picker instead of being a dead end.
-- **#1226** — the View menu's "Command palette", the Go menu's "Go
-  to file…", the tree's empty-state "Open file…", and the startup
-  picker's OpenFile all ran `view.discovery`, which only toggles the
-  F1 click-discovery overlay. Now `palette` / `picker.files`. A
-  "every menu id resolves" test would have stayed green — the guard
-  that catches it pins the label's promise to the command.
-- **#1217** — Claude usage felt unreliable because the endpoint 429s
-  routinely (3 accounts × 5-min poll) and the error branch zeroed the
-  percentages. 0% reads as "you've used nothing", not "unknown", so
-  the chip alternated between a real number and a reassuring lie.
-  Readings now survive an error; `last_error` is the staleness
-  signal and chips append `!`. Em-dash means "never fetched".
-- **#1219** — `tree_view` still subtracted a bottom pad and a
-  separator row for the GIT/INTEGRATIONS sections that were zeroed
-  out on 2026-06-30. Two dead rows in every panel; two more files
-  fit now.
-- **#1221** — SESSIONS was the last activity panel hand-rolling its
-  caps header, so it never got the shared refresh chip. Its refresh
-  drops the two render caches + the port cache.
-- **#1218** — `mnml-fim-engine`'s own README carried crates.io and
-  docs.rs badges for `fim-engine`, a crate that does not exist, plus
-  a CI badge for a repo that went private. The family table linked
-  the same dead repo.
+**`Pane::Files` — a file manager as a pane.** Design shape "C": a
+browser is just a pane, so side-by-side comes free from `Layout::Split`
+and the commander arrangement is a layout preset rather than a mode.
+Navigation, sort, hidden toggle, clickable breadcrumb + destinations
+picker (`src/places.rs`), git badges per row, `p` preview, `/` filter,
+multi-select (`Space`/`a`/`Esc`, plus ctrl- and shift-click), and the
+full file-operation set acting on the mark set. `src/file_browser.rs` +
+`src/ui/file_browser_view.rs` + `src/app/file_actions.rs`.
 
-Docs: new `manual/security.md` + `manual/tabs-splits.md`, rewritten
-`manual/activity-panels.md`, refreshed `manual/first-launch.md`.
-`.docs-sync-marker` deliberately NOT bumped — this is one pass over
-a larger backlog. A site content audit landed at
-`.mnml/findings/site-content-audit-20260828.md`; four of its factual
-findings are fixed, and one of ITS findings was itself wrong
-(headless force-enables `write_screen`, so those examples were never
-no-ops).
+**Background transfers (`src/transfer.rs` + `src/app/transfers.rs`).**
+Copy/move run off the render thread — the user chose "everything async"
+over a size threshold, so there is ONE path. Statusline chip while
+running, `transfer.cancel_all`, `:qa` refuses mid-transfer. Two
+data-loss bugs were caught in review before shipping: a cancelled
+cross-filesystem move deleted the source (`copy_one` returned `Ok(())`
+on cancel, indistinguishable from success), and `cleanup` could delete
+a pre-existing destination it had not created.
 
-**Fonts in Marketplace + UI-managed launch profiles (2026-08-25,
-#1202 + #1203 f/u).** `src/font_scan.rs` (seek-based sfnt name-table
-reader; TTF/OTF/TTC) scans platform font dirs, reads "Nerd Fonts
-X.Y.Z" from name ID 5, collapses variant families (Mono/Propo/NL/NF
-abbreviations — NB: NF files carry a duplicate abbreviated platform-3
-ID-16 record, first-per-platform wins) and renders a FONTS section
-pinned atop the Marketplace tab: version vs latest release (GitHub
-API, 24h cache), green ✓ / yellow + "↑ Update" chip → brew upgrade in
-a Pty (macOS-only v1). Launch profiles are now fully UI-managed:
-chip right-click → "New launch profile…" (two-step name → command
-prompts) / "Remove profile: <name>" write the workspace manifest;
-`launch_profiles::{add,remove}_profile` are comment-preserving text
-edits. Fixed en route: the welcome/About overlays' dismiss-on-click
-swallow ran before the context-menu modal handler, so chip-menu items
-clicked over the welcome screen were dead (user report — "Set
-launcher script… does nothing").
+**Three editor freezes, all measured rather than guessed.**
+1. A 545K-character SINGLE line (minified JSON): the per-visual-row loop
+   did per-LINE work, so ~40 rows each rebuilt a whole-line char vector
+   and colour grid every frame. 745ms/frame → 25ms. `LineRender`
+   pre-pass in `editor_view.rs`.
+2. A 13,210-line file: `line_start` scanned the whole buffer counting
+   newlines on every call, and `line_str` calls it twice.
+   `Editor::line_starts` indexes it; `line_count`, `current_line`,
+   `line_at_byte`, `col_at_byte` all answer from it now.
+3. The statusline breadcrumb ran `extract_symbols` over the whole file
+   EVERY FRAME (45.7ms on that file) — `[ui] breadcrumb` is on by
+   default, so every user paid it. Cached on the Buffer.
 
-**AI launch profiles (2026-08-25, #1203).** Multiple named launch
-commands per Claude/Codex chip replace the "wrapper as a separate
-integration" pattern (the `claude_multi` manifest is retired). New
-`src/launch_profiles.rs`: `[[launch_profile]] {name, command}` +
-`default_profile` in the user-global and workspace integration
-manifests (workspace wins per name); the legacy `launcher = "…"`
-single-override becomes profile `wrapper` and keeps its always-wins
-default (full back-compat — `pty_pane::resolve_launcher` now
-delegates here and gained user-scope resolution). Right-click the AI
-chip (top-right cluster or split-strip) → flat "New session: <name>"
-rows (one-off spawn, label suffixed) + "✓ Default: <name>" rows
-(persists to the workspace manifest, top-level key inserted above
-tables). Commands are exe paths, not shell lines — flags belong in
-wrapper scripts. tattle-claude-workspace's manifest upgraded to the
-named form (`multi-repo`). 11 new tests.
+Combined: 300ms → 9ms per frame on a 13k-line file, and it barely scales
+with size now.
 
-**Sonos speaker chip + two ways to send Mac audio (2026-08-22).**
-New `src/sonos/` subsystem (`soap` / `discovery` / `ops` / `stream` /
-`airplay` / `coreaudio`) plus `src/app/sonos.rs`. Statusline cluster on the
-right lane, next to the music cluster: a single constant-width
-`[󰓃]` destination chip. State is carried by color — teal streaming /
-white playing / dim idle — and room/track/volume by the hover tooltip +
-Info View, which draw ABOVE the strip and move nothing. Hover-expansion
-was built first and reverted to opt-in the same session (`[sonos]
-chip_label` = never (default) | hover | always): the lane is
-right-aligned, so any width change slides every neighbouring chip, and
-pointer-triggered re-flow reads as the strip twitching. The expanded
-form's play/pause is NOT a duplicate of the music cluster's — that
-drives the *player*, this drives the *speaker*, the only thing that
-works when the Sonos plays its own source with no Mac player involved. Expansion grows LEFTWARD — the lane is
-right-aligned, so a pointer inside the cluster stays inside it;
-growing rightward would shove the hovered chip out from under the
-cursor and oscillate. Click targets: speaker glyph = send this Mac's audio, transport = play/skip,
-label = room picker, right-click = everything (volume, mute, favorites,
-grouping, re-scan, hide). Discovery is one SSDP `M-SEARCH` +
-`GetZoneGroupState`; satellites (bonded Sub / surrounds) are excluded
-from the room list, and the chip renders nothing when no household
-answers. All network work is on a worker thread behind a
-Cmd/Snapshot channel pair — the render loop never waits on a speaker.
-Transport goes to the group *coordinator*; volume/mute to the named
-room.
+**The lesson worth keeping:** a timing-based regression guard failed
+three separate ways here — an absolute bound broke CI at 1.0998s against
+1s, raising it to 10s stopped catching the bug entirely, and a
+syntax-on/off RATIO passed at 1.04x while being blind to the exact
+regression it was named for. All three guards are STRUCTURAL now:
+thread-local counters asserting the index rebuilds once and the outline
+extracts once. Break-check every guard by restoring the bug.
 
-**Why two audio paths, and the macOS 26 finding behind it.** AirPlay
-target selection is not reachable from an app on macOS 26: Sound
-settings lists only CoreAudio devices, an AirPlay target isn't one
-until already connected, and Control Center (the sole picker) exposes
-an *empty* accessibility tree — verified live, `windows=1` with zero
-children. No CLI exists either. So: (a) Music.app has a scriptable
-`current AirPlay devices` property, giving a real, cold-capable AirPlay
-hand-off for Music.app's own audio; (b) everything else goes out as
-`system output → BlackHole loopback → ffmpeg mp3 → mnml HTTP →
-x-rincon-mp3radio://`, with the previous output device restored on
-stop. `src/sonos/coreaudio.rs` is hand-rolled CoreAudio FFI (no
-`coreaudio-sys` dep) for the default-output switch. Note for later: a
-CoreAudio device literally named "AirPlay" *does* appear while an
-AirPlay session is live, so a device switcher could toggle mid-session
-— but never connect cold. ScreenCaptureKit is the driver-free upgrade
-path for the capture half.
+**Also in this release:** notification history (persisted per workspace,
+statusline badge, `:messages`); context-menu submenus + the `+` menu
+regrouped from 15 rows to 5 with per-row pin/hide curation; TODO actions
+that discover the workspace's own `.claude/agents|commands|skills` and
+fall back to plain Claude Code / Codex (`src/claude_assets.rs`); the
+`--no-session` / `./run.sh fresh` escape hatch; horizontal scrolling
+fixed (it never moved the render window — pre-existing, found in
+review); and the CodeQL alert backlog closed (2 critical workflow
+injections, 4 missing-permissions).
 
-Scope split: the chip + transport + grouping are Sonos-specific
-(port-1400 UPnP); `audio.airplay_music` is NOT (it hands Music.app to
-any AirPlay receiver — Apple TV / HomePod / AirPlay TV / another Mac,
-no Sonos required), hence the `audio.*` group; the loopback stream IS
-Sonos-specific because it works by telling a speaker to fetch a URL.
-
-Config `[sonos]` (`enabled` / `host` / `room` / `poll_secs` /
-`prefer_airplay`), `:set sonos`, a Settings **Sonos** section, 16
-`sonos.*` palette commands, 4 hover-help/Info-View entries, and
-`site/src/content/docs/manual/sonos.md`. 44 new tests (SOAP envelopes,
-topology parse incl. satellite exclusion + double-escaped payloads,
-AirPlay's `NOT_IMPLEMENTED` metadata fallback, favorite
-container-vs-stream routing, ffmpeg device-index parse, live CoreAudio
-enumeration, app-level status/picker behavior).
-
-
-
-**First-launch wizard + per-integration auth SDK shipped
-(2026-08-11).** Task #870 + #892 both landed end-to-end as a
-14-commit day (mnml core) + 4 crates.io publishes (mnml-bridge
-0.7.0, mnml-msg-slack 0.1.3, mnml-forge-bitbucket 0.3.3,
-mnml-tracker-jira 0.2.3).
-
-**First-launch wizard** (`first_launch.show`): centered modal that
-auto-opens on first-ever launch (gated by `[ui]
-first_launch_complete`). Six sections top-to-bottom, keyboard-
-driven, Esc = "Ask me later" (flag stays false), Enter = Finish
-(persists + flips true). Sections: (1) AI ghost-text backend
-(Claude API / Local / Skip → writes `[ai] suggest_backend` +
-`inline_suggestions`), (2) input style (vim / standard → writes
-`[editor] input_style`), (3) Nerd Font sample-glyph diagnostic,
-(4-6) tool installs (Claude Code + Codex npm install / VSCode
-`code` shim / btop+htop+iftop brew install), each Space-fires a
-Pty pane running the shell command. Files:
-`src/app/first_launch.rs`, `src/ui/first_launch_overlay.rs`. E2E:
-`tests/e2e/first_launch_wizard.test`.
-
-**Per-integration Settings pane + `[[auth]]` schema.** Integration
-authors declare their auth needs in the manifest via
-`mnml-bridge`'s new `AuthField` (0.7.0): `key`, `label`, `kind`
-(secret/text/url/email/number), `env_fallback`, `help_url`, `help`,
-`required`. mnml core reads them and drives three surfaces:
-
-- **Configure pane**: right-click chip → "Configure…" (only
-  surfaced when the manifest declares `[[auth]]`), or palette
-  `integrations.configure_picker` for the picker path when 2+
-  qualify. Modal form, secrets rendered as `•••`. Ctrl+S writes
-  values back to `[auth_values]` in the same manifest TOML.
-- **First-hit auth guard**: firing an integration command with a
-  required field unset (and no env_fallback env var set)
-  intercepts dispatch and opens the Configure pane instead of a
-  silent-fail Pty.
-- **Pty env-injection**: at spawn time, mnml injects
-  `[auth_values]` as env vars using each field's `env_fallback`
-  name. Cross-integration sharing — a token saved in ANY
-  installed integration flows to every subsequent Pty spawn, so
-  configuring bitbucket once gives jira's Fix Versions view its
-  `$BITBUCKET_ACCESS_TOKEN` for free. Current-firing integration
-  wins on env-var-name conflicts.
-
-Files: `src/integration_manifest.rs` (AuthField), `src/app/integration_settings.rs`, `src/ui/integration_settings_overlay.rs`, `src/app/mod.rs::open_pty_dir` (injection), `src/app/mod.rs::run_dynamic_command` (guard). Site manual: `site/src/content/docs/manual/first-launch.md` + `.../integrations/auth.md`.
-
-**Pilot siblings shipped end-to-end** (each declares `[[auth]]`
-via mnml-bridge 0.7): Slack (bot_token + team_id), Bitbucket
-(app_password + username), Jira (site_url + email + api_token).
-Existing env-var users unaffected — env_fallback preserves
-back-compat; skip-if-empty means clearing a pane field falls back
-to the shell export.
-
-**Other today** (Aug 11): approved + merged PR #27 (ICodeGorilla
-Windows zig-target fix); absorbed fim-engine into
-`crates/fim-engine/` as a workspace member (old repo now
-private); shipped 8 CI-red e2e-test fixes (space eater + settings
-Esc/arrows regressions); 2 new agents (`hover-help-writer`,
-`pr-reviewer`); Info View hover-help coverage audit
-(`docs/design/info-view-coverage.md`).
-
-**Tmnl integration removed (2026-06-22):** Mnml is now
-terminal-agnostic. The entire tmnl-protocol blit client, the
-mixr-host docked panel, and the chrome-chips protocol are gone
-(~3.7k lines + ~30 call sites cleaned up). Rationale: tmnl's
-fontdue rasterizer produces visibly thinner glyphs than Apple
-Terminal's CoreText, especially on Nerd Font icons. Pivoted to
-"mnml runs in any terminal, let the terminal handle rendering
-quality" so users get CoreText-grade icons everywhere for free.
-
-Things removed:
-
-- `Pane::BlitHost` variant + all match arms
-- `--blit`, `--no-native-promote` CLI flags
-- `TMNL_TRANSFER_SOCKET` / `MNML_BLIT_SOCKET` env-var paths
-- Auto-promote-to-tmnl-native-tab on startup
-- `:host.launch`, `:tmnl.open-tab`, `:tmnl.pop-pty` ex commands
-- `tmnl.*` registered commands + integration `tmnl:<id>` form
-- Chrome chips protocol + `under_tmnl` / `inside_tmnl_pty` gates
-- `pop_pty_to_tmnl` / SCM_RIGHTS pty-fd handoff
-- `tmnl-protocol` Cargo dependency
-- `tmnl` from the FamilyOffer sibling-suggestion list
-
-Things preserved:
-
-- `Pane::Pty` (shell panes — unrelated to tmnl). All Claude
-  Code / Codex / shell integrations run as Pty panes.
-- Headless mode + the file-IPC channel (`src/ipc/`).
-- The mixr now-playing chip + `mixr.show` command (now
-  opens mixr as a Pty pane via `App::open_mixr`, replacing
-  the prior `mixr_host` docked panel).
-- All sibling tools (`mnml-forge-*`, `mnml-aws-*`, etc.)
-  still launch from rail chips — now via `:term <binary>`
-  spawning a Pty pane instead of a blit-host pane.
-
-Net diff: 36 files changed, +238 / -4088 lines. 957 lib tests
-pass; clippy clean. Branch `remove-tmnl-integration` (two commits:
-c7e37fb bulk removal, ce99b56 audit pass).
-
-**Right panel scaffold + integration `enabled` opt-in + flat palette-bar chrome
-shipped 2026-06-28.** Collapsible right side panel (drag-resize, `session.json`
-persist, `[ui] right_panel_visible` / `[ui] right_panel_width` config keys,
-`:set rightpanel`, `view.toggle_right_panel`); integration chips now have an
-`enabled` flag (only `browser` on by default; right-click to toggle, persisted
-to TOML); palette bar redesigned with flat chips + sidebar/right-panel toggles +
-compact-fallback; icon picker (~70 Nerd Font glyphs); external tool launchers
-(`tools.htop/iftop/btop`); Pty tabs in bufferline (`$` suffix, skip in `:bn`/`:bp`);
-drag-to-split stale-rect fixes; full hover + right-click coverage on all chips.
-
-**File-split refactor + keyboard polish (2026-06-28 evening).** Two waves of
-work landed:
-
-1. **9-step file split** of the two biggest source files. `src/app/mod.rs`
-   went from 14,234 → ~11,500 lines and `src/tui.rs` went from 7,712 → ~1,700
-   lines. The 9 new siblings: `src/app/{util,sibling_install_methods,workspace_methods,cloud_agents_methods,cmdline_methods}.rs`
-   and `src/tui/{chord,mouse}.rs` + `src/tui/handlers/{overlay,pane}.rs`.
-   Pure non-destructive — every function kept its signature; some private fns
-   elevated to `pub(crate)` for cross-sibling calls. 974 → 978 tests pass; no
-   behavior change. Verified by a post-split regression sweep (0 issues).
-
-2. **3 keyboard / right-panel features.** (a) Chord chain feeds the opener
-   letter to whichkey when its fallback opens the overlay — `<leader>tr`
-   needed `Ctrl+K t t r` before; now it's two keys. (b) `Shift+F10` opens the
-   context menu for the focused element (tree row or active pane tab) — VS
-   Code + macOS convention. (c) Right-panel **v2**: when the panel is visible,
-   `outline.show` and `lsp.diagnostics` route into the panel instead of
-   splitting the editor body. Header shows the hosted pane's kind (OUTLINE /
-   DIAGNOSTICS) with a `×` close button; below 16 cells the body shows a
-   "too narrow" hint.
-
-3. **Build-system fix.** `run.sh` now prepends
-   `/opt/homebrew/opt/zig@0.15/bin` to PATH so `libghostty-vt-sys`'s build.rs
-   doesn't silently fail on macOS shells without zig in PATH.
-
-**Integration SDK shipped + mnml 0.2.0 tag-ready (2026-07-03).** The big
-release. Community-default `IntegrationIcon` entries move out of mnml core
-into sibling-owned manifests, and mnml gains a full runtime-helper surface
-for siblings:
-
-- **`mnml-bridge` 0.3.0 on crates.io.** Sibling `Cargo.toml` uses
-  `mnml-bridge = "0.3"` (no more path-dep tricks). New SDK API:
-  `install_integration()` / `uninstall_integration()` (fs-based, no IPC)
-  and IPC helpers `toast_{info,warn,error,persistent}`, `progress_*`,
-  `statusline_set_segment`, `notify` (OSC 9 + OSC 777).
-- **File-based integration manifests.** `~/.config/mnml/integrations/<id>.toml`
-  with workspace override at `<ws>/.mnml/integrations/<id>.toml`. Precedence:
-  user config > manifest > built-in default. `integrations.refresh` palette
-  command re-scans without restart.
-- **37 sibling repos self-install.** Every `mnml-*` on GitHub ships
-  `--install` / `--uninstall` subcommands + a check-only CI workflow. The
-  older rolling-`latest-build` prebuild workflow (`prebuild.yml`) also
-  coexists per sibling for fast install.
-- **`tattle_qwe` → `ecs_runner`.** AWS-Fargate cloud-agent runner is now
-  generic + config-driven. `AgentSource::TattleQwe` → `AgentSource::Ecs`;
-  empty `[cloud_agents]` config = no-op.
-
-Reconciled the 34 sibling repos that had diverged from their remotes:
-each got `mnml-bridge = "0.3"` (crates.io), `src/install.rs`, `--install`
-dispatch in `src/main.rs`, README setup step, a fresh `ci.yml` (no
-clone-mnml step needed). 8 of them were also missing basic deps
-(`mnml-bridge` outright, plus `unicode-width` on 4 messaging siblings)
-— added during the sweep. `mnml-msg-gcal` created + pushed as a new
-public repo (Google Calendar v3 + OAuth loopback flow).
-
-Still user-driven: `cargo publish` the 37 siblings to crates.io + tag
-`v0.2.0` on mnml so cargo-dist takes over.
-
-**HTTP Request pane surface polish (2026-07-06 → 2026-07-07).** Two
-sessions of feature work landed on top of the 0.2.0 SDK:
-
-- **`[⇔]` edit-split.** New chip on the Request block's border row
-  toggles a side-by-side split of the edit content area. Left = current
-  primary tab (Body / Params / …), right = secondary tab (defaults to
-  Vars; clickable right-side tab strip lets you pick any combination).
-  Click the 1-cell divider to cycle the ratio 30/50/70. Palette command
-  `http.toggle_edit_split`. Below ~48 cells wide the split gracefully
-  degrades to primary-only. Keyboard still targets the primary side;
-  the secondary side is click-editable (Vars cells, Params rows).
-
-- **HTTP-panel `/` filter.** The activity-bar HTTP panel now matches
-  the Agents / Cloud Agents idiom — `/` focuses the filter row, typing
-  narrows across all seven sections (FILES / RECENT / CAPTURED / ENVS
-  / CHAINS / MOCKS / COLLECTIONS), Esc clears + unfocuses. For
-  COLLECTIONS a request-name hit keeps its collection visible and
-  force-expands it.
-
-- **`{{VAR}}` highlighting + click-to-def + hover.** Vars now render
-  cyan (resolved) or bold-red (unresolved) across the URL, Body
-  (JSON + plain), Params values, and Headers values. Left-click a
-  token → jump to its definition line in `.mnml/env/<active>.env`
-  (falls back to `.rqst/env/<active>.env`, opens at EOF when
-  undefined). Right-click → context menu with "Set value…" (seeds
-  the env-edit prompt so undefined vars can be defined in one step),
-  "Jump to definition", "Copy variable name". Hover shows the
-  resolved value or "not defined in active env". Dynamic
-  `{{$uuid}}` / `{{$timestamp}}` render as resolved but skip the
-  "Set value…" menu item (they're built-ins).
-
-- **`tokenize_vars` + `build_var_spans` + `colored_line_with_vars`
-  helpers.** New in `src/ui/request_view.rs`. The JSON path merges
-  tree-sitter syntax coloring with var styling at the per-character
-  level — vars override syntax colors.
-
-**Local file actions pack + tree up-nav (2026-07-07).** Adds the
-standard file-manager clipboard + operations that were missing:
-
-- `file.cut` (Ctrl+X), `file.copy` (Ctrl+C), `file.paste` (Ctrl+V),
-  `file.duplicate` (Ctrl+D) — Ctrl-shortcuts only fire in tree focus
-  so they don't fight standard-input Ctrl+X/C in editor panes.
-- `file.move_to` opens a destination-path prompt (workspace-relative
-  or absolute, `~` expands, missing intermediates created).
-- Right-click tree menu adds Cut / Copy / Paste here / Duplicate /
-  Move to…; the Paste entry appears only when the clipboard is
-  non-empty.
-- **Alt-drag = copy.** Existing tree drag-drop (move with confirm
-  prompt) now respects the Alt modifier at drag-start — Alt-drop
-  fires an immediate `copy_recursively` (non-destructive, no
-  confirmation). Matches Finder / VS Code convention.
-- **`..` up-navigation row.** *(Shipped here; became a `↑` header chip
-  on 2026-08-24, then removed entirely in v0.2.17 — add-workspace covers
-  the use case. The row, the chip, and `view.workspace_up` are all gone;
-  this bullet is kept as history, not as a description of today's UI.)*
-
-Copy paths use `fs::copy` for files, recursive walk for directories,
-`os::unix::fs::symlink` for symlinks. Same-dir Copy+Paste bumps to
-`-copy` / `-copy-N` instead of clobbering. Move = `fs::rename` (single-
-filesystem only).
-
-**Layout bug fix (2026-07-06).** `split_leaf_with` used to call
-`Layout::leaf(leaf)` for the source side, dropping every background
-tab in the source leaf — a pane that was only in the source leaf's
-`tabs` list became invisible until the split closed. Fixed by
-copying the source leaf's tabs via `leaf_containing` and passing
-them to `Layout::leaf_with_tabs`. 5 regression tests added
-(`leaf_containing_returns_tab_list_for_background_tab`,
-`all_panes_includes_background_tabs_across_splits`,
-`split_preserves_background_tabs_in_source_leaf`, +2).
-
-**v0.2.10 + long polish + Info View v0.3 Phase 1 (2026-08-09/10).**
-A ~21-commit session covering release repair, a persist sweep, a
-dead-code sweep, two file-split extracts, an R9 tester round + its
-fixes, and the first shipped slice of the Info View flagship.
-
-Release repair: v0.2.9 tagged but shipped zero binaries because
-GitHub Actions scrubbed the cargo-dist plan output as a suspected
-secret — the CHANGELOG had a phrase that matched a stored repo
-secret's value. Sanitized the phrase, tagged v0.2.10, all 22
-release assets uploaded, Homebrew tap auto-updated.
-
-Persist sweep (`0f47e49a`): every runtime UI/editor toggle
-(workspace dots, wrap, whitespace, rainbow, scrollbar,
-todo highlight, render markdown, sticky context, breadcrumb,
-auto-pair, highlight_trailing_ws, highlight_word, relative
-numbers, color column, vim ↔ standard input style) now writes
-to user config via new `persist_config_scalar` helper + a
-`persist_ui_bool` / `persist_ui_int` / `persist_editor_bool` /
-`persist_editor_string` surface. Was: interactive toggles
-reverted on restart because setters only mutated in-memory.
-Post-round follow-up (`996c0478`) caught `view.toggle_hover_help`
-and `clock.hide` which the initial sweep missed.
-
-Dead-code sweep (`ee229891`, `e99bc792`): -730 lines net across
-15 files. 12 pub App fields with 0 reads/writes, 25 pub methods
-with 0 callers (verified by alternation-regex grep — first-pass
-audit had false positives from fn-pointer references, so I
-re-verified every candidate). Extracted `src/app/toggles.rs`
-(all 14 setter+toggle pairs from the persist sweep) and
-`src/app/harpoon.rs` from `app/mod.rs`'s midsection.
-
-R9 tester round + fixes (2 SEV-1 items verified fixed pre-round):
-- Menu-bar `»` overflow chip when narrow terminals clip menus
-  (mouse users couldn't reach View / Go / Run / Terminal /
-  Window / Help without Alt+letter).
-- `handle_md_preview_key` used to `_ => {}` swallow every key
-  it didn't recognize — trap door for vim users landing in a
-  preview pane (`:` never opened cmdline, `<leader>` chords
-  bounced off). Now returns `false` from the catch-all so
-  chord/cmdline dispatch runs.
-- Settings-filter auto-focused on overlay open (was dropping
-  keystrokes until the user hit `/` first).
-- Settings overlay grew rows for `hover_help` /
-  `show_workspace_dots` / `highlight_todo_keywords`.
-- Menu ↔ palette label alignment ("word wrap" → "line wrap"
-  to match the palette title).
-- `:q` on dirty buffer names the file in the toast.
-- `<leader>ff` bound to `picker.files` (NvChad muscle memory).
-- `.mnml/` excluded from Ctrl+P picker (surface state files
-  drowning real files).
-- `integrations.refresh` also rebuilds HTTP MOCKS cache
-  (was `http.refresh`-only).
-- Ctrl+Shift+P dismisses any open prompt before opening the
-  palette (was a race where palette keystrokes leaked into
-  the underneath prompt on Esc).
-- WRAP chip right-click menu shows current state + Settings
-  jump (was a bare 1-item toggle).
-
-Also: R8-round hover-help `selected_row()` fix for Claude Agents
-dashboard when filter/sort is active; Go-menu "Go to definition"
-now fires `lsp.goto_definition` (was `lsp.peek_definition`).
-
-Info View v0.3 Phase 1 + 1.5 (design doc `docs/design/info-view-v0.3.md`):
-- Framework (`src/ui/info_view.rs`): `InfoViewCopy` /
-  `InfoViewTarget` / `describe_info_view` + `empty_state_copy`
-  + `to_flat_pair` interim adaptor.
-- 49 curated copy entries (`src/ui/info_view_copy.rs`): 27 chip
-  variants (Statusline*, Bufferline*, Palette*, MenuBarWord,
-  Activity*, Agents*, Http*, Git*, Fold), 10 menu items,
-  8 tree-row languages (rs / ts / py / md / go / sh / yaml /
-  html / css / sql / dockerfile).
-- Phase 1.5 wiring (`d3ab4bb5`): `hover_help.rs` now consumes
-  InfoViewCopy via `to_flat_pair` for chip + tree-row targets
-  — the 49 entries actually appear in the info panel.
-- Rich renderer (Phase 1.6) still TODO — shortcuts / try_it /
-  chord glyphs / `:cmd.id` inline hyperlinks are populated in
-  data but compressed by `to_flat_pair` in the display.
-
-Related PR merged: `chris-mclennan/mnml-integrations#1` swapped
-`mnml-msg-slack`'s slack glyph from U+F07D2 (rendered as a
-house on current Nerd Font builds) to U+F03EF (matches
-`src/icon_catalog.rs` — the Slack logo).
-
-**For prior history** (the 7-month arc that built tmnl + the
-blit protocol + mixr-host + chrome chips integration) see
-`git log` before the cleanup commits. Those entries used to live
-here as Status snapshots; pruned to keep the dev-log relevant
-to current architecture.
+**Post-release:** verify assets — a green run is not enough.
+`gh release view v0.2.20 --json assets --jq '.assets|length'` wants ~22.
 
 
 ## Not set up yet (could add later)
