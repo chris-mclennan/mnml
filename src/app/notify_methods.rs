@@ -31,24 +31,41 @@ impl App {
         }
         // Recorded even when `:silent` suppressed the visible toast —
         // that is the point of a log.
+        self.record_message(s, level);
+    }
+
+    /// The single place a message enters the log, the badge and the disk.
+    ///
+    /// Both `toast_leveled` and `toast_persistent` land here. They used
+    /// to each push to `message_log` themselves, and only the first also
+    /// persisted and counted — so every `notify()` error, which routes
+    /// through `toast_persistent`, was invisible to both the on-disk
+    /// history and the badge. The most important class of message was
+    /// the one that did not reach either.
+    pub(crate) fn record_message(&mut self, text: String, level: ToastLevel) {
         self.message_log.push(crate::app::LoggedMessage {
-            text: s,
+            text,
             level,
             at: crate::app::now_unix(),
         });
-        if matches!(level, ToastLevel::Warn | ToastLevel::Error) {
-            self.unread_messages += 1;
-        }
-        // Straight to disk, per entry rather than dumped on quit: a crash
-        // is exactly when you want to know what the last message said,
-        // and a quit-time dump loses that case.
-        if let Some(m) = self.message_log.last() {
-            let m = m.clone();
-            self.persist_message(&m);
-        }
         if self.message_log.len() > MESSAGE_LOG_MAX {
             let drop = self.message_log.len() - MESSAGE_LOG_MAX;
             self.message_log.drain(..drop);
+        }
+        if matches!(level, ToastLevel::Warn | ToastLevel::Error) {
+            // Clamped to what the history can actually show: the log is
+            // capped, so an unread count above it promises entries the
+            // picker no longer holds.
+            self.unread_messages = (self.unread_messages + 1).min(MESSAGE_LOG_MAX);
+            if matches!(level, ToastLevel::Error) {
+                self.unread_errors = (self.unread_errors + 1).min(MESSAGE_LOG_MAX);
+            }
+        }
+        // Straight to disk, per entry rather than dumped on quit: a crash
+        // is exactly when you want to know what the last message said.
+        if let Some(m) = self.message_log.last() {
+            let m = m.clone();
+            self.persist_message(&m);
         }
     }
 
@@ -68,15 +85,7 @@ impl App {
     ) {
         let id: String = id.into();
         let s: String = msg.into();
-        self.message_log.push(crate::app::LoggedMessage {
-            text: s.clone(),
-            level,
-            at: crate::app::now_unix(),
-        });
-        if self.message_log.len() > MESSAGE_LOG_MAX {
-            let drop = self.message_log.len() - MESSAGE_LOG_MAX;
-            self.message_log.drain(..drop);
-        }
+        self.record_message(s.clone(), level);
         if self.silent_depth > 0 {
             return;
         }

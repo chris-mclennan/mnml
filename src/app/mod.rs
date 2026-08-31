@@ -4628,6 +4628,14 @@ pub struct App {
     /// because entries carry whole-second times, and either direction of
     /// a clock comparison is wrong at the boundary.
     pub unread_messages: usize,
+    /// How many of `unread_messages` are errors, tracked separately so
+    /// the badge can colour by level without re-scanning the log.
+    ///
+    /// Scanning was the first attempt and it was wrong: `take(unread)`
+    /// over the whole log walks Info entries too, so one Info toast after
+    /// an Error pushed the Error out of the window and painted the badge
+    /// yellow for an error.
+    pub unread_errors: usize,
     /// Vim `:silent <cmd>` nesting depth. While > 0, `toast()` skips
     /// the visible toast (still records into `message_log`).
     pub silent_depth: usize,
@@ -6552,6 +6560,7 @@ impl App {
             arglist_index: None,
             message_log: Vec::new(),
             unread_messages: 0,
+            unread_errors: 0,
             silent_depth: 0,
             recent_commands: Vec::new(),
             user_ex_commands: std::collections::HashMap::new(),

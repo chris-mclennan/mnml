@@ -126,6 +126,24 @@ fn num_field(line: &str, key: &str) -> Option<u64> {
     rest[..end].parse().ok()
 }
 
+/// The on-disk shape of one entry.
+///
+/// ONE definition, used by both the append path and the prune rewrite —
+/// they had the format string each, and a future escaping fix landing in
+/// only one would silently desync the two writers of the same file.
+///
+/// Field order is load-bearing: `text` is last, so a message whose own
+/// content contains `"text":"` or `"level":"` cannot be found ahead of
+/// the real field by `field()`'s first-match search.
+fn format_entry(m: &LoggedMessage) -> String {
+    format!(
+        "{{\"at\":{},\"level\":\"{}\",\"text\":\"{}\"}}\n",
+        m.at,
+        level_str(m.level),
+        esc(&m.text)
+    )
+}
+
 impl crate::app::App {
     /// Append one entry to the on-disk log.
     ///
@@ -134,26 +152,28 @@ impl crate::app::App {
     /// since the failure toast would also try to write.
     pub fn persist_message(&self, m: &LoggedMessage) {
         let path = message_log_path(&self.workspace);
-        let Some(dir) = path.parent() else {
-            return;
+        // Try the open FIRST and only create the directory if that
+        // fails. `create_dir_all` on every toast is a wasted syscall
+        // after the first, and this runs on the thread that renders.
+        let line = format_entry(m);
+        let open = || {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
         };
-        if std::fs::create_dir_all(dir).is_err() {
-            return;
+        let f = match open() {
+            Ok(f) => Some(f),
+            Err(_) => {
+                let made = path
+                    .parent()
+                    .is_some_and(|d| std::fs::create_dir_all(d).is_ok());
+                if made { open().ok() } else { None }
+            }
+        };
+        if let Some(mut f) = f {
+            let _ = f.write_all(line.as_bytes());
         }
-        let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        else {
-            return;
-        };
-        let _ = writeln!(
-            f,
-            "{{\"at\":{},\"level\":\"{}\",\"text\":\"{}\"}}",
-            m.at,
-            level_str(m.level),
-            esc(&m.text)
-        );
     }
 
     /// Read the persisted log, dropping stale entries and keeping the
@@ -169,6 +189,7 @@ impl crate::app::App {
             return;
         };
         let cutoff = now_unix().saturating_sub(MAX_AGE_SECS);
+        let read_lines = body.lines().count();
         let mut out: Vec<LoggedMessage> = body
             .lines()
             .filter_map(|l| {
@@ -188,19 +209,18 @@ impl crate::app::App {
         }
         // Rewrite whenever pruning changed anything, so the file cannot
         // grow without bound across sessions.
-        if out.len() != body.lines().count() {
-            let rewritten: String = out
-                .iter()
-                .map(|m| {
-                    format!(
-                        "{{\"at\":{},\"level\":\"{}\",\"text\":\"{}\"}}\n",
-                        m.at,
-                        level_str(m.level),
-                        esc(&m.text)
-                    )
-                })
-                .collect();
-            let _ = std::fs::write(&path, rewritten);
+        if out.len() != read_lines {
+            let rewritten: String = out.iter().map(format_entry).collect();
+            // Temp file + rename, not a truncating write. A plain
+            // `fs::write` that is interrupted between truncate and write
+            // leaves an EMPTY file — losing the entire history to
+            // exactly the crash this log exists to survive. Rename is
+            // atomic within a filesystem, so a reader sees either the
+            // old file or the new one.
+            let tmp = path.with_extension("jsonl.tmp");
+            if std::fs::write(&tmp, rewritten).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
         }
         // Persisted entries go BEFORE anything this session produced.
         out.append(&mut self.message_log);
@@ -230,6 +250,7 @@ impl crate::app::App {
     /// is opened.
     pub fn mark_messages_seen(&mut self) {
         self.unread_messages = 0;
+        self.unread_errors = 0;
     }
 }
 
@@ -327,6 +348,101 @@ mod tests {
         assert!(
             !on_disk.contains("ancient"),
             "pruned in memory only — the file still grows:\n{on_disk}"
+        );
+    }
+
+    /// Review finding — the gap that made the whole feature miss its
+    /// most important case.
+    ///
+    /// `notify()` routes EVERY `ToastLevel::Error` through
+    /// `toast_persistent`, which pushed to `message_log` but never
+    /// persisted and never counted. So an integration error — pinned
+    /// precisely because it matters — reached neither the on-disk
+    /// history nor the badge. Nothing tested `notify()`, only
+    /// `toast_leveled`, which is how it shipped.
+    #[test]
+    fn a_pinned_error_reaches_the_disk_and_the_badge() {
+        let (d, mut app) = app();
+        app.toast_persistent("some-id", "integration exploded", ToastLevel::Error);
+
+        assert_eq!(
+            app.unread_message_count(),
+            1,
+            "a pinned error did not light the badge"
+        );
+        let on_disk = std::fs::read_to_string(message_log_path(d.path()))
+            .expect("a pinned error was never written to disk");
+        assert!(
+            on_disk.contains("integration exploded"),
+            "persisted file is missing the pinned error:\n{on_disk}"
+        );
+    }
+
+    /// Review finding — the badge painted the WRONG COLOUR.
+    ///
+    /// It re-scanned `message_log.iter().rev().take(unread)`, but
+    /// `unread` counts only warnings and errors while the log also holds
+    /// Info. One Info toast after an error pushed the error out of the
+    /// window, so an unread error rendered in the warning colour.
+    #[test]
+    fn an_info_toast_after_an_error_does_not_downgrade_the_badge() {
+        let (_d, mut app) = app();
+        app.toast_leveled("could not save", ToastLevel::Error);
+        app.toast_leveled("saved other.rs", ToastLevel::Info);
+
+        assert_eq!(app.unread_message_count(), 1, "info was counted as unread");
+        assert!(
+            app.unread_errors > 0,
+            "an unread error was forgotten, so the badge paints as a warning"
+        );
+    }
+
+    /// The unread count must never promise more than the history can
+    /// show — the log is capped, so a count above the cap points at
+    /// entries the picker has already dropped.
+    #[test]
+    fn the_unread_count_cannot_exceed_what_the_log_holds() {
+        let (_d, mut app) = app();
+        for i in 0..(crate::app::MESSAGE_LOG_MAX + 50) {
+            app.toast_leveled(format!("problem {i}"), ToastLevel::Warn);
+        }
+        assert!(
+            app.unread_message_count() <= app.message_log.len(),
+            "unread {} > {} entries actually in the log",
+            app.unread_message_count(),
+            app.message_log.len()
+        );
+    }
+
+    /// The prune rewrite must not be able to leave an empty file. A
+    /// plain truncating write interrupted midway loses the ENTIRE
+    /// history — to exactly the crash this log exists to survive.
+    #[test]
+    fn the_prune_rewrite_goes_through_a_temp_file() {
+        let (d, _app) = app();
+        let p = message_log_path(d.path());
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let old = now_unix() - (MAX_AGE_SECS + 60);
+        let recent = now_unix();
+        std::fs::write(
+            &p,
+            format!(
+                "{{\"at\":{old},\"level\":\"info\",\"text\":\"ancient\"}}\n\
+                 {{\"at\":{recent},\"level\":\"error\",\"text\":\"keep me\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app2.load_persisted_messages(200);
+
+        let on_disk = std::fs::read_to_string(&p).unwrap();
+        assert!(on_disk.contains("keep me"), "pruning lost a live entry");
+        assert!(!on_disk.contains("ancient"), "pruning did not reach disk");
+        // No debris left behind.
+        assert!(
+            !p.with_extension("jsonl.tmp").exists(),
+            "the temp file was not renamed away"
         );
     }
 

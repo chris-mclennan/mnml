@@ -1687,12 +1687,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // the level so the count does not have to.
     let unread = app.unread_message_count();
     if unread > 0 {
-        let worst_is_error = app
-            .message_log
-            .iter()
-            .rev()
-            .take(unread)
-            .any(|m| matches!(m.level, crate::app::ToastLevel::Error));
+        // Counted, not re-scanned. `take(unread)` over the log walked
+        // Info entries too, so `Error` then `Info` pushed the error out
+        // of the window and painted the badge yellow for an error.
+        let worst_is_error = app.unread_errors > 0;
         let glyph = if app.config.ui.ascii_icons {
             "!"
         } else {
