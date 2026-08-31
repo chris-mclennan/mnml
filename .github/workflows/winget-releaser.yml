@@ -49,6 +49,28 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     runs-on: ubuntu-latest
     steps:
+      # `microsoft/winget-pkgs` takes ~1,000 commits a day, so the fork
+      # goes stale within days of any release. komac creates its branch
+      # pointing at UPSTREAM's current head SHA — a commit a stale fork
+      # does not contain — and GitHub refuses the ref. It surfaces as
+      #
+      #   chris-mclennan does not have the correct permissions to
+      #   execute `CreateRef`
+      #
+      # which reads like a token problem and is not one. v0.2.20 failed
+      # this way with a valid token, an 8,093-commit-behind fork, and
+      # two rounds of token regeneration chasing the wrong cause.
+      #
+      # `--force` is safe here: the fork's master carries no commits of
+      # its own (verified 0 ahead), it exists only to host komac's
+      # short-lived submission branches.
+      - name: Sync the winget-pkgs fork with upstream
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          gh repo sync chris-mclennan/winget-pkgs --force \
+            || echo "::warning::fork sync failed — the publish below may hit CreateRef"
+
       - name: Publish to winget-pkgs
         # Pinned to v2 (current major). The action's repo owns the
         # release; we trust them with the WINGET_TOKEN. If that
