@@ -33,6 +33,13 @@ on:
         description: "Version to publish to winget (e.g. 0.1.3, no leading v)"
         required: true
 
+# CodeQL actions/missing-workflow-permissions — explicit least
+# privilege. Cross-repo work here uses a dedicated PAT, so the
+# job's own GITHUB_TOKEN needs read only. Without a block the job
+# inherits the repo default, which can be write.
+permissions:
+  contents: read
+
 jobs:
   winget:
     # Only act on a workflow_run that came from a `v*` TAG. See

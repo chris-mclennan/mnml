@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# CodeQL actions/missing-workflow-permissions — an explicit least-
+# privilege grant. This workflow only checks out and builds, so the
+# token needs nothing but read. Without a block, the job inherits
+# whatever the repo default is, which can be write.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

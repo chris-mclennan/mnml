@@ -44,14 +44,25 @@ jobs:
 
       - name: Resolve version
         id: ver
+        # CodeQL critical (actions/code-injection) — `github.event.*`
+        # values were interpolated straight into this shell. A branch or
+        # tag name may contain `;`, `$`, backticks and `|`, all legal in
+        # git refs, so the value could become script rather than data.
+        # Through `env:` it arrives as a shell variable and is never
+        # parsed as code.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            v="${{ github.event.inputs.version }}"
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            v="${{ github.event.workflow_run.head_branch }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            v="$INPUT_VERSION"
+          elif [ "$EVENT_NAME" = "workflow_run" ]; then
+            v="$RUN_BRANCH"
             v="${v#v}"
           else
-            v="${{ github.event.release.tag_name }}"
+            v="$RELEASE_TAG"
             v="${v#v}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"

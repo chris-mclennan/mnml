@@ -91,7 +91,11 @@ async function checkInternalLinks() {
     const html = await readFile(page, 'utf8');
     for (const href of extractHrefs(html)) {
       if (isExternalHref(href)) continue;
-      if (href.startsWith('javascript:') || href.startsWith('data:')) continue;
+      // Schemes this checker cannot resolve as internal links. CodeQL
+      // (js/incomplete-url-scheme-check) flags an allow/deny list that
+      // omits `vbscript:` — harmless here since this only decides what
+      // to skip, but a scheme list with a known hole is worth closing.
+      if (/^(javascript|data|vbscript):/i.test(href)) continue;
       // Pagefind & sitemap assets are served by the host, not
       // part of the checkable page tree.
       if (href.startsWith('/pagefind/') || href === '/sitemap-index.xml') continue;

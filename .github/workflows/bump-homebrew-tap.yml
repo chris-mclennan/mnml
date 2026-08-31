@@ -27,6 +27,13 @@ on:
         description: "Version to bump to (no leading v)"
         required: true
 
+# CodeQL actions/missing-workflow-permissions — explicit least
+# privilege. Cross-repo work here uses a dedicated PAT, so the
+# job's own GITHUB_TOKEN needs read only. Without a block the job
+# inherits the repo default, which can be write.
+permissions:
+  contents: read
+
 jobs:
   bump:
     # workflow_run carries the upstream conclusion in
@@ -46,16 +53,27 @@ jobs:
     steps:
       - name: Resolve version
         id: ver
+        # CodeQL critical (actions/code-injection) — `github.event.*`
+        # values were interpolated straight into this shell. A branch or
+        # tag name may contain `;`, `$`, backticks and `|`, all legal in
+        # git refs, so the value could become script rather than data.
+        # Through `env:` it arrives as a shell variable and is never
+        # parsed as code.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            v="${{ github.event.inputs.version }}"
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            v="$INPUT_VERSION"
+          elif [ "$EVENT_NAME" = "workflow_run" ]; then
             # workflow_run fires from the Release workflow's tag-push
             # trigger; the tag is on the head_branch.
-            v="${{ github.event.workflow_run.head_branch }}"
+            v="$RUN_BRANCH"
             v="${v#v}"
           else
-            v="${{ github.event.release.tag_name }}"
+            v="$RELEASE_TAG"
             v="${v#v}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"

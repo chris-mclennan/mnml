@@ -25,6 +25,13 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+# CodeQL actions/missing-workflow-permissions — explicit least
+# privilege. Cross-repo work here uses a dedicated PAT, so the
+# job's own GITHUB_TOKEN needs read only. Without a block the job
+# inherits the repo default, which can be write.
+permissions:
+  contents: read
+
 jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
