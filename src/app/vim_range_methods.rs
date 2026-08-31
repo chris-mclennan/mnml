@@ -88,6 +88,7 @@ impl App {
             crate::edit_op::EditOp::Outdent
         };
         b.editor.apply(op, 20, &mut self.clipboard);
+        b.mark_edited();
         b.editor
             .apply(crate::edit_op::EditOp::SelectClear, 20, &mut self.clipboard);
         let arrow = if indent { ">" } else { "<" };
@@ -116,6 +117,7 @@ impl App {
                     20,
                     &mut self.clipboard,
                 );
+                b.mark_edited();
             }
             self.toast(format!(":j {start_line}..{end_line}"));
         }

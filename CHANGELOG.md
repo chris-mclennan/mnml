@@ -10,6 +10,80 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.20](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.19...mnml-rs-v0.2.20) - 2026-08-31
+
+A file manager, background file operations, and three separate editor
+freezes fixed. The performance work matters most if you open large
+files: mnml could lock up for minutes on a minified JSON file or on a
+13,000-line source file, and both are now fast.
+
+### Added
+
+- **Files pane** — a directory listing as a first-class pane
+  (`files.open`), so a file browser is just another thing you can split,
+  tab, and arrange. Navigation, sort, hidden-file toggle, a clickable
+  breadcrumb with a destinations picker (Home / Downloads / volumes /
+  workspaces / recents), git status badges per row, and `p` to preview
+  a file without leaving the listing.
+- **Multi-select** in that pane. `Space` marks, `a` marks all, `Esc`
+  clears; every operation acts on the set. Reachable by mouse too —
+  Ctrl/Cmd-click toggles one, Shift-click extends a range, and the
+  right-click menu acts on the marked set rather than silently on the
+  row under the cursor.
+- **Dual file panes** (commander layout) from the `+` menu.
+- **Background file transfers.** Copy and move run off the render
+  thread, so a large directory can no longer freeze the editor. A
+  statusline chip shows progress and speed while one is running, hidden
+  entirely when nothing is; `transfer.cancel_all` in the palette.
+- **Notification history.** Every message already recorded to
+  `:messages` now persists per workspace and survives a restart, with a
+  statusline badge counting unread warnings and errors. Info does not
+  light it.
+- **Submenus** in context menus, and the `+` menu regrouped from ~15
+  flat rows into five. Each row carries a kebab for pinning, hiding, or
+  copying its command id, and your layout persists.
+- **TODO actions.** The TODOs panel offers to hand a marker to an AI
+  session, listing whatever agents, commands, and skills the workspace's
+  own `.claude/` directory contains, and falling back to plain Claude
+  Code or Codex when it has none.
+- `--no-session` (also `./run.sh fresh`) launches without restoring the
+  previous session — an escape hatch for the case where a restored pane
+  wedges the app and relaunching reopens it.
+
+### Fixed
+
+- **Three editor freezes on large files.** A single very long line (a
+  minified 545 KB JSON file on one line) made the renderer redo
+  whole-line work for every visual row. Separately, line lookups scanned
+  the entire buffer on every call, and the statusline breadcrumb ran a
+  regex pass over the whole file every frame. On a 13,000-line file,
+  frame time went from 300 ms to 9 ms.
+- **Horizontal scrolling rendered nothing.** With line wrap off, the
+  view window never moved, so anything past the viewport width on a long
+  line was unreachable and the cursor drifted off the character it was
+  on. Long-standing; found while reviewing the performance work.
+- **`PageDown` on a short file** parked the cursor past the end and
+  painted a blank pane.
+- Scroll acceleration is calibrated for terminals that multiply wheel
+  events, and defaults to a sane setting.
+- Git panel: the rail scrolls, tags list newest first, a collapsed
+  section's count no longer changes as you scroll past it, and clicking
+  a branch reveals its commit with context instead of pinned to a screen
+  edge.
+- The `+ dock` chip no longer paints over the bottom-right pane's last
+  row, where clicking a file created a sticky note. Its actions moved
+  into the `+` menu.
+- A menu left open no longer keeps the keyboard after a Ctrl+punctuation
+  chord.
+
+### Security
+
+- Hardened the GitHub Actions workflows: event-supplied values reach
+  shell steps as environment variables rather than being interpolated
+  into the script, and every workflow declares least-privilege
+  permissions. Both classes were reported by code scanning.
+
+
 ## [0.2.19](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.17...mnml-rs-v0.2.19) - 2026-08-27
 
 Security release. Everything below came out of an audit of the

@@ -192,6 +192,14 @@ pub enum BufferEvent {
     NoOp,
 }
 
+// Counts full `extract_symbols` passes, for the cache guard.
+// Thread-local so parallel tests cannot pollute each other's count.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static OUTLINE_EXTRACTS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 pub struct Buffer {
     pub path: Option<PathBuf>,
     pub editor: Editor,
@@ -622,6 +630,28 @@ impl Buffer {
 
     /// hint. Untracked edits drop `parse_tree` to `None` at the time the edit
     /// is processed, so this method falls back to a full reparse.
+    /// Record that this buffer's text just changed.
+    ///
+    /// The single bookkeeping chokepoint: dirty flag, syntax
+    /// highlighting, the outline cache, find matches, and the edit
+    /// timestamp. `Buffer::editor` is `pub`, so at least eight call
+    /// sites reach `Editor::apply` directly — bracketed paste, `:j`,
+    /// `:1,5>`, `<count>o`, visual-block change, the generic op-fire
+    /// path — and each of those was maintaining a DIFFERENT subset of
+    /// this by hand. Review found the outline cache going stale through
+    /// every one of them: rename a function with `:j` and the breadcrumb
+    /// kept the old name.
+    ///
+    /// Call this after any direct `editor.apply`.
+    pub fn mark_edited(&mut self) {
+        self.recompute_dirty();
+        self.highlights_dirty = true;
+        self.outline_cache.borrow_mut().take();
+        self.refresh_find_matches();
+        self.last_edited = Some(std::time::Instant::now());
+        self.note_edit_position();
+    }
+
     /// Outline symbols for this buffer, cached until the next edit.
     ///
     /// Callers previously ran `extract_symbols` over the whole text
@@ -633,6 +663,8 @@ impl Buffer {
             return Vec::new();
         };
         if self.outline_cache.borrow().is_none() {
+            #[cfg(test)]
+            OUTLINE_EXTRACTS.with(|c| c.set(c.get() + 1));
             let syms = crate::regex_outline::extract_symbols(self.editor.text(), ext);
             *self.outline_cache.borrow_mut() = Some(syms);
         }
@@ -973,11 +1005,7 @@ impl Buffer {
                     // Defer highlight reparse — App::tick refreshes after a
                     // short idle. Holds the previous frame's highlights
                     // during rapid typing for big files.
-                    self.highlights_dirty = true;
-                    self.outline_cache.borrow_mut().take();
-                    self.refresh_find_matches();
-                    self.last_edited = Some(Instant::now());
-                    self.note_edit_position();
+                    self.mark_edited();
                     BufferEvent::Edited
                 } else {
                     BufferEvent::Redraw
@@ -1044,13 +1072,8 @@ impl Buffer {
             }
         }
         if changed {
-            self.recompute_dirty();
-            self.highlights_dirty = true;
-            self.outline_cache.borrow_mut().take();
-            self.refresh_find_matches();
-            self.last_edited = Some(Instant::now());
             // Folds shifted per-op above; no need to wholesale-clear here.
-            self.note_edit_position();
+            self.mark_edited();
         }
         changed
     }
@@ -1912,29 +1935,88 @@ mod outline_cache_tests {
         );
     }
 
-    /// Repeated reads with no edit must not re-run the regex pass —
-    /// that is the whole point. Counted via the elapsed cost of the
-    /// second read relative to the first, which is the only observable
-    /// difference without instrumenting the extractor.
+    /// Repeated reads with no edit must not re-run the regex pass.
+    ///
+    /// Counted, not timed. The first version asserted on wall-clock
+    /// elapsed, which is the flaky pattern the sibling `line_starts`
+    /// tests already avoid with a real counter.
     #[test]
     fn repeated_reads_without_an_edit_do_not_rescan() {
-        let text: String = (0..4000).map(|i| format!("fn f{i}() {{}}\n")).collect();
+        let text: String = (0..500).map(|i| format!("fn f{i}() {{}}\n")).collect();
         let b = buf_with(&text);
-
-        let t0 = std::time::Instant::now();
-        let first = b.outline_symbols().len();
-        let cold = t0.elapsed();
-        let t1 = std::time::Instant::now();
+        OUTLINE_EXTRACTS.with(|c| c.set(0));
         for _ in 0..20 {
             let _ = b.outline_symbols();
         }
-        let warm = t1.elapsed();
+        assert_eq!(
+            OUTLINE_EXTRACTS.with(|c| c.get()),
+            1,
+            "20 reads triggered more than one extraction"
+        );
+    }
 
-        assert!(first > 0, "no symbols extracted at all");
+    /// REVIEW FINDING — the cache went stale through every edit path
+    /// that reaches `Editor::apply` directly instead of going through
+    /// `Buffer::apply_edit_ops`. `Buffer::editor` is `pub`, and at least
+    /// eight call sites do exactly that: bracketed paste, `:j`, `:1,5>`,
+    /// `<count>o`, visual-block change, the generic op-fire path.
+    /// Rename a function with `:j` and the breadcrumb kept the old name.
+    ///
+    /// The previous test used `apply_edit_ops` only, so it stayed green
+    /// with every one of those bypasses present.
+    #[test]
+    fn the_outline_refreshes_after_a_direct_editor_apply() {
+        let mut b = buf_with("fn alpha() {}\nfn second() {}\n");
         assert!(
-            warm < cold * 10,
-            "20 cached reads ({warm:?}) cost more than 10x one cold read \
-             ({cold:?}) — the outline is being re-extracted every call"
+            b.outline_symbols().iter().any(|s| s.name.contains("alpha")),
+            "setup: alpha not found"
+        );
+
+        // Straight to the editor, as the bypass paths do.
+        let mut clip = Clipboard::default();
+        b.editor.set_cursor_byte(0);
+        for _ in 0.."fn alpha".len() {
+            b.editor
+                .apply(crate::edit_op::EditOp::DeleteForward, 20, &mut clip);
+        }
+        for c in "fn gamma".chars() {
+            b.editor
+                .apply(crate::edit_op::EditOp::InsertChar(c), 20, &mut clip);
+        }
+        b.mark_edited();
+
+        let names: Vec<String> = b.outline_symbols().iter().map(|s| s.name.clone()).collect();
+        assert!(
+            names.iter().any(|n| n.contains("gamma")),
+            "outline stale after a direct editor.apply: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains("alpha")),
+            "outline still names the old symbol: {names:?}"
+        );
+    }
+
+    /// `mark_edited` is the chokepoint — it must do ALL the bookkeeping,
+    /// not just the outline, or the paths that call it still leave the
+    /// dirty flag and syntax highlighting stale (which they did).
+    #[test]
+    fn mark_edited_sets_every_piece_of_edit_bookkeeping() {
+        let mut b = buf_with("fn alpha() {}\n");
+        b.highlights_dirty = false;
+        b.dirty = false;
+        let mut clip = Clipboard::default();
+        b.editor
+            .apply(crate::edit_op::EditOp::InsertChar('x'), 20, &mut clip);
+        b.mark_edited();
+
+        assert!(b.dirty, "the modified indicator stayed off after an edit");
+        assert!(
+            b.highlights_dirty,
+            "syntax highlighting was not invalidated"
+        );
+        assert!(
+            b.last_edited.is_some(),
+            "no edit timestamp — autosave will not fire"
         );
     }
 }

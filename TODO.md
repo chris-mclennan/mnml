@@ -192,6 +192,31 @@ the sixel/image path shows how a non-text pane hangs off `Pane`.
   of data by accident.
 
 
+### Editor breadcrumb should be clickable
+
+**User ask 2026-08-31:** "should this line with breadcrumb be clickable
+at all?"
+
+Today it is not — the editor breadcrumb (`src › app › mod.rs`, plus the
+enclosing symbol when sticky context is on) registers no click rects.
+The FILES pane's breadcrumb already is clickable
+(`PaneRects::file_pane_breadcrumbs`), so this is an inconsistency
+between two things that look identical.
+
+What each segment should do:
+
+- **A directory segment** (`src`, `app`) — open a Files pane there. That
+  matches what the Files-pane breadcrumb already does, and is the
+  reason `Pane::Files` exists.
+- **The filename** — reveal the file in the tree, scrolling it into view
+  and selecting it. Opening it is a no-op; it is already open.
+- **A symbol segment** (`ScrollbarKind`) — jump to that symbol's
+  definition line. The symbols are already extracted for the breadcrumb
+  (`Buffer::outline_symbols`), so the target is in hand.
+
+Hover should underline the segment under the cursor, as the Files-pane
+breadcrumb does, or nothing on screen says it is clickable.
+
 ### Rename `crates/fim-engine/` → `crates/mnml-fim-engine/`
 
 **User ask 2026-08-31:** "i want it using the new name though."
@@ -303,22 +328,56 @@ a specific workflow that needs it.
 
 ## Integrations
 
-### GitHub Issues sibling (mnml-tracker-github)
-**Shape:** a `mnml-tracker-*` sibling that mirrors the existing
-`mnml-tracker-jira` + `mnml-tracker-linear` tools but for GitHub
-Issues. Uses `gh api` under the hood (no new deps — the auth chain
-that already backs `mnml-forge-github` reuses cleanly). Manifest
-registers as `github_issues` (distinct from `github` forge chip).
+### GitHub — Insights tab, and polish the three that exist
 
-Tabs: mirror the jira / linear shape — `Assigned to me`,
-`Mentioned`, `Created by me`, plus configurable saved-search tabs
-(e.g. by label / milestone / repo). Row Enter opens the console
-URL; Enter on a body cell opens a scratch pane with the full
-markdown for quick reference.
+**User asks 2026-08-31:** GitHub Actions, Issues, Insights, and PRs —
+"to existing integration", "these will look and feel like the jira and
+bitbucket ones we did", "i think we already have a start on the
+integration".
 
-Sibling repo goes at `mnml-tracker-github` alongside the jira +
-linear ones. Integration manifest registers `<leader>ig` chord for
-"GitHub Issues: open". First-party family entry, not community.
+**CORRECTION.** An earlier version of this entry proposed building
+Issues, Actions and PRs. They are ALREADY BUILT in
+`mnml-integrations/apps/mnml-forge-github`, and have been:
+
+```rust
+pub enum TabKind {
+    Issues,
+    Actions,
+    WorkspaceOpenPrs,
+    WorkspaceMergedPrs,
+    WorkspaceActions,
+}
+```
+
+with `TabData::Issues(Vec<Issue>)`, `Actions(Vec<WorkflowRun>)`, and
+per-repo `RepoPrTree` / `RepoActionsTree` groupings — the same shape as
+`mnml-forge-bitbucket`'s `PullRequests` / `Pipelines` / `Branches` plus
+its workspace-wide kinds, which is what "look and feel like the jira and
+bitbucket ones" means. Anything written here should be checked against
+that source before being called missing.
+
+**Actually missing: Insights.** No `insight` / `traffic` / `clones` /
+`contributors` anywhere in the app. Honest assessment: it is the weakest
+of the four for an editor — weekly-glance data the browser renders
+better — so it is worth doing only after the polish below, and worth
+dropping if it does not earn its place.
+
+**Worth checking before building anything else here:**
+
+- The installed manifest (`~/.config/mnml/integrations/github.toml`)
+  declares no tabs at all, unlike the bitbucket ones. Whether the tab
+  set is manifest-driven or hardcoded decides how much of this is
+  configuration rather than code.
+- Whether the existing Actions tab does the thing that would actually
+  save a context switch: auto-follow the run for a branch you just
+  pushed, and toast on failure. That single behaviour is most of the
+  value, and it is the reason CI failures currently pull you out of the
+  editor.
+- Whether a PR row can check out its branch into a worktree and open the
+  diff in `Pane::Diff` — both exist in mnml core already.
+- Surfacing `.mnml/pr-reviews/<n>.md` (written by the `pr-reviewer`
+  agent) on the matching PR row, which would close the loop between
+  running a review and reading it.
 
 ## Search / Find
 

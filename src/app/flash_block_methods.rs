@@ -327,6 +327,7 @@ impl App {
             crate::edit_op::EditOp::InsertNewlineBelow
         };
         b.editor.apply(op, 20, &mut self.clipboard);
+        b.mark_edited();
         b.recompute_dirty();
         b.refresh_highlights();
         let first_row = if above { cur_row } else { cur_row + 1 };
@@ -539,6 +540,8 @@ impl App {
         }
         if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
             b.editor.apply(op, 20, &mut self.clipboard);
+            b.mark_edited();
+            b.mark_edited();
             b.recompute_dirty();
             b.refresh_highlights();
         }

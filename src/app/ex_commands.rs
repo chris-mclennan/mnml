@@ -2798,6 +2798,7 @@ impl App {
                         20,
                         &mut self.clipboard,
                     );
+                    b.mark_edited();
                     self.toast(":j");
                 }
             }

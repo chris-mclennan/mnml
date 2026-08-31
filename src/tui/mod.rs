@@ -529,6 +529,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                                 24,
                                 &mut clip,
                             );
+                            editor.mark_edited();
                         }
                         app.clipboard = clip;
                         continue;

@@ -240,6 +240,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             let path_line = format!(" {rel}:{}", hit.line);
             let title: String = hit.title.chars().take(40).collect();
+            // Pad the highlight across to the kebab.
+            //
+            // The band used to close one cell past the title, which was
+            // right until the actions kebab appeared at the row's right
+            // edge — then a focused row read as a highlighted stretch, a
+            // dead gap, and a floating kebab. The row's content now ends
+            // AT the kebab, so the band runs to it (user report).
+            //
+            // `- 2` leaves the kebab's own two cells, which paint with
+            // the same background, so the run is continuous.
+            let used =
+                2 + hit.tag.chars().count() + path_line.chars().count() + 1 + title.chars().count();
+            let pad = (area.width as usize).saturating_sub(used + 2);
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     // The selection highlight is INSET by one cell rather
@@ -264,10 +277,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(path_line, Style::default().fg(t.comment).bg(row_bg)),
                     Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(title, Style::default().fg(t.fg).bg(row_bg)),
-                    // One cell past the last character, so the highlight
-                    // closes around the text instead of ending flush on
-                    // its final glyph.
-                    Span::styled(" ", Style::default().bg(row_bg)),
+                    // Runs to the kebab rather than stopping at the
+                    // text — see `pad` above.
+                    Span::styled(" ".repeat(pad), Style::default().bg(row_bg)),
                 ])),
                 row_rect,
             );
@@ -450,11 +462,13 @@ mod tests {
     use super::*;
 
     /// User report — the focused row's highlight started at column 0, so
-    /// it read as a full-width band welded to the panel's left edge.
-    /// It should be inset by one cell and close one cell past the last
-    /// character, not run to the panel edge.
+    /// it read as a full-width band welded to the panel's left edge; and
+    /// once the actions kebab appeared at the right edge, closing the
+    /// band just past the title left a dead gap with a floating kebab
+    /// beyond it. It should be inset one cell on the left and run
+    /// CONTINUOUSLY to the kebab on the right.
     #[test]
-    fn the_focused_rows_highlight_is_inset_and_closes_past_the_text() {
+    fn the_focused_rows_highlight_is_inset_and_runs_to_the_kebab() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -489,7 +503,6 @@ mod tests {
         let buf = term.backend().buffer();
         let panel_bg = theme::cur().bg_darker;
         let hl = theme::cur().bg2;
-        // Find the list row.
         let mut row_y = None;
         for y in 0..12u16 {
             let line: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
@@ -511,25 +524,18 @@ mod tests {
             "the highlight does not start at column 1"
         );
 
-        // Walk to the end of the highlight run and check it closes just
-        // past the text rather than continuing to the panel edge.
-        let mut end = 1u16;
-        while end + 1 < w && buf[(end + 1, y)].bg == hl {
-            end += 1;
-        }
+        // Continuous from column 1 through the kebab: no unhighlighted
+        // gap between the text and the kebab.
+        let gaps: Vec<u16> = (1..w - 1).filter(|&x| buf[(x, y)].bg != hl).collect();
         assert!(
-            end < w - 1,
-            "the highlight runs to the panel edge (ends at {end} of {w})"
+            gaps.is_empty(),
+            "unhighlighted gap(s) at columns {gaps:?} — the band stops \
+             before the kebab instead of running to it"
         );
-        assert_eq!(
-            buf[(end, y)].symbol(),
-            " ",
-            "the highlight should close on a blank cell one past the text"
-        );
-        assert_ne!(
-            buf[(end - 1, y)].symbol(),
-            " ",
-            "more than one blank cell of highlight after the text"
+        // The kebab itself is inside the band, and is a click target.
+        assert!(
+            app.rects.todos_panel_kebab.is_some(),
+            "the focused row shows no actions kebab"
         );
     }
 
