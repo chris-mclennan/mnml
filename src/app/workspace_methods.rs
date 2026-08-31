@@ -2026,7 +2026,14 @@ mod todo_action_tests {
         let hit = app.todos_hits[0].clone();
         let p = app.todo_action_prompt(&hit, "Use the developer agent to ", "Fix");
         assert!(p.starts_with("Use the developer agent to Fix"), "{p}");
-        assert!(p.contains("src/a.rs:42"), "no file:line in the prompt: {p}");
+        // Separator-agnostic: Windows renders `src\a.rs:42`. mnml is a
+        // Windows target, so a `/`-only assertion is a test bug, not a
+        // product one — it failed CI on windows-latest and nowhere else.
+        let norm = p.replace('\\', "/");
+        assert!(
+            norm.contains("src/a.rs:42"),
+            "no file:line in the prompt: {p}"
+        );
         assert!(p.contains("handle the empty case"), "no marker text: {p}");
         assert!(p.contains("FIXME"), "the tag is dropped: {p}");
         // Workspace-relative, not the absolute tempdir path.
