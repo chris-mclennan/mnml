@@ -1936,9 +1936,11 @@ mod todo_action_tests {
     use crate::config::Config;
     use crate::ui::todos_panel::TodoHit;
 
-    fn app_with(assets: bool) -> (tempfile::TempDir, tempfile::TempDir, App) {
+    fn app_with(assets: bool) -> (tempfile::TempDir, tempfile::TempDir, App, crate::EnvGuard) {
         let home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("HOME", home.path()) };
+        // Guarded, so HOME is RESTORED on drop — a raw `set_var` here
+        // leaks a deleted tempdir into every later test.
+        let guard = crate::EnvGuard::set("HOME", home.path());
         let d = tempfile::tempdir().unwrap();
         if assets {
             let c = d.path().join(".claude/agents");
@@ -1965,7 +1967,7 @@ mod todo_action_tests {
             line: 42,
             title: "handle the empty case".into(),
         }];
-        (d, home, app)
+        (d, home, app, guard)
     }
 
     /// The Tattle half of the ask: a workspace's own agents and commands
@@ -1975,7 +1977,7 @@ mod todo_action_tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (_d, _h, app) = app_with(true);
+        let (_d, _h, app, _g) = app_with(true);
         let labels: Vec<String> = app
             .todos_action_menu_items(0)
             .into_iter()
@@ -1999,7 +2001,7 @@ mod todo_action_tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (_d, _h, app) = app_with(false);
+        let (_d, _h, app, _g) = app_with(false);
         let labels: Vec<String> = app
             .todos_action_menu_items(0)
             .into_iter()
@@ -2020,7 +2022,7 @@ mod todo_action_tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (_d, _h, app) = app_with(true);
+        let (_d, _h, app, _g) = app_with(true);
         let hit = app.todos_hits[0].clone();
         let p = app.todo_action_prompt(&hit, "Use the developer agent to ", "Fix");
         assert!(p.starts_with("Use the developer agent to Fix"), "{p}");
@@ -2039,7 +2041,7 @@ mod todo_action_tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (_d, _h, mut app) = app_with(false);
+        let (_d, _h, mut app, _g) = app_with(false);
         let root = app.workspace.clone();
         app.todos_hits.push(TodoHit {
             tag: "TODO",
@@ -2060,7 +2062,7 @@ mod todo_action_tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (_d, _h, mut app) = app_with(false);
+        let (_d, _h, mut app, _g) = app_with(false);
         let root = app.workspace.clone();
         app.todos_hits.push(TodoHit {
             tag: "TODO",

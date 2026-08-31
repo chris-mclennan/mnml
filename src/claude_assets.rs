@@ -169,10 +169,13 @@ mod tests {
     /// `~/.claude/` too, so without it a test picks up the developer's
     /// real agents — nondeterministic on its own, and it raced the tests
     /// that DO swap HOME, passing alone and failing in the suite.
-    fn ws() -> (tempfile::TempDir, tempfile::TempDir) {
+    fn ws() -> (tempfile::TempDir, tempfile::TempDir, crate::EnvGuard) {
         let home = tempfile::tempdir().unwrap();
-        // SAFETY of ordering: callers hold `test_env_lock` around this.
-        unsafe { std::env::set_var("HOME", home.path()) };
+        // EnvGuard, not a raw `set_var`: the guard RESTORES HOME on drop.
+        // A raw set left every later test pointing at a deleted tempdir,
+        // which is how an unrelated test started failing in the suite
+        // while passing alone.
+        let guard = crate::EnvGuard::set("HOME", home.path());
         let d = tempfile::tempdir().unwrap();
         let c = d.path().join(".claude");
         std::fs::create_dir_all(c.join("agents")).unwrap();
@@ -189,7 +192,7 @@ mod tests {
             "---\nname: drive-mnml\ndescription: Screenshot and click the real window.\n---\n",
         )
         .unwrap();
-        (d, home)
+        (d, home, guard)
     }
 
     #[test]
@@ -197,7 +200,7 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (d, _home) = ws();
+        let (d, _home, _g) = ws();
         let found = discover(d.path());
         let names: Vec<String> = found.iter().map(|a| a.label()).collect();
         assert!(
@@ -218,7 +221,7 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (d, _home) = ws();
+        let (d, _home, _g) = ws();
         let c = d.path().join(".claude/agents");
         std::fs::write(
             c.join("wrong-filename.md"),
@@ -239,7 +242,7 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (d, _home) = ws();
+        let (d, _home, _g) = ws();
         std::fs::write(
             d.path().join(".claude/agents/plain.md"),
             "No frontmatter here.\nname: not-a-header\n",
@@ -264,7 +267,7 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (d, home) = ws();
+        let (d, home, _g) = ws();
         std::fs::create_dir_all(home.path().join(".claude/agents")).unwrap();
         std::fs::write(
             home.path().join(".claude/agents/code-reviewer.md"),
@@ -318,7 +321,7 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let (d, _home) = ws();
+        let (d, _home, _g) = ws();
         for n in ["zeta.md", "alpha.md"] {
             std::fs::write(
                 d.path().join(".claude/agents").join(n),

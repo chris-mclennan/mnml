@@ -508,6 +508,16 @@ struct TuiArgs {
     /// integrations dir, no session to restore). Adds a persistent
     /// banner reminding the user their real config is safe.
     sandbox: bool,
+    /// Skip session restore for this launch only.
+    ///
+    /// The escape hatch for a restore-then-freeze loop: if a restored
+    /// pane wedges mnml, restarting reopens the same pane and wedges it
+    /// again, and nothing inside the app can help because the render
+    /// thread never gets back to the event loop. `--no-session` (or
+    /// `./run.sh fresh`) breaks the cycle without hand-editing
+    /// `.mnml/session.json`. The session file is left ALONE, so the next
+    /// normal launch still has it.
+    no_session: bool,
     /// After startup, dispatch `view.activity_<name>` to open a
     /// specific activity-bar section — e.g. `--show integrations`
     /// lands the user on the Integrations panel. Skipped if the
@@ -532,6 +542,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut startup_picker = false;
     let mut no_workspace = false;
     let mut sandbox = false;
+    let mut no_session = false;
     let mut show_panel: Option<String> = None;
     let mut demo = false;
 
@@ -554,6 +565,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
             "--startup-picker" => startup_picker = true,
             "--no-workspace" => no_workspace = true,
             "--sandbox" => sandbox = true,
+            "--no-session" | "--fresh" => no_session = true,
             "--demo" => demo = true,
             "--show" => {
                 show_panel = Some(
@@ -661,6 +673,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         config_path,
         startup_picker,
         sandbox,
+        no_session,
         show_panel,
         demo,
     })
@@ -740,18 +753,17 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // widgets / open tabs / layout from a session.json would defeat
     // that. User report 2026-08-05: sandbox showed Note 1 / Note 2
     // from the real ~/Projects/mnml/.mnml/session.json.
-    if !args.sandbox {
+    if !args.sandbox && !args.no_session {
         app.try_restore_session();
-        // The message history outlives the process (user ask: "same
-        // store just persisted"). Skipped in sandbox for the same reason
-        // session restore is — that mode wants a brand-new-user view.
-        app.load_persisted_messages(mnml::app::MESSAGE_LOG_MAX);
-    } else {
-        // ...and the WRITE side has to be skipped with it. Sandbox
-        // honours an explicitly-passed workspace, so persisting there
-        // would contaminate that workspace's real history with
-        // throwaway-session noise the sandbox never displayed.
+    }
+    // Message history is INDEPENDENT of session restore. `--no-session`
+    // exists to skip one wedged pane, not to lose the log that might say
+    // why it wedged — which is exactly when you want to read it. Only
+    // sandbox opts out, and it opts out of writing too.
+    if args.sandbox {
         app.persist_messages = false;
+    } else {
+        app.load_persisted_messages(mnml::app::MESSAGE_LOG_MAX);
     }
     // #878 step 2 (2026-08-19) — apply the declarative
     // `[[startup.layout]]` block, gated internally on layout-empty +

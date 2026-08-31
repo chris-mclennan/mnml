@@ -223,6 +223,13 @@ case "${1:-start}" in
   # ── mnml-specific IPC subcommands ───────────────────────────────
   restart) send_cmd '{"cmd":"restart"}'; exit $? ;;
   stop)    send_cmd '{"cmd":"quit"}'; exit $? ;;
+  # ── Escape hatch ────────────────────────────────────────────────
+  # Launch WITHOUT restoring the session. For when a restored pane
+  # wedges mnml: restarting reopens the same pane and wedges it again,
+  # and nothing inside the app can break the cycle because the render
+  # thread never reaches the event loop again. Leaves session.json
+  # alone, so the next plain `./run.sh` still restores it.
+  fresh)   shift; set -- --no-session "$@" ;;
   shot)    shift; exec bash "$REPO/scripts/shot.sh" "$@" ;;
   # ── Sandbox mode ────────────────────────────────────────────────
   # See mnml as a brand-new user would. Redirects $HOME + $XDG_CONFIG_HOME

@@ -790,6 +790,14 @@ fn infer_single_edit(
 
 const UNDO_LIMIT: usize = 2000;
 
+// Counts line-index rebuilds, for the regression guard. Thread-local so
+// parallel tests cannot pollute each other's count.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LINE_INDEX_REBUILDS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 #[derive(Debug, Clone)]
 pub struct Editor {
     text: String,
@@ -801,6 +809,19 @@ pub struct Editor {
     /// eagerly on every edit dominated the hot path on 5 MB files
     /// (~2.9 ms/keystroke → sub-µs after lazification).
     goal_col: Option<usize>,
+    /// Byte offset of each line's first character, `line_starts[0] == 0`.
+    ///
+    /// `None` = dirty, rebuilt on next read — the same lazy-invalidate
+    /// shape as `goal_col` above, for the same reason. `line_start` used
+    /// to scan the WHOLE buffer counting newlines on every call, and
+    /// `line_str` calls it twice (once directly, once through
+    /// `line_end`). The renderer does that per visible line, so a 621 KB
+    /// file with the cursor at line 10,200 cost ~88 full-buffer scans a
+    /// frame and froze mnml outright (user report, 2026-08-30).
+    ///
+    /// `RefCell` because `line_start` takes `&self` and is called from
+    /// the render path, which holds the buffer immutably.
+    line_starts: std::cell::RefCell<Option<Vec<usize>>>,
     tab_width: usize,
     comment_token: String,
     /// Closing token for block-comment-style line toggling (HTML's `-->`,
@@ -875,6 +896,7 @@ impl Editor {
             cursor: 0,
             anchor: None,
             goal_col: None,
+            line_starts: std::cell::RefCell::new(None),
             tab_width: tab_width.max(1),
             comment_token: "// ".to_string(),
             comment_token_close: String::new(),
@@ -1103,7 +1125,7 @@ impl Editor {
             }
             let prev = self.prev_char_boundary(p);
             let removed = p - prev;
-            self.text.replace_range(prev..p, "");
+            self.text_mut().replace_range(prev..p, "");
             for (j, c) in cursors.iter_mut().enumerate() {
                 if j == i {
                     *c = prev;
@@ -1187,7 +1209,7 @@ impl Editor {
                 continue;
             }
             let removed = e - s;
-            self.text.replace_range(s..e, "");
+            self.text_mut().replace_range(s..e, "");
             for (j, c) in cursors.iter_mut().enumerate() {
                 if j == i {
                     *c = s;
@@ -1225,7 +1247,7 @@ impl Editor {
         positions.dedup();
         let bytes = s.len();
         for &p in positions.iter().rev() {
-            self.text.insert_str(p, s);
+            self.text_mut().insert_str(p, s);
         }
         // Each cursor at original position `p` shifts by
         //   `(count of insertion points <= p) * bytes`.
@@ -1279,7 +1301,7 @@ impl Editor {
             };
             let payload = parts[visual_index[i]];
             let bytes = payload.len();
-            self.text.insert_str(at, payload);
+            self.text_mut().insert_str(at, payload);
             // Shift other cursors / anchors that were at-or-after the
             // insertion point.
             for (j, c) in cursors.iter_mut().enumerate() {
@@ -1315,7 +1337,7 @@ impl Editor {
             }
             let next = self.next_char_boundary(p);
             let removed = next - p;
-            self.text.replace_range(p..next, "");
+            self.text_mut().replace_range(p..next, "");
             for (j, c) in cursors.iter_mut().enumerate() {
                 if j == i {
                     // Cursor stays at p — the deleted char was AT cursor.
@@ -1373,7 +1395,8 @@ impl Editor {
         if s.is_empty() {
             return;
         }
-        self.text.insert_str(self.cursor, s);
+        let __at = self.cursor;
+        self.text_mut().insert_str(__at, s);
     }
 
     /// The identifier under the cursor — the maximal run of `[A-Za-z0-9_]`
@@ -1670,22 +1693,45 @@ impl Editor {
         self.text[..byte].bytes().filter(|&b| b == b'\n').count()
     }
     /// Byte offset of the start of line `line` (clamped to last line).
+    /// Mutable access to the buffer text, invalidating the line index.
+    ///
+    /// EVERY mutation goes through here. Hand-invalidating at each of the
+    /// 66 mutation sites is 66 chances to miss one, and a stale line
+    /// index renders the wrong bytes — worse than the slowness it fixes.
+    fn text_mut(&mut self) -> &mut String {
+        self.line_starts.borrow_mut().take();
+        &mut self.text
+    }
+
+    /// Rebuild the line index if dirty, then read offset `line` from it.
+    ///
+    /// O(n) once per edit instead of O(n) per call.
     fn line_start(&self, line: usize) -> usize {
-        if line == 0 {
-            return 0;
-        }
-        let mut seen = 0;
-        for (i, b) in self.text.bytes().enumerate() {
-            if b == b'\n' {
-                seen += 1;
-                if seen == line {
-                    return i + 1;
+        {
+            let mut cache = self.line_starts.borrow_mut();
+            if cache.is_none() {
+                let mut v = Vec::with_capacity(self.text.len() / 32 + 1);
+                v.push(0usize);
+                for (i, b) in self.text.bytes().enumerate() {
+                    if b == b'\n' {
+                        v.push(i + 1);
+                    }
                 }
+                #[cfg(test)]
+                LINE_INDEX_REBUILDS.with(|c| c.set(c.get() + 1));
+                *cache = Some(v);
             }
         }
-        // line beyond the last → start of the last line
-        self.text.rfind('\n').map(|i| i + 1).unwrap_or(0)
+        let cache = self.line_starts.borrow();
+        let v = cache.as_ref().expect("just populated");
+        match v.get(line) {
+            Some(&off) => off,
+            // Past the last line → start of the last line, matching the
+            // previous behaviour exactly.
+            None => v.last().copied().unwrap_or(0),
+        }
     }
+
     /// Byte offset just before line `line`'s newline (or EOF for the last line).
     fn line_end(&self, line: usize) -> usize {
         let start = self.line_start(line);
@@ -1942,7 +1988,7 @@ impl Editor {
         out
     }
     fn restore(&mut self, s: Snapshot) {
-        self.text = s.text;
+        *self.text_mut() = s.text;
         self.cursor = s.cursor.min(self.text.len());
         while !self.text.is_char_boundary(self.cursor) {
             self.cursor -= 1;
@@ -2451,7 +2497,8 @@ impl Editor {
                 };
                 self.checkpoint();
                 let s = ch.to_string();
-                self.text.insert_str(self.cursor, &s);
+                let __at = self.cursor;
+                self.text_mut().insert_str(__at, &s);
                 self.cursor += s.len();
                 out.buffer_changed = true;
             }
@@ -2589,8 +2636,8 @@ impl Editor {
                     let open_str = open.encode_utf8(&mut open_buf);
                     // Insert close at hi first (later offset), then open at
                     // lo, so earlier offsets stay valid.
-                    self.text.insert_str(hi, close_str);
-                    self.text.insert_str(lo, open_str);
+                    self.text_mut().insert_str(hi, close_str);
+                    self.text_mut().insert_str(lo, open_str);
                     // Land cursor on the closing char.
                     self.cursor = hi + open.len_utf8();
                     self.anchor = None;
@@ -2619,8 +2666,8 @@ impl Editor {
                     self.checkpoint();
                     let close_len = close.len_utf8();
                     let open_len = open.len_utf8();
-                    self.text.replace_range(cl..cl + close_len, "");
-                    self.text.replace_range(o..o + open_len, "");
+                    self.text_mut().replace_range(cl..cl + close_len, "");
+                    self.text_mut().replace_range(o..o + open_len, "");
                     // Land cursor at the (now-shifted) inner-content start.
                     self.cursor = o.min(self.text.len());
                     self.anchor = None;
@@ -2658,8 +2705,9 @@ impl Editor {
                     let mut to_open_buf = [0u8; 4];
                     let to_open_str = to_open.encode_utf8(&mut to_open_buf);
                     // Replace close first (later offset), then open.
-                    self.text.replace_range(cl..cl + close_len, to_close_str);
-                    self.text.replace_range(o..o + open_len, to_open_str);
+                    self.text_mut()
+                        .replace_range(cl..cl + close_len, to_close_str);
+                    self.text_mut().replace_range(o..o + open_len, to_open_str);
                     self.anchor = None;
                     out.buffer_changed = true;
                 }
@@ -3087,7 +3135,7 @@ impl Editor {
                     let s = c.encode_utf8(&mut tmp).to_string();
                     // Insert in descending order so earlier offsets stay valid.
                     for &p in positions.iter().rev() {
-                        self.text.insert_str(p, &s);
+                        self.text_mut().insert_str(p, &s);
                     }
                     let advanced: Vec<usize> = positions
                         .iter()
@@ -3115,16 +3163,19 @@ impl Editor {
                     && let Some(closer) = close
                     && self.next_char_allows_pair()
                 {
-                    self.text.insert(self.cursor, c);
+                    let __at = self.cursor;
+                    self.text_mut().insert(__at, c);
                     self.cursor += c.len_utf8();
-                    self.text.insert(self.cursor, closer);
+                    let __at = self.cursor;
+                    self.text_mut().insert(__at, closer);
                     // Leave the cursor between the pair.
                     out.buffer_changed = true;
                 } else if self.auto_pair && is_auto_pair_close(c) && self.cursor_on_char(c) {
                     // Skip over the auto-inserted close: just move past it.
                     self.cursor += c.len_utf8();
                 } else {
-                    self.text.insert(self.cursor, c);
+                    let __at = self.cursor;
+                    self.text_mut().insert(__at, c);
                     self.cursor += c.len_utf8();
                     out.buffer_changed = true;
                 }
@@ -3146,7 +3197,8 @@ impl Editor {
                     out.buffer_changed = true;
                     return;
                 }
-                self.text.insert_str(self.cursor, &s);
+                let __at = self.cursor;
+                self.text_mut().insert_str(__at, &s);
                 self.cursor += s.len();
                 out.buffer_changed = true;
             }
@@ -3172,10 +3224,12 @@ impl Editor {
                 } else {
                     String::new()
                 };
-                self.text.insert(self.cursor, '\n');
+                let __at = self.cursor;
+                self.text_mut().insert(__at, '\n');
                 self.cursor += 1;
                 if !indent.is_empty() {
-                    self.text.insert_str(self.cursor, &indent);
+                    let __at = self.cursor;
+                    self.text_mut().insert_str(__at, &indent);
                     self.cursor += indent.len();
                 }
                 out.buffer_changed = true;
@@ -3190,10 +3244,11 @@ impl Editor {
                 } else {
                     String::new()
                 };
-                self.text.insert(eol, '\n');
+                self.text_mut().insert(eol, '\n');
                 self.cursor = eol + 1;
                 if !indent.is_empty() {
-                    self.text.insert_str(self.cursor, &indent);
+                    let __at = self.cursor;
+                    self.text_mut().insert_str(__at, &indent);
                     self.cursor += indent.len();
                 }
                 out.buffer_changed = true;
@@ -3203,7 +3258,7 @@ impl Editor {
                 self.checkpoint();
                 let line = self.current_line();
                 let bol = self.line_start(line);
-                self.text.insert(bol, '\n');
+                self.text_mut().insert(bol, '\n');
                 self.cursor = bol;
                 out.buffer_changed = true;
             }
@@ -3236,12 +3291,13 @@ impl Editor {
                     && let Some(closer) = pair_close
                     && next_char == Some(closer)
                 {
-                    self.text.replace_range(prev..next_byte, "");
+                    self.text_mut().replace_range(prev..next_byte, "");
                     self.cursor = prev;
                     out.buffer_changed = true;
                     return;
                 }
-                self.text.replace_range(prev..self.cursor, "");
+                let __a0 = self.cursor;
+                self.text_mut().replace_range(prev..__a0, "");
                 self.cursor = prev;
                 out.buffer_changed = true;
             }
@@ -3260,7 +3316,8 @@ impl Editor {
                 }
                 self.checkpoint();
                 let next = self.next_char_boundary(self.cursor);
-                self.text.replace_range(self.cursor..next, "");
+                let __at = self.cursor;
+                self.text_mut().replace_range(__at..next, "");
                 out.buffer_changed = true;
             }
             DeleteWordLeft => {
@@ -3281,7 +3338,8 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
-                self.text.replace_range(target..self.cursor, "");
+                let __a0 = self.cursor;
+                self.text_mut().replace_range(target..__a0, "");
                 self.cursor = target;
                 out.buffer_changed = true;
             }
@@ -3303,7 +3361,8 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
-                self.text.replace_range(self.cursor..target, "");
+                let __at = self.cursor;
+                self.text_mut().replace_range(__at..target, "");
                 out.buffer_changed = true;
             }
             DeleteToLineStart => {
@@ -3321,7 +3380,8 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
-                self.text.replace_range(bol..self.cursor, "");
+                let __a0 = self.cursor;
+                self.text_mut().replace_range(bol..__a0, "");
                 self.cursor = bol;
                 out.buffer_changed = true;
             }
@@ -3340,7 +3400,8 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
-                self.text.replace_range(self.cursor..eol, "");
+                let __at = self.cursor;
+                self.text_mut().replace_range(__at..eol, "");
                 out.buffer_changed = true;
             }
             DeleteLine => {
@@ -3359,15 +3420,16 @@ impl Editor {
                 let has_newline_after = self.line_end(line) < self.text.len();
                 if has_newline_after {
                     let end = self.line_end(line) + 1;
-                    self.text.replace_range(start..end, "");
+                    self.text_mut().replace_range(start..end, "");
                     self.cursor = start.min(self.text.len());
                 } else if start > 0 {
                     let prev_line_start = self.line_start(line - 1);
                     let cut_from = self.prev_char_boundary(start);
-                    self.text.replace_range(cut_from..self.text.len(), "");
+                    let __a0 = self.text.len();
+                    self.text_mut().replace_range(cut_from..__a0, "");
                     self.cursor = prev_line_start.min(self.text.len());
                 } else {
-                    self.text.clear();
+                    self.text_mut().clear();
                     self.cursor = 0;
                 }
                 out.buffer_changed = true;
@@ -3478,10 +3540,11 @@ impl Editor {
                     return;
                 }
                 if let Some((lo, hi)) = self.selection() {
-                    self.text.replace_range(lo..hi, &s);
+                    self.text_mut().replace_range(lo..hi, &s);
                     self.cursor = lo + s.len();
                 } else {
-                    self.text.insert_str(self.cursor, &s);
+                    let __at = self.cursor;
+                    self.text_mut().insert_str(__at, &s);
                     self.cursor += s.len();
                 }
                 self.anchor = None;
@@ -3497,13 +3560,13 @@ impl Editor {
                     Some('\n') | None => {
                         // At EOL or EOF — insert instead of overwrite. Push
                         // `None` so Backspace knows to just delete-back.
-                        self.text.insert_str(cur, &s);
+                        self.text_mut().insert_str(cur, &s);
                         self.cursor = cur + s.len();
                         self.replace_stack.push(None);
                     }
                     Some(target) => {
                         let end = cur + target.len_utf8();
-                        self.text.replace_range(cur..end, &s);
+                        self.text_mut().replace_range(cur..end, &s);
                         self.cursor = cur + s.len();
                         // Remember the original char so Backspace can
                         // restore it (vim canonical Replace-Backspace).
@@ -3526,11 +3589,13 @@ impl Editor {
                         // Replace the inserted char with the original.
                         let mut buf = [0u8; 4];
                         let s = original.encode_utf8(&mut buf).to_string();
-                        self.text.replace_range(before..self.cursor, &s);
+                        let __a0 = self.cursor;
+                        self.text_mut().replace_range(before..__a0, &s);
                     }
                     None => {
                         // Inserted-past-EOL — delete the inserted char.
-                        self.text.replace_range(before..self.cursor, "");
+                        let __a0 = self.cursor;
+                        self.text_mut().replace_range(before..__a0, "");
                     }
                 }
                 self.cursor = before;
@@ -3551,7 +3616,7 @@ impl Editor {
                             out_s.push(c);
                         }
                     }
-                    self.text.replace_range(lo..hi, &out_s);
+                    self.text_mut().replace_range(lo..hi, &out_s);
                     self.cursor = lo;
                     self.anchor = None;
                     out.buffer_changed = true;
@@ -3564,7 +3629,7 @@ impl Editor {
                         let end = cur + target.len_utf8();
                         let mut buf = [0u8; 4];
                         let s = c.encode_utf8(&mut buf);
-                        self.text.replace_range(cur..end, s);
+                        self.text_mut().replace_range(cur..end, s);
                         // cursor stays at `cur` (vim convention)
                         out.buffer_changed = true;
                     }
@@ -3576,7 +3641,7 @@ impl Editor {
                 let end = end.min(len).max(start);
                 if self.text.is_char_boundary(start) && self.text.is_char_boundary(end) {
                     self.checkpoint();
-                    self.text.replace_range(start..end, &text);
+                    self.text_mut().replace_range(start..end, &text);
                     self.cursor = start + text.len();
                     self.anchor = None;
                     out.buffer_changed = true;
@@ -3586,7 +3651,7 @@ impl Editor {
                 self.checkpoint();
                 let pad: String = " ".repeat(self.tab_width);
                 let changed = self.for_each_selected_line(|ed, bol| {
-                    ed.text.insert_str(bol, &pad);
+                    ed.text_mut().insert_str(bol, &pad);
                     pad.len() as isize
                 });
                 if changed {
@@ -3611,7 +3676,7 @@ impl Editor {
                         }
                     }
                     if remove > 0 {
-                        ed.text.replace_range(bol..bol + remove, "");
+                        ed.text_mut().replace_range(bol..bol + remove, "");
                     }
                     -(remove as isize)
                 });
@@ -3688,19 +3753,19 @@ impl Editor {
                         if has_close {
                             if ed.text[..eol].ends_with(&close) {
                                 let cut = eol - close.len();
-                                ed.text.replace_range(cut..eol, "");
+                                ed.text_mut().replace_range(cut..eol, "");
                                 close_delta = -(close.len() as isize);
                             } else if ed.text[..eol].ends_with(&close_trimmed) {
                                 let cut = eol - close_trimmed.len();
-                                ed.text.replace_range(cut..eol, "");
+                                ed.text_mut().replace_range(cut..eol, "");
                                 close_delta = -(close_trimmed.len() as isize);
                             }
                         }
                         let open_delta = if ed.text[ie..].starts_with(&token) {
-                            ed.text.replace_range(ie..ie + token.len(), "");
+                            ed.text_mut().replace_range(ie..ie + token.len(), "");
                             -(token.len() as isize)
                         } else if ed.text[ie..].starts_with(&trimmed) {
-                            ed.text.replace_range(ie..ie + trimmed.len(), "");
+                            ed.text_mut().replace_range(ie..ie + trimmed.len(), "");
                             -(trimmed.len() as isize)
                         } else {
                             0
@@ -3711,10 +3776,10 @@ impl Editor {
                         // the open insert below doesn't shift EOL.
                         let mut close_delta: isize = 0;
                         if has_close {
-                            ed.text.insert_str(eol, &close);
+                            ed.text_mut().insert_str(eol, &close);
                             close_delta = close.len() as isize;
                         }
-                        ed.text.insert_str(ie, &token);
+                        ed.text_mut().insert_str(ie, &token);
                         token.len() as isize + close_delta
                     }
                 });
@@ -3812,8 +3877,8 @@ impl Editor {
                 // (Works for the last line — no trailing newline needed beyond
                 // what gets inserted.)
                 let body = self.text[bol..eol].to_string();
-                self.text.insert(eol, '\n');
-                self.text.insert_str(eol + 1, &body);
+                self.text_mut().insert(eol, '\n');
+                self.text_mut().insert_str(eol + 1, &body);
                 // Move the cursor to the same column on the new line.
                 let col = self.col_at_byte(self.cursor);
                 self.cursor = self.byte_at_col(line + 1, col);
@@ -3832,7 +3897,9 @@ impl Editor {
                         };
                         // Single-byte ASCII swap; replace_range keeps it safe.
                         let s = std::str::from_utf8(&[toggled]).unwrap().to_string();
-                        self.text.replace_range(self.cursor..self.cursor + 1, &s);
+                        let __at = self.cursor;
+                        let __a0 = self.cursor;
+                        self.text_mut().replace_range(__at..__a0 + 1, &s);
                         out.buffer_changed = true;
                     }
                     // Advance to the next char boundary (handles multi-byte).
@@ -3851,7 +3918,7 @@ impl Editor {
                     smart_increment_at(&self.text, self.cursor, self.current_line(), delta)
                 {
                     self.checkpoint();
-                    self.text.replace_range(start..end, &new_str);
+                    self.text_mut().replace_range(start..end, &new_str);
                     self.cursor = start + new_str.len().saturating_sub(1);
                     self.anchor = None;
                     out.buffer_changed = true;
@@ -3898,7 +3965,7 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
-                self.text.replace_range(start..end, &new_str);
+                self.text_mut().replace_range(start..end, &new_str);
                 // Cursor lands on the last char of the new number (vim).
                 self.cursor = start + new_str.len().saturating_sub(1);
                 self.anchor = None;
@@ -3952,7 +4019,7 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
-                self.text.replace_range(start..end, &wrapped);
+                self.text_mut().replace_range(start..end, &wrapped);
                 self.cursor = start;
                 self.anchor = None;
                 out.buffer_changed = true;
@@ -3978,7 +4045,7 @@ impl Editor {
                     };
                     if transformed != original {
                         self.checkpoint();
-                        self.text.replace_range(lo..hi, &transformed);
+                        self.text_mut().replace_range(lo..hi, &transformed);
                         // Vim canonical: cursor parks at the START of the
                         // transformed range after `gu` / `gU` / `g~`.
                         // R12 nvchad SEV-3 2026-08-23 — was landing at
@@ -4031,7 +4098,7 @@ impl Editor {
                             for &(byte, col) in targets.iter().rev() {
                                 let pad = max_col - col;
                                 if pad > 0 {
-                                    self.text.insert_str(byte, &" ".repeat(pad));
+                                    self.text_mut().insert_str(byte, &" ".repeat(pad));
                                 }
                             }
                             self.cursor = self.line_start(first_line).min(self.text.len());
@@ -4090,7 +4157,8 @@ impl Editor {
                     } else {
                         " "
                     };
-                    self.text.replace_range(trim_end..next_first, separator);
+                    self.text_mut()
+                        .replace_range(trim_end..next_first, separator);
                     // Cursor lands ON the inserted space (or at the join
                     // boundary when none was inserted).
                     self.cursor = trim_end;
@@ -4186,7 +4254,7 @@ impl Editor {
                     sorted.sort_by_key(|r| std::cmp::Reverse(r.0));
                     for (s, e) in sorted {
                         if s < e {
-                            self.text.replace_range(s..e, "");
+                            self.text_mut().replace_range(s..e, "");
                         }
                     }
                     // Land cursor at the rectangle's top-left (the byte at
@@ -4281,7 +4349,7 @@ impl Editor {
                     clip.push_delete(s.clone(), false);
                     out.clipboard_set = Some(s);
                     self.checkpoint();
-                    self.text.replace_range(lo..hi, "");
+                    self.text_mut().replace_range(lo..hi, "");
                     self.cursor = lo;
                     self.anchor = None;
                     out.buffer_changed = true;
@@ -4328,7 +4396,7 @@ impl Editor {
                         let trimmed = s.strip_suffix('\n').unwrap_or(&s);
                         payload = format!("\n{trimmed}");
                     }
-                    self.text.insert_str(insert_at, &payload);
+                    self.text_mut().insert_str(insert_at, &payload);
                     self.cursor = if eol < self.text.len() {
                         insert_at
                     } else {
@@ -4336,7 +4404,7 @@ impl Editor {
                     };
                 } else {
                     let at = self.next_char_boundary(self.cursor).min(self.text.len());
-                    self.text.insert_str(at, &s);
+                    self.text_mut().insert_str(at, &s);
                     self.cursor = at + s.len();
                 }
                 self.anchor = None;
@@ -4369,10 +4437,11 @@ impl Editor {
                 if clip.is_linewise() {
                     let line = self.current_line();
                     let bol = self.line_start(line);
-                    self.text.insert_str(bol, &s);
+                    self.text_mut().insert_str(bol, &s);
                     self.cursor = bol;
                 } else {
-                    self.text.insert_str(self.cursor, &s);
+                    let __at = self.cursor;
+                    self.text_mut().insert_str(__at, &s);
                     self.cursor += s.len();
                 }
                 self.anchor = None;
@@ -4400,12 +4469,12 @@ impl Editor {
                         let trimmed = s.strip_suffix('\n').unwrap_or(&s);
                         payload = format!("\n{trimmed}");
                     }
-                    self.text.insert_str(insert_at, &payload);
+                    self.text_mut().insert_str(insert_at, &payload);
                     // gp: cursor at END of pasted block (vim convention).
                     self.cursor = insert_at + payload.len();
                 } else {
                     let at = self.next_char_boundary(self.cursor).min(self.text.len());
-                    self.text.insert_str(at, &s);
+                    self.text_mut().insert_str(at, &s);
                     self.cursor = at + s.len();
                 }
                 self.anchor = None;
@@ -4420,10 +4489,11 @@ impl Editor {
                 if clip.is_linewise() {
                     let line = self.current_line();
                     let bol = self.line_start(line);
-                    self.text.insert_str(bol, &s);
+                    self.text_mut().insert_str(bol, &s);
                     self.cursor = bol + s.len();
                 } else {
-                    self.text.insert_str(self.cursor, &s);
+                    let __at = self.cursor;
+                    self.text_mut().insert_str(__at, &s);
                     self.cursor += s.len();
                 }
                 self.anchor = None;
@@ -4447,7 +4517,8 @@ impl Editor {
                 if !deleted {
                     self.checkpoint();
                 }
-                self.text.insert_str(self.cursor, &s);
+                let __at = self.cursor;
+                self.text_mut().insert_str(__at, &s);
                 self.cursor += s.len();
                 self.anchor = None;
                 out.buffer_changed = true;
@@ -4517,7 +4588,7 @@ impl Editor {
         self.checkpoint();
         if self.extra_cursors.is_empty() {
             let (lo, hi) = self.selection().expect("primary_has_sel implies Some");
-            self.text.replace_range(lo..hi, "");
+            self.text_mut().replace_range(lo..hi, "");
             self.cursor = lo;
             self.anchor = None;
             out.buffer_changed = true;
@@ -5412,8 +5483,8 @@ impl Editor {
         let a_text = self.text[a_start..a_end].to_string();
         let b_text = self.text[b_start..b_end].to_string();
         // replace b first (later in the string) so a's offsets stay valid
-        self.text.replace_range(b_start..b_end, &a_text);
-        self.text.replace_range(a_start..a_end, &b_text);
+        self.text_mut().replace_range(b_start..b_end, &a_text);
+        self.text_mut().replace_range(a_start..a_end, &b_text);
     }
 }
 
@@ -6258,6 +6329,74 @@ mod tests {
         e.cursor = 8;
         e.apply(MoveCursorToSelectionStart, 10, &mut c);
         assert_eq!(e.cursor(), 8, "no anchor → no move");
+    }
+
+    /// PERF REGRESSION GUARD — `line_start` on a large buffer.
+    ///
+    /// `src/app/mod.rs` (13,210 lines, 621 KB) froze mnml outright with
+    /// the cursor near line 10,200: `line_start` scanned the whole buffer
+    /// counting newlines on EVERY call, `line_str` calls it twice (once
+    /// directly, once via `line_end`), and the renderer does that per
+    /// visible line — ~88 full-buffer scans a frame. Two force-quits.
+    ///
+    /// Counted, not timed. A deep-vs-shallow timing ratio FAILED BOTH
+    /// WAYS when tried: the fix speeds up both ends, so the ratio barely
+    /// moves even as the absolute cost drops 367x (830ms → 2.3ms for 200
+    /// reads). Scans are the invariant that matters, and it is exact.
+    #[test]
+    fn reading_every_line_scans_the_buffer_once_not_once_per_line() {
+        let lines = 13_000;
+        let text: String = (0..lines)
+            .map(|i| format!("line {i} of the file\n"))
+            .collect();
+        let ed = Editor::new(&text, 4);
+
+        LINE_INDEX_REBUILDS.with(|c| c.set(0));
+        // Deepest first — the pathological direction for a forward scan,
+        // and where the user's cursor was.
+        for l in (0..lines).rev() {
+            let _ = ed.line_str(l);
+        }
+        let rebuilds = LINE_INDEX_REBUILDS.with(|c| c.get());
+        assert_eq!(
+            rebuilds, 1,
+            "reading {lines} lines scanned the buffer {rebuilds} times — \
+             line_start is scanning per call again"
+        );
+    }
+
+    /// The counter has to move at all, or the guard above reports
+    /// success forever.
+    #[test]
+    fn the_line_index_counter_actually_counts() {
+        let ed = Editor::new("a\nb\nc\n", 4);
+        LINE_INDEX_REBUILDS.with(|c| c.set(0));
+        let _ = ed.line_str(1);
+        assert_eq!(LINE_INDEX_REBUILDS.with(|c| c.get()), 1);
+    }
+
+    /// The index must not go stale. Every mutation routes through
+    /// `text_mut`, which invalidates — this checks the contract rather
+    /// than the mechanism, since a stale index renders the WRONG BYTES,
+    /// which is worse than the slowness it replaces.
+    #[test]
+    fn the_line_index_survives_edits_that_move_line_boundaries() {
+        let mut ed = Editor::new("alpha\nbeta\ngamma\n", 4);
+        assert_eq!(ed.line_str(1), "beta");
+
+        // Insert a newline in the middle of line 0.
+        ed.set_cursor_byte(2);
+        let mut clip = Clipboard::default();
+        ed.apply(EditOp::InsertChar('\n'), 40, &mut clip);
+        assert_eq!(ed.line_str(0), "al", "index stale after a split");
+        assert_eq!(ed.line_str(1), "pha");
+        assert_eq!(ed.line_str(2), "beta");
+
+        // And joining lines back up.
+        ed.set_cursor_byte(0);
+        ed.apply(EditOp::DeleteToLineEnd, 40, &mut clip);
+        assert_eq!(ed.line_str(0), "", "index stale after a delete");
+        assert_eq!(ed.line_str(1), "pha");
     }
 
     #[test]
