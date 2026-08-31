@@ -4950,7 +4950,21 @@ fn tab_chip_inputs_for(
         id,
         glyph,
         icon_color,
-        name: pane.title(),
+        // Mark a rendered-markdown pane with the SAME eye the
+        // bufferline's `Preview` chip uses. It was a bare `◳`, which is
+        // not a convention anywhere and did not match the chip that
+        // toggles the very same thing.
+        name: match pane {
+            Pane::MdPreview(_) => {
+                let eye = if app.config.ui.ascii_icons {
+                    "(p)"
+                } else {
+                    "\u{f06e}"
+                };
+                format!("{} {eye}", pane.title())
+            }
+            _ => pane.title(),
+        },
         is_active: id == active,
         is_dirty: pane.is_dirty(),
         is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),

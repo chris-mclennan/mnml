@@ -979,6 +979,20 @@ pub struct UiConfig {
     /// markdown preview pane (`Pane::MdPreview`) is the canonical
     /// rendering. `:set [no]rendermarkdown` / `view.toggle_render_markdown`.
     pub render_markdown: bool,
+    /// Open `.md` files as the rendered `Pane::MdPreview` rather than
+    /// raw text. ON by default.
+    ///
+    /// Uncommon for an editor — VS Code, Zed, Neovim and JetBrains all
+    /// open the source — but deliberate here: raw markdown's `#` and `*`
+    /// noise reads badly in a terminal, and the rendered view is what
+    /// makes a TUI pleasant to read documentation in. `:e path.md` still
+    /// opens raw (`open_path_force_editor`), and the `Edit` chip swaps
+    /// an open preview to the editor.
+    ///
+    /// This routing used to be unconditional, so the behaviour existed
+    /// with no way to turn it off — and it had already generated one
+    /// report (see `open_path_force_editor`'s comment).
+    pub markdown_opens_rendered: bool,
     /// When true, paint a dim fold-arrow (`▾`) in the gutter for every
     /// foldable header line, not just on hover. Matches VS Code's
     /// "Editor › Show Folding Controls: always" default. Off by default
@@ -1529,6 +1543,7 @@ impl Default for Config {
                 wrap: false,
                 highlight_todo_keywords: false,
                 render_markdown: false,
+                markdown_opens_rendered: true,
                 always_show_fold_arrows: false,
                 sticky_context: false,
                 md_image_rows: 12,
@@ -2105,6 +2120,7 @@ struct RawUi {
     wrap: Option<bool>,
     highlight_todo_keywords: Option<bool>,
     render_markdown: Option<bool>,
+    markdown_opens_rendered: Option<bool>,
     always_show_fold_arrows: Option<bool>,
     sticky_context: Option<bool>,
     md_image_rows: Option<u16>,
@@ -2655,6 +2671,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.highlight_todo_keywords {
             self.ui.highlight_todo_keywords = v;
+        }
+        if let Some(v) = raw.ui.markdown_opens_rendered {
+            self.ui.markdown_opens_rendered = v;
         }
         if let Some(v) = raw.ui.render_markdown {
             self.ui.render_markdown = v;

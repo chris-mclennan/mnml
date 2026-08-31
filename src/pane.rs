@@ -556,7 +556,11 @@ impl MdPreview {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "markdown".to_string());
-        format!("{name} ◳")
+        // Just the filename. The rendered-preview marker is appended by
+        // the bufferline, which can honour `[ui] ascii_icons` — this
+        // function cannot see the config, and the marker used to be a
+        // hardcoded `◳` that matched nothing else in the UI.
+        name
     }
 
     /// Approximate cursor-tracking — scroll the preview so it lines up with

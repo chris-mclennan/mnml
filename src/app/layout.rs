@@ -497,7 +497,7 @@ impl App {
         // pass preview=false — but the display style (rendered vs.
         // raw) is the same either way for markdown UNLESS the caller
         // is vim's `:e` (force_editor=true), which opens raw.
-        if !force_editor && is_markdown_path(&path) {
+        if !force_editor && self.config.ui.markdown_opens_rendered && is_markdown_path(&path) {
             // Carry the preview intent. It used to be dropped here, so a
             // markdown file opened from the tree was ALWAYS a permanent
             // tab — never italic, never replaced.
@@ -3407,6 +3407,36 @@ mod md_preview_tab_tests {
             std::fs::write(app.workspace.join(n), format!("# {n}\n")).unwrap();
         }
         (d, app)
+    }
+
+    /// The rendered-first default is deliberate — raw markdown reads
+    /// badly in a terminal — but it used to be UNCONDITIONAL, so there
+    /// was no way to turn it off despite a prior report from someone who
+    /// wanted the source (see `open_path_force_editor`).
+    #[test]
+    fn markdown_opens_rendered_by_default() {
+        let (_d, mut app) = app_with_md();
+        app.open_path(&app.workspace.join("a.md"));
+        assert!(
+            app.panes.iter().any(|p| matches!(p, Pane::MdPreview(_))),
+            "markdown did not open rendered"
+        );
+    }
+
+    /// ...and the option actually turns it off.
+    #[test]
+    fn the_option_opens_markdown_as_text() {
+        let (_d, mut app) = app_with_md();
+        app.config.ui.markdown_opens_rendered = false;
+        app.open_path(&app.workspace.join("a.md"));
+        assert!(
+            app.panes.iter().any(|p| matches!(p, Pane::Editor(_))),
+            "markdown_opens_rendered = false still opened a preview"
+        );
+        assert!(
+            !app.panes.iter().any(|p| matches!(p, Pane::MdPreview(_))),
+            "opened both"
+        );
     }
 
     /// USER REPORT — End in the tree landed on TODO.md and opened a
