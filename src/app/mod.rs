@@ -2352,6 +2352,10 @@ pub struct PaneRects {
     /// header: `(rect, pane_id, that ancestor's path)`. Clicking a segment
     /// navigates there.
     pub file_pane_breadcrumbs: Vec<(Rect, PaneId, std::path::PathBuf)>,
+    /// Editor breadcrumb segments and the directory each opens. Empty
+    /// when the label is truncated — a rendered column no longer maps to
+    /// a segment then, so a click would land somewhere arbitrary.
+    pub editor_breadcrumbs: Vec<(Rect, std::path::PathBuf)>,
     /// The `▾` at the end of a Files pane's breadcrumb — opens the
     /// destinations picker.
     pub file_pane_places_chevron: Option<(Rect, PaneId)>,

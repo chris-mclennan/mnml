@@ -1367,6 +1367,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Files-pane row rects live for one frame, like editor_panes.
     app.rects.file_pane_rows.clear();
     app.rects.file_pane_breadcrumbs.clear();
+    app.rects.editor_breadcrumbs.clear();
     app.rects.file_pane_places_chevron = None;
     app.rects.file_pane_sort_label = None;
     // (md preview / editor chip rects are cleared earlier — see the

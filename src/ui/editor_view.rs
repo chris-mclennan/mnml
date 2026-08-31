@@ -61,7 +61,7 @@ pub fn draw_pane(
         (None, area)
     };
     if let (Some(ca), Some(label)) = (crumb_area, crumb_label) {
-        draw_breadcrumb(frame, ca, &label);
+        draw_breadcrumb(frame, app, pane_id, ca, &label);
     }
 
     // #polish 2026-07-06 — the `👁 Preview` chip moved to the
@@ -1819,11 +1819,50 @@ fn breadcrumb_label(app: &App, pane_id: PaneId) -> Option<String> {
     Some(parts.join(" › "))
 }
 
+/// Breadcrumb segments paired with the directory each one opens.
+///
+/// A directory segment targets itself; the filename targets its parent,
+/// so every segment does ONE thing — open a Files pane there — which is
+/// what the Files pane's own breadcrumb already does. Making the
+/// filename inert would leave part of a clickable row dead.
+fn breadcrumb_segments(app: &App, pane_id: PaneId) -> Option<Vec<(String, std::path::PathBuf)>> {
+    let Some(Pane::Editor(b)) = app.panes.get(pane_id) else {
+        return None;
+    };
+    let path = b.path.as_ref()?;
+    let rel = path.strip_prefix(&app.workspace).unwrap_or(path);
+    let names: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(os) => Some(os.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(names.len());
+    let mut acc = app.workspace.clone();
+    let last = names.len() - 1;
+    for (i, n) in names.iter().enumerate() {
+        acc.push(n);
+        let target = if i == last {
+            acc.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| app.workspace.clone())
+        } else {
+            acc.clone()
+        };
+        out.push((n.clone(), target));
+    }
+    Some(out)
+}
+
 /// One-row breadcrumb header (dim) above the editor body. Caller has
 /// already resolved the label via [`breadcrumb_label`] and decided to
 /// render. Truncates the middle with `…` if the label is wider than
 /// the pane.
-fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
+fn draw_breadcrumb(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, label: &str) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -1833,7 +1872,38 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
         area,
     );
     let max = area.width.saturating_sub(2) as usize;
-    let display = if label.chars().count() <= max {
+    let fits = label.chars().count() <= max;
+
+    // Click targets only when the label fits.
+    //
+    // Truncation replaces the middle with `…`, so a rendered column no
+    // longer maps to a segment — registering rects then would send
+    // clicks somewhere arbitrary, which is worse than not being
+    // clickable. The row still renders identically either way.
+    if fits && let Some(segs) = breadcrumb_segments(app, pane_id) {
+        let mut x = area.x + 1;
+        for (i, (name, target)) in segs.iter().enumerate() {
+            if i > 0 {
+                x += " \u{203a} ".chars().count() as u16;
+            }
+            let w = name.chars().count() as u16;
+            if x + w > area.x + area.width {
+                break;
+            }
+            app.rects.editor_breadcrumbs.push((
+                Rect {
+                    x,
+                    y: area.y,
+                    width: w,
+                    height: 1,
+                },
+                target.clone(),
+            ));
+            x += w;
+        }
+    }
+
+    let display = if fits {
         label.to_string()
     } else if max > 3 {
         let half = (max - 1) / 2;
@@ -1841,7 +1911,7 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
         let head: String = chars.iter().take(half).collect();
         let tail: String = chars.iter().rev().take(max - 1 - half).collect();
         let tail: String = tail.chars().rev().collect();
-        format!("{head}…{tail}")
+        format!("{head}\u{2026}{tail}")
     } else {
         label.chars().take(max).collect()
     };
@@ -1857,6 +1927,118 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// User ask — "should this line with breadcrumb be clickable at
+    /// all?" It was not: the Files pane's breadcrumb registered click
+    /// rects and the editor's registered none, so two rows that look
+    /// identical behaved differently.
+    #[test]
+    fn editor_breadcrumb_segments_are_clickable_and_target_their_directory() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("src/ui")).unwrap();
+        let f = d.path().join("src/ui/thing.rs");
+        std::fs::write(&f, "fn main() {}\n").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.editor.breadcrumb = true;
+        app.open_path(&f);
+
+        let mut term = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        term.draw(|fr| crate::ui::draw(fr, &mut app)).unwrap();
+
+        let crumbs = app.rects.editor_breadcrumbs.clone();
+        assert_eq!(
+            crumbs.len(),
+            3,
+            "expected a rect per segment (src / ui / thing.rs), got {}",
+            crumbs.len()
+        );
+        // A directory segment targets ITSELF...
+        assert!(crumbs[0].1.ends_with("src"), "first: {:?}", crumbs[0].1);
+        assert!(crumbs[1].1.ends_with("ui"), "second: {:?}", crumbs[1].1);
+        // ...and the filename targets its PARENT, so every segment does
+        // the same one thing rather than leaving part of the row dead.
+        assert!(
+            crumbs[2].1.ends_with("ui"),
+            "the filename should target its parent dir, got {:?}",
+            crumbs[2].1
+        );
+        // Rects must not overlap, or a click is ambiguous.
+        for w in crumbs.windows(2) {
+            assert!(
+                w[0].0.x + w[0].0.width <= w[1].0.x,
+                "segment rects overlap: {:?} then {:?}",
+                w[0].0,
+                w[1].0
+            );
+        }
+    }
+
+    /// When the label is truncated a rendered column no longer maps to a
+    /// segment, so registering rects would send clicks somewhere
+    /// arbitrary. Better un-clickable than wrong.
+    ///
+    /// Calls `draw_breadcrumb` directly with a narrow area. Driving it
+    /// through the full UI does not work: below roughly 120 columns the
+    /// breadcrumb row is not drawn at all, so an emptiness assertion
+    /// there passes for the wrong reason — it did, and the break-check
+    /// caught it.
+    #[test]
+    fn a_truncated_breadcrumb_registers_no_click_targets() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("src/ui")).unwrap();
+        let f = d.path().join("src/ui/thing.rs");
+        std::fs::write(&f, "fn main() {}\n").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.editor.breadcrumb = true;
+        app.open_path(&f);
+        let pane_id = app.active.unwrap();
+        let label = breadcrumb_label(&app, pane_id).expect("no label");
+
+        let mut term = Terminal::new(TestBackend::new(60, 6)).unwrap();
+
+        // Wide enough for the label ⇒ rects.
+        app.rects.editor_breadcrumbs.clear();
+        let wide = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 1,
+        };
+        term.draw(|fr| draw_breadcrumb(fr, &mut app, pane_id, wide, &label))
+            .unwrap();
+        assert!(
+            !app.rects.editor_breadcrumbs.is_empty(),
+            "control: a label that FITS should register rects"
+        );
+
+        // Too narrow ⇒ truncated ⇒ no rects.
+        app.rects.editor_breadcrumbs.clear();
+        let narrow = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 1,
+        };
+        term.draw(|fr| draw_breadcrumb(fr, &mut app, pane_id, narrow, &label))
+            .unwrap();
+        assert!(
+            label.chars().count() > 8,
+            "setup: the label must not fit in the narrow area"
+        );
+        assert!(
+            app.rects.editor_breadcrumbs.is_empty(),
+            "registered {} click rects over a truncated label",
+            app.rects.editor_breadcrumbs.len()
+        );
+    }
+
     /// Horizontal scroll must actually move the render window.
     ///
     /// It did not. `VisRow::char_start` was a flat `chunk * tw`, and with

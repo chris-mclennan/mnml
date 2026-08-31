@@ -213,31 +213,6 @@ single screenshot.
 
 Left for the user to decide with that context.
 
-### Editor breadcrumb should be clickable
-
-**User ask 2026-08-31:** "should this line with breadcrumb be clickable
-at all?"
-
-Today it is not — the editor breadcrumb (`src › app › mod.rs`, plus the
-enclosing symbol when sticky context is on) registers no click rects.
-The FILES pane's breadcrumb already is clickable
-(`PaneRects::file_pane_breadcrumbs`), so this is an inconsistency
-between two things that look identical.
-
-What each segment should do:
-
-- **A directory segment** (`src`, `app`) — open a Files pane there. That
-  matches what the Files-pane breadcrumb already does, and is the
-  reason `Pane::Files` exists.
-- **The filename** — reveal the file in the tree, scrolling it into view
-  and selecting it. Opening it is a no-op; it is already open.
-- **A symbol segment** (`ScrollbarKind`) — jump to that symbol's
-  definition line. The symbols are already extracted for the breadcrumb
-  (`Buffer::outline_symbols`), so the target is in hand.
-
-Hover should underline the segment under the cursor, as the Files-pane
-breadcrumb does, or nothing on screen says it is clickable.
-
 ### WebSocket support
 **Status: complete.** Both tracks shipped:
 

@@ -3663,6 +3663,21 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // Git-palette row (the GitKraken-style panel shown when
     // `ActivitySection::Git` is active). Maps to the same
     // `GitRailHit` dispatch as the legacy rail.
+    // Editor breadcrumb — each segment opens a Files pane at its
+    // directory. The Files pane's own breadcrumb was already clickable;
+    // the editor's registered no rects at all, so two rows that look
+    // identical behaved differently (user: "should this line with
+    // breadcrumb be clickable at all?").
+    if let Some((_, dir)) = app
+        .rects
+        .editor_breadcrumbs
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        app.open_files_pane(Some(dir));
+        return;
+    }
     // ── Files pane breadcrumb ──
     //
     // Checked BEFORE the row list because the header sits above the rows
