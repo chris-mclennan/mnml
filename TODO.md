@@ -193,26 +193,6 @@ the sixel/image path shows how a non-text pane hangs off `Pane`.
   of data by accident.
 
 
-### Trash: size bound, not just an age bound
-
-Review note on the undoable-delete work (2026-08-31). Retention is
-purely time-based — 7 days — with no total-size cap. A user who deletes
-a large directory to reclaim disk space does not get that space back for
-a week, and the trash lives on the same filesystem they were trying to
-free.
-
-Worth adding a size ceiling (evict oldest until under, say, 1 GB or some
-fraction of free space) and skipping the trash entirely above a
-threshold, with the toast saying the delete is not undoable — which the
-fallback path already words correctly.
-
-Also unverified: symlink handling on the hard-delete FALLBACK path.
-`is_dir` comes from `path.is_dir()`, which follows symlinks, so a
-symlink-to-directory whose trash move failed would reach
-`remove_dir_all`. Narrow (the move rarely fails on the same filesystem)
-but worth a targeted test: symlink to a directory outside the workspace,
-force the rename to fail, assert the target's contents survive.
-
 ### Question: gutter width on the activity panels
 
 **User asked 2026-08-31:** "do you think we should have a 1 cell buffer

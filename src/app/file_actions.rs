@@ -564,6 +564,24 @@ impl App {
         digits.parse().ok()
     }
 
+    /// Ceiling on the trash's total size.
+    ///
+    /// Age alone was not enough: deleting a large directory to reclaim
+    /// disk space did not reclaim it for a week, and the trash sits on
+    /// the same filesystem being cleaned up. Above this, the oldest
+    /// entries go until it fits.
+    const TRASH_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+    /// Anything at least this big skips the trash entirely and is
+    /// deleted outright.
+    ///
+    /// Moving a 4 GB directory into the trash only to evict it moments
+    /// later is worse than not trashing it: the space is not freed, and
+    /// the undo it offers is one the size cap is about to invalidate.
+    /// The toast says the delete is not undoable, which the fallback
+    /// path already words.
+    const TRASH_SKIP_ABOVE_BYTES: u64 = 256 * 1024 * 1024;
+
     /// Drop trashed entries older than a week.
     ///
     /// Without this the directory grows forever — the delete is only
@@ -590,6 +608,44 @@ impl App {
                 std::fs::remove_file(&p)
             };
         }
+        self.evict_trash_over_budget();
+    }
+
+    /// Evict oldest-first until the trash fits under
+    /// [`Self::TRASH_MAX_BYTES`].
+    fn evict_trash_over_budget(&self) {
+        let trash = self.trash_dir();
+        let Ok(rd) = std::fs::read_dir(&trash) else {
+            return;
+        };
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut entries: Vec<(u64, std::path::PathBuf, u64)> = rd
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                let at = Self::trashed_at(&p)?;
+                let (bytes, _) = crate::transfer::measure(std::slice::from_ref(&p), &cancel);
+                Some((at, p, bytes))
+            })
+            .collect();
+        let mut total: u64 = entries.iter().map(|(_, _, b)| *b).sum();
+        if total <= Self::TRASH_MAX_BYTES {
+            return;
+        }
+        entries.sort_by_key(|(at, _, _)| *at); // oldest first
+        for (_, p, bytes) in entries {
+            if total <= Self::TRASH_MAX_BYTES {
+                break;
+            }
+            let removed = if p.is_dir() {
+                std::fs::remove_dir_all(&p).is_ok()
+            } else {
+                std::fs::remove_file(&p).is_ok()
+            };
+            if removed {
+                total = total.saturating_sub(bytes);
+            }
+        }
     }
 
     pub fn execute_delete_fs_entry(&mut self, path: &Path) {
@@ -607,8 +663,16 @@ impl App {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "entry".to_string());
+        // Something huge skips the trash: moving it there would not free
+        // the space the user is trying to reclaim, and the undo it
+        // offered would be evicted by the size cap moments later.
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let (bytes, _) =
+            crate::transfer::measure(std::slice::from_ref(&path.to_path_buf()), &cancel);
+        let too_big = bytes >= Self::TRASH_SKIP_ABOVE_BYTES;
+
         let trash = self.trash_dir();
-        let made_trash = std::fs::create_dir_all(&trash).is_ok();
+        let made_trash = !too_big && std::fs::create_dir_all(&trash).is_ok();
         let dest = Self::free_trash_path(&trash, &name);
         let moved = made_trash && std::fs::rename(path, &dest).is_ok();
 
@@ -675,10 +739,10 @@ impl App {
             "deleted {}{}{}",
             rel_path(&self.workspace, path),
             if is_dir { "/" } else { "" },
-            if moved {
-                ""
-            } else {
-                " (no undo — trash unavailable)"
+            match (moved, too_big) {
+                (true, _) => "",
+                (false, true) => " (no undo — too large to keep)",
+                (false, false) => " (no undo — trash unavailable)",
             }
         ));
     }
@@ -1676,6 +1740,67 @@ mod refresh_after_ops_tests {
 mod delete_undo_tests {
     use crate::app::App;
     use crate::config::Config;
+    /// Deleting a SYMLINK to a directory must not touch the target.
+    ///
+    /// Review flagged this as unverified: the hard-delete fallback picks
+    /// `remove_dir_all` vs `remove_file` from `path.is_dir()`, which
+    /// FOLLOWS symlinks — so a symlink-to-directory takes the
+    /// `remove_dir_all` branch. Verified rather than assumed:
+    /// `remove_dir_all` does not follow symlinks, it unlinks the link
+    /// itself. This test pins that, since the whole fallback rests on it.
+    #[test]
+    #[cfg(unix)]
+    fn deleting_a_symlink_to_a_directory_leaves_the_target_alone() {
+        let (_d, mut app, _f) = app_with_file();
+        let outside = tempfile::tempdir().unwrap();
+        let real = outside.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("precious.txt"), b"do not delete").unwrap();
+
+        let link = app.workspace.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        app.execute_delete_fs_entry(&link);
+
+        assert!(
+            std::fs::symlink_metadata(&link).is_err(),
+            "the symlink itself survived the delete"
+        );
+        assert!(
+            real.join("precious.txt").exists(),
+            "deleting a symlink wiped the directory it pointed at"
+        );
+    }
+
+    /// ...and the same on the HARD-DELETE fallback, which is the path
+    /// the review was actually worried about — the trash move never
+    /// happens there.
+    #[test]
+    #[cfg(unix)]
+    fn the_fallback_delete_also_spares_a_symlink_target() {
+        let (_d, mut app, _f) = app_with_file();
+        let outside = tempfile::tempdir().unwrap();
+        let real = outside.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("precious.txt"), b"do not delete").unwrap();
+        let link = app.workspace.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Force the trash move to fail: a FILE where the directory goes.
+        std::fs::create_dir_all(app.workspace.join(".mnml")).unwrap();
+        std::fs::write(app.trash_dir(), b"not a directory").unwrap();
+
+        app.execute_delete_fs_entry(&link);
+
+        assert!(
+            app.pending_undo.is_none(),
+            "setup: expected the fallback path"
+        );
+        assert!(
+            real.join("precious.txt").exists(),
+            "the fallback delete wiped the symlink's target"
+        );
+    }
 
     fn app_with_file() -> (tempfile::TempDir, App, std::path::PathBuf) {
         let d = tempfile::tempdir().unwrap();
@@ -1831,6 +1956,76 @@ mod delete_undo_tests {
             toast.contains("no undo"),
             "the toast does not say the delete was unrecoverable: {toast:?}"
         );
+    }
+
+    /// The trash must be bounded by SIZE, not only age. Deleting a large
+    /// directory to reclaim space did not reclaim it for a week, and the
+    /// trash sits on the same filesystem being cleaned up.
+    #[test]
+    fn the_trash_evicts_oldest_first_when_over_budget() {
+        let (_d, mut app, f) = app_with_file();
+        let trash = app.trash_dir();
+        std::fs::create_dir_all(&trash).unwrap();
+
+        // Three stamped entries, oldest first, together over budget.
+        let now = crate::app::now_unix();
+        let big = vec![0u8; (App::TRASH_MAX_BYTES / 2) as usize + 1];
+        for (i, age) in [(0u32, 300u64), (1, 200), (2, 100)] {
+            std::fs::write(trash.join(format!("{}-old{i}.bin", now - age)), &big).unwrap();
+        }
+
+        app.execute_delete_fs_entry(&f);
+
+        let names: Vec<String> = std::fs::read_dir(&trash)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.contains("old0")),
+            "the OLDEST entry was not evicted first: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("doomed.txt")),
+            "the entry just deleted was evicted: {names:?}"
+        );
+    }
+
+    /// Something very large skips the trash entirely — moving it there
+    /// would not free the space, and the undo would be evicted by the
+    /// size cap moments later. The toast has to say so.
+    #[test]
+    fn a_very_large_delete_skips_the_trash_and_says_so() {
+        let (_d, mut app, _f) = app_with_file();
+        let big_dir = app.workspace.join("huge");
+        std::fs::create_dir_all(&big_dir).unwrap();
+        std::fs::write(
+            big_dir.join("blob.bin"),
+            vec![0u8; App::TRASH_SKIP_ABOVE_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        app.execute_delete_fs_entry(&big_dir);
+
+        assert!(!big_dir.exists(), "the directory was not deleted");
+        assert!(
+            app.pending_undo.is_none(),
+            "offered an undo for something it did not keep"
+        );
+        let toast = app
+            .toast
+            .as_ref()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+        assert!(
+            toast.contains("too large"),
+            "the toast does not explain why there is no undo: {toast:?}"
+        );
+        // ...and the space really is free: nothing landed in the trash.
+        let trashed = std::fs::read_dir(app.trash_dir())
+            .map(|r| r.count())
+            .unwrap_or(0);
+        assert_eq!(trashed, 0, "it went to the trash anyway");
     }
 
     /// The trash is bounded — a deferred delete that is never collected
