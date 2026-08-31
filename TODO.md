@@ -193,6 +193,38 @@ the sixel/image path shows how a non-text pane hangs off `Pane`.
   of data by accident.
 
 
+### Glyphs on every menu row, not just the menu bar
+
+**User ask 2026-08-31:** "all rows on all dropdowns and right click
+menus and such should have glyphs for each one like we did for menubar."
+
+The menu bar's dropdowns already carry per-item glyphs. Nothing else
+does — the file/tree right-click menu, the `+` menu and its submenus,
+the repo chip menu, the dock kebab, the statusline chip menus, and the
+Files-pane row kebab are all plain text. A 15-row right-click menu with
+no icons is a wall of words, and the menu bar proves the pattern is
+already accepted here.
+
+**Where it should live:** `MenuItem` gains an optional glyph, defaulting
+to none, and `ui/context_menu.rs` reserves the column only when at least
+one row in that menu has one — so a menu of two plain rows does not grow
+an empty gutter. `[ui] ascii_icons` must fall back, as everywhere else.
+
+**The real work is the mapping, not the rendering.** There are ~40
+distinct `MenuAction` variants plus command-id rows. Rather than
+hand-tagging each call site, the glyph should derive from the ACTION
+where possible — one table `MenuAction -> glyph`, so a new menu built
+from existing actions gets icons for free and cannot drift. Rows that
+carry a raw `Command(id)` can map from the command's `group` (files /
+git / ai / view …), which already exists.
+
+Reuse `icon_catalog.rs` rather than inventing a second set, and match
+the menu bar's existing choices where the same action appears in both —
+two different glyphs for "Delete" in two menus would be worse than none.
+
+Worth doing after the menu-bar set is audited for consistency, since
+this multiplies whatever convention is there now.
+
 ### Choose which browser opens external URLs
 
 **User report 2026-08-31:** "choose which browser opens when doing

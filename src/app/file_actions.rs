@@ -556,6 +556,7 @@ impl App {
     /// real, and it costs nothing new because a directory listing is
     /// already a pane.
     pub fn open_trash_pane(&mut self) {
+        self.migrate_legacy_trash_index();
         let trash = self.trash_dir();
         if std::fs::create_dir_all(&trash).is_err() {
             self.toast("could not open the trash");
@@ -609,6 +610,34 @@ impl App {
                 self.toast(format!("restored {}", rel_path(&self.workspace, &to)));
             }
             Err(e) => self.toast(format!("restore failed: {e}")),
+        }
+    }
+
+    /// Move a pre-existing `.mnml/trash/index.jsonl` out of the trash.
+    ///
+    /// The index used to live INSIDE the trash, where it rendered as a
+    /// row beside the user's deleted files. Relocating it only changed
+    /// where NEW writes go — an existing file kept sitting there
+    /// (user: "i still see the index"). This carries it across once and
+    /// removes the old one.
+    fn migrate_legacy_trash_index(&self) {
+        let legacy = self.trash_dir().join("index.jsonl");
+        let Ok(old_body) = std::fs::read_to_string(&legacy) else {
+            return;
+        };
+        let dest = self.trash_index_path();
+        let mut merged = std::fs::read_to_string(&dest).unwrap_or_default();
+        if !merged.is_empty() && !merged.ends_with('\n') {
+            merged.push('\n');
+        }
+        merged.push_str(&old_body);
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Only drop the old file once the merged copy is safely written,
+        // or a failure here loses every recorded origin.
+        if std::fs::write(&dest, merged).is_ok() {
+            let _ = std::fs::remove_file(&legacy);
         }
     }
 
@@ -2384,6 +2413,65 @@ mod trash_view_tests {
         assert!(
             app.trash_index_path().is_file(),
             "the index was not written at all"
+        );
+    }
+
+    /// USER REPORT — "i still see the index". Relocating the index only
+    /// changed where NEW writes go; a file already sitting inside the
+    /// trash stayed there and kept rendering as a row.
+    #[test]
+    fn a_legacy_index_inside_the_trash_is_migrated_out() {
+        let (_d, mut app) = app_with(&[]);
+        let trash = app.trash_dir();
+        std::fs::create_dir_all(&trash).unwrap();
+        let legacy = trash.join("index.jsonl");
+        std::fs::write(
+            &legacy,
+            "{\"entry\":\"1-old.txt\",\"origin\":\"/tmp/old.txt\"}\n",
+        )
+        .unwrap();
+        // Something else in the trash so the pane actually opens.
+        std::fs::write(trash.join("1-old.txt"), b"x").unwrap();
+
+        app.open_trash_pane();
+
+        assert!(
+            !legacy.exists(),
+            "the legacy index is still inside the trash"
+        );
+        let moved = std::fs::read_to_string(app.trash_index_path()).unwrap();
+        assert!(
+            moved.contains("1-old.txt"),
+            "migration dropped the recorded origins:\n{moved}"
+        );
+    }
+
+    /// Migration must not lose records already at the new location.
+    #[test]
+    fn migration_merges_rather_than_overwrites() {
+        let (_d, mut app) = app_with(&["keep.txt"]);
+        app.execute_delete_fs_entry(&app.workspace.join("keep.txt"));
+        let before = std::fs::read_to_string(app.trash_index_path()).unwrap();
+        assert!(before.contains("keep.txt"), "setup");
+
+        let legacy = app.trash_dir().join("index.jsonl");
+        std::fs::write(
+            &legacy,
+            "{\"entry\":\"1-old.txt\",\"origin\":\"/tmp/old.txt\"}\n",
+        )
+        .unwrap();
+        std::fs::write(app.trash_dir().join("1-old.txt"), b"x").unwrap();
+
+        app.open_trash_pane();
+
+        let after = std::fs::read_to_string(app.trash_index_path()).unwrap();
+        assert!(
+            after.contains("keep.txt"),
+            "migration clobbered existing records"
+        );
+        assert!(
+            after.contains("1-old.txt"),
+            "migration dropped the legacy records"
         );
     }
 

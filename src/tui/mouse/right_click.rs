@@ -2009,6 +2009,17 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                         crate::context_menu::MenuAction::Command("files.restore_from_trash"),
                     ),
                 );
+                // "Delete…" is a lie in here — there is nowhere further
+                // to defer to, so it removes the file outright. Say so
+                // (user: "shouldn't delete say delete permanently?"),
+                // and mark it destructive so it paints red like every
+                // other unrecoverable action.
+                for it in menu.items.iter_mut() {
+                    if matches!(it.action, crate::context_menu::MenuAction::Delete(_)) {
+                        it.label = "Delete permanently…".to_string();
+                        it.destructive = true;
+                    }
+                }
             }
             // #files — the tree's menu is path-based and knows nothing
             // about marks, so prepend the two things only a Files pane
