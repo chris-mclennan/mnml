@@ -3858,6 +3858,15 @@ pub enum UndoAction {
     /// Put the workspace `captured/log.jsonl` bytes back.
     /// Captured on `http_panel_clear_captured`.
     RestoreCapturedFile { bytes: Vec<u8> },
+    /// Move a deleted path back out of the workspace trash.
+    ///
+    /// A delete used to be `remove_file` / `remove_dir_all` — final, with
+    /// the app's own undo mechanism sitting right there unused. It moves
+    /// the entry into `.mnml/trash/` now, so undo is a rename back.
+    RestoreDeletedPath {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+    },
     /// Reopen a closed buffer at the given path + cursor + scroll.
     /// Cursor stored as a raw byte offset (Editor's native form).
     ReopenClosedBuffer {
@@ -11119,6 +11128,30 @@ impl App {
                         self.toast("recent history restored");
                     }
                     Err(e) => self.toast(format!("undo: {e}")),
+                }
+            }
+            UndoAction::RestoreDeletedPath { from, to } => {
+                // Refuse rather than clobber: something may have taken
+                // the path back since the delete.
+                if to.exists() {
+                    self.toast(format!(
+                        "undo: {} already exists",
+                        to.file_name()
+                            .map(|n| n.to_string_lossy())
+                            .unwrap_or_default()
+                    ));
+                } else {
+                    match std::fs::rename(&from, &to) {
+                        Ok(()) => {
+                            self.refresh_trees_for_path(&to);
+                            let name = to
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            self.toast(format!("restored {name}"));
+                        }
+                        Err(e) => self.toast(format!("undo: {e}")),
+                    }
                 }
             }
             UndoAction::ReopenClosedBuffer {

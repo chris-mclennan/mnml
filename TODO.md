@@ -144,8 +144,9 @@ that reflows the strip):
 - **Names truncate without an ellipsis**, so a clipped name reads as a
   real filename.
 - **The Files pane registers no click rects for F1 Click Discovery.**
-- **File operations register no `pending_undo`** even though the app has
-  the mechanism — a delete from the pane is unrecoverable.
+- ~~File operations register no `pending_undo`~~ — FIXED 2026-08-31. A
+  delete moves to `.mnml/trash/` and offers undo; entries older than a
+  week are pruned.
 
 ### 7. Archives — view inside, extract out
 

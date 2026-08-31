@@ -514,16 +514,79 @@ impl App {
         }
     }
 
+    /// Workspace trash directory. A delete moves here rather than
+    /// unlinking, so `pending_undo` has something to restore.
+    pub fn trash_dir(&self) -> std::path::PathBuf {
+        self.workspace.join(".mnml").join("trash")
+    }
+
+    /// Drop trashed entries older than a week.
+    ///
+    /// Without this the directory grows forever — the delete is only
+    /// deferred, not avoided. A week is long enough that "I deleted that
+    /// yesterday" is still recoverable by hand.
+    fn prune_trash(&self) {
+        const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+        let Ok(rd) = std::fs::read_dir(self.trash_dir()) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let stale = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t.elapsed().map(|d| d > MAX_AGE).unwrap_or(false))
+                .unwrap_or(false);
+            if !stale {
+                continue;
+            }
+            let p = e.path();
+            let _ = if p.is_dir() {
+                std::fs::remove_dir_all(&p)
+            } else {
+                std::fs::remove_file(&p)
+            };
+        }
+    }
+
     pub fn execute_delete_fs_entry(&mut self, path: &Path) {
         let is_dir = path.is_dir();
-        let res = if is_dir {
-            std::fs::remove_dir_all(path)
+        // Move to the workspace trash instead of unlinking, so the
+        // delete is undoable. The app has had `pending_undo` all along;
+        // a Files-pane delete simply never offered it, which made it the
+        // one operation you could not take back.
+        //
+        // Falls back to a hard delete when the move fails — a trash on a
+        // different filesystem, or an unwritable workspace. Better to
+        // still delete than to refuse, but no undo is offered then,
+        // because there would be nothing to restore.
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "entry".to_string());
+        let trash = self.trash_dir();
+        let stamp = crate::app::now_unix();
+        let dest = trash.join(format!("{stamp}-{name}"));
+        let moved = std::fs::create_dir_all(&trash).is_ok() && std::fs::rename(path, &dest).is_ok();
+
+        if !moved {
+            let res = if is_dir {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            };
+            if let Err(e) = res {
+                self.toast(format!("delete failed: {e}"));
+                return;
+            }
         } else {
-            std::fs::remove_file(path)
-        };
-        if let Err(e) = res {
-            self.toast(format!("delete failed: {e}"));
-            return;
+            self.set_pending_undo(
+                format!("deleted {name}"),
+                crate::app::UndoAction::RestoreDeletedPath {
+                    from: dest,
+                    to: path.to_path_buf(),
+                },
+            );
+            self.prune_trash();
         }
         // Force-close any editor buffer for the deleted file (or dir contents).
         let affected: Vec<usize> = self
@@ -1553,6 +1616,102 @@ mod refresh_after_ops_tests {
         assert!(
             listed(&app, dst_pane).contains(&"moving.txt".to_string()),
             "the destination pane did not pick up the arrival"
+        );
+    }
+}
+
+#[cfg(test)]
+mod delete_undo_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn app_with_file() -> (tempfile::TempDir, App, std::path::PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let f = app.workspace.join("doomed.txt");
+        std::fs::write(&f, b"precious").unwrap();
+        (d, app, f)
+    }
+
+    /// A Files-pane delete was the one operation with no way back — the
+    /// app has had `pending_undo` all along and this path never offered
+    /// it. It is now a move into `.mnml/trash/`, so undo is a rename.
+    #[test]
+    fn deleting_offers_an_undo_that_restores_the_file() {
+        let (_d, mut app, f) = app_with_file();
+        app.execute_delete_fs_entry(&f);
+        assert!(!f.exists(), "the file is still in place");
+        assert!(
+            app.pending_undo.is_some(),
+            "a delete offered no undo affordance"
+        );
+
+        app.commit_pending_undo();
+        assert!(f.is_file(), "undo did not bring the file back");
+        assert_eq!(std::fs::read(&f).unwrap(), b"precious", "content changed");
+    }
+
+    /// Directories too — `remove_dir_all` was the truly unrecoverable
+    /// one, and a rename handles a tree as cheaply as a file.
+    #[test]
+    fn deleting_a_directory_is_also_undoable() {
+        let (_d, mut app, _f) = app_with_file();
+        let dir = app.workspace.join("adir");
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        std::fs::write(dir.join("nested/x.txt"), b"deep").unwrap();
+
+        app.execute_delete_fs_entry(&dir);
+        assert!(!dir.exists());
+        assert!(app.pending_undo.is_some(), "no undo for a directory");
+        app.commit_pending_undo();
+        assert_eq!(
+            std::fs::read(dir.join("nested/x.txt")).unwrap(),
+            b"deep",
+            "the tree did not come back intact"
+        );
+    }
+
+    /// Undo must refuse rather than clobber something that has taken the
+    /// path back in the meantime.
+    #[test]
+    fn undo_does_not_overwrite_a_file_recreated_at_the_same_path() {
+        let (_d, mut app, f) = app_with_file();
+        app.execute_delete_fs_entry(&f);
+        std::fs::write(&f, b"newer").unwrap();
+
+        app.commit_pending_undo();
+        assert_eq!(
+            std::fs::read(&f).unwrap(),
+            b"newer",
+            "undo clobbered a file that had been recreated"
+        );
+    }
+
+    /// The trash is bounded — a deferred delete that is never collected
+    /// is just a disk leak.
+    #[test]
+    fn stale_trash_entries_are_pruned() {
+        let (_d, mut app, f) = app_with_file();
+        let trash = app.trash_dir();
+        std::fs::create_dir_all(&trash).unwrap();
+        let old = trash.join("ancient.txt");
+        std::fs::write(&old, b"x").unwrap();
+        // `File::set_modified` is std — no dependency for one test.
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86400);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+
+        app.execute_delete_fs_entry(&f);
+        assert!(!old.exists(), "a month-old trash entry survived the prune");
+        // ...and the one just deleted is still there.
+        assert_eq!(
+            std::fs::read_dir(&trash).unwrap().count(),
+            1,
+            "the fresh entry was pruned too"
         );
     }
 }
