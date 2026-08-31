@@ -520,23 +520,67 @@ impl App {
         self.workspace.join(".mnml").join("trash")
     }
 
+    /// An unused path in the trash for `name`.
+    ///
+    /// The stamp alone is NOT enough: `now_unix()` is second-resolution
+    /// and `fs::rename` REPLACES an existing destination file. Deleting
+    /// two files with the same basename inside one second therefore
+    /// destroyed the first one's bytes — the precise outcome this
+    /// feature exists to prevent, and silent, since the toast reads the
+    /// same either way. A counter suffix makes the name unique.
+    fn free_trash_path(trash: &Path, name: &str) -> std::path::PathBuf {
+        let stamp = crate::app::now_unix();
+        let first = trash.join(format!("{stamp}-{name}"));
+        if !first.exists() {
+            return first;
+        }
+        for n in 2..10_000u32 {
+            let p = trash.join(format!("{stamp}-{n}-{name}"));
+            if !p.exists() {
+                return p;
+            }
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        trash.join(format!("{stamp}-{nanos}-{name}"))
+    }
+
+    /// When `entry` entered the trash, from the stamp encoded in its
+    /// name.
+    ///
+    /// NOT the filesystem mtime. `rename` does not update mtime, so a
+    /// file untouched for over a week was pruned on the very tick it was
+    /// trashed, and the undo then pointed at nothing seconds after the
+    /// toast promised it. Deleting an old file is the COMMON case, so
+    /// that broke the feature for most of its uses.
+    fn trashed_at(entry: &Path) -> Option<u64> {
+        let name = entry.file_name()?.to_str()?;
+        let digits: String = name.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        digits.parse().ok()
+    }
+
     /// Drop trashed entries older than a week.
     ///
     /// Without this the directory grows forever — the delete is only
     /// deferred, not avoided. A week is long enough that "I deleted that
     /// yesterday" is still recoverable by hand.
     fn prune_trash(&self) {
-        const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+        const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
         let Ok(rd) = std::fs::read_dir(self.trash_dir()) else {
             return;
         };
+        let cutoff = crate::app::now_unix().saturating_sub(MAX_AGE_SECS);
         for e in rd.flatten() {
-            let stale = e
-                .metadata()
-                .and_then(|m| m.modified())
-                .map(|t| t.elapsed().map(|d| d > MAX_AGE).unwrap_or(false))
-                .unwrap_or(false);
-            if !stale {
+            // No stamp in the name ⇒ not ours; leave it rather than guess.
+            let Some(at) = Self::trashed_at(&e.path()) else {
+                continue;
+            };
+            if at > cutoff {
                 continue;
             }
             let p = e.path();
@@ -564,9 +608,9 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "entry".to_string());
         let trash = self.trash_dir();
-        let stamp = crate::app::now_unix();
-        let dest = trash.join(format!("{stamp}-{name}"));
-        let moved = std::fs::create_dir_all(&trash).is_ok() && std::fs::rename(path, &dest).is_ok();
+        let made_trash = std::fs::create_dir_all(&trash).is_ok();
+        let dest = Self::free_trash_path(&trash, &name);
+        let moved = made_trash && std::fs::rename(path, &dest).is_ok();
 
         if !moved {
             let res = if is_dir {
@@ -624,10 +668,18 @@ impl App {
         // unconditionally (walks `.http` / `.curl` / `.rest` in the
         // workspace + `.mnml/` subdirs).
         self.http_panel_refresh();
+        // Says so when it is NOT recoverable. The two paths read
+        // identically otherwise, so the user could not tell afterwards
+        // whether a given delete could be taken back.
         self.toast(format!(
-            "deleted {}{}",
+            "deleted {}{}{}",
             rel_path(&self.workspace, path),
-            if is_dir { "/" } else { "" }
+            if is_dir { "/" } else { "" },
+            if moved {
+                ""
+            } else {
+                " (no undo — trash unavailable)"
+            }
         ));
     }
 
@@ -1687,31 +1739,127 @@ mod delete_undo_tests {
         );
     }
 
+    /// REVIEW CRITICAL 1 — `now_unix()` is second-resolution and
+    /// `fs::rename` REPLACES an existing destination file. Two deletes
+    /// of the same basename inside one second destroyed the first file's
+    /// bytes outright, with an identical success toast either way.
+    #[test]
+    fn two_deletes_of_the_same_name_in_one_second_both_survive() {
+        let (_d, mut app, _f) = app_with_file();
+        std::fs::create_dir_all(app.workspace.join("a")).unwrap();
+        std::fs::create_dir_all(app.workspace.join("b")).unwrap();
+        let one = app.workspace.join("a/same.txt");
+        let two = app.workspace.join("b/same.txt");
+        std::fs::write(&one, b"FIRST").unwrap();
+        std::fs::write(&two, b"SECOND").unwrap();
+
+        app.execute_delete_fs_entry(&one);
+        app.execute_delete_fs_entry(&two);
+
+        let bodies: Vec<Vec<u8>> = std::fs::read_dir(app.trash_dir())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .map(|e| std::fs::read(e.path()).unwrap())
+            .collect();
+        assert_eq!(
+            bodies.len(),
+            2,
+            "one delete overwrote the other in the trash: {bodies:?}"
+        );
+        assert!(bodies.contains(&b"FIRST".to_vec()), "FIRST was destroyed");
+        assert!(bodies.contains(&b"SECOND".to_vec()), "SECOND was destroyed");
+    }
+
+    /// REVIEW CRITICAL 2 — pruning aged entries by filesystem mtime, and
+    /// `rename` does not update mtime. Any file untouched for over a week
+    /// was pruned on the very tick it was trashed, so the undo pointed at
+    /// nothing seconds after the toast promised it. Deleting an OLD file
+    /// is the common case, which broke the feature for most of its uses.
+    ///
+    /// The first version of the prune test aged a PRE-EXISTING trash
+    /// entry, so it never exercised this at all.
+    #[test]
+    fn deleting_a_file_older_than_the_retention_window_is_still_undoable() {
+        let (_d, mut app, f) = app_with_file();
+        // Back-date the file itself well past the 7-day window.
+        let ancient = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86400);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(ancient)
+            .unwrap();
+
+        app.execute_delete_fs_entry(&f);
+        let undo = app.pending_undo.as_ref().expect("no undo offered");
+        let crate::app::UndoAction::RestoreDeletedPath { from, .. } = &undo.action else {
+            panic!("wrong undo action");
+        };
+        assert!(
+            from.exists(),
+            "the trashed copy was pruned on the same tick it was created — \
+             undo points at nothing"
+        );
+
+        app.commit_pending_undo();
+        assert!(f.is_file(), "undo could not restore an old file");
+    }
+
+    /// A delete that could NOT be trashed must say so — the two paths
+    /// read identically before, so the user had no way to tell whether a
+    /// given delete was recoverable.
+    #[test]
+    fn a_delete_without_undo_says_so() {
+        let (_d, mut app, f) = app_with_file();
+        // Make the trash path unusable: a FILE where the directory goes.
+        std::fs::create_dir_all(app.workspace.join(".mnml")).unwrap();
+        std::fs::write(app.trash_dir(), b"not a directory").unwrap();
+
+        app.execute_delete_fs_entry(&f);
+        assert!(!f.exists(), "the file survived a fallback delete");
+        assert!(
+            app.pending_undo.is_none(),
+            "offered an undo with nothing to restore"
+        );
+        let toast = app
+            .toast
+            .as_ref()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+        assert!(
+            toast.contains("no undo"),
+            "the toast does not say the delete was unrecoverable: {toast:?}"
+        );
+    }
+
     /// The trash is bounded — a deferred delete that is never collected
     /// is just a disk leak.
+    ///
+    /// Ages by the STAMP IN THE NAME, which is when the entry was
+    /// trashed. The earlier version of this test set a filesystem mtime,
+    /// which `rename` never updates — so it tested a mechanism the prune
+    /// no longer uses, and never covered the case that actually broke
+    /// (an old file trashed and immediately pruned).
     #[test]
     fn stale_trash_entries_are_pruned() {
         let (_d, mut app, f) = app_with_file();
         let trash = app.trash_dir();
         std::fs::create_dir_all(&trash).unwrap();
-        let old = trash.join("ancient.txt");
+        let old_stamp = crate::app::now_unix() - (30 * 86400);
+        let old = trash.join(format!("{old_stamp}-ancient.txt"));
         std::fs::write(&old, b"x").unwrap();
-        // `File::set_modified` is std — no dependency for one test.
-        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86400);
-        std::fs::File::options()
-            .write(true)
-            .open(&old)
-            .unwrap()
-            .set_modified(long_ago)
-            .unwrap();
+        // An entry with no stamp is not ours and must be left alone.
+        let foreign = trash.join("someone-elses-file.txt");
+        std::fs::write(&foreign, b"y").unwrap();
 
         app.execute_delete_fs_entry(&f);
+
         assert!(!old.exists(), "a month-old trash entry survived the prune");
-        // ...and the one just deleted is still there.
-        assert_eq!(
-            std::fs::read_dir(&trash).unwrap().count(),
-            1,
-            "the fresh entry was pruned too"
+        assert!(foreign.exists(), "pruned an entry that was not ours");
+        assert!(
+            std::fs::read_dir(&trash).unwrap().count() == 2,
+            "expected the fresh entry + the foreign one"
         );
     }
 }
