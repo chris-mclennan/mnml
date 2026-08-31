@@ -1147,7 +1147,11 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
                 let selected = p.cursor.min(buttons.len() - 1);
                 let code = buttons[selected].1;
                 app.prompt = None;
-                app.run_delete_button(code);
+                // Option/Alt = skip the trash. macOS's alternate-item
+                // convention, hung off the confirming keypress because a
+                // terminal cannot observe a held modifier.
+                let alt = key.modifiers.contains(KeyModifiers::ALT);
+                app.run_delete_button_opts(code, alt);
                 return;
             }
             KeyCode::Char(c) => {
@@ -1159,7 +1163,8 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
                 };
                 if let Some(code) = hit {
                     app.prompt = None;
-                    app.run_delete_button(code);
+                    let alt = key.modifiers.contains(KeyModifiers::ALT);
+                    app.run_delete_button_opts(code, alt);
                 }
                 return;
             }

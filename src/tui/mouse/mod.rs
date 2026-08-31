@@ -1360,7 +1360,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
             app.prompt = None;
-            app.run_delete_button(code);
+            let alt = m
+                .modifiers
+                .contains(ratatui::crossterm::event::KeyModifiers::ALT);
+            app.run_delete_button_opts(code, alt);
         }
         return;
     }

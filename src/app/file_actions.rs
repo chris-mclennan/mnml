@@ -226,6 +226,13 @@ impl App {
         } else {
             format!("Delete {rel}?")
         };
+        // Name the alternate, or nobody discovers it. An invisible
+        // modifier gesture is one nobody uses.
+        let title = if path.parent() == Some(self.trash_dir().as_path()) {
+            format!("{title}  (permanent — already in the trash)")
+        } else {
+            format!("{title}  ⌥ to skip the trash")
+        };
         let mut prompt =
             crate::prompt::Prompt::new(crate::prompt::PromptKind::DeleteConfirm, title);
         // Focus Cancel by default (index 1) — safety first for a
@@ -507,10 +514,22 @@ impl App {
     /// Dispatch handler for the DeleteConfirm button dialog. Delete
     /// = execute, Cancel = drop the pending FsAction.
     pub fn run_delete_button(&mut self, code: u8) {
+        self.run_delete_button_opts(code, false);
+    }
+
+    /// `permanent` skips the trash — the Option-held path.
+    ///
+    /// macOS's alternate-menu-item convention: holding Option turns a
+    /// reversible action into its irreversible sibling. A terminal
+    /// cannot see a HELD modifier (there is no event until a key or
+    /// click arrives), so this hangs off the modifier on the confirming
+    /// event rather than on hold-state, which is the same gesture from
+    /// the user's side.
+    pub fn run_delete_button_opts(&mut self, code: u8, permanent: bool) {
         match code {
             crate::ui::prompt::CONFIRM_BTN_PRIMARY => {
                 if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
-                    self.execute_delete_fs_entry(&path);
+                    self.execute_delete_fs_entry_opts(&path, permanent);
                 }
             }
             crate::ui::prompt::CONFIRM_BTN_CANCEL => {
@@ -848,6 +867,11 @@ impl App {
     }
 
     pub fn execute_delete_fs_entry(&mut self, path: &Path) {
+        self.execute_delete_fs_entry_opts(path, false);
+    }
+
+    /// `force_permanent` bypasses the trash entirely.
+    pub fn execute_delete_fs_entry_opts(&mut self, path: &Path, force_permanent: bool) {
         let is_dir = path.is_dir();
         // Move to the workspace trash instead of unlinking, so the
         // delete is undoable. The app has had `pending_undo` all along;
@@ -876,7 +900,7 @@ impl App {
         // `1788195310-1788195284-CHANGELOG-copy.md` and never actually
         // removed anything (user report). The trash is the end of the
         // line; there is nowhere further to defer to.
-        let already_trashed = path.parent() == Some(trash.as_path());
+        let already_trashed = force_permanent || path.parent() == Some(trash.as_path());
         let made_trash = !too_big && !already_trashed && std::fs::create_dir_all(&trash).is_ok();
         let dest = Self::free_trash_path(&trash, &name);
         let moved = made_trash && std::fs::rename(path, &dest).is_ok();
@@ -2343,6 +2367,92 @@ mod trash_view_tests {
         assert!(
             app.trash_origin_of(for_b).unwrap().ends_with("b/dup.txt"),
             "the origin index confused two same-named files"
+        );
+    }
+
+    /// USER ASK — "can we do a keypress while this is open to get
+    /// alternate option Delete Permanently so we can skip trash, on mac
+    /// it's like option."
+    ///
+    /// macOS's alternate-menu-item convention. A terminal cannot see a
+    /// HELD modifier — there is no event until a key or click arrives —
+    /// so this hangs off the modifier on the CONFIRMING event, which is
+    /// the same gesture from the user's side.
+    #[test]
+    fn option_on_the_confirm_skips_the_trash() {
+        let (_d, mut app) = app_with(&["doomed.txt"]);
+        let f = app.workspace.join("doomed.txt");
+        app.open_fs_delete_prompt(f.clone());
+        app.run_delete_button_opts(crate::ui::prompt::CONFIRM_BTN_PRIMARY, true);
+
+        assert!(!f.exists(), "the file was not deleted");
+        let trashed = std::fs::read_dir(app.trash_dir())
+            .map(|r| r.count())
+            .unwrap_or(0);
+        assert_eq!(trashed, 0, "Option-delete still went through the trash");
+        assert!(
+            app.pending_undo.is_none(),
+            "offered an undo for something it did not keep"
+        );
+    }
+
+    /// ...and WITHOUT Option it still trashes, or the modifier would be
+    /// meaningless.
+    #[test]
+    fn a_plain_confirm_still_uses_the_trash() {
+        let (_d, mut app) = app_with(&["doomed.txt"]);
+        let f = app.workspace.join("doomed.txt");
+        app.open_fs_delete_prompt(f.clone());
+        app.run_delete_button_opts(crate::ui::prompt::CONFIRM_BTN_PRIMARY, false);
+
+        assert!(!f.exists());
+        let trashed = std::fs::read_dir(app.trash_dir())
+            .map(|r| r.count())
+            .unwrap_or(0);
+        assert_eq!(trashed, 1, "a plain delete did not reach the trash");
+        assert!(app.pending_undo.is_some(), "no undo offered");
+    }
+
+    /// The dialog has to NAME the alternate — an invisible modifier
+    /// gesture is one nobody uses.
+    #[test]
+    fn the_delete_dialog_names_the_option_alternate() {
+        let (_d, mut app) = app_with(&["doomed.txt"]);
+        app.open_fs_delete_prompt(app.workspace.join("doomed.txt"));
+        let title = app
+            .prompt
+            .as_ref()
+            .map(|p| p.title.clone())
+            .unwrap_or_default();
+        assert!(
+            title.contains("skip the trash"),
+            "the dialog does not mention the alternate: {title:?}"
+        );
+    }
+
+    /// Inside the trash there is no alternate to offer — it says the
+    /// delete is permanent instead of promising a modifier that would
+    /// change nothing.
+    #[test]
+    fn inside_the_trash_the_dialog_says_permanent_instead() {
+        let (_d, mut app) = app_with(&["doomed.txt"]);
+        app.execute_delete_fs_entry(&app.workspace.join("doomed.txt"));
+        let entry = std::fs::read_dir(app.trash_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .next()
+            .unwrap();
+        app.open_fs_delete_prompt(entry);
+        let title = app
+            .prompt
+            .as_ref()
+            .map(|p| p.title.clone())
+            .unwrap_or_default();
+        assert!(title.contains("permanent"), "title was {title:?}");
+        assert!(
+            !title.contains("skip the trash"),
+            "promised an alternate that does nothing here: {title:?}"
         );
     }
 
