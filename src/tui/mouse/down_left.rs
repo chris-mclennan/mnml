@@ -407,6 +407,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // The notifications bell opens the message history.
+    if let Some(r) = app.rects.activity_bar_bell
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::command::run("messages.show", app);
+        return;
+    }
     if let Some(r) = app.rects.activity_bar_gear
         && crate::app::dispatch::contains(r, x, y)
     {

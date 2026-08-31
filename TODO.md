@@ -193,6 +193,38 @@ the sixel/image path shows how a non-text pane hangs off `Pane`.
   of data by accident.
 
 
+### Choose which browser opens external URLs
+
+**User report 2026-08-31:** "choose which browser opens when doing
+favorites in browser, i expected chrome but got safari. a left click on
+browser gives me chrome still... weird."
+
+Not weird — two different mechanisms:
+
+- **The browser CHIP / pane** drives Chrome specifically, because it
+  speaks CDP. Chrome is not a preference there, it is the protocol.
+- **A favorite / external URL** goes through
+  `App::open_url_external` (`src/app/mod.rs:1431`), which shells out to
+  macOS `open <url>` — the SYSTEM DEFAULT browser. Safari, unless the
+  user changed it.
+
+So mnml is consistent with itself and inconsistent with the user's
+expectation, which is the worse kind.
+
+Fix: a config key — `[ui] external_browser`, defaulting to `"default"`
+(today's behaviour). On macOS `open -a "Google Chrome" <url>`; on Linux
+the browser's binary; on Windows the ProgId or an explicit exe. A
+`"chrome"` value should mean "the same Chrome the CDP pane uses", so the
+two agree by default when set.
+
+Worth surfacing in Settings under Integrations, and worth a note in the
+browser chip's right-click menu ("External links open in: …"), since
+that is where the user will look after being surprised.
+
+Careful with the SSH path: `open_url_external` deliberately refuses to
+shell out over SSH and emits OSC 52 instead, so the local terminal gets
+the URL. Any browser-choice logic goes AFTER that check, not before.
+
 ### Question: gutter width on the activity panels
 
 **User asked 2026-08-31:** "do you think we should have a 1 cell buffer

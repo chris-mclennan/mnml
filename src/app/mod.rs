@@ -2737,6 +2737,9 @@ pub struct PaneRects {
     /// About). `None` when the activity bar isn't visible (rail
     /// hidden, etc.).
     pub activity_bar_gear: Option<Rect>,
+    /// The notifications bell, directly above the gear. Always present —
+    /// its job is to say the message history exists.
+    pub activity_bar_bell: Option<Rect>,
     /// Bottom cmdline bar rect — click to open the ex-cmdline
     /// (`:settings` / `:help` / …) without a keyboard chord. Set
     /// every frame by `cmdline_bar::draw`.

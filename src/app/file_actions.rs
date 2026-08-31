@@ -562,7 +562,7 @@ impl App {
             return;
         }
         let empty = std::fs::read_dir(&trash)
-            .map(|r| r.flatten().all(|e| e.file_name() == "index.jsonl"))
+            .map(|r| r.flatten().next().is_none())
             .unwrap_or(true);
         if empty {
             self.toast("trash is empty");
@@ -621,7 +621,12 @@ impl App {
     /// 10-second undo toast held the original path in memory and lost it
     /// on expiry.
     pub fn trash_index_path(&self) -> std::path::PathBuf {
-        self.trash_dir().join("index.jsonl")
+        // BESIDE the trash, not inside it. Kept inside, it showed up as
+        // a row in the trash pane next to the entries — bookkeeping
+        // masquerading as one of the user's deleted files (user: "why is
+        // it visible here?"). Out here there is nothing to filter and
+        // the emptiness check is just "is the directory empty".
+        self.workspace.join(".mnml").join("trash-index.jsonl")
     }
 
     /// Record `trashed` (a path inside the trash) as having come from
@@ -750,6 +755,30 @@ impl App {
             };
         }
         self.evict_trash_over_budget();
+        self.prune_trash_index();
+    }
+
+    /// Drop index lines whose trash entry no longer exists.
+    ///
+    /// Otherwise the index outlives everything it describes and grows
+    /// for the life of the workspace — one line per delete, forever.
+    fn prune_trash_index(&self) {
+        let path = self.trash_index_path();
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let trash = self.trash_dir();
+        let kept: Vec<&str> = body
+            .lines()
+            .filter(|l| json_str_field(l, "entry").is_some_and(|e| trash.join(e).exists()))
+            .collect();
+        if kept.len() != body.lines().count() {
+            let mut out = kept.join("\n");
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            let _ = std::fs::write(&path, out);
+        }
     }
 
     /// Evict oldest-first until the trash fits under
@@ -813,7 +842,13 @@ impl App {
         let too_big = bytes >= Self::TRASH_SKIP_ABOVE_BYTES;
 
         let trash = self.trash_dir();
-        let made_trash = !too_big && std::fs::create_dir_all(&trash).is_ok();
+        // Already IN the trash ⇒ delete for real. Moving it to a fresh
+        // stamped name in the same directory produced absurdities like
+        // `1788195310-1788195284-CHANGELOG-copy.md` and never actually
+        // removed anything (user report). The trash is the end of the
+        // line; there is nowhere further to defer to.
+        let already_trashed = path.parent() == Some(trash.as_path());
+        let made_trash = !too_big && !already_trashed && std::fs::create_dir_all(&trash).is_ok();
         let dest = Self::free_trash_path(&trash, &name);
         let moved = made_trash && std::fs::rename(path, &dest).is_ok();
 
@@ -838,6 +873,10 @@ impl App {
             );
             self.prune_trash();
         }
+        // Always, not only on the trashed path: a PERMANENT delete of a
+        // trash entry also orphans its index line, and that path never
+        // reaches `prune_trash`.
+        self.prune_trash_index();
         // Force-close any editor buffer for the deleted file (or dir contents).
         let affected: Vec<usize> = self
             .panes
@@ -881,10 +920,11 @@ impl App {
             "deleted {}{}{}",
             rel_path(&self.workspace, path),
             if is_dir { "/" } else { "" },
-            match (moved, too_big) {
-                (true, _) => "",
-                (false, true) => " (no undo — too large to keep)",
-                (false, false) => " (no undo — trash unavailable)",
+            match (moved, too_big, already_trashed) {
+                (true, _, _) => "",
+                (false, _, true) => " — permanently",
+                (false, true, _) => " (no undo — too large to keep)",
+                (false, false, _) => " (no undo — trash unavailable)",
             }
         ));
     }
@@ -2274,6 +2314,108 @@ mod trash_view_tests {
         assert!(
             app.trash_origin_of(for_b).unwrap().ends_with("b/dup.txt"),
             "the origin index confused two same-named files"
+        );
+    }
+
+    /// USER REPORT — deleting something already IN the trash re-trashed
+    /// it: a fresh stamped name in the same directory, producing
+    /// `1788195310-1788195284-CHANGELOG-copy.md` and never removing
+    /// anything. The trash is the end of the line.
+    #[test]
+    fn deleting_an_entry_already_in_the_trash_removes_it_for_real() {
+        let (_d, mut app) = app_with(&["gone.txt"]);
+        let orig = app.workspace.join("gone.txt");
+        app.execute_delete_fs_entry(&orig);
+
+        let entry = std::fs::read_dir(app.trash_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .next()
+            .expect("nothing in the trash");
+
+        app.execute_delete_fs_entry(&entry);
+
+        assert!(!entry.exists(), "the trash entry survived a second delete");
+        let left = std::fs::read_dir(app.trash_dir()).unwrap().count();
+        assert_eq!(
+            left,
+            0,
+            "re-trashed instead of deleting: {:?}",
+            std::fs::read_dir(app.trash_dir())
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name())
+                .collect::<Vec<_>>()
+        );
+        let toast = app
+            .toast
+            .as_ref()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+        assert!(
+            toast.contains("permanently"),
+            "did not say the delete was permanent: {toast:?}"
+        );
+    }
+
+    /// USER REPORT — the origin index sat INSIDE the trash directory, so
+    /// it rendered as a row beside the real entries: bookkeeping
+    /// masquerading as one of the user's deleted files.
+    #[test]
+    fn the_origin_index_is_not_inside_the_trash_directory() {
+        let (_d, mut app) = app_with(&["x.txt"]);
+        app.execute_delete_fs_entry(&app.workspace.join("x.txt"));
+
+        let names: Vec<String> = std::fs::read_dir(app.trash_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names.len(),
+            1,
+            "the trash holds more than the entry: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains("index")),
+            "the index is listed as a trash entry: {names:?}"
+        );
+        assert!(
+            app.trash_index_path().is_file(),
+            "the index was not written at all"
+        );
+    }
+
+    /// The index must not outlive what it describes — one line per
+    /// delete, forever, otherwise.
+    #[test]
+    fn index_lines_are_dropped_when_their_entry_is_gone() {
+        let (_d, mut app) = app_with(&["a.txt", "b.txt"]);
+        app.execute_delete_fs_entry(&app.workspace.join("a.txt"));
+        app.execute_delete_fs_entry(&app.workspace.join("b.txt"));
+        assert_eq!(
+            std::fs::read_to_string(app.trash_index_path())
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+
+        // Permanently remove one, then trigger a prune with another delete.
+        let first = std::fs::read_dir(app.trash_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .next()
+            .unwrap();
+        app.execute_delete_fs_entry(&first);
+
+        let lines = std::fs::read_to_string(app.trash_index_path()).unwrap();
+        assert_eq!(
+            lines.lines().count(),
+            1,
+            "the index still names an entry that is gone:\n{lines}"
         );
     }
 
