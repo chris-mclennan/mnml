@@ -18,6 +18,14 @@ pub enum MenuAction {
     PlusMenuPin(String),
     PlusMenuUnpin(String),
     PlusMenuHide(String),
+    /// Hand a TODO to an AI session. `row` is the FILTERED position,
+    /// matching `todos_panel_cursor`; `prefix` names the discovered
+    /// agent / command / skill, and is empty for the plain fallback.
+    TodoAction {
+        row: usize,
+        prefix: String,
+        codex: bool,
+    },
     /// A row that exists only to open a child menu. Never dispatched —
     /// `run_menu_action` must never see it, because a submenu row is
     /// inert by construction: clicking it opens the child, it does not

@@ -2788,6 +2788,7 @@ impl App {
             // row opens its child instead of dispatching. Reaching here
             // means the caller lost track of that.
             Submenu => {}
+            TodoAction { row, prefix, codex } => self.todos_run_action(row, &prefix, codex),
             PlusMenuPin(id) => self.plus_menu_curate(&id, PlusCuration::Pin),
             PlusMenuUnpin(id) => self.plus_menu_curate(&id, PlusCuration::Unpin),
             PlusMenuHide(id) => self.plus_menu_curate(&id, PlusCuration::Hide),

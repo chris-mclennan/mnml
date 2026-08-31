@@ -2032,6 +2032,17 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
 
+    // Right-click a TODO row opens the same action menu the kebab does
+    // — the kebab is the discoverable route, right-click the fast one.
+    if let Some(&(_, row)) = app
+        .rects
+        .todos_panel_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.open_todos_action_menu(row, (x, y));
+        return;
+    }
     if let Some(&(_, hit)) = app
         .rects
         .git_palette_rows

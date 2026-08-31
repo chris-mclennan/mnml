@@ -3405,6 +3405,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.toast("sessions: refreshed".to_string());
         return;
     }
+    // The kebab sits inside the row rect, so it must be tested BEFORE
+    // the row or the row always wins.
+    if let Some((kr, row)) = app.rects.todos_panel_kebab
+        && crate::app::dispatch::contains(kr, x, y)
+    {
+        app.open_todos_action_menu(row, (kr.x, kr.y + 1));
+        return;
+    }
     if let Some(&(_, row)) = app
         .rects
         .todos_panel_rows

@@ -1823,3 +1823,254 @@ mod todos_nav_tests {
         );
     }
 }
+
+/// TODO row actions — hand a marker to an AI session.
+///
+/// **User ask 2026-08-30:** "the todos should probably also have some
+/// kind of action like fix, or implement… need a way for tattle people
+/// to have it use our agents/skills/commands but if user not have that
+/// it just uses claude code or codex."
+///
+/// Nothing here knows about Tattle. `claude_assets::discover` reads
+/// whatever `.claude/` the workspace has; a workspace with none falls
+/// through to a plain Claude Code / Codex session, which is the same
+/// code path with an empty prefix.
+impl crate::app::App {
+    /// The prompt handed to the AI for `hit`, with `prefix` naming the
+    /// agent / command / skill (empty for the plain fallback).
+    ///
+    /// Carries file:line and the marker text, because the model needs to
+    /// find it — a bare "fix the TODO" makes it search.
+    pub fn todo_action_prompt(
+        &self,
+        hit: &crate::ui::todos_panel::TodoHit,
+        prefix: &str,
+        verb: &str,
+    ) -> String {
+        let rel = hit
+            .path
+            .strip_prefix(&self.workspace)
+            .unwrap_or(&hit.path)
+            .to_string_lossy();
+        format!(
+            "{prefix}{verb} the {} at {rel}:{} — {}",
+            hit.tag, hit.line, hit.title
+        )
+    }
+
+    /// Build the action menu for the TODO at filtered position `row`.
+    ///
+    /// Discovered assets first, then the plain fallbacks under a
+    /// separator. The fallbacks are ALWAYS present: a workspace with a
+    /// hundred agents still wants "just open Claude Code on this".
+    pub fn todos_action_menu_items(&self, row: usize) -> Vec<crate::context_menu::MenuItem> {
+        use crate::context_menu::{MenuAction, MenuItem};
+        let mut items = Vec::new();
+        for a in crate::claude_assets::discover(&self.workspace) {
+            items.push(MenuItem::new(
+                a.label(),
+                MenuAction::TodoAction {
+                    row,
+                    prefix: a.prompt_prefix(),
+                    codex: false,
+                },
+            ));
+        }
+        items.push(MenuItem::new(
+            "Fix with Claude Code",
+            MenuAction::TodoAction {
+                row,
+                prefix: String::new(),
+                codex: false,
+            },
+        ));
+        items.push(MenuItem::new(
+            "Fix with Codex",
+            MenuAction::TodoAction {
+                row,
+                prefix: String::new(),
+                codex: true,
+            },
+        ));
+        items
+    }
+
+    /// Open the action menu for the TODO at filtered position `row`.
+    ///
+    /// Selects the row first, so the menu and the highlight cannot
+    /// disagree about which TODO is being acted on.
+    pub fn open_todos_action_menu(&mut self, row: usize, anchor: (u16, u16)) {
+        let items = self.todos_action_menu_items(row);
+        if items.is_empty() {
+            return;
+        }
+        self.todos_panel_cursor = row;
+        let title = self
+            .todos_filtered()
+            .get(row)
+            .map(|h| format!("{} {}", h.tag, h.title));
+        self.context_menu = Some(crate::context_menu::ContextMenu::new(title, anchor, items));
+    }
+
+    /// Spawn an AI session on the TODO at filtered position `row`.
+    pub fn todos_run_action(&mut self, row: usize, prefix: &str, codex: bool) {
+        let hit = self.todos_filtered().get(row).map(|h| (*h).clone());
+        let Some(hit) = hit else {
+            return;
+        };
+        let prompt = self.todo_action_prompt(&hit, prefix, "Fix");
+        let profile = if codex {
+            let mut p = crate::pty_pane::BinaryProfile::codex(self.workspace.clone());
+            p.args.push(prompt);
+            p
+        } else {
+            crate::pty_pane::BinaryProfile::claude_code_with_prompt(self.workspace.clone(), prompt)
+        };
+        self.open_pty(profile);
+    }
+}
+
+#[cfg(test)]
+mod todo_action_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::ui::todos_panel::TodoHit;
+
+    fn app_with(assets: bool) -> (tempfile::TempDir, tempfile::TempDir, App) {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let d = tempfile::tempdir().unwrap();
+        if assets {
+            let c = d.path().join(".claude/agents");
+            std::fs::create_dir_all(&c).unwrap();
+            std::fs::write(
+                c.join("developer.md"),
+                "---\nname: developer\ndescription: implements a ticket\n---\n",
+            )
+            .unwrap();
+            let cmds = d.path().join(".claude/commands");
+            std::fs::create_dir_all(&cmds).unwrap();
+            std::fs::write(cmds.join("qa-sweep.md"), "sweep\n").unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Build hits under `app.workspace`, not the raw tempdir path:
+        // `App::new` canonicalizes, and on macOS that turns /var into
+        // /private/var. The real scanner walks from `app.workspace` so
+        // its hits always match; a fixture using the tempdir path does
+        // not, and `strip_prefix` then leaves an absolute path.
+        let root = app.workspace.clone();
+        app.todos_hits = vec![TodoHit {
+            tag: "FIXME",
+            path: root.join("src/a.rs"),
+            line: 42,
+            title: "handle the empty case".into(),
+        }];
+        (d, home, app)
+    }
+
+    /// The Tattle half of the ask: a workspace's own agents and commands
+    /// become actions, with the plain sessions still offered under them.
+    #[test]
+    fn a_workspace_with_claude_assets_offers_them_as_actions() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, _h, app) = app_with(true);
+        let labels: Vec<String> = app
+            .todos_action_menu_items(0)
+            .into_iter()
+            .map(|i| i.label)
+            .collect();
+        assert!(
+            labels.contains(&"agent: developer".to_string()),
+            "{labels:?}"
+        );
+        assert!(labels.contains(&"/qa-sweep".to_string()), "{labels:?}");
+        assert!(
+            labels.contains(&"Fix with Claude Code".to_string()),
+            "the plain fallback vanished when assets existed: {labels:?}"
+        );
+    }
+
+    /// The other half: someone without any of that still gets a working
+    /// menu, which is the same code path with an empty prefix.
+    #[test]
+    fn a_workspace_without_assets_still_offers_claude_and_codex() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, _h, app) = app_with(false);
+        let labels: Vec<String> = app
+            .todos_action_menu_items(0)
+            .into_iter()
+            .map(|i| i.label)
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["Fix with Claude Code", "Fix with Codex"],
+            "a workspace with no .claude/ got something other than the \
+             plain fallbacks: {labels:?}"
+        );
+    }
+
+    /// The prompt has to carry file:line and the marker text. "Fix the
+    /// TODO" with no location makes the model go looking.
+    #[test]
+    fn the_prompt_names_the_file_line_and_text() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, _h, app) = app_with(true);
+        let hit = app.todos_hits[0].clone();
+        let p = app.todo_action_prompt(&hit, "Use the developer agent to ", "Fix");
+        assert!(p.starts_with("Use the developer agent to Fix"), "{p}");
+        assert!(p.contains("src/a.rs:42"), "no file:line in the prompt: {p}");
+        assert!(p.contains("handle the empty case"), "no marker text: {p}");
+        assert!(p.contains("FIXME"), "the tag is dropped: {p}");
+        // Workspace-relative, not the absolute tempdir path.
+        assert!(!p.contains("/var/"), "leaked an absolute path: {p}");
+    }
+
+    /// The menu's row index is the FILTERED position, like the cursor —
+    /// with a filter active, resolving against `todos_hits` would act on
+    /// a different TODO than the one clicked.
+    #[test]
+    fn the_action_resolves_against_the_filtered_list() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, _h, mut app) = app_with(false);
+        let root = app.workspace.clone();
+        app.todos_hits.push(TodoHit {
+            tag: "TODO",
+            path: root.join("src/b.rs"),
+            line: 7,
+            title: "second".into(),
+        });
+        app.todos_panel_filter = "second".into();
+        assert_eq!(app.todos_filtered().len(), 1, "filter setup");
+        let hit = app.todos_filtered()[0].clone();
+        assert_eq!(hit.line, 7, "filtered position 0 is not the filtered hit");
+    }
+
+    /// Opening the menu selects the row, or the menu and the highlight
+    /// disagree about which TODO is being acted on.
+    #[test]
+    fn opening_the_menu_moves_the_selection_to_that_row() {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_d, _h, mut app) = app_with(false);
+        let root = app.workspace.clone();
+        app.todos_hits.push(TodoHit {
+            tag: "TODO",
+            path: root.join("src/b.rs"),
+            line: 7,
+            title: "second".into(),
+        });
+        app.todos_panel_cursor = 0;
+        app.open_todos_action_menu(1, (0, 0));
+        assert_eq!(app.todos_panel_cursor, 1, "the selection did not follow");
+        assert!(app.context_menu.is_some(), "no menu opened");
+    }
+}

@@ -2544,6 +2544,9 @@ pub struct PaneRects {
     /// `ActivitySection::Todos` panel — one row per hit + the index
     /// in `App::todos_hits`. Click → jump to file:line. (#9)
     pub todos_panel_rows: Vec<(Rect, usize)>,
+    /// The actions kebab on the focused TODO row, and its filtered
+    /// position. At most one — only the focused row shows it.
+    pub todos_panel_kebab: Option<(Rect, usize)>,
     /// `ActivitySection::Todos` panel refresh chip rect.
     pub todos_panel_refresh_chip: Option<Rect>,
     /// `ActivitySection::Todos` panel `/` filter input row.
@@ -3517,6 +3520,7 @@ impl PaneRects {
         self.findings_panel_filter_input = None;
         // Todos panel.
         self.todos_panel_rows.clear();
+        self.todos_panel_kebab = None;
         self.todos_panel_refresh_chip = None;
         // 2026-08-24 — new header refresh chips.
         self.notes_panel_refresh_chip = None;

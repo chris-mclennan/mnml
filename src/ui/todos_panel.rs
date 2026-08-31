@@ -41,6 +41,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.todos_panel_rows.clear();
     app.rects.todos_panel_refresh_chip = None;
     app.rects.todos_panel_filter_input = None;
+    app.rects.todos_panel_kebab = None;
 
     // Trigger a background rescan the first time this panel appears
     // in a session (todos_hits is empty and no scan yet).
@@ -275,6 +276,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // the raw index made a click set the cursor to a different
             // TODO than the one clicked whenever a filter was active.
             let _ = idx;
+            // Actions kebab, focused row only — the hover-reveal idiom
+            // the `+` menu uses. Visible when you are on the row, no
+            // marker repeated down all thirty-nine, and it leaves the
+            // other rows their full width for the path.
+            if is_focused_row && area.width > 4 {
+                let kr = Rect {
+                    x: area.x + area.width - 2,
+                    y,
+                    width: 2,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        if app.config.ui.ascii_icons {
+                            ": "
+                        } else {
+                            "\u{22ee} "
+                        },
+                        Style::default().fg(t.comment).bg(row_bg),
+                    ))),
+                    kr,
+                );
+                app.rects.todos_panel_kebab = Some((kr, row_i));
+            }
             app.rects.todos_panel_rows.push((row_rect, row_i));
             y += 1;
         }
