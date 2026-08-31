@@ -10,6 +10,33 @@
 
 use super::*;
 
+/// One `"key":"value"` field out of a flat JSON line, unescaped.
+///
+/// The trash index is written right here and its shape is fixed, so a
+/// full parser would be out of proportion — the same reasoning as
+/// `message_persist`'s reader. `origin` is last on the line, so a path
+/// containing `"entry":"` cannot be found ahead of the real field.
+fn json_str_field(line: &str, key: &str) -> Option<String> {
+    let pat = format!("\"{key}\":\"");
+    let start = line.find(&pat)? + pat.len();
+    let rest = &line[start..];
+    let mut out = String::new();
+    let mut esc = false;
+    for c in rest.chars() {
+        if esc {
+            out.push(c);
+            esc = false;
+        } else if c == '\\' {
+            esc = true;
+        } else if c == '"' {
+            return Some(out);
+        } else {
+            out.push(c);
+        }
+    }
+    None
+}
+
 impl App {
     /// Open the "type the filename to confirm" prompt for the
     /// "Discard changes" menu entry. Stashes `rel` in
@@ -520,6 +547,120 @@ impl App {
         self.workspace.join(".mnml").join("trash")
     }
 
+    /// Open the workspace trash as a Files pane.
+    ///
+    /// The 10-second undo toast was the ONLY way back; after it expired
+    /// the entry sat in `.mnml/trash/` for a week reachable only from a
+    /// terminal. Keeping a file for seven days and offering ten seconds
+    /// to use it is a strange half-feature — this makes the seven days
+    /// real, and it costs nothing new because a directory listing is
+    /// already a pane.
+    pub fn open_trash_pane(&mut self) {
+        let trash = self.trash_dir();
+        if std::fs::create_dir_all(&trash).is_err() {
+            self.toast("could not open the trash");
+            return;
+        }
+        let empty = std::fs::read_dir(&trash)
+            .map(|r| r.flatten().all(|e| e.file_name() == "index.jsonl"))
+            .unwrap_or(true);
+        if empty {
+            self.toast("trash is empty");
+            return;
+        }
+        self.open_files_pane(Some(trash));
+    }
+
+    /// Put the selected trash entry back where it came from.
+    ///
+    /// Refuses rather than clobbers if something has taken the path
+    /// since, and says so when the origin was never recorded — an entry
+    /// trashed before the index existed has nowhere to go back to.
+    pub fn restore_from_trash(&mut self) {
+        let Some(from) = self.target_path() else {
+            self.toast("nothing selected");
+            return;
+        };
+        if from.parent() != Some(self.trash_dir().as_path()) {
+            self.toast("not a trash entry");
+            return;
+        }
+        let Some(entry) = from
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let Some(to) = self.trash_origin_of(&entry) else {
+            self.toast("no record of where this came from — move it by hand");
+            return;
+        };
+        if to.exists() {
+            self.toast(format!("{} already exists", rel_path(&self.workspace, &to)));
+            return;
+        }
+        if let Some(parent) = to.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::rename(&from, &to) {
+            Ok(()) => {
+                self.refresh_trees_for_path(&to);
+                self.toast(format!("restored {}", rel_path(&self.workspace, &to)));
+            }
+            Err(e) => self.toast(format!("restore failed: {e}")),
+        }
+    }
+
+    /// Where the trash records what each entry used to be.
+    ///
+    /// The trash filename carries only a stamp and a BASENAME, so it
+    /// cannot say where the entry came from. Without this, the 7-day
+    /// retention is close to useless: you can see that `doomed.txt` is
+    /// in there, but not which of four directories it belongs in. The
+    /// 10-second undo toast held the original path in memory and lost it
+    /// on expiry.
+    pub fn trash_index_path(&self) -> std::path::PathBuf {
+        self.trash_dir().join("index.jsonl")
+    }
+
+    /// Record `trashed` (a path inside the trash) as having come from
+    /// `origin`.
+    fn record_trash_origin(&self, trashed: &Path, origin: &Path) {
+        use std::io::Write;
+        let Some(entry) = trashed.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
+        let esc = |v: &str| v.replace('\\', r"\\").replace('"', "\\\"");
+        let line = format!(
+            "{{\"entry\":\"{}\",\"origin\":\"{}\"}}\n",
+            esc(entry),
+            esc(&origin.to_string_lossy())
+        );
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.trash_index_path())
+        {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+
+    /// Where the trash entry named `entry` came from, if recorded.
+    pub fn trash_origin_of(&self, entry: &str) -> Option<std::path::PathBuf> {
+        let body = std::fs::read_to_string(self.trash_index_path()).ok()?;
+        // Last match wins: the same basename can be trashed repeatedly,
+        // and the newest record is the one that matches this entry.
+        let mut found = None;
+        for line in body.lines() {
+            let e = json_str_field(line, "entry")?;
+            if e == entry {
+                found = json_str_field(line, "origin").map(std::path::PathBuf::from);
+            }
+        }
+        found
+    }
+
     /// An unused path in the trash for `name`.
     ///
     /// The stamp alone is NOT enough: `now_unix()` is second-resolution
@@ -687,6 +828,7 @@ impl App {
                 return;
             }
         } else {
+            self.record_trash_origin(&dest, path);
             self.set_pending_undo(
                 format!("deleted {name}"),
                 crate::app::UndoAction::RestoreDeletedPath {
@@ -1884,7 +2026,7 @@ mod delete_undo_tests {
         let bodies: Vec<Vec<u8>> = std::fs::read_dir(app.trash_dir())
             .unwrap()
             .flatten()
-            .filter(|e| e.path().is_file())
+            .filter(|e| e.path().is_file() && e.file_name() != "index.jsonl")
             .map(|e| std::fs::read(e.path()).unwrap())
             .collect();
         assert_eq!(
@@ -2052,9 +2194,138 @@ mod delete_undo_tests {
 
         assert!(!old.exists(), "a month-old trash entry survived the prune");
         assert!(foreign.exists(), "pruned an entry that was not ours");
+        let entries = std::fs::read_dir(&trash)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name() != "index.jsonl")
+            .count();
+        assert_eq!(entries, 2, "expected the fresh entry + the foreign one");
+    }
+}
+
+#[cfg(test)]
+mod trash_view_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn app_with(files: &[&str]) -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        for f in files {
+            let p = app.workspace.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, f.as_bytes()).unwrap();
+        }
+        (d, app)
+    }
+
+    /// The trash filename carries a stamp and a BASENAME only, so it
+    /// cannot say where the entry came from. Without the index, a
+    /// week of retention is close to useless: you can see `x.txt` is in
+    /// there, not which of four directories it belongs in.
+    #[test]
+    fn restoring_puts_the_entry_back_where_it_came_from() {
+        let (_d, mut app) = app_with(&["deep/nested/x.txt"]);
+        let orig = app.workspace.join("deep/nested/x.txt");
+        app.execute_delete_fs_entry(&orig);
+        assert!(!orig.exists(), "setup: not deleted");
+
+        // Open the trash and select the entry, as the user would.
+        app.open_trash_pane();
+        let pid = app.active.expect("no pane opened");
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = f
+                .entries
+                .iter()
+                .position(|e| e.name.ends_with("x.txt"))
+                .expect("the trashed entry is not listed");
+        }
+        app.restore_from_trash();
+
         assert!(
-            std::fs::read_dir(&trash).unwrap().count() == 2,
-            "expected the fresh entry + the foreign one"
+            orig.is_file(),
+            "restore did not put the file back at its original path"
+        );
+        assert_eq!(std::fs::read(&orig).unwrap(), b"deep/nested/x.txt");
+    }
+
+    /// Two files with the same basename from different directories must
+    /// each go back to their OWN directory — the whole point of
+    /// recording the origin rather than guessing from the name.
+    #[test]
+    fn same_named_files_restore_to_their_own_directories() {
+        let (_d, mut app) = app_with(&["a/dup.txt", "b/dup.txt"]);
+        let a = app.workspace.join("a/dup.txt");
+        let b = app.workspace.join("b/dup.txt");
+        app.execute_delete_fs_entry(&a);
+        app.execute_delete_fs_entry(&b);
+
+        // Restore whichever entry maps to `b`.
+        let entries: Vec<String> = std::fs::read_dir(app.trash_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "index.jsonl")
+            .collect();
+        let for_b = entries
+            .iter()
+            .find(|n| app.trash_origin_of(n).as_deref() == Some(b.as_path()))
+            .expect("no index record points at b/dup.txt");
+        assert!(
+            app.trash_origin_of(for_b).unwrap().ends_with("b/dup.txt"),
+            "the origin index confused two same-named files"
+        );
+    }
+
+    /// An entry trashed before the index existed has nowhere to go back
+    /// to — say so rather than guessing a destination.
+    #[test]
+    fn an_entry_with_no_recorded_origin_is_refused() {
+        let (_d, mut app) = app_with(&[]);
+        let trash = app.trash_dir();
+        std::fs::create_dir_all(&trash).unwrap();
+        let orphan = trash.join(format!("{}-orphan.txt", crate::app::now_unix()));
+        std::fs::write(&orphan, b"x").unwrap();
+
+        app.open_trash_pane();
+        let pid = app.active.expect("no pane");
+        if let Some(crate::pane::Pane::Files(f)) = app.panes.get_mut(pid) {
+            f.selected = f
+                .entries
+                .iter()
+                .position(|e| e.name.contains("orphan"))
+                .unwrap();
+        }
+        app.restore_from_trash();
+
+        assert!(orphan.exists(), "moved an entry with no known origin");
+        let toast = app
+            .toast
+            .as_ref()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+        assert!(
+            toast.contains("no record"),
+            "did not explain why it refused: {toast:?}"
+        );
+    }
+
+    /// An empty trash should say so rather than opening a blank pane.
+    #[test]
+    fn opening_an_empty_trash_says_so() {
+        let (_d, mut app) = app_with(&[]);
+        app.open_trash_pane();
+        let toast = app
+            .toast
+            .as_ref()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+        assert!(toast.contains("empty"), "toast was {toast:?}");
+        assert!(
+            !app.panes
+                .iter()
+                .any(|p| matches!(p, crate::pane::Pane::Files(_))),
+            "opened a pane on an empty trash"
         );
     }
 }

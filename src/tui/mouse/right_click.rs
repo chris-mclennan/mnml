@@ -1997,6 +1997,19 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         };
         if let Some((path, is_dir)) = target {
             app.open_tree_context_menu(path.clone(), is_dir, (x, y));
+            // A trash entry gets Restore at the top — the whole reason
+            // the 7-day retention is worth having.
+            if path.parent() == Some(app.trash_dir().as_path())
+                && let Some(menu) = app.context_menu.as_mut()
+            {
+                menu.items.insert(
+                    0,
+                    crate::context_menu::MenuItem::new(
+                        "Restore to original location",
+                        crate::context_menu::MenuAction::Command("files.restore_from_trash"),
+                    ),
+                );
+            }
             // #files — the tree's menu is path-based and knows nothing
             // about marks, so prepend the two things only a Files pane
             // can offer. Prepending to the built menu rather than forking

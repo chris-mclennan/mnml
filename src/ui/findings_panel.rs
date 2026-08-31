@@ -210,7 +210,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
+                // 3-cell gutter — kept in step across TODOS / FINDINGS
+                // / NOTES. Widening one alone is what put TODOS out of
+                // line with its siblings before.
+                Span::styled("   ", Style::default().bg(bg)),
                 Span::styled(format!("{icon} "), Style::default().fg(t.cyan).bg(bg)),
                 Span::styled(name_padded, Style::default().fg(t.fg).bg(bg)),
                 Span::styled(format!(" {age_str}"), Style::default().fg(t.comment).bg(bg)),

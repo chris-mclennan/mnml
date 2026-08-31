@@ -265,7 +265,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // NOTES list rows and this panel's own hint rows —
                     // the first of those two cells is simply outside the
                     // highlight now.
-                    Span::styled(" ", Style::default().bg(bg)),
+                    // Two unhighlighted cells, then the band. Matches
+                    // FINDINGS / NOTES at 3 cells to the text.
+                    Span::styled("  ", Style::default().bg(bg)),
                     Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(
                         hit.tag,
@@ -520,13 +522,18 @@ mod tests {
         );
         assert_eq!(
             buf[(1, y)].bg,
+            panel_bg,
+            "column 1 is highlighted — the gutter is 2 cells now"
+        );
+        assert_eq!(
+            buf[(2, y)].bg,
             hl,
-            "the highlight does not start at column 1"
+            "the highlight does not start at column 2"
         );
 
         // Continuous from column 1 through the kebab: no unhighlighted
         // gap between the text and the kebab.
-        let gaps: Vec<u16> = (1..w - 1).filter(|&x| buf[(x, y)].bg != hl).collect();
+        let gaps: Vec<u16> = (2..w - 1).filter(|&x| buf[(x, y)].bg != hl).collect();
         assert!(
             gaps.is_empty(),
             "unhighlighted gap(s) at columns {gaps:?} — the band stops \
@@ -588,9 +595,9 @@ mod tests {
             .unwrap_or_else(|| panic!("no TODO row rendered:\n{}", rows.join("\n")));
         let indent = todo_row.len() - todo_row.trim_start().len();
         assert_eq!(
-            indent, 2,
-            "list row indented {indent} cells; FINDINGS and NOTES use 2, \
-             and so do this panel's own hint rows:\n{todo_row:?}"
+            indent, 3,
+            "list row indented {indent} cells; FINDINGS and NOTES use 3, \
+             and the three move together:\n{todo_row:?}"
         );
     }
 

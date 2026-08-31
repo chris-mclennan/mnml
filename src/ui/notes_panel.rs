@@ -235,7 +235,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled("  ", Style::default().bg(row_bg)),
+                    // 3-cell gutter — see findings_panel.
+                    Span::styled("   ", Style::default().bg(row_bg)),
                     Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(row_bg)),
                     Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
                     Span::styled(

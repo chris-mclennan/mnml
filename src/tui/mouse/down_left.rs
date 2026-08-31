@@ -67,6 +67,7 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
                     "Dual file panes (commander)",
                     MenuAction::Command("files.open_split"),
                 ),
+                MenuItem::new("Trash", MenuAction::Command("files.trash")),
             ],
         ),
         MenuItem::submenu(

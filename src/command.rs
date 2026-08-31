@@ -3040,6 +3040,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |_app| {},
         },
         Command {
+            id: "files.trash",
+            title: "Files: open the workspace trash",
+            group: "files",
+            keys: &[],
+            run: |app| app.open_trash_pane(),
+        },
+        Command {
+            id: "files.restore_from_trash",
+            title: "Files: restore the selected trash entry",
+            group: "files",
+            keys: &[],
+            run: |app| app.restore_from_trash(),
+        },
+        Command {
             id: "transfer.cancel_all",
             title: "Transfers: cancel all running",
             group: "transfer",
