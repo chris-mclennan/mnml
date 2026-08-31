@@ -1491,7 +1491,9 @@ impl Editor {
         // line *terminator*, not an extra empty line). Bug-hunt
         // SEV-3 from 2026-06-07: the chip used to say `Ln 1/4` for
         // a 3-line file with the Unix-correct trailing newline.
-        let nl_count = self.text.bytes().filter(|&b| b == b'\n').count();
+        // `line_starts.len() - 1` IS the newline count: one entry for
+        // byte 0, plus one per newline.
+        let nl_count = self.with_line_index(|v| v.len() - 1);
         if nl_count == 0 {
             // Empty buffer ⇒ 1 visual line; non-empty no-newline ⇒ 1.
             1
@@ -1681,16 +1683,12 @@ impl Editor {
 
     // ─── line geometry helpers ──────────────────────────────────────
     fn current_line(&self) -> usize {
-        self.text[..self.cursor]
-            .bytes()
-            .filter(|&b| b == b'\n')
-            .count()
+        self.line_of_byte(self.cursor)
     }
     /// Public byte-offset → 0-based line index. Mirrors [`Self::current_line`]
     /// but for any caller (folds, click-to-place, etc.).
     pub fn line_at_byte(&self, byte: usize) -> usize {
-        let byte = byte.min(self.text.len());
-        self.text[..byte].bytes().filter(|&b| b == b'\n').count()
+        self.line_of_byte(byte)
     }
     /// Byte offset of the start of line `line` (clamped to last line).
     /// Mutable access to the buffer text, invalidating the line index.
@@ -1703,10 +1701,13 @@ impl Editor {
         &mut self.text
     }
 
-    /// Rebuild the line index if dirty, then read offset `line` from it.
+    /// Run `f` over the line index, building it first if dirty.
     ///
-    /// O(n) once per edit instead of O(n) per call.
-    fn line_start(&self, line: usize) -> usize {
+    /// Everything that used to count newlines across the whole buffer
+    /// answers from here. Each of those was an O(n) scan costing 2-4ms
+    /// per call on a 13k-line file, and the render path makes tens of
+    /// them a frame — measured at ~300ms per frame, linear in file size.
+    fn with_line_index<R>(&self, f: impl FnOnce(&[usize]) -> R) -> R {
         {
             let mut cache = self.line_starts.borrow_mut();
             if cache.is_none() {
@@ -1723,13 +1724,26 @@ impl Editor {
             }
         }
         let cache = self.line_starts.borrow();
-        let v = cache.as_ref().expect("just populated");
-        match v.get(line) {
+        f(cache.as_ref().expect("just populated"))
+    }
+
+    /// 0-based line containing `byte`, by binary search on the index
+    /// rather than counting newlines up to it.
+    fn line_of_byte(&self, byte: usize) -> usize {
+        let byte = byte.min(self.text.len());
+        self.with_line_index(|v| v.partition_point(|&s| s <= byte).saturating_sub(1))
+    }
+
+    /// Rebuild the line index if dirty, then read offset `line` from it.
+    ///
+    /// O(n) once per edit instead of O(n) per call.
+    fn line_start(&self, line: usize) -> usize {
+        self.with_line_index(|v| match v.get(line) {
             Some(&off) => off,
             // Past the last line → start of the last line, matching the
-            // previous behaviour exactly.
+            // pre-index behaviour exactly.
             None => v.last().copied().unwrap_or(0),
-        }
+        })
     }
 
     /// Byte offset just before line `line`'s newline (or EOF for the last line).
@@ -1753,7 +1767,8 @@ impl Editor {
         b
     }
     fn col_at_byte(&self, byte: usize) -> usize {
-        let line = self.text[..byte].bytes().filter(|&b| b == b'\n').count();
+        // Bounded by the LINE's length now, not the file's.
+        let line = self.line_of_byte(byte);
         self.text[self.line_start(line)..byte].chars().count()
     }
 

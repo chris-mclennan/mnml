@@ -192,6 +192,16 @@ the sixel/image path shows how a non-text pane hangs off `Pane`.
   of data by accident.
 
 
+### Rename `crates/fim-engine/` → `crates/mnml-fim-engine/`
+
+**User ask 2026-08-31:** "i want it using the new name though."
+
+The PACKAGE is already `mnml-fim-engine`; only the directory kept the
+short name, which is what the file tree shows. Renaming it touches the
+workspace `members` list in the root `Cargo.toml`, any `path = ` deps,
+and CI paths — mechanical, but it moves a directory, so do it on its own
+and verify the build rather than folding it into a feature commit.
+
 ## PERF — a single very long line freezes the editor
 
 **FIXED 2026-08-30.** Opening `data/nerd-glyphnames.json` (545,559
