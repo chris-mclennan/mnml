@@ -1158,6 +1158,7 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
                 let low = c.to_ascii_lowercase();
                 let hit = match low {
                     'd' | 'y' => Some(crate::ui::prompt::CONFIRM_BTN_PRIMARY),
+                    'p' => Some(crate::ui::prompt::CONFIRM_BTN_PERMANENT),
                     'c' | 'n' => Some(crate::ui::prompt::CONFIRM_BTN_CANCEL),
                     _ => None,
                 };

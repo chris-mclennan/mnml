@@ -226,18 +226,25 @@ impl App {
         } else {
             format!("Delete {rel}?")
         };
-        // Name the alternate, or nobody discovers it. An invisible
-        // modifier gesture is one nobody uses.
+        // The alternate is a BUTTON now, not a hint appended here — see
+        // `prompt::delete_buttons`. Inside the trash there is nothing to
+        // defer to, so the question says so.
         let title = if path.parent() == Some(self.trash_dir().as_path()) {
             format!("{title}  (permanent — already in the trash)")
         } else {
-            format!("{title}  ⌥ to skip the trash")
+            title
         };
         let mut prompt =
             crate::prompt::Prompt::new(crate::prompt::PromptKind::DeleteConfirm, title);
-        // Focus Cancel by default (index 1) — safety first for a
-        // destructive action.
-        prompt.cursor = 1;
+        // Focus Cancel by default — safety first for a destructive
+        // action. Resolved by CODE, not by a hardcoded index: adding
+        // the "Delete permanently" button shifted Cancel from 1 to 2,
+        // and a stale literal here would have default-focused the
+        // IRREVERSIBLE button.
+        prompt.cursor = crate::ui::prompt::delete_buttons()
+            .iter()
+            .position(|(_, code, _)| *code == crate::ui::prompt::CONFIRM_BTN_CANCEL)
+            .unwrap_or(0);
         self.prompt = Some(prompt);
     }
 
@@ -526,8 +533,9 @@ impl App {
     /// event rather than on hold-state, which is the same gesture from
     /// the user's side.
     pub fn run_delete_button_opts(&mut self, code: u8, permanent: bool) {
+        let permanent = permanent || code == crate::ui::prompt::CONFIRM_BTN_PERMANENT;
         match code {
-            crate::ui::prompt::CONFIRM_BTN_PRIMARY => {
+            crate::ui::prompt::CONFIRM_BTN_PRIMARY | crate::ui::prompt::CONFIRM_BTN_PERMANENT => {
                 if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
                     self.execute_delete_fs_entry_opts(&path, permanent);
                 }
@@ -2413,21 +2421,51 @@ mod trash_view_tests {
         assert!(app.pending_undo.is_some(), "no undo offered");
     }
 
-    /// The dialog has to NAME the alternate — an invisible modifier
-    /// gesture is one nobody uses.
+    /// The alternate has to be VISIBLE. It started as text appended to
+    /// the question ("⌥ to skip the trash"); the user asked for it to be
+    /// an option on the modal instead, so it is a button.
     #[test]
-    fn the_delete_dialog_names_the_option_alternate() {
+    fn the_delete_dialog_offers_a_permanent_button() {
+        let labels: Vec<&str> = crate::ui::prompt::delete_buttons()
+            .iter()
+            .map(|(l, _, _)| *l)
+            .collect();
+        assert!(
+            labels.iter().any(|l| l.contains("permanently")),
+            "no permanent-delete button: {labels:?}"
+        );
+    }
+
+    /// Cancel must stay the DEFAULT focus. Adding the permanent button
+    /// shifted Cancel from index 1 to 2 — a hardcoded `cursor = 1` would
+    /// have default-focused the irreversible action.
+    #[test]
+    fn cancel_is_still_the_default_focus() {
         let (_d, mut app) = app_with(&["doomed.txt"]);
         app.open_fs_delete_prompt(app.workspace.join("doomed.txt"));
-        let title = app
-            .prompt
-            .as_ref()
-            .map(|p| p.title.clone())
-            .unwrap_or_default();
-        assert!(
-            title.contains("skip the trash"),
-            "the dialog does not mention the alternate: {title:?}"
+        let cursor = app.prompt.as_ref().unwrap().cursor;
+        let buttons = crate::ui::prompt::delete_buttons();
+        assert_eq!(
+            buttons[cursor].1,
+            crate::ui::prompt::CONFIRM_BTN_CANCEL,
+            "default focus is {:?}, not Cancel",
+            buttons[cursor].0
         );
+    }
+
+    /// The permanent BUTTON skips the trash, same as the modifier.
+    #[test]
+    fn the_permanent_button_skips_the_trash() {
+        let (_d, mut app) = app_with(&["doomed.txt"]);
+        let f = app.workspace.join("doomed.txt");
+        app.open_fs_delete_prompt(f.clone());
+        app.run_delete_button_opts(crate::ui::prompt::CONFIRM_BTN_PERMANENT, false);
+
+        assert!(!f.exists());
+        let trashed = std::fs::read_dir(app.trash_dir())
+            .map(|r| r.count())
+            .unwrap_or(0);
+        assert_eq!(trashed, 0, "the permanent button still trashed the file");
     }
 
     /// Inside the trash there is no alternate to offer — it says the

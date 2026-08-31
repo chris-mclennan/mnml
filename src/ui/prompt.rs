@@ -220,9 +220,17 @@ pub const CONFIRM_BTN_CANCEL: u8 = 1;
 /// Two-button set for the delete-confirm dialog. Returns
 /// `(label, action_code, hotkey_char_idx)` per button. Cancel is the
 /// default focus (safety first) — see `open_fs_delete_prompt`.
+/// Third code: delete outright, skipping the trash.
+pub const CONFIRM_BTN_PERMANENT: u8 = 2;
+
 pub fn delete_buttons() -> Vec<(&'static str, u8, usize)> {
+    // A real BUTTON rather than a hint in the title. The Option
+    // modifier still works, but a modifier nobody can see is not an
+    // affordance — the user asked for the alternate to be "an option on
+    // the modal" instead of text appended to the question.
     vec![
         ("  Delete  ", CONFIRM_BTN_PRIMARY, 2),
+        (" Delete permanently ", CONFIRM_BTN_PERMANENT, 8),
         (" Cancel ", CONFIRM_BTN_CANCEL, 1),
     ]
 }
