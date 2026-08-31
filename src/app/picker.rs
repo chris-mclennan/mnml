@@ -905,6 +905,31 @@ impl App {
             return;
         };
         let Some(item) = picker.selected_item().cloned() else {
+            // No match. For a file picker, the query may be a PATH the
+            // user pasted — one outside the workspace, so it was never a
+            // candidate to match against. Enter did nothing at all
+            // before, with no feedback either (user report: pasted an
+            // absolute path, pressed Enter, "nothing happens").
+            if matches!(picker.kind, PickerKind::Files | PickerKind::Recent) {
+                let q = picker.query.trim();
+                if !q.is_empty() {
+                    // Resolves `~`, and a relative path against the
+                    // workspace — the same rule the rest of the file
+                    // operations use.
+                    let expanded = crate::app::util::expand_tilde_and_resolve(&self.workspace, q);
+                    if expanded.is_file() {
+                        self.open_path(&expanded);
+                        return;
+                    }
+                    if expanded.is_dir() {
+                        // A directory is a reasonable thing to paste too.
+                        self.open_files_pane(Some(expanded));
+                        return;
+                    }
+                    self.toast(format!("no such file: {q}"));
+                    return;
+                }
+            }
             return;
         };
         match picker.kind {
@@ -2519,5 +2544,93 @@ mod picker_tests {
         app.open_repo_picker();
         // Only one repo ⇒ no picker.
         assert!(app.picker.is_none());
+    }
+}
+
+#[cfg(test)]
+mod picker_path_fallback_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// User report — pasted an absolute path into "Open file", pressed
+    /// Enter, "nothing happens". The picker matches against WORKSPACE
+    /// files, so a path outside it was never a candidate; with no
+    /// selection, accept returned early and did not even toast.
+    #[test]
+    fn accepting_a_pasted_absolute_path_opens_it() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let f = outside.path().join("elsewhere.txt");
+        std::fs::write(&f, "hello\n").unwrap();
+
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_file_picker();
+        for c in f.to_string_lossy().chars() {
+            if let Some(p) = app.picker.as_mut() {
+                p.type_char(c);
+            }
+        }
+        assert!(
+            app.picker.as_ref().unwrap().selected_item().is_none(),
+            "setup: the path should match nothing in this workspace"
+        );
+
+        app.picker_accept();
+        assert!(
+            app.panes.iter().any(|p| matches!(
+                p,
+                crate::pane::Pane::Editor(b)
+                    if b.path.as_deref().is_some_and(|q| q.ends_with("elsewhere.txt"))
+            )),
+            "the pasted path did not open"
+        );
+    }
+
+    /// A pasted DIRECTORY is a reasonable thing to want too — it opens
+    /// as a Files pane rather than failing.
+    #[test]
+    fn accepting_a_pasted_directory_opens_a_files_pane() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("a.txt"), "x").unwrap();
+
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_file_picker();
+        for c in outside.path().to_string_lossy().chars() {
+            if let Some(p) = app.picker.as_mut() {
+                p.type_char(c);
+            }
+        }
+        app.picker_accept();
+        assert!(
+            app.panes
+                .iter()
+                .any(|p| matches!(p, crate::pane::Pane::Files(_))),
+            "a pasted directory did not open a Files pane"
+        );
+    }
+
+    /// A path that does not exist must SAY so. Silence is what made the
+    /// original report read as the app being broken.
+    #[test]
+    fn a_pasted_path_that_does_not_exist_says_so() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_file_picker();
+        for c in "/nope/does/not/exist.txt".chars() {
+            if let Some(p) = app.picker.as_mut() {
+                p.type_char(c);
+            }
+        }
+        app.picker_accept();
+        let toast = app
+            .toast
+            .as_ref()
+            .map(|(t, _)| t.clone())
+            .unwrap_or_default();
+        assert!(
+            toast.contains("no such file"),
+            "silent on a bad path; toast was {toast:?}"
+        );
     }
 }
