@@ -7758,7 +7758,7 @@ mod page_down_eof_tests {
     use crate::edit_op::EditOp;
 
     /// 47 lines with the Unix-correct trailing newline — exactly the
-    /// user's `crates/fim-engine/Cargo.toml` from the 2026-08-29 report.
+    /// user's `crates/mnml-fim-engine/Cargo.toml` from the 2026-08-29 report.
     fn newline_terminated(lines: usize) -> Editor {
         let mut text = String::new();
         for i in 1..=lines {

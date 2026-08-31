@@ -28,7 +28,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      # fim-engine used to be a sibling repo — vendored to `crates/fim-engine/`
+      # fim-engine used to be a sibling repo — vendored to `crates/mnml-fim-engine/`
       # as a workspace member 2026-08-11, so no external checkout needed
       # anymore. The `path: mnml` layout is preserved so downstream
       # `working-directory: mnml` steps don't need to change.

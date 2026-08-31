@@ -5,7 +5,7 @@
 # needs the apt-get step.
 #
 # fim-engine used to be a sibling repo cloned here into `../fim-engine/`.
-# Vendored to `crates/fim-engine/` as a workspace member 2026-08-11 —
+# Vendored to `crates/mnml-fim-engine/` as a workspace member 2026-08-11 —
 # the external clone step went with it. Reintroduce it here if
 # fim-engine ever moves back out.
 

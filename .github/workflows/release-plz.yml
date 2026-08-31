@@ -12,7 +12,7 @@
 #   (GITHUB_TOKEN is the default per-run token — already provided.)
 #
 # (fim-engine used to be a sibling requiring its own crates.io publish
-# before this workflow. Now vendored as `crates/fim-engine/` — no
+# before this workflow. Now vendored as `crates/mnml-fim-engine/` — no
 # external publish ordering needed.)
 
 name: release-plz

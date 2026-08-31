@@ -35,5 +35,5 @@ crates.io. The `0.1.0` line below is the initial published version.
 <!-- The standalone fim-engine repo was absorbed into mnml on 2026-08-10
      (`crates/fim-engine/`, git-subtree history preserved) and made private,
      so its compare/tag URLs 404. Releases live on crates.io. -->
-[Unreleased]: https://github.com/chris-mclennan/mnml/commits/main/crates/fim-engine
+[Unreleased]: https://github.com/chris-mclennan/mnml/commits/main/crates/mnml-fim-engine
 [0.1.0]: https://crates.io/crates/mnml-fim-engine/0.1.0

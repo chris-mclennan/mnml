@@ -29,7 +29,7 @@ the directory holding `libghostty-vt.pc` and no zig is needed; a local ghostty
 checkout works via `GHOSTTY_SOURCE_DIR`.
 
 `mnml-fim-engine` (the local FIM code-completion engine) is a workspace member
-at `crates/fim-engine/` — a single `cargo build` from the mnml root builds
+at `crates/mnml-fim-engine/` — a single `cargo build` from the mnml root builds
 everything. There's no external sibling checkout to keep in sync; the crate
 lived in its own repo through 2026-08-10 and was vendored in with full
 git-subtree history preserved. mnml's `Cargo.toml` depends on it under the

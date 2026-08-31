@@ -1,14 +1,14 @@
 # Contributing to mnml-fim-engine
 
 Thanks for your interest in mnml-fim-engine. This guide covers the workflow and
-conventions. The crate lives inside the mnml workspace at `crates/fim-engine/`;
+conventions. The crate lives inside the mnml workspace at `crates/mnml-fim-engine/`;
 its standalone repo was absorbed on 2026-08-10 and is gone.
 
 ## Getting started
 
 ```bash
 git clone https://github.com/chris-mclennan/mnml
-cd mnml/crates/fim-engine
+cd mnml/crates/mnml-fim-engine
 cargo test
 ```
 
