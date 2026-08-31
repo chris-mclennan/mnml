@@ -27,4 +27,4 @@ export class Store {
 }
 export function reset(state: Store): Store {
   return { ...state, items: [] };
-})
+}
