@@ -116,7 +116,7 @@ impl WizardSection {
                 "mnml uses Nerd Font glyphs for icons throughout the UI. If the \
                  sample below renders as boxes or `?` marks instead of icons, \
                  your terminal font isn't a Nerd Font. Press Space to \
-                 auto-install Symbols Nerd Font Mono (brew / winget / curl \
+                 auto-install Symbols Nerd Font Mono (brew / PowerShell / curl \
                  per OS) — you'll still need to point your terminal at the new \
                  font and restart it.\n\n\
                  macOS 26 note: use the auto-install (brew cask). Dragging the \
@@ -594,7 +594,7 @@ impl App {
                 let os = std::env::consts::OS;
                 let cmd = match os {
                     "macos" => "brew install --cask font-symbols-only-nerd-font",
-                    "windows" => "winget install --id NerdFonts.SymbolsOnly -e",
+                    "windows" => "the auto-install (downloads Symbols Nerd Font for your user)",
                     _ => "the auto-install",
                 };
                 self.toast(format!(
@@ -629,8 +629,10 @@ impl App {
     ///   no upstream package, nix has one). Downloads
     ///   NerdFontsSymbolsOnly.zip from the latest GH release
     ///   into `~/.local/share/fonts/` and runs `fc-cache -f`.
-    /// - Windows: `winget install --id NerdFonts.SymbolsOnly`
-    ///   (or a curl fallback).
+    /// - Windows: same release-zip route as Linux, via PowerShell.
+    ///   There is no winget package to use — the `NerdFonts`
+    ///   publisher does not exist in winget-pkgs, and no symbols-only
+    ///   Nerd Font is published under any other id.
     pub fn wizard_install_nerd_font(&mut self) {
         let os = std::env::consts::OS;
         let install_cmd: String = match os {
@@ -653,7 +655,37 @@ impl App {
                      echo 'Symbols Nerd Font Mono installed to ~/.local/share/fonts/nerd-symbols'"
                 )
             }
-            "windows" => "winget install --id NerdFonts.SymbolsOnly -e".to_string(),
+            "windows" => {
+                // No winget package exists: the `NerdFonts` publisher
+                // is absent from winget-pkgs entirely, and no
+                // symbols-only Nerd Font is published under any other
+                // id. So take the same route as Linux and pull the
+                // release zip. Per-user install (LOCALAPPDATA fonts
+                // dir + HKCU registration, supported since Win10
+                // 1809) keeps this admin-free.
+                let dl = "https://github.com/ryanoasis/nerd-fonts/releases/latest/\
+                          download/NerdFontsSymbolsOnly.zip";
+                format!(
+                    "$ErrorActionPreference='Stop'; \
+                     $zip=Join-Path $env:TEMP 'NerdFontsSymbolsOnly.zip'; \
+                     $tmp=Join-Path $env:TEMP 'nerd-symbols'; \
+                     $dest=Join-Path $env:LOCALAPPDATA 'Microsoft\\Windows\\Fonts'; \
+                     $reg='HKCU:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts'; \
+                     [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; \
+                     Invoke-WebRequest -Uri '{dl}' -OutFile $zip -UseBasicParsing; \
+                     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; \
+                     Expand-Archive -Path $zip -DestinationPath $tmp -Force; \
+                     New-Item -ItemType Directory -Force -Path $dest | Out-Null; \
+                     if(-not (Test-Path $reg)){{New-Item -Path $reg -Force | Out-Null}}; \
+                     Get-ChildItem (Join-Path $tmp '*.ttf') | ForEach-Object {{ \
+                       Copy-Item $_.FullName $dest -Force; \
+                       New-ItemProperty -Path $reg -Name ($_.BaseName + ' (TrueType)') \
+                         -Value (Join-Path $dest $_.Name) -PropertyType String -Force | Out-Null }}; \
+                     Remove-Item $zip -Force -ErrorAction SilentlyContinue; \
+                     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; \
+                     Write-Host 'Symbols Nerd Font installed for the current user.'"
+                )
+            }
             other => {
                 self.toast(format!(
                     "No auto-install for OS '{other}' — download from https://www.nerdfonts.com."
@@ -673,39 +705,59 @@ impl App {
                 // (Font Awesome F000-F4FF, powerline E0B0, baked
                 // F8B0-F8B1), and only a patched primary covers them
                 // all; codepoint-map alone leaves ?-boxes.
-                "Then: in `~/.config/ghostty/config` set `font-family = JetBrainsMono Nerd \
+                "in `~/.config/ghostty/config` set `font-family = JetBrainsMono Nerd \
                  Font Mono` (any full Nerd-Font-patched mono works — NOT the symbols-only \
                  face), plus `font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols` \
                  for mnml's baked glyphs. Fully quit (Cmd+Q) + reopen ghostty."
             }
             Some("iTerm.app") => {
-                "Then: iTerm2 → Preferences → Profiles → Text → Font → choose Symbols Nerd Font \
-                 Mono. Restart iTerm2."
+                // The symbols-only face has no letters, so it belongs
+                // in the non-ASCII slot, never as the main font.
+                "iTerm2 → Settings → Profiles → Text → tick 'Use a different font for \
+                 non-ASCII text' and set that to Symbols Nerd Font Mono (leave the main font \
+                 as your normal mono). Restart iTerm2."
             }
             Some("Apple_Terminal") => {
-                "Then: Terminal → Preferences → Profiles → Text → Font → choose Symbols Nerd \
-                 Font Mono. Restart Terminal.app."
+                // Terminal.app has no separate non-ASCII font slot, so
+                // a full patched mono is the only option here.
+                "Terminal.app has no non-ASCII font slot, so pick a full Nerd-Font-patched \
+                 mono (e.g. CaskaydiaCove NFM) under Settings → Profiles → Text → Font. \
+                 Restart Terminal.app."
             }
             Some("WezTerm") => {
-                "Then: add `Symbols Nerd Font Mono` to `font` fallback in \
+                "add `Symbols Nerd Font Mono` to `font` fallback in \
                  `~/.wezterm.lua`, restart WezTerm."
             }
             _ => {
                 if os == "windows" {
-                    "Then: Windows Terminal → Settings → your profile → Appearance → Font \
-                     face → Symbols Nerd Font Mono. Restart the terminal."
+                    // Windows Terminal exposes no codepoint-map / fallback-list
+                    // setting, so the symbols face can only be reached via
+                    // DirectWrite's own fallback. Do NOT tell the user to set it
+                    // as the font face — the symbols-only face has no letters.
+                    "restart Windows Terminal and see whether icons resolve — there is no \
+                     fallback-list setting to change. If they still render as boxes, set \
+                     Settings → your profile → Appearance → Font face to a full \
+                     Nerd-Font-patched mono such as CaskaydiaCove NFM (not the symbols-only \
+                     face — it has no letters)."
                 } else {
-                    "Then: point your terminal's font (or its fallback list) at 'Symbols \
+                    "point your terminal's font (or its fallback list) at 'Symbols \
                      Nerd Font Mono'. Restart the terminal so it re-reads the font list."
                 }
             }
         };
         self.close_first_launch_defer();
-        self.toast(term_hint);
+        // Spawn first, then toast — and phrase the follow-up as
+        // conditional. This used to toast the configure step
+        // unconditionally before spawning, so a failed (or never
+        // spawned) install still told the user it had worked.
         self.open_pty(crate::pty_pane::BinaryProfile::task(
             "install: nerd font",
             &install_cmd,
             self.workspace.clone(),
+        ));
+        self.toast(format!(
+            "Installing — watch the `install: nerd font` pane. If it reports an error the \
+             font is NOT installed. Once it succeeds: {term_hint}"
         ));
     }
 
