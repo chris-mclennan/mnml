@@ -121,17 +121,41 @@ pub struct BinaryProfile {
 }
 
 /// Fallback shell binary when `$SHELL` is unset. `/bin/sh` on Unix,
-/// `bash` on Windows (Git Bash — preinstalled on `windows-latest` CI
-/// runners and on any developer machine with Git for Windows). Users
-/// who prefer `cmd`/`pwsh` can set `SHELL` to override.
+/// PowerShell on Windows. Users who prefer `cmd`/`bash` can set
+/// `SHELL` to override.
+///
+/// This used to be a bare `bash` on Windows on the assumption that Git
+/// for Windows supplies it. It does not: the installer only adds
+/// `Git\cmd` to PATH, which holds `git.exe` and no `bash.exe`. A bare
+/// `bash` therefore resolves to `System32\bash.exe` — the WSL launcher
+/// — which execs into the default distro and dies with
+/// `execvpe(/bin/bash) failed` when that distro has no bash (e.g. when
+/// the only one registered is Docker Desktop's `docker-desktop`). The
+/// pane never renders and nothing surfaces the failure.
 fn default_shell() -> String {
     #[cfg(windows)]
     {
-        "bash".to_string()
+        "powershell.exe".to_string()
     }
     #[cfg(not(windows))]
     {
         "/bin/sh".to_string()
+    }
+}
+
+/// The flag that makes `shell` execute a command string: `-Command`
+/// for PowerShell, `/C` for cmd, `-c` for POSIX shells. Needed because
+/// `task` can no longer assume the shell speaks `-c`.
+fn shell_command_flag(shell: &str) -> &'static str {
+    let base = shell
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+    match base.strip_suffix(".exe").unwrap_or(&base) {
+        "powershell" | "pwsh" => "-Command",
+        "cmd" => "/C",
+        _ => "-c",
     }
 }
 
@@ -231,10 +255,15 @@ impl BinaryProfile {
         }
     }
 
-    /// A named `[tasks.<name>]` entry — run `cmdline` via `$SHELL -c` in a pty pane.
-    /// `cwd` defaults to the workspace.
+    /// A named `[tasks.<name>]` entry — run `cmdline` via `$SHELL` in a pty pane,
+    /// with whatever run-a-command flag that shell speaks (see
+    /// [`shell_command_flag`]). `cwd` defaults to the workspace.
     pub fn task(name: &str, cmdline: &str, cwd: PathBuf) -> Self {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell());
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(default_shell);
+        let flag = shell_command_flag(&shell);
         // multilang-dev-user F3 — drop the redundant 'task: ' prefix
         // so a bufferline tab for 'npm run dev' reads 'npm run dev'
         // not 'task: npm run dev'. The bufferline is already context
@@ -243,7 +272,7 @@ impl BinaryProfile {
         BinaryProfile {
             label: name.to_string(),
             exe: shell,
-            args: vec!["-c".to_string(), cmdline.to_string()],
+            args: vec![flag.to_string(), cmdline.to_string()],
             cwd: Some(cwd),
             env: Vec::new(),
             session_id: None,
