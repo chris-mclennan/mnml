@@ -231,10 +231,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     crate::ui::git_graph_view::humanize_age(secs)
                 })
                 .unwrap_or_default();
-            let name_width = (area.width as usize)
-                .saturating_sub(4)
-                .saturating_sub(age_str.chars().count())
-                .saturating_sub(1);
+            // Row is: 2 inset + 1 accent + 2 icon+space + name + gap +
+            // age. That is 5 cells of prefix, so the name budget is
+            // `row_w - 5 - gap - age`.
+            //
+            // The old arithmetic subtracted one too few and measured
+            // against `area.width` rather than `row_w`, so the name ran
+            // into the age column — worse once a scrollbar took a
+            // column, and worse again for a two-character age (`14h`
+            // fits where `1h` does not).
+            //
+            // GAP is 2, not 1: the user asked for one more cell of air
+            // between the name and the age.
+            const AGE_GAP: usize = 2;
+            let name_width = (row_w as usize)
+                .saturating_sub(5)
+                .saturating_sub(AGE_GAP)
+                .saturating_sub(age_str.chars().count());
             let name_clipped: String = name.chars().take(name_width).collect();
             let name_padded = format!("{name_clipped:<width$}", width = name_width);
             let row_rect = Rect {
@@ -263,7 +276,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(row_bg)),
                     Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
                     Span::styled(
-                        format!(" {age_str}"),
+                        format!("{}{age_str}", " ".repeat(AGE_GAP)),
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
                 ])),
@@ -272,6 +285,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.rects.notes_panel_files.push((row_rect, path.clone()));
             y += 1;
         }
+        // Content rect, so a wheel event over the list can be routed
+        // to this panel's scroll offset.
+        app.rects.notes_panel_area = Some(Rect {
+            x: area.x,
+            y: area.y + 4,
+            width: area.width,
+            height: visible_rows as u16,
+        });
         if needs_sb {
             let sb = Rect {
                 x: area.x + row_w,
@@ -287,6 +308,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 visible_rows,
                 first,
             );
+            app.rects.scrollbars.push(crate::app::ScrollbarHit {
+                area: sb,
+                pane_id: 0,
+                total: files.len(),
+                viewport: visible_rows,
+                kind: crate::app::ScrollbarKind::NotesPanel,
+            });
         }
     }
     let _ = y;

@@ -1403,6 +1403,58 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
+    // Wheel over TODOS / NOTES / FINDINGS. These three had scroll
+    // STATE and a scrollbar but no wheel routing at all, so the only
+    // way to move them was the keyboard cursor (user: "cant actually
+    // scroll though. tried mousewheel and dragging scrollbar").
+    //
+    // The window follows the CURSOR each frame, so nudging `scroll`
+    // alone is snapped straight back — the cursor is clamped into the
+    // new window here, exactly as the scrollbar drag does.
+    {
+        use crate::app::ActivitySection as S;
+        let hit = match app.active_section {
+            S::Todos => app.rects.todos_panel_area.map(|r| (r, 0u8)),
+            S::Notes => app.rects.notes_panel_area.map(|r| (r, 1u8)),
+            S::Findings => app.rects.findings_panel_area.map(|r| (r, 2u8)),
+            _ => None,
+        };
+        if let Some((ar, which)) = hit
+            && contains(ar, x, y)
+        {
+            let d = list_scroll_clamp_scaled(delta, scroll_ceiling);
+            let step = |v: usize| -> usize {
+                if d < 0 {
+                    v.saturating_sub(d.unsigned_abs() as usize)
+                } else {
+                    v.saturating_add(d as usize)
+                }
+            };
+            let rows = ar.height as usize;
+            match which {
+                0 => {
+                    app.todos_panel_scroll = step(app.todos_panel_scroll);
+                    app.todos_panel_cursor = app
+                        .todos_panel_cursor
+                        .clamp(app.todos_panel_scroll, app.todos_panel_scroll + rows - 1);
+                }
+                1 => {
+                    app.notes_panel_scroll = step(app.notes_panel_scroll);
+                    app.notes_panel_cursor = app
+                        .notes_panel_cursor
+                        .clamp(app.notes_panel_scroll, app.notes_panel_scroll + rows - 1);
+                }
+                _ => {
+                    app.findings_panel_scroll = step(app.findings_panel_scroll);
+                    app.findings_panel_cursor = app.findings_panel_cursor.clamp(
+                        app.findings_panel_scroll,
+                        app.findings_panel_scroll + rows - 1,
+                    );
+                }
+            }
+            return;
+        }
+    }
     // qa-feature 2026-07-01 — wheel over the Integrations panel
     // scrolls its icon list. Bumps by 3 rows per notch (one icon
     // row) since each entry is 3 cells tall.

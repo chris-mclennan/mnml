@@ -274,6 +274,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .push((row_rect, path.clone()));
         y += 1;
     }
+    // Content rect, so a wheel event over the list can be routed
+    // to this panel's scroll offset.
+    app.rects.findings_panel_area = Some(Rect {
+        x: area.x,
+        y: area.y + 4,
+        width: area.width,
+        height: visible_rows as u16,
+    });
     if needs_sb {
         let sb = Rect {
             x: area.x + row_w,
@@ -289,6 +297,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             visible_rows,
             first,
         );
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb,
+            pane_id: 0,
+            total: files.len(),
+            viewport: visible_rows,
+            kind: crate::app::ScrollbarKind::FindingsPanel,
+        });
     }
 }
 

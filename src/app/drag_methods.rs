@@ -177,6 +177,29 @@ impl App {
             self.agents_panel_scroll = scroll;
             return;
         }
+        // These three derive their window from the CURSOR each frame
+        // (`list_scroll_window` follows it), so setting `scroll` alone
+        // would be snapped straight back on the next render. Move the
+        // cursor with the drag — same reasoning as the Files pane and
+        // the tree above.
+        match kind {
+            ScrollbarKind::TodosPanel => {
+                self.todos_panel_scroll = scroll;
+                self.todos_panel_cursor = self.todos_panel_cursor.max(scroll);
+                return;
+            }
+            ScrollbarKind::NotesPanel => {
+                self.notes_panel_scroll = scroll;
+                self.notes_panel_cursor = self.notes_panel_cursor.max(scroll);
+                return;
+            }
+            ScrollbarKind::FindingsPanel => {
+                self.findings_panel_scroll = scroll;
+                self.findings_panel_cursor = self.findings_panel_cursor.max(scroll);
+                return;
+            }
+            _ => {}
+        }
         // #1229 — the git rail's scroll lives on an App field too, not on
         // a pane.
         if matches!(kind, ScrollbarKind::GitPalette) {

@@ -2191,6 +2191,10 @@ pub enum ScrollbarKind {
     /// The agents rail panel (`app.agents_panel_scroll`) — not a pane.
     /// `total` = content-row count; `viewport` = panel body height.
     AgentsPanel,
+    /// The three activity list panels, whose scroll lives on `App`.
+    TodosPanel,
+    NotesPanel,
+    FindingsPanel,
     /// #1229 — the git rail's own scroll (`App::git_palette_scroll`).
     /// `total` = item rows across all sections; `viewport` = item rows the
     /// panel can show.
@@ -2591,6 +2595,12 @@ pub struct PaneRects {
     pub findings_panel_files: Vec<(Rect, std::path::PathBuf)>,
     pub findings_panel_filter_input: Option<Rect>,
     pub findings_panel_new_chip: Option<Rect>,
+    /// Content rects for the three list panels, so a wheel event over
+    /// them can be routed to their scroll offset. Without these the
+    /// panels scrolled ONLY by moving the keyboard cursor.
+    pub todos_panel_area: Option<Rect>,
+    pub notes_panel_area: Option<Rect>,
+    pub findings_panel_area: Option<Rect>,
     /// `ActivitySection::Notes` panel `+ New note` row rect.
     pub notes_panel_new_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel `/` filter input row.
@@ -3576,6 +3586,9 @@ impl PaneRects {
         self.findings_panel_files.clear();
         self.findings_panel_filter_input = None;
         self.findings_panel_new_chip = None;
+        self.todos_panel_area = None;
+        self.notes_panel_area = None;
+        self.findings_panel_area = None;
         // Todos panel.
         self.todos_panel_rows.clear();
         self.todos_panel_kebab = None;

@@ -370,6 +370,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // no bar, no cue — so a list twice the panel height read as the
         // whole list (user: "it says 93 but it stops ... this makes me
         // think there are no more to see").
+        // Content rect, so a wheel event over the list can be routed
+        // to this panel's scroll offset.
+        app.rects.todos_panel_area = Some(Rect {
+            x: area.x,
+            y: area.y + 3,
+            width: area.width,
+            height: visible_rows as u16,
+        });
         if needs_sb {
             let sb = Rect {
                 x: area.x + row_w,
@@ -385,6 +393,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 visible_rows,
                 first,
             );
+            app.rects.scrollbars.push(crate::app::ScrollbarHit {
+                area: sb,
+                pane_id: 0,
+                total: filtered.len(),
+                viewport: visible_rows,
+                kind: crate::app::ScrollbarKind::TodosPanel,
+            });
         }
         y += 1;
     }
@@ -709,6 +724,70 @@ mod tests {
             1,
             "expected only the commented marker, got: {:?}",
             hits.iter().map(|h| h.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// USER REPORT — "cant actually scroll though. tried mousewheel and
+    /// dragging scrollbar."
+    ///
+    /// The panel had scroll STATE and painted a bar, but registered
+    /// neither a content rect (so wheel events could not be routed to
+    /// it) nor a `ScrollbarHit` (so the bar was paint-only, not a drag
+    /// target). Both absences are asserted here because both were
+    /// missing and either alone leaves the panel unscrollable by mouse.
+    #[test]
+    fn a_scrollable_panel_registers_its_wheel_area_and_scrollbar_hit() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = (0..90)
+            .map(|i| TodoHit {
+                tag: "TODO",
+                path: d.path().join(format!("f{i}.rs")),
+                line: 1,
+                title: format!("item{i}"),
+            })
+            .collect();
+
+        let (w, h) = (40u16, 20u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+
+        let area = app
+            .rects
+            .todos_panel_area
+            .expect("no content rect — a wheel event over the list has nowhere to route");
+        assert!(area.height > 0, "content rect is zero-height: {area:?}");
+
+        let hit = app
+            .rects
+            .scrollbars
+            .iter()
+            .find(|s| matches!(s.kind, crate::app::ScrollbarKind::TodosPanel))
+            .expect("the scrollbar is paint-only — no drag target registered");
+        assert_eq!(hit.total, 90, "scrollbar reports the wrong total");
+        assert!(
+            hit.viewport > 0 && hit.viewport < hit.total,
+            "viewport {} vs total {} — a bar that cannot move",
+            hit.viewport,
+            hit.total
         );
     }
 
