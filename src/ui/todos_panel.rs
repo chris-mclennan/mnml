@@ -267,7 +267,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // highlight now.
                     // Two unhighlighted cells, then the band. Matches
                     // FINDINGS / NOTES at 3 cells to the text.
-                    Span::styled("  ", Style::default().bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
                     // The focused row's accent bar. mnml marks a selected
                     // row with a blue `▌` everywhere else it has one —
                     // the palette picker, the activity bar, the sessions
@@ -534,18 +534,14 @@ mod tests {
         );
         assert_eq!(
             buf[(1, y)].bg,
-            panel_bg,
-            "column 1 is highlighted — the gutter is 2 cells now"
-        );
-        assert_eq!(
-            buf[(2, y)].bg,
             hl,
-            "the highlight does not start at column 2"
+            "the highlight does not start at column 1 — the list rows sit one \
+             cell in, so the accent lands under the filter row's magnifier"
         );
 
         // Continuous from column 1 through the kebab: no unhighlighted
         // gap between the text and the kebab.
-        let gaps: Vec<u16> = (2..w - 1).filter(|&x| buf[(x, y)].bg != hl).collect();
+        let gaps: Vec<u16> = (1..w - 1).filter(|&x| buf[(x, y)].bg != hl).collect();
         assert!(
             gaps.is_empty(),
             "unhighlighted gap(s) at columns {gaps:?} — the band stops \
@@ -564,12 +560,12 @@ mod tests {
         // only by its background: "when i think gutter i was thinking
         // vertical COLORED bar like we do in sessions view".
         assert_eq!(
-            buf[(2, y)].symbol(),
+            buf[(1, y)].symbol(),
             "▌",
             "the focused row has no accent bar in its gutter"
         );
         assert_eq!(
-            buf[(2, y)].fg,
+            buf[(1, y)].fg,
             theme::cur().blue,
             "the accent bar is not the blue every other selected-row \
              marker in mnml uses"
@@ -673,9 +669,9 @@ mod tests {
              the sibling panels have drifted apart:\n{todo_row:?}\n{notes_row:?}"
         );
         assert_eq!(
-            todos_col, 3,
-            "list text should start at column 3 (two inset cells + the \
-             accent-bar cell):\n{todo_row:?}"
+            todos_col, 2,
+            "list text should start at column 2 (one inset cell + the \
+             accent-bar cell, which sits under the filter magnifier):\n{todo_row:?}"
         );
     }
 

@@ -225,7 +225,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 // step across TODOS / FINDINGS / NOTES. Widening one
                 // alone is what put TODOS out of line with its siblings
                 // before.
-                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
                     if is_focused_row { "▌" } else { " " },
                     Style::default().fg(t.blue).bg(row_bg),
@@ -310,20 +310,24 @@ mod tests {
             "column 0 is highlighted — the band is welded to the panel edge"
         );
         assert_eq!(
-            buf[(1, y)].bg,
-            t.bg_darker,
-            "column 1 is highlighted — the gutter should be 2 cells, as in TODOS"
-        );
-        assert_eq!(
-            buf[(2, y)].symbol(),
+            buf[(1, y)].symbol(),
             "▌",
-            "the accent bar is not at column 2"
+            "the accent bar is not at column 1 — it should sit under the \
+             filter row's magnifier"
         );
-        assert_eq!(buf[(2, y)].fg, t.blue, "the accent bar is not blue");
+        assert_eq!(buf[(1, y)].fg, t.blue, "the accent bar is not blue");
         assert_eq!(
-            buf[(3, y)].bg,
+            buf[(1, y)].bg,
             t.bg2,
-            "the focused row carries no highlight band"
+            "the accent sits outside the highlight band"
+        );
+        // Column 2 is where the row's TEXT begins now — the icon. Asserted
+        // so the shift can't silently drift back and leave a dead cell
+        // between the accent and the content.
+        assert_ne!(
+            buf[(2, y)].symbol(),
+            " ",
+            "column 2 is blank — the row content did not follow the accent"
         );
     }
 

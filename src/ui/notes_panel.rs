@@ -245,7 +245,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // carried no accent; TODOS had already been inset
                     // without ever gaining the bar. Both are fixed here,
                     // together, so the two panels finally agree.
-                    Span::styled("  ", Style::default().bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
                     Span::styled(
                         if is_focused_row { "▌" } else { " " },
                         Style::default().fg(t.blue).bg(row_bg),
@@ -401,18 +401,14 @@ mod tests {
             "column 0 is highlighted — the band is welded to the panel edge"
         );
         assert_eq!(
-            buf[(1, y)].bg,
-            t.bg_darker,
-            "column 1 is highlighted — the gutter should be 2 cells, as in TODOS"
-        );
-        assert_eq!(
-            buf[(2, y)].symbol(),
+            buf[(1, y)].symbol(),
             "▌",
-            "the focused row's accent bar is not at column 2"
+            "the accent bar is not at column 1 — it should sit under the \
+             filter row's magnifier"
         );
-        assert_eq!(buf[(2, y)].fg, t.blue, "the accent bar is not blue");
+        assert_eq!(buf[(1, y)].fg, t.blue, "the accent bar is not blue");
         assert_eq!(
-            buf[(2, y)].bg,
+            buf[(1, y)].bg,
             t.bg2,
             "the accent sits outside the highlight band"
         );
