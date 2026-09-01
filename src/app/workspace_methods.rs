@@ -965,6 +965,55 @@ impl App {
             .collect()
     }
 
+    pub fn findings_panel_cursor_down(&mut self) {
+        let n = self.findings_filtered().len();
+        if n == 0 {
+            self.findings_panel_cursor = 0;
+            return;
+        }
+        self.findings_panel_cursor = (self.findings_panel_cursor + 1).min(n - 1);
+    }
+
+    pub fn findings_panel_cursor_up(&mut self) {
+        self.findings_panel_cursor = self.findings_panel_cursor.saturating_sub(1);
+    }
+
+    pub fn findings_panel_activate(&mut self) {
+        if let Some(path) = self
+            .findings_filtered()
+            .into_iter()
+            .nth(self.findings_panel_cursor)
+        {
+            self.open_path(&path);
+        }
+    }
+
+    /// The filtered row list FINDINGS renders.
+    ///
+    /// Must stay identical to the filter in `ui::findings_panel::draw`
+    /// — it matches the RENDERED relative name with the extension
+    /// stripped, not the bare file name that NOTES matches on. If the
+    /// two drift, the cursor selects a different row than the one
+    /// highlighted on screen.
+    pub(crate) fn findings_filtered(&self) -> Vec<std::path::PathBuf> {
+        let root = crate::ui::findings_panel::findings_dir(&self.workspace);
+        let f = self.findings_panel_filter.to_ascii_lowercase();
+        self.findings_panel_files_cache
+            .iter()
+            .filter(|p| {
+                if f.is_empty() {
+                    return true;
+                }
+                let rel = p.strip_prefix(&root).unwrap_or(p);
+                rel.with_extension("")
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains(&f)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Cursor slot 0 = the "+ New session" chip (visually FIRST as of
     /// #1188). Slots 1..=n = the n AI session rows below it. Was:
     /// slots 0..n-1 = sessions, n = chip; but #1188 moved the chip to

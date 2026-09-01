@@ -3397,24 +3397,31 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.notes_panel_new_note();
         return;
     }
-    if let Some((_, path)) = app
+    // Move the panel's selection to the clicked row, as TODOS does.
+    // Both of these used to just `open_path` without touching the
+    // cursor, so the highlight stayed on whichever row the keyboard had
+    // last left it on — harmless while neither panel drew a highlight,
+    // actively misleading now that both do.
+    if let Some((i, path)) = app
         .rects
         .notes_panel_files
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|i| (i, app.rects.notes_panel_files[i].1.clone()))
     {
-        let path = path.clone();
+        app.notes_panel_cursor = i;
         app.open_path(&path);
         return;
     }
     // Findings panel — row click opens the .md file (2026-08-07).
-    if let Some((_, path)) = app
+    if let Some((i, path)) = app
         .rects
         .findings_panel_files
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|i| (i, app.rects.findings_panel_files[i].1.clone()))
     {
-        let path = path.clone();
+        app.findings_panel_cursor = i;
         app.open_path(&path);
         return;
     }

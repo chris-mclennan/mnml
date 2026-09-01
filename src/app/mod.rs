@@ -5423,6 +5423,10 @@ pub struct App {
     /// 2026-07-09.
     pub todos_panel_cursor: usize,
     pub notes_panel_cursor: usize,
+    /// FINDINGS had no cursor at all until 2026-09-01, so its rows
+    /// could not be highlighted, keyboard-navigated, or marked with the
+    /// selected-row accent its sibling panels use (user ask).
+    pub findings_panel_cursor: usize,
     pub sessions_panel_cursor: usize,
     /// #1184 (2026-08-23) — first visible row in the sessions rail.
     /// User hit "can only reliably load 9 or so Claudes in total,
@@ -6671,6 +6675,7 @@ impl App {
             sessions_panel_filter_focused: false,
             todos_panel_cursor: 0,
             notes_panel_cursor: 0,
+            findings_panel_cursor: 0,
             sessions_panel_cursor: 0,
             sessions_panel_scroll: 0,
             agents_panel_scroll: 0,

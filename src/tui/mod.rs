@@ -1779,6 +1779,24 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.notes_panel_activate();
                 return;
             }
+            (crate::app::ActivitySection::Findings, KeyCode::Down | KeyCode::Char('j'))
+                if !app.findings_panel_filter_focused =>
+            {
+                app.findings_panel_cursor_down();
+                return;
+            }
+            (crate::app::ActivitySection::Findings, KeyCode::Up | KeyCode::Char('k'))
+                if !app.findings_panel_filter_focused =>
+            {
+                app.findings_panel_cursor_up();
+                return;
+            }
+            (crate::app::ActivitySection::Findings, KeyCode::Enter)
+                if !app.findings_panel_filter_focused =>
+            {
+                app.findings_panel_activate();
+                return;
+            }
             (crate::app::ActivitySection::Sessions, KeyCode::Down | KeyCode::Char('j'))
                 if !app.sessions_panel_filter_focused =>
             {

@@ -283,6 +283,84 @@ mod tests {
     /// its highlight ran flush to the left edge — the exact complaint
     /// that had already been fixed in TODOS — and it never painted an
     /// accent bar at all, so "the gutter" was invisible empty space.
+    /// USER REPORT — "when creating or deleting notes, it does not auto
+    /// refresh, if i click refresh icon i see the changes."
+    ///
+    /// The sidebar panels cache their own file list, and no filesystem
+    /// mutation invalidated it. Asserted through `refresh_after_fs_change`
+    /// — the shared chokepoint every create / delete / rename / transfer
+    /// funnels through — rather than through one caller, so a new
+    /// mutation path cannot reintroduce this by forgetting a call.
+    #[test]
+    fn creating_and_deleting_a_note_refreshes_the_panel_cache() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        // From `app.workspace`, NOT `d.path()`: App::new canonicalizes
+        // the workspace, so on macOS the raw tempdir is /var/... while
+        // the panel scans /private/var/... — seeding the wrong one makes
+        // this test fail against a correct fix.
+        let nd = notes_dir(&app.workspace);
+        std::fs::create_dir_all(&nd).unwrap();
+        app.notes_panel_refresh();
+        assert!(app.notes_panel_files_cache.is_empty(), "seeded dirty");
+
+        // Create.
+        let note = nd.join("fresh.md");
+        std::fs::write(&note, "x").unwrap();
+        app.refresh_after_fs_change();
+        assert!(
+            app.notes_panel_files_cache.iter().any(|p| p == &note),
+            "a newly created note is missing until the user clicks refresh"
+        );
+
+        // Delete.
+        std::fs::remove_file(&note).unwrap();
+        app.refresh_after_fs_change();
+        assert!(
+            !app.notes_panel_files_cache.iter().any(|p| p == &note),
+            "a deleted note lingers in the panel until the user clicks refresh"
+        );
+    }
+
+    /// The same chokepoint must cover FINDINGS, whose cache has the
+    /// identical lifecycle.
+    #[test]
+    fn creating_a_finding_refreshes_the_panel_cache() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let fd = crate::ui::findings_panel::findings_dir(&app.workspace);
+        std::fs::create_dir_all(&fd).unwrap();
+        app.findings_panel_refresh();
+        let f = fd.join("report.md");
+        std::fs::write(&f, "x").unwrap();
+        app.refresh_after_fs_change();
+        assert!(
+            app.findings_panel_files_cache.iter().any(|p| p == &f),
+            "a newly created finding is missing until the user clicks refresh"
+        );
+    }
+
+    /// TODOS is deliberately NOT refreshed on every filesystem change:
+    /// its refresh walks the whole workspace synchronously, and doing
+    /// that per file operation is the exact per-frame full-scan shape
+    /// behind this editor's previous freezes.
+    #[test]
+    fn an_fs_change_does_not_trigger_a_whole_workspace_todo_scan() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        std::fs::write(d.path().join("a.rs"), "// TODO: marker\n").unwrap();
+        app.todos_panel_scanned_once = false;
+        app.refresh_after_fs_change();
+        assert!(
+            !app.todos_panel_scanned_once,
+            "refresh_after_fs_change ran a full-workspace TODO scan — that \
+             cost belongs on the panel's own refresh, not on every file op"
+        );
+    }
+
     #[test]
     fn the_focused_row_is_inset_and_carries_the_blue_accent_bar() {
         let d = tempfile::tempdir().unwrap();

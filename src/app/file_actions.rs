@@ -1167,6 +1167,23 @@ impl App {
                 f.reload();
             }
         }
+        // The sidebar list panels keep their OWN file caches, which a
+        // create / delete / rename left stale: the new note was absent,
+        // or the deleted row lingered, until the user clicked the panel's
+        // refresh chip (user report 2026-09-01). The same class of bug
+        // was already fixed once for the HTTP panel, in the delete path
+        // only — this is the shared chokepoint, so fixing it here covers
+        // create, delete, rename and background transfers at once.
+        //
+        // Only the DIRECTORY-SCOPED caches are refreshed. `todos` is
+        // deliberately excluded: `todos_panel_refresh` is a synchronous
+        // walk of the whole workspace, and running that on every file
+        // operation would be exactly the kind of per-frame full scan
+        // that caused this editor's previous freezes. A TODO marker
+        // also cannot appear from a file operation the way a note or a
+        // finding can — it needs an edit, which has its own trigger.
+        self.notes_panel_refresh();
+        self.findings_panel_refresh();
     }
 
     /// Enter the selected directory, or open the selected file.

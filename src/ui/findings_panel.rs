@@ -164,11 +164,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // `root` computed above alongside the filter — reused here so
     // nested tester-round dirs render `round/foo` instead of
     // losing all context to file_stem.
+    // Clamp the cursor to the filtered length so a stale index left by
+    // a narrowing filter doesn't highlight nothing.
+    let clamped_cursor = app.findings_panel_cursor.min(files.len().saturating_sub(1));
+    app.findings_panel_cursor = clamped_cursor;
     #[allow(clippy::explicit_counter_loop)]
-    for path in files.iter().take(area.height.saturating_sub(3) as usize) {
+    for (row_i, path) in files
+        .iter()
+        .take(area.height.saturating_sub(3) as usize)
+        .enumerate()
+    {
         if y >= area.y + area.height {
             break;
         }
+        let is_focused_row = row_i == clamped_cursor;
+        let row_bg = if is_focused_row { t.bg2 } else { bg };
         // Relative-to-findings-root name so nested rows keep their
         // round-dir context. Strip the `.md` extension for compactness.
         let rel = path.strip_prefix(&root).unwrap_or(path);
@@ -210,13 +220,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                // 3-cell gutter — kept in step across TODOS / FINDINGS
-                // / NOTES. Widening one alone is what put TODOS out of
-                // line with its siblings before.
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(format!("{icon} "), Style::default().fg(t.cyan).bg(bg)),
-                Span::styled(name_padded, Style::default().fg(t.fg).bg(bg)),
-                Span::styled(format!(" {age_str}"), Style::default().fg(t.comment).bg(bg)),
+                // Two unhighlighted cells keep the band off the panel
+                // edge, then the focused row's blue `▌` accent — kept in
+                // step across TODOS / FINDINGS / NOTES. Widening one
+                // alone is what put TODOS out of line with its siblings
+                // before.
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(
+                    if is_focused_row { "▌" } else { " " },
+                    Style::default().fg(t.blue).bg(row_bg),
+                ),
+                Span::styled(format!("{icon} "), Style::default().fg(t.cyan).bg(row_bg)),
+                Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
+                Span::styled(
+                    format!(" {age_str}"),
+                    Style::default().fg(t.comment).bg(row_bg),
+                ),
             ])),
             row_rect,
         );
@@ -232,4 +251,120 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// `+ New finding` action).
 pub fn findings_dir(workspace: &std::path::Path) -> std::path::PathBuf {
     workspace.join(".mnml").join("findings")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn app_with_findings(names: &[&str]) -> (tempfile::TempDir, crate::app::App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        let fd = findings_dir(d.path());
+        std::fs::create_dir_all(&fd).unwrap();
+        for n in names {
+            std::fs::write(fd.join(format!("{n}.md")), "x").unwrap();
+        }
+        app.findings_panel_refresh();
+        (d, app)
+    }
+
+    fn render(app: &mut crate::app::App, w: u16) -> ratatui::buffer::Buffer {
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 12,
+                },
+            )
+        })
+        .unwrap();
+        term.backend().buffer().clone()
+    }
+
+    /// FINDINGS had no cursor at all, so no row could be highlighted and
+    /// the panel was the odd one out beside TODOS and NOTES (user ask:
+    /// "right now i cant highlight, it shoudl be same as notes and todos
+    /// ands also have colored gutter").
+    #[test]
+    fn the_focused_row_is_inset_and_carries_the_blue_accent_bar() {
+        let (_d, mut app) = app_with_findings(&["alpha"]);
+        let t = theme::cur();
+        let buf = render(&mut app, 60);
+        let y = (0..12u16)
+            .find(|&y| (0..60).any(|x| buf[(x, y)].symbol() == "▌"))
+            .expect("no row carries an accent bar");
+
+        assert_eq!(
+            buf[(0, y)].bg,
+            t.bg_darker,
+            "column 0 is highlighted — the band is welded to the panel edge"
+        );
+        assert_eq!(
+            buf[(1, y)].bg,
+            t.bg_darker,
+            "column 1 is highlighted — the gutter should be 2 cells, as in TODOS"
+        );
+        assert_eq!(
+            buf[(2, y)].symbol(),
+            "▌",
+            "the accent bar is not at column 2"
+        );
+        assert_eq!(buf[(2, y)].fg, t.blue, "the accent bar is not blue");
+        assert_eq!(
+            buf[(3, y)].bg,
+            t.bg2,
+            "the focused row carries no highlight band"
+        );
+    }
+
+    /// The accent must FOLLOW the cursor, not sit on row 0 forever.
+    #[test]
+    fn the_accent_bar_moves_with_the_cursor() {
+        let (_d, mut app) = app_with_findings(&["alpha", "beta"]);
+        let first = (0..12u16)
+            .find(|&y| {
+                let b = render(&mut app, 60);
+                (0..60).any(|x| b[(x, y)].symbol() == "▌")
+            })
+            .expect("no accent row before moving");
+
+        app.findings_panel_cursor_down();
+        let buf = render(&mut app, 60);
+        let second = (0..12u16)
+            .find(|&y| (0..60).any(|x| buf[(x, y)].symbol() == "▌"))
+            .expect("no accent row after moving");
+
+        assert_ne!(
+            first, second,
+            "the accent bar stayed on row {first} after the cursor moved down"
+        );
+    }
+
+    /// A cursor left past the end by a narrowing filter must not leave
+    /// the panel with no highlight at all.
+    #[test]
+    fn a_stale_cursor_is_clamped_into_range() {
+        let (_d, mut app) = app_with_findings(&["alpha", "beta"]);
+        app.findings_panel_cursor = 99;
+        let buf = render(&mut app, 60);
+        assert!(
+            (0..12u16).any(|y| (0..60).any(|x| buf[(x, y)].symbol() == "▌")),
+            "a stale cursor left the panel with no highlighted row"
+        );
+        assert!(
+            app.findings_panel_cursor < 2,
+            "cursor {} was not clamped to the row count",
+            app.findings_panel_cursor
+        );
+    }
 }
