@@ -9,6 +9,12 @@ The roadmap lives in [`.local/PLAN.md`](.local/PLAN.md).
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/chris-mclennan/mnml/compare/mnml-fim-engine-v0.1.1...mnml-fim-engine-v0.1.2) - 2026-09-01
+
+### Other
+
+- rename crates/fim-engine/ -> crates/mnml-fim-engine/
+
 The crate ships from the mnml workspace; `0.1.1` is the current release on
 crates.io. The `0.1.0` line below is the initial published version.
 
