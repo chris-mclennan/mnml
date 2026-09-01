@@ -1683,12 +1683,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // An overlay's text caret (picker query, prompt input) wins when it's open;
     // otherwise the editor caret when the editor pane has focus and no overlay is
     // up; otherwise nothing.
+    //
+    // The menu-bar and workspace-picker dropdowns have to be in this guard even
+    // though they aren't focus-stealing overlays. They paint over the editor body
+    // but leave `focus` on the pane, so without them the terminal keeps drawing
+    // its hardware caret at the editor position — visibly on top of the open
+    // dropdown, since the real cursor is above every painted cell.
     if let Some((x, y)) = app.rects.prompt_caret.or(app.rects.picker_caret) {
         frame.set_cursor_position((x, y));
     } else if app.focus == Focus::Pane
         && app.whichkey.is_none()
         && app.close_prompt.is_none()
         && app.prompt.is_none()
+        && app.menu_open.is_none()
+        && !app.workspace_picker_open
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));
