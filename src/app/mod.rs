@@ -1428,6 +1428,21 @@ fn derive_bitbucket_slug(repo_path: &std::path::Path) -> Option<String> {
 /// get the strict improvement of "no wrong-browser open" — the
 /// toast side of this (surface the URL in the UI too) needs an
 /// App handle and is filed as a follow-up.
+/// The user's preferred browser (`[ui] external_browser`), or empty for
+/// the OS default. A process-global because `open_url_external` is a
+/// free function with eleven call sites and no `self` — the same reason
+/// `pty_pane::TERMINAL_LABEL` is one.
+static EXTERNAL_BROWSER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Called once from `App::new` after config load.
+pub fn set_external_browser(name: String) {
+    let _ = EXTERNAL_BROWSER.set(name);
+}
+
+fn external_browser() -> &'static str {
+    EXTERNAL_BROWSER.get().map(String::as_str).unwrap_or("")
+}
+
 pub fn open_url_external(url: &str) {
     // Reviewer fix (2026-08-23): the OSC 52 path opens `/dev/tty`,
     // which doesn't exist on Windows — Win32-OpenSSH sets
@@ -1445,6 +1460,40 @@ pub fn open_url_external(url: &str) {
     if !is_safe_external_url(url) {
         eprintln!("mnml: refusing to open {url:?} — not a plain http(s) URL");
         return;
+    }
+    // `[ui] external_browser` wins over the OS default when set.
+    //
+    // Spawned with the URL as a normal argv entry in every case — never
+    // through a shell — so the `explorer.exe` reasoning below (a URL
+    // containing `&` starting a second command) cannot be reintroduced
+    // here. `is_safe_external_url` above is still the first layer.
+    let chosen = external_browser();
+    if !chosen.is_empty() {
+        let spawned = if cfg!(target_os = "macos") {
+            // macOS wants an application NAME via `open -a`.
+            std::process::Command::new("open")
+                .arg("-a")
+                .arg(chosen)
+                .arg(url)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        } else {
+            std::process::Command::new(chosen)
+                .arg(url)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        };
+        // Fall through to the OS default if that browser is not
+        // installed — a typo in the config should not mean links
+        // silently stop working.
+        if spawned.is_ok() {
+            return;
+        }
+        eprintln!("mnml: could not launch {chosen:?} — falling back to the OS default");
     }
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
@@ -6319,6 +6368,7 @@ impl App {
         // user's rebrand (default "terminal"; users on ghostty /
         // kitty / wezterm can set their own).
         crate::pty_pane::set_terminal_label(config.ui.terminal_label.clone());
+        crate::app::set_external_browser(config.ui.external_browser.clone());
         // Snapshot values from config that App holds by value (config
         // itself is moved into the struct below).
         let hover_help_height_init = config.ui.hover_help_height;

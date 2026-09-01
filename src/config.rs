@@ -1214,6 +1214,22 @@ pub struct UiConfig {
     /// ```
     pub terminal_label: String,
 
+    /// Which browser opens external links (favorites, docs, PR links).
+    /// Empty = the OS default handler, which is the previous behaviour.
+    ///
+    /// A user whose default is Safari but who works in Chrome had no way
+    /// to redirect this (user report 2026-09-01: "i expected chrome but
+    /// got safari").
+    ///
+    /// macOS takes an application NAME (passed to `open -a`); Linux and
+    /// Windows take an executable that accepts the URL as its argument.
+    ///
+    /// ```toml
+    /// [ui]
+    /// external_browser = "Google Chrome"
+    /// ```
+    pub external_browser: String,
+
     /// Optional custom SVG for the terminal chip glyph, overriding
     /// the default `\u{ea85}` (nf-cod-terminal). Path to an SVG on
     /// disk; baked into MnmlSymbols.ttf on startup at a reserved
@@ -1666,6 +1682,7 @@ impl Default for Config {
                 expand_indicator: "chevron".to_string(),
                 hover_help_height: 8,
                 terminal_label: "terminal".to_string(),
+                external_browser: String::new(),
                 terminal_glyph_svg: String::new(),
                 top_bar_cluster_mode: "auto".to_string(),
                 // 2026-07-12 user request — default to Claude Code
@@ -2190,6 +2207,7 @@ struct RawUi {
     /// See [`UiConfig::terminal_label`].
     #[serde(default)]
     terminal_label: Option<String>,
+    external_browser: Option<String>,
     /// See [`UiConfig::terminal_glyph_svg`].
     #[serde(default)]
     terminal_glyph_svg: Option<String>,
@@ -3046,6 +3064,18 @@ impl Config {
             if !trimmed.is_empty() {
                 self.ui.terminal_label = trimmed.to_string();
             }
+        }
+        // EXEC-BEARING. This key names a program mnml spawns, so an
+        // untrusted workspace must not be able to set it — otherwise a
+        // cloned repo shipping `.mnml/config.toml` with
+        // `external_browser = "/bin/whatever"` runs that the next time
+        // the user clicks any link. Gated exactly like formatters /
+        // linters / DAP adapters.
+        if allow_exec && let Some(s) = raw.ui.external_browser {
+            // Empty stays empty — that is the "use the OS default"
+            // value, so a user can clear the key to get the old
+            // behaviour back rather than having to delete the line.
+            self.ui.external_browser = s.trim().to_string();
         }
         if let Some(s) = raw.ui.terminal_glyph_svg {
             self.ui.terminal_glyph_svg = s.trim().to_string();
@@ -4351,6 +4381,53 @@ split = "down"
 
 #[cfg(test)]
 mod tests {
+
+    /// Write `body` as a workspace `.mnml/config.toml` and load it.
+    /// `apply_file_pub` rather than `load_with_trust` so the developer's
+    /// real `~/.config/mnml/config.toml` cannot influence the result.
+    fn cfg_from(body: &str) -> (tempfile::TempDir, Config) {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("config.toml");
+        std::fs::write(&f, body).unwrap();
+        let mut c = Config::default();
+        c.apply_file_pub(&f);
+        (d, c)
+    }
+
+    /// USER REPORT 2026-09-01 — "choose which browser opens when doing
+    /// favorites in browser, i expected chrome but got safari."
+    #[test]
+    fn external_browser_defaults_to_the_os_handler_and_is_settable() {
+        assert_eq!(
+            Config::default().ui.external_browser,
+            "",
+            "default must be empty — empty means 'use the OS default', \
+             so an unset key keeps the previous behaviour"
+        );
+        let (_d, c) = cfg_from("[ui]\nexternal_browser = \"Google Chrome\"\n");
+        assert_eq!(c.ui.external_browser, "Google Chrome");
+    }
+
+    /// `external_browser` names a program mnml SPAWNS, so an untrusted
+    /// workspace must not be able to set it — a cloned repo shipping
+    /// `.mnml/config.toml` would otherwise run an arbitrary binary the
+    /// next time the user clicked a link.
+    #[test]
+    fn an_untrusted_workspace_cannot_set_the_external_browser() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml")).unwrap();
+        std::fs::write(
+            d.path().join(".mnml").join("config.toml"),
+            "[ui]\nexternal_browser = \"/tmp/evil\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load_with_trust(None, d.path(), false);
+        assert_ne!(
+            cfg.ui.external_browser, "/tmp/evil",
+            "an untrusted workspace set the browser mnml spawns — \
+             clicking any link would run it"
+        );
+    }
     use super::*;
     use std::io::Write;
 
