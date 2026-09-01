@@ -517,7 +517,9 @@ impl App {
             && let Some(ext) = path.extension().and_then(|s| s.to_str())
             && matches!(ext, "http" | "curl" | "rest")
         {
-            self.open_request_pane_from_file(&path);
+            // Carry the preview intent, as the image/markdown branches do.
+            let as_preview = preview && self.config.editor.input_style == "standard";
+            self.open_request_pane_from_file_opts(&path, as_preview);
             return;
         }
         // Push the *current* position onto the back-stack before navigating
@@ -3446,6 +3448,58 @@ mod md_preview_tab_tests {
             before,
             "two image previews left {} tabs",
             app.panes.len()
+        );
+    }
+
+    /// A DELIBERATE open of a `.http` file must be a permanent tab.
+    ///
+    /// `open_request_pane_from_file` hardcoded `is_preview = true`, so
+    /// `:edit a.http`, the Cmd+P picker and grep jumps all produced a
+    /// replaceable tab — and the user's next glance at any other request
+    /// silently destroyed the one they had deliberately opened.
+    #[test]
+    fn a_permanent_http_open_is_not_a_preview_tab() {
+        let (_d, mut app) = app_with_md();
+        for n in ["a.http", "b.http"] {
+            std::fs::write(app.workspace.join(n), "GET https://example.com\n").unwrap();
+        }
+
+        app.open_path(&app.workspace.join("a.http"));
+        let previews = app
+            .panes
+            .iter()
+            .filter(|p| matches!(p, Pane::Request(r) if r.is_preview))
+            .count();
+        assert_eq!(previews, 0, "a deliberate open produced a preview tab");
+
+        // ...so glancing at another request must NOT consume it.
+        let before = app.panes.len();
+        app.open_path_preview(&app.workspace.join("b.http"));
+        assert_eq!(
+            app.panes.len(),
+            before + 1,
+            "the glance replaced the deliberately-opened request"
+        );
+    }
+
+    /// Glancing at a request while focused in another split must not
+    /// reach across and hijack a preview living in a different leaf.
+    #[test]
+    fn an_http_preview_does_not_hijack_another_split() {
+        let (_d, mut app) = app_with_md();
+        for n in ["a.http", "b.http"] {
+            std::fs::write(app.workspace.join(n), "GET https://example.com\n").unwrap();
+        }
+        app.open_path_preview(&app.workspace.join("a.http"));
+        let leaf_a = app.active;
+        app.split_active(crate::layout::SplitDir::Vertical);
+        let leaf_b = app.active;
+        assert_ne!(leaf_a, leaf_b, "split did not move focus to a new leaf");
+
+        app.open_path_preview(&app.workspace.join("b.http"));
+        assert_ne!(
+            app.active, leaf_a,
+            "focus teleported into the other split, replacing its request"
         );
     }
 

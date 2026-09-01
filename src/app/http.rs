@@ -924,6 +924,11 @@ impl App {
     /// parse — that way a corrupt/half-written file is still
     /// reachable.
     pub fn open_request_pane_from_file(&mut self, path: &std::path::Path) {
+        self.open_request_pane_from_file_opts(path, false);
+    }
+
+    /// `as_preview` marks the pane replaceable, matching markdown/image.
+    pub fn open_request_pane_from_file_opts(&mut self, path: &std::path::Path, as_preview: bool) {
         use crate::pane::Pane;
         use crate::request_pane::{EditField, RequestPane, RunState, ViewMode};
         // Already open as a Request pane? Reveal it.
@@ -1036,20 +1041,30 @@ impl App {
         pane.view = ViewMode::Edit;
         pane.focus = EditField::Url;
         pane.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
-        // File-backed requests open in PREVIEW mode too — arrowing
-        // through the tree / HTTP-panel COLLECTIONS shouldn't pile
-        // up tabs for each request the user glances at. The first
-        // edit promotes; a subsequent preview-open replaces this
-        // pane. 2026-07-08.
-        pane.is_preview = true;
-        // Preview-replace path: if any existing Request pane is
-        // still in preview, REPLACE its contents instead of
-        // spawning a new pane. Keeps the "one browsing tab as I
-        // flip through requests" idiom.
-        if let Some(preview_pid) = self
-            .panes
-            .iter()
-            .position(|p| matches!(p, Pane::Request(rp) if rp.is_preview))
+        // File-backed requests open in PREVIEW mode when GLANCED at —
+        // arrowing through the tree shouldn't pile up a tab per request.
+        // The first edit promotes; a subsequent preview-open replaces
+        // this pane. 2026-07-08.
+        //
+        // The intent is now carried in rather than hardcoded `true`. It
+        // used to apply to EVERY open, so `:edit a.http`, the Cmd+P
+        // picker and a grep jump — all deliberate, permanent opens —
+        // produced a replaceable tab that the user's next glance at any
+        // other request silently destroyed.
+        pane.is_preview = as_preview;
+        // Preview-replace path: if the ACTIVE pane is a Request still in
+        // preview, REPLACE its contents instead of spawning a new pane.
+        // Keeps the "one browsing tab as I flip through requests" idiom.
+        //
+        // Scoped to the active leaf, matching the markdown/image
+        // previews. Scanning every pane meant a glance while focused in
+        // one split replaced a request in ANOTHER split and teleported
+        // focus over to it.
+        if as_preview
+            && let Some(preview_pid) = self.active.filter(|&id| {
+                self.layout().contains(id)
+                    && matches!(self.panes.get(id), Some(Pane::Request(rp)) if rp.is_preview)
+            })
         {
             self.panes[preview_pid] = Pane::Request(pane);
             self.active = Some(preview_pid);
