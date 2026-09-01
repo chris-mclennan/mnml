@@ -239,7 +239,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 height: 1,
             };
             let path_line = format!(" {rel}:{}", hit.line);
-            let title: String = hit.title.chars().take(40).collect();
+            // Budget the text against the ROW WIDTH, not a fixed 40
+            // characters. The old constant meant a long path pushed the
+            // title straight through the right border (user report:
+            // "the todos area has same issue where text goes to the
+            // right all the way up against the border").
+            //
+            // `RIGHT_PAD` is the blank cell the user asked for; the
+            // kebab is drawn over the row's right edge on the focused
+            // row, so it needs that gap too.
+            const RIGHT_PAD: usize = 2;
+            const MIN_TITLE: usize = 8;
+            let budget = (area.width as usize).saturating_sub(RIGHT_PAD);
+            let lead = 2 + hit.tag.chars().count() + 1;
+            // Clip the path first if it alone would fill the row, so a
+            // deep path can never squeeze the title out entirely.
+            let path_budget = budget.saturating_sub(lead + MIN_TITLE);
+            let path_line: String = if path_line.chars().count() > path_budget {
+                let keep = path_budget.saturating_sub(1);
+                path_line.chars().take(keep).collect::<String>() + "\u{2026}"
+            } else {
+                path_line
+            };
+            let title_budget = budget.saturating_sub(lead + path_line.chars().count());
+            let title: String = hit.title.chars().take(title_budget.min(40)).collect();
             // Pad the highlight across to the kebab.
             //
             // The band used to close one cell past the title, which was
@@ -252,7 +275,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // the same background, so the run is continuous.
             let used =
                 2 + hit.tag.chars().count() + path_line.chars().count() + 1 + title.chars().count();
-            let pad = (area.width as usize).saturating_sub(used + 2);
+            let pad = (area.width as usize).saturating_sub(used + RIGHT_PAD);
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     // The selection highlight is INSET by one cell rather
@@ -392,6 +415,10 @@ pub fn scan_file(path: &std::path::Path) -> Vec<TodoHit> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new(); // non-UTF-8 → binary → skip
     };
+    let is_markdown = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"));
     let mut out = Vec::new();
     let scan_test_modifiers = is_playwright_test_file(path);
     for (i, line) in content.lines().enumerate() {
@@ -441,7 +468,23 @@ pub fn scan_file(path: &std::path::Path) -> Vec<TodoHit> {
                     || prefix.contains("/*")
                     || prefix.contains("--")
                     || prefix.contains("<!--");
-                if !looks_like_comment {
+                // MARKDOWN has no code comments — a `- TODO: …` line in
+                // prose IS the item, and requiring a comment char meant
+                // a whole TODO.md scanned to a single hit: the `#` in
+                // its own title heading. Accept a marker preceded only
+                // by list / heading / quote punctuation.
+                //
+                // Still anchored to the START of the line, so a passing
+                // mention of TODO mid-sentence is not collected.
+                let markdown_item = is_markdown
+                    && prefix
+                        .trim_start_matches(|c: char| {
+                            c.is_whitespace()
+                                || c.is_ascii_digit()
+                                || matches!(c, '-' | '*' | '+' | '#' | '>' | '.' | ')' | '[' | ']')
+                        })
+                        .is_empty();
+                if !looks_like_comment && !markdown_item {
                     continue;
                 }
                 // Confirm word-boundary on the right so `TODOLIST`
@@ -570,6 +613,138 @@ mod tests {
             "the accent bar is not the blue every other selected-row \
              marker in mnml uses"
         );
+    }
+
+    /// USER REPORT — after 9 items were appended to TODO.md the panel
+    /// count moved by ONE. "where are yours on this list, those 9".
+    ///
+    /// `scan_file` required a comment character before the marker, so a
+    /// markdown list item (`- TODO: …`) never matched; the only hit in
+    /// a whole TODO.md was the `#` in its own title heading.
+    #[test]
+    fn markdown_list_items_are_collected_without_a_comment_char() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("TODO.md");
+        std::fs::write(
+            &f,
+            "# mnml TODO\n\n             - TODO: first queued item\n             - TODO: second queued item\n             * FIXME: a starred one\n             1. TODO: a numbered one\n             > TODO: a quoted one\n",
+        )
+        .unwrap();
+        let hits = scan_file(&f);
+        assert!(
+            hits.len() >= 6,
+            "markdown TODOs were skipped — only {} hit(s): {:?}",
+            hits.len(),
+            hits.iter().map(|h| h.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// ...but a passing MENTION mid-sentence is still not an item, or
+    /// every doc discussing TODOs would flood the panel.
+    #[test]
+    fn a_mid_sentence_mention_in_markdown_is_not_collected() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("notes.md");
+        std::fs::write(
+            &f,
+            "The scanner looks for TODO markers in comments.\n             Nothing here should be collected.\n",
+        )
+        .unwrap();
+        let hits = scan_file(&f);
+        assert!(
+            hits.is_empty(),
+            "a prose mention was collected as an item: {:?}",
+            hits.iter().map(|h| h.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Code files must be UNCHANGED — the comment requirement is what
+    /// stops `let todo = ...` from being collected there.
+    #[test]
+    fn code_files_still_require_a_comment_char() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a.rs");
+        std::fs::write(
+            &f,
+            "let TODO_LIST = 1;\nlet x = \"TODO: not a comment\";\n// TODO: a real one\n",
+        )
+        .unwrap();
+        let hits = scan_file(&f);
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected only the commented marker, got: {:?}",
+            hits.iter().map(|h| h.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// USER REPORT — "the todos area has same issue where text goes to
+    /// the right all the way up against the border."
+    ///
+    /// The title was clipped to a fixed 40 chars regardless of panel
+    /// width, so a long path pushed the row straight through the edge.
+    #[test]
+    fn a_long_row_keeps_a_blank_cell_before_the_right_border() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = vec![TodoHit {
+            tag: "REVIEW",
+            path: d.path().join("src/app/a_very_deeply_nested_module_path.rs"),
+            line: 1998,
+            title: "a title long enough to run past any sane panel width".into(),
+        }];
+
+        // Narrow, like the real activity panel.
+        let w = 34u16;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 12,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+
+        let mut saw_row = false;
+        for y in 0..12u16 {
+            let line: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
+            if !line.contains("REVIEW") {
+                continue;
+            }
+            saw_row = true;
+            // The assertion is that the TITLE SURVIVES, not that the
+            // last cell is blank.
+            //
+            // A blank last cell proves nothing: ratatui clips at the
+            // rect either way, so that held with the fix removed too —
+            // the first version of this test passed against the bug.
+            // What actually breaks without the width-derived budget is
+            // that a long path consumes the whole row and the title is
+            // pushed out entirely, which is the difference the user
+            // sees.
+            assert!(
+                line.contains("a title"),
+                "the path consumed the row and the title vanished:\n{line:?}"
+            );
+            assert!(
+                line.contains('\u{2026}'),
+                "the path was hard-clipped instead of elided:\n{line:?}"
+            );
+        }
+        assert!(saw_row, "no TODO row rendered at all");
     }
 
     /// User report — "the list appears too far left, shift 1 cell right".

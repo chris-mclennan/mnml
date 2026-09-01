@@ -205,8 +205,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         }
         spans.push(Span::styled(" ".repeat(gap), Style::default().bg(bg)));
         if dw > 0 {
+            // LEADING space, not trailing. The row already budgets
+            // `dw + 1` cells for the detail, but emitting the spare cell
+            // AFTER the detail put it against the right border and left
+            // the label butted straight up against the `ⓘ` icon (user
+            // report: "dont let lines run up to the information icon,
+            // leave at least 1 col char blank there"). The cell was
+            // always reserved — it was simply on the wrong side.
             spans.push(Span::styled(
-                format!("{detail} "),
+                format!(" {detail}"),
                 Style::default().fg(theme::cur().comment).bg(bg),
             ));
         }
@@ -489,5 +496,73 @@ mod tests {
         // The last few cells of any row must NOT be a non-… char
         // that's a continuation of the detail. (Soft check — the
         // explicit assertion above is the hard one.)
+    }
+}
+
+#[cfg(test)]
+mod detail_gap_tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    /// USER REPORT — "dont let lines run up to the information icon,
+    /// leave at least 1 col char blank there."
+    ///
+    /// The Messages popup is a picker whose `detail` is `ⓘ  HH:MM`. The
+    /// row budgeted a cell for the gap but emitted it AFTER the detail,
+    /// so a full-width label ran flush into the icon.
+    #[test]
+    fn a_full_width_label_keeps_a_gap_before_its_detail() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let icon = '\u{f05a}';
+        // A label far longer than the row, so it is truncated to exactly
+        // fill its budget — the case that used to collide.
+        let items = vec![crate::picker::PickerItem::new(
+            "0".to_string(),
+            "x".repeat(400),
+            format!("{icon}  18:45"),
+        )];
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Messages,
+            "Messages (1)".to_string(),
+            items,
+        ));
+
+        let (w, h) = (80u16, 20u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+
+        let mut checked = false;
+        for y in 0..h {
+            let line: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
+            // CHAR index, not the byte index `find` returns — the row
+            // contains multi-byte box-drawing characters, so mixing the
+            // two silently compares the wrong cell.
+            if let Some(i) = line.chars().position(|c| c == icon) {
+                let before: String = line.chars().take(i).collect();
+                assert!(
+                    before.ends_with(' '),
+                    "the label runs flush into the ⓘ icon — no blank cell \
+                     before it:\n{line:?}"
+                );
+                checked = true;
+            }
+        }
+        assert!(checked, "no row carrying the ⓘ icon was rendered at all");
     }
 }

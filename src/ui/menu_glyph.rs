@@ -151,8 +151,16 @@ pub fn for_action(a: &MenuAction) -> &'static str {
         M::PtyClear(..) => "\u{f12d}",     // eraser
 
         // ── Run ──
-        M::RunCmd(..) | M::Command(..) | M::TodoAction { .. } => "\u{f04b}", // play
-        M::RunIntegrationDiag(..) => "\u{f0f1}",                             // stethoscope
+        // `Command` is a generic wrapper used by dozens of rows, so one
+        // glyph here rendered whole menus as a single repeated icon
+        // (user: "i see too much repetition... its like we quit trying"
+        // — the pty menu was twelve identical play triangles). Derive
+        // it from the command id instead.
+        M::Command(id) => command_glyph(id),
+        M::RunCmd(..) => "\u{f04b}", // play
+        // Agents / skills / slash-commands offered on a TODO row.
+        M::TodoAction { .. } => "\u{F06A9}",     // robot
+        M::RunIntegrationDiag(..) => "\u{f0f1}", // stethoscope
 
         // ── Info ──
         M::ShowIntegrationDetails(..) | M::ShowIntegrationManifest(..) => "\u{f05a}", // info-circle
@@ -181,6 +189,64 @@ pub fn for_action(a: &MenuAction) -> &'static str {
     }
 }
 
+/// Glyph for a `MenuAction::Command(id)` row, keyed off the command id.
+///
+/// Ordered most-specific-first, and matched as a substring, so
+/// `"pane.close"` resolves on "close" rather than on "pane". Falls back
+/// to a play triangle, which is honest — the row runs *some* command —
+/// rather than pretending to know more.
+fn command_glyph(id: &str) -> &'static str {
+    const TABLE: &[(&str, &str)] = &[
+        ("paste", "\u{f0ea}"),
+        ("copy", "\u{f0c5}"),
+        ("cut", "\u{f0c4}"),
+        ("clear", "\u{f12d}"),
+        ("restart", "\u{f021}"),
+        ("refresh", "\u{f021}"),
+        ("reload", "\u{f021}"),
+        ("close", "\u{f00d}"),
+        ("quit", "\u{f00d}"),
+        ("delete", "\u{f1f8}"),
+        ("remove", "\u{f1f8}"),
+        ("trash", "\u{f1f8}"),
+        ("save", "\u{f0c7}"),
+        ("equalize", "\u{f0db}"),
+        ("dock", "\u{f0db}"),
+        ("split", "\u{f0db}"),
+        ("maximize", "\u{f065}"),
+        ("full", "\u{f065}"),
+        ("zoom", "\u{f065}"),
+        ("new", "\u{f067}"),
+        ("reveal", "\u{f002}"),
+        ("find", "\u{f002}"),
+        ("search", "\u{f002}"),
+        ("grep", "\u{f002}"),
+        ("open", "\u{f07c}"),
+        ("theme", "\u{f043}"),
+        ("toggle", "\u{f205}"),
+        ("git", "\u{f1d3}"),
+        ("term", "\u{f120}"),
+        ("pty", "\u{f120}"),
+        ("shell", "\u{f120}"),
+        ("rename", "\u{f044}"),
+        ("edit", "\u{f044}"),
+        ("settings", "\u{f013}"),
+        ("config", "\u{f013}"),
+        ("help", "\u{f059}"),
+        ("pin", "\u{f08d}"),
+        ("hide", "\u{f070}"),
+        ("agent", "\u{F06A9}"),
+        ("ai", "\u{F06A9}"),
+    ];
+    let lower = id.to_ascii_lowercase();
+    for (needle, glyph) in TABLE {
+        if lower.contains(needle) {
+            return glyph;
+        }
+    }
+    "\u{f04b}"
+}
+
 /// ASCII mode gets no glyphs at all.
 ///
 /// The alternative — an ASCII stand-in per family — would need a legend
@@ -190,20 +256,26 @@ pub fn for_action_ascii(_a: &MenuAction) -> &'static str {
     ""
 }
 
-/// The glyph column a menu row should paint, honouring `ascii_icons`.
+/// Width of the glyph column, in cells: glyph + a 2-cell gap, matching
+/// `menu_bar`'s `icon_col_w` — the spacing the user singled out as the
+/// one that reads correctly.
+pub const COLUMN_W: usize = 3;
+
+/// The glyph column a menu row paints, honouring `ascii_icons`.
 ///
-/// Always two cells wide when non-empty (glyph + separating space) so
-/// rows with no glyph still align with rows that have one.
+/// ALWAYS [`COLUMN_W`] cells in nerd mode, even for a row with no
+/// glyph. A variable-width column was the bug behind rows looking
+/// randomly indented: a label already carrying its own `✓ ` prefix
+/// ended up a gutter deeper than its neighbours.
 pub fn column(a: &MenuAction, ascii: bool) -> String {
-    let g = if ascii {
-        for_action_ascii(a)
-    } else {
-        for_action(a)
-    };
+    if ascii {
+        return String::new();
+    }
+    let g = for_action(a);
     if g.is_empty() {
-        String::new()
+        " ".repeat(COLUMN_W)
     } else {
-        format!("{g} ")
+        format!("{g}{}", " ".repeat(COLUMN_W - 1))
     }
 }
 
@@ -251,24 +323,172 @@ mod tests {
         assert!(!column(&a, false).is_empty(), "nerd mode painted nothing");
     }
 
-    /// A blank glyph must produce a BLANK COLUMN, not a stray space that
-    /// shifts that row's label out of line with its neighbours.
+    /// EVERY row's column is the same width, glyph or not.
+    ///
+    /// This test previously asserted the opposite — that a glyph-less
+    /// row emitted NOTHING — which is precisely the bug the user saw:
+    /// rows whose label already carried a `✓ ` prefix sat a gutter
+    /// deeper than their neighbours, so the menu looked randomly
+    /// indented. A variable-width column cannot align.
     #[test]
-    fn a_blank_glyph_produces_a_blank_column_not_a_stray_space() {
+    fn every_row_reserves_the_same_glyph_column_width() {
         assert_eq!(for_action(&M::Submenu), "", "setup: expected a blank row");
+        let blank = column(&M::Submenu, false);
+        let full = column(&M::SavePane(0), false);
         assert_eq!(
-            column(&M::Submenu, false),
-            "",
-            "a glyph-less row emitted padding, misaligning it against its \
-             neighbours"
+            blank.chars().count(),
+            COLUMN_W,
+            "a glyph-less row did not reserve the column: {blank:?}"
+        );
+        assert_eq!(
+            full.chars().count(),
+            COLUMN_W,
+            "a glyph row did not reserve the column: {full:?}"
+        );
+        assert!(
+            blank.trim().is_empty(),
+            "the blank column painted something: {blank:?}"
+        );
+        assert!(
+            full.ends_with("  "),
+            "no 2-cell gap after the glyph: {full:?}"
         );
     }
 
-    /// The non-empty column is glyph + one space, so labels line up.
+    /// `MenuAction::Command` is a generic wrapper behind dozens of rows.
+    /// One glyph for all of them turned whole menus into a column of the
+    /// same repeated icon ("i see too much repetition... its like we
+    /// quit trying"), so ids must resolve to DIFFERENT glyphs.
     #[test]
-    fn the_glyph_column_is_glyph_plus_one_space() {
-        let c = column(&M::SavePane(0), false);
-        assert!(c.ends_with(' '), "no separator after the glyph: {c:?}");
-        assert_eq!(c.chars().count(), 2, "unexpected column width: {c:?}");
+    fn command_rows_do_not_all_collapse_to_one_glyph() {
+        let ids = [
+            "pty.clear",
+            "pty.restart",
+            "pane.close",
+            "window.dock_left",
+            "window.maximize_width",
+            "edit.paste",
+        ];
+        let glyphs: std::collections::HashSet<&str> =
+            ids.iter().map(|i| command_glyph(i)).collect();
+        assert!(
+            glyphs.len() >= 5,
+            "{} ids collapsed to {} glyph(s) — the pty menu was twelve \
+             identical play triangles for exactly this reason",
+            ids.len(),
+            glyphs.len()
+        );
     }
+
+    /// An id the table does not know still gets an honest fallback
+    /// rather than a blank or a wrong-but-specific icon.
+    #[test]
+    fn an_unmapped_command_falls_back_rather_than_blank() {
+        let g = command_glyph("something.entirely.unmapped");
+        assert!(!g.is_empty(), "unmapped command produced no glyph");
+    }
+}
+
+/// Dump every menu row's glyph as markdown, grouped by glyph, for a
+/// human to audit ("is this icon appropriate, and is it spaced right").
+///
+/// Generated FROM THE LIVE TABLE rather than hand-written, so the audit
+/// document cannot drift from what the menus actually paint. Run with:
+///
+/// ```text
+/// cargo test --lib menu_glyph::audit -- --ignored --nocapture
+/// ```
+///
+/// Writes `.mnml/menu-glyph-audit.md`, which opens in mnml itself —
+/// where the Nerd Font is present and the glyphs actually render.
+#[cfg(test)]
+#[test]
+#[ignore = "generates a review document; not a correctness check"]
+fn audit_dump() {
+    use crate::context_menu::MenuAction as M;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    let p = |s: &str| PathBuf::from(s);
+    // One representative per variant. Labels are the human-facing names
+    // the menus actually use, so the audit reads like the menus do.
+    let rows: Vec<(&str, MenuAction)> = vec![
+        ("Open", M::OpenPath(p("/a"))),
+        ("Open as text", M::OpenPathAsText(p("/a"))),
+        ("Open in split", M::OpenInSplit(p("/a"))),
+        ("Reveal in Finder", M::RevealInFinder(p("/a"))),
+        ("Open externally", M::OpenExternally("u".into())),
+        ("Open terminal here", M::OpenTerminal(p("/a"))),
+        ("Preview markdown", M::PreviewMarkdown(p("/a"))),
+        ("Copy path", M::CopyPath("/a".into())),
+        ("Copy text", M::CopyText("x".into())),
+        ("Cut", M::FileCut(p("/a"))),
+        ("Paste", M::FilePaste(p("/a"))),
+        ("Duplicate", M::FileDuplicate(p("/a"))),
+        ("Move to…", M::FileMoveTo(p("/a"))),
+        ("New file", M::NewFile(p("/a"))),
+        ("New folder", M::NewFolder(p("/a"))),
+        ("Rename…", M::Rename(p("/a"))),
+        ("Delete", M::Delete(p("/a"))),
+        ("Close tab", M::CloseTab(0)),
+        ("Close all tabs", M::CloseAllTabs),
+        ("Pin tab", M::PinTab(0)),
+        ("Save", M::SavePane(0)),
+        ("Expand recursively", M::TreeExpandRecursive(p("/a"))),
+        ("Collapse recursively", M::TreeCollapseRecursive(p("/a"))),
+        ("Submenu parent", M::Submenu),
+    ];
+
+    let mut by_glyph: BTreeMap<&'static str, Vec<&str>> = BTreeMap::new();
+    for (label, a) in &rows {
+        by_glyph.entry(for_action(a)).or_default().push(label);
+    }
+
+    let mut out = String::from(
+        "# Menu glyph audit\n\n\
+         Generated by `cargo test --lib menu_glyph::audit -- --ignored`.\n\
+         Grouped by glyph: every row under one heading shares that icon.\n\
+         Read it in mnml, where the Nerd Font renders.\n\n\
+         Ask of each group: does one icon honestly cover all of these?\n\n",
+    );
+    for (glyph, labels) in &by_glyph {
+        let shown = if glyph.is_empty() {
+            "(none)".to_string()
+        } else {
+            format!("`{glyph}`  {glyph}")
+        };
+        out.push_str(&format!("## {shown} — {} row(s)\n\n", labels.len()));
+        for l in labels {
+            let col = column(
+                rows.iter().find(|(n, _)| n == l).map(|(_, a)| a).unwrap(),
+                false,
+            );
+            out.push_str(&format!("- `{col}{l}`\n"));
+        }
+        out.push('\n');
+    }
+
+    // `MenuAction::Command` rows resolve through the id table, which is
+    // where the worst repetition lived — audit it separately.
+    out.push_str("## `Command(id)` — resolved by id keyword\n\n");
+    for id in [
+        "pty.clear",
+        "pty.restart",
+        "pane.close",
+        "window.dock_left",
+        "window.equalize",
+        "view.toggle_theme",
+        "files.new",
+        "git.stage",
+        "edit.paste",
+        "something.unmapped",
+    ] {
+        out.push_str(&format!("- `{}` → `{}`\n", id, command_glyph(id)));
+    }
+
+    let dir = std::path::Path::new(".mnml");
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join("menu-glyph-audit.md");
+    std::fs::write(&path, out).unwrap();
+    eprintln!("wrote {}", path.display());
 }

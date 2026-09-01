@@ -1207,3 +1207,59 @@ Reason this beats "just paste the whole tab": the prompt is
 structured for AI parsing, keeps the important context, and
 strips secrets so users don't leak credentials into their AI
 provider by accident.
+
+## Session 2026-09-01 — user reports, queued
+
+Raised in one batch while reviewing the menu-glyph and panel work.
+Ordered by whether the shape is settled; the last four are questions
+that need a decision before they are buildable.
+
+### Bugs — shape settled
+
+- TODO: messages popup lets text run into the `ⓘ` column. Leave at
+  least one blank cell before the icon. (`src/ui/messages_view.rs`)
+- TODO: TODOS panel rows run flush to the right border — same missing
+  right pad as the messages popup. Both are the same fix in two places.
+- TODO: `Ctrl+W` closes in most-recently-opened order, not right-to-
+  left. Open two files then two Claude sessions: the first `Ctrl+W`
+  closes the newest session (expected), the second closes a FILE rather
+  than the remaining session. Expected: reverse/right-to-left along the
+  tab strip.
+
+### Toasts — a pattern is missing, not just a bug
+
+- TODO: a toast that reports a MISSING DEPENDENCY should offer to
+  install it, not just state the problem and vanish. Concrete case:
+  clicking the speaker icon toasts "sonos: install the loopback driver
+  first: brew install --cask blackhole-2ch" and disappears.
+  Open question: install button on the toast, or route to the
+  marketplace tab, or both. See the decision note below.
+- TODO: clicking a toast should open more detail where more detail
+  exists (and do nothing where it does not — not every toast has a
+  body).
+- TODO: right-click a toast to copy its text. Today a toast that
+  scrolls past is unrecoverable except via `:messages`.
+
+### Colour / configuration surface
+
+- TODO: let the user set the CURRENT-ROW colour, the way session colour
+  is set. Sessions expose `Color: …` rows on right-click; the panels'
+  focused-row accent is hardcoded blue. Note the asymmetry the user
+  spotted: session colour is per-session, whereas this would be one
+  colour for the accent everywhere.
+- TODO: make `[ui] external_browser` reachable from the UI — probably
+  right-click on the relevant icon rather than TOML-only.
+
+### mixr
+
+- TODO: resume mixr playback across an mnml restart. Losing the mix
+  position on every `./run.sh restart` is a real cost while developing
+  mnml and mixr together. Needs mixr to persist position + mnml to
+  hand it back on relaunch.
+
+### TODOS panel navigation
+
+- TODO: the TODOS panel is a flat 68-row list with no ordering control.
+  Add sort options (by tag severity / path / recency) and a TREE view
+  grouped by directory, alongside the existing flat list. Finding a
+  specific item today means knowing its text and using the filter.

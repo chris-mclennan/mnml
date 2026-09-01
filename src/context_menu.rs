@@ -614,7 +614,14 @@ impl ContextMenu {
             .iter()
             // +2 for the trailing ` \u{25b8}` a submenu row paints, so the
             // marker never overlaps a long label.
-            .map(|i| i.label.chars().count() + if i.has_submenu() { 2 } else { 0 })
+            .map(|i| {
+                i.label.chars().count()
+                    // The glyph column every row now reserves. Omitting
+                    // it clipped every label by exactly its width —
+                    // "Restart (Ctrl+C" and "claude-agents-power-use".
+                    + crate::ui::menu_glyph::COLUMN_W
+                    + if i.has_submenu() { 2 } else { 0 }
+            })
             .chain(self.title.iter().map(|t| t.chars().count()))
             .max()
             .unwrap_or(8);
