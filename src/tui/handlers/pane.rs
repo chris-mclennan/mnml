@@ -2900,6 +2900,40 @@ fn handle_md_preview_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize
     // and md-preview has no editor). Bind `:` here to open the app-
     // level `no_pane_cmdline` so `:bd!`, `:e file`, `:q` reach the ex
     // dispatcher from a preview pane too.
+    // Typing on a rendered preview swaps to the raw editor and lets the
+    // keystroke LAND there, rather than being swallowed (user ask: go
+    // straight to edit, don't ask — typing is unambiguous intent, and a
+    // modal on every keystroke would be worse than the problem).
+    //
+    // Standard input style only. Under vim, `j`/`k`/`g`/`G` are this
+    // pane's scroll keys and a vim user reaches insert deliberately with
+    // `i`; auto-swapping on any letter would break both.
+    //
+    // Deliberately placed BEFORE the `:` handler below so `:` types like
+    // any other character in standard mode. Leaving it behind would mean
+    // every letter inserted except that one, which pops the ex cmdline
+    // mid-word. Vim keeps `:` for the cmdline, which is what that binding
+    // was added for.
+    //
+    // Returning FALSE after the swap is the point: `handle_pane_key`
+    // continues down into its editor path with this same key, and the
+    // pane at index `i` is now an Editor (`md_preview_to_edit` replaces
+    // in place), so the character that triggered the swap is inserted
+    // instead of being dropped.
+    if matches!(app.panes.get(i), Some(Pane::MdPreview(_)))
+        && app.config.editor.input_style == "standard"
+        && matches!(key.code, KeyCode::Char(_))
+        // Defensive, not load-bearing: probed 2026-09-01, every Ctrl/Alt
+        // chord is already consumed further up `handle_pane_key` and
+        // none reaches here. Kept so the condition states its own intent
+        // and stays correct if that upstream handling ever loosens.
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.md_preview_to_edit(i);
+        return false;
+    }
     if let Some(Pane::MdPreview(_)) = app.panes.get(i)
         && matches!(key.code, KeyCode::Char(':'))
     {
@@ -3592,4 +3626,95 @@ mod tree_page_key_tests {
         }
         assert_eq!(app.tree.cursor(), 0, "cursor did not clamp to the top");
     }
+}
+
+#[cfg(test)]
+mod md_preview_typing_tests {
+    use super::handle_pane_key;
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::pane::Pane;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// A workspace holding one markdown file, opened as a RENDERED
+    /// preview (the default), with that pane active.
+    fn app_previewing_md(input_style: &str) -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = input_style.to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let md = app.workspace.join("notes.md");
+        std::fs::write(&md, "# Title\n\nSome text.\n").unwrap();
+        app.open_path(&md);
+        app.focus = crate::focus::Focus::Pane;
+        assert!(
+            matches!(app.panes.get(app.active.unwrap()), Some(Pane::MdPreview(_))),
+            "setup: markdown did not open as a rendered preview"
+        );
+        (d, app)
+    }
+
+    fn active_is_editor(app: &App) -> bool {
+        matches!(app.panes.get(app.active.unwrap()), Some(Pane::Editor(_)))
+    }
+
+    /// Standard input style: typing is unambiguous intent, so a letter
+    /// swaps straight to the raw editor.
+    #[test]
+    fn typing_on_a_preview_swaps_to_the_editor_under_standard_input() {
+        let (_d, mut app) = app_previewing_md("standard");
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::NONE),
+        );
+        assert!(
+            active_is_editor(&app),
+            "typing a letter left the pane as a rendered preview"
+        );
+    }
+
+    /// ...and the character that triggered the swap must LAND, not be
+    /// swallowed by the pane it arrived at.
+    #[test]
+    fn the_keystroke_that_triggered_the_swap_is_not_swallowed() {
+        let (_d, mut app) = app_previewing_md("standard");
+        handle_pane_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::NONE),
+        );
+        let Some(Pane::Editor(b)) = app.panes.get(app.active.unwrap()) else {
+            panic!("no editor pane after typing");
+        };
+        assert!(
+            b.editor.text().contains('Z'),
+            "the swap ate the keystroke; buffer is {:?}",
+            b.editor.text()
+        );
+    }
+
+    /// Vim input style must be untouched: `j` is this pane's scroll key,
+    /// and a vim user reaches insert deliberately with `i`. Auto-swapping
+    /// on any letter would break both.
+    #[test]
+    fn typing_on_a_preview_does_not_swap_under_vim_input() {
+        let (_d, mut app) = app_previewing_md("vim");
+        for c in ['j', 'k', 'Z'] {
+            handle_pane_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+            assert!(
+                !active_is_editor(&app),
+                "`{c}` swapped a vim user out of the preview"
+            );
+        }
+    }
+
+    // NOTE: there is deliberately NO test for the Ctrl/Alt guard on the
+    // swap condition. Probed 2026-09-01 with the guard removed: Ctrl+s,
+    // Ctrl+q, Ctrl+y, Alt+z and Alt+m ALL still failed to reach it,
+    // because `handle_pane_key` consumes every Ctrl/Alt chord further
+    // up. A test there passes whether or not the guard exists, which is
+    // worse than no test — it reads as coverage while asserting nothing.
+    // If chord handling upstream ever loosens, write the test then.
 }

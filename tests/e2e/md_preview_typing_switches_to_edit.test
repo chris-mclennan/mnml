@@ -1,0 +1,22 @@
+# Typing on a RENDERED markdown preview swaps to the raw editor and the
+# keystroke LANDS — it is not swallowed. User: "if user tries to type on
+# md being previewed shoudl we go to edit mode or ask?" → go straight to
+# edit; typing is unambiguous intent.
+
+write notes.md "# Title\n\nSome text.\n"
+open notes.md
+
+# Opens rendered by default (`markdown_opens_rendered`), so the heading
+# marker is stripped and the banner offers Edit.
+expect screen lacks "# Title"
+expect screen contains "Edit"
+
+# Type one character.
+type "Z"
+
+# Raw source is on screen now — the `#` marker proves this is the editor
+# and not the renderer, which strips it.
+expect screen contains "# Title"
+
+# ...and the character that triggered the swap actually landed.
+expect dirty true
