@@ -13,6 +13,13 @@ pub struct ImagePane {
     pub data: ImageData,
     /// Whether the user has hidden the file metadata header. Toggled by `i`.
     pub show_header: bool,
+    /// Replaceable preview tab, like `Buffer::is_preview`.
+    ///
+    /// Images route to this pane before the preview logic runs, and the
+    /// flag only existed on `Buffer` — so glancing at a `.gif` from the
+    /// tree left a permanent tab that the next preview would not replace
+    /// (user report; the same defect markdown had).
+    pub is_preview: bool,
 }
 
 impl ImagePane {
@@ -21,6 +28,7 @@ impl ImagePane {
         Ok(ImagePane {
             data,
             show_header: true,
+            is_preview: false,
         })
     }
 

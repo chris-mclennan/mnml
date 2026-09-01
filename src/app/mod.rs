@@ -8488,6 +8488,11 @@ impl App {
     /// open images are focused instead of duplicated. Refuses with a toast
     /// when the file is too large (50 MB cap) or unreadable.
     pub fn open_image_pane(&mut self, path: &Path) {
+        self.open_image_pane_opts(path, false);
+    }
+
+    /// `as_preview` marks the pane replaceable, like an editor preview.
+    pub fn open_image_pane_opts(&mut self, path: &Path, as_preview: bool) {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if let Some(i) = self
             .panes
@@ -8498,8 +8503,29 @@ impl App {
             return;
         }
         match crate::image::ImagePane::open(&path) {
-            Ok(pane) => {
+            Ok(mut pane) => {
                 self.note_recent_file(&path);
+                pane.is_preview = as_preview;
+                // Replace an existing preview in the active layout
+                // rather than stacking — the rule editor previews
+                // follow. Without it, arrowing past five images left
+                // five permanent tabs.
+                if as_preview
+                    && let Some(idx) = self.active.filter(|&id| {
+                        self.layout().contains(id)
+                            && match self.panes.get(id) {
+                                Some(Pane::Image(p)) => p.is_preview,
+                                Some(Pane::MdPreview(mp)) => mp.is_preview,
+                                Some(Pane::Editor(b)) => b.is_preview,
+                                _ => false,
+                            }
+                    })
+                {
+                    self.panes[idx] = Pane::Image(pane);
+                    self.active = Some(idx);
+                    self.reveal_pane(idx);
+                    return;
+                }
                 self.panes.push(Pane::Image(pane));
                 let new_id = self.panes.len() - 1;
                 self.reveal_pane(new_id);

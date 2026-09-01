@@ -7,8 +7,11 @@ open notes.md
 
 command markdown.preview
 
-# Preview pane is now active and full-width. Its title chip carries `◳`.
-expect pane "◳"
+# Preview pane is now active and full-width. `Pane::title()` is the bare
+# filename — the rendered-preview marker is appended by the bufferline,
+# which is the only layer that can honour `[ui] ascii_icons`.
+expect pane "notes.md"
+expect screen contains "notes.md "
 expect screen contains "Some bold text"
 
 # The original editor body is hidden (preview replaced the leaf), but the

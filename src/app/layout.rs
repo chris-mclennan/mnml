@@ -486,7 +486,9 @@ impl App {
         // `:e`) skips these auto-routings so the raw editor opens even
         // for image / markdown / .http files.
         if !force_editor && is_image_extension(&path) {
-            self.open_image_pane(&path);
+            // Carry the preview intent, as the markdown branch does.
+            let as_preview = preview && self.config.editor.input_style == "standard";
+            self.open_image_pane_opts(&path, as_preview);
             return;
         }
         // qa-feature 2026-07-02 — markdown files open as a rendered
@@ -3407,6 +3409,44 @@ mod md_preview_tab_tests {
             std::fs::write(app.workspace.join(n), format!("# {n}\n")).unwrap();
         }
         (d, app)
+    }
+
+    /// USER REPORT — "gif also has same issue as md where once you look
+    /// at it is loaded and doesn't disappear as you scroll away."
+    ///
+    /// Same defect, same cause: images route to `Pane::Image` before the
+    /// preview logic runs, and `is_preview` only lived on `Buffer`.
+    #[test]
+    fn previewing_an_image_makes_a_preview_tab() {
+        let (_d, mut app) = app_with_md();
+        // A 1x1 PNG is enough — the pane only needs to open.
+        let png: [u8; 67] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        for n in ["one.png", "two.png"] {
+            std::fs::write(app.workspace.join(n), png).unwrap();
+        }
+
+        app.open_path_preview(&app.workspace.join("one.png"));
+        let is_prev = app.panes.iter().any(|p| match p {
+            Pane::Image(ip) => ip.is_preview,
+            _ => false,
+        });
+        assert!(is_prev, "an image preview opened as a permanent tab");
+
+        // ...and the next one replaces it rather than stacking.
+        let before = app.panes.len();
+        app.open_path_preview(&app.workspace.join("two.png"));
+        assert_eq!(
+            app.panes.len(),
+            before,
+            "two image previews left {} tabs",
+            app.panes.len()
+        );
     }
 
     /// The rendered-first default is deliberate — raw markdown reads

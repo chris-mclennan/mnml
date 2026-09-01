@@ -11,9 +11,13 @@ open notes.md
 
 # Both panes should be visible side-by-side: the source editor's tab name
 # `notes.md ●` (no dirty marker yet — file just opened, but the bufferline
-# always has the name) and the preview pane's `notes.md ◳` title chip.
+# always has the name) and the preview pane's tab, which carries the eye.
+#
+# The marker is asserted ATTACHED TO THE NAME, not merely present on the
+# screen — the eye is also the bufferline's Preview chip, so a bare
+# `contains` would pass on a screen with no preview tab at all.
 expect screen contains "notes.md"
-expect screen contains "◳"
+expect screen contains "notes.md "
 
 # The preview pane renders the rendered text — `**bold**` markers are
 # stripped, leaving the bold word visible.

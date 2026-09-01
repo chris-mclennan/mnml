@@ -4970,7 +4970,8 @@ fn tab_chip_inputs_for(
         is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),
         is_preview: matches!(pane, Pane::Editor(b) if b.is_preview)
             || matches!(pane, Pane::Request(rp) if rp.is_preview)
-            || matches!(pane, Pane::MdPreview(mp) if mp.is_preview),
+            || matches!(pane, Pane::MdPreview(mp) if mp.is_preview)
+            || matches!(pane, Pane::Image(ip) if ip.is_preview),
         is_hovered: app.hovered_bufferline_tab == Some(id),
         diag_chip,
         diag_severity,
