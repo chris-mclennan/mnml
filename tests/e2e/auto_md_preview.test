@@ -9,15 +9,16 @@ expect screen contains "auto-preview md: on"
 write notes.md "# Title\n\nSome **bold** text.\n"
 open notes.md
 
-# Both panes should be visible side-by-side: the source editor's tab name
-# `notes.md ●` (no dirty marker yet — file just opened, but the bufferline
-# always has the name) and the preview pane's tab, which carries the eye.
+# Both panes are visible side-by-side, and the preview tab is the BARE
+# filename — no marker glyph (the user rejected both `◳` and the eye,
+# 2026-09-01).
 #
-# The marker is asserted ATTACHED TO THE NAME, not merely present on the
-# screen — the eye is also the bufferline's Preview chip, so a bare
-# `contains` would pass on a screen with no preview tab at all.
+# `lacks` is anchored to the NAME rather than being a bare "no eye on
+# screen": the source pane's banner chip legitimately reads ` Preview`
+# with the same eye, so an unanchored check would fail for the wrong
+# reason.
 expect screen contains "notes.md"
-expect screen contains "notes.md "
+expect screen lacks "notes.md "
 
 # The preview pane renders the rendered text — `**bold**` markers are
 # stripped, leaving the bold word visible.

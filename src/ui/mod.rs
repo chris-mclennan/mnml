@@ -4950,21 +4950,14 @@ fn tab_chip_inputs_for(
         id,
         glyph,
         icon_color,
-        // Mark a rendered-markdown pane with the SAME eye the
-        // bufferline's `Preview` chip uses. It was a bare `◳`, which is
-        // not a convention anywhere and did not match the chip that
-        // toggles the very same thing.
-        name: match pane {
-            Pane::MdPreview(_) => {
-                let eye = if app.config.ui.ascii_icons {
-                    "(p)"
-                } else {
-                    "\u{f06e}"
-                };
-                format!("{} {eye}", pane.title())
-            }
-            _ => pane.title(),
-        },
+        // A rendered-markdown tab carries NO marker glyph. It was a
+        // bare `◳`, then the bufferline's eye; the user rejected both
+        // (2026-09-01) — the tab shows the filename, nothing else.
+        //
+        // Nothing is lost: the banner chip in the pane itself still
+        // reads `✏ Edit` / ` Preview`, and it is LABELLED, which is
+        // what made the bare tab glyph redundant.
+        name: pane.title(),
         is_active: id == active,
         is_dirty: pane.is_dirty(),
         is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),
