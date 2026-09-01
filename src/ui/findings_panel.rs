@@ -188,12 +188,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // a narrowing filter doesn't highlight nothing.
     let clamped_cursor = app.findings_panel_cursor.min(files.len().saturating_sub(1));
     app.findings_panel_cursor = clamped_cursor;
+    let visible_rows = (area.height as usize).saturating_sub(4);
+    let mut scroll = app.findings_panel_scroll;
+    let (first, shown, needs_sb) = crate::ui::panel_chrome::list_scroll_window(
+        &mut scroll,
+        clamped_cursor,
+        files.len(),
+        visible_rows,
+    );
+    app.findings_panel_scroll = scroll;
+    let row_w = if needs_sb {
+        area.width.saturating_sub(1)
+    } else {
+        area.width
+    };
     #[allow(clippy::explicit_counter_loop)]
-    for (row_i, path) in files
-        .iter()
-        .take(area.height.saturating_sub(4) as usize)
-        .enumerate()
-    {
+    for (row_i, path) in files.iter().enumerate().skip(first).take(shown) {
         if y >= area.y + area.height {
             break;
         }
@@ -235,7 +245,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let row_rect = Rect {
             x: area.x,
             y,
-            width: area.width,
+            width: row_w,
             height: 1,
         };
         frame.render_widget(
@@ -263,6 +273,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .findings_panel_files
             .push((row_rect, path.clone()));
         y += 1;
+    }
+    if needs_sb {
+        let sb = Rect {
+            x: area.x + row_w,
+            y: area.y + 4,
+            width: 1,
+            height: visible_rows as u16,
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            sb,
+            &t,
+            files.len(),
+            visible_rows,
+            first,
+        );
     }
 }
 

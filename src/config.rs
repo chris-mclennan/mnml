@@ -932,6 +932,7 @@ pub struct UiConfig {
     /// keeps the user's curation.
     pub plus_menu_pinned: Vec<String>,
     pub plus_menu_hidden: Vec<String>,
+
     /// #1102 (2026-08-20) — user-controlled reorder for dynamic
     /// statusline segments (`[[statusline_segments]]` from any
     /// installed integration manifest, plus IPC-set segments).

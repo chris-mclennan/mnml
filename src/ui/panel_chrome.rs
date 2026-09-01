@@ -127,3 +127,38 @@ pub fn draw_caps_header_with_refresh(
     );
     Some(refresh_rect)
 }
+
+/// Scroll window for a simple list panel: clamp `scroll` so `cursor`
+/// stays visible, and report `(first_visible, visible_rows, needs_bar)`.
+///
+/// Shared because TODOS / NOTES / FINDINGS each grew the same list and
+/// each shipped WITHOUT scrolling — they drew one screenful and dropped
+/// the rest silently. Keeping the arithmetic in one place is what stops
+/// the fourth such panel repeating it.
+pub fn list_scroll_window(
+    scroll: &mut usize,
+    cursor: usize,
+    total: usize,
+    visible_rows: usize,
+) -> (usize, usize, bool) {
+    if visible_rows == 0 || total == 0 {
+        *scroll = 0;
+        return (0, 0, false);
+    }
+    // Follow the cursor in both directions.
+    if cursor < *scroll {
+        *scroll = cursor;
+    } else if cursor >= *scroll + visible_rows {
+        *scroll = cursor + 1 - visible_rows;
+    }
+    // Never leave blank rows below a full list.
+    let max_scroll = total.saturating_sub(visible_rows);
+    if *scroll > max_scroll {
+        *scroll = max_scroll;
+    }
+    (
+        *scroll,
+        visible_rows.min(total - *scroll),
+        total > visible_rows,
+    )
+}

@@ -5478,6 +5478,14 @@ pub struct App {
     /// could not be highlighted, keyboard-navigated, or marked with the
     /// selected-row accent its sibling panels use (user ask).
     pub findings_panel_cursor: usize,
+    /// First visible row for the three list panels.
+    ///
+    /// They had NO scroll state at all until 2026-09-01: each drew the
+    /// first screenful and everything past it was unreachable, with no
+    /// scrollbar to say so — 93 TODOs looked like 40 (user report).
+    pub todos_panel_scroll: usize,
+    pub notes_panel_scroll: usize,
+    pub findings_panel_scroll: usize,
     pub sessions_panel_cursor: usize,
     /// #1184 (2026-08-23) — first visible row in the sessions rail.
     /// User hit "can only reliably load 9 or so Claudes in total,
@@ -6728,6 +6736,9 @@ impl App {
             todos_panel_cursor: 0,
             notes_panel_cursor: 0,
             findings_panel_cursor: 0,
+            todos_panel_scroll: 0,
+            notes_panel_scroll: 0,
+            findings_panel_scroll: 0,
             sessions_panel_cursor: 0,
             sessions_panel_scroll: 0,
             agents_panel_scroll: 0,

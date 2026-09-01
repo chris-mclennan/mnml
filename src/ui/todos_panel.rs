@@ -208,12 +208,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // cursor after a filter narrows doesn't paint nothing.
         let clamped_cursor = app.todos_panel_cursor.min(filtered.len().saturating_sub(1));
         app.todos_panel_cursor = clamped_cursor;
-        for (row_i, (idx, hit)) in filtered
-            .iter()
-            .copied()
-            .take(area.height.saturating_sub(5) as usize)
-            .enumerate()
-        {
+        // Content begins at `area.y + 3`, so THREE rows are chrome — not
+        // the five the row budget used to reserve, which stopped the
+        // list two lines short of the border and made a full panel look
+        // like the end of the list.
+        let visible_rows = (area.height as usize).saturating_sub(3);
+        let mut scroll = app.todos_panel_scroll;
+        let (first, shown, needs_sb) = crate::ui::panel_chrome::list_scroll_window(
+            &mut scroll,
+            clamped_cursor,
+            filtered.len(),
+            visible_rows,
+        );
+        app.todos_panel_scroll = scroll;
+        // Leave a column for the scrollbar only when one is needed.
+        let row_w = if needs_sb {
+            area.width.saturating_sub(1)
+        } else {
+            area.width
+        };
+        for (row_i, (idx, hit)) in filtered.iter().copied().enumerate().skip(first).take(shown) {
             if y >= area.y + area.height {
                 break;
             }
@@ -235,7 +249,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let row_rect = Rect {
                 x: area.x,
                 y,
-                width: area.width,
+                width: row_w,
                 height: 1,
             };
             let path_line = format!(" {rel}:{}", hit.line);
@@ -351,6 +365,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             app.rects.todos_panel_rows.push((row_rect, row_i));
             y += 1;
+        }
+        // Without this the panel simply stopped at the last drawn row —
+        // no bar, no cue — so a list twice the panel height read as the
+        // whole list (user: "it says 93 but it stops ... this makes me
+        // think there are no more to see").
+        if needs_sb {
+            let sb = Rect {
+                x: area.x + row_w,
+                y: area.y + 3,
+                width: 1,
+                height: visible_rows as u16,
+            };
+            crate::ui::scrollbar::paint_simple_scrollbar(
+                frame,
+                sb,
+                &t,
+                filtered.len(),
+                visible_rows,
+                first,
+            );
         }
         y += 1;
     }
@@ -675,6 +709,85 @@ mod tests {
             1,
             "expected only the commented marker, got: {:?}",
             hits.iter().map(|h| h.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// USER REPORT — "it says 93 but it stops 2 lines before the border
+    /// ... and no scrollbar. this makes me think there are no more to
+    /// see."
+    ///
+    /// Two defects in one: the row budget reserved five chrome rows
+    /// when content starts three in, and there was NO SCROLL STATE at
+    /// all — everything past the first screenful was unreachable.
+    #[test]
+    fn a_long_list_fills_the_panel_and_shows_a_scrollbar() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = (0..90)
+            .map(|i| TodoHit {
+                tag: "TODO",
+                path: d.path().join(format!("f{i}.rs")),
+                line: 1,
+                title: format!("item{i}"),
+            })
+            .collect();
+
+        let (w, h) = (40u16, 20u16);
+        let render = |app: &mut crate::app::App| -> Vec<String> {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| {
+                draw(
+                    f,
+                    app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: w,
+                        height: h,
+                    },
+                )
+            })
+            .unwrap();
+            let buf = term.backend().buffer();
+            (0..h)
+                .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+                .collect()
+        };
+
+        let rows = render(&mut app);
+        // Content starts at row 3, so rows 3..h-1 must all carry a TODO.
+        // The old budget left the last two blank, which is what made a
+        // full panel look like the end of the list.
+        let last = &rows[(h - 1) as usize];
+        assert!(
+            last.contains("TODO"),
+            "the bottom row of the panel is empty — the list stops short \
+             of the border:\n{last:?}"
+        );
+
+        // A list this long must advertise that there is more.
+        let painted: String = rows.join("");
+        assert!(
+            painted.contains('\u{2588}')
+                || painted.contains('\u{2593}')
+                || painted.contains('\u{2502}'),
+            "no scrollbar painted for 90 items in a 20-row panel"
+        );
+
+        // ...and the cursor must be able to REACH the end.
+        for _ in 0..89 {
+            app.todos_panel_cursor_down();
+        }
+        let rows = render(&mut app);
+        assert!(
+            rows.iter().any(|r| r.contains("item89")),
+            "the last item is unreachable — the panel never scrolled"
         );
     }
 
