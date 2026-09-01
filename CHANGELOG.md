@@ -10,6 +10,40 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.21](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.20...mnml-rs-v0.2.21) - 2026-09-01
+
+### Added
+
+- *(markdown)* typing on a rendered preview swaps to the editor
+- *(md)* rendered-first stays the default, but becomes an option
+- *(files)* a "Delete permanently" button on the confirm modal
+- *(files)* Option on the delete confirm skips the trash
+- *(files)* a trash view, and widen the panel gutter to 3 cells
+- *(files)* a delete is undoable — it moves to the workspace trash
+- *(editor)* the breadcrumb is clickable
+
+### Fixed
+
+- *(ui)* FINDINGS gets a cursor; panel caches refresh on fs changes
+- *(ui)* the TODOS/NOTES gutter never painted its accent bar
+- *(#1238)* markdown preview tabs carry no marker glyph at all
+- *(#1238)* .http had the preview bug in both directions
+- *(#1238)* glancing at an image left a permanent tab, same as markdown
+- *(md)* a markdown preview was always a permanent tab
+- *(files)* migrate the old trash index; say "Delete permanently" in there
+- *(files)* deleting inside the trash re-trashed it; hide the index
+- *(picker)* "Open file" ignored a pasted path, silently
+- *(ui)* hide the terminal caret while a dropdown is open
+- *(files)* bound the trash by size, and verify the symlink case
+- *(files)* two ways the undoable delete still destroyed data
+- *(test)* Windows path separator broke the TODO-prompt assertion
+- *(git)* the repo chip was a dead end once you closed your repo tabs
+
+### Other
+
+- rename crates/fim-engine/ -> crates/mnml-fim-engine/
+- *(v0.2.20)* the file-manager release
+
 ## [0.2.20](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.19...mnml-rs-v0.2.20) - 2026-08-31
 
 A file manager, background file operations, and three separate editor
