@@ -1263,3 +1263,17 @@ that need a decision before they are buildable.
   Add sort options (by tag severity / path / recency) and a TREE view
   grouped by directory, alongside the existing flat list. Finding a
   specific item today means knowing its text and using the filter.
+
+### Session 2026-09-01 (second batch)
+
+- TODO: notification bell should sit in the TOP RIGHT, and left-clicking
+  it should open the notifications popup.
+- TODO: the menu-glyph audit list needs a one-step way to regenerate —
+  `cargo test --ignored` is too obscure. A palette command that writes
+  and opens `.mnml/menu-glyph-audit.md` would do it.
+- TODO: NOTES age column needs one more character of room. `14h` and
+  `1d` fit but sit flush against the edge where `1h` does not.
+- TODO: the focused-row kebab in the panels wants shifting one cell
+  right, but the highlight band is wider than the filter row above it,
+  so the two edges disagree. Decide whether the band should end where
+  the filter chip ends, or the filter chip widen to the band.
