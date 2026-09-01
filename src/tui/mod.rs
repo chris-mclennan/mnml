@@ -218,6 +218,35 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     // near the dump call for rationale.
     let mut last_ipc_dump: Option<Instant> = None;
 
+    // Discard input that arrived while NO process was reading the
+    // tty.
+    //
+    // mnml is relaunched constantly during development
+    // (`./run.sh restart`), and the terminal keeps generating mouse
+    // reports across the gap. Those bytes sit in the tty buffer and
+    // the next process reads them as ordinary `Char` events — by
+    // then they are indistinguishable from typing, so they land in
+    // whatever pane has focus as literal text like
+    // `[<65;146;14M`. All-motion tracking (`?1003h`, enabled just
+    // above) makes this far more likely, since every mouse MOVE
+    // generates a report.
+    //
+    // Bounded so a genuinely busy tty cannot spin here.
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(20);
+        let mut dropped = 0u32;
+        while std::time::Instant::now() < deadline && dropped < 512 {
+            match event::poll(std::time::Duration::ZERO) {
+                Ok(true) => {
+                    if event::read().is_err() {
+                        break;
+                    }
+                    dropped += 1;
+                }
+                _ => break,
+            }
+        }
+    }
     loop {
         let frame_start = std::time::Instant::now();
         app.tick();

@@ -14,6 +14,45 @@
 
 use ratatui::crossterm::event::{self, Event as CtEvent, MouseEvent, MouseEventKind};
 
+/// What the drain loop should do with an event it just read.
+///
+/// Extracted as a pure function because [`coalesce_scroll`] reads from
+/// crossterm's global queue, which a unit test cannot inject into — so
+/// the POLICY is testable even though the loop is not.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DrainAction {
+    /// Another scroll in the same direction — fold it into the batch.
+    Count,
+    /// A bare motion report. Discard and KEEP DRAINING: all-motion
+    /// tracking interleaves these with every wheel burst, and treating
+    /// one as a stop meant bursts barely coalesced.
+    Skip,
+    /// Anything else — stash it for the main loop and stop.
+    StashAndStop,
+}
+
+pub(crate) fn drain_action(first: MouseEventKind, ev: &CtEvent) -> DrainAction {
+    let same_dir = matches!(
+        (first, mouse_kind(ev)),
+        (MouseEventKind::ScrollUp, Some(MouseEventKind::ScrollUp))
+            | (MouseEventKind::ScrollDown, Some(MouseEventKind::ScrollDown))
+    );
+    if same_dir {
+        DrainAction::Count
+    } else if matches!(mouse_kind(ev), Some(MouseEventKind::Moved)) {
+        DrainAction::Skip
+    } else {
+        DrainAction::StashAndStop
+    }
+}
+
+fn mouse_kind(ev: &CtEvent) -> Option<MouseEventKind> {
+    match ev {
+        CtEvent::Mouse(m) => Some(m.kind),
+        _ => None,
+    }
+}
+
 /// Drain immediately-available scroll events in the SAME direction
 /// from crossterm's queue. Non-scroll events return `Ok(None)`; the
 /// caller dispatches the original event as-is.
@@ -21,13 +60,6 @@ use ratatui::crossterm::event::{self, Event as CtEvent, MouseEvent, MouseEventKi
 /// Caps the batched count so a stuck wheel can't trigger thousands
 /// of lines of scroll in one shot.
 pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<MouseEvent>> {
-    let same_dir = |k: MouseEventKind| -> bool {
-        matches!(
-            (first.kind, k),
-            (MouseEventKind::ScrollUp, MouseEventKind::ScrollUp)
-                | (MouseEventKind::ScrollDown, MouseEventKind::ScrollDown)
-        )
-    };
     if !matches!(
         first.kind,
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
@@ -41,17 +73,16 @@ pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<Mous
             break;
         }
         let ev = event::read()?;
-        match ev {
-            CtEvent::Mouse(m) if same_dir(m.kind) => {
+        // Policy lives in `drain_action` so it can be unit-tested; the
+        // loop only performs it. Keeping the decision inline would mean
+        // the tests below asserted something nothing calls.
+        match drain_action(first.kind, &ev) {
+            DrainAction::Count => {
                 count += 1;
                 continue;
             }
-            // code-reviewer W-2 2026-06-28: stash the non-scroll
-            // event in a thread-local so the main event loop can
-            // drain it before reading the next event. Previously
-            // dropped, which lost interleaved clicks/keys during
-            // wheel bursts.
-            other => {
+            DrainAction::Skip => continue,
+            DrainAction::StashAndStop => {
                 COALESCE_LEFTOVER.with(|s| {
                     let mut slot = s.borrow_mut();
                     // code-reviewer 3rd 2026-06-29 N-1: assert in
@@ -62,7 +93,7 @@ pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<Mous
                         slot.is_none(),
                         "COALESCE_LEFTOVER was not drained before re-stashing"
                     );
-                    *slot = Some(other);
+                    *slot = Some(ev);
                 });
                 break;
             }
@@ -103,4 +134,75 @@ pub(crate) fn take_scroll_batch_count() -> u32 {
     SCROLL_BATCH_COUNT
         .swap(1, std::sync::atomic::Ordering::Relaxed)
         .max(1)
+}
+
+#[cfg(test)]
+mod drain_policy_tests {
+    use super::*;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn mouse(kind: MouseEventKind) -> CtEvent {
+        CtEvent::Mouse(MouseEvent {
+            kind,
+            column: 1,
+            row: 1,
+            modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn same_direction_scrolls_are_folded_into_the_batch() {
+        assert_eq!(
+            drain_action(
+                MouseEventKind::ScrollDown,
+                &mouse(MouseEventKind::ScrollDown)
+            ),
+            DrainAction::Count
+        );
+    }
+
+    /// The regression: a motion report used to END the drain. With
+    /// all-motion tracking on, motion interleaves with every wheel
+    /// burst, so coalescing almost never got past one event and the
+    /// view advanced in lurches.
+    #[test]
+    fn a_motion_report_does_not_stop_the_drain() {
+        assert_eq!(
+            drain_action(MouseEventKind::ScrollDown, &mouse(MouseEventKind::Moved)),
+            DrainAction::Skip,
+            "a bare motion report ended the wheel drain"
+        );
+    }
+
+    /// ...but a real interleaved event must still be preserved, or
+    /// clicks and keys get eaten during a wheel burst.
+    #[test]
+    fn a_click_or_key_is_stashed_and_stops_the_drain() {
+        assert_eq!(
+            drain_action(
+                MouseEventKind::ScrollDown,
+                &mouse(MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left
+                ))
+            ),
+            DrainAction::StashAndStop
+        );
+        assert_eq!(
+            drain_action(
+                MouseEventKind::ScrollDown,
+                &CtEvent::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+            ),
+            DrainAction::StashAndStop
+        );
+    }
+
+    /// An OPPOSITE-direction scroll must stop the batch, or a reversal
+    /// mid-spin would be summed into the wrong direction.
+    #[test]
+    fn an_opposite_scroll_stops_the_drain() {
+        assert_eq!(
+            drain_action(MouseEventKind::ScrollDown, &mouse(MouseEventKind::ScrollUp)),
+            DrainAction::StashAndStop
+        );
+    }
 }
