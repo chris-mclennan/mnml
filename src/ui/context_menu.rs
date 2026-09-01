@@ -89,7 +89,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         } else {
             ""
         };
-        let mut label = format!(" {} ", item.label);
+        // Leading glyph column — see `ui::menu_glyph`. Blank rows emit
+        // an empty column rather than a placeholder, and the padding
+        // below is computed from the finished string, so mixed
+        // glyph/no-glyph menus still fill the row.
+        let g = crate::ui::menu_glyph::column(&item.action, app.config.ui.ascii_icons);
+        let mut label = format!(" {g}{} ", item.label);
         let room = want.saturating_sub(marker.chars().count());
         if label.chars().count() < room {
             label.push_str(&" ".repeat(room - label.chars().count()));
@@ -167,7 +172,8 @@ fn draw_submenu(frame: &mut Frame, app: &mut App, screen: Rect, parent: Rect) {
         if item.destructive && !selected {
             style = style.fg(crate::ui::theme::cur().red);
         }
-        let mut label = format!(" {} ", item.label);
+        let g = crate::ui::menu_glyph::column(&item.action, app.config.ui.ascii_icons);
+        let mut label = format!(" {g}{} ", item.label);
         let want = inner.width as usize;
         if label.chars().count() < want {
             label.push_str(&" ".repeat(want - label.chars().count()));
@@ -176,4 +182,72 @@ fn draw_submenu(frame: &mut Frame, app: &mut App, screen: Rect, parent: Rect) {
         app.rects.context_submenu_items.push((r, row));
     }
     app.rects.context_submenu_box = Some(area);
+}
+
+#[cfg(test)]
+mod glyph_render_tests {
+    use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    fn render_menu(ascii: bool) -> String {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::Config::default();
+        cfg.ui.ascii_icons = ascii;
+        let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.context_menu = Some(ContextMenu::new(
+            Some("a.txt".to_string()),
+            (2, 2),
+            vec![
+                MenuItem::new("Copy path", MenuAction::CopyText("/a".into())),
+                MenuItem::new("Save", MenuAction::SavePane(0)),
+            ],
+        ));
+        let (w, h) = (80u16, 24u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The glyph must reach the SCREEN, not merely exist in the table.
+    /// The table's own tests pass even if the renderer never calls it.
+    #[test]
+    fn menu_rows_paint_their_glyph() {
+        let screen = render_menu(false);
+        let copy = crate::ui::menu_glyph::for_action(&MenuAction::CopyText("/a".into()));
+        assert!(
+            screen.contains(copy),
+            "the Copy row painted no glyph — the table is wired to nothing:\n{screen}"
+        );
+        assert!(screen.contains("Copy path"), "the row label vanished");
+    }
+
+    /// ASCII mode must render the labels and NO glyphs.
+    #[test]
+    fn ascii_mode_paints_labels_without_glyphs() {
+        let screen = render_menu(true);
+        assert!(screen.contains("Copy path"), "label missing in ascii mode");
+        let copy = crate::ui::menu_glyph::for_action(&MenuAction::CopyText("/a".into()));
+        assert!(
+            !screen.contains(copy),
+            "ascii mode painted a nerd glyph:\n{screen}"
+        );
+    }
 }

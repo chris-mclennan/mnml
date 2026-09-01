@@ -28,6 +28,7 @@ pub mod codex_usage_view;
 pub mod design_tokens;
 pub mod empty_state;
 pub mod filter_placeholder;
+pub mod menu_glyph;
 pub mod panel_chrome;
 pub mod refresh_glyph;
 pub mod search_glyph;
