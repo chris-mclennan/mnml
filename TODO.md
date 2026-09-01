@@ -1277,3 +1277,8 @@ that need a decision before they are buildable.
   right, but the highlight band is wider than the filter row above it,
   so the two edges disagree. Decide whether the band should end where
   the filter chip ends, or the filter chip widen to the band.
+
+- TODO: `context_menu` silently drops rows past the screen height — it
+  clamps `visible` to the inner height with no scroll and no indicator,
+  so a long submenu (the agent list) is truncated with no cue. Same
+  defect class as the three list panels fixed 2026-09-01.
