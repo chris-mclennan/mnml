@@ -2541,6 +2541,7 @@ pub struct PaneRects {
     /// 2026-08-07 — Findings panel row rects (mirrors Notes shape).
     pub findings_panel_files: Vec<(Rect, std::path::PathBuf)>,
     pub findings_panel_filter_input: Option<Rect>,
+    pub findings_panel_new_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel `+ New note` row rect.
     pub notes_panel_new_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel `/` filter input row.
@@ -3525,6 +3526,7 @@ impl PaneRects {
         // Findings panel.
         self.findings_panel_files.clear();
         self.findings_panel_filter_input = None;
+        self.findings_panel_new_chip = None;
         // Todos panel.
         self.todos_panel_rows.clear();
         self.todos_panel_kebab = None;

@@ -1473,6 +1473,40 @@ impl App {
     /// `note-1.md` with no chance to name it). The prompt already
     /// routes accept → `create_new_file` which writes the file
     /// and opens it in an editor pane.
+    /// FINDINGS' create action. NOTES and TODOS both had one; this
+    /// panel's own module docstring referred to a "`+ New finding`
+    /// action" that had never been built (user ask 2026-09-01).
+    ///
+    /// Deliberately the same shape as `notes_panel_new_note` — seeded
+    /// name, NewFile prompt, same FsAction — so the two panels stay one
+    /// idiom rather than two.
+    pub fn findings_panel_new_finding(&mut self) {
+        let dir = crate::ui::findings_panel::findings_dir(&self.workspace);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast(format!("findings: create dir failed: {e}"));
+            return;
+        }
+        let mut i = 1;
+        let mut candidate = dir.join("finding-1.md");
+        while candidate.exists() {
+            i += 1;
+            candidate = dir.join(format!("finding-{i}.md"));
+        }
+        let seed = format!("finding-{i}.md");
+        self.pending_fs_action = Some(FsAction::NewFile {
+            parent: dir.clone(),
+        });
+        let title = format!(
+            "New finding in {}/",
+            crate::app::util::rel_path(&self.workspace, &dir)
+        );
+        self.prompt = Some(crate::prompt::Prompt::seeded_select_all(
+            crate::prompt::PromptKind::NewFile,
+            title,
+            seed,
+        ));
+    }
+
     pub fn notes_panel_new_note(&mut self) {
         let dir = crate::ui::notes_panel::notes_dir(&self.workspace);
         if let Err(e) = std::fs::create_dir_all(&dir) {

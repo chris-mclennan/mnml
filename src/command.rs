@@ -4207,6 +4207,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.notes_panel_new_note(),
         },
         Command {
+            id: "findings.new",
+            title: "Findings: create a new finding in .mnml/findings/",
+            group: "findings",
+            keys: &[],
+            run: |app| app.findings_panel_new_finding(),
+        },
+        Command {
             id: "view.activity_todos",
             title: "Activity: show TODOs (TODO/FIXME/XXX/HACK/REVIEW markers)",
             group: "view",

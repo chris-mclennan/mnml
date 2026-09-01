@@ -121,12 +121,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // R16 design-critic (2026-08-24) — content starts at `area.y + 3`
-    // (one blank row under the filter) rather than the `area.y + 2`
-    // that NOTES/SESSIONS use. FINDINGS has no `+ New finding` CTA
-    // chip to occupy that row, so the blank is deliberate breathing
-    // room instead of a missing button. Same call in `todos_panel.rs`.
-    let mut y = area.y + 3;
+    // The row at `area.y + 2` was left blank by R16 design-critic
+    // (2026-08-24) precisely BECAUSE this panel had no `+ New finding`
+    // chip to put in it. It has one now (user ask 2026-09-01), so the
+    // reserved row is finally occupied and the layout matches
+    // NOTES/SESSIONS instead of being a lone exception.
+    let mut y = area.y + 2;
+    if y < area.y + area.height {
+        let label = "+ New finding";
+        let chip_w = crate::ui::action_button::chip_width(label);
+        let avail = area.width.saturating_sub(1);
+        let new_rect = Rect {
+            x: area.x + 1,
+            y,
+            width: chip_w.min(avail),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(crate::ui::action_button::chip_line(
+                label,
+                crate::ui::action_button::primary(&t),
+            )),
+            new_rect,
+        );
+        app.rects.findings_panel_new_chip = Some(new_rect);
+        y += 2;
+    }
 
     if files.is_empty() {
         // Distinguish "no files at all" from "filter matched nothing"
@@ -171,7 +191,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     #[allow(clippy::explicit_counter_loop)]
     for (row_i, path) in files
         .iter()
-        .take(area.height.saturating_sub(3) as usize)
+        .take(area.height.saturating_sub(4) as usize)
         .enumerate()
     {
         if y >= area.y + area.height {
@@ -329,6 +349,46 @@ mod tests {
             " ",
             "column 2 is blank — the row content did not follow the accent"
         );
+    }
+
+    /// The `+ New finding` chip must render — including on an EMPTY
+    /// panel, which is exactly when a user needs it most. The panel had
+    /// no create action at all until 2026-09-01, while NOTES and TODOS
+    /// both did; its own module docstring referred to one that did not
+    /// exist.
+    #[test]
+    fn the_new_finding_chip_renders_even_when_empty() {
+        let (_d, mut app) = app_with_findings(&[]);
+        let buf = render(&mut app, 60);
+        let text: String = (0..12u16)
+            .map(|y| (0..60).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("+ New finding"),
+            "no create chip on an empty FINDINGS panel:\n{text}"
+        );
+        assert!(
+            app.rects.findings_panel_new_chip.is_some(),
+            "the chip painted but registered no click rect — a dead button"
+        );
+    }
+
+    /// ...and it must still be there once the panel HAS rows, rather
+    /// than being pushed out by the list.
+    #[test]
+    fn the_new_finding_chip_survives_a_populated_list() {
+        let (_d, mut app) = app_with_findings(&["alpha", "beta"]);
+        let buf = render(&mut app, 60);
+        let text: String = (0..12u16)
+            .map(|y| (0..60).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("+ New finding"),
+            "chip vanished once rows existed"
+        );
+        assert!(text.contains("alpha"), "rows stopped rendering");
     }
 
     /// The accent must FOLLOW the cursor, not sit on row 0 forever.
