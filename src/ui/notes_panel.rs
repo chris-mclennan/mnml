@@ -235,8 +235,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    // 3-cell gutter — see findings_panel.
-                    Span::styled("   ", Style::default().bg(row_bg)),
+                    // Two unhighlighted cells keep the band off the panel
+                    // edge, then the focused row's blue `▌` accent — the
+                    // same selected-row idiom as the palette picker /
+                    // activity bar / sessions panel.
+                    //
+                    // This panel painted all three gutter cells in the
+                    // row colour, so its band ran flush to the edge AND
+                    // carried no accent; TODOS had already been inset
+                    // without ever gaining the bar. Both are fixed here,
+                    // together, so the two panels finally agree.
+                    Span::styled("  ", Style::default().bg(bg)),
+                    Span::styled(
+                        if is_focused_row { "▌" } else { " " },
+                        Style::default().fg(t.blue).bg(row_bg),
+                    ),
                     Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(row_bg)),
                     Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
                     Span::styled(
@@ -255,4 +268,75 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
 pub fn notes_dir(workspace: &std::path::Path) -> std::path::PathBuf {
     workspace.join(".mnml").join("notes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// The focused row must be inset off the panel edge AND carry the
+    /// blue `▌` accent, matching TODOS.
+    ///
+    /// This panel painted all three gutter cells in the row colour, so
+    /// its highlight ran flush to the left edge — the exact complaint
+    /// that had already been fixed in TODOS — and it never painted an
+    /// accent bar at all, so "the gutter" was invisible empty space.
+    #[test]
+    fn the_focused_row_is_inset_and_carries_the_blue_accent_bar() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        let nd = notes_dir(d.path());
+        std::fs::create_dir_all(&nd).unwrap();
+        std::fs::write(nd.join("a.md"), "hello").unwrap();
+        app.notes_panel_files_cache = vec![nd.join("a.md")];
+        app.notes_panel_scanned_once = true;
+
+        let w = 60u16;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 12,
+                },
+            )
+        })
+        .unwrap();
+
+        let t = theme::cur();
+        let buf = term.backend().buffer();
+        let y = (0..12u16)
+            .find(|&y| (0..w).any(|x| buf[(x, y)].symbol() == "▌"))
+            .expect("no row carries an accent bar");
+
+        assert_eq!(
+            buf[(0, y)].bg,
+            t.bg_darker,
+            "column 0 is highlighted — the band is welded to the panel edge"
+        );
+        assert_eq!(
+            buf[(1, y)].bg,
+            t.bg_darker,
+            "column 1 is highlighted — the gutter should be 2 cells, as in TODOS"
+        );
+        assert_eq!(
+            buf[(2, y)].symbol(),
+            "▌",
+            "the focused row's accent bar is not at column 2"
+        );
+        assert_eq!(buf[(2, y)].fg, t.blue, "the accent bar is not blue");
+        assert_eq!(
+            buf[(2, y)].bg,
+            t.bg2,
+            "the accent sits outside the highlight band"
+        );
+    }
 }

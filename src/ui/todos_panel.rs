@@ -268,7 +268,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // Two unhighlighted cells, then the band. Matches
                     // FINDINGS / NOTES at 3 cells to the text.
                     Span::styled("  ", Style::default().bg(bg)),
-                    Span::styled(" ", Style::default().bg(row_bg)),
+                    // The focused row's accent bar. mnml marks a selected
+                    // row with a blue `▌` everywhere else it has one —
+                    // the palette picker, the activity bar, the sessions
+                    // panel, the Claude accounts view. This panel
+                    // RESERVED the column but never painted the bar, so
+                    // the only cue was a background shift, and the gutter
+                    // read as empty space (user report: "when i think
+                    // gutter i was thinking vertical COLORED bar like we
+                    // do in sessions view").
+                    Span::styled(
+                        if is_focused_row { "▌" } else { " " },
+                        Style::default().fg(t.blue).bg(row_bg),
+                    ),
                     Span::styled(
                         hit.tag,
                         Style::default()
@@ -544,6 +556,24 @@ mod tests {
             app.rects.todos_panel_kebab.is_some(),
             "the focused row shows no actions kebab"
         );
+
+        // The focused row carries the blue `▌` accent at column 2 — the
+        // selected-row idiom mnml uses in the palette picker, the
+        // activity bar and the sessions panel. The gutter column was
+        // reserved but never painted, so a focused row was distinguished
+        // only by its background: "when i think gutter i was thinking
+        // vertical COLORED bar like we do in sessions view".
+        assert_eq!(
+            buf[(2, y)].symbol(),
+            "▌",
+            "the focused row has no accent bar in its gutter"
+        );
+        assert_eq!(
+            buf[(2, y)].fg,
+            theme::cur().blue,
+            "the accent bar is not the blue every other selected-row \
+             marker in mnml uses"
+        );
     }
 
     /// User report — "the list appears too far left, shift 1 cell right".
@@ -593,11 +623,59 @@ mod tests {
             .iter()
             .find(|r| r.contains("TODO") && !r.contains("TODOS"))
             .unwrap_or_else(|| panic!("no TODO row rendered:\n{}", rows.join("\n")));
-        let indent = todo_row.len() - todo_row.trim_start().len();
+        // Where the TEXT begins — not the leading-space count, which
+        // stopped measuring the indent once the focused row's accent
+        // bar started occupying the third gutter cell.
+        let text_start = |row: &str| {
+            row.chars()
+                .position(|c| c != ' ' && c != '▌')
+                .unwrap_or(usize::MAX)
+        };
+        let todos_col = text_start(todo_row);
+
+        // Render NOTES and compare against it directly. The docstring
+        // above has always claimed this was "asserted against a sibling
+        // panel"; it asserted a literal `3`, so the two could drift
+        // apart in either direction without this test noticing.
+        let mut napp =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        napp.config.ui.ascii_icons = true;
+        let nd = crate::ui::notes_panel::notes_dir(d.path());
+        std::fs::create_dir_all(&nd).unwrap();
+        std::fs::write(nd.join("zzmarker.md"), "x").unwrap();
+        napp.notes_panel_files_cache = vec![nd.join("zzmarker.md")];
+        napp.notes_panel_scanned_once = true;
+        let mut nterm = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        nterm
+            .draw(|f| {
+                crate::ui::notes_panel::draw(
+                    f,
+                    &mut napp,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 80,
+                        height: 12,
+                    },
+                )
+            })
+            .unwrap();
+        let nbuf = nterm.backend().buffer();
+        let notes_row: String = (0..12)
+            .map(|y| (0..80).map(|x| nbuf[(x, y)].symbol()).collect::<String>())
+            .find(|r| r.contains("zzmarker"))
+            .expect("no NOTES list row rendered");
+        let notes_col = text_start(&notes_row);
+
         assert_eq!(
-            indent, 3,
-            "list row indented {indent} cells; FINDINGS and NOTES use 3, \
-             and the three move together:\n{todo_row:?}"
+            todos_col, notes_col,
+            "TODOS text starts at column {todos_col}, NOTES at {notes_col} — \
+             the sibling panels have drifted apart:\n{todo_row:?}\n{notes_row:?}"
+        );
+        assert_eq!(
+            todos_col, 3,
+            "list text should start at column 3 (two inset cells + the \
+             accent-bar cell):\n{todo_row:?}"
         );
     }
 
