@@ -2895,14 +2895,17 @@ mod list_sort_wiring_tests {
     ) -> (
         tempfile::TempDir,
         tempfile::TempDir,
-        // ORDER MATTERS. A tuple drops left-to-right, so the EnvGuard
-        // must come BEFORE the MutexGuard: returning the lock first
-        // released it while `MNML_DATA_ROOT` was still set, letting the
-        // next test start against this test's tempdir config. That is
-        // exactly how `discover_over_an_empty_dir_does_not_touch_the_
-        // ledger` failed in a full run while passing alone.
-        crate::EnvGuard,
+        // ORDER MATTERS, and it is the opposite of the obvious. Locals
+        // drop in REVERSE declaration order, so the EnvGuard must be
+        // declared AFTER the MutexGuard to be dropped BEFORE it —
+        // otherwise the lock is released while `MNML_DATA_ROOT` is
+        // still set and the next test resolves its config to this
+        // test's tempdir. Getting this backwards broke
+        // `open_keys_config_appends_stub_when_missing`, which sets
+        // XDG_CONFIG_HOME but not MNML_DATA_ROOT, and which
+        // `home_config_path` checks first.
         std::sync::MutexGuard<'static, ()>,
+        crate::EnvGuard,
         App,
     ) {
         let cfg_dir = tempfile::tempdir().unwrap();
@@ -2928,7 +2931,7 @@ mod list_sort_wiring_tests {
                 .unwrap();
         }
         app.notes_panel_refresh();
-        (d, cfg_dir, env, lock, app)
+        (d, cfg_dir, lock, env, app)
     }
 
     fn names(app: &App) -> Vec<String> {
@@ -2945,7 +2948,7 @@ mod list_sort_wiring_tests {
         // `zebra` is written last, so newest-first puts it on top while
         // A–Z puts it last. The two orders are opposites here, which is
         // what makes the assertion meaningful.
-        let (_d, _cfg, _env, _lk, mut app) = app_with_notes(&["alpha", "middle", "zebra"]);
+        let (_d, _cfg, _lk, _env, mut app) = app_with_notes(&["alpha", "middle", "zebra"]);
         assert_eq!(app.notes_sort, ListSort::Newest, "default changed");
         assert_eq!(names(&app).first().unwrap(), "zebra", "not newest-first");
 
@@ -2961,7 +2964,7 @@ mod list_sort_wiring_tests {
     /// Sort is PER PANEL: browsing notes A–Z must not reorder findings.
     #[test]
     fn setting_one_panels_sort_leaves_the_others_alone() {
-        let (_d, _cfg, _env, _lk, mut app) = app_with_notes(&["a", "b"]);
+        let (_d, _cfg, _lk, _env, mut app) = app_with_notes(&["a", "b"]);
         app.set_panel_sort("notes", "name");
         assert_eq!(app.notes_sort, ListSort::Name);
         assert_eq!(

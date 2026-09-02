@@ -2595,6 +2595,7 @@ pub struct PaneRects {
     pub findings_panel_files: Vec<(Rect, std::path::PathBuf)>,
     pub findings_panel_filter_input: Option<Rect>,
     pub findings_panel_new_chip: Option<Rect>,
+    pub todos_panel_new_chip: Option<Rect>,
     /// Content rects for the three list panels, so a wheel event over
     /// them can be routed to their scroll offset. Without these the
     /// panels scrolled ONLY by moving the keyboard cursor.
@@ -3586,6 +3587,7 @@ impl PaneRects {
         self.findings_panel_files.clear();
         self.findings_panel_filter_input = None;
         self.findings_panel_new_chip = None;
+        self.todos_panel_new_chip = None;
         self.todos_panel_area = None;
         self.notes_panel_area = None;
         self.findings_panel_area = None;

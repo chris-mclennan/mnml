@@ -3434,6 +3434,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.findings_panel_new_finding();
         return;
     }
+    if let Some(r) = app.rects.todos_panel_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.todos_panel_new_todo();
+        return;
+    }
     if let Some((i, path)) = app
         .rects
         .findings_panel_files

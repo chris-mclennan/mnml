@@ -4228,6 +4228,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "todos.new",
+            title: "TODOs: add a TODO to the workspace TODO.md",
+            group: "todos",
+            keys: &[],
+            run: |app| app.todos_panel_new_todo(),
+        },
+        Command {
             id: "findings.new",
             title: "Findings: create a new finding in .mnml/findings/",
             group: "findings",

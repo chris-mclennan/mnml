@@ -8,6 +8,8 @@ pub enum PromptKind {
     /// Accept ⇒ `App::add_workspace_runtime(input)`. Input is a path
     /// (tilde-expanded); the workspace name defaults to the basename.
     AddWorkspace,
+    /// Free text for a new TODO, appended to the workspace `TODO.md`.
+    NewTodo,
     /// Accept ⇒ `git commit -m <input>`.
     GitCommit,
     /// Accept ⇒ `git commit --amend -m <input>` (rewrite HEAD's message in

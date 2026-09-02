@@ -826,6 +826,67 @@ impl App {
     /// (blocks one frame's render) but subsequent \`todos.refresh\`
     /// clicks are cheap enough on typical trees. If it starts to
     /// hurt, extract to a background thread + mpsc.
+    /// `+ New todo` — append a line to the workspace `TODO.md`.
+    ///
+    /// WHERE IT LANDS, and why. `TODO.md` at the workspace root, not
+    /// `.mnml/todos.md`:
+    ///
+    /// * It is the file that already holds this workspace's backlog,
+    ///   so a todo made here shows up beside the ones already written
+    ///   by hand instead of splitting the list in two.
+    /// * The scanner cannot see `.mnml/` anyway — `walk_for_todos`
+    ///   skips every dot-directory — so that sink would need a
+    ///   special case to be visible at all.
+    ///
+    /// It IS tracked by git in this repo, so a todo added here is a
+    /// commit away from being shared. That is right for a project
+    /// backlog and wrong for a private note; notes already have their
+    /// own panel and their own gitignored directory.
+    ///
+    /// Appended under an `## Inbox` heading, created if absent, so
+    /// entries collect in one predictable place rather than being
+    /// stapled to whatever section happens to be last.
+    pub fn todos_panel_new_todo(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::NewTodo,
+            "New TODO (appended to TODO.md)".to_string(),
+        ));
+    }
+
+    /// Commit the text from the `NewTodo` prompt.
+    pub fn append_todo(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let path = self.workspace.join("TODO.md");
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        const INBOX: &str = "## Inbox";
+        let mut out = if existing.trim().is_empty() {
+            format!("# TODO\n\n{INBOX}\n")
+        } else if existing.contains(INBOX) {
+            existing.clone()
+        } else {
+            format!("{}\n\n{INBOX}\n", existing.trim_end())
+        };
+        // Insert directly under the Inbox heading — newest first, so a
+        // long-lived file does not bury today's entry at the bottom.
+        if let Some(i) = out.find(INBOX) {
+            let after = i + INBOX.len();
+            let line_end = out[after..]
+                .find('\n')
+                .map(|n| after + n + 1)
+                .unwrap_or(out.len());
+            out.insert_str(line_end, &format!("- TODO: {text}\n"));
+        }
+        if let Err(e) = std::fs::write(&path, out) {
+            self.toast(format!("todo: write failed: {e}"));
+            return;
+        }
+        self.todos_panel_refresh();
+        self.toast(format!("todo added to {}", "TODO.md"));
+    }
+
     pub fn todos_panel_refresh(&mut self) {
         let mut hits = Vec::new();
         walk_for_todos(&self.workspace, 0, &mut hits);
@@ -2189,5 +2250,83 @@ mod todo_action_tests {
         app.open_todos_action_menu(1, (0, 0));
         assert_eq!(app.todos_panel_cursor, 1, "the selection did not follow");
         assert!(app.context_menu.is_some(), "no menu opened");
+    }
+}
+
+#[cfg(test)]
+mod new_todo_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// A todo added from the panel must land in TODO.md AND be visible
+    /// in the panel immediately — the whole point is not having to know
+    /// where the file is.
+    #[test]
+    fn a_new_todo_lands_in_todo_md_and_appears_in_the_panel() {
+        let (_d, mut app) = app();
+        app.append_todo("wire the thing");
+
+        let body = std::fs::read_to_string(app.workspace.join("TODO.md")).unwrap();
+        assert!(body.contains("## Inbox"), "no Inbox heading:\n{body}");
+        assert!(
+            body.contains("- TODO: wire the thing"),
+            "not written:\n{body}"
+        );
+        assert!(
+            app.todos_hits
+                .iter()
+                .any(|h| h.title.contains("wire the thing")),
+            "written to disk but not picked up by the panel"
+        );
+    }
+
+    /// Appending must PRESERVE an existing file — this repo's TODO.md
+    /// is 59KB of real backlog, and clobbering it would be unrecoverable
+    /// from inside the editor.
+    #[test]
+    fn appending_preserves_existing_content() {
+        let (_d, mut app) = app();
+        let path = app.workspace.join("TODO.md");
+        std::fs::write(
+            &path,
+            "# mnml TODO\n\n## Files pane\n\n- TODO: existing item\n",
+        )
+        .unwrap();
+
+        app.append_todo("brand new");
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("- TODO: existing item"), "clobbered:\n{body}");
+        assert!(body.contains("- TODO: brand new"), "not appended:\n{body}");
+        assert!(body.contains("## Files pane"), "lost a section:\n{body}");
+    }
+
+    /// Newest first under Inbox, so today's entry is not buried at the
+    /// bottom of a long-lived file.
+    #[test]
+    fn newest_entry_goes_first_under_inbox() {
+        let (_d, mut app) = app();
+        app.append_todo("older");
+        app.append_todo("newer");
+        let body = std::fs::read_to_string(app.workspace.join("TODO.md")).unwrap();
+        let older = body.find("older").unwrap();
+        let newer = body.find("newer").unwrap();
+        assert!(newer < older, "the newest entry was buried:\n{body}");
+    }
+
+    /// Empty input must not write a bare `- TODO:` row.
+    #[test]
+    fn empty_input_writes_nothing() {
+        let (_d, mut app) = app();
+        app.append_todo("   ");
+        assert!(
+            !app.workspace.join("TODO.md").exists(),
+            "an empty todo created the file anyway"
+        );
     }
 }

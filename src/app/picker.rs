@@ -1908,6 +1908,10 @@ impl App {
             return;
         };
         match p.kind {
+            crate::prompt::PromptKind::NewTodo => {
+                let text = p.input.clone();
+                self.append_todo(&text);
+            }
             crate::prompt::PromptKind::AddWorkspace => {
                 // If the user picked a row from the live directory
                 // listing (↑↓ then Enter), that path wins over the

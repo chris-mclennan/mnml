@@ -42,6 +42,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.todos_panel_refresh_chip = None;
     app.rects.todos_panel_filter_input = None;
     app.rects.todos_panel_kebab = None;
+    app.rects.todos_panel_new_chip = None;
 
     // Trigger a background rescan the first time this panel appears
     // in a session (todos_hits is empty and no scan yet).
@@ -146,7 +147,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // filter) is intentional: TODOS has no `+ New todo` CTA chip like
     // NOTES/SESSIONS do, so the row acts as breathing room instead of
     // a chip slot. Matches `findings_panel.rs`.
-    let mut y = area.y + 3;
+    // `+ New todo` occupies the row that was deliberately left blank
+    // for want of a CTA — the same reasoning that gave FINDINGS its
+    // chip. TODOS was then the only list panel with no way to create
+    // anything.
+    let y = area.y + 2;
+    if y < area.y + area.height {
+        let label = "+ New todo";
+        let chip_w = crate::ui::action_button::chip_width(label);
+        let avail = area.width.saturating_sub(1);
+        let new_rect = Rect {
+            x: area.x + 1,
+            y,
+            width: chip_w.min(avail),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(crate::ui::action_button::chip_line(
+                label,
+                crate::ui::action_button::primary(&t),
+            )),
+            new_rect,
+        );
+        app.rects.todos_panel_new_chip = Some(new_rect);
+    }
+    let mut y = y + 1;
 
     if app.todos_hits.is_empty() {
         // Interpolate the same glyph the header refresh chip uses
