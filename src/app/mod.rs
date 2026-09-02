@@ -2192,6 +2192,8 @@ pub enum ScrollbarKind {
     /// `total` = content-row count; `viewport` = panel body height.
     AgentsPanel,
     /// The three activity list panels, whose scroll lives on `App`.
+    /// The picker overlay's list (message history, files, commands).
+    Picker,
     TodosPanel,
     NotesPanel,
     FindingsPanel,
@@ -2800,7 +2802,6 @@ pub struct PaneRects {
     pub activity_bar_gear: Option<Rect>,
     /// The notifications bell, directly above the gear. Always present —
     /// its job is to say the message history exists.
-    pub activity_bar_bell: Option<Rect>,
     /// Bottom cmdline bar rect — click to open the ex-cmdline
     /// (`:settings` / `:help` / …) without a keyboard chord. Set
     /// every frame by `cmdline_bar::draw`.

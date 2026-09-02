@@ -189,6 +189,17 @@ impl App {
         // drag left it below the new window and `list_scroll_window`
         // snapped the scroll straight back — a bottom-to-top drag was a
         // complete no-op. Assignment moves it either way.
+        // The picker derives its window from `selected` each frame, so a
+        // drag must move the SELECTION — setting `scroll` alone would be
+        // reverted on the next render. Same trap as the Files pane and
+        // the list panels below.
+        if matches!(kind, ScrollbarKind::Picker) {
+            if let Some(p) = self.picker.as_mut() {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            return;
+        }
         match kind {
             ScrollbarKind::TodosPanel => {
                 self.todos_panel_scroll = scroll;

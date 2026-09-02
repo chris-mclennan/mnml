@@ -54,7 +54,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.activity_bar_icons.clear();
     app.rects.activity_bar_gear = None;
-    app.rects.activity_bar_bell = None;
 
     let t = theme::cur();
     let bar_bg = t.bg_darker;
@@ -98,53 +97,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         app.rects.activity_bar_gear = Some(gear_row);
     }
-    // Notifications bell, directly above the gear.
+    // The notifications bell used to live here, directly above the
+    // gear. It was added when the only other route to the message
+    // history was a statusline badge HIDDEN until something went wrong,
+    // so nothing on screen said the feature existed.
     //
-    // The message history was reachable only from the palette and from a
-    // statusline badge that is HIDDEN until something goes wrong — so if
-    // you had never hit an error, nothing on screen said the history
-    // existed (user ask: "i think we need an icon for it somewhere,
-    // maybe put it above settings gear").
-    //
-    // Unlike the statusline badge this is always present, because its
-    // job is to say the feature exists. It colours by unread level:
-    // red for errors, yellow for warnings, dim otherwise.
-    let bell_glyph = if nerd { "\u{F0F3}" } else { "!" }; // nf-fa-bell
-    if area.height >= 4 {
-        let bell_y = area.y + area.height - 3;
-        let bell_row = Rect {
-            x: area.x,
-            y: bell_y,
-            width: area.width,
-            height: 1,
-        };
-        let unread = app.unread_message_count();
-        let fg = if unread == 0 {
-            t.comment
-        } else if app.unread_errors > 0 {
-            t.red
-        } else {
-            t.yellow
-        };
-        let mut style = Style::default().fg(fg).bg(bar_bg);
-        if unread == 0 {
-            style = style.add_modifier(Modifier::DIM);
-        }
-        frame.render_widget(
-            Paragraph::new(Line::from(bell_glyph)).style(style),
-            Rect {
-                x: area.x + 1,
-                y: bell_y,
-                width: area.width.saturating_sub(1),
-                height: 1,
-            },
-        );
-        app.rects.activity_bar_bell = Some(bell_row);
-    }
+    // That reason is gone: the statusline bell is now ALWAYS present
+    // (quiet when idle) and sits beside the clock, where the user asked
+    // for it and prefers it. Two permanent bells for one history is one
+    // too many, so this one is removed rather than kept "just in case"
+    // — the rect field and its click handler are removed too, rather
+    // than left as dead code.
 
-    // Carve the section-icon paint area so it stops above the gear and
-    // the bell.
-    let icons_end_y = area.y + area.height.saturating_sub(4);
+    // Carve the section-icon paint area so it stops above the gear.
+    // Was `- 4` to also clear the bell that used to sit above it; the
+    // sections get that row back now.
+    let icons_end_y = area.y + area.height.saturating_sub(3);
 
     let icon_x = area.x + 1; // 1 cell of left padding
     let mut y = area.y + 1; // start 1 row down for top padding

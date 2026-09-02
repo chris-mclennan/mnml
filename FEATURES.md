@@ -40,19 +40,64 @@ The complete, organised feature inventory. For the front-door overview see
 - **Buffer management** — a tabline of open buffers, MRU buffer switching,
   reopen-closed-buffer, recent-files picker, alternate-file jump.
 
+## File manager
+
+- **Files pane** — a directory listing as a first-class `Pane`
+  (`files.open`), so a browser is just another thing you can split, tab,
+  and arrange; `files.open_split` opens a second one beside it for a
+  Commander-style dual layout. Navigation, three sort orders
+  (dirs-first-name / size / modified), a hidden-file toggle, a clickable
+  breadcrumb with a destinations picker (Home / Downloads / volumes /
+  workspaces / recents), per-row git status badges, `p` to preview a file
+  without leaving the listing, and a `/`-filter. The same `file.*`
+  operations that work from tree focus (below) also act from a focused
+  Files pane. `src/file_browser.rs` + `src/ui/file_browser_view.rs` +
+  `src/app/file_actions.rs`.
+- **Multi-select** — `Space` marks the row under the cursor, `a` marks
+  all, `Esc` clears; every file operation acts on the marked set.
+  Ctrl/Cmd-click toggles one row, Shift-click extends a range; the
+  right-click menu acts on the marks rather than the row under the
+  cursor. Marks are keyed by path (not index), so they survive a
+  re-sort, a reload, a hidden-file toggle, or navigating away and back.
+- **Background transfers** — copy and move run on a worker thread
+  (`src/transfer.rs`) instead of the render thread, so a large directory
+  no longer freezes the editor. A statusline chip shows progress and
+  speed while a transfer is running (hidden when idle);
+  `transfer.cancel_all` cancels every in-flight transfer from the
+  palette; `:qa` refuses to quit mid-transfer.
+- **Undoable delete / workspace trash** — a delete moves the entry to
+  `<workspace>/.mnml/trash` instead of removing it outright; the confirm
+  modal also offers "Delete permanently" to skip the trash. `files.trash`
+  opens the trash as a Files pane; `files.restore_from_trash` puts the
+  selected entry back where it came from. Bounded: entries older than 7
+  days are pruned, the trash is capped at 512 MB total (oldest evicted
+  first above that), and anything at least 256 MB skips the trash and is
+  deleted directly rather than trashing something the size cap would
+  immediately evict.
+- **Editor breadcrumb** — a directory-path row above the buffer; each
+  path segment is clickable and opens a Files pane at that directory
+  (parity with the Files pane's own breadcrumb, which was already
+  clickable).
+
 ## Navigation & search
 
 - **Fuzzy pickers** — file finder, command palette, buffer switcher, symbol
   picker, marks/clipboard/recent-commands pickers — all over one fuzzy core.
 - **Which-key leader popup** — a discoverable trie of leader-key chords.
-  Root groups: `f` find, `g` git, `b` buffer, `p` picker, `P` PR, `i`
-  integrations, `a` AI/term, `s` split, `l` LSP, `I` insert, `t` tab, `w`
-  workspace, `u` UI, `h` http, `d` diff/debug. `<leader>i` opens `+integrations`
-  with chords for every forge/AWS/DB sibling: `b` Bitbucket, `g` GitHub, `l`
-  GitLab, `z` Azure DevOps, `c` CodeBuild, `s` S3, `w` CloudWatch Logs, `a`
-  Amplify, `d` DynamoDB, `L` Lambda, `e` EventBridge, `+` add integration, `p`
-  icon picker, `e` enable/disable. `<leader>t` includes `r` (toggle right panel).
-  `<leader>...b` maps to `tools.btop`.
+  Root groups: `f` find, `b` buffer, `t` toggle (explorer, right panel,
+  hidden files, vim⇄standard, theme picker), `g` git, `h` http, `T` test,
+  `L` lang-run (`c` cargo / `n` npm / `p` pytest / `g` go, each its own
+  subgroup), `P` PR (cross-host picker + refresh), `i` integrations
+  (detail pane, `htop`/`iftop`/`btop` launchers, icon picker,
+  enable/disable), `a` AI/term, `s` split, `l` LSP, `I` snippet insert, `H`
+  harpoon (plus `1`–`9` direct jumps), `c` cheatsheet. Root-level leaves
+  (no second key): `/` toggle comment, `n` line-number gutter, `?`
+  cheatsheet, `w` save, `B` open browser, `q` close buffer, `e` explorer,
+  `m` markdown preview, `p` command palette, `o` run task. The per-forge
+  chords that used to live under `i` (one letter per Bitbucket / GitHub /
+  S3 / Lambda / … sibling) were dropped 2026-08-03 — each marketplace
+  integration now registers its own command and chord via its manifest
+  instead of a hardcoded binding here.
 - **Find & replace** — in-buffer find (literal + regex, smart-case,
   incremental), replace, find history.
 - **Workspace grep** — ripgrep-backed project search into a results pane, with
@@ -103,14 +148,43 @@ The complete, organised feature inventory. For the front-door overview see
   message, recompose `HEAD`'s message, via the `claude` CLI or Codex.
 - **Browse** — open the current file / commit on the remote (GitHub, GitLab,
   Bitbucket, Azure DevOps).
+- **Cross-host PR picker** — `pr.picker` fans out to whichever
+  `mnml-forge-*` integration siblings (Bitbucket / GitHub / GitLab /
+  Azure DevOps) are installed, merges their open PRs into one picker
+  (Enter opens the PR URL, Tab jumps to its pipeline run), backed by a
+  background-refreshed cache (`pr.refresh`). Per-host Pipelines/builds
+  dashboards, PR reviewer/approval detail, and CI log viewers live in
+  those standalone `mnml-forge-*` binaries, not in mnml core — the SCM
+  hosts were split out of core in June 2026 (`src/scm.rs`).
 
-## SCM & CI dashboards
+## TODOs, notes & findings
 
-- **Pipelines / builds** — recent runs for Bitbucket Pipelines, GitHub Actions,
-  GitLab CI, and Azure DevOps, grouped by repo with per-branch and "mine" views.
-- **Pull requests** — open PRs / MRs across all four hosts, with reviewer and
-  approval counts, a cross-host PR picker, and PR ↔ pipeline cross-navigation.
-- **Log viewers** — fetch and tail per-job CI logs with severity colouring.
+Three activity-bar list panels sharing one design (`src/ui/{todos,notes,
+findings}_panel.rs`, `src/ui/list_sort.rs`).
+
+- **TODOS panel** — scans `TODO`/`FIXME`/`XXX`/`HACK`/`REVIEW` markers from
+  source-code comments AND markdown list items (a bare `- TODO: …` line
+  counts) across the workspace, plus Playwright/Jest `.fixme(`/`.fail(`/
+  `.skip(` call sites. Rescans on filesystem changes, throttled to one
+  scan per 2 seconds. `+ New todo` (`todos.new`) appends a line under a
+  `## Inbox` heading in the workspace's `TODO.md` (creating both if
+  absent). Right-click a hit for an action menu that hands it to
+  whatever agents/commands/skills the workspace's own `.claude/`
+  directory declares, or falls back to "Fix with Claude Code" / "Fix
+  with Codex".
+- **NOTES / FINDINGS panels** — the same list shape over `.mnml/notes/`
+  and `.mnml/findings/`. `+ New note` (`notes.new`) / `+ New finding`
+  (`findings.new`) open a NewFile prompt pre-seeded with the next
+  auto-numbered filename (`note-N.md` / `finding-N.md`), so Enter is
+  fast and typing over it is still possible.
+- **Shared panel chrome** — a caps header with a live count (`(N)`, or
+  `(M of N)` while filtered), a `/`-focus filter row, a focused-row
+  accent bar, a scrollbar, and keyboard/wheel/drag scrolling. Right-click
+  the `⟳` chip (shared with the Git / Agents / Cloud Agents / HTTP
+  panels) for "Refresh now", "Auto-refresh: on/off" (persisted per panel
+  via `[ui] auto_refresh_off`), and — TODOS/NOTES/FINDINGS only — a sort
+  toggle between Newest-first and Name A–Z (persisted as `[ui]
+  todos_sort` / `notes_sort` / `findings_sort`).
 
 ## AI
 
@@ -119,6 +193,8 @@ The complete, organised feature inventory. For the front-door overview see
 
 - **AI panes** — run the `claude` CLI or Codex as embedded panes; tail their
   session transcripts; promote a one-shot answer into an interactive session.
+  `ai.claude_code_focus` focuses the running Claude Code session (starting one
+  if none is open) rather than always spawning a new one.
 - **On-selection actions** — explain / fix / refactor / write-tests on a
   selection; a free-text "ask"; results stream into a pane and a fix/refactor can
   be applied as a reviewed diff.
@@ -188,8 +264,12 @@ The complete, organised feature inventory. For the front-door overview see
   center: the dragged widget inherits the target's corner and reorders in
   the vec to sit adjacent (above if cursor was above the target's center,
   below otherwise).
-- **Empty-state chip** — a faint ` + dock ` chip at the bottom-right of the
-  editor body when no widgets exist. Click to spawn a default Note 1.
+- **New dock note lives in the `+` menu.** An earlier faint ` + dock `
+  chip painted over the bottom-right of the editor body — on top of
+  whatever pane's last row was there, so clicking a file in a Files pane
+  could spawn a sticky note. Removed 2026-08; "New dock note" is a row
+  in the shared `+` menu instead, which covers nothing and is always in
+  the same place.
 - **Session persistence** — the widget vec (positions, sizes, corners,
   content, layout, opacity) round-trips through `.mnml/session.json`. Older
   session files without the layout / opacity fields default to `Overlay` /
@@ -350,14 +430,37 @@ The complete, organised feature inventory. For the front-door overview see
   (EC00 codicon) + flat-rendered integration chips between the workspace chip and
   the right cluster + add-integration `+` (EA7C codicon). At narrow widths the
   right cluster drops TABS rather than vanishing entirely.
+- **Menu glyphs** — every context-menu row draws an icon by default
+  (`src/ui/menu_glyph.rs`); `[ui] ascii_icons = true` blanks them all so
+  the menu is pure text. `menu.glyph_audit` writes and opens a
+  spacing/icon audit covering every menu in the app.
+- **Context-menu submenus + a curated `+` menu** — a context-menu row can
+  open a nested submenu. The `+` chip's "new thing" menu is organised
+  into five sections rather than ~15 flat rows; each row carries a kebab
+  to pin, hide, or copy its command id, and the layout persists
+  (`[ui] plus_menu_pinned` / `plus_menu_hidden`).
+- **External browser override** — `[ui] external_browser = "Google
+  Chrome"` opens external links (git remote browse, etc.) in a named
+  application instead of the OS default; an untrusted workspace cannot
+  set this key for you.
 - **94 themes** — the full NvChad base46 set (onedark, gruvbox, catppuccin,
   kanagawa, tokyonight, nord, dracula, …); switch at runtime.
 - **Discoverability** — an F1 click-discovery overlay, hover tooltips on every
   chip (hover any chip for a description; right-click for a context menu with
   actions), right-click context menus throughout, a first-launch welcome, About &
   Settings overlays.
-- **Markdown** — a live preview pane with inline image embedding, and optional
-  inline-rendered markdown in the editor.
+- **Markdown** — a live preview pane with inline image embedding, and
+  optional inline-rendered markdown in the editor (`render_markdown`,
+  off by default; `view.toggle_render_markdown`). `[ui]
+  markdown_opens_rendered` (default on) opens `.md` files straight into
+  the rendered preview pane rather than the raw editor.
+- **Preview tabs** — opening a markdown file, an image/GIF, or an
+  `.http`/`.curl`/`.rest` request from a single click (tree, Files pane,
+  a jump) reuses a *preview* tab that the next glance replaces, instead
+  of piling up permanent tabs for things you were only looking at.
+  Typing edits the tab permanent; on a rendered markdown preview, typing
+  first swaps it to the raw editor and lands the keystroke there — under
+  the standard keymap only, vim input does not auto-swap on the first key.
 - **Image rendering** — inline images via the Kitty / iTerm2 graphics protocols.
 - **Now-playing transport chip** — the statusline's right-side cluster splits
   into `[play/pause]` + `[ffwd]` + `[track]` adjacent segments when any source
@@ -387,7 +490,15 @@ The complete, organised feature inventory. For the front-door overview see
   click for a menu with dismiss-this / dismiss-all / copy-text.
   The Undo chip beside the toast stack commits on left-click and
   cancels on right-click.
-- **Zen mode**, **stacked notifications**, a clickable statusline.
+- **Notification history** — every toast is recorded to `:messages`
+  (`messages.show` opens a picker over recent entries; `:Messages!`
+  dumps the full log into a scratch buffer) and now persists per
+  workspace across restarts. A bell chip sits immediately left of the
+  clock in the statusline, always drawn, in three states: quiet/idle
+  colours when nothing is unread, yellow with a count for unread
+  warnings, red with a count when any unread entry is an error — info
+  messages don't light it.
+- **Zen mode**, a clickable statusline.
 
 ## Workspace trust
 
@@ -467,10 +578,10 @@ The complete, organised feature inventory. For the front-door overview see
   carries an `enabled` flag (default `false`; `browser` is enabled by default).
   Right-click a chip → Enable / Disable toggles the flag and persists the change
   to TOML. Palette command: `integrations.toggle_enabled`. Which-key chord:
-  `<leader>ie`. Disabled chips are rendered visually dim and do not launch on
+  `<leader>iE`. Disabled chips are rendered visually dim and do not launch on
   click; they can still be edited or removed via the kebab menu
-  (`integrations.edit` / `integrations.remove`). Which-key chords `<leader>i+`
-  (add) and `<leader>ip` (icon picker) round out the integrations group.
+  (`integrations.edit` / `integrations.remove`). `<leader>ip` (icon picker) and
+  `<leader>id` (detail pane) round out the integrations which-key group.
 - **Icon picker** — `integrations.icon_picker` (palette command; `<leader>ip`)
   opens a browsable overlay of ~70 Nerd Font glyphs organized by category.
   Accepting a glyph copies the character and its `\u{XXXX}` escape to the

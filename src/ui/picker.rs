@@ -237,6 +237,44 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
                 .bg(theme::cur().bg_dark),
         )));
     }
+    // A picker SCROLLS but said nothing about it — the list simply ended
+    // at whatever fit, exactly like the three activity panels did. The
+    // message history is the one that shows it: 200 entries in a
+    // 15-row popup, with no cue that 185 more exist (user: "rows go
+    // beyond visible length").
+    let total = picker.items_view().count();
+    let needs_sb = total > visible && visible > 0;
+    let list_area = if needs_sb {
+        Rect {
+            width: list_area.width.saturating_sub(1),
+            ..list_area
+        }
+    } else {
+        list_area
+    };
+    if needs_sb {
+        let sb = Rect {
+            x: list_area.x + list_area.width,
+            y: list_area.y,
+            width: 1,
+            height: list_area.height,
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            sb,
+            &theme::cur(),
+            total,
+            visible,
+            scroll,
+        );
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb,
+            pane_id: 0,
+            total,
+            viewport: visible,
+            kind: crate::app::ScrollbarKind::Picker,
+        });
+    }
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_dark)),
         list_area,
@@ -564,5 +602,87 @@ mod detail_gap_tests {
             }
         }
         assert!(checked, "no row carrying the ⓘ icon was rendered at all");
+    }
+}
+
+#[cfg(test)]
+mod picker_scrollbar_tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    fn app_with_items(n: usize) -> (tempfile::TempDir, crate::app::App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let items: Vec<crate::picker::PickerItem> = (0..n)
+            .map(|i| {
+                crate::picker::PickerItem::new(
+                    i.to_string(),
+                    format!("message number {i}"),
+                    String::new(),
+                )
+            })
+            .collect();
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Messages,
+            format!("Messages ({n})"),
+            items,
+        ));
+        (d, app)
+    }
+
+    fn render(app: &mut crate::app::App) {
+        let (w, h) = (100u16, 24u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+    }
+
+    /// USER REPORT — "rows go beyond visible length". The picker
+    /// scrolled but painted no bar, so 200 messages in a 15-row popup
+    /// looked like 15. Same defect the three activity panels had.
+    #[test]
+    fn a_long_picker_registers_a_scrollbar() {
+        let (_d, mut app) = app_with_items(200);
+        render(&mut app);
+        let hit = app
+            .rects
+            .scrollbars
+            .iter()
+            .find(|s| matches!(s.kind, crate::app::ScrollbarKind::Picker))
+            .expect("no scrollbar for 200 items — the list just ends");
+        assert_eq!(hit.total, 200);
+        assert!(
+            hit.viewport > 0 && hit.viewport < hit.total,
+            "viewport {} vs total {} — a bar that cannot move",
+            hit.viewport,
+            hit.total
+        );
+    }
+
+    /// A picker that FITS must not grow a bar.
+    #[test]
+    fn a_short_picker_has_no_scrollbar() {
+        let (_d, mut app) = app_with_items(3);
+        render(&mut app);
+        assert!(
+            !app.rects
+                .scrollbars
+                .iter()
+                .any(|s| matches!(s.kind, crate::app::ScrollbarKind::Picker)),
+            "a 3-item picker painted a scrollbar"
+        );
     }
 }
