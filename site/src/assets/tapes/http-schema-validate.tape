@@ -74,6 +74,14 @@ Type `printf '%s' '{"type":"object","required":["name","email"],"properties":{"n
 Enter
 Sleep 200ms
 
+Type "mkdir -p .mnml && touch .mnml/.welcomed"
+Enter
+Sleep 200ms
+# Background driver — fires open + the four http.* commands over IPC.
+# Typing `:http.…` no longer works here: see the driver's header.
+Type "(bash $HOME/Projects/mnml/site/src/assets/tapes/http-schema-validate-workspace/drive.sh $MNML_DEMO &) 2>/dev/null"
+Enter
+Sleep 200ms
 Type "clear"
 Enter
 Sleep 400ms
@@ -88,71 +96,15 @@ Sleep 3s
 Escape
 Sleep 600ms
 
-# ── open users.curl ─────────────────────────────────────────────────────
-Ctrl+P
-Sleep 800ms
-Type "users.curl"
-Sleep 500ms
-Enter
-Sleep 1.5s
+# ── all beats fire from the IPC driver ──────────────────────────────────
+# 1. open users.curl                → Request pane, Edit view
+# 2. http.send                      → fails fast against the dead port
+# 3. http.replay_mock               → injects the canned {"name":42} body
+# 4. http.revalidate_schema         → footer flips to `✗ Schema: N errors`
+#                                     + `✗ schema re-validated: N error(s)` toast
+# 5. http.show_schema_errors        → `[schema-errors]` scratch with the
+#                                     per-error path / message list
+Sleep 17s
 
-# ── Stage 1: :http.send — fires (fails fast against dead port) ─────────
-# Connection failure spawns a Request pane in Failed state; focus
-# stays on the editor pane underneath. We Escape between every
-# cmdline transition to drop any auto-opened popup / picker so the
-# `:` next opens a clean cmdline (the Response view's `a` chord
-# would otherwise consume the `a` in `replay_mock`).
-Escape
-Sleep 200ms
-Type ":http.send"
-Sleep 500ms
-Enter
-Sleep 3s
-
-# ── Stage 2: :http.replay_mock — inject the canned response ────────────
-# The pane now holds a Done response with body `{"name":42}` + the
-# `content-type: application/json` header. The schema sidecar gets
-# resolved at this point and the footer shows the validation result
-# (`✗ Schema: N errors` — name isn't a string, email is missing).
-Escape
-Sleep 200ms
-Escape
-Sleep 200ms
-Type ":http.replay_mock"
-Sleep 500ms
-Enter
-Sleep 3s
-
-# ── Stage 3: :http.revalidate_schema — re-run validation explicitly ─────
-# The initial send path doesn't validate against the mock body —
-# replay_mock writes the response with `schema_result: None`. The
-# revalidate call is what actually runs the JSON-Schema validator
-# against the mock'd body, populates the footer, and toasts the
-# `✗ schema re-validated: N error(s)` headline.
-Escape
-Sleep 200ms
-Escape
-Sleep 200ms
-Type ":http.revalidate_schema"
-Sleep 500ms
-Enter
-Sleep 3s
-
-# Linger on the response view so the `✗ Schema: N errors …` footer is
-# readable.
-Sleep 1.5s
-
-# ── Stage 4: :http.show_schema_errors — open the full error list ───────
-Escape
-Sleep 200ms
-Escape
-Sleep 200ms
-Type ":http.show_schema_errors"
-Sleep 500ms
-Enter
-Sleep 4s
-
-# Final frame: `[schema-errors]` scratch open with the numbered list
-# of validator errors (`✗ Schema validation failed (users.schema.json)`
-# header + the per-error path / message).
-Sleep 2s
+# ── settle on the [schema-errors] scratch ───────────────────────────────
+Sleep 2.5s

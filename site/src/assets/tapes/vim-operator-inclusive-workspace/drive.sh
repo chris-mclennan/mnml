@@ -31,6 +31,14 @@ CMD="$WS/.mnml/ipc/command"
   done
   sleep 1.0
 
+  # The unnamed register `""` mirrors the SYSTEM clipboard, and step 8
+  # (`:reg`) paints it on screen — so whatever the operator happened to
+  # have copied leaks into a GIF that ships on the public manual page.
+  # (Caught 2026-09-02: a private bitbucket URL rendered in the frame.)
+  # Park a benign value for the take, restore the real one at the end.
+  CLIP_BAK=$(pbpaste 2>/dev/null || true)
+  printf 'mnml demo clipboard' | pbcopy 2>/dev/null || true
+
   # 1) open the seed file
   echo '{"cmd":"open","path":"demo.txt"}' >> "$CMD"
   sleep 1.8
@@ -69,4 +77,9 @@ CMD="$WS/.mnml/ipc/command"
   sleep 0.4
   echo '{"cmd":"key","key":"enter"}' >> "$CMD"
   sleep 1.5
+
+  # Give the tape's trailing settle time to finish recording, then hand
+  # the operator's clipboard back.
+  sleep 3.0
+  printf '%s' "$CLIP_BAK" | pbcopy 2>/dev/null || true
 } >/dev/null 2>&1

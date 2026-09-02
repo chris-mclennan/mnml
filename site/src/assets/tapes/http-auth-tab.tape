@@ -59,9 +59,17 @@ Sleep 200ms
 Type "echo '# auth-tab demo workspace' > README.md"
 Enter
 Sleep 200ms
+Type "mkdir -p .mnml && touch .mnml/.welcomed"
+Enter
+Sleep 200ms
 # Seed the clipboard with a curl carrying a Bearer token — the Auth
 # tab summarises whatever's in the Authorization header.
 Type `printf "%s" "curl 'https://api.example.com/v1/me' -H 'Accept: application/json' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.demo-payload.sig'" | pbcopy`
+Enter
+Sleep 200ms
+# Background driver — opens README, fires http.paste_curl, then walks
+# the tab strip and lands on Auth via Ctrl+4 (VHS can't type that).
+Type "(bash $HOME/Projects/mnml/site/src/assets/tapes/http-auth-tab-workspace/drive.sh $MNML_DEMO &) 2>/dev/null"
 Enter
 Sleep 200ms
 Type "clear"
@@ -78,40 +86,18 @@ Sleep 3s
 Escape
 Sleep 600ms
 
-# ── focus an editor pane so `:` ex-cmdline is reachable ─────────────────
-Ctrl+P
-Sleep 800ms
-Type "readme"
-Sleep 500ms
-Enter
-Sleep 1.2s
+# ── all beats fire from the IPC driver ──────────────────────────────────
+# 1. open README.md          → an editor pane behind the Request pane
+# 2. http.paste_curl         → Request pane, Edit view, populated from the
+#                              clipboard curl (URL + Accept + Authorization)
+# 3. ctrl+]                  → one visible step along the tab strip
+#                              (Params Body Headers Auth Vars Script)
+# 4. ctrl+4                  → lands ON Auth: the credentials picker with
+#                              its summary header + `+ Set Bearer token…`
+#                              / `+ Set Basic auth…` / `↻ Apply saved
+#                              preset…` action rows, reading against the
+#                              Authorization header parsed out of the curl
+Sleep 14s
 
-# ── Stage 1: :http.paste_curl mints + populates a Request pane ─────────
-Type ":http.paste_curl"
-Sleep 500ms
-Enter
-Sleep 3s
-
-# Pane lands in Edit view, Body tab. Method [GET] · URL ·
-# [Body] Headers Params Auth Vars Source. Headers buffer (visible
-# in the Response section's request-line preview) carries both
-#   Accept: application/json
-#   Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.demo-payload.sig
-# Linger so the populated layout reads.
-Sleep 2.5s
-
-# ── Stage 2: Ctrl+] walks the tab strip forward ────────────────────────
-# Each press cycles one (or more, in this recording harness) tab in
-# the strip — Body → Headers → Params → Auth → Vars → Source → Body.
-# Watching the bracket markers tour the strip demonstrates the
-# Postman-parity surface.
-Ctrl+]
-Sleep 2.5s
-
-Ctrl+]
-Sleep 2.5s
-
-# ── Stage 3: ground out on the populated request — linger on the
-#     final state so the Auth tab's presence + the parsed Authorization
-#     header (visible in the request-line preview) read together. ────
+# ── settle on the Auth tab ──────────────────────────────────────────────
 Sleep 3s

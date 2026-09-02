@@ -73,7 +73,12 @@ Sleep 600ms
 # ~1s  : driver opens src/lib.rs.
 # ~4s  : view.toggle_right_panel (empty state).
 # ~7s  : ai.explain (AI chat tab — Asking → Streaming → Done).
-Sleep 16s
+# `claude -p` needs ~5s for a trivial prompt and noticeably longer for
+# the explain prompt + process spawn. The old 16s budget left ~15s
+# after the driver fires ai.explain, and the take ended still showing
+# "› thinking… (claude -p)" — the streamed answer, which is the whole
+# point of the tape, never made the recording. Give it ~30s.
+Sleep 31s
 
 # ── settle on a final frame ──────────────────────────────────────────────
 Sleep 1.5s

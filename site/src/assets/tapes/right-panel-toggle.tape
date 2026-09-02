@@ -3,12 +3,15 @@
 #
 # Demonstrates the v2 right-panel shipped 2026-06-28:
 #   1. open the panel (Ctrl+Shift+B / view.toggle_right_panel) → body
-#      paints the empty-state hint:
-#        " SIDE PANEL"
-#        "  Nothing here yet."
-#        "  :outline.show"
-#        "  :lsp.diagnostics"
-#        "  Hide with Ctrl+Shift+B."
+#      paints the empty-state hint. As of 2026-09 that reads:
+#        "right panel"
+#        "Add a panel:"
+#        "  Outline      :outline.show"
+#        "  Problems     :lsp.diagnostics"
+#        "  AI chat      :ai.chat"
+#        "  Grep         :find.grep"
+#        "  Tests        :test.run"
+#        "Hide: Ctrl+Shift+B"
 #   2. `outline.show` routes the Outline pane *into* the panel —
 #      header switches to " OUTLINE", editor body keeps full width.
 #   3. close the panel — view.toggle_right_panel also nulls

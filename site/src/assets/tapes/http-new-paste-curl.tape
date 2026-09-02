@@ -76,7 +76,13 @@ Enter
 Sleep 200ms
 # Pre-load the system clipboard with the curl the demo will paste.
 # pbcopy is macOS-native; VHS for this family runs on macOS.
-Type `printf "%s" "curl 'https://httpbin.org/get' -H 'Accept: application/json' -H 'X-Demo: tape'" | pbcopy`
+Type `printf "%s" "curl 'https://httpbin.org/headers' -H 'Accept: application/json' -H 'X-Demo: tape'" | pbcopy`
+Enter
+Sleep 200ms
+# Clipboard steward — re-seeds the curl ~1s before paste_curl reads it
+# (the setup-block seed above is ~7s early and loses races), then puts
+# the operator's clipboard back. See the driver's header.
+Type "(bash $HOME/Projects/mnml/site/src/assets/tapes/http-new-paste-curl-workspace/drive.sh $MNML_DEMO &) 2>/dev/null"
 Enter
 Sleep 200ms
 Type "clear"
@@ -115,18 +121,22 @@ Sleep 3s
 
 # paste_curl auto-switches the pane to Edit view + Body tab and
 # focuses the URL field. The toast confirms the parsed source.
-# Linger so the populated form (GET · https://httpbin.org/get ·
+# Linger so the populated form (GET · https://httpbin.org/headers ·
 # [Body] tab) is readable.
 Sleep 2s
 
-# ── Stage 2: flip to Response view (Esc) and fire (r) ───────────────────
-# Esc-from-Edit toggles to Response view (post-2026-06-19 keymap);
-# `r` from Response re-fires the request using the pane's current
-# field values.
-Escape
-Sleep 800ms
-Type "r"
-Sleep 5s
+# `/headers`, NOT `/get`.
+#
+# Both echo the `X-Demo: tape` header this tape exists to show, but
+# `/get` also echoes `"origin": "<your public IP>"` into the response
+# body — and this GIF is published. The tape only started exposing it
+# once the request actually fired (the old Escape-then-`r` pair was
+# dead, so it never got a response at all).
+#
+# ── Stage 2: fire the request ───────────────────────────────────────────
+# Driven over IPC (`http.send`) from the workspace driver — see its
+# header for why the old Escape-then-`r` keystroke pair went dead.
+Sleep 6s
 
 # ── Final frame: 200 OK with the parsed Accept + X-Demo headers ────────
 Sleep 2.5s
