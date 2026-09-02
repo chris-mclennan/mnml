@@ -1311,9 +1311,29 @@ fn budgeted_scroll_at(app: &mut App, delta: i32, now: std::time::Instant) -> i32
     // `floor()` alone discarded it every time, which made `gentle`
     // (1 notch x1.5 = 1.5 -> 1) indistinguishable from `off`.
     let wanted_with_carry = want + app.scroll_frac_carry;
-    let spend = wanted_with_carry.min(app.scroll_bucket).floor();
+    let mut spend = wanted_with_carry.min(app.scroll_bucket).floor();
+    // A real wheel event ALWAYS moves at least one line.
+    //
+    // `min(bucket).floor()` returns 0 once the bucket drains, so a
+    // sustained scroll simply STOPPED: a tester measured every burst
+    // travelling exactly 300 lines and then nothing, and — worse — a
+    // fast spin covering LESS per notch than a slow one, which inverts
+    // what `scroll_accel` promises.
+    //
+    // The bucket's job is to bound how far a FREE SPIN coasts past the
+    // hand, and it still does: it limits the EXTRA lines acceleration
+    // adds. What it must not do is swallow the input entirely, because
+    // then the user's hand moved and the screen did not — the same
+    // complaint ("it misses a lot of scrolling i do") that raised the
+    // refill from 12 to 60, arriving by a different route.
+    //
+    // Stopping remains the stop detector's job, as the bound test below
+    // already documents.
+    if spend < 1.0 {
+        spend = 1.0;
+    }
     app.scroll_frac_carry = (wanted_with_carry - spend).clamp(0.0, 1.0);
-    app.scroll_bucket -= spend;
+    app.scroll_bucket = (app.scroll_bucket - spend).max(0.0);
     delta.signum() * (spend as i32)
 }
 
@@ -2449,6 +2469,60 @@ pub(crate) fn pty_key_bytes(key: KeyEvent) -> Vec<u8> {
 #[cfg(test)]
 mod scroll_accel_tests {
     use super::{SCROLL_BUCKET_MAX, budgeted_scroll_at, scroll_accel_ceiling};
+
+    /// TESTER — "sustained wheel scrolling caps at ~300 lines and then
+    /// stops", and worse, "a fast spin travels LESS per notch than a
+    /// slow one", which is the inverse of what `scroll_accel` promises.
+    ///
+    /// `min(bucket).floor()` returned 0 once the bucket drained, so the
+    /// hand kept moving and the screen did not.
+    #[test]
+    fn a_sustained_scroll_never_stops_moving() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let mut now = std::time::Instant::now();
+        let mut zero_runs = 0;
+        // 400 events at 100/s — the tester's "hand-realistic" rate,
+        // sustained well past the point the bucket empties.
+        for _ in 0..400 {
+            now += std::time::Duration::from_millis(10);
+            if budgeted_scroll_at(&mut app, 3, now) == 0 {
+                zero_runs += 1;
+            }
+        }
+        assert_eq!(
+            zero_runs, 0,
+            "{zero_runs} of 400 wheel events moved nothing at all — the \
+             wheel turned and the view did not"
+        );
+    }
+
+    /// ...and the dampener still holds: a free spin must not coast far
+    /// past the hand. The floor is ONE line per event, so travel stays
+    /// proportional to events actually delivered.
+    #[test]
+    fn the_minimum_spend_does_not_uncap_a_free_spin() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let mut now = std::time::Instant::now();
+        let mut total = 0i32;
+        for _ in 0..400 {
+            now += std::time::Duration::from_millis(10);
+            total += budgeted_scroll_at(&mut app, 3, now).abs();
+        }
+        // 400 events cannot move more than 3 lines each, and the bucket
+        // keeps it well under that.
+        assert!(
+            total <= 400 * 3,
+            "400 events moved {total} lines — more than they asked for"
+        );
+        assert!(
+            total >= 400,
+            "400 events moved only {total} lines — below the one-line floor"
+        );
+    }
     use crate::app::App;
     use crate::config::Config;
 

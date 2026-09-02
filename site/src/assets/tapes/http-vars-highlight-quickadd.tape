@@ -34,7 +34,7 @@
 Output site/src/assets/tapes/http-vars-highlight-quickadd.gif
 
 Set Shell       "bash"
-Set FontFamily  "JetBrainsMono Nerd Font mnml"
+Set FontFamily  "JetBrainsMono Nerd Font, MnmlSymbols"
 Set FontSize    12
 Set Width       1600
 Set Height      900

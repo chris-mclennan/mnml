@@ -22,7 +22,7 @@
 Output site/src/assets/tapes/vim-operator-inclusive.gif
 
 Set Shell       "bash"
-Set FontFamily  "JetBrainsMono Nerd Font mnml"
+Set FontFamily  "JetBrainsMono Nerd Font, MnmlSymbols"
 Set FontSize    14
 Set Width       1200
 Set Height      560

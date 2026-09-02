@@ -260,7 +260,7 @@ fn activity_bar_section_copy(
                 PaletteLink::new("view.activity_explorer", "Focus files"),
                 PaletteLink::new("picker.files", "Fuzzy open"),
             ],
-            docs: Some("https://mnml.sh/manual/tree/".into()),
+            docs: Some("https://mnml.sh/manual/file-actions/".into()),
             ..Default::default()
         }),
         ActivitySection::Git => Some(InfoViewCopy {
@@ -283,7 +283,7 @@ fn activity_bar_section_copy(
                 "view.activity_integrations",
                 "Focus integrations",
             )],
-            docs: Some("https://mnml.sh/manual/integrations/".into()),
+            docs: Some("https://mnml.sh/manual/integrations/overview/".into()),
             ..Default::default()
         }),
         ActivitySection::Agents => Some(InfoViewCopy {
@@ -293,7 +293,7 @@ fn activity_bar_section_copy(
                    Done). Filter input at top; + New starts a fresh session."
                 .into(),
             try_it: vec![PaletteLink::new("view.activity_agents", "Focus agents")],
-            docs: Some("https://mnml.sh/manual/agents/".into()),
+            docs: Some("https://mnml.sh/manual/ai-panes/".into()),
             ..Default::default()
         }),
         ActivitySection::Sessions => Some(InfoViewCopy {
@@ -302,7 +302,13 @@ fn activity_bar_section_copy(
                    Each row shows session name + git branch + cwd + notification \
                    ring when there's unread output. Click a row to focus that pane."
                 .into(),
-            try_it: vec![PaletteLink::new("view.activity_sessions", "Focus sessions")],
+            try_it: vec![
+                PaletteLink::new("view.activity_sessions", "Focus sessions"),
+                PaletteLink::new(
+                    "ai.claude_code_focus",
+                    "Focus running Claude (or start one)",
+                ),
+            ],
             ..Default::default()
         }),
         ActivitySection::Http => Some(InfoViewCopy {
@@ -1067,16 +1073,10 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // (search / new-request / collapse-all / refresh) and
         // pointed try_it at `http.new_request`, which has no button
         // in this cluster. Now index-aware.
+        // R14b drift fix (fill 2026-09-02) — was swapped: index 0 is the
+        // leftmost chip in `toolbar_chips` (src/ui/http_panel.rs:77-91),
+        // which is collapse-all, not refresh. Index 1 is refresh.
         HttpToolbarChip(0) => Some(InfoViewCopy {
-            title: "HTTP: refresh list".into(),
-            body: "Rescan collections / files / envs / captured / mocks and rebuild \
-                   the HTTP-panel caches. Same as the palette command."
-                .into(),
-            try_it: vec![PaletteLink::new("http.refresh", "Refresh HTTP list")],
-            docs: Some("https://mnml.sh/manual/http/".into()),
-            ..Default::default()
-        }),
-        HttpToolbarChip(1) => Some(InfoViewCopy {
             title: "HTTP: collapse / expand all sections".into(),
             body: "Fold every HTTP-panel section (FILES / RECENT / CAPTURED / ENVS / \
                    CHAINS / MOCKS / COLLECTIONS) closed, or expand them all when \
@@ -1086,6 +1086,15 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 "http.toggle_collapse_all",
                 "Toggle collapse-all",
             )],
+            ..Default::default()
+        }),
+        HttpToolbarChip(1) => Some(InfoViewCopy {
+            title: "HTTP: refresh list".into(),
+            body: "Rescan collections / files / envs / captured / mocks and rebuild \
+                   the HTTP-panel caches. Same as the palette command."
+                .into(),
+            try_it: vec![PaletteLink::new("http.refresh", "Refresh HTTP list")],
+            docs: Some("https://mnml.sh/manual/http/".into()),
             ..Default::default()
         }),
         HttpToolbarChip(_) => None,
@@ -1408,9 +1417,15 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             title: "Toast notification".into(),
             body: "A transient status message stacked in the corner — success, \
                    error, or progress info from whatever just ran. Hovering \
-                   pauses its countdown so you have time to read it; click to \
-                   dismiss early, or right-click for a small actions menu."
+                   pauses its countdown so you have time to read it; click the \
+                   `x` in the border to dismiss early, or right-click for dismiss \
+                   / dismiss-all / copy-text actions."
                 .into(),
+            aside: Some(
+                "A trailing `xN` badge means the same message repeated N times \
+                 instead of stacking duplicate boxes."
+                    .into(),
+            ),
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::RailHeaderChip
@@ -2689,6 +2704,30 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
         // #1226 (2026-08-28) — this row used to fire `view.discovery`,
         // the F1 click-discovery overlay, not the palette. It now fires
         // `palette`, so the copy describes the palette.
+        // src: src/menu_bar.rs::view_menu — `Pane::Files` is a file
+        // manager as a pane (v0.2.20), not a modal browser, so it opens
+        // like any other tab.
+        ("View", i) if i.contains("File browser pane") => Some(InfoViewCopy {
+            title: "View → File browser pane".into(),
+            body: "Opens a Files pane at the workspace root — a full file \
+                   manager (navigate, sort, multi-select, cut / copy / paste, \
+                   background transfers) rendered as an ordinary tab, so it \
+                   splits and tab-pages like any other pane."
+                .into(),
+            try_it: vec![PaletteLink::new("files.open", "Open a file browser")],
+            ..Default::default()
+        }),
+        ("View", i) if i.contains("Dual file panes") => Some(InfoViewCopy {
+            title: "View → Dual file panes (commander)".into(),
+            body: "Opens two Files panes side by side — the Norton-Commander \
+                   layout for moving files between two locations without \
+                   retyping a destination path. Each side navigates \
+                   independently; drag or use the action menu to move between \
+                   them."
+                .into(),
+            try_it: vec![PaletteLink::new("files.open_split", "Open dual file panes")],
+            ..Default::default()
+        }),
         ("View", i) if i.contains("Command palette") => Some(InfoViewCopy {
             title: "View → Command palette".into(),
             body: "Opens the command palette — fuzzy-search every registered \

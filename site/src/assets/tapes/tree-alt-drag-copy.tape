@@ -21,7 +21,7 @@
 Output site/src/assets/tapes/tree-alt-drag-copy.gif
 
 Set Shell       "bash"
-Set FontFamily  "JetBrainsMono Nerd Font mnml"
+Set FontFamily  "JetBrainsMono Nerd Font, MnmlSymbols"
 Set FontSize    13
 Set Width       1280
 Set Height      760

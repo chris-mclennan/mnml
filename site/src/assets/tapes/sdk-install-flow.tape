@@ -16,7 +16,7 @@
 Output site/src/assets/tapes/sdk-install-flow.gif
 
 Set Shell       "bash"
-Set FontFamily  "JetBrainsMono Nerd Font mnml"
+Set FontFamily  "JetBrainsMono Nerd Font, MnmlSymbols"
 Set FontSize    13
 Set Width       1200
 Set Height      680
