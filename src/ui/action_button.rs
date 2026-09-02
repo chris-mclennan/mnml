@@ -175,6 +175,36 @@ impl<'a> Button<'a> {
         }
     }
 
+    /// The refresh affordance, in one of its two sizes.
+    ///
+    /// `label: None` is the COMPACT form — icon only, for a tight panel
+    /// header. `Some(word)` is the EXPANDED form for a toolbar with
+    /// room for it. Both are the same button with the same glyph, which
+    /// is the point: the family had drifted to three different refresh
+    /// icons — core's codicon, Jira's `⟳`, Bitbucket's `\u{f0450}` —
+    /// each with its own spacing.
+    ///
+    /// Deliberately a constructor on THIS component rather than a
+    /// `RefreshChip` of its own: `Button` already carries icon, label,
+    /// fill, accent and state, so a second chip type would be a
+    /// parallel system to keep in sync (user: "i have asked for
+    /// components before ... we may have some already").
+    ///
+    /// The glyph still comes from [`crate::ui::refresh_glyph`], which
+    /// stays the single source of truth for WHICH glyph; this decides
+    /// how it is dressed.
+    pub fn refresh(t: &Theme, ascii: bool, label: Option<&'a str>) -> Self {
+        Self {
+            icon: Some(crate::ui::refresh_glyph::for_ascii(ascii)),
+            label: label.unwrap_or(""),
+            fill: t.bg2,
+            text: t.fg,
+            accent: Some(t.blue),
+            bold: false,
+            state: ButtonState::Normal,
+        }
+    }
+
     /// The panel's main call-to-action — green fill, black text. Same
     /// visual as the free function [`primary`].
     pub fn primary(t: &Theme, label: &'a str) -> Self {
@@ -297,6 +327,52 @@ pub fn centred_row(buttons: &[Button<'_>], width: u16, gap: u16) -> (u16, Vec<u1
 mod button_tests {
     use super::*;
     use crate::ui::theme;
+
+    /// The refresh button's two modes must carry the SAME glyph. That
+    /// is the whole reason it is a constructor here rather than each
+    /// caller assembling its own chip: the family had drifted to three
+    /// different refresh icons.
+    #[test]
+    fn both_refresh_modes_use_one_glyph() {
+        let t = crate::ui::theme::cur();
+        let compact = Button::refresh(&t, false, None);
+        let expanded = Button::refresh(&t, false, Some("Refresh"));
+        assert_eq!(
+            compact.icon, expanded.icon,
+            "the compact and expanded refresh buttons disagree on the glyph"
+        );
+        assert_eq!(
+            compact.icon,
+            Some(crate::ui::refresh_glyph::NERD),
+            "the refresh button stopped using the canonical glyph"
+        );
+    }
+
+    /// ASCII mode must reach the icon, or a non-Nerd-Font terminal gets
+    /// a replacement box in both modes.
+    #[test]
+    fn refresh_honours_ascii_mode() {
+        let t = crate::ui::theme::cur();
+        assert_eq!(
+            Button::refresh(&t, true, Some("Refresh")).icon,
+            Some(crate::ui::refresh_glyph::ASCII)
+        );
+    }
+
+    /// Compact is icon-only; expanded adds the word. Asserted through
+    /// `width()` because that is what callers size their click rect
+    /// with — a chip wider than its rect clips itself.
+    #[test]
+    fn expanded_is_wider_than_compact_by_its_label() {
+        let t = crate::ui::theme::cur();
+        let compact = Button::refresh(&t, false, None);
+        let expanded = Button::refresh(&t, false, Some("Refresh"));
+        assert_eq!(
+            expanded.width() - compact.width(),
+            "Refresh".chars().count() as u16,
+            "the expanded button is not exactly its label wider"
+        );
+    }
 
     #[test]
     fn width_counts_the_pads_and_the_icon_space() {

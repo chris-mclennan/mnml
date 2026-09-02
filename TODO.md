@@ -1285,10 +1285,7 @@ that need a decision before they are buildable.
 
 ### Integration refresh buttons diverge from mnml's design language
 
-- TODO: `mnml-tracker-jira` renders `" ⟳ Refresh "` (spelled-out word,
-  U+27F3) while mnml core uses the icon-only chip from
-  `ui::refresh_glyph` (NERD U+EB37 / ASCII U+21BA) via
-  `panel_chrome::draw_caps_header_with_refresh`. Bitbucket should be
-  checked too. Bring the integrations onto the same chip so the family
-  reads as one product. Cross-repo (`~/Projects/mnml-integrations`), so
-  it wants a worktree.
+DONE 2026-09-01 — `crates/mnml-chrome` in mnml-integrations, branch
+`chore/unify-refresh-chip`. Jira (U+27F3) and Bitbucket (U+F0450) both
+moved onto core's codicon; `Button::refresh` in core gained Compact /
+Expanded modes. Branch is unpushed and unmerged.
