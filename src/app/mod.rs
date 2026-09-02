@@ -5496,6 +5496,12 @@ pub struct App {
     /// They had NO scroll state at all until 2026-09-01: each drew the
     /// first screenful and everything past it was unreachable, with no
     /// scrollbar to say so — 93 TODOs looked like 40 (user report).
+    /// Row order for the three list panels. Per-panel because a user
+    /// browsing notes alphabetically may still want findings newest-
+    /// first — they are different tasks.
+    pub todos_sort: crate::ui::list_sort::ListSort,
+    pub notes_sort: crate::ui::list_sort::ListSort,
+    pub findings_sort: crate::ui::list_sort::ListSort,
     pub todos_panel_scroll: usize,
     /// Earliest time the TODOS auto-refresh may run again — its scan
     /// walks the whole workspace, so it is throttled rather than run
@@ -6388,6 +6394,10 @@ impl App {
     }
 
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
+        // Read before `config` moves into the struct literal below.
+        let sort_todos = crate::ui::list_sort::ListSort::from_token(&config.ui.todos_sort);
+        let sort_notes = crate::ui::list_sort::ListSort::from_token(&config.ui.notes_sort);
+        let sort_findings = crate::ui::list_sort::ListSort::from_token(&config.ui.findings_sort);
         // Propagate `[ui] terminal_label` into pty_pane's process-
         // global so every `BinaryProfile::shell()` picks up the
         // user's rebrand (default "terminal"; users on ghostty /
@@ -6753,6 +6763,9 @@ impl App {
             todos_panel_cursor: 0,
             notes_panel_cursor: 0,
             findings_panel_cursor: 0,
+            todos_sort: sort_todos,
+            notes_sort: sort_notes,
+            findings_sort: sort_findings,
             todos_panel_scroll: 0,
             todos_auto_refresh_at: None,
             notes_panel_scroll: 0,

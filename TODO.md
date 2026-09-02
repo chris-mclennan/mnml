@@ -1289,3 +1289,17 @@ DONE 2026-09-01 — `crates/mnml-chrome` in mnml-integrations, branch
 `chore/unify-refresh-chip`. Jira (U+27F3) and Bitbucket (U+F0450) both
 moved onto core's codicon; `Button::refresh` in core gained Compact /
 Expanded modes. Branch is unpushed and unmerged.
+
+### Component-system opportunities (audit 2026-09-01)
+
+- TODO: sweep for elements that should join the design-system modules
+  under `src/ui/`. Confirmed so far: SEVEN sort types exist
+  (`file_browser::Sort`, `SessionsSortMode`, `InstalledSort`,
+  `MarketplaceSort`, `TestsSort`, `SpendSortKey`,
+  `claude_agents::SortBy`). Most are NOT collapsible — their variants
+  are genuinely domain-specific — but the *presentation* of a sort
+  (menu rows, current-mode tick, cycling) is repeated per panel and
+  could be one component. Same question for filter rows, count-in-
+  parens subtitles, and empty states.
+- TODO: TODOS tree view grouped by directory, alongside the flat list
+  (`ListSort` now covers ordering; grouping is the separate half).

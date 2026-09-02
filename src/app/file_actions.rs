@@ -1160,6 +1160,37 @@ impl App {
     /// refreshed where the file landed and left the place it came from
     /// still showing it. Panes are few and `reload()` is one `read_dir`,
     /// so refreshing all of them is both simpler and correct.
+    /// A list panel's current row order.
+    pub fn panel_sort(&self, panel: &str) -> crate::ui::list_sort::ListSort {
+        match panel {
+            "todos" => self.todos_sort,
+            "notes" => self.notes_sort,
+            _ => self.findings_sort,
+        }
+    }
+
+    /// Set a list panel's row order, persist it, and re-sort NOW —
+    /// the panels read from a cache, so without the refresh the new
+    /// order would not appear until something else invalidated it.
+    pub fn set_panel_sort(&mut self, panel: &str, mode: &str) {
+        let m = crate::ui::list_sort::ListSort::from_token(mode);
+        let (field, key) = match panel {
+            "todos" => (&mut self.todos_sort, "todos_sort"),
+            "notes" => (&mut self.notes_sort, "notes_sort"),
+            _ => (&mut self.findings_sort, "findings_sort"),
+        };
+        *field = m;
+        if let Err(e) = crate::app::discovery::persist_ui_string(key, m.as_str()) {
+            self.toast(format!("sort: could not save: {e}"));
+        }
+        match panel {
+            "todos" => self.todos_panel_refresh(),
+            "notes" => self.notes_panel_refresh(),
+            _ => self.findings_panel_refresh(),
+        }
+        self.toast(format!("{panel}: {}", m.label()));
+    }
+
     /// Whether `panel` auto-refreshes. ON unless the user turned it
     /// off — see [`crate::config::UiConfig::auto_refresh_off`].
     pub fn panel_auto_refresh(&self, panel: &str) -> bool {
@@ -2844,5 +2875,100 @@ mod auto_refresh_tests {
             app.todos_auto_refresh_at.is_none(),
             "a disabled panel still ran its scan"
         );
+    }
+}
+
+#[cfg(test)]
+mod list_sort_wiring_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::ui::list_sort::ListSort;
+
+    /// Returns the env guard + lock alongside the app: `set_panel_sort`
+    /// PERSISTS, and without redirecting `MNML_DATA_ROOT` these tests
+    /// write `notes_sort` into the developer's real
+    /// `~/.config/mnml/config.toml`. That happened on the first run of
+    /// this test and had to be undone by hand. `HOME` is not enough —
+    /// `home_config_path` checks `MNML_DATA_ROOT` first.
+    fn app_with_notes(
+        names: &[&str],
+    ) -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        // ORDER MATTERS. A tuple drops left-to-right, so the EnvGuard
+        // must come BEFORE the MutexGuard: returning the lock first
+        // released it while `MNML_DATA_ROOT` was still set, letting the
+        // next test start against this test's tempdir config. That is
+        // exactly how `discover_over_an_empty_dir_does_not_touch_the_
+        // ledger` failed in a full run while passing alone.
+        crate::EnvGuard,
+        std::sync::MutexGuard<'static, ()>,
+        App,
+    ) {
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env = crate::EnvGuard::set("MNML_DATA_ROOT", cfg_dir.path());
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let nd = crate::ui::notes_panel::notes_dir(&app.workspace);
+        std::fs::create_dir_all(&nd).unwrap();
+        // Write oldest-first with a real mtime gap, so "newest" and
+        // "A–Z" produce DIFFERENT orders — otherwise the test passes
+        // whichever mode is in effect.
+        for (i, n) in names.iter().enumerate() {
+            let p = nd.join(format!("{n}.md"));
+            std::fs::write(&p, "x").unwrap();
+            // std, not the `filetime` crate — no new dependency for a
+            // test helper. Stable since 1.75.
+            let when = std::time::SystemTime::now() + std::time::Duration::from_secs(i as u64 * 10);
+            let f = std::fs::File::options().write(true).open(&p).unwrap();
+            f.set_times(std::fs::FileTimes::new().set_modified(when))
+                .unwrap();
+        }
+        app.notes_panel_refresh();
+        (d, cfg_dir, env, lock, app)
+    }
+
+    fn names(app: &App) -> Vec<String> {
+        app.notes_panel_files_cache
+            .iter()
+            .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// USER ASK — "not sure what controls order of notes, maybe we need
+    /// view modes like A-Z or newest".
+    #[test]
+    fn switching_to_name_reorders_the_notes_panel() {
+        // `zebra` is written last, so newest-first puts it on top while
+        // A–Z puts it last. The two orders are opposites here, which is
+        // what makes the assertion meaningful.
+        let (_d, _cfg, _env, _lk, mut app) = app_with_notes(&["alpha", "middle", "zebra"]);
+        assert_eq!(app.notes_sort, ListSort::Newest, "default changed");
+        assert_eq!(names(&app).first().unwrap(), "zebra", "not newest-first");
+
+        app.set_panel_sort("notes", "name");
+        assert_eq!(app.notes_sort, ListSort::Name);
+        assert_eq!(
+            names(&app),
+            vec!["alpha", "middle", "zebra"],
+            "the panel did not re-sort — the cache was left stale"
+        );
+    }
+
+    /// Sort is PER PANEL: browsing notes A–Z must not reorder findings.
+    #[test]
+    fn setting_one_panels_sort_leaves_the_others_alone() {
+        let (_d, _cfg, _env, _lk, mut app) = app_with_notes(&["a", "b"]);
+        app.set_panel_sort("notes", "name");
+        assert_eq!(app.notes_sort, ListSort::Name);
+        assert_eq!(
+            app.findings_sort,
+            ListSort::Newest,
+            "findings followed notes"
+        );
+        assert_eq!(app.todos_sort, ListSort::Newest, "todos followed notes");
     }
 }

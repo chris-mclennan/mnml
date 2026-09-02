@@ -31,6 +31,8 @@ pub enum MenuAction {
     /// Flip a panel's auto-refresh, by panel id. Hangs off the
     /// right-click menu on that panel's ↻ chip.
     TogglePanelAutoRefresh(String),
+    /// Set a list panel's row order. `(panel_id, mode token)`.
+    SetPanelSort(String, String),
     GitSwitchRepo(usize),
     GitReopenRepo(PathBuf),
     /// A row that exists only to open a child menu. Never dispatched —

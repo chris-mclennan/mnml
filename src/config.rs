@@ -943,6 +943,15 @@ pub struct UiConfig {
     /// panel's ↻ chip.
     pub auto_refresh_off: Vec<String>,
 
+    /// Row order for the three activity list panels — `"newest"`
+    /// (default) or `"name"`. Per-panel: browsing notes A–Z does not
+    /// mean you want findings that way too.
+    pub todos_sort: String,
+    /// See [`UiConfig::todos_sort`].
+    pub notes_sort: String,
+    /// See [`UiConfig::todos_sort`].
+    pub findings_sort: String,
+
     /// #1102 (2026-08-20) — user-controlled reorder for dynamic
     /// statusline segments (`[[statusline_segments]]` from any
     /// installed integration manifest, plus IPC-set segments).
@@ -1564,6 +1573,9 @@ impl Default for Config {
                 plus_menu_pinned: Vec::new(),
                 plus_menu_hidden: Vec::new(),
                 auto_refresh_off: Vec::new(),
+                todos_sort: "newest".to_string(),
+                notes_sort: "newest".to_string(),
+                findings_sort: "newest".to_string(),
                 statusline_segment_order: Vec::new(),
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,

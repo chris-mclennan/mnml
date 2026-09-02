@@ -829,7 +829,30 @@ impl App {
     pub fn todos_panel_refresh(&mut self) {
         let mut hits = Vec::new();
         walk_for_todos(&self.workspace, 0, &mut hits);
-        hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+        match self.todos_sort {
+            // Path then line — the reading order of the codebase.
+            crate::ui::list_sort::ListSort::Name => {
+                hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+            }
+            // Newest file first, still line-ordered within a file so a
+            // file's own markers never appear shuffled.
+            crate::ui::list_sort::ListSort::Newest => {
+                let mtime = |p: &std::path::Path| {
+                    std::fs::metadata(p)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                };
+                hits.sort_by(|a, b| {
+                    mtime(&b.path)
+                        .cmp(&mtime(&a.path))
+                        .then(a.path.cmp(&b.path))
+                        .then(a.line.cmp(&b.line))
+                });
+            }
+        }
         self.todos_hits = hits;
         self.todos_panel_scanned_once = true;
         self.todos_panel_cursor = 0;
@@ -1418,13 +1441,17 @@ impl App {
         let dir = crate::ui::findings_panel::findings_dir(&self.workspace);
         let mut out: Vec<std::path::PathBuf> = Vec::new();
         walk_findings(&dir, 0, &mut out);
-        out.sort_by_key(|p| {
-            std::fs::metadata(p)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| std::cmp::Reverse(d.as_secs()))
-                .unwrap_or(std::cmp::Reverse(0))
+        // Keyed on the RELATIVE name the row displays, not the file
+        // name: nested tester-round dirs render as `round/foo`, and
+        // sorting by file name would order rows differently from how
+        // they read.
+        let root = dir.clone();
+        crate::ui::list_sort::sort_paths(&mut out, self.findings_sort, |p| {
+            p.strip_prefix(&root)
+                .unwrap_or(p)
+                .with_extension("")
+                .to_string_lossy()
+                .into_owned()
         });
         self.findings_panel_files_cache = out;
         self.findings_panel_scanned_once = true;
@@ -1442,14 +1469,12 @@ impl App {
                 .collect(),
             Err(_) => Vec::new(),
         };
-        // Sort by modified time descending — most-recently-worked-on first.
-        out.sort_by_key(|p| {
-            std::fs::metadata(p)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| std::cmp::Reverse(d.as_secs()))
-                .unwrap_or(std::cmp::Reverse(0))
+        // Order is the user's choice now (`ui::list_sort`), defaulting
+        // to the newest-first this used to hard-code.
+        crate::ui::list_sort::sort_paths(&mut out, self.notes_sort, |p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
         });
         self.notes_panel_files_cache = out;
         self.notes_panel_scanned_once = true;
