@@ -1160,6 +1160,31 @@ impl App {
     /// refreshed where the file landed and left the place it came from
     /// still showing it. Panes are few and `reload()` is one `read_dir`,
     /// so refreshing all of them is both simpler and correct.
+    /// Whether `panel` auto-refreshes. ON unless the user turned it
+    /// off — see [`crate::config::UiConfig::auto_refresh_off`].
+    pub fn panel_auto_refresh(&self, panel: &str) -> bool {
+        !self.config.ui.auto_refresh_off.iter().any(|p| p == panel)
+    }
+
+    /// Flip `panel`'s auto-refresh and persist it.
+    pub fn toggle_panel_auto_refresh(&mut self, panel: &str) {
+        let was_on = self.panel_auto_refresh(panel);
+        if was_on {
+            self.config.ui.auto_refresh_off.push(panel.to_string());
+        } else {
+            self.config.ui.auto_refresh_off.retain(|p| p != panel);
+        }
+        let list = self.config.ui.auto_refresh_off.clone();
+        if let Err(e) = crate::app::discovery::persist_ui_string_array("auto_refresh_off", &list) {
+            self.toast(format!("auto-refresh: could not save: {e}"));
+            return;
+        }
+        self.toast(format!(
+            "{panel}: auto-refresh {}",
+            if was_on { "off" } else { "on" }
+        ));
+    }
+
     pub fn refresh_after_fs_change(&mut self) {
         self.tree.refresh();
         for p in self.panes.iter_mut() {
@@ -1182,8 +1207,27 @@ impl App {
         // that caused this editor's previous freezes. A TODO marker
         // also cannot appear from a file operation the way a note or a
         // finding can — it needs an edit, which has its own trigger.
-        self.notes_panel_refresh();
-        self.findings_panel_refresh();
+        if self.panel_auto_refresh("notes") {
+            self.notes_panel_refresh();
+        }
+        if self.panel_auto_refresh("findings") {
+            self.findings_panel_refresh();
+        }
+        // TODOS is throttled, not excluded. Its refresh walks the whole
+        // workspace synchronously, so running it on every file
+        // operation is the per-frame full-scan shape behind this
+        // editor's previous freezes — but excluding it outright is why
+        // a user who edited TODO.md saw nothing until they clicked ↻.
+        // Once every two seconds keeps it current without the cost
+        // landing on a burst of writes.
+        if self.panel_auto_refresh("todos") {
+            let now = std::time::Instant::now();
+            let due = self.todos_auto_refresh_at.map(|t| now >= t).unwrap_or(true);
+            if due {
+                self.todos_auto_refresh_at = Some(now + std::time::Duration::from_secs(2));
+                self.todos_panel_refresh();
+            }
+        }
     }
 
     /// Enter the selected directory, or open the selected file.
@@ -2721,6 +2765,84 @@ mod trash_view_tests {
                 .iter()
                 .any(|p| matches!(p, crate::pane::Pane::Files(_))),
             "opened a pane on an empty trash"
+        );
+    }
+}
+
+#[cfg(test)]
+mod auto_refresh_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// User: "in most cases its probably already on." Auto-refresh is
+    /// the DEFAULT — the config records only what was turned off, so an
+    /// untouched install has every panel refreshing.
+    #[test]
+    fn every_panel_auto_refreshes_by_default() {
+        let (_d, app) = app();
+        for p in [
+            "todos",
+            "notes",
+            "findings",
+            "sessions",
+            "agents",
+            "cloud_agents",
+            "git",
+            "http",
+        ] {
+            assert!(app.panel_auto_refresh(p), "{p} did not default to on");
+        }
+    }
+
+    /// An entry in the off-list turns exactly ONE panel off.
+    #[test]
+    fn the_off_list_disables_only_the_named_panel() {
+        let (_d, mut app) = app();
+        app.config.ui.auto_refresh_off.push("todos".to_string());
+        assert!(!app.panel_auto_refresh("todos"), "todos should be off");
+        assert!(
+            app.panel_auto_refresh("notes"),
+            "turning todos off also disabled notes"
+        );
+    }
+
+    /// TODOS auto-refresh is THROTTLED, not excluded: its scan walks
+    /// the whole workspace, and running that per file operation is the
+    /// per-frame full-scan shape behind this editor's earlier freezes.
+    #[test]
+    fn the_todos_scan_is_throttled_across_a_burst_of_changes() {
+        let (_d, mut app) = app();
+        std::fs::write(app.workspace.join("a.rs"), "// TODO: x\n").unwrap();
+
+        app.refresh_after_fs_change();
+        let first = app.todos_auto_refresh_at;
+        assert!(first.is_some(), "the first change did not scan");
+
+        // A burst of further changes must not rescan.
+        for _ in 0..20 {
+            app.refresh_after_fs_change();
+        }
+        assert_eq!(
+            app.todos_auto_refresh_at, first,
+            "a burst of file changes triggered repeated whole-workspace scans"
+        );
+    }
+
+    /// ...and turning it off means it does not scan at all.
+    #[test]
+    fn a_disabled_panel_does_not_scan() {
+        let (_d, mut app) = app();
+        app.config.ui.auto_refresh_off.push("todos".to_string());
+        app.refresh_after_fs_change();
+        assert!(
+            app.todos_auto_refresh_at.is_none(),
+            "a disabled panel still ran its scan"
         );
     }
 }

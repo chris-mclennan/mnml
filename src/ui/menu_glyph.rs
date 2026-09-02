@@ -146,9 +146,10 @@ pub fn for_action(a: &MenuAction) -> &'static str {
         M::TreeCollapseRecursive(..) => "\u{f146}", // minus-square
 
         // ── Terminal / process ──
-        M::PtyRestart(..) => "\u{f021}",   // refresh
-        M::PtyInterrupt(..) => "\u{f04d}", // stop
-        M::PtyClear(..) => "\u{f12d}",     // eraser
+        M::TogglePanelAutoRefresh(..) => "\u{f021}", // refresh
+        M::PtyRestart(..) => "\u{f021}",             // refresh
+        M::PtyInterrupt(..) => "\u{f04d}",           // stop
+        M::PtyClear(..) => "\u{f12d}",               // eraser
 
         // ── Run ──
         // `Command` is a generic wrapper used by dozens of rows, so one

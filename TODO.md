@@ -1282,3 +1282,13 @@ that need a decision before they are buildable.
   clamps `visible` to the inner height with no scroll and no indicator,
   so a long submenu (the agent list) is truncated with no cue. Same
   defect class as the three list panels fixed 2026-09-01.
+
+### Integration refresh buttons diverge from mnml's design language
+
+- TODO: `mnml-tracker-jira` renders `" ⟳ Refresh "` (spelled-out word,
+  U+27F3) while mnml core uses the icon-only chip from
+  `ui::refresh_glyph` (NERD U+EB37 / ASCII U+21BA) via
+  `panel_chrome::draw_caps_header_with_refresh`. Bitbucket should be
+  checked too. Bring the integrations onto the same chip so the family
+  reads as one product. Cross-repo (`~/Projects/mnml-integrations`), so
+  it wants a worktree.

@@ -28,6 +28,9 @@ pub enum MenuAction {
     },
     /// Switch the GIT rail to repo `n`, or reopen a closed one. Both
     /// hang off the repo chip's menu.
+    /// Flip a panel's auto-refresh, by panel id. Hangs off the
+    /// right-click menu on that panel's ↻ chip.
+    TogglePanelAutoRefresh(String),
     GitSwitchRepo(usize),
     GitReopenRepo(PathBuf),
     /// A row that exists only to open a child menu. Never dispatched —

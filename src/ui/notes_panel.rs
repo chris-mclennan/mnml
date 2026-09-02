@@ -396,22 +396,36 @@ mod tests {
         );
     }
 
-    /// TODOS is deliberately NOT refreshed on every filesystem change:
-    /// its refresh walks the whole workspace synchronously, and doing
-    /// that per file operation is the exact per-frame full-scan shape
-    /// behind this editor's previous freezes.
+    /// TODOS auto-refresh is THROTTLED, not excluded.
+    ///
+    /// This test used to assert it never ran at all. That was the right
+    /// policy while the only alternative was scanning the whole
+    /// workspace on every file operation — the per-frame full-scan
+    /// shape behind this editor's earlier freezes. But it also meant a
+    /// user who edited TODO.md saw nothing until they clicked ↻, which
+    /// is the complaint that prompted the change. A throttle keeps the
+    /// panel current without the cost landing on a burst of writes.
     #[test]
-    fn an_fs_change_does_not_trigger_a_whole_workspace_todo_scan() {
+    fn a_burst_of_fs_changes_scans_todos_at_most_once() {
         let d = tempfile::tempdir().unwrap();
         let mut app =
             crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
-        std::fs::write(d.path().join("a.rs"), "// TODO: marker\n").unwrap();
-        app.todos_panel_scanned_once = false;
+        std::fs::write(app.workspace.join("a.rs"), "// TODO: marker\n").unwrap();
+
         app.refresh_after_fs_change();
+        let after_first = app.todos_auto_refresh_at;
         assert!(
-            !app.todos_panel_scanned_once,
-            "refresh_after_fs_change ran a full-workspace TODO scan — that \
-             cost belongs on the panel's own refresh, not on every file op"
+            after_first.is_some(),
+            "the first change did not scan at all"
+        );
+
+        for _ in 0..20 {
+            app.refresh_after_fs_change();
+        }
+        assert_eq!(
+            app.todos_auto_refresh_at, after_first,
+            "a burst re-scanned the whole workspace repeatedly — the \
+             throttle is not holding"
         );
     }
 

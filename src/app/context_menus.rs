@@ -214,6 +214,41 @@ impl App {
         self.toast("no context menu at this focus");
     }
 
+    /// Right-click menu for a panel's ↻ chip: refresh now, and flip
+    /// auto-refresh. Every panel that has a chip gets the same two
+    /// rows, so the gesture means the same thing everywhere.
+    pub fn open_refresh_chip_menu(&mut self, panel: &'static str, anchor: (u16, u16)) {
+        let on = self.panel_auto_refresh(panel);
+        let items = vec![
+            crate::context_menu::MenuItem::new(
+                "Refresh now",
+                crate::context_menu::MenuAction::Command(match panel {
+                    "todos" => "todos.refresh",
+                    "notes" => "notes.refresh",
+                    "findings" => "findings.refresh",
+                    "sessions" => "sessions.refresh",
+                    "agents" => "agents.refresh",
+                    "cloud_agents" => "cloud.agents_refresh",
+                    "git" => "git.refresh",
+                    _ => "http.refresh",
+                }),
+            ),
+            crate::context_menu::MenuItem::new(
+                if on {
+                    "Auto-refresh: on"
+                } else {
+                    "Auto-refresh: off"
+                },
+                crate::context_menu::MenuAction::TogglePanelAutoRefresh(panel.to_string()),
+            ),
+        ];
+        self.context_menu = Some(crate::context_menu::ContextMenu::new(
+            Some(panel.to_uppercase()),
+            anchor,
+            items,
+        ));
+    }
+
     /// Right-click in the file tree on `path` (at screen cell `anchor`).
     /// Right-click a row inside an extra-workspace section. Resolves
     /// the row's path/is_dir from that workspace's own tree and hands
@@ -2401,6 +2436,9 @@ impl App {
                     }
                     Err(e) => self.toast(format!("reorder: persist failed: {e}")),
                 }
+            }
+            TogglePanelAutoRefresh(panel) => {
+                self.toggle_panel_auto_refresh(&panel);
             }
             SetIntegrationAutoUpdate(id, on) => {
                 match crate::app::discovery::persist_integration_auto_update(&id, on) {

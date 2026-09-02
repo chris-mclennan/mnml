@@ -13,7 +13,31 @@
 use crate::app::App;
 use crate::pane::Pane;
 
+/// Right-click on any panel's ↻ chip opens the refresh menu. Listed in
+/// one place so a new panel with a chip is one line, not a new idiom.
+fn refresh_chip_menu_hit(app: &crate::app::App, x: u16, y: u16) -> Option<&'static str> {
+    let chips: [(Option<ratatui::layout::Rect>, &'static str); 7] = [
+        (app.rects.todos_panel_refresh_chip, "todos"),
+        (app.rects.notes_panel_refresh_chip, "notes"),
+        (app.rects.findings_panel_refresh_chip, "findings"),
+        (app.rects.sessions_panel_refresh_chip, "sessions"),
+        (app.rects.agents_panel_refresh_chip, "agents"),
+        (app.rects.cloud_agents_refresh_chip, "cloud_agents"),
+        (app.rects.git_palette_refresh_chip, "git"),
+    ];
+    chips
+        .iter()
+        .find(|(r, _)| r.is_some_and(|r| crate::app::dispatch::contains(r, x, y)))
+        .map(|(_, id)| *id)
+}
+
 pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
+    // Checked FIRST: the chips sit inside their panels' headers, so a
+    // later panel-body branch would otherwise swallow the click.
+    if let Some(panel) = refresh_chip_menu_hit(app, x, y) {
+        app.open_refresh_chip_menu(panel, (x, y));
+        return;
+    }
     if app.debug_click_inspector {
         let hits = app.rects.inspect_click_targets(x, y);
         let msg = if hits.is_empty() {

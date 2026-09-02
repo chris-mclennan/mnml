@@ -933,6 +933,16 @@ pub struct UiConfig {
     pub plus_menu_pinned: Vec<String>,
     pub plus_menu_hidden: Vec<String>,
 
+    /// Panels whose auto-refresh the user has turned OFF, by panel id
+    /// (`"todos"`, `"notes"`, `"findings"`, `"sessions"`, `"agents"`,
+    /// `"cloud_agents"`, `"git"`, `"http"`).
+    ///
+    /// An OFF-list rather than an on-list: auto-refresh is the default
+    /// everywhere, so an empty list is the common case and the file
+    /// records only what the user changed. Toggled by right-clicking a
+    /// panel's ↻ chip.
+    pub auto_refresh_off: Vec<String>,
+
     /// #1102 (2026-08-20) — user-controlled reorder for dynamic
     /// statusline segments (`[[statusline_segments]]` from any
     /// installed integration manifest, plus IPC-set segments).
@@ -1553,6 +1563,7 @@ impl Default for Config {
                 activity_bar_pinned_integrations: Vec::new(),
                 plus_menu_pinned: Vec::new(),
                 plus_menu_hidden: Vec::new(),
+                auto_refresh_off: Vec::new(),
                 statusline_segment_order: Vec::new(),
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,

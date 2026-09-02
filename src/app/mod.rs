@@ -5497,6 +5497,10 @@ pub struct App {
     /// first screenful and everything past it was unreachable, with no
     /// scrollbar to say so — 93 TODOs looked like 40 (user report).
     pub todos_panel_scroll: usize,
+    /// Earliest time the TODOS auto-refresh may run again — its scan
+    /// walks the whole workspace, so it is throttled rather than run
+    /// on every filesystem change.
+    pub todos_auto_refresh_at: Option<std::time::Instant>,
     pub notes_panel_scroll: usize,
     pub findings_panel_scroll: usize,
     pub sessions_panel_cursor: usize,
@@ -6750,6 +6754,7 @@ impl App {
             notes_panel_cursor: 0,
             findings_panel_cursor: 0,
             todos_panel_scroll: 0,
+            todos_auto_refresh_at: None,
             notes_panel_scroll: 0,
             findings_panel_scroll: 0,
             sessions_panel_cursor: 0,
