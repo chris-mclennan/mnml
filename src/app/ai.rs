@@ -651,20 +651,41 @@ impl App {
         // (sidebar Integrations chip + split-strip AI chip) since
         // both call this method.
         self.set_activity_section(crate::app::ActivitySection::Sessions);
-        // If a Claude pane is already open, toggle focus / visibility-ish
-        // by revealing it instead of spawning a duplicate. (Claude
-        // sessions are expensive to bootstrap — same gesture as the
-        // claude-chat.nvim "toggle if already active" behavior.)
-        if let Some(id) = self.find_claude_pty() {
-            self.reveal_pane(id);
-            return;
-        }
+        // Spawns a NEW session even when one is already running.
+        //
+        // This used to reveal the existing pane instead — the
+        // claude-chat.nvim "toggle if already active" gesture. That is a
+        // reasonable default for a single-assistant workflow, but not
+        // for this one: the user runs several Claude sessions at once
+        // and reported "when i click the claude man icon at top right
+        // and i already have a claude running, i dont get a second
+        // claude but thats what i usually want" (2026-09-02).
+        //
+        // The old behaviour is not gone — it is `ai.claude_code_focus`,
+        // offered on the chip's right-click menu. Changing the command
+        // rather than re-pointing the chip keeps every entry point
+        // (chip, whichkey chord, palette) agreeing on what a plain
+        // "open Claude" means.
         // AI panes dock as a vertical split on the right of the active
         // leaf — the IDE-canonical "chat panel" placement.
         self.open_pty_dir(
             crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
             crate::layout::SplitDir::Horizontal,
         );
+    }
+
+    /// Reveal an EXISTING Claude pane, or start one if none is running.
+    ///
+    /// The behaviour `open_claude_code` had until 2026-09-02. Kept
+    /// because it is genuinely useful — "take me to the session I have"
+    /// — just not what a plain click should mean here.
+    pub fn focus_claude_code(&mut self) {
+        self.set_activity_section(crate::app::ActivitySection::Sessions);
+        if let Some(id) = self.find_claude_pty() {
+            self.reveal_pane(id);
+            return;
+        }
+        self.open_claude_code();
     }
 
     /// Always spawn a *new* Claude pane (no toggle / reuse) — the
@@ -3349,5 +3370,53 @@ mod ai_tests {
         assert_eq!(fmt_tokens(840), "840");
         assert_eq!(fmt_tokens(2_100), "2.1k");
         assert_eq!(fmt_tokens(1_200_000), "1.2M");
+    }
+}
+
+#[cfg(test)]
+mod claude_icon_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// USER REPORT — "when i click the claude man icon at top right and
+    /// i already have a claude running, i dont get a second claude but
+    /// thats what i usually want."
+    ///
+    /// The chip fires `ai.claude_code`, which used to REVEAL the
+    /// existing pane rather than start another.
+    #[test]
+    fn opening_claude_twice_gives_two_sessions() {
+        let (_d, mut app) = app();
+        app.open_claude_code();
+        let first = app.panes.len();
+        assert!(first > 0, "setup: no pane opened at all");
+
+        app.open_claude_code();
+        assert!(
+            app.panes.len() > first,
+            "the second open revealed the first session instead of \
+             starting another ({first} panes before and after)"
+        );
+    }
+
+    /// The old behaviour still exists, just under its own name — it is
+    /// genuinely useful, and the right-click menu offers it.
+    #[test]
+    fn focus_reuses_the_running_session() {
+        let (_d, mut app) = app();
+        app.open_claude_code();
+        let after_first = app.panes.len();
+        app.focus_claude_code();
+        assert_eq!(
+            app.panes.len(),
+            after_first,
+            "focus spawned a new session instead of revealing the one running"
+        );
     }
 }

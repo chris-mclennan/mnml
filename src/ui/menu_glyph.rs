@@ -294,6 +294,98 @@ pub fn column(a: &MenuAction, ascii: bool) -> String {
     }
 }
 
+/// Write the menu-glyph audit document and return its path.
+///
+/// A REAL function, not a `#[ignore]`d test: the user asked for "an
+/// easier way to do the audit list in future, shouldn't be that hard",
+/// and `cargo test --ignored` is not that. `menu.glyph_audit` in the
+/// palette calls this and opens the result.
+///
+/// Generated from the live table so the document cannot drift from
+/// what the menus actually paint.
+pub fn write_audit(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    use crate::context_menu::MenuAction as M;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    let p = |s: &str| PathBuf::from(s);
+    let rows: Vec<(&str, MenuAction)> = vec![
+        ("Open", M::OpenPath(p("/a"))),
+        ("Open as text", M::OpenPathAsText(p("/a"))),
+        ("Open in split", M::OpenInSplit(p("/a"))),
+        ("Reveal in Finder", M::RevealInFinder(p("/a"))),
+        ("Open externally", M::OpenExternally("u".into())),
+        ("Open terminal here", M::OpenTerminal(p("/a"))),
+        ("Preview markdown", M::PreviewMarkdown(p("/a"))),
+        ("Copy path", M::CopyPath("/a".into())),
+        ("Copy text", M::CopyText("x".into())),
+        ("Cut", M::FileCut(p("/a"))),
+        ("Paste", M::FilePaste(p("/a"))),
+        ("Duplicate", M::FileDuplicate(p("/a"))),
+        ("Move to…", M::FileMoveTo(p("/a"))),
+        ("New file", M::NewFile(p("/a"))),
+        ("New folder", M::NewFolder(p("/a"))),
+        ("Rename…", M::Rename(p("/a"))),
+        ("Delete", M::Delete(p("/a"))),
+        ("Close tab", M::CloseTab(0)),
+        ("Close all tabs", M::CloseAllTabs),
+        ("Pin tab", M::PinTab(0)),
+        ("Save", M::SavePane(0)),
+        ("Expand recursively", M::TreeExpandRecursive(p("/a"))),
+        ("Collapse recursively", M::TreeCollapseRecursive(p("/a"))),
+        ("Auto-refresh", M::TogglePanelAutoRefresh("todos".into())),
+        ("Sort", M::SetPanelSort("todos".into(), "name".into())),
+        ("Submenu parent", M::Submenu),
+    ];
+
+    let mut by_glyph: BTreeMap<&'static str, Vec<&str>> = BTreeMap::new();
+    for (label, a) in &rows {
+        by_glyph.entry(for_action(a)).or_default().push(label);
+    }
+
+    let mut out = String::from(
+        "# Menu glyph audit\n\n\
+         Regenerate with the `menu.glyph_audit` palette command.\n\
+         Grouped by glyph: every row under one heading shares that icon.\n\
+         The spacing shown is the REAL rendered column.\n\n\
+         Ask of each group: does one icon honestly cover all of these?\n\n",
+    );
+    for (glyph, labels) in &by_glyph {
+        let shown = if glyph.is_empty() {
+            "(none)".to_string()
+        } else {
+            format!("`{glyph}`  {glyph}")
+        };
+        out.push_str(&format!("## {shown} — {} row(s)\n\n", labels.len()));
+        for l in labels {
+            let a = rows.iter().find(|(n, _)| n == l).map(|(_, a)| a).unwrap();
+            out.push_str(&format!("- `{}{l}`\n", column(a, false)));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## `Command(id)` — resolved by id keyword\n\n");
+    for id in [
+        "pty.clear",
+        "pty.restart",
+        "pane.close",
+        "window.dock_left",
+        "window.equalize",
+        "view.toggle_theme",
+        "files.new",
+        "git.stage",
+        "edit.paste",
+        "something.unmapped",
+    ] {
+        out.push_str(&format!("- `{}` → `{}`\n", id, command_glyph(id)));
+    }
+
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("menu-glyph-audit.md");
+    std::fs::write(&path, out)?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,108 +541,4 @@ mod tests {
         let g = command_glyph("something.entirely.unmapped");
         assert!(!g.is_empty(), "unmapped command produced no glyph");
     }
-}
-
-/// Dump every menu row's glyph as markdown, grouped by glyph, for a
-/// human to audit ("is this icon appropriate, and is it spaced right").
-///
-/// Generated FROM THE LIVE TABLE rather than hand-written, so the audit
-/// document cannot drift from what the menus actually paint. Run with:
-///
-/// ```text
-/// cargo test --lib menu_glyph::audit -- --ignored --nocapture
-/// ```
-///
-/// Writes `.mnml/menu-glyph-audit.md`, which opens in mnml itself —
-/// where the Nerd Font is present and the glyphs actually render.
-#[cfg(test)]
-#[test]
-#[ignore = "generates a review document; not a correctness check"]
-fn audit_dump() {
-    use crate::context_menu::MenuAction as M;
-    use std::collections::BTreeMap;
-    use std::path::PathBuf;
-
-    let p = |s: &str| PathBuf::from(s);
-    // One representative per variant. Labels are the human-facing names
-    // the menus actually use, so the audit reads like the menus do.
-    let rows: Vec<(&str, MenuAction)> = vec![
-        ("Open", M::OpenPath(p("/a"))),
-        ("Open as text", M::OpenPathAsText(p("/a"))),
-        ("Open in split", M::OpenInSplit(p("/a"))),
-        ("Reveal in Finder", M::RevealInFinder(p("/a"))),
-        ("Open externally", M::OpenExternally("u".into())),
-        ("Open terminal here", M::OpenTerminal(p("/a"))),
-        ("Preview markdown", M::PreviewMarkdown(p("/a"))),
-        ("Copy path", M::CopyPath("/a".into())),
-        ("Copy text", M::CopyText("x".into())),
-        ("Cut", M::FileCut(p("/a"))),
-        ("Paste", M::FilePaste(p("/a"))),
-        ("Duplicate", M::FileDuplicate(p("/a"))),
-        ("Move to…", M::FileMoveTo(p("/a"))),
-        ("New file", M::NewFile(p("/a"))),
-        ("New folder", M::NewFolder(p("/a"))),
-        ("Rename…", M::Rename(p("/a"))),
-        ("Delete", M::Delete(p("/a"))),
-        ("Close tab", M::CloseTab(0)),
-        ("Close all tabs", M::CloseAllTabs),
-        ("Pin tab", M::PinTab(0)),
-        ("Save", M::SavePane(0)),
-        ("Expand recursively", M::TreeExpandRecursive(p("/a"))),
-        ("Collapse recursively", M::TreeCollapseRecursive(p("/a"))),
-        ("Submenu parent", M::Submenu),
-    ];
-
-    let mut by_glyph: BTreeMap<&'static str, Vec<&str>> = BTreeMap::new();
-    for (label, a) in &rows {
-        by_glyph.entry(for_action(a)).or_default().push(label);
-    }
-
-    let mut out = String::from(
-        "# Menu glyph audit\n\n\
-         Generated by `cargo test --lib menu_glyph::audit -- --ignored`.\n\
-         Grouped by glyph: every row under one heading shares that icon.\n\
-         Read it in mnml, where the Nerd Font renders.\n\n\
-         Ask of each group: does one icon honestly cover all of these?\n\n",
-    );
-    for (glyph, labels) in &by_glyph {
-        let shown = if glyph.is_empty() {
-            "(none)".to_string()
-        } else {
-            format!("`{glyph}`  {glyph}")
-        };
-        out.push_str(&format!("## {shown} — {} row(s)\n\n", labels.len()));
-        for l in labels {
-            let col = column(
-                rows.iter().find(|(n, _)| n == l).map(|(_, a)| a).unwrap(),
-                false,
-            );
-            out.push_str(&format!("- `{col}{l}`\n"));
-        }
-        out.push('\n');
-    }
-
-    // `MenuAction::Command` rows resolve through the id table, which is
-    // where the worst repetition lived — audit it separately.
-    out.push_str("## `Command(id)` — resolved by id keyword\n\n");
-    for id in [
-        "pty.clear",
-        "pty.restart",
-        "pane.close",
-        "window.dock_left",
-        "window.equalize",
-        "view.toggle_theme",
-        "files.new",
-        "git.stage",
-        "edit.paste",
-        "something.unmapped",
-    ] {
-        out.push_str(&format!("- `{}` → `{}`\n", id, command_glyph(id)));
-    }
-
-    let dir = std::path::Path::new(".mnml");
-    std::fs::create_dir_all(dir).unwrap();
-    let path = dir.join("menu-glyph-audit.md");
-    std::fs::write(&path, out).unwrap();
-    eprintln!("wrote {}", path.display());
 }

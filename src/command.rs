@@ -4207,6 +4207,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.notes_panel_new_note(),
         },
         Command {
+            id: "menu.glyph_audit",
+            title: "Menus: write + open the glyph audit (icons and spacing)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                // Writes AND opens it. The generator previously lived in
+                // an `#[ignore]`d test, which the user rightly called
+                // too obscure — "i need easier way to do the audit list
+                // in future, shouldn't be that hard". It opens in mnml
+                // itself, which is where the Nerd Font renders.
+                let dir = app.workspace.join(".mnml");
+                match crate::ui::menu_glyph::write_audit(&dir) {
+                    Ok(path) => {
+                        app.open_path(&path);
+                        app.toast("menu glyph audit written");
+                    }
+                    Err(e) => app.toast(format!("glyph audit: {e}")),
+                }
+            },
+        },
+        Command {
             id: "findings.new",
             title: "Findings: create a new finding in .mnml/findings/",
             group: "findings",
@@ -6680,6 +6701,13 @@ fn builtin_commands() -> Vec<Command> {
             // No global key — `Ctrl+Shift+A` isn't distinguishable in most terminals; use `<leader>a c`.
             keys: &[],
             run: |app| app.open_claude_code(),
+        },
+        Command {
+            id: "ai.claude_code_focus",
+            title: "AI: focus the running Claude Code session (start one if none)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.focus_claude_code(),
         },
         Command {
             id: "ai.chat",
