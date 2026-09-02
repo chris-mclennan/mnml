@@ -1337,6 +1337,37 @@ fn list_scroll_clamp_scaled(delta: i32, ceiling: f32) -> i32 {
 }
 
 pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
+    // An OPEN CONTEXT MENU takes the wheel first — it is drawn on top
+    // of everything, so a wheel over it that scrolled the pane
+    // underneath would be scrolling something the user cannot see. A
+    // menu taller than the screen had no way to reach its lower rows
+    // at all (tester 2026-09-02: the agent menu dropped `Fix with
+    // Claude Code`, and neither wheel nor arrows moved it).
+    if let Some(area) = app.rects.context_submenu_box.or(app.rects.context_menu_box)
+        && contains(area, x, y)
+    {
+        let into_submenu = app
+            .rects
+            .context_submenu_box
+            .is_some_and(|r| contains(r, x, y));
+        let step = if delta < 0 { -1i32 } else { 1i32 };
+        if into_submenu {
+            if let Some((_, m)) = app.context_submenu.as_mut() {
+                m.scroll = if step < 0 {
+                    m.scroll.saturating_sub(1)
+                } else {
+                    m.scroll.saturating_add(1)
+                };
+            }
+        } else if let Some(m) = app.context_menu.as_mut() {
+            m.scroll = if step < 0 {
+                m.scroll.saturating_sub(1)
+            } else {
+                m.scroll.saturating_add(1)
+            };
+        }
+        return;
+    }
     let delta = budgeted_scroll(app, delta);
     if delta == 0 {
         return;

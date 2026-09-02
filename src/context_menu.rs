@@ -604,6 +604,15 @@ pub struct ContextMenu {
     /// item at `selected` (0 by default), so the "no highlight"
     /// state isn't actually inert.
     pub interacted: bool,
+    /// First visible row.
+    ///
+    /// A menu taller than the screen used to be silently TRUNCATED —
+    /// `visible = inner.height.min(items.len())` with no offset, no
+    /// scroll and no indicator. With 38 agents installed, right-clicking
+    /// a TODO row dropped the last five rows, including `Fix with Claude
+    /// Code` and `Fix with Codex`: the two actions the menu exists for.
+    /// Neither the wheel nor the arrows moved it (tester, 2026-09-02).
+    pub scroll: usize,
 }
 
 impl ContextMenu {
@@ -615,6 +624,7 @@ impl ContextMenu {
             anchor,
             selected: 0,
             interacted: false,
+            scroll: 0,
         }
     }
     pub fn move_up(&mut self) {

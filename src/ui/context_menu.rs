@@ -50,8 +50,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     }
 
     let curatable = menu.curatable;
-    let visible = (inner.height as usize).min(menu.items.len());
-    for (row, item) in menu.items.iter().take(visible).enumerate() {
+    // Window the rows instead of truncating them. A menu taller than
+    // the screen silently dropped its LAST rows — which in the TODO
+    // agent menu are the two actions the menu exists for.
+    let rows = inner.height as usize;
+    let scroll = {
+        let sel = menu.selected;
+        let mut s = menu.scroll.min(menu.items.len().saturating_sub(rows));
+        if sel < s {
+            s = sel;
+        } else if rows > 0 && sel >= s + rows {
+            s = sel + 1 - rows;
+        }
+        s
+    };
+    let more_above = scroll > 0;
+    let more_below = scroll + rows < menu.items.len();
+    let visible = rows.min(menu.items.len().saturating_sub(scroll));
+    for (row, item) in menu.items.iter().skip(scroll).take(visible).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
         // Only paint the highlight once the user has interacted
         // (mouse hover or arrow keys). On first open with no
@@ -109,10 +125,39 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             // Its own hit-rect: clicking the row runs it, clicking the
             // kebab opens the options. Two outcomes in one row means the
             // targets must not overlap.
-            app.rects.context_menu_kebab =
-                Some((Rect::new(r.x + r.width.saturating_sub(2), r.y, 2, 1), row));
+            app.rects.context_menu_kebab = Some((
+                Rect::new(r.x + r.width.saturating_sub(2), r.y, 2, 1),
+                row + scroll,
+            ));
         }
-        app.rects.context_menu_items.push((r, row));
+        // `row + scroll`: `row` is the position in the WINDOW now, and
+        // every consumer of this rect (click routing, kebab) wants the
+        // index into `items`.
+        app.rects.context_menu_items.push((r, row + scroll));
+    }
+    // Say so when rows are off-screen, rather than ending the list
+    // silently at whatever fits — the truncation was invisible.
+    if more_above || more_below {
+        let t = crate::ui::theme::cur();
+        let hint = match (more_above, more_below) {
+            (true, true) => "\u{2195}",
+            (true, false) => "\u{2191}",
+            _ => "\u{2193}",
+        };
+        let hx = area.x + area.width.saturating_sub(3);
+        let hy = area.y + area.height.saturating_sub(1);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" {hint}"),
+                ratatui::style::Style::default().fg(t.comment).bg(t.bg2),
+            ))),
+            Rect::new(hx, hy, 2, 1),
+        );
+    }
+    // Persist the windowed offset once the immutable borrow of
+    // `app.context_menu` above has ended.
+    if let Some(m) = app.context_menu.as_mut() {
+        m.scroll = scroll;
     }
     app.rects.context_menu_box = Some(area);
 
@@ -164,8 +209,24 @@ fn draw_submenu(frame: &mut Frame, app: &mut App, screen: Rect, parent: Rect) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let visible = (inner.height as usize).min(menu.items.len());
-    for (row, item) in menu.items.iter().take(visible).enumerate() {
+    // Windowed, like the parent menu. This is the one that actually
+    // bit: the agent list under a TODO row is a SUBMENU, and it dropped
+    // `Fix with Claude Code` and `Fix with Codex` off the bottom.
+    let rows = inner.height as usize;
+    let scroll = {
+        let sel = menu.selected;
+        let mut sc = menu.scroll.min(menu.items.len().saturating_sub(rows));
+        if sel < sc {
+            sc = sel;
+        } else if rows > 0 && sel >= sc + rows {
+            sc = sel + 1 - rows;
+        }
+        sc
+    };
+    let more_above = scroll > 0;
+    let more_below = scroll + rows < menu.items.len();
+    let visible = rows.min(menu.items.len().saturating_sub(scroll));
+    for (row, item) in menu.items.iter().skip(scroll).take(visible).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
         let selected = row == menu.selected && menu.interacted;
         let mut style = if selected {
@@ -187,7 +248,31 @@ fn draw_submenu(frame: &mut Frame, app: &mut App, screen: Rect, parent: Rect) {
             label.push_str(&" ".repeat(want - label.chars().count()));
         }
         frame.render_widget(Paragraph::new(Line::from(Span::styled(label, style))), r);
-        app.rects.context_submenu_items.push((r, row));
+        app.rects.context_submenu_items.push((r, row + scroll));
+    }
+    if more_above || more_below {
+        let hint = match (more_above, more_below) {
+            (true, true) => "\u{2195}",
+            (true, false) => "\u{2191}",
+            _ => "\u{2193}",
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" {hint}"),
+                ratatui::style::Style::default()
+                    .fg(crate::ui::theme::cur().comment)
+                    .bg(crate::ui::theme::cur().bg2),
+            ))),
+            Rect::new(
+                area.x + area.width.saturating_sub(3),
+                area.y + area.height.saturating_sub(1),
+                2,
+                1,
+            ),
+        );
+    }
+    if let Some((_, m)) = app.context_submenu.as_mut() {
+        m.scroll = scroll;
     }
     app.rects.context_submenu_box = Some(area);
 }
@@ -256,6 +341,125 @@ mod glyph_render_tests {
         assert!(
             !screen.contains(copy),
             "ascii mode painted a nerd glyph:\n{screen}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    fn render(app: &mut crate::app::App, w: u16, h: u16) -> String {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn app_with_long_menu(n: usize) -> (tempfile::TempDir, crate::app::App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let mut items: Vec<MenuItem> = (0..n)
+            .map(|i| MenuItem::new(format!("agent-{i:02}"), MenuAction::Command("scratch.new")))
+            .collect();
+        // The two rows that actually matter sit LAST, exactly as in the
+        // real TODO menu.
+        items.push(MenuItem::new(
+            "Fix with Claude Code",
+            MenuAction::Command("ai.claude_code"),
+        ));
+        items.push(MenuItem::new(
+            "Fix with Codex",
+            MenuAction::Command("ai.codex_new"),
+        ));
+        app.context_menu = Some(ContextMenu::new(Some("TODO".into()), (2, 1), items));
+        (d, app)
+    }
+
+    /// TESTER SEV-2, confirmed — a menu taller than the screen dropped
+    /// its LAST rows silently. In the real case those were `Fix with
+    /// Claude Code` and `Fix with Codex`: the two actions the menu
+    /// exists for. Neither wheel nor arrows moved it.
+    #[test]
+    fn a_long_menu_can_reach_its_last_row() {
+        let (_d, mut app) = app_with_long_menu(40);
+        let first = render(&mut app, 40, 20);
+        assert!(
+            !first.contains("Fix with Codex"),
+            "setup: the menu fits, so nothing is being truncated"
+        );
+
+        // Select the last row, as arrowing to the bottom would.
+        let last = app.context_menu.as_ref().unwrap().items.len() - 1;
+        app.context_menu.as_mut().unwrap().selected = last;
+        let scrolled = render(&mut app, 40, 20);
+        assert!(
+            scrolled.contains("Fix with Codex"),
+            "the last row is unreachable — the menu is still truncated:\n{scrolled}"
+        );
+    }
+
+    /// Truncation must not be SILENT: say that rows are off-screen.
+    #[test]
+    fn an_overflowing_menu_shows_an_indicator() {
+        let (_d, mut app) = app_with_long_menu(40);
+        let painted = render(&mut app, 40, 20);
+        assert!(
+            painted.contains('\u{2193}') || painted.contains('\u{2195}'),
+            "no overflow indicator — the list just ends:\n{painted}"
+        );
+    }
+
+    /// A menu that FITS must be unchanged — no indicator, no offset.
+    #[test]
+    fn a_short_menu_is_untouched() {
+        let (_d, mut app) = app_with_long_menu(3);
+        let painted = render(&mut app, 40, 20);
+        assert!(painted.contains("Fix with Codex"), "short menu lost a row");
+        assert!(
+            !painted.contains('\u{2193}') && !painted.contains('\u{2195}'),
+            "a menu that fits painted an overflow indicator:\n{painted}"
+        );
+    }
+
+    /// Click routing must map to the ITEM index, not the window row —
+    /// otherwise a scrolled menu runs the wrong action.
+    #[test]
+    fn click_rects_carry_the_item_index_not_the_window_row() {
+        let (_d, mut app) = app_with_long_menu(40);
+        let last = app.context_menu.as_ref().unwrap().items.len() - 1;
+        app.context_menu.as_mut().unwrap().selected = last;
+        let _ = render(&mut app, 40, 20);
+        let max_idx = app
+            .rects
+            .context_menu_items
+            .iter()
+            .map(|(_, i)| *i)
+            .max()
+            .expect("no rows registered");
+        assert_eq!(
+            max_idx, last,
+            "the bottom row registered index {max_idx}, not {last} — a \
+             click on a scrolled menu would run the wrong action"
         );
     }
 }
