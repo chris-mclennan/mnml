@@ -18,15 +18,33 @@ impl App {
         if self.silent_depth == 0 {
             let now = Instant::now();
             self.toast = Some((s.clone(), now));
-            let entry = ToastEntry {
-                text: s.clone(),
-                created_at: now,
-                level,
-                persistent_id: None,
-            };
-            self.toast_stack.push_front(entry);
-            while self.toast_stack.len() > TOAST_STACK_MAX {
-                self.toast_stack.pop_back();
+            // Coalesce an identical message that is still on screen.
+            //
+            // A failing operation retried three times used to push three
+            // identical boxes, crowding out everything else — the user's
+            // own screenshot showed `sonos: install the loopback driver
+            // first` three times over. Bumping a counter says the same
+            // thing in one box, and keeps the message at the top of the
+            // stack where a fresh one would be.
+            if let Some(existing) = self
+                .toast_stack
+                .iter_mut()
+                .find(|e| e.text == s && e.persistent_id.is_none())
+            {
+                existing.repeats = existing.repeats.saturating_add(1);
+                existing.created_at = now;
+            } else {
+                let entry = ToastEntry {
+                    text: s.clone(),
+                    created_at: now,
+                    level,
+                    persistent_id: None,
+                    repeats: 1,
+                };
+                self.toast_stack.push_front(entry);
+                while self.toast_stack.len() > TOAST_STACK_MAX {
+                    self.toast_stack.pop_back();
+                }
             }
         }
         // Recorded even when `:silent` suppressed the visible toast —
@@ -116,6 +134,7 @@ impl App {
             slot.created_at = Instant::now();
         } else {
             self.persistent_toasts.push(ToastEntry {
+                repeats: 1,
                 text: s,
                 created_at: Instant::now(),
                 level,
@@ -387,5 +406,70 @@ impl App {
             .as_ref()
             .filter(|(_, t)| t.elapsed() < TOAST_TTL)
             .map(|(s, _)| s.as_str())
+    }
+}
+
+#[cfg(test)]
+mod toast_coalesce_tests {
+    use crate::app::{App, ToastLevel};
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// USER SCREENSHOT — `sonos: install the loopback driver first`
+    /// appeared three times in the stack, crowding out everything else.
+    /// A retried failure should say so once with a count.
+    #[test]
+    fn an_identical_message_coalesces_instead_of_stacking() {
+        let (_d, mut app) = app();
+        for _ in 0..3 {
+            app.toast_leveled("install the loopback driver first", ToastLevel::Error);
+        }
+        let matching: Vec<_> = app
+            .toast_stack
+            .iter()
+            .filter(|e| e.text == "install the loopback driver first")
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "the same message stacked {} times instead of coalescing",
+            matching.len()
+        );
+        assert_eq!(matching[0].repeats, 3, "the repeat count is wrong");
+    }
+
+    /// DIFFERENT messages must still stack — coalescing must not
+    /// swallow distinct problems.
+    #[test]
+    fn different_messages_still_stack_separately() {
+        let (_d, mut app) = app();
+        app.toast_leveled("first problem", ToastLevel::Error);
+        app.toast_leveled("second problem", ToastLevel::Error);
+        assert_eq!(
+            app.toast_stack.len(),
+            2,
+            "two distinct messages collapsed into one"
+        );
+    }
+
+    /// Every occurrence still reaches the LOG. Coalescing is a display
+    /// decision; losing the history would be a real one.
+    #[test]
+    fn every_occurrence_is_still_recorded_in_the_log() {
+        let (_d, mut app) = app();
+        for _ in 0..3 {
+            app.toast_leveled("repeated failure", ToastLevel::Error);
+        }
+        let n = app
+            .message_log
+            .iter()
+            .filter(|m| m.text == "repeated failure")
+            .count();
+        assert_eq!(n, 3, "coalescing dropped occurrences from the history");
     }
 }

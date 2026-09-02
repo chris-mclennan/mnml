@@ -3992,6 +3992,16 @@ pub struct ToastEntry {
     /// `Some(id)` for persistent toasts (dismissable by id, never
     /// aged out). `None` for ephemeral toasts (TTL-expiring stack).
     pub persistent_id: Option<String>,
+    /// How many times this exact message has arrived while still on
+    /// screen. 1 for the common case; rendered as a `xN` suffix above
+    /// that.
+    ///
+    /// A repeated message used to stack as N separate boxes, so one
+    /// failing operation retried three times pushed everything else off
+    /// the screen with three copies of one line (seen in a user
+    /// screenshot: `sonos: install the loopback driver first` three
+    /// times over).
+    pub repeats: u32,
 }
 
 /// Left/right anchor for a dynamic statusline segment.

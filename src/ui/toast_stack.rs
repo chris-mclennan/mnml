@@ -188,7 +188,7 @@ fn draw_toast_box(
         .style(Style::default().bg(t.bg_darker));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::raw(" "),
         Span::styled(
             text,
@@ -201,11 +201,47 @@ fn draw_toast_box(
                     Modifier::empty()
                 }),
         ),
-    ]);
+    ];
+    // `xN` for a message that arrived again while still on screen —
+    // one box saying "three times", not three boxes saying the same
+    // thing.
+    if entry.repeats > 1 {
+        spans.push(Span::styled(
+            format!("  x{}", entry.repeats),
+            Style::default().fg(t.comment).bg(t.bg_darker),
+        ));
+    }
+    let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
         inner,
     );
+    // Close affordance in the top-right of the border.
+    //
+    // Clicking a toast ALREADY dismissed it — this adds no capability,
+    // it says the capability is there. The user asked for "a red X to
+    // close quickly so user not have to wait", having assumed there was
+    // no way to dismiss one early; that is a discoverability failure,
+    // not a missing feature.
+    //
+    // Painted on the border row rather than inside, so it costs the
+    // message no width, and dimmed while the toast is fading out so it
+    // does not brighten as everything else recedes.
+    if inner.width > 0 {
+        let mut style = Style::default().fg(t.red).bg(t.bg_darker);
+        if fading {
+            style = style.add_modifier(Modifier::DIM);
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("\u{00d7}", style))),
+            ratatui::layout::Rect {
+                x: rect.x + rect.width.saturating_sub(2),
+                y: rect.y,
+                width: 1,
+                height: 1,
+            },
+        );
+    }
     *y_bottom = y;
     true
 }
