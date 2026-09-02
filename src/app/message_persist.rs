@@ -560,8 +560,13 @@ mod tests {
         assert!(app.message_log.iter().any(|m| m.text == "throwaway"));
     }
 
-    /// The badge is the only on-screen sign the log has anything in it,
-    /// so it must appear when it should and vanish when it should not.
+    /// The COUNT is the sign the log has something unread, so it must
+    /// appear when it should and clear when it should not.
+    ///
+    /// This test asserted the bell itself vanished at zero. That was the
+    /// behaviour until 2026-09-02, when it gained three states: the bell
+    /// is now always present (quiet when idle) and only the count comes
+    /// and goes.
     #[test]
     fn the_badge_appears_only_when_there_is_something_unread() {
         use ratatui::Terminal;
@@ -603,9 +608,15 @@ mod tests {
             !cleared.contains("! 1"),
             "badge survived reading the history:\n{cleared}"
         );
+        // The bell itself REMAINS, and stays clickable — it is how you
+        // reach the history when there is nothing new. Only the COUNT
+        // clears. It used to disappear entirely at zero; three states
+        // replaced that so the lane stops reflowing on every message
+        // (user ask 2026-09-02).
         assert!(
-            app.rects.statusline_notif_chip.is_none(),
-            "a hidden badge left a live click rect behind"
+            app.rects.statusline_notif_chip.is_some(),
+            "the idle bell left no click rect — the history becomes \
+             unreachable from the statusline once you have read it"
         );
     }
 

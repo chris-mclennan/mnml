@@ -1680,7 +1680,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // chip_label = "hover" | "always"` opts back in — and when it does,
     // the cluster grows LEFTWARD, which is what keeps hover-expansion
     // from oscillating: a pointer inside the cluster stays inside it.
-    let mut notif_seg_idx: Option<usize> = None;
+    // Always assigned — the bell is unconditional now.
+    let notif_seg_idx: Option<usize>;
     // Notification badge — unread warnings and errors.
     //
     // Hidden entirely at zero, like every other chip in this lane: an
@@ -1688,30 +1689,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // lane is right-aligned so it would shift every neighbour to say it.
     // Red for errors, yellow when it is warnings only — colour carries
     // the level so the count does not have to.
-    let unread = app.unread_message_count();
-    if unread > 0 {
-        // Counted, not re-scanned. `take(unread)` over the log walked
-        // Info entries too, so `Error` then `Info` pushed the error out
-        // of the window and painted the badge yellow for an error.
-        let worst_is_error = app.unread_errors > 0;
-        let glyph = if app.config.ui.ascii_icons {
-            "!"
-        } else {
-            "\u{f0f3}"
-        };
-        let bg = if worst_is_error {
-            theme::cur().red
-        } else {
-            theme::cur().yellow
-        };
-        let seg_idx = right.len();
-        right.push(Seg::new(
-            format!(" {glyph} {unread} "),
-            theme::cur().bg_darker,
-            bg,
-        ));
-        notif_seg_idx = Some(seg_idx);
-    }
     // #files item 6 — the transfer chip. Hidden entirely at rest, so it
     // costs nothing in the common case; the lane is right-aligned, so a
     // chip that were always present would shift every neighbour to show
@@ -2018,6 +1995,49 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ~0 (a single SystemTime call per render + one cached offset lookup).
     // `[ui] clock = false` to turn off. `TZ_OFFSET_HOURS` env var still
     // overrides the system offset for testing / containers.
+    // Notification bell — sits immediately LEFT of the clock, and is
+    // ALWAYS present (user ask 2026-09-02: "i think we can do bell and
+    // have multiple states").
+    //
+    // It used to be hidden entirely at zero, on the reasoning that a
+    // bell reporting "nothing wrong" is noise in a right-aligned lane
+    // that shifts its neighbours. Three states resolve that: the idle
+    // bell is drawn in the same quiet colours as the clock beside it,
+    // so it reads as furniture rather than an alert, and it stops the
+    // lane reflowing every time a message arrives — which was the real
+    // cost of hiding it.
+    //
+    // Colour carries the level so the count does not have to: red for
+    // errors, yellow for warnings only, quiet when there is nothing.
+    {
+        let unread = app.unread_message_count();
+        // Counted, not re-scanned. `take(unread)` over the log walked
+        // Info entries too, so `Error` then `Info` pushed the error out
+        // of the window and painted the badge yellow for an error.
+        let worst_is_error = app.unread_errors > 0;
+        let glyph = if app.config.ui.ascii_icons {
+            "!"
+        } else {
+            "\u{f0f3}"
+        };
+        let (label, fg, bg) = if unread == 0 {
+            (format!(" {glyph} "), theme::cur().comment, theme::cur().bg2)
+        } else if worst_is_error {
+            (
+                format!(" {glyph} {unread} "),
+                theme::cur().bg_darker,
+                theme::cur().red,
+            )
+        } else {
+            (
+                format!(" {glyph} {unread} "),
+                theme::cur().bg_darker,
+                theme::cur().yellow,
+            )
+        };
+        notif_seg_idx = Some(right.len());
+        right.push(Seg::new(label, fg, bg));
+    }
     if app.config.ui.clock {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2775,6 +2795,83 @@ mod tests {
         assert!(
             row.contains("Col 1"),
             "statusline missing column chip: {row:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bell_state_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    fn render(app: &mut App) -> String {
+        let (w, h) = (160u16, 3u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 1,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        (0..w).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        (d, app)
+    }
+
+    /// USER ASK — "i think we can do bell and have multiple states".
+    /// The bell used to vanish entirely at zero, so the lane reflowed
+    /// every time a message arrived.
+    #[test]
+    fn the_bell_is_present_even_with_nothing_unread() {
+        let (_d, mut app) = app();
+        assert_eq!(app.unread_message_count(), 0, "setup: expected a clean log");
+        let line = render(&mut app);
+        assert!(
+            line.contains('!'),
+            "the idle bell is not drawn at all:\n{line:?}"
+        );
+    }
+
+    /// Idle must not show a count — a bell reading `! 0` is noise.
+    #[test]
+    fn the_idle_bell_shows_no_count() {
+        let (_d, mut app) = app();
+        let line = render(&mut app);
+        assert!(
+            !line.contains("! 0"),
+            "the idle bell shows a zero count:\n{line:?}"
+        );
+    }
+
+    /// It sits immediately LEFT of the clock, which is where the user
+    /// asked for it.
+    #[test]
+    fn the_bell_sits_left_of_the_clock() {
+        let (_d, mut app) = app();
+        app.config.ui.clock = true;
+        let line = render(&mut app);
+        let bell = line.rfind('!').expect("no bell drawn");
+        // The clock renders as HH:MM — find the colon after the bell.
+        let clock = line[bell..].find(':').map(|i| bell + i);
+        assert!(
+            clock.is_some(),
+            "no clock found to the right of the bell:\n{line:?}"
         );
     }
 }
