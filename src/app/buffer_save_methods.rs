@@ -451,19 +451,53 @@ impl App {
     }
 
     pub fn save_all(&mut self) {
+        // DIVERGED PANES ON ONE PATH ARE NOT SAVED SILENTLY.
+        //
+        // `split_active` opens the new half by RE-READING the file, so
+        // two panes on one path are independent buffers. Write-all
+        // then wrote each in turn — last one wins — and marked BOTH
+        // clean. An edit made in the left pane vanished from disk while
+        // the pane still displayed it and reported no unsaved changes:
+        // unrecoverable by any later save, with no toast and no prompt.
+        //
+        // Deliberately not a refactor to live-linked splits (that is
+        // the v2 noted in `split_active`). Here: write ONE of the
+        // colliding panes and leave the rest DIRTY, so nothing ever
+        // claims to be saved when it is not, and the user is told.
+        let mut seen: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
+        // The active pane wins the collision when it is one of them —
+        // it is the one the user was last editing.
+        let mut order: Vec<usize> = (0..self.panes.len()).collect();
+        if let Some(a) = self.active {
+            order.sort_by_key(|&i| i != a);
+        }
+        let mut skipped = 0usize;
         let mut n = 0;
         let mut saved: Vec<std::path::PathBuf> = Vec::new();
-        for pane in &mut self.panes {
-            if let Pane::Editor(b) = pane
-                && b.path.is_some()
-                && b.dirty
-                && b.save_to_disk().is_ok()
-            {
-                n += 1;
-                if let Some(p) = &b.path {
-                    saved.push(p.clone());
-                }
+        for i in order {
+            let Some(Pane::Editor(b)) = self.panes.get_mut(i) else {
+                continue;
+            };
+            let Some(path) = b.path.clone() else {
+                continue;
+            };
+            if !b.dirty {
+                continue;
             }
+            if !seen.insert(path.clone()) {
+                skipped += 1;
+                continue;
+            }
+            if b.save_to_disk().is_ok() {
+                n += 1;
+                saved.push(path);
+            }
+        }
+        if skipped > 0 {
+            self.toast(format!(
+                "{skipped} pane(s) on an already-saved file were NOT written —                  two views of one file have diverged. Copy what you need,                  then reload."
+            ));
         }
         self.git.refresh();
         self.disarm_quit();

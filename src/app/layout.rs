@@ -3599,3 +3599,85 @@ mod md_preview_tab_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod split_divergence_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// TESTER SEV-1 — `:vsplit` then editing both halves then `:wa`
+    /// destroyed one half's work SILENTLY.
+    ///
+    /// `split_active` re-reads the file from disk, so the two panes are
+    /// independent buffers. Write-all wrote each in turn (last wins)
+    /// and marked BOTH clean, so the losing pane still displayed its
+    /// edit while reporting no unsaved changes — unrecoverable by any
+    /// later save, with no toast and no prompt.
+    ///
+    /// The fix is not live-linked splits (that is the documented v2).
+    /// It is that nothing may report itself saved when it was not.
+    #[test]
+    fn diverged_panes_on_one_path_are_not_silently_overwritten() {
+        // Serialized against the env-redirecting tests. `App::new` plus
+        // `save_all` (which refreshes git) have global side effects, and
+        // this test is slow enough to overlap the window in which
+        // `integration_glyphs`' tests have HOME pointed at a tempdir —
+        // they failed in a full run while passing alone.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let f = app.workspace.join("doc.txt");
+        std::fs::write(&f, "AAAA\nBBBB\nCCCC\n").unwrap();
+        app.open_path(&f);
+
+        app.split_active(crate::layout::SplitDir::Vertical);
+        let panes: Vec<usize> = app
+            .panes
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| matches!(p, crate::pane::Pane::Editor(b) if b.path.as_deref() == Some(f.as_path())))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Edit each independently.
+        for (n, &pid) in panes.iter().enumerate() {
+            if let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(pid) {
+                let tag = if n == 0 { "LEFT-" } else { "RIGHT-" };
+                b.editor.place_cursor(0, 0);
+                let mut clip = crate::clipboard::Clipboard::default();
+                for ch in tag.chars() {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::InsertChar(ch), 20, &mut clip);
+                }
+                b.dirty = true;
+            }
+        }
+        app.save_all();
+
+        // Exactly one version reached disk — that part is unavoidable
+        // without live-linked splits.
+        let disk = std::fs::read_to_string(&f).unwrap();
+        let first = disk.lines().next().unwrap_or_default().to_string();
+        assert!(
+            first.starts_with("LEFT-") || first.starts_with("RIGHT-"),
+            "neither pane was written at all: {first:?}"
+        );
+
+        // The pane that did NOT win must still report itself DIRTY.
+        // Marking it clean is what made the loss silent and permanent.
+        let loser_clean = panes.iter().any(|&pid| match app.panes.get(pid) {
+            Some(crate::pane::Pane::Editor(b)) => {
+                let mine = b.editor.text().lines().next().unwrap_or_default();
+                !b.dirty && mine != first
+            }
+            _ => false,
+        });
+        assert!(
+            !loser_clean,
+            "a pane whose edit never reached disk reports itself saved — \
+             the work is unrecoverable and nothing said so"
+        );
+    }
+}
