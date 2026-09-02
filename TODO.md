@@ -1303,3 +1303,36 @@ Expanded modes. Branch is unpushed and unmerged.
   parens subtitles, and empty states.
 - TODO: TODOS tree view grouped by directory, alongside the flat list
   (`ListSort` now covers ordering; grouping is the separate half).
+
+### Right-click menu for the notification bell
+
+The bell (statusline, left of the clock) has no right-click menu at all
+today — left-click runs `messages.show`. It now has three states, so a
+menu is the natural home for the things you want *about* notifications
+rather than *from* them.
+
+Ordered by how clearly they earn a slot:
+
+- TODO: bell right-click — **Mark all read**. `mark_messages_seen()`
+  already exists and is currently only reachable as a side effect of
+  opening the history. Clearing a red bell without reading it is the
+  single most obvious want.
+- TODO: bell right-click — **Show history** (mirrors left-click, so the
+  menu is self-describing rather than assuming you know the gesture).
+- TODO: bell right-click — **Copy last message** / **Copy all**. Ties
+  into the already-filed "i need to copy a toast sometimes"; the log is
+  where a toast goes after it vanishes, so this is the durable answer.
+- TODO: bell right-click — **Filter: Errors / Warnings / All**. The log
+  keeps `ToastLevel`, and `unread_errors` is already tracked separately
+  from the total, so the data is there. Same shape as the panels' sort
+  rows.
+- TODO: bell right-click — **Clear history**. `prune_persisted_messages`
+  exists but only runs on a cap. Destructive, so it belongs behind the
+  right-click rather than anywhere near the left.
+- TODO: bell right-click — **Notify level: Errors only / Warnings+ /
+  All**, persisted like `auto_refresh_off`. Decides what lights the
+  bell at all, which is the one setting a user actually tunes.
+
+Deliberately NOT proposed: dismiss-individual (that is the toast's own
+right-click menu, already filed) and per-source muting (there is no
+source field on a log entry — it would need one first).
