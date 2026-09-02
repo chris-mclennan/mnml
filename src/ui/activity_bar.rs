@@ -117,6 +117,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let icon_x = area.x + 1; // 1 cell of left padding
     let mut y = area.y + 1; // start 1 row down for top padding
 
+    // Row step: 2 (icon + a blank spacer) when everything fits, 1 when
+    // it does not.
+    //
+    // The loops below simply BREAK at `icons_end_y`, so a short terminal
+    // silently dropped whatever came last — at 28 rows a tester found
+    // TODOS, FINDINGS and every launcher gone, with no overflow marker
+    // and no way to reach them by mouse at all.
+    //
+    // Halving the step doubles capacity and degrades gracefully: the
+    // rail gets denser rather than shorter. Truncation is still possible
+    // on a genuinely tiny terminal, but it now takes half the height to
+    // reach it.
+    let items = ActivitySection::all().len()
+        + app.mount_manifests.len()
+        + app.config.ui.activity_bar_pinned_integrations.len();
+    let avail = icons_end_y.saturating_sub(area.y + 1) as usize;
+    let step: u16 = if items * 2 > avail { 1 } else { 2 };
+
     for section in ActivitySection::all() {
         if y >= icons_end_y {
             break;
@@ -210,7 +228,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         app.rects.activity_bar_icons.push((row, *section));
         // 2 rows per icon for breathing room.
-        y = y.saturating_add(2);
+        y = y.saturating_add(step);
     }
     // Manifest-registered Mount sections. Rendered after the
     // builtins so they live in the "this workspace's tools" zone
@@ -304,7 +322,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             );
         }
         app.rects.activity_bar_icons.push((row, section));
-        y = y.saturating_add(2);
+        y = y.saturating_add(step);
     }
     // 2026-07-20 — user-pinned integration launcher icons. Each
     // fires the integration chip's `command` on click (spawns a
@@ -361,6 +379,97 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         frame.render_widget(Paragraph::new(Line::from(glyph)).style(style), glyph_rect);
         app.rects.activity_bar_icons.push((row, section));
-        y = y.saturating_add(2);
+        y = y.saturating_add(step);
+    }
+}
+
+#[cfg(test)]
+mod density_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    fn sections_drawn(h: u16) -> usize {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let w = 4u16;
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        app.rects.activity_bar_icons.len()
+    }
+
+    /// TESTER SEV-2 — a short terminal silently dropped sections from
+    /// the rail, with no overflow marker and no way to reach them by
+    /// mouse. The loops simply broke at the carve line.
+    ///
+    /// The step halves when things do not fit, so the rail gets DENSER
+    /// rather than shorter.
+    ///
+    /// Measured at 16 rows, not the tester's 28: with only the built-in
+    /// sections, 12 icons still fit at 28 even with the old fixed step,
+    /// so 28 does not reproduce it. Their instance had launchers pinned,
+    /// which this test cannot fake — a pinned id only draws if it
+    /// resolves to a real `integration_icon`. 16 rows exercises the same
+    /// code path honestly.
+    #[test]
+    fn a_short_terminal_keeps_every_section() {
+        let tall = sections_drawn(44);
+        let short = sections_drawn(16);
+        assert!(tall > 0, "setup: nothing drawn even at 44 rows");
+        assert_eq!(
+            short, tall,
+            "a 16-row terminal shows {short} sections vs {tall} at 44 — \
+             the rest are unreachable by mouse"
+        );
+    }
+
+    /// The dense mode must only kick in when it is needed — a tall
+    /// terminal keeps its spacing.
+    #[test]
+    fn a_tall_terminal_keeps_the_spacing() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let (w, h) = (4u16, 44u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let mut ys: Vec<u16> = app
+            .rects
+            .activity_bar_icons
+            .iter()
+            .map(|(r, _)| r.y)
+            .collect();
+        ys.sort_unstable();
+        assert!(ys.len() >= 2, "setup: too few sections");
+        assert_eq!(
+            ys[1] - ys[0],
+            2,
+            "a 44-row terminal went dense when it did not need to"
+        );
     }
 }

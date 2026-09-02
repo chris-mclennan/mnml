@@ -1898,15 +1898,29 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     // Right-click on the editor BODY → text-scoped menu.
-    if let Some(&(tr, pid)) = app
-        .rects
-        .editor_panes
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-    {
+    //
+    // The hit test is widened to the right by the columns the editor
+    // reserves but does not register: 1 cell of padding, the change-
+    // density strip, and the scrollbar. `editor_panes` carries the TEXT
+    // rect, so right-clicking any of those three produced no menu at all
+    // — a dead zone in the last three columns at every width (tester,
+    // 2026-09-02).
+    //
+    // The x is CLAMPED back into the text rect before mapping to a file
+    // position: widening the rect itself would make those columns map to
+    // a column past the end of the line.
+    const RESERVED_RIGHT: u16 = 3;
+    if let Some(&(tr, pid)) = app.rects.editor_panes.iter().find(|(r, _)| {
+        let widened = ratatui::layout::Rect {
+            width: r.width.saturating_add(RESERVED_RIGHT),
+            ..*r
+        };
+        crate::app::dispatch::contains(widened, x, y)
+    }) {
         let wrap = app.config.ui.wrap;
         if let Some(Pane::Editor(b)) = app.panes.get(pid) {
-            let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
+            let clamped_x = x.min(tr.x + tr.width.saturating_sub(1));
+            let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, clamped_x, y);
             app.open_editor_body_context_menu(pid, row, col, (x, y));
             return;
         }
@@ -2149,6 +2163,57 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 app.open_git_status_context_menu(pid, idx, (x, y));
             }
             _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod editor_deadzone_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::layout::Rect;
+
+    /// TESTER SEV-2 — right-clicking the last three screen columns of an
+    /// editor opened no menu at any width.
+    ///
+    /// The editor reserves three columns it does not register in
+    /// `editor_panes` (padding + change-density strip + scrollbar), and
+    /// that rect is what the right-click hit test used.
+    #[test]
+    fn right_click_in_the_reserved_right_columns_still_opens_a_menu() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let f = app.workspace.join("a.rs");
+        std::fs::write(&f, "fn main() {}\n").unwrap();
+        app.open_path(&f);
+        let pid = app.active.expect("no active pane");
+
+        // A text rect that stops 3 columns short of the pane edge, as
+        // the real renderer registers it.
+        let text = Rect {
+            x: 4,
+            y: 1,
+            width: 40,
+            height: 20,
+        };
+        app.rects.editor_panes.clear();
+        app.rects.editor_panes.push((text, pid));
+
+        // Inside the text: must work (guards the test itself).
+        super::handle_right_click(&mut app, text.x + 5, text.y + 2);
+        assert!(app.context_menu.is_some(), "setup: no menu inside the text");
+        app.context_menu = None;
+
+        // The three reserved columns to its right: the dead zone.
+        for off in 0..3u16 {
+            let x = text.x + text.width + off;
+            super::handle_right_click(&mut app, x, text.y + 2);
+            assert!(
+                app.context_menu.is_some(),
+                "no menu at reserved column +{off} (x={x}) — the dead zone \
+                 is still there"
+            );
+            app.context_menu = None;
         }
     }
 }
