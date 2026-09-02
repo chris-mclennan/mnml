@@ -48,6 +48,8 @@ Six panels route their header through the shared helper (GIT, TODOS, NOTES, FIND
 
 Each fires a short toast (`todos: rescanned`, `git: refreshed`, …) so a chip click that finds nothing new still reads as having done something.
 
+**Right-click** the chip for the panel's settings menu: **Refresh now**, **Auto-refresh: on / off** (persisted per panel, on by default), and — on TODOS / NOTES / FINDINGS — the two sort rows. See [Activity lists](/manual/activity-lists/#the--chip-refresh-auto-refresh-and-sort).
+
 ### The filter row
 
 Row 1 of every panel is a filter input rendered as a full-width pill:
@@ -99,11 +101,11 @@ On a narrow panel the message ellipsizes rather than being clipped mid-word, and
 
 ### Action chips
 
-Panels with a create action put it directly under the filter row rather than at the bottom of the list, so it stays one keystroke away when the list scrolls past the panel height. All of them use the same solid-fill "primary action" role: `+ New note`, `+ New session`. The fill *is* the focus signal — there's no foreground swap on cursor, which at one point produced mid-grey text on mid-green.
+Panels with a create action put it directly under the filter row rather than at the bottom of the list, so it stays one keystroke away when the list scrolls past the panel height. All of them use the same solid-fill "primary action" role: `+ New todo`, `+ New note`, `+ New finding`, `+ New session`. The fill *is* the focus signal — there's no foreground swap on cursor, which at one point produced mid-grey text on mid-green.
 
 ## The TODOs panel
 
-`view.activity_todos` — a workspace-wide scan for marker patterns in comments, one row per hit. The scan runs on first activation and populates a cache; the header's `⟳` (or `todos.refresh`) re-runs it.
+`view.activity_todos` — a workspace-wide scan for marker patterns in comments, one row per hit. The scan runs on first activation and populates a cache; the header's `⟳` (or `todos.refresh`) re-runs it, and auto-refresh re-runs it on a two-second throttle. Full depth — the walker's limits, the markdown rules, the row kebab and `+ New todo` — is in [Activity lists](/manual/activity-lists/#todos).
 
 ### Marker patterns
 
@@ -154,7 +156,7 @@ The filter matches against the tag, the workspace-relative path plus line number
 
 **`+ New note`** (chip, or `notes.new`) opens the New file prompt seeded with the next free auto-number — `note-1.md`, `note-2.md`, … Press `Enter` to accept the default, or type over it with a real name. The prompt exists because the chip used to create `note-1.md` silently with no chance to name it.
 
-The filter matches the filename without its `.md` extension. Click or `Enter` opens the note.
+The filter matches the filename without its `.md` extension. Click or `Enter` opens the note. See [Activity lists](/manual/activity-lists/#notes) for the sort and auto-refresh behavior.
 
 ## The Findings panel
 
@@ -164,9 +166,9 @@ It's zero-config and cross-project: `cd ~/Projects/mixr && mnml .` picks up that
 
 Rows are `icon  name  age` — the name is relative to the findings root with the `.md` stripped, so a nested round directory renders `round-12/mouse-r16` rather than losing its context to the file stem, and the right-aligned age is a humanized mtime. Clicking a row opens the markdown in an editor pane.
 
-The filter matches the same rendered relative name the row shows. The panel leaves one blank row between the filter and the first finding — deliberate breathing room, because unlike NOTES and SESSIONS it has no create chip to occupy that slot.
+The filter matches the same rendered relative name the row shows. **`+ New finding`** (chip, or `findings.new`) seeds `finding-1.md`, `finding-2.md`, … into the New file prompt, mirroring `+ New note` exactly — so the row under the filter is a chip slot here too, rather than the lone exception it once was.
 
-v1 is a flat list plus the filter; right-click actions (archive / delete / mark reviewed) are a follow-up.
+Right-click row actions (archive / delete / mark reviewed) are still a follow-up. For the full depth on this panel — the recursive walk, the sort menu and the auto-refresh rules — see [Activity lists](/manual/activity-lists/#findings).
 
 ## The Sessions panel
 
@@ -220,12 +222,12 @@ Three more activity sections wear the same chrome but are documented in depth el
 | | TODOs | Notes | Findings | Sessions |
 |---|---|---|---|---|
 | Source of rows | scan of workspace comments | `.mnml/notes/*.md` | `.mnml/findings/*.md` | AI Pty panes |
-| Order | scan order | mtime desc | mtime desc | pinned, then Auto / Manual |
-| Scan trigger | activation + `⟳` | activation + `⟳` | activation + `⟳` | continuous (live) |
+| Order | `newest` / `name`, per panel | `newest` / `name`, per panel | `newest` / `name`, per panel | pinned, then Auto / Manual |
+| Scan trigger | activation, `⟳`, auto (2s throttle) | activation, `⟳`, auto | activation, `⟳`, auto | continuous (live) |
 | Header count | `(M of N)` when filtered | always | always | always |
 | Filter matches | tag / path / title | filename | relative name | name / label / branch / cwd / ticket |
 | Row activation | opens file at line | opens the note | opens the report | reveals + focuses the pane |
-| Create chip | — | `+ New note` | — | `+ New session` |
+| Create chip | `+ New todo` | `+ New note` | `+ New finding` | `+ New session` |
 
 ## Next
 

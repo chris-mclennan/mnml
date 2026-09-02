@@ -41,8 +41,9 @@ The strip is exactly **4 cells** wide (`ACTIVITY_BAR_WIDTH`) — 1 cell of left 
 | Agents | `A` | `view.activity_agents` | Cross-workspace Claude Code / Codex agents dashboard |
 | Cloud agents | `C` | `view.activity_cloud_agents` | ECS-runner cloud agents dashboard |
 | HTTP | `H` | `view.activity_http` | Request browser (`.http` / `.curl` files, chains, mocks, collections) — see [HTTP client](/manual/http) |
-| Notes | `N` | `view.activity_notes` | `.mnml/notes/*.md` workspace scratch notes — see [activity-panels](/manual/activity-panels) |
-| TODOs | `T` | `view.activity_todos` | Comment marker scan (TODO / FIXME / XXX / HACK / REVIEW) + Playwright test modifiers — see [activity-panels](/manual/activity-panels) |
+| Notes | `N` | `view.activity_notes` | `.mnml/notes/*.md` workspace scratch notes — see [Activity lists](/manual/activity-lists) |
+| TODOs | `O` | `view.activity_todos` | Comment marker scan (TODO / FIXME / XXX / HACK / REVIEW) + Playwright test modifiers — see [Activity lists](/manual/activity-lists) |
+| Findings | `F` | `view.activity_findings` | `.mnml/findings/**/*.md` tester + review reports — see [Activity lists](/manual/activity-lists) |
 | Integrations | `I` | `view.activity_integrations` | Installed / Marketplace tabs over `[[ui.integration_icon]]` — see [Integrations](/manual/integrations/installing) |
 | Mount (dynamic) | manifest | `view.activity_mount:<id>` | Per-sibling activity section registered by a manifest with `activity_bar_section = true` |
 

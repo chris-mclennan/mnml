@@ -228,6 +228,21 @@ impl App {
             // signal we hang the one-time ghost-text hint off. No-ops
             // after the first fire, and whenever suggestions are on.
             self.maybe_show_ghost_text_hint();
+            // Saving a file IS a filesystem change, and this path did
+            // not say so.
+            //
+            // `refresh_after_fs_change` was only reached from the file
+            // operations (create / delete / rename / transfer) and from
+            // `:w <path>` — never from a plain Ctrl+S on an already-open
+            // buffer. So editing TODO.md in mnml and saving normally
+            // left the TODOS panel stale until some unrelated file
+            // operation happened to tick it, which is the complaint the
+            // whole auto-refresh feature was built to answer. Found
+            // independently by a tester and by the manual writer.
+            //
+            // Cheap: notes and findings are one scoped `read_dir` each,
+            // and the TODOS scan is behind its own 2-second throttle.
+            self.refresh_after_fs_change();
         }
     }
     /// Vim `:w <path>` — write the active editor to `<path>` WITHOUT
@@ -458,5 +473,49 @@ impl App {
             self.notify_lsp_saved(&p);
         }
         self.toast(format!("saved {n} file(s)"));
+    }
+}
+
+#[cfg(test)]
+mod save_refreshes_panels_tests {
+    use crate::app::App;
+    use crate::config::Config;
+
+    /// TESTER SEV-2, confirmed independently by the manual writer:
+    /// `Ctrl+S` never refreshed the list panels.
+    ///
+    /// `refresh_after_fs_change` was reached from the file operations
+    /// and from `:w <path>`, but not from a plain save of an open
+    /// buffer — so editing TODO.md in mnml and saving left the TODOS
+    /// panel stale, which is the exact complaint auto-refresh exists
+    /// to answer.
+    #[test]
+    fn saving_a_buffer_refreshes_the_list_panels() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+
+        // A note exists on disk but the panel has never scanned.
+        let nd = crate::ui::notes_panel::notes_dir(&app.workspace);
+        std::fs::create_dir_all(&nd).unwrap();
+        std::fs::write(nd.join("fresh.md"), "x").unwrap();
+        app.notes_panel_refresh();
+        assert_eq!(app.notes_panel_files_cache.len(), 1, "setup");
+
+        // A second note appears, and the user saves an unrelated file.
+        std::fs::write(nd.join("second.md"), "x").unwrap();
+        let f = app.workspace.join("code.rs");
+        std::fs::write(&f, "fn main() {}\n").unwrap();
+        app.open_path(&f);
+        if let Some(b) = app.active_editor_mut() {
+            b.dirty = true;
+        }
+        app.save_active_now();
+
+        assert_eq!(
+            app.notes_panel_files_cache.len(),
+            2,
+            "saving did not refresh the panels — the new note is still \
+             invisible until an unrelated file operation happens"
+        );
     }
 }

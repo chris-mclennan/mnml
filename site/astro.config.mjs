@@ -108,6 +108,7 @@ export default defineConfig({
             { label: 'File actions & tree up-navigation', slug: 'manual/file-actions' },
             { label: 'Activity bar', slug: 'manual/activity-bar' },
             { label: 'Activity panels', slug: 'manual/activity-panels' },
+            { label: 'Activity lists — TODOs, Notes & Findings', slug: 'manual/activity-lists' },
             { label: 'Tabs, splits & tab pages', slug: 'manual/tabs-splits' },
             { label: 'Right side panel', slug: 'manual/right-panel' },
             { label: 'Menu bar', slug: 'manual/menu-bar' },
