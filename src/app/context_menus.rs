@@ -214,6 +214,47 @@ impl App {
         self.toast("no context menu at this focus");
     }
 
+    /// Right-click menu for the statusline notification bell.
+    ///
+    /// The bell had no right-click menu at all — left-click opens the
+    /// history and that was the whole surface. These are the things you
+    /// want ABOUT notifications rather than FROM them, and each maps to
+    /// an API that already existed with no way to reach it:
+    /// `mark_messages_seen` was only a side effect of opening the log,
+    /// and the log's text was only copyable one row at a time.
+    pub fn open_notification_bell_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let unread = self.unread_message_count();
+        let total = self.message_log.len();
+        let mut items = vec![MenuItem::new(
+            "Show history",
+            MenuAction::Command("messages.show"),
+        )];
+        // Only offered when there IS something to clear — a "mark all
+        // read" on a quiet bell is a button that does nothing.
+        if unread > 0 {
+            items.push(MenuItem::new(
+                format!("Mark {unread} read"),
+                MenuAction::MarkMessagesSeen,
+            ));
+        }
+        if total > 0 {
+            items.push(MenuItem::new(
+                "Copy last message",
+                MenuAction::CopyLastMessage,
+            ));
+            items.push(MenuItem::new(
+                format!("Copy all ({total})"),
+                MenuAction::CopyAllMessages,
+            ));
+        }
+        self.context_menu = Some(ContextMenu::new(
+            Some("Notifications".to_string()),
+            anchor,
+            items,
+        ));
+    }
+
     /// Right-click menu for a panel's ↻ chip: refresh now, and flip
     /// auto-refresh. Every panel that has a chip gets the same two
     /// rows, so the gesture means the same thing everywhere.
@@ -2457,6 +2498,34 @@ impl App {
             TogglePanelAutoRefresh(panel) => {
                 self.toggle_panel_auto_refresh(&panel);
             }
+            MarkMessagesSeen => {
+                let n = self.unread_message_count();
+                self.mark_messages_seen();
+                self.toast(format!("marked {n} message(s) read"));
+            }
+            CopyLastMessage => match self.message_log.last() {
+                Some(m) => {
+                    let text = m.text.clone();
+                    self.clipboard.set(text, false);
+                    self.toast("copied the last message");
+                }
+                None => self.toast("no messages to copy"),
+            },
+            CopyAllMessages => {
+                if self.message_log.is_empty() {
+                    self.toast("no messages to copy");
+                } else {
+                    let n = self.message_log.len();
+                    let all = self
+                        .message_log
+                        .iter()
+                        .map(|m| m.text.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.clipboard.set(all, false);
+                    self.toast(format!("copied {n} message(s)"));
+                }
+            }
             SetPanelSort(panel, mode) => {
                 self.set_panel_sort(&panel, &mode);
             }
@@ -3251,5 +3320,87 @@ impl crate::app::App {
                 self.toast(format!("{id} {what}"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bell_menu_tests {
+    use crate::app::{App, ToastLevel};
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    fn labels(app: &App) -> Vec<String> {
+        app.context_menu
+            .as_ref()
+            .map(|m| m.items.iter().map(|i| i.label.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// A quiet bell must not offer "mark read" — a row that does
+    /// nothing teaches the user the menu is unreliable.
+    #[test]
+    fn a_quiet_bell_offers_no_mark_read_row() {
+        let (_d, mut app) = app();
+        app.open_notification_bell_menu((0, 0));
+        let l = labels(&app);
+        assert!(
+            !l.iter().any(|s| s.contains("read")),
+            "offered mark-read with nothing unread: {l:?}"
+        );
+        assert!(l.iter().any(|s| s == "Show history"), "{l:?}");
+    }
+
+    /// With unread messages the row appears AND says how many.
+    #[test]
+    fn an_unread_bell_offers_mark_read_with_a_count() {
+        let (_d, mut app) = app();
+        app.toast_leveled("a problem", ToastLevel::Error);
+        app.open_notification_bell_menu((0, 0));
+        let l = labels(&app);
+        assert!(
+            l.iter().any(|s| s == "Mark 1 read"),
+            "no counted mark-read row: {l:?}"
+        );
+    }
+
+    /// Mark-read clears the badge WITHOUT opening the history — the
+    /// whole point, since that was previously the only way.
+    #[test]
+    fn mark_read_clears_the_badge_without_opening_the_history() {
+        let (_d, mut app) = app();
+        app.toast_leveled("a problem", ToastLevel::Error);
+        assert_eq!(app.unread_message_count(), 1, "setup");
+        app.run_menu_action(crate::context_menu::MenuAction::MarkMessagesSeen);
+        assert_eq!(app.unread_message_count(), 0, "the badge did not clear");
+        assert!(
+            app.picker.is_none(),
+            "it opened the history as a side effect"
+        );
+    }
+
+    /// Copy must put the message somewhere, not just toast about it.
+    ///
+    /// Asserted on the internal REGISTER, not `Clipboard::text()`.
+    /// `text()` prefers the OS clipboard when it differs, so the first
+    /// version of this test was reading the developer's real macOS
+    /// clipboard — which still held this exact string from the previous
+    /// run. It passed with the copy removed entirely.
+    #[test]
+    fn copy_last_message_puts_the_text_on_the_clipboard() {
+        let (_d, mut app) = app();
+        app.toast_leveled("a uniquely identifying failure string", ToastLevel::Error);
+        app.run_menu_action(crate::context_menu::MenuAction::CopyLastMessage);
+        assert!(
+            app.clipboard
+                .register
+                .contains("a uniquely identifying failure string"),
+            "the register does not hold the message: {:?}",
+            app.clipboard.register
+        );
     }
 }

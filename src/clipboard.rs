@@ -17,7 +17,13 @@
 use std::collections::HashMap;
 
 pub struct Clipboard {
-    register: String,
+    /// The unnamed register's text.
+    ///
+    /// `pub(crate)` so tests can assert what was COPIED without going
+    /// through `text()`, which prefers the OS clipboard and therefore
+    /// reads the developer's real machine — a test written against it
+    /// passes on stale system-clipboard contents.
+    pub(crate) register: String,
     register_linewise: bool,
     /// Linewise-ness of whatever `text()` last returned (kept in sync so
     /// `is_linewise()` is meaningful right after a `text()` call).

@@ -38,6 +38,12 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_refresh_chip_menu(panel, (x, y));
         return;
     }
+    if let Some(r) = app.rects.statusline_notif_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_notification_bell_menu((x, y));
+        return;
+    }
     if app.debug_click_inspector {
         let hits = app.rects.inspect_click_targets(x, y);
         let msg = if hits.is_empty() {

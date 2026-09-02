@@ -147,6 +147,8 @@ pub fn for_action(a: &MenuAction) -> &'static str {
 
         // ── Terminal / process ──
         M::TogglePanelAutoRefresh(..) => "\u{f021}", // refresh
+        M::MarkMessagesSeen => "\u{f00c}",           // check
+        M::CopyLastMessage | M::CopyAllMessages => "\u{f0c5}", // copy
         M::SetPanelSort(..) => "\u{f0dc}",           // sort
         M::PtyRestart(..) => "\u{f021}",             // refresh
         M::PtyInterrupt(..) => "\u{f04d}",           // stop
