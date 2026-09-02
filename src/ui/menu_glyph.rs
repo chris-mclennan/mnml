@@ -269,6 +269,19 @@ pub const COLUMN_W: usize = 3;
 /// glyph. A variable-width column was the bug behind rows looking
 /// randomly indented: a label already carrying its own `✓ ` prefix
 /// ended up a gutter deeper than its neighbours.
+/// The glyph column, preferring an EXPLICIT icon over the action
+/// table. `MenuItem::with_icon` sets one for rows the table cannot
+/// identify — submenu parents and integration rows.
+pub fn column_for(icon: Option<&str>, a: &MenuAction, ascii: bool) -> String {
+    if ascii {
+        return String::new();
+    }
+    match icon {
+        Some(g) if !g.is_empty() => format!("{g}{}", " ".repeat(COLUMN_W - 1)),
+        _ => column(a, ascii),
+    }
+}
+
 pub fn column(a: &MenuAction, ascii: bool) -> String {
     if ascii {
         return String::new();
@@ -314,6 +327,53 @@ mod tests {
         assert_ne!(copy, del, "copy and delete share a glyph");
         assert_ne!(copy, save, "copy and save share a glyph");
         assert_ne!(del, save, "delete and save share a glyph");
+    }
+
+    /// An EXPLICIT icon must win over the action table.
+    ///
+    /// Without this, a submenu parent rendered blank (its action is
+    /// `Submenu`, which identifies nothing) and every integration row
+    /// rendered the same play triangle (all generic `RunCmd`) — fifteen
+    /// identical icons in one menu.
+    #[test]
+    fn an_explicit_icon_overrides_the_action_table() {
+        let a = M::Submenu;
+        assert_eq!(for_action(&a), "", "setup: Submenu has no table glyph");
+        let col = column_for(Some("\u{f12e}"), &a, false);
+        assert!(
+            col.starts_with('\u{f12e}'),
+            "the explicit icon was ignored: {col:?}"
+        );
+        assert_eq!(
+            col.chars().count(),
+            COLUMN_W,
+            "an explicit icon broke the column width: {col:?}"
+        );
+    }
+
+    /// Distinct integration glyphs must stay distinct — that is the
+    /// entire complaint being fixed.
+    #[test]
+    fn distinct_explicit_icons_do_not_collapse() {
+        let a = M::RunCmd("x".into());
+        let one = column_for(Some("\u{f09b}"), &a, false);
+        let two = column_for(Some("\u{f1d3}"), &a, false);
+        assert_ne!(one, two, "two integrations rendered the same icon");
+    }
+
+    /// No explicit icon falls through to the table, so rows that never
+    /// set one are unaffected.
+    #[test]
+    fn no_explicit_icon_falls_through_to_the_table() {
+        let a = M::SavePane(0);
+        assert_eq!(column_for(None, &a, false), column(&a, false));
+        assert_eq!(column_for(Some(""), &a, false), column(&a, false));
+    }
+
+    /// ASCII mode still paints nothing, explicit icon or not.
+    #[test]
+    fn an_explicit_icon_is_still_suppressed_in_ascii_mode() {
+        assert_eq!(column_for(Some("\u{f12e}"), &M::Submenu, true), "");
     }
 
     /// ASCII mode must be untouched — `ascii_icons` exists for terminals

@@ -42,6 +42,10 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
     // carrying `▸` conventionally means "clicking me does nothing, I just
     // open more", so making an action row a parent would make it lie about
     // itself. Per-row extras hang off the row's own `⋮` instead.
+    // Submenu parents carry an EXPLICIT icon: their action is
+    // `MenuAction::Submenu`, which has no identity for the glyph table
+    // to key on, so every parent rendered blank (user: "why plus menu
+    // missing icons for most of these").
     let mut items = vec![
         MenuItem::submenu(
             "New",
@@ -56,7 +60,8 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
                 MenuItem::new("Browser tab", MenuAction::Command("browser.open")),
                 MenuItem::new("Tab page", MenuAction::Command("tab.new")),
             ],
-        ),
+        )
+        .with_icon("\u{f15b}"), // file
         MenuItem::submenu(
             "Open",
             vec![
@@ -69,7 +74,8 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
                 ),
                 MenuItem::new("Trash", MenuAction::Command("files.trash")),
             ],
-        ),
+        )
+        .with_icon("\u{f07c}"), // folder-open
         MenuItem::submenu(
             "AI",
             vec![
@@ -79,14 +85,16 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
                 ),
                 MenuItem::new("Codex session", MenuAction::Command("ai.codex_new")),
             ],
-        ),
+        )
+        .with_icon("\u{F06A9}"), // robot — same as the Agents section
         MenuItem::submenu(
             "Dock",
             vec![
                 MenuItem::new("Note", MenuAction::Command("dock.new_text")),
                 MenuItem::new("Log tail", MenuAction::Command("dock.new_log_tail")),
             ],
-        ),
+        )
+        .with_icon("\u{f0db}"), // columns
     ];
     // Integrations get their own group, which is the whole reason the
     // flat list could not stay flat: this one grows without bound as the
@@ -102,11 +110,17 @@ fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
                 .label
                 .clone()
                 .unwrap_or_else(|| icon.id.replace('_', " "));
+            // The integration's OWN glyph, the same one its chip and
+            // activity-bar entry draw. Without this every row is a
+            // generic `RunCmd` and the table can only offer a play
+            // triangle — fifteen identical ones (user: "we have
+            // dedicated ones we already use elsewhere").
             MenuItem::new(label, MenuAction::RunCmd(icon.command.clone()))
+                .with_icon(icon.glyph.clone())
         })
         .collect();
     if !integrations.is_empty() {
-        items.push(MenuItem::submenu("Integrations", integrations));
+        items.push(MenuItem::submenu("Integrations", integrations).with_icon("\u{f12e}")); // puzzle-piece
     }
     // Every row above opens something NEW. After closing your tabs the
     // thing you actually want is them BACK, and the only route was

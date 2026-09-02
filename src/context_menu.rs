@@ -511,6 +511,19 @@ pub enum MenuAction {
 #[derive(Debug, Clone)]
 pub struct MenuItem {
     pub label: String,
+    /// Explicit glyph, overriding the `MenuAction → glyph` table.
+    ///
+    /// The table can only know what an action DOES, which is not
+    /// enough twice over: a submenu parent's action is
+    /// `MenuAction::Submenu` and carries no identity at all, and an
+    /// integration row is a generic `RunCmd` even though the
+    /// integration has its own glyph and colour. Both rendered as a
+    /// repeated play triangle, or nothing (user: "why are we using
+    /// generic icons we have dedicated ones we already use elsewhere",
+    /// "why plus menu missing icons for most of these").
+    ///
+    /// Same idiom as `menu_bar::MenuItem::action_with_icon`.
+    pub icon: Option<String>,
     pub action: MenuAction,
     /// Child rows. When present the row paints a `▸`, opens on hover or
     /// `→`, and its own `action` is ignored.
@@ -526,6 +539,7 @@ impl MenuItem {
     pub fn new(label: impl Into<String>, action: MenuAction) -> Self {
         MenuItem {
             label: label.into(),
+            icon: None,
             action,
             submenu: None,
             destructive: false,
@@ -536,16 +550,28 @@ impl MenuItem {
     pub fn destructive(label: impl Into<String>, action: MenuAction) -> Self {
         MenuItem {
             label: label.into(),
+            icon: None,
             action,
             submenu: None,
             destructive: true,
         }
     }
 
+    /// Attach an explicit glyph, overriding the action table.
+    ///
+    /// Use for rows whose ACTION cannot identify them: submenu parents
+    /// (all `MenuAction::Submenu`) and integration rows (all generic
+    /// `RunCmd`, though each integration has its own glyph).
+    pub fn with_icon(mut self, icon: impl Into<String>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
     /// A row that opens a child menu instead of doing something itself.
     pub fn submenu(label: impl Into<String>, items: Vec<MenuItem>) -> Self {
         MenuItem {
             label: label.into(),
+            icon: None,
             action: MenuAction::Submenu,
             submenu: Some(items),
             destructive: false,

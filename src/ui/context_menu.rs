@@ -93,7 +93,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // an empty column rather than a placeholder, and the padding
         // below is computed from the finished string, so mixed
         // glyph/no-glyph menus still fill the row.
-        let g = crate::ui::menu_glyph::column(&item.action, app.config.ui.ascii_icons);
+        let g = crate::ui::menu_glyph::column_for(
+            item.icon.as_deref(),
+            &item.action,
+            app.config.ui.ascii_icons,
+        );
         let mut label = format!(" {g}{} ", item.label);
         let room = want.saturating_sub(marker.chars().count());
         if label.chars().count() < room {
@@ -172,7 +176,11 @@ fn draw_submenu(frame: &mut Frame, app: &mut App, screen: Rect, parent: Rect) {
         if item.destructive && !selected {
             style = style.fg(crate::ui::theme::cur().red);
         }
-        let g = crate::ui::menu_glyph::column(&item.action, app.config.ui.ascii_icons);
+        let g = crate::ui::menu_glyph::column_for(
+            item.icon.as_deref(),
+            &item.action,
+            app.config.ui.ascii_icons,
+        );
         let mut label = format!(" {g}{} ", item.label);
         let want = inner.width as usize;
         if label.chars().count() < want {
