@@ -1216,9 +1216,9 @@ that need a decision before they are buildable.
 
 ### Bugs — shape settled
 
-- TODO: messages popup lets text run into the `ⓘ` column. Leave at
+- DONE 66677dda — the picker's detail gap was emitted on the wrong side of the icon.
   least one blank cell before the icon. (`src/ui/messages_view.rs`)
-- TODO: TODOS panel rows run flush to the right border — same missing
+- DONE e862f3f3 — rows stop one cell short of the kebab; budget is width-derived.
   right pad as the messages popup. Both are the same fix in two places.
 - TODO: `Ctrl+W` closes in most-recently-opened order, not right-to-
   left. Open two files then two Claude sessions: the first `Ctrl+W`
@@ -1259,26 +1259,26 @@ that need a decision before they are buildable.
 
 ### TODOS panel navigation
 
-- TODO: the TODOS panel is a flat 68-row list with no ordering control.
+- DONE 94299617 — sort modes (Newest / Name A–Z) on the ↻ right-click menu. Tree view is still open, filed separately below.
   Add sort options (by tag severity / path / recency) and a TREE view
   grouped by directory, alongside the existing flat list. Finding a
   specific item today means knowing its text and using the filter.
 
 ### Session 2026-09-01 (second batch)
 
-- TODO: notification bell should sit in the TOP RIGHT, and left-clicking
+- DONE a5d8f762 + 66677dda — bell sits left of the clock with three states, left-click opens the history, and the left-bar duplicate is removed.
   it should open the notifications popup.
-- TODO: the menu-glyph audit list needs a one-step way to regenerate —
+- DONE d70ccdb8 — `menu.glyph_audit` writes and opens it. Later rewritten (60d36f30) to cover every command rather than a 26-row sample.
   `cargo test --ignored` is too obscure. A palette command that writes
   and opens `.mnml/menu-glyph-audit.md` would do it.
-- TODO: NOTES age column needs one more character of room. `14h` and
+- DONE 7cf4f932 — 2-cell gap, budgeted against the row width so the scrollbar column is excluded.
   `1d` fit but sit flush against the edge where `1h` does not.
-- TODO: the focused-row kebab in the panels wants shifting one cell
+- DONE e862f3f3 — and it was also overlapping the new scrollbar.
   right, but the highlight band is wider than the filter row above it,
   so the two edges disagree. Decide whether the band should end where
   the filter chip ends, or the filter chip widen to the band.
 
-- TODO: `context_menu` silently drops rows past the screen height — it
+- DONE 1ef21198 — menus and submenus window their rows, take the wheel, and show an overflow indicator.
   clamps `visible` to the inner height with no scroll and no indicator,
   so a long submenu (the agent list) is truncated with no cue. Same
   defect class as the three list panels fixed 2026-09-01.
@@ -1313,13 +1313,13 @@ rather than *from* them.
 
 Ordered by how clearly they earn a slot:
 
-- TODO: bell right-click — **Mark all read**. `mark_messages_seen()`
+- DONE 352907dd.
   already exists and is currently only reachable as a side effect of
   opening the history. Clearing a red bell without reading it is the
   single most obvious want.
-- TODO: bell right-click — **Show history** (mirrors left-click, so the
+- DONE 352907dd.
   menu is self-describing rather than assuming you know the gesture).
-- TODO: bell right-click — **Copy last message** / **Copy all**. Ties
+- DONE 352907dd.
   into the already-filed "i need to copy a toast sometimes"; the log is
   where a toast goes after it vanishes, so this is the durable answer.
 - TODO: bell right-click — **Filter: Errors / Warnings / All**. The log
