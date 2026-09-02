@@ -84,13 +84,20 @@ where
             paths.sort_by_key(|p| key(p).to_lowercase());
         }
         ListSort::Newest => {
+            // Name is the TIEBREAK, not decoration. mtime has
+            // one-second resolution here, so files written in the same
+            // second — which is most of a freshly-cloned or
+            // agent-written directory — otherwise render in raw
+            // `read_dir` order: `note-24, note-10, note-34`. TODOS
+            // already tie-broke; the shared helper did not.
             paths.sort_by_key(|p| {
-                std::fs::metadata(p)
+                let secs = std::fs::metadata(p)
                     .and_then(|m| m.modified())
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| std::cmp::Reverse(d.as_secs()))
-                    .unwrap_or(std::cmp::Reverse(0))
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                (std::cmp::Reverse(secs), key(p).to_lowercase())
             });
         }
     }
@@ -141,6 +148,38 @@ mod tests {
             v[0],
             PathBuf::from("/root/aaa/z.md"),
             "sorted by file name instead of the displayed path"
+        );
+    }
+
+    /// mtime has one-second resolution, so files written together —
+    /// most of a cloned or agent-written directory — tie. Without a
+    /// tiebreak they render in raw `read_dir` order, which looks
+    /// random: `note-24, note-10, note-34`.
+    #[test]
+    fn newest_breaks_ties_by_name_not_read_dir_order() {
+        let d = tempfile::tempdir().unwrap();
+        let when = std::time::SystemTime::now();
+        let mut v = Vec::new();
+        // Deliberately created out of order, all with the SAME mtime.
+        for n in ["note-24", "note-10", "note-34"] {
+            let p = d.path().join(format!("{n}.md"));
+            std::fs::write(&p, "x").unwrap();
+            let f = std::fs::File::options().write(true).open(&p).unwrap();
+            f.set_times(std::fs::FileTimes::new().set_modified(when))
+                .unwrap();
+            v.push(p);
+        }
+        sort_paths(&mut v, ListSort::Newest, |p| {
+            p.file_name().unwrap().to_string_lossy().into_owned()
+        });
+        let names: Vec<String> = v
+            .iter()
+            .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["note-10", "note-24", "note-34"],
+            "same-second files did not fall back to name order"
         );
     }
 

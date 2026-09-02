@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         return;
     }
 
-    let inner_w = menu.content_width();
+    let inner_w = menu.content_width(app.config.ui.ascii_icons);
     let w = ((inner_w as u16) + 2).min(screen.width.saturating_sub(1));
     // Rows: optional title + one per item.
     let title_rows = if menu.title.is_some() { 1u16 } else { 0 };
@@ -134,7 +134,7 @@ fn draw_submenu(frame: &mut Frame, app: &mut App, screen: Rect, parent: Rect) {
     if menu.items.is_empty() {
         return;
     }
-    let inner_w = menu.content_width();
+    let inner_w = menu.content_width(app.config.ui.ascii_icons);
     let w = ((inner_w as u16) + 2).min(screen.width.saturating_sub(1));
     let h = (menu.items.len() as u16 + 2).min(screen.height.saturating_sub(1));
 

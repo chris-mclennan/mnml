@@ -1431,21 +1431,35 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 }
             };
             let rows = ar.height as usize;
+            // Clamp the OFFSET against the list length before the
+            // cursor is clamped into the window.
+            //
+            // Without this, wheeling past the end kept growing `scroll`
+            // and the window-clamp dragged the cursor to the last row
+            // with it, so a following Enter opened something the user
+            // never selected. The render clamps `scroll` too, but only
+            // AFTER this has already moved the cursor.
+            let len = match which {
+                0 => app.todos_hits.len(),
+                1 => app.notes_panel_files_cache.len(),
+                _ => app.findings_panel_files_cache.len(),
+            };
+            let max_scroll = len.saturating_sub(rows);
             match which {
                 0 => {
-                    app.todos_panel_scroll = step(app.todos_panel_scroll);
+                    app.todos_panel_scroll = step(app.todos_panel_scroll).min(max_scroll);
                     app.todos_panel_cursor = app
                         .todos_panel_cursor
                         .clamp(app.todos_panel_scroll, app.todos_panel_scroll + rows - 1);
                 }
                 1 => {
-                    app.notes_panel_scroll = step(app.notes_panel_scroll);
+                    app.notes_panel_scroll = step(app.notes_panel_scroll).min(max_scroll);
                     app.notes_panel_cursor = app
                         .notes_panel_cursor
                         .clamp(app.notes_panel_scroll, app.notes_panel_scroll + rows - 1);
                 }
                 _ => {
-                    app.findings_panel_scroll = step(app.findings_panel_scroll);
+                    app.findings_panel_scroll = step(app.findings_panel_scroll).min(max_scroll);
                     app.findings_panel_cursor = app.findings_panel_cursor.clamp(
                         app.findings_panel_scroll,
                         app.findings_panel_scroll + rows - 1,

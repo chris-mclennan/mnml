@@ -236,10 +236,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 crate::ui::git_graph_view::humanize_age(secs)
             })
             .unwrap_or_default();
-        let name_width = (area.width as usize)
-            .saturating_sub(4)
-            .saturating_sub(age_str.chars().count())
-            .saturating_sub(1);
+        // Budgeted against `row_w`, not `area.width` — with a
+        // scrollbar present this clipped the last character of the age
+        // column (`13m` → `13`, `now` → `no`). NOTES had the identical
+        // arithmetic fixed already; this one was missed.
+        const AGE_GAP: usize = 2;
+        let name_width = (row_w as usize)
+            .saturating_sub(5)
+            .saturating_sub(AGE_GAP)
+            .saturating_sub(age_str.chars().count());
         let name_clipped: String = name.chars().take(name_width).collect();
         let name_padded = format!("{name_clipped:<width$}", width = name_width);
         let row_rect = Rect {
@@ -263,7 +268,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(format!("{icon} "), Style::default().fg(t.cyan).bg(row_bg)),
                 Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
                 Span::styled(
-                    format!(" {age_str}"),
+                    format!("{}{age_str}", " ".repeat(AGE_GAP)),
                     Style::default().fg(t.comment).bg(row_bg),
                 ),
             ])),

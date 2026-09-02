@@ -3402,6 +3402,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.notes_panel_filter_input
         && crate::app::dispatch::contains(r, x, y)
     {
+        // Focus MUST move with the flag. The key router requires
+        // `filter_focused && focus == Tree && active_section == …`;
+        // setting only the flag left the filter row LOOKING focused —
+        // magnifier, caret and all — while every keystroke went to the
+        // editor buffer. Clicking a row `open_path`s and takes
+        // `Focus::Pane`, and the filter is the very next thing you
+        // reach for, so this was one click away at all times.
+        app.focus = crate::focus::Focus::Tree;
+        app.active_section = crate::app::ActivitySection::Notes;
         app.notes_panel_filter_focused = true;
         return;
     }
@@ -3423,11 +3432,27 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         .map(|i| (i, app.rects.notes_panel_files[i].1.clone()))
     {
-        app.notes_panel_cursor = i;
+        // `+ scroll`: the renderer only pushes rects for VISIBLE rows,
+        // so `position()` is an index into the window, not the list.
+        // Clicking row 37 at scroll 26 opened the right file but put
+        // the highlight on row 20 and snapped the list to the top.
+        // TODOS is immune because it stores the row index in the tuple.
+        app.notes_panel_cursor = i + app.notes_panel_scroll;
         app.open_path(&path);
         return;
     }
     // Findings panel — row click opens the .md file (2026-08-07).
+    // FINDINGS had no filter click handler at all: the rect was
+    // populated and exported to `rects.json`, but nothing in
+    // `tui::mouse` ever read it, so the row was inert to the mouse.
+    if let Some(r) = app.rects.findings_panel_filter_input
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.focus = crate::focus::Focus::Tree;
+        app.active_section = crate::app::ActivitySection::Findings;
+        app.findings_panel_filter_focused = true;
+        return;
+    }
     if let Some(r) = app.rects.findings_panel_new_chip
         && crate::app::dispatch::contains(r, x, y)
     {
@@ -3447,7 +3472,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         .map(|i| (i, app.rects.findings_panel_files[i].1.clone()))
     {
-        app.findings_panel_cursor = i;
+        // See the NOTES branch above — window index, not list index.
+        app.findings_panel_cursor = i + app.findings_panel_scroll;
         app.open_path(&path);
         return;
     }
@@ -3455,6 +3481,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.todos_panel_filter_input
         && crate::app::dispatch::contains(r, x, y)
     {
+        // Focus MUST move with the flag. The key router requires
+        // `filter_focused && focus == Tree && active_section == …`;
+        // setting only the flag left the filter row LOOKING focused —
+        // magnifier, caret and all — while every keystroke went to the
+        // editor buffer. Clicking a row `open_path`s and takes
+        // `Focus::Pane`, and the filter is the very next thing you
+        // reach for, so this was one click away at all times.
+        app.focus = crate::focus::Focus::Tree;
+        app.active_section = crate::app::ActivitySection::Todos;
         app.todos_panel_filter_focused = true;
         return;
     }
@@ -4387,5 +4422,87 @@ mod plus_menu_tests {
         let (_d, app) = app();
         let n = plus_menu_items(&app).len();
         assert!(n <= 7, "top level is back to {n} rows: {:?}", labels(&app));
+    }
+}
+
+#[cfg(test)]
+mod panel_filter_focus_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use crate::focus::Focus;
+    use ratatui::layout::Rect;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// TESTER SEV-1 — clicking a panel's `/` filter row while focus is
+    /// on the editor left the row LOOKING focused (magnifier, caret)
+    /// while every keystroke went into the open file: `// HACK:` became
+    /// `// HQQACK:`.
+    ///
+    /// The key router needs `filter_focused && focus == Tree &&
+    /// active_section == …`; the click set only the flag. One click
+    /// away at all times, since clicking a row takes `Focus::Pane` and
+    /// the filter is the next thing you reach for.
+    #[test]
+    fn clicking_a_filter_row_takes_focus_off_the_editor() {
+        for (section, rect_of, flag_of) in [
+            (
+                crate::app::ActivitySection::Todos,
+                (|a: &mut App, r| a.rects.todos_panel_filter_input = Some(r)) as fn(&mut App, Rect),
+                (|a: &App| a.todos_panel_filter_focused) as fn(&App) -> bool,
+            ),
+            (
+                crate::app::ActivitySection::Notes,
+                (|a: &mut App, r| a.rects.notes_panel_filter_input = Some(r)) as fn(&mut App, Rect),
+                (|a: &App| a.notes_panel_filter_focused) as fn(&App) -> bool,
+            ),
+            (
+                crate::app::ActivitySection::Findings,
+                (|a: &mut App, r| a.rects.findings_panel_filter_input = Some(r))
+                    as fn(&mut App, Rect),
+                (|a: &App| a.findings_panel_filter_focused) as fn(&App) -> bool,
+            ),
+        ] {
+            let (_d, mut app) = app();
+            app.active_section = section;
+            // The state the bug needed: focus on the editor pane.
+            app.focus = Focus::Pane;
+            let r = Rect {
+                x: 0,
+                y: 2,
+                width: 20,
+                height: 1,
+            };
+            rect_of(&mut app, r);
+
+            let ev = ratatui::crossterm::event::MouseEvent {
+                kind: ratatui::crossterm::event::MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left,
+                ),
+                column: 5,
+                row: 2,
+                modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+            };
+            super::handle_down_left(&mut app, ev, 5, 2);
+
+            assert!(
+                flag_of(&app),
+                "{section:?}: the filter did not take focus at all"
+            );
+            assert_eq!(
+                app.focus,
+                Focus::Tree,
+                "{section:?}: filter looks focused but focus is still on the \
+                 pane — keystrokes land in the open file"
+            );
+            assert_eq!(
+                app.active_section, section,
+                "{section:?}: section did not follow the click"
+            );
+        }
     }
 }

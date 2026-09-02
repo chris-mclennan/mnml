@@ -193,56 +193,132 @@ pub fn for_action(a: &MenuAction) -> &'static str {
 
 /// Glyph for a `MenuAction::Command(id)` row, keyed off the command id.
 ///
-/// Ordered most-specific-first, and matched as a substring, so
-/// `"pane.close"` resolves on "close" rather than on "pane". Falls back
-/// to a play triangle, which is honest — the row runs *some* command —
-/// rather than pretending to know more.
+/// ACTION FIRST, then domain. A command id is `namespace.action`, and
+/// the action is what the row DOES — so `editor.undo` is an undo, not
+/// an edit, and `git.push` is a push, not a generic git operation.
+///
+/// The first version matched substrings against the WHOLE id in one
+/// ordered pass, which let a namespace swallow everything under it:
+/// `("git", …)` claimed all fifty git commands, `("edit", …)` claimed
+/// every `editor.*`, and 339 of 789 commands (43%) fell through to a
+/// play triangle. The result was menus that were a column of one icon
+/// — the exact complaint the table was added to fix, relocated.
 fn command_glyph(id: &str) -> &'static str {
-    const TABLE: &[(&str, &str)] = &[
+    // Matched against the LAST dotted segment.
+    const ACTION: &[(&str, &str)] = &[
+        ("undo", "\u{f0e2}"),
+        ("redo", "\u{f01e}"),
         ("paste", "\u{f0ea}"),
         ("copy", "\u{f0c5}"),
+        ("yank", "\u{f0c5}"),
         ("cut", "\u{f0c4}"),
         ("clear", "\u{f12d}"),
         ("restart", "\u{f021}"),
         ("refresh", "\u{f021}"),
         ("reload", "\u{f021}"),
+        ("reset", "\u{f0e2}"),
         ("close", "\u{f00d}"),
         ("quit", "\u{f00d}"),
+        ("kill", "\u{f00d}"),
+        ("stop", "\u{f04d}"),
         ("delete", "\u{f1f8}"),
         ("remove", "\u{f1f8}"),
         ("trash", "\u{f1f8}"),
         ("save", "\u{f0c7}"),
-        ("equalize", "\u{f0db}"),
-        ("dock", "\u{f0db}"),
-        ("split", "\u{f0db}"),
-        ("maximize", "\u{f065}"),
-        ("full", "\u{f065}"),
-        ("zoom", "\u{f065}"),
+        ("write", "\u{f0c7}"),
+        ("definition", "\u{eab5}"),
+        ("references", "\u{f0c1}"),
+        ("hover", "\u{f05a}"),
+        ("symbol", "\u{f1b3}"),
+        ("rename", "\u{f044}"),
+        ("format", "\u{f036}"),
+        ("comment", "\u{f075}"),
+        ("indent", "\u{f03c}"),
+        ("fold", "\u{f0d7}"),
+        ("select", "\u{f0c9}"),
+        ("goto", "\u{eab5}"),
+        ("jump", "\u{eab5}"),
+        ("commit", "\u{f1d3}"),
+        ("push", "\u{f062}"),
+        ("pull", "\u{f063}"),
+        ("fetch", "\u{f063}"),
+        ("stash", "\u{f187}"),
+        ("branch", "\u{f126}"),
+        ("merge", "\u{f126}"),
+        ("rebase", "\u{f126}"),
+        ("diff", "\u{f0db}"),
+        ("stage", "\u{f067}"),
+        ("unstage", "\u{f068}"),
         ("new", "\u{f067}"),
+        ("open", "\u{f07c}"),
         ("reveal", "\u{f002}"),
         ("find", "\u{f002}"),
         ("search", "\u{f002}"),
         ("grep", "\u{f002}"),
-        ("open", "\u{f07c}"),
         ("theme", "\u{f043}"),
         ("toggle", "\u{f205}"),
-        ("git", "\u{f1d3}"),
-        ("term", "\u{f120}"),
-        ("pty", "\u{f120}"),
-        ("shell", "\u{f120}"),
-        ("rename", "\u{f044}"),
-        ("edit", "\u{f044}"),
+        ("dock", "\u{f0db}"),
+        ("split", "\u{f0db}"),
+        ("equalize", "\u{f0db}"),
+        ("maximize", "\u{f065}"),
+        ("zoom", "\u{f065}"),
         ("settings", "\u{f013}"),
         ("config", "\u{f013}"),
         ("help", "\u{f059}"),
+        ("about", "\u{f05a}"),
         ("pin", "\u{f08d}"),
         ("hide", "\u{f070}"),
-        ("agent", "\u{F06A9}"),
-        ("ai", "\u{F06A9}"),
+        ("show", "\u{f06e}"),
+        ("run", "\u{f04b}"),
+        ("test", "\u{f0c3}"),
+        ("build", "\u{f0ad}"),
+        ("install", "\u{f019}"),
+        ("update", "\u{f019}"),
+        ("next", "\u{f061}"),
+        ("prev", "\u{f060}"),
     ];
+    // Matched against the FIRST dotted segment, only when the action
+    // says nothing. A domain icon is a weaker answer than an action
+    // one, so it must never outrank it.
+    const DOMAIN: &[(&str, &str)] = &[
+        ("git", "\u{f1d3}"),
+        ("ai", "\u{F06A9}"),
+        ("browser", "\u{f0ac}"),
+        ("http", "\u{f1d8}"),
+        ("term", "\u{f120}"),
+        ("pty", "\u{f120}"),
+        ("tools", "\u{f120}"),
+        ("lsp", "\u{f085}"),
+        ("dap", "\u{f188}"),
+        ("debug", "\u{f188}"),
+        ("files", "\u{f07b}"),
+        ("tree", "\u{f07b}"),
+        ("buffer", "\u{f15b}"),
+        ("tab", "\u{f15b}"),
+        ("editor", "\u{f044}"),
+        ("view", "\u{f06e}"),
+        ("window", "\u{f0db}"),
+        ("picker", "\u{f002}"),
+        ("notes", "\u{f249}"),
+        ("todos", "\u{f046}"),
+        ("findings", "\u{F1623}"),
+        ("integrations", "\u{f12e}"),
+        ("cloud", "\u{f0c2}"),
+        ("mixr", "\u{f001}"),
+    ];
+
     let lower = id.to_ascii_lowercase();
-    for (needle, glyph) in TABLE {
-        if lower.contains(needle) {
+    let (ns, action) = match lower.split_once('.') {
+        Some((a, b)) => (a, b.rsplit('.').next().unwrap_or(b)),
+        None => ("", lower.as_str()),
+    };
+    for (needle, glyph) in ACTION {
+        if action.contains(needle) {
+            return glyph;
+        }
+    }
+    for (needle, glyph) in DOMAIN {
+        if ns == *needle {
             return glyph;
         }
     }
@@ -297,87 +373,74 @@ pub fn column(a: &MenuAction, ascii: bool) -> String {
 /// Write the menu-glyph audit document and return its path.
 ///
 /// A REAL function, not a `#[ignore]`d test: the user asked for "an
-/// easier way to do the audit list in future, shouldn't be that hard",
-/// and `cargo test --ignored` is not that. `menu.glyph_audit` in the
-/// palette calls this and opens the result.
+/// easier way to do the audit list in future, shouldn't be that hard".
+/// `menu.glyph_audit` in the palette calls this and opens the result.
 ///
-/// Generated from the live table so the document cannot drift from
-/// what the menus actually paint.
+/// Enumerates EVERY registered command, not a hand-picked sample.
+///
+/// The first version sampled 26 of 132 `MenuAction` variants and 10
+/// command ids while its own header claimed it was "generated from the
+/// live table so it cannot drift" — so it reported a healthy
+/// vocabulary while the git chip menu was ten identical logos and the
+/// LSP menu was seven play triangles. A sampling audit that claims
+/// completeness is worse than no audit: it answers the question
+/// wrongly and confidently.
 pub fn write_audit(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
-    use crate::context_menu::MenuAction as M;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
 
-    let p = |s: &str| PathBuf::from(s);
-    let rows: Vec<(&str, MenuAction)> = vec![
-        ("Open", M::OpenPath(p("/a"))),
-        ("Open as text", M::OpenPathAsText(p("/a"))),
-        ("Open in split", M::OpenInSplit(p("/a"))),
-        ("Reveal in Finder", M::RevealInFinder(p("/a"))),
-        ("Open externally", M::OpenExternally("u".into())),
-        ("Open terminal here", M::OpenTerminal(p("/a"))),
-        ("Preview markdown", M::PreviewMarkdown(p("/a"))),
-        ("Copy path", M::CopyPath("/a".into())),
-        ("Copy text", M::CopyText("x".into())),
-        ("Cut", M::FileCut(p("/a"))),
-        ("Paste", M::FilePaste(p("/a"))),
-        ("Duplicate", M::FileDuplicate(p("/a"))),
-        ("Move to…", M::FileMoveTo(p("/a"))),
-        ("New file", M::NewFile(p("/a"))),
-        ("New folder", M::NewFolder(p("/a"))),
-        ("Rename…", M::Rename(p("/a"))),
-        ("Delete", M::Delete(p("/a"))),
-        ("Close tab", M::CloseTab(0)),
-        ("Close all tabs", M::CloseAllTabs),
-        ("Pin tab", M::PinTab(0)),
-        ("Save", M::SavePane(0)),
-        ("Expand recursively", M::TreeExpandRecursive(p("/a"))),
-        ("Collapse recursively", M::TreeCollapseRecursive(p("/a"))),
-        ("Auto-refresh", M::TogglePanelAutoRefresh("todos".into())),
-        ("Sort", M::SetPanelSort("todos".into(), "name".into())),
-        ("Submenu parent", M::Submenu),
-    ];
-
-    let mut by_glyph: BTreeMap<&'static str, Vec<&str>> = BTreeMap::new();
-    for (label, a) in &rows {
-        by_glyph.entry(for_action(a)).or_default().push(label);
+    // Every registered command id, resolved through the real table.
+    let mut by_glyph: BTreeMap<&'static str, Vec<(&'static str, &'static str)>> = BTreeMap::new();
+    for c in crate::command::registry().all() {
+        by_glyph
+            .entry(command_glyph(c.id))
+            .or_default()
+            .push((c.id, c.title));
     }
+    let total: usize = by_glyph.values().map(|v| v.len()).sum();
 
-    let mut out = String::from(
+    // Worst offenders first — a menu is unreadable when many of its
+    // rows share one icon, so size of group is the thing to look at.
+    let mut groups: Vec<(&'static str, usize)> =
+        by_glyph.iter().map(|(g, v)| (*g, v.len())).collect();
+    groups.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+
+    let mut out = format!(
         "# Menu glyph audit\n\n\
-         Regenerate with the `menu.glyph_audit` palette command.\n\
-         Grouped by glyph: every row under one heading shares that icon.\n\
-         The spacing shown is the REAL rendered column.\n\n\
-         Ask of each group: does one icon honestly cover all of these?\n\n",
+         Regenerate with the `menu.glyph_audit` palette command.\n\n\
+         {total} registered commands resolved through `command_glyph`, \
+         grouped by the glyph they land on. EVERY command is listed — \
+         this is not a sample.\n\n\
+         A large group is the thing to look for: it means that many menu \
+         rows draw the same icon, which is what makes a menu read as a \
+         column of one symbol.\n\n\
+         ## Group sizes\n\n"
     );
-    for (glyph, labels) in &by_glyph {
-        let shown = if glyph.is_empty() {
+    for (g, n) in &groups {
+        let shown = if g.is_empty() {
             "(none)".to_string()
         } else {
-            format!("`{glyph}`  {glyph}")
+            format!("`{g}` {g}")
         };
-        out.push_str(&format!("## {shown} — {} row(s)\n\n", labels.len()));
-        for l in labels {
-            let a = rows.iter().find(|(n, _)| n == l).map(|(_, a)| a).unwrap();
-            out.push_str(&format!("- `{}{l}`\n", column(a, false)));
-        }
-        out.push('\n');
+        out.push_str(&format!("- {shown} — **{n}**\n"));
     }
 
-    out.push_str("## `Command(id)` — resolved by id keyword\n\n");
-    for id in [
-        "pty.clear",
-        "pty.restart",
-        "pane.close",
-        "window.dock_left",
-        "window.equalize",
-        "view.toggle_theme",
-        "files.new",
-        "git.stage",
-        "edit.paste",
-        "something.unmapped",
-    ] {
-        out.push_str(&format!("- `{}` → `{}`\n", id, command_glyph(id)));
+    out.push_str("\n## Every command, by glyph\n");
+    for (g, n) in &groups {
+        let shown = if g.is_empty() {
+            "(none)".to_string()
+        } else {
+            format!("`{g}`  {g}")
+        };
+        out.push_str(&format!("\n### {shown} — {n} command(s)\n\n"));
+        let mut rows = by_glyph[g].clone();
+        rows.sort();
+        for (id, title) in rows {
+            out.push_str(&format!(
+                "- `{}{}` — `{id}`\n",
+                column_for(None, &crate::context_menu::MenuAction::Command(id), false),
+                title
+            ));
+        }
     }
 
     std::fs::create_dir_all(dir)?;
@@ -419,6 +482,68 @@ mod tests {
         assert_ne!(copy, del, "copy and delete share a glyph");
         assert_ne!(copy, save, "copy and save share a glyph");
         assert_ne!(del, save, "delete and save share a glyph");
+    }
+
+    /// The ACTION must beat the NAMESPACE.
+    ///
+    /// Matching the whole id in one pass let a namespace swallow
+    /// everything under it: `editor.undo` resolved to a pencil because
+    /// "edit" matched, and all fifty git commands drew one logo.
+    #[test]
+    fn the_action_outranks_the_namespace() {
+        assert_ne!(
+            command_glyph("editor.undo"),
+            command_glyph("editor.indent_line"),
+            "every editor.* command still collapses to one namespace icon"
+        );
+        assert_ne!(
+            command_glyph("git.push"),
+            command_glyph("git.pull"),
+            "push and pull share an icon — the git namespace is winning"
+        );
+        assert_ne!(
+            command_glyph("editor.undo"),
+            command_glyph("editor.redo"),
+            "undo and redo share an icon, and they are opposites"
+        );
+    }
+
+    /// No single glyph may claim a large share of the command surface.
+    ///
+    /// This is the measurable form of "a menu should not be a column of
+    /// one repeated icon". Before the action/domain split, the play
+    /// triangle held 339 of 789 commands — 43% — and menus built from
+    /// those ids rendered as exactly that.
+    #[test]
+    fn no_glyph_claims_a_large_share_of_all_commands() {
+        use std::collections::BTreeMap;
+        let mut by: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut total = 0usize;
+        for c in crate::command::registry().all() {
+            *by.entry(command_glyph(c.id)).or_default() += 1;
+            total += 1;
+        }
+        let (worst, n) = by.iter().max_by_key(|(_, n)| **n).unwrap();
+        let share = (*n as f64) / (total as f64);
+        assert!(
+            share < 0.20,
+            "{worst:?} covers {n}/{total} commands ({:.0}%) — menus built \
+             from these ids will read as a column of one icon",
+            share * 100.0
+        );
+    }
+
+    /// A go-to-definition row must draw the same glyph wherever it
+    /// appears. The menu bar hand-picks `\u{eab5}`; the table used to
+    /// give the editor's own menu a play triangle for the same action.
+    #[test]
+    fn goto_definition_matches_the_menu_bars_hand_picked_glyph() {
+        assert_eq!(
+            command_glyph("lsp.goto_definition"),
+            "\u{eab5}",
+            "the same action draws two different glyphs depending on \
+             which menu you opened it from"
+        );
     }
 
     /// An EXPLICIT icon must win over the action table.

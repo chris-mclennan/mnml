@@ -639,7 +639,7 @@ impl ContextMenu {
         }
     }
     /// Inner content width (the longest label + a little padding).
-    pub fn content_width(&self) -> usize {
+    pub fn content_width(&self, ascii: bool) -> usize {
         let longest = self
             .items
             .iter()
@@ -647,10 +647,17 @@ impl ContextMenu {
             // marker never overlaps a long label.
             .map(|i| {
                 i.label.chars().count()
-                    // The glyph column every row now reserves. Omitting
-                    // it clipped every label by exactly its width —
+                    // The glyph column every row reserves. Omitting it
+                    // clipped every label by exactly its width —
                     // "Restart (Ctrl+C" and "claude-agents-power-use".
-                    + crate::ui::menu_glyph::COLUMN_W
+                    //
+                    // ASCII mode reserves NOTHING: `column_for` returns
+                    // an empty string there, so adding the width made
+                    // every ascii menu 3 cells wider than before, with
+                    // 3 dead cells per row — while the change that
+                    // introduced it claimed ascii "looks exactly as it
+                    // did before".
+                    + if ascii { 0 } else { crate::ui::menu_glyph::COLUMN_W }
                     + if i.has_submenu() { 2 } else { 0 }
             })
             .chain(self.title.iter().map(|t| t.chars().count()))

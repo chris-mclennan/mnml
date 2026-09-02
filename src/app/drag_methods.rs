@@ -182,20 +182,27 @@ impl App {
         // would be snapped straight back on the next render. Move the
         // cursor with the drag — same reasoning as the Files pane and
         // the tree above.
+        // Snap the cursor to the window TOP, exactly as the tree and
+        // Files-pane scrollbars above do.
+        //
+        // `max(scroll)` only ever pushed the cursor DOWN, so an upward
+        // drag left it below the new window and `list_scroll_window`
+        // snapped the scroll straight back — a bottom-to-top drag was a
+        // complete no-op. Assignment moves it either way.
         match kind {
             ScrollbarKind::TodosPanel => {
                 self.todos_panel_scroll = scroll;
-                self.todos_panel_cursor = self.todos_panel_cursor.max(scroll);
+                self.todos_panel_cursor = scroll;
                 return;
             }
             ScrollbarKind::NotesPanel => {
                 self.notes_panel_scroll = scroll;
-                self.notes_panel_cursor = self.notes_panel_cursor.max(scroll);
+                self.notes_panel_cursor = scroll;
                 return;
             }
             ScrollbarKind::FindingsPanel => {
                 self.findings_panel_scroll = scroll;
-                self.findings_panel_cursor = self.findings_panel_cursor.max(scroll);
+                self.findings_panel_cursor = scroll;
                 return;
             }
             _ => {}

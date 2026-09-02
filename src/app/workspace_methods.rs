@@ -916,7 +916,14 @@ impl App {
         }
         self.todos_hits = hits;
         self.todos_panel_scanned_once = true;
-        self.todos_panel_cursor = 0;
+        // The cursor is NOT reset. Clicking ↻ used to send you back to
+        // row 0, which on a 99-row list means losing your place every
+        // time the panel refreshes — and it now refreshes on a timer.
+        // The render clamps a stale index, so an entry disappearing
+        // cannot leave it out of range.
+        self.todos_panel_cursor = self
+            .todos_panel_cursor
+            .min(self.todos_hits.len().saturating_sub(1));
     }
 
     // vscode-user-keyboard SEV-2 fix 2026-07-09 — j/k / arrow
