@@ -262,9 +262,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // `RIGHT_PAD` is the blank cell the user asked for; the
             // kebab is drawn over the row's right edge on the focused
             // row, so it needs that gap too.
-            const RIGHT_PAD: usize = 2;
+            // 2 cells for the kebab + 1 blank between it and the last
+            // character of the row (user ask). Measured against `row_w`,
+            // not `area.width`, so the scrollbar column is excluded.
+            const KEBAB_W: usize = 2;
+            const RIGHT_PAD: usize = KEBAB_W + 1;
             const MIN_TITLE: usize = 8;
-            let budget = (area.width as usize).saturating_sub(RIGHT_PAD);
+            let budget = (row_w as usize).saturating_sub(RIGHT_PAD);
             let lead = 2 + hit.tag.chars().count() + 1;
             // Clip the path first if it alone would fill the row, so a
             // deep path can never squeeze the title out entirely.
@@ -289,7 +293,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // the same background, so the run is continuous.
             let used =
                 2 + hit.tag.chars().count() + path_line.chars().count() + 1 + title.chars().count();
-            let pad = (area.width as usize).saturating_sub(used + RIGHT_PAD);
+            // The band still runs the full row width — only the TEXT
+            // stops short. Subtracting RIGHT_PAD here too would reopen
+            // the dead gap between the text and the kebab that the
+            // 2026-08 fix closed.
+            let pad = (row_w as usize).saturating_sub(used);
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     // The selection highlight is INSET by one cell rather
@@ -345,9 +353,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // other rows their full width for the path.
             if is_focused_row && area.width > 4 {
                 let kr = Rect {
-                    x: area.x + area.width - 2,
+                    // `row_w`, not `area.width` — with a scrollbar
+                    // present the kebab was painting ON the bar.
+                    x: area.x + row_w - KEBAB_W as u16,
                     y,
-                    width: 2,
+                    width: KEBAB_W as u16,
                     height: 1,
                 };
                 frame.render_widget(
@@ -724,6 +734,79 @@ mod tests {
             1,
             "expected only the commented marker, got: {:?}",
             hits.iter().map(|h| h.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// USER ASK — "lets shorten from the right side these rows, this
+    /// should create 1 empty char on highlighted line between last char
+    /// and the kebab."
+    ///
+    /// Also pins the kebab INSIDE the row: it was positioned from
+    /// `area.width`, so once a scrollbar took a column it painted on
+    /// top of the bar.
+    #[test]
+    fn the_focused_row_leaves_a_blank_cell_before_its_kebab() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = false;
+        app.todos_panel_scanned_once = true;
+        // Long titles so every row wants more width than it has, and
+        // enough of them to force a scrollbar.
+        app.todos_hits = (0..60)
+            .map(|i| TodoHit {
+                tag: "TODO",
+                path: d.path().join("CHANGELOG.md"),
+                line: 79,
+                title: format!("{i} a title far longer than the panel is wide, truly"),
+            })
+            .collect();
+
+        let (w, h) = (44u16, 16u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+
+        let (kr, _) = app
+            .rects
+            .todos_panel_kebab
+            .expect("focused row has no kebab");
+        // A scrollbar IS present here (60 rows in 16), so the row is
+        // one cell narrower than the panel. `<= w` was too weak to
+        // catch the bug — it held with the kebab sitting exactly on
+        // the bar.
+        let sb = app
+            .rects
+            .scrollbars
+            .iter()
+            .find(|s| matches!(s.kind, crate::app::ScrollbarKind::TodosPanel))
+            .expect("setup: expected a scrollbar for 60 rows in 16");
+        assert!(
+            kr.x + kr.width <= sb.area.x,
+            "the kebab overlaps the scrollbar: kebab {kr:?}, bar at x={}",
+            sb.area.x
+        );
+        // The cell immediately left of the kebab must be blank.
+        let gap = buf[(kr.x - 1, kr.y)].symbol().to_string();
+        let row: String = (0..w).map(|x| buf[(x, kr.y)].symbol()).collect();
+        assert_eq!(
+            gap, " ",
+            "no blank cell between the row text and the kebab:\n{row:?}"
         );
     }
 
