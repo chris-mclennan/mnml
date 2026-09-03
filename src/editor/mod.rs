@@ -8095,3 +8095,84 @@ mod change_undo_tests {
         );
     }
 }
+
+/// Linewise VISUAL operators — the mirror of the charwise fix.
+#[cfg(test)]
+mod linewise_visual_tests {
+    use super::*;
+    use crate::clipboard::Clipboard;
+
+    fn ed(s: &str) -> (Editor, Clipboard) {
+        (Editor::new(s, 4), Clipboard::detached())
+    }
+    fn run(e: &mut Editor, c: &mut Clipboard, ops: &[EditOp]) {
+        for op in ops {
+            e.apply(op.clone(), 10, c);
+        }
+    }
+
+    /// `Vd` on one line deletes that line; `Vjd` deletes two.
+    ///
+    /// The `y` and indent branches called `NormalizeLinewiseSelection`
+    /// and were correct; `d`/`x`, `c`/`s` and `u`/`U`/`~` did not, so
+    /// `Vd` on a single line was a NO-OP and `Vjd` deleted one line of
+    /// two. This is the charwise off-by-one mirrored into the half
+    /// nobody re-tested — and my own commit message claimed linewise
+    /// was verified (bug-hunt 2026-09-03).
+    ///
+    /// Reference behaviour taken from the real `vim` binary.
+    #[test]
+    fn linewise_delete_takes_whole_lines() {
+        // One line selected → that whole line goes.
+        let (mut e, mut c) = ed("one\ntwo\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::SelectStart,
+                EditOp::NormalizeLinewiseSelection,
+                EditOp::DeleteSelection,
+            ],
+        );
+        assert_eq!(e.text(), "two\n", "Vd did not remove the whole line");
+
+        // Two lines selected → both go.
+        let (mut e, mut c) = ed("one\ntwo\nthree\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::SelectStart,
+                EditOp::MoveDown,
+                EditOp::NormalizeLinewiseSelection,
+                EditOp::DeleteSelection,
+            ],
+        );
+        assert_eq!(e.text(), "three\n", "Vjd deleted one line of two");
+    }
+
+    /// The same normalisation is what makes `VU` cover the line rather
+    /// than nothing.
+    #[test]
+    fn linewise_case_change_covers_the_whole_line() {
+        let (mut e, mut c) = ed("alpha\nbeta\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::SelectStart,
+                EditOp::NormalizeLinewiseSelection,
+                EditOp::TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+            ],
+        );
+        assert!(
+            e.text().starts_with("ALPHA"),
+            "VU left the line unchanged: {:?}",
+            e.text().lines().next()
+        );
+        assert!(
+            e.text().contains("beta"),
+            "VU reached beyond the selected line"
+        );
+    }
+}

@@ -3910,7 +3910,14 @@ impl VimInputHandler {
                 // where vim leaves `defghij`. Linewise already spans
                 // whole lines, so it must NOT be widened again.
                 if linewise {
-                    InputResult::Ops(vec![DeleteSelection])
+                    // `V` selections need normalising to full lines
+                    // BEFORE the operator, exactly as the `y` and
+                    // indent branches already did. Without it `Vd` on
+                    // a single line was a NO-OP and `Vjd` deleted one
+                    // line of two — the charwise off-by-one mirrored
+                    // into the half nobody re-tested (bug-hunt
+                    // 2026-09-03).
+                    InputResult::Ops(vec![NormalizeLinewiseSelection, DeleteSelection])
                 } else {
                     InputResult::Ops(vec![MakeSelectionInclusive, DeleteSelection])
                 }
@@ -3919,7 +3926,11 @@ impl VimInputHandler {
                 self.mode = VimMode::Insert;
                 self.reset_pending();
                 if linewise {
-                    InputResult::Ops(vec![ReplaceSelection(String::new()), ContinueInsertRun])
+                    InputResult::Ops(vec![
+                        NormalizeLinewiseSelection,
+                        ReplaceSelection(String::new()),
+                        ContinueInsertRun,
+                    ])
                 } else {
                     InputResult::Ops(vec![
                         MakeSelectionInclusive,
@@ -4030,8 +4041,14 @@ impl VimInputHandler {
                 // but not these, so `v l l U` uppercased two characters
                 // where vim does three — the same off-by-one, left
                 // behind in the operators nobody had tested.
+                // Linewise needs normalising to full lines; charwise
+                // needs widening by one. Both were missing for these
+                // three, so `VU` was a no-op and `v l l U` was one
+                // character short (bug-hunt 2026-09-03).
                 let mut ops = Vec::new();
-                if !linewise {
+                if linewise {
+                    ops.push(NormalizeLinewiseSelection);
+                } else {
                     ops.push(MakeSelectionInclusive);
                 }
                 ops.push(TransformSelectionCase(how));

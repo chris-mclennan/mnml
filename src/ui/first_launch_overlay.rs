@@ -51,9 +51,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     // we can register rects mutably after positioning is decided.
     let hit_tags: Vec<Option<FirstLaunchHit>> = lines.iter().map(|(_, hit)| *hit).collect();
     let lines: Vec<Line> = lines.into_iter().map(|(l, _)| l).collect();
-    let inner_w = INNER_W;
-    let outer_w = inner_w + 2;
-    let outer_h = total_h.min(screen.height.saturating_sub(2));
+    // SEV-1 (mouse bug-hunt 2026-09-03) — `outer_h` was clamped to the
+    // screen and `outer_w` was NOT, so any terminal narrower than 76
+    // columns PANICKED the process: ratatui does not clip, it panics
+    // on a write outside the buffer. Measured: 76 fine, 75 and below
+    // dead.
+    //
+    // The wizard is the worst possible place for this. It runs before
+    // anything else on a first launch, and because the user can never
+    // reach Finish, the panic repeats on EVERY subsequent launch —
+    // mnml is simply unusable on a narrow terminal, with no way out
+    // short of hand-editing config.toml.
+    //
+    // Same class as the picker's clamp (fixed today): a fixed width is
+    // a preference, the screen is a hard limit.
+    let outer_w = (INNER_W + 2).min(screen.width);
+    let inner_w = outer_w.saturating_sub(2);
+    let outer_h = total_h
+        .min(screen.height.saturating_sub(2))
+        .min(screen.height);
     // #987 (2026-08-18) — when the wizard is taller than the terminal,
     // scroll so the focused section stays visible. Without this the
     // top of the content shows and later sections clip off the bottom

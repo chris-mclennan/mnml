@@ -836,14 +836,33 @@ impl App {
                     // scope ran every match regardless of the flag.
                     // Now: split by line and use `replace` (first) or
                     // `replace_all` (global) per line, then rejoin.
+                    //
+                    // SEV-1 (vim bug-hunt 2026-09-03) — the chunks from
+                    // `split_inclusive` CARRY their `\n`, so `$` (which
+                    // without `(?m)` means end-of-haystack) anchored
+                    // AFTER the newline. `:%s/\s\+$//` therefore matched
+                    // the trailing whitespace TOGETHER WITH the line
+                    // terminator and deleted both — collapsing the whole
+                    // file onto one line. That is the single most
+                    // common substitution a person runs, and the reflex
+                    // next keystroke is `:w`.
+                    //
+                    // Split the terminator off, substitute on the line
+                    // BODY, then put it back. `$` now anchors where the
+                    // user can see the line end.
                     let replaced: String = scope
                         .split_inclusive('\n')
-                        .map(|line| {
-                            if sub.global {
-                                re.replace_all(line, replacement.as_str()).into_owned()
+                        .map(|chunk| {
+                            let (body, eol) = match chunk.strip_suffix('\n') {
+                                Some(b) => (b, "\n"),
+                                None => (chunk, ""),
+                            };
+                            let out = if sub.global {
+                                re.replace_all(body, replacement.as_str())
                             } else {
-                                re.replace(line, replacement.as_str()).into_owned()
-                            }
+                                re.replace(body, replacement.as_str())
+                            };
+                            format!("{out}{eol}")
                         })
                         .collect();
                     vec![crate::edit_op::EditOp::ReplaceRange {
@@ -5582,6 +5601,59 @@ mod ex_commands_tests {
         assert!(
             msgs.iter().any(|m| m.text.contains("need a command")),
             ":spawn with no args should toast a hint; log tail = {msgs:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod substitute_eol_tests {
+    /// SEV-1 — `:%s/\s\+$//` collapsed the entire file onto one line.
+    ///
+    /// The per-line chunks came from `split_inclusive('\n')` and CARRY
+    /// their newline, so `$` — which without `(?m)` means end of
+    /// haystack — anchored after the terminator. `\s\+$` therefore
+    /// matched the trailing whitespace TOGETHER WITH the `\n` and
+    /// deleted both.
+    ///
+    /// This is the most common substitution anyone runs, and the
+    /// reflex next keystroke is `:w`. Expected output checked against
+    /// the real `vim` binary: `alpha\nbeta\ngamma\ndelta\n`.
+    #[test]
+    fn trailing_whitespace_substitution_keeps_the_line_breaks() {
+        let re = regex::Regex::new(r"\s+$").unwrap();
+        let scope = "alpha   \nbeta\ngamma \ndelta\n";
+        let replaced: String = scope
+            .split_inclusive('\n')
+            .map(|chunk| {
+                let (body, eol) = match chunk.strip_suffix('\n') {
+                    Some(b) => (b, "\n"),
+                    None => (chunk, ""),
+                };
+                format!("{}{eol}", re.replace_all(body, ""))
+            })
+            .collect();
+        assert_eq!(replaced, "alpha\nbeta\ngamma\ndelta\n");
+        assert_eq!(
+            replaced.matches('\n').count(),
+            4,
+            "line terminators were consumed by the substitution"
+        );
+    }
+
+    /// The old shape, kept as the counter-example: proving the defect
+    /// was real and that the fix is what closes it.
+    #[test]
+    fn the_old_split_inclusive_shape_ate_the_newlines() {
+        let re = regex::Regex::new(r"\s+$").unwrap();
+        let scope = "alpha   \nbeta\ngamma \ndelta\n";
+        let broken: String = scope
+            .split_inclusive('\n')
+            .map(|line| re.replace_all(line, "").into_owned())
+            .collect();
+        assert_eq!(
+            broken, "alphabetagammadelta",
+            "if this no longer joins the lines, the fix above is \
+             guarding something that cannot happen and should be re-derived"
         );
     }
 }
