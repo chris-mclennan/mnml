@@ -17,22 +17,36 @@ const KEYCHAIN_ACTIVE_REFRESH_SECS: u64 = 5 * 60;
 // TODO (user ask 2026-09-03) — a SWITCH ADVISOR over the usage panel.
 //
 // Today the panel answers "where do I stand?". The ask is for it to
-// answer "what should I do?": tell me when to move to a cheaper model
-// and when to come back, so I land near zero unused quota instead of
-// either wasting it or hitting the wall mid-task.
+// answer "what should I do?", so quota lands near zero unused instead
+// of being wasted or hit mid-task.
 //
-// The user's framing: "stay on it too long and the projection changes
-// to running out, then switch back until safe again." So it is a
-// two-sided signal, not a single warning threshold — coming BACK
-// matters as much as leaving, because quota left unspent at reset is
-// wasted.
+// **It is about ACCOUNT switching, not model switching.** The user
+// (2026-09-03): "im not switchign models much currently." An earlier
+// draft of this note framed it as moving between Opus and Fable; that
+// was wrong. Model choice is a separate decision the user makes for
+// task-fit reasons.
 //
-// The user doubts it is achievable, on the grounds that their three
-// accounts renew on different schedules. That is worth answering
-// directly: the differing schedules are the REASON to build it, not
-// the obstacle. Three reset clocks against three burn rates is exactly
-// the arithmetic a person cannot do in their head, which is why the
-// decision currently gets made by feel.
+// **The strategy is already settled — automate it, do not reinvent
+// it.** The user's own heuristic: "watch for the account renewing the
+// soonest and use all of its tokens first, then switch when around
+// 95%, and then do the same for that account too."
+//
+// That is earliest-deadline-first, and it is the right greedy answer
+// here: quota that resets soonest is the quota most likely to expire
+// unspent, so it is the quota to burn first. The user called
+// themselves "a feeble minded human" for arriving at it by feel — it
+// is in fact the correct policy, and the job of this feature is to
+// execute it faster and without vigilance, not to find a better one.
+//
+// So the advisor is: rank accounts by `resets_at` ascending, point at
+// the head of that list, and tell the user when it crosses ~95% and
+// which account is next. Everything below is in service of making that
+// ranking trustworthy.
+//
+// The differing renewal schedules are the REASON to build this, not
+// the obstacle the user took them for. Three reset clocks against
+// three burn rates is precisely the arithmetic a person cannot hold in
+// their head, which is why the call currently gets made by feel.
 //
 // **What already exists.** Per-account snapshots with `resets_at`
 // (5-hour window) and `weekly_resets_at`, utilization percentages,
@@ -57,9 +71,20 @@ const KEYCHAIN_ACTIVE_REFRESH_SECS: u64 = 5 * 60;
 // independently and says "Opus exhausts at ~15:40, weekly resets
 // Thursday" rather than pretending to model the counterfactual.
 //
+// **The 50% days.** The user: "we have those 50% days or something" —
+// periods where the effective allowance differs from the norm. Confirm
+// what these actually are before modelling them, but the design
+// consequence is known either way: a projection that assumes a fixed
+// ceiling will be wrong on exactly the days when the user most wants
+// to spend confidently. Derive the ceiling from the account's own
+// reported numbers rather than a constant, so an unusual day is
+// absorbed rather than mispredicted.
+//
 // Ship the projection before the recommendation. A trustworthy "you
 // run out at X" is useful on its own; a recommendation that is wrong
-// twice will not be read a third time.
+// twice will not be read a third time. And since the user already
+// executes the right policy manually, a wrong recommendation is
+// strictly worse than none — it would displace a working habit.
 
 /// Fold a failed fetch into the account's *existing* snapshot.
 ///
