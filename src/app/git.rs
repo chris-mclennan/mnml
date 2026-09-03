@@ -151,7 +151,7 @@ impl App {
             MenuAction::OpenPath(abs.clone()),
         ));
         items.push(MenuItem::new(
-            "Reveal in Finder",
+            crate::app::reveal_in_files_label(),
             MenuAction::RevealInFinder(abs.clone()),
         ));
         items.push(MenuItem::new("Copy path", MenuAction::CopyPath(rel)));
@@ -3057,7 +3057,10 @@ impl App {
                         "Open shell here",
                         MenuAction::GitWorktreeShell(path.clone()),
                     ),
-                    MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                    MenuItem::new(
+                        crate::app::reveal_in_files_label(),
+                        MenuAction::RevealInFinder(path.clone()),
+                    ),
                     MenuItem::new(
                         "Copy path",
                         MenuAction::CopyPath(path.to_string_lossy().into_owned()),

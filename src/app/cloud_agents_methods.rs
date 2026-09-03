@@ -1233,7 +1233,7 @@ impl App {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(pb.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Open externally", MenuAction::OpenExternally(pb)),
         ];
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
@@ -1271,10 +1271,10 @@ impl App {
                 MenuAction::Command("ai.dashboard.resume_in_pty"),
             ),
             MenuItem::new(
-                "Yank session id",
+                "Copy session id",
                 MenuAction::Command("ai.dashboard.yank_session_id"),
             ),
-            MenuItem::new("Yank cwd", MenuAction::Command("ai.dashboard.yank_cwd")),
+            MenuItem::new("Copy cwd", MenuAction::Command("ai.dashboard.yank_cwd")),
             MenuItem::new(
                 "Export as markdown",
                 MenuAction::Command("ai.dashboard.export_markdown"),

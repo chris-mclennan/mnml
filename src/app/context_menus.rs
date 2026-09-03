@@ -380,7 +380,10 @@ impl App {
                 MenuItem::new("Move to…", MenuAction::FileMoveTo(path.clone())),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
-                MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                MenuItem::new(
+                    crate::app::reveal_in_files_label(),
+                    MenuAction::RevealInFinder(path.clone()),
+                ),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
                 MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
@@ -415,7 +418,10 @@ impl App {
                 MenuItem::new("Move to…", MenuAction::FileMoveTo(path.clone())),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
-                MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                MenuItem::new(
+                    crate::app::reveal_in_files_label(),
+                    MenuAction::RevealInFinder(path.clone()),
+                ),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             ]);
@@ -1161,7 +1167,7 @@ impl App {
             ));
         }
         items.push(MenuItem::new(
-            "Reveal in Finder",
+            crate::app::reveal_in_files_label(),
             MenuAction::RevealInFinder(self.workspace.clone()),
         ));
         items.push(MenuItem::new(
@@ -1262,7 +1268,7 @@ impl App {
         ));
         if let Some(p) = path {
             items.push(MenuItem::new(
-                "Reveal in Finder",
+                crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(p),
             ));
         }
@@ -1521,7 +1527,7 @@ impl App {
             MenuAction::Command("git.refresh_repos"),
         ));
         items.push(MenuItem::new(
-            "Reveal in Finder",
+            crate::app::reveal_in_files_label(),
             MenuAction::RevealInFinder(self.active_repo_path().to_path_buf()),
         ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));

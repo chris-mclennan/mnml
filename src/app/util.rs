@@ -476,3 +476,83 @@ mod self_copy_guard_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod menu_label_consistency_tests {
+    /// One verb for one action, across every menu.
+    ///
+    /// The 2026-09-03 audit found `MenuAction::CopyPath` labelled
+    /// "Yank path" in `right_click.rs` and "Copy path" in
+    /// `context_menus.rs` — the same action, two words, depending only
+    /// on which file the menu happened to be built in.
+    ///
+    /// "Copy" wins. mnml deliberately serves both a vim and a standard
+    /// audience, and a context menu is a MOUSE affordance — it cannot
+    /// branch on the active input handler without breaking the
+    /// architecture rule that only the statusline reads `EditingMode`.
+    /// "Copy" is understood by both camps; "Yank" only by one.
+    #[test]
+    fn menu_rows_say_copy_not_yank() {
+        let mut offenders = Vec::new();
+        let mut files = Vec::new();
+        collect_rs(std::path::Path::new("src"), &mut files);
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap_or_default();
+            for (i, line) in src.lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                if line.contains("MenuItem::new(\"Yank") {
+                    offenders.push(format!("{}:{}", f.display(), i + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "menu rows using the vim verb where every other menu says \"Copy\": {offenders:?}"
+        );
+    }
+
+    /// The OS file-manager label must come from `reveal_in_files_label`,
+    /// never be hardcoded — mnml ships on Windows and Linux, where
+    /// "Finder" names nothing.
+    #[test]
+    fn no_menu_hardcodes_the_word_finder() {
+        let mut offenders = Vec::new();
+        let mut files = Vec::new();
+        collect_rs(std::path::Path::new("src"), &mut files);
+        for f in &files {
+            // This file DEFINES the label, so it legitimately contains it.
+            if f.ends_with("util.rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(f).unwrap_or_default();
+            for (i, line) in src.lines().enumerate() {
+                if line.trim_start().starts_with("//") || line.contains("///") {
+                    continue;
+                }
+                if line.contains("\"Reveal in Finder\"") {
+                    offenders.push(format!("{}:{}", f.display(), i + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "hardcoded \"Reveal in Finder\" — use reveal_in_files_label(): {offenders:?}"
+        );
+    }
+
+    fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_rs(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+}

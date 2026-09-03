@@ -342,7 +342,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(path.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
@@ -366,7 +366,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         if let Some(row) = app.agents_panel_rows.get(row_idx).cloned() {
             use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
             let mut items = vec![MenuItem::new(
-                "Yank session id",
+                "Copy session id",
                 MenuAction::CopyPath(row.session_id.clone()),
             )];
             // A Codex row's transcript path can be a sentinel, and a
@@ -391,7 +391,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             }
             if let Some(cwd) = row.cwd.clone() {
                 items.push(MenuItem::new(
-                    "Yank workspace path",
+                    "Copy workspace path",
                     MenuAction::CopyPath(cwd),
                 ));
             }
@@ -435,9 +435,9 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 ),
                 // The matched TEXT is the thing a user most often
                 // wants off a search hit — more than the path.
-                MenuItem::new("Yank match", MenuAction::CopyPath(hit.text.clone())),
+                MenuItem::new("Copy match", MenuAction::CopyPath(hit.text.clone())),
                 MenuItem::new(
-                    "Yank path:line",
+                    "Copy path:line",
                     MenuAction::CopyPath(format!("{}:{}", hit.rel, hit.line + 1)),
                 ),
             ];
@@ -476,7 +476,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(path.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
@@ -786,7 +786,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
             let items = vec![
                 MenuItem::new("Edit…", MenuAction::CopyPath(format!("edit:{key}"))),
-                MenuItem::new("Yank name", MenuAction::CopyPath(key.clone())),
+                MenuItem::new("Copy name", MenuAction::CopyPath(key.clone())),
                 MenuItem::new("Delete…", MenuAction::Command("http.delete_env_key")),
             ];
             app.pending_env_key_delete = Some(key.clone());
@@ -840,7 +840,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(path.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
@@ -861,8 +861,8 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             let title = format!("{method} {}", &url[..40.min(url.len())]);
             let items = vec![
                 MenuItem::new("Open as scratch", MenuAction::CopyPath(curl.clone())),
-                MenuItem::new("Yank curl", MenuAction::CopyPath(curl)),
-                MenuItem::new("Yank URL", MenuAction::CopyPath(url)),
+                MenuItem::new("Copy curl", MenuAction::CopyPath(curl)),
+                MenuItem::new("Copy URL", MenuAction::CopyPath(url)),
             ];
             app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         }
@@ -882,8 +882,8 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             let title = format!("{} {}", row.method, &row.url[..40.min(row.url.len())]);
             let items = vec![
                 MenuItem::new("Open as scratch", MenuAction::CopyPath(curl.clone())),
-                MenuItem::new("Yank curl", MenuAction::CopyPath(curl)),
-                MenuItem::new("Yank URL", MenuAction::CopyPath(row.url)),
+                MenuItem::new("Copy curl", MenuAction::CopyPath(curl)),
+                MenuItem::new("Copy URL", MenuAction::CopyPath(row.url)),
             ];
             app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         }
@@ -920,8 +920,8 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = vec![
             MenuItem::new("Set active", MenuAction::Command("http.pick_env")),
             MenuItem::new("Open file", MenuAction::OpenPath(env_file.clone())),
-            MenuItem::new("Yank name", MenuAction::CopyPath(name.clone())),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy name", MenuAction::CopyPath(name.clone())),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(env_file.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(env_file)),
         ];
@@ -950,7 +950,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(path.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
@@ -979,7 +979,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(path.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
@@ -1008,7 +1008,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(dir.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(dir.clone())),
             MenuItem::new("Delete collection…", MenuAction::Delete(dir)),
         ];
@@ -1037,7 +1037,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(path.clone()),
             ),
-            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
