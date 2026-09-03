@@ -161,7 +161,12 @@ fn draw_toast_box(
     let box_w = (inner_w + 2)
         .min(MAX_WIDTH)
         .min(area.width.saturating_sub(2));
-    let box_h: u16 = 3;
+    // A toast with an offer is one row taller so the chip sits INSIDE
+    // the box on its own line. It used to be painted on the bottom
+    // BORDER, which is geometrically inside but does not read that way:
+    // a filled chip straddling a 1-cell rule looks detached, and the
+    // user asked whether it was "outside the border".
+    let box_h: u16 = if entry.action.is_some() { 4 } else { 3 };
     if *y_bottom < area.y + box_h {
         return false;
     }
@@ -244,24 +249,34 @@ fn draw_toast_box(
                     .add_modifier(Modifier::BOLD),
             ))),
             ratatui::layout::Rect {
-                x: rect.x + 2,
-                y: rect.y + rect.height.saturating_sub(1),
+                x: inner.x,
+                y: inner.y + 1,
                 width: w,
                 height: 1,
             },
         );
     }
-    if inner.width > 0 {
-        let mut style = Style::default().fg(t.red).bg(t.bg_darker);
+    // Close affordance, three cells wide and BOLD.
+    //
+    // It was a single dim `x` sitting flush against the corner glyphs,
+    // and the user did not know it existed until it was mentioned. Set
+    // off by spaces it reads as a control rather than as part of the
+    // rule, and the padding makes it a bigger mouse target — a 1-cell
+    // click target on a transient widget is a poor bet.
+    if rect.width > 6 {
+        let mut style = Style::default()
+            .fg(t.red)
+            .bg(t.bg_darker)
+            .add_modifier(Modifier::BOLD);
         if fading {
             style = style.add_modifier(Modifier::DIM);
         }
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled("\u{00d7}", style))),
+            Paragraph::new(Line::from(Span::styled(" \u{00d7} ", style))),
             ratatui::layout::Rect {
-                x: rect.x + rect.width.saturating_sub(2),
+                x: rect.x + rect.width.saturating_sub(4),
                 y: rect.y,
-                width: 1,
+                width: 3,
                 height: 1,
             },
         );
@@ -460,4 +475,105 @@ fn draw_progress_box(
     );
     *y_bottom = y;
     true
+}
+
+#[cfg(test)]
+mod action_chip_tests {
+    use crate::app::{App, ToastAction, ToastLevel};
+    use crate::config::Config;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn render(app: &mut App, w: u16, h: u16) -> Vec<String> {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| super::draw(f, app)).unwrap();
+        let buf = term.backend().buffer();
+        (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect()
+    }
+
+    fn app_with_offer() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.toast_with_action(
+            "needs the loopback driver",
+            ToastLevel::Error,
+            ToastAction::RunInTerminal {
+                label: "Install".into(),
+                cmd: "brew install --cask blackhole-2ch".into(),
+            },
+        );
+        (d, app)
+    }
+
+    /// USER REPORT — "the install is outside the border, is that
+    /// expected". It was painted on the bottom BORDER: geometrically
+    /// inside, but a filled chip straddling a 1-cell rule does not read
+    /// that way. It now has its own row within the box.
+    #[test]
+    fn the_action_chip_sits_inside_the_box_not_on_its_border() {
+        let (_d, mut app) = app_with_offer();
+        let rows = render(&mut app, 70, 12);
+        let i = rows
+            .iter()
+            .position(|r| r.contains("Install"))
+            .expect("no action chip drawn");
+        // The row carrying the chip must be a CONTENT row — bounded by
+        // the box's vertical rules, not made of horizontal rule glyphs.
+        assert!(
+            rows[i].contains('\u{2502}'),
+            "the chip row has no side walls — it is on a border:\n{}",
+            rows[i]
+        );
+        assert!(
+            !rows[i].contains('\u{2500}'),
+            "the chip is painted on a horizontal rule:\n{}",
+            rows[i]
+        );
+        // And a border still closes the box beneath it.
+        assert!(
+            rows[i + 1].contains('\u{2518}'),
+            "no bottom border under the chip:\n{}",
+            rows[i + 1]
+        );
+    }
+
+    /// USER REPORT — "that x is too hard to see, i didnt know it was
+    /// there". A single dim glyph flush against the corner. It is bold
+    /// and padded now, which also makes it a 3-cell mouse target rather
+    /// than a 1-cell one.
+    #[test]
+    fn the_close_affordance_is_padded_and_bold() {
+        let (_d, mut app) = app_with_offer();
+        let rows = render(&mut app, 70, 12);
+        let top = rows
+            .iter()
+            .find(|r| r.contains('\u{00d7}'))
+            .expect("no close affordance drawn");
+        assert!(
+            top.contains(" \u{00d7} "),
+            "the x is flush against the border glyphs:\n{top}"
+        );
+    }
+
+    /// A toast with NO offer keeps its original three-row shape.
+    #[test]
+    fn a_toast_without_an_offer_is_unchanged() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.toast_leveled("just a message", ToastLevel::Info);
+        let rows = render(&mut app, 70, 12);
+        let drawn: Vec<&String> = rows.iter().filter(|r| !r.trim().is_empty()).collect();
+        assert_eq!(
+            drawn.len(),
+            3,
+            "a toast with no offer grew a row:\n{}",
+            drawn
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 }

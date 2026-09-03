@@ -3993,14 +3993,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .enumerate()
         .find(|(_, r)| crate::app::dispatch::contains(**r, x, y))
     {
-        // The bottom border row is the ACTION chip when the toast has
-        // one — clicking there runs the offer instead of dismissing.
-        // Dismissing something you meant to act on is the worse of the
-        // two mistakes, since the toast is then gone.
+        // Row 2 of the box is the ACTION chip when the toast has one:
+        // top border, message, chip, bottom border. Clicking there runs
+        // the offer instead of dismissing — dismissing something you
+        // meant to act on is the worse mistake, since the toast is then
+        // gone.
         if let Some(e) = app.toast_stack.get(idx)
             && let Some(act) = e.action.clone()
             && let Some(r) = app.rects.toast_stack_rects.get(idx)
-            && y == r.y + r.height.saturating_sub(1)
+            && y == r.y + 2
         {
             app.run_toast_action(&act);
             return;
