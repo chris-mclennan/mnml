@@ -195,10 +195,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // (user 2026-09-03: "can i get an empty char on right side of
         // time and scrollbar too").
         let detail_cost = if dw > 0 { dw + 2 } else { 0 };
-        // label gets whatever's left after the marker (2) and the detail.
-        let label_avail = lw.saturating_sub(marker_w + detail_cost);
-        let label: String = item.label.chars().take(label_avail).collect();
-        let used = marker_w + label.chars().count() + detail_cost;
+        // A row with NO detail still owes the right edge a cell: the
+        // trailing space was added to the detail span, so detail-less
+        // rows ran flush into the scrollbar (bug-hunt 2026-09-03).
+        let right_pad = if dw > 0 { 0 } else { 1 };
+        // label gets whatever's left after the marker and the detail.
+        let label_avail = lw.saturating_sub(marker_w + detail_cost + right_pad);
+        // The detail gets an ellipsis when it overflows; the label did
+        // not, so a cut label read as a complete one —
+        // `app.data_layout` rendered as `app` with nothing to say it
+        // continued.
+        let label: String = if item.label.chars().count() > label_avail && label_avail >= 2 {
+            item.label.chars().take(label_avail - 1).collect::<String>() + "\u{2026}"
+        } else {
+            item.label.chars().take(label_avail).collect()
+        };
+        let used = marker_w + label.chars().count() + detail_cost + right_pad;
         let gap = lw.saturating_sub(used);
         let mut label_style = Style::default().fg(theme::cur().fg).bg(bg);
         if is_sel {
@@ -1030,6 +1042,69 @@ mod picker_scrollbar_tests {
         assert!(
             app.dragging_scrollbar.is_none(),
             "the scrollbar drag never ended — the bar stays grabbed"
+        );
+    }
+
+    /// Two row-layout gaps found 2026-09-03.
+    ///
+    /// A row with NO detail ran flush into the scrollbar, because the
+    /// trailing space had been added to the detail span only. And a
+    /// truncated LABEL got no ellipsis while the detail did, so a cut
+    /// label read as a complete one.
+    #[test]
+    fn detail_less_rows_keep_a_right_margin_and_cut_labels_show_it() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        // Long labels, NO detail, and enough rows to force a scrollbar.
+        let items: Vec<crate::picker::PickerItem> = (0..200)
+            .map(|i| {
+                crate::picker::PickerItem::new(
+                    i.to_string(),
+                    format!("a rather long entry label that will not fit at all {i}"),
+                    String::new(),
+                )
+            })
+            .collect();
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Files,
+            "Files".to_string(),
+            items,
+        ));
+        let (w, h) = (60u16, 20u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let rows: Vec<String> = (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+        let row = rows
+            .iter()
+            .find(|r| r.contains("a rather long entry"))
+            .expect("no list row rendered");
+
+        assert!(
+            row.contains('\u{2026}'),
+            "a truncated label has no ellipsis, so it reads as complete: {row:?}"
+        );
+        // The label must not touch whatever sits at the right edge.
+        let cut = row.split('\u{2026}').next().unwrap_or("");
+        let after: String = row.chars().skip(cut.chars().count() + 1).collect();
+        assert!(
+            after.starts_with(' '),
+            "the label runs flush into the right edge: {after:?}"
         );
     }
 

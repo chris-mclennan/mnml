@@ -1607,6 +1607,21 @@ pub fn rects_dump_json(app: &App) -> String {
         "agents_panel_refresh_chip",
         app.rects.agents_panel_refresh_chip
     );
+    // 2026-09-03 — the sort chips shipped without a dump entry, so
+    // `.test` E2E could not locate them and the mouse bug-hunt had to
+    // derive the column from `screen.txt` by hand. Same omission this
+    // file already carries five comments about; adding the entry is
+    // part of adding a chip, not a follow-up.
+    one!("todos_panel_sort_chip", app.rects.todos_panel_sort_chip);
+    one!("notes_panel_sort_chip", app.rects.notes_panel_sort_chip);
+    one!(
+        "findings_panel_sort_chip",
+        app.rects.findings_panel_sort_chip
+    );
+    one!(
+        "sessions_panel_sort_chip",
+        app.rects.sessions_panel_sort_chip
+    );
     // R16 vscode-mouse SEV-2 (2026-08-24) — todos + cloud_agents
     // refresh chips were populated by the panel render but never
     // dumped over IPC, so the mouse tester couldn't verify their
@@ -1829,6 +1844,21 @@ pub fn rects_dump_json(app: &App) -> String {
     }
     for (r, idx) in &app.rects.picker_items {
         push_rect(&mut out, &mut first, &format!("picker_item:{idx}"), *r);
+    }
+    // 2026-09-03 — the NOTES / FINDINGS file rows were absent from the
+    // dump, so an E2E test could click a TODOS row but not a note or a
+    // finding. Indexed by position in the visible window, matching how
+    // both panels' click handlers resolve a hit.
+    for (i, (r, _)) in app.rects.notes_panel_files.iter().enumerate() {
+        push_rect(&mut out, &mut first, &format!("notes_panel_file:{i}"), *r);
+    }
+    for (i, (r, _)) in app.rects.findings_panel_files.iter().enumerate() {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("findings_panel_file:{i}"),
+            *r,
+        );
     }
     for (r, pid, field) in &app.rects.request_fields {
         push_rect(
@@ -2712,5 +2742,34 @@ mod tests {
         let log = std::fs::read_to_string(dir.path().join(".mnml/ipc/events.jsonl")).unwrap();
         assert!(log.contains(r#""event":"plugin-command""#), "log: {log}");
         assert!(log.contains(r#""id":"plugin.x""#), "log: {log}");
+    }
+}
+
+#[cfg(test)]
+mod rect_dump_coverage_tests {
+    /// Any clickable chip or row must appear in the rect dump, or a
+    /// `.test` E2E cannot address it and a mouse bug-hunt has to derive
+    /// its column from `screen.txt` by hand.
+    ///
+    /// This file already carried five comments about this exact class
+    /// of omission before the sort chips repeated it, which is why the
+    /// check is now mechanical.
+    #[test]
+    fn every_new_clickable_rect_is_dumped() {
+        let src = std::fs::read_to_string(file!()).unwrap();
+        for field in [
+            "todos_panel_sort_chip",
+            "notes_panel_sort_chip",
+            "findings_panel_sort_chip",
+            "sessions_panel_sort_chip",
+            "notes_panel_files",
+            "findings_panel_files",
+        ] {
+            assert!(
+                src.contains(field),
+                "`{field}` is clickable but absent from the rect dump — \
+                 E2E cannot locate it"
+            );
+        }
     }
 }
