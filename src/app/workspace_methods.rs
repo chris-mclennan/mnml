@@ -925,6 +925,9 @@ impl App {
                 }),
             }
         }
+        // `>=` because the walk stops the moment it reaches the cap,
+        // so hitting it exactly is indistinguishable from exceeding it.
+        self.todos_truncated = hits.len() >= TODOS_SCAN_CAP;
         self.todos_hits = hits;
         self.todos_panel_scanned_once = true;
         // The cursor is NOT reset. Clicking ↻ used to send you back to
@@ -1743,12 +1746,23 @@ fn walk_for_http(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::Pat
     }
 }
 
+/// Marker cap for the TODOS walk.
+///
+/// A bound on a recursive workspace scan is right — but it must be
+/// VISIBLE. Before 2026-09-03 the walk simply stopped, so which markers
+/// existed was decided by raw `read_dir` order: a workspace with 3043
+/// markers showed 1102, and filtering for a package that really had 100
+/// of them returned zero. Every sort mode then ordered an arbitrary
+/// subset, which "Newest first" and (once added) "Oldest first" both
+/// quietly misrepresent. The panel now says when it has capped.
+pub const TODOS_SCAN_CAP: usize = 1000;
+
 fn walk_for_todos(
     dir: &std::path::Path,
     depth: u32,
     out: &mut Vec<crate::ui::todos_panel::TodoHit>,
 ) {
-    if depth > 6 || out.len() > 1000 {
+    if depth > 6 || out.len() >= TODOS_SCAN_CAP {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {

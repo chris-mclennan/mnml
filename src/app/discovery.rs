@@ -1249,6 +1249,15 @@ fn persist_config_scalar(
         }
     }
     let contents = out.join("\n") + "\n";
+    // A no-op write is not free: `write_toml_with_backup` rewrites the
+    // file, stamps a `config.toml.pre-config-*` backup, and prunes the
+    // oldest. Setting a value to what it already is would therefore
+    // evict one entry of the user's disaster-recovery history per
+    // click — and the sort chips cycle on every click (bug-hunt
+    // 2026-09-03). Compare first; the read already happened above.
+    if contents == existing {
+        return Ok(path);
+    }
     crate::app::backup::write_toml_with_backup(&path, &contents, "config")
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
@@ -2286,6 +2295,46 @@ enabled = true
                 .unwrap()
                 .contains("[[ui.integration_icon]]"),
             "block still stripped"
+        );
+    }
+}
+
+#[cfg(test)]
+mod persist_noop_tests {
+    /// Writing a value that is already in the file must not touch it.
+    ///
+    /// `write_toml_with_backup` rewrites, stamps a
+    /// `config.toml.pre-config-*` backup, and prunes the oldest — so a
+    /// no-op write evicts one entry of the user's disaster-recovery
+    /// history. The sort chips cycle on every click, which made this
+    /// easy to hit (bug-hunt 2026-09-03).
+    #[test]
+    fn re_persisting_the_same_value_does_not_rewrite_the_file() {
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let _lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env = crate::EnvGuard::set("MNML_DATA_ROOT", cfg_dir.path());
+
+        let path = super::persist_ui_string("todos_sort", "name").unwrap();
+        let first = std::fs::read_to_string(&path).unwrap();
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        // Same value again — must be a no-op.
+        super::persist_ui_string("todos_sort", "name").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            mtime,
+            "the file was rewritten for an unchanged value"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
+
+        // A DIFFERENT value must still be written, or the guard has
+        // broken persistence outright.
+        super::persist_ui_string("todos_sort", "oldest").unwrap();
+        assert!(
+            std::fs::read_to_string(&path).unwrap().contains("oldest"),
+            "the no-op guard swallowed a real change"
         );
     }
 }

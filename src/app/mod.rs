@@ -5585,6 +5585,11 @@ pub struct App {
     /// Row order for the three list panels. Per-panel because a user
     /// browsing notes alphabetically may still want findings newest-
     /// first — they are different tasks.
+    /// True when the TODOS walk stopped at
+    /// [`crate::app::workspace_methods::TODOS_SCAN_CAP`], so the list
+    /// is an arbitrary subset and the sort order does not mean what it
+    /// says. Surfaced in the panel header.
+    pub todos_truncated: bool,
     pub todos_sort: crate::ui::list_sort::ListSort,
     pub notes_sort: crate::ui::list_sort::ListSort,
     pub findings_sort: crate::ui::list_sort::ListSort,
@@ -6854,6 +6859,7 @@ impl App {
             todos_panel_cursor: 0,
             notes_panel_cursor: 0,
             findings_panel_cursor: 0,
+            todos_truncated: false,
             todos_sort: sort_todos,
             notes_sort: sort_notes,
             findings_sort: sort_findings,

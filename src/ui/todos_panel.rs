@@ -101,10 +101,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // 2026-08-24 (user ask) — always show a count-in-parens
     // (parity with FINDINGS): total when unfiltered, `M of N`
     // when a filter narrows it.
+    // A `+` marks a capped scan: the number is a floor, not a total,
+    // and the sort order describes only what was scanned.
+    let cap = if app.todos_truncated { "+" } else { "" };
     let subtitle = if filter_lc.is_empty() {
-        format!("  ({})", app.todos_hits.len())
+        format!("  ({}{cap})", app.todos_hits.len())
     } else {
-        format!("  ({} of {})", filtered.len(), app.todos_hits.len())
+        format!("  ({} of {}{cap})", filtered.len(), app.todos_hits.len())
     };
     // The `sort:` chip is the same idiom as CLOUD AGENTS' `view:`
     // chip — click cycles, right-click lists every mode with a ✓ on
@@ -645,6 +648,73 @@ pub fn scan_file(path: &std::path::Path) -> Vec<TodoHit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BUG-HUNT 2026-09-03 — the TODOS walk stops at 1000 markers, so
+    /// which ones exist is decided by raw `read_dir` order. A workspace
+    /// with 3043 markers showed 1102, and filtering for a package with
+    /// 100 of them returned zero. Every sort mode then orders an
+    /// arbitrary subset — "Oldest first" is not the oldest in the
+    /// workspace, it is the oldest of whatever the walk happened to
+    /// reach.
+    ///
+    /// The cap itself is right (it bounds a recursive scan). Being
+    /// SILENT about it is not.
+    #[test]
+    fn a_capped_scan_says_so_in_the_header() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = (0..crate::app::workspace_methods::TODOS_SCAN_CAP)
+            .map(|i| TodoHit {
+                tag: "TODO",
+                path: d.path().join(format!("f{i}.rs")),
+                line: 1,
+                title: "x".into(),
+            })
+            .collect();
+
+        let render = |app: &mut crate::app::App| -> String {
+            let (w, h) = (80u16, 12u16);
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| {
+                draw(
+                    f,
+                    app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: w,
+                        height: h,
+                    },
+                )
+            })
+            .unwrap();
+            let buf = term.backend().buffer();
+            (0..w).map(|x| buf[(x, 0)].symbol()).collect()
+        };
+
+        app.todos_truncated = true;
+        let capped = render(&mut app);
+        assert!(
+            capped.contains("(1000+)"),
+            "a capped scan reports a plain total, so the count reads as \
+             complete: {capped:?}"
+        );
+
+        // And an uncapped scan must NOT wear the marker, or it means
+        // nothing.
+        app.todos_truncated = false;
+        let full = render(&mut app);
+        assert!(
+            full.contains("(1000)") && !full.contains("(1000+)"),
+            "an uncapped scan was marked as capped: {full:?}"
+        );
+    }
 
     /// USER REPORT 2026-09-03 — "the first todo shobund start 1 line
     /// down". Adding the `+ New todo` chip consumed the panel's only
