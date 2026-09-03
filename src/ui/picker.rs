@@ -118,6 +118,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     // List rendering leaves grid mode off; grid renderer sets it fresh.
     picker.grid_cols = 0;
     let visible = list_area.height as usize;
+    // Reserve the scrollbar column BEFORE laying out any row.
+    //
+    // It used to be reserved after, by narrowing the render rect — so
+    // every row was laid out for the full width and then had its last
+    // cell clipped. On the message history that ate the final digit of
+    // the clock: `04:4` (user report).
+    let total_items = picker.items_view().count();
+    let needs_sb = total_items > visible && visible > 0;
+    let list_area = if needs_sb {
+        Rect {
+            width: list_area.width.saturating_sub(1),
+            ..list_area
+        }
+    } else {
+        list_area
+    };
     if picker.selected < picker.scroll {
         picker.scroll = picker.selected;
     } else if picker.selected >= picker.scroll + visible {
@@ -242,16 +258,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     // message history is the one that shows it: 200 entries in a
     // 15-row popup, with no cue that 185 more exist (user: "rows go
     // beyond visible length").
-    let total = picker.items_view().count();
-    let needs_sb = total > visible && visible > 0;
-    let list_area = if needs_sb {
-        Rect {
-            width: list_area.width.saturating_sub(1),
-            ..list_area
-        }
-    } else {
-        list_area
-    };
+    let total = total_items;
     if needs_sb {
         let sb = Rect {
             x: list_area.x + list_area.width,
@@ -669,6 +676,62 @@ mod picker_scrollbar_tests {
             "viewport {} vs total {} — a bar that cannot move",
             hit.viewport,
             hit.total
+        );
+    }
+
+    /// USER REPORT — "the scrollbar is covering up the minutes".
+    ///
+    /// The bar's column was reserved by narrowing the RENDER rect after
+    /// the rows had already been laid out for the full width, so every
+    /// row lost its last cell. On the message history, whose detail is
+    /// `⚠ HH:MM`, that ate the final digit of the clock: `04:4`.
+    #[test]
+    fn the_scrollbar_does_not_clip_the_detail_column() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        // Rows shaped like the message log: a long label, and a detail
+        // whose LAST character carries meaning — the clock's final digit.
+        let items: Vec<crate::picker::PickerItem> = (0..200)
+            .map(|i| {
+                crate::picker::PickerItem::new(
+                    i.to_string(),
+                    format!("sonos: install the loopback driver first {i}"),
+                    "\u{f071}  04:47".to_string(),
+                )
+            })
+            .collect();
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Messages,
+            "Messages (200)".to_string(),
+            items,
+        ));
+        let (w, h) = (100u16, 24u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let rows: Vec<String> = (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+        let hit = rows
+            .iter()
+            .find(|r| r.contains("04:4"))
+            .expect("no row carrying a clock rendered");
+        assert!(
+            hit.contains("04:47"),
+            "the last digit of the clock was clipped by the scrollbar:\n{hit}"
         );
     }
 
