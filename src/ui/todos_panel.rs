@@ -109,8 +109,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // The `sort:` chip is the same idiom as CLOUD AGENTS' `view:`
     // chip — click cycles, right-click lists every mode with a ✓ on
     // the current one.
-    let sort_chip =
-        crate::ui::panel_chrome::mode_chip_text("sort", app.panel_sort("todos").label());
+    // Pad to the widest mode label so the chip keeps a fixed width and
+    // cannot slide out from under a repeat-clicking pointer.
+    let sort_widest = crate::ui::list_sort::ListSort::all()
+        .iter()
+        .map(|m| m.label().chars().count())
+        .max()
+        .unwrap_or(0);
+    let sort_chip = crate::ui::panel_chrome::mode_chip_text(
+        "sort",
+        app.panel_sort("todos").label(),
+        sort_widest,
+    );
     let (todos_sort, todos_refresh) = crate::ui::panel_chrome::draw_caps_header_with_chips(
         frame,
         Rect {

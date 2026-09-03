@@ -3527,9 +3527,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         if let Some(r) = app.rects.sessions_panel_sort_chip
             && crate::app::dispatch::contains(r, x, y)
         {
-            app.sessions_sort_mode = app.sessions_sort_mode.next();
-            let label = app.sessions_sort_mode.label();
-            app.toast(format!("sessions: {label}"));
+            app.set_sessions_sort(app.sessions_sort_mode.next());
             return;
         }
     }

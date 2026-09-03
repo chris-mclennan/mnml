@@ -6481,6 +6481,11 @@ impl App {
 
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
         // Read before `config` moves into the struct literal below.
+        let sort_sessions = if config.ui.sessions_sort == "manual" {
+            crate::app::SessionsSortMode::Manual
+        } else {
+            crate::app::SessionsSortMode::Auto
+        };
         let sort_todos = crate::ui::list_sort::ListSort::from_token(&config.ui.todos_sort);
         let sort_notes = crate::ui::list_sort::ListSort::from_token(&config.ui.notes_sort);
         let sort_findings = crate::ui::list_sort::ListSort::from_token(&config.ui.findings_sort);
@@ -6843,7 +6848,7 @@ impl App {
             ai_placeholder_slot: None,
             sessions_manual_order: Vec::new(),
             sessions_pinned: std::collections::HashSet::new(),
-            sessions_sort_mode: crate::app::SessionsSortMode::Auto,
+            sessions_sort_mode: sort_sessions,
             sessions_panel_filter: String::new(),
             sessions_panel_filter_focused: false,
             todos_panel_cursor: 0,
@@ -10181,6 +10186,25 @@ impl App {
         } else if let Some(parent) = path.parent() {
             open_path_external(parent);
         }
+    }
+
+    /// Set the SESSIONS row order and persist it.
+    ///
+    /// 2026-09-03 — this was three separate bare assignments (the chip
+    /// click and two palette commands), none of which persisted, so
+    /// SESSIONS was the only one of the four sort settings that did not
+    /// survive a restart. One setter now, as the list panels have in
+    /// `set_panel_sort`.
+    pub fn set_sessions_sort(&mut self, mode: crate::app::SessionsSortMode) {
+        self.sessions_sort_mode = mode;
+        let token = match mode {
+            crate::app::SessionsSortMode::Auto => "auto",
+            crate::app::SessionsSortMode::Manual => "manual",
+        };
+        if let Err(e) = crate::app::discovery::persist_ui_string("sessions_sort", token) {
+            self.toast(format!("sort: could not save: {e}"));
+        }
+        self.toast(format!("sessions: {}", mode.label()));
     }
 
     /// Reveal `path` in mnml's OWN file tree — expand every ancestor,

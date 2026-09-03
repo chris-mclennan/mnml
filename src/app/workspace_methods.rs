@@ -751,7 +751,10 @@ impl App {
                 MenuAction::WorkspaceMoveDown(idx),
             ));
         }
-        items.push(MenuItem::new("Delete", MenuAction::WorkspaceDelete(idx)));
+        items.push(MenuItem::destructive(
+            "Delete",
+            MenuAction::WorkspaceDelete(idx),
+        ));
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }
 

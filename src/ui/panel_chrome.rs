@@ -140,8 +140,34 @@ pub fn draw_caps_header_with_refresh(
 /// The chip carries its own label because a bare value (` Newest `)
 /// does not say what it controls; `view:` and `sort:` are what make
 /// two chips in one header distinguishable.
-pub fn mode_chip_text(key: &str, value: &str) -> String {
-    format!(" {key}: {value} ")
+pub fn mode_chip_text(key: &str, value: &str, widest: usize) -> String {
+    // Pad to the WIDEST value the chip can ever hold, so the chip does
+    // not resize when the mode changes.
+    //
+    // 2026-09-03 bug-hunt 2-B: the chip is right-anchored, so shrinking
+    // the label moved its left edge rightward and out from under the
+    // pointer. Clicking the word `sort:` advanced twice and then went
+    // dead with no pointer movement — "the button works sometimes".
+    // Same principle as the leaf tab strip's arrow slots: reserve the
+    // space once so the affordance cannot move under the cursor.
+    let pad = widest.saturating_sub(value.chars().count());
+    format!(" {key}: {value}{} ", " ".repeat(pad))
+}
+
+/// The narrow form: an icon only, no key and no value.
+///
+/// The full chip needs ~38 cells with its panel title and count; the
+/// shipped default sidebar is 26, so at stock settings the expanded
+/// chip never appeared at all — the sorting the user asked for was
+/// invisible for anyone who had not widened the rail (found by two
+/// independent bug-hunts, 2026-09-03).
+///
+/// Dropping to an icon is what the refresh chip beside it already
+/// does, so the narrow header reads as one family rather than one chip
+/// vanishing. Right-click still opens the full menu with every mode
+/// spelled out, which is where the words belong anyway.
+pub fn mode_chip_icon(ascii: bool) -> &'static str {
+    if ascii { " ~ " } else { " \u{f0dc} " }
 }
 
 /// The chip's style. Split out so a caller painting the chip inside a
@@ -181,10 +207,16 @@ pub fn draw_caps_header_with_chips(
     let refresh_w = refresh_text.chars().count() as u16;
     let label_w = label.chars().count() as u16;
     let sub_w = subtitle.map(|s| s.chars().count() as u16).unwrap_or(0);
-    let chip_w = chip.map(|c| c.chars().count() as u16).unwrap_or(0);
 
-    // 1 leading pad + label + subtitle + a gap before each chip.
-    let refresh_fits = area.width >= label_w + sub_w + refresh_w + 3;
+    // The subtitle is DROPPABLE; the title and the refresh chip are not.
+    //
+    // 2026-09-03 bug-hunt 2-C: folding the subtitle into the
+    // refresh-fits budget meant typing in the filter — which grows
+    // `(N)` into `(N of M)` — could push the header over and delete the
+    // refresh chip mid-interaction. The helper this replaced sized the
+    // refresh chip against `label + refresh + 3` only and always
+    // emitted the subtitle, so that was a regression.
+    let refresh_fits = area.width >= label_w + refresh_w + 3;
     if !refresh_fits {
         // Too narrow for any chip — fall back to the plain header so
         // the title still paints.
@@ -197,7 +229,29 @@ pub fn draw_caps_header_with_chips(
         );
         return (None, None);
     }
-    let chip_fits = chip_w > 0 && area.width >= label_w + sub_w + refresh_w + chip_w + 4;
+    // Drop the subtitle rather than the refresh chip when both cannot
+    // fit — the count is nice, the refresh button is functional.
+    let sub_fits = area.width >= label_w + sub_w + refresh_w + 3;
+    let subtitle = if sub_fits { subtitle } else { None };
+    let sub_w = if sub_fits { sub_w } else { 0 };
+
+    // Three chip widths, tried widest-first: the full ` key: value `,
+    // then the icon-only form, then nothing. The middle rung is what
+    // makes the chip exist at the shipped default sidebar width, where
+    // the full form needs ~38 cells against 26 available.
+    let full_w = chip.map(|c| c.chars().count() as u16).unwrap_or(0);
+    let icon = mode_chip_icon(ascii);
+    let icon_w = icon.chars().count() as u16;
+    let (chip, chip_w) = if chip.is_none() {
+        (None, 0)
+    } else if area.width >= label_w + sub_w + refresh_w + full_w + 4 {
+        (chip, full_w)
+    } else if area.width >= label_w + sub_w + refresh_w + icon_w + 4 {
+        (Some(icon), icon_w)
+    } else {
+        (None, 0)
+    };
+    let chip_fits = chip_w > 0;
 
     let refresh_x = area.x + area.width.saturating_sub(refresh_w);
     // The chip sits immediately left of the refresh chip, with one
@@ -328,13 +382,10 @@ mod mode_chip_tests {
         (row, got.0, got.1)
     }
 
-    /// The whole point of the chip: the sort mode is VISIBLE. It was
-    /// previously reachable only by right-clicking the refresh chip,
-    /// which is why the user reported the panels as having no sorting
-    /// options at all.
+    /// The whole point of the chip: the sort mode is VISIBLE.
     #[test]
     fn the_chip_paints_its_value_and_returns_a_hit_rect() {
-        let (row, chip, refresh) = render(60, Some(&mode_chip_text("sort", "Newest first")));
+        let (row, chip, refresh) = render(60, Some(&mode_chip_text("sort", "Newest first", 12)));
         assert!(row.contains("FINDINGS"), "title missing: {row:?}");
         assert!(
             row.contains("sort: Newest first"),
@@ -342,8 +393,6 @@ mod mode_chip_tests {
         );
         let chip = chip.expect("no chip rect returned — the chip would be unclickable");
         assert!(refresh.is_some(), "refresh chip lost");
-        // The rect must actually cover the painted text, or the click
-        // target and the pixels disagree.
         let painted: String = row
             .chars()
             .skip(chip.x as usize)
@@ -355,14 +404,76 @@ mod mode_chip_tests {
         );
     }
 
-    /// A chip that will not fit must be DROPPED, not clipped — a
-    /// half-painted chip is a dead click target, and worse than none.
-    /// The refresh chip wins the last cells because users already
-    /// reach for it by position.
+    /// THE SHIPPED DEFAULT. `[ui] tree_width = 30` leaves the panel
+    /// about 26 cells, and the full chip needs ~38 — so at stock
+    /// settings the chip did not render AT ALL, and the sorting the
+    /// user asked for was invisible to anyone who had not widened the
+    /// rail. Two independent bug-hunts found it on the same day.
+    ///
+    /// The original tests here rendered at 60 and 24 — bracketing the
+    /// default without ever testing it. This test exists because that
+    /// gap is what let the feature ship broken.
+    #[test]
+    fn the_chip_is_reachable_at_the_default_sidebar_width() {
+        for w in [26u16, 30, 34] {
+            let (row, chip, refresh) = render(w, Some(&mode_chip_text("sort", "Newest first", 12)));
+            assert!(
+                chip.is_some(),
+                "no sort affordance at all at width {w} (the shipped default \
+                 leaves ~26): {row:?}"
+            );
+            assert!(refresh.is_some(), "refresh chip lost at width {w}");
+            assert!(row.contains("FINDINGS"), "title lost at width {w}: {row:?}");
+            // The rect must cover something painted, or it is a click
+            // target over blank cells.
+            let r = chip.unwrap();
+            let painted: String = row
+                .chars()
+                .skip(r.x as usize)
+                .take(r.width as usize)
+                .collect();
+            assert!(
+                !painted.trim().is_empty(),
+                "the chip rect at width {w} covers only blanks: {painted:?}"
+            );
+        }
+    }
+
+    /// The chip must not RESIZE when the mode changes: it is
+    /// right-anchored, so a shorter label moves its left edge rightward
+    /// and out from under a pointer that is repeat-clicking. Users saw
+    /// two clicks land and the third do nothing.
+    #[test]
+    fn the_chip_keeps_a_fixed_width_across_modes() {
+        let widest = crate::ui::list_sort::ListSort::all()
+            .iter()
+            .map(|m| m.label().chars().count())
+            .max()
+            .unwrap();
+        let mut rects = Vec::new();
+        for m in crate::ui::list_sort::ListSort::all() {
+            let (_, chip, _) = render(60, Some(&mode_chip_text("sort", m.label(), widest)));
+            rects.push(chip.expect("chip vanished for a mode"));
+        }
+        let first = rects[0];
+        for (m, r) in crate::ui::list_sort::ListSort::all().iter().zip(&rects) {
+            assert_eq!(
+                (r.x, r.width),
+                (first.x, first.width),
+                "the chip moved or resized for {m:?} — a repeat-click would miss it"
+            );
+        }
+    }
+
+    /// A narrow chip that will not fit even as an icon is DROPPED, not
+    /// clipped — a half-painted chip is a dead click target.
     #[test]
     fn a_chip_that_does_not_fit_is_dropped_not_clipped() {
-        let (row, chip, refresh) = render(24, Some(&mode_chip_text("sort", "Newest first")));
-        assert!(chip.is_none(), "a chip was returned at 24 cells: {row:?}");
+        // 17 cells: title(8) + refresh(3) + icon(3) + gaps(4) = 18, so
+        // even the icon form cannot fit and the chip must vanish
+        // entirely rather than paint a partial target.
+        let (row, chip, refresh) = render(17, Some(&mode_chip_text("sort", "Newest first", 12)));
+        assert!(chip.is_none(), "a chip was returned at 17 cells: {row:?}");
         assert!(
             !row.contains("sort:"),
             "the chip painted anyway, clipped: {row:?}"
@@ -370,6 +481,41 @@ mod mode_chip_tests {
         assert!(
             refresh.is_some(),
             "the refresh chip was dropped before the sort chip: {row:?}"
+        );
+        assert!(row.contains("FINDINGS"), "title lost: {row:?}");
+    }
+
+    /// The subtitle is droppable; the refresh chip is not. Typing in a
+    /// filter grows `(N)` into `(N of M)`, which used to push the
+    /// header over budget and delete the refresh chip mid-interaction.
+    #[test]
+    fn a_long_subtitle_drops_itself_before_the_refresh_chip() {
+        let t = crate::ui::theme::cur();
+        let mut term = Terminal::new(TestBackend::new(22, 1)).unwrap();
+        let mut got = (None, None);
+        term.draw(|f| {
+            got = draw_caps_header_with_chips(
+                f,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 22,
+                    height: 1,
+                },
+                "FINDINGS",
+                Some("  (10 of 92)"),
+                None,
+                t.bg_darker,
+                &t,
+                true,
+            );
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..22).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            got.1.is_some(),
+            "the refresh chip was dropped to make room for a count: {row:?}"
         );
         assert!(row.contains("FINDINGS"), "title lost: {row:?}");
     }

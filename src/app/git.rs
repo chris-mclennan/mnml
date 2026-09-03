@@ -155,7 +155,10 @@ impl App {
             MenuAction::RevealInFinder(abs.clone()),
         ));
         items.push(MenuItem::new("Copy path", MenuAction::CopyPath(rel)));
-        items.push(MenuItem::new("Delete file…", MenuAction::Delete(abs)));
+        items.push(MenuItem::destructive(
+            "Delete file…",
+            MenuAction::Delete(abs),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(basename), anchor, items));
     }
 

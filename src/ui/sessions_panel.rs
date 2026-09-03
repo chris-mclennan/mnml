@@ -149,7 +149,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // 2026-09-03 (user: "add same sort thing to sessions") — the same
     // `sort:` chip the other panels grew, over SESSIONS' own
     // State/Manual axis rather than a bolted-on name sort.
-    let sort_chip = crate::ui::panel_chrome::mode_chip_text("sort", app.sessions_sort_mode.label());
+    let sort_widest = crate::app::SessionsSortMode::all()
+        .iter()
+        .map(|m| m.label().chars().count())
+        .max()
+        .unwrap_or(0);
+    let sort_chip = crate::ui::panel_chrome::mode_chip_text(
+        "sort",
+        app.sessions_sort_mode.label(),
+        sort_widest,
+    );
     let (sessions_sort, sessions_refresh) = crate::ui::panel_chrome::draw_caps_header_with_chips(
         frame,
         Rect {

@@ -379,7 +379,7 @@ impl App {
                 MenuItem::new("Duplicate", MenuAction::FileDuplicate(path.clone())),
                 MenuItem::new("Move to…", MenuAction::FileMoveTo(path.clone())),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
-                MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
+                MenuItem::destructive("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new(
                     crate::app::reveal_in_files_label(),
                     MenuAction::RevealInFinder(path.clone()),
@@ -417,7 +417,7 @@ impl App {
                 MenuItem::new("Duplicate", MenuAction::FileDuplicate(path.clone())),
                 MenuItem::new("Move to…", MenuAction::FileMoveTo(path.clone())),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
-                MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
+                MenuItem::destructive("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new(
                     crate::app::reveal_in_files_label(),
                     MenuAction::RevealInFinder(path.clone()),

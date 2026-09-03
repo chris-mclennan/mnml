@@ -978,6 +978,10 @@ pub struct UiConfig {
     /// Row order for the three activity list panels — `"newest"`
     /// (default) or `"name"`. Per-panel: browsing notes A–Z does not
     /// mean you want findings that way too.
+    /// SESSIONS panel row order — `"auto"` (by run state) or
+    /// `"manual"` (your drag order). Its own axis, not the
+    /// newest/name one the three list panels share.
+    pub sessions_sort: String,
     pub todos_sort: String,
     /// See [`UiConfig::todos_sort`].
     pub notes_sort: String,
@@ -1605,6 +1609,7 @@ impl Default for Config {
                 plus_menu_pinned: Vec::new(),
                 plus_menu_hidden: Vec::new(),
                 auto_refresh_off: Vec::new(),
+                sessions_sort: "auto".to_string(),
                 todos_sort: "newest".to_string(),
                 notes_sort: "newest".to_string(),
                 findings_sort: "newest".to_string(),
@@ -2168,6 +2173,15 @@ struct RawUi {
     theme_auto_system: Option<bool>,
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
+    /// 2026-09-03 — these three shipped in `UiConfig` and in the
+    /// defaults but had NO raw field and NO apply branch, so a value
+    /// written to config.toml (including one `set_panel_sort` had just
+    /// persisted) was parsed into nothing and silently ignored. The
+    /// sort did not survive a restart.
+    todos_sort: Option<String>,
+    notes_sort: Option<String>,
+    findings_sort: Option<String>,
+    sessions_sort: Option<String>,
     right_panel_visible: Option<bool>,
     right_panel_width: Option<u16>,
     auto_hide_narrow_width: Option<u16>,
@@ -2671,6 +2685,26 @@ impl Config {
         }
         if let Some(v) = raw.ui.tree_width {
             self.ui.tree_width = v.clamp(10, 80);
+        }
+        // Round-trip through `ListSort` so an unknown token falls back
+        // to the default rather than being stored verbatim and failing
+        // to match anything later.
+        for (raw_val, dst) in [
+            (&raw.ui.todos_sort, &mut self.ui.todos_sort),
+            (&raw.ui.notes_sort, &mut self.ui.notes_sort),
+            (&raw.ui.findings_sort, &mut self.ui.findings_sort),
+        ] {
+            if let Some(sv) = raw_val {
+                *dst = crate::ui::list_sort::ListSort::from_token(sv)
+                    .as_str()
+                    .to_string();
+            }
+        }
+        if let Some(sv) = &raw.ui.sessions_sort {
+            let n = sv.trim().to_ascii_lowercase();
+            if matches!(n.as_str(), "auto" | "manual") {
+                self.ui.sessions_sort = n;
+            }
         }
         if let Some(v) = raw.ui.right_panel_visible {
             self.ui.right_panel_visible = v;
@@ -5178,5 +5212,68 @@ ratio = 99
         assert_eq!(cfg.startup_layout.len(), 2);
         // Out-of-range ratio → None, applier picks layout default (50).
         assert_eq!(cfg.startup_layout[1].ratio, None);
+    }
+}
+
+#[cfg(test)]
+mod sort_persistence_tests {
+    use super::*;
+
+    /// Every sort setting must SURVIVE A RESTART.
+    ///
+    /// `todos_sort` / `notes_sort` / `findings_sort` existed in
+    /// `UiConfig` and in the defaults but had no raw field and no apply
+    /// branch, so a value in config.toml — including one the app had
+    /// just written itself — parsed into nothing. `sessions_sort` had
+    /// no key at all. Found by a keyboard bug-hunt, 2026-09-03.
+    ///
+    /// Asserts the LOAD path specifically: writing was never the broken
+    /// half, which is why this went unnoticed.
+    #[test]
+    fn every_sort_setting_round_trips_through_a_config_file() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[ui]\n\
+             todos_sort = \"name\"\n\
+             notes_sort = \"oldest\"\n\
+             findings_sort = \"name_desc\"\n\
+             sessions_sort = \"manual\"\n",
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        assert_eq!(cfg.ui.todos_sort, "newest", "default changed");
+        cfg.apply_file_pub(&path);
+
+        assert_eq!(cfg.ui.todos_sort, "name", "todos_sort was not read back");
+        assert_eq!(cfg.ui.notes_sort, "oldest", "notes_sort was not read back");
+        assert_eq!(
+            cfg.ui.findings_sort, "name_desc",
+            "findings_sort was not read back"
+        );
+        assert_eq!(
+            cfg.ui.sessions_sort, "manual",
+            "sessions_sort was not read back"
+        );
+    }
+
+    /// A junk token must fall back to the default rather than being
+    /// stored verbatim — a stored typo matches no mode and would leave
+    /// the panel in a state nothing can select.
+    #[test]
+    fn a_junk_sort_token_falls_back_to_the_default() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[ui]\ntodos_sort = \"nonsense\"\nsessions_sort = \"nonsense\"\n",
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&path);
+        assert_eq!(cfg.ui.todos_sort, "newest");
+        assert_eq!(cfg.ui.sessions_sort, "auto");
     }
 }

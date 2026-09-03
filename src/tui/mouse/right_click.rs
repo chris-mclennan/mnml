@@ -344,7 +344,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
-            MenuItem::new("Delete…", MenuAction::Delete(path)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
@@ -478,7 +478,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
-            MenuItem::new("Delete…", MenuAction::Delete(path)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
@@ -787,7 +787,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             let items = vec![
                 MenuItem::new("Edit…", MenuAction::CopyPath(format!("edit:{key}"))),
                 MenuItem::new("Copy name", MenuAction::CopyPath(key.clone())),
-                MenuItem::new("Delete…", MenuAction::Command("http.delete_env_key")),
+                MenuItem::destructive("Delete…", MenuAction::Command("http.delete_env_key")),
             ];
             app.pending_env_key_delete = Some(key.clone());
             app.context_menu = Some(ContextMenu::new(Some(key), (x, y), items));
@@ -842,7 +842,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
-            MenuItem::new("Delete…", MenuAction::Delete(path)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
@@ -923,7 +923,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new("Copy name", MenuAction::CopyPath(name.clone())),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(env_file.clone())),
-            MenuItem::new("Delete…", MenuAction::Delete(env_file)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(env_file)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(name), (x, y), items));
         return;
@@ -951,7 +951,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 MenuAction::RevealInFinder(path.clone()),
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
-            MenuItem::new("Delete…", MenuAction::Delete(path)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
@@ -981,7 +981,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
-            MenuItem::new("Delete…", MenuAction::Delete(path)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
@@ -1010,7 +1010,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(dir.clone())),
-            MenuItem::new("Delete collection…", MenuAction::Delete(dir)),
+            MenuItem::destructive("Delete collection…", MenuAction::Delete(dir)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
@@ -1038,7 +1038,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 MenuAction::RevealInFinder(path.clone()),
             ),
             MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
-            MenuItem::new("Delete…", MenuAction::Delete(path)),
+            MenuItem::destructive("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;

@@ -1279,7 +1279,7 @@ impl App {
                 "Export as markdown",
                 MenuAction::Command("ai.dashboard.export_markdown"),
             ),
-            MenuItem::new("Kill session…", MenuAction::Command("ai.dashboard.kill")),
+            MenuItem::destructive("Kill session…", MenuAction::Command("ai.dashboard.kill")),
         ];
         self.active = Some(pid);
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));

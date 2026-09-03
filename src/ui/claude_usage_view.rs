@@ -161,8 +161,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
             let header_row_idx = rows.len();
             let mut header_spans: Vec<Span<'static>> = vec![gutter_span()];
             // Cumulative cell offset used to pin the pencil hitrect.
-            // Starts at 2 (gutter `▌ ` is 2 cells).
-            let mut cursor_cells: u16 = 2;
+            // Starts at the gutter's width.
+            //
+            // 2026-09-03 — this was the literal 2, from when the gutter
+            // was `▌ `. Making the gutter one cell (`ui::gutter`) left
+            // the literal stale, so the ✎ painted one cell left of its
+            // own click rect. Derive it so the two cannot drift again.
+            let mut cursor_cells: u16 = crate::ui::gutter::WIDTH;
             if is_active {
                 let pill = "(active) ";
                 header_spans.push(Span::styled(

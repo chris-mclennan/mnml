@@ -687,3 +687,58 @@ impl ContextMenu {
         (longest + 2).max(12)
     }
 }
+
+#[cfg(test)]
+mod destructive_marking_tests {
+    /// Every row that destroys user data must be built with
+    /// [`MenuItem::destructive`], which paints it red when idle.
+    ///
+    /// The 2026-09-03 audit found the constructor applied to 3 rows out
+    /// of ~25 that qualified, so "Delete…" looked identical to "Open"
+    /// in almost every menu — the cue existed but carried no
+    /// information.
+    ///
+    /// Scope is deliberately DATA LOSS, not "sounds alarming".
+    /// `Clear (Ctrl+L)` and `Clear (:noh)` reset a view and stay
+    /// `MenuItem::new`: painting routine rows red is how a warning
+    /// colour stops being read.
+    #[test]
+    fn rows_that_destroy_data_are_marked_destructive() {
+        let mut offenders = Vec::new();
+        let mut files = Vec::new();
+        collect_rs(std::path::Path::new("src"), &mut files);
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap_or_default();
+            for (i, line) in src.lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let is_data_loss = line.contains("MenuItem::new(\"Delete")
+                    || line.contains("MenuItem::new(\"Kill session");
+                if is_data_loss {
+                    offenders.push(format!("{}:{} → {}", f.display(), i + 1, line.trim()));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "destructive rows built with MenuItem::new, so they paint like \
+             any other row:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_rs(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+}

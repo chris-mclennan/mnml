@@ -212,6 +212,12 @@ pub fn for_action(a: &MenuAction) -> &'static str {
 fn command_glyph(id: &str) -> &'static str {
     // Matched against the LAST dotted segment.
     const ACTION: &[(&str, &str)] = &[
+        // 2026-09-03 — SESSIONS' sort rows go through
+        // `MenuAction::Command("sessions.sort_auto")`, not
+        // `SetPanelSort`, so they fell through to the play-triangle
+        // fallback and rendered `▶ ✓ State` beside the list panels'
+        // `✓ Newest first`. Same menu shape, two different icons.
+        ("sort", "\u{f0dc}"),
         ("undo", "\u{f0e2}"),
         ("redo", "\u{f01e}"),
         ("paste", "\u{f0ea}"),
@@ -671,5 +677,34 @@ mod tests {
     fn an_unmapped_command_falls_back_rather_than_blank() {
         let g = command_glyph("something.entirely.unmapped");
         assert!(!g.is_empty(), "unmapped command produced no glyph");
+    }
+}
+
+#[cfg(test)]
+mod sort_row_glyph_tests {
+    use super::*;
+    use crate::context_menu::MenuAction as M;
+
+    /// The two sort menus must carry the SAME icon.
+    ///
+    /// The list panels' rows are `MenuAction::SetPanelSort`, which has
+    /// an explicit entry; SESSIONS' rows are
+    /// `MenuAction::Command("sessions.sort_auto")`, which fell through
+    /// to the play-triangle fallback. Identical menus, one row with a
+    /// sort icon and one with `▶`.
+    #[test]
+    fn both_sort_menus_use_the_same_glyph() {
+        let panel = column_for(None, &M::SetPanelSort("todos".into(), "name".into()), false);
+        let sessions = column_for(None, &M::Command("sessions.sort_auto"), false);
+        assert_eq!(
+            panel.trim(),
+            sessions.trim(),
+            "the two sort menus render different icons"
+        );
+        assert_ne!(
+            sessions.trim(),
+            "\u{f04b}",
+            "the sessions sort row is still on the play-triangle fallback"
+        );
     }
 }

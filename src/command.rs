@@ -4326,20 +4326,14 @@ fn builtin_commands() -> Vec<Command> {
             title: "Sessions: sort by state (running → recent → idle)",
             group: "view",
             keys: &[],
-            run: |app| {
-                app.sessions_sort_mode = crate::app::SessionsSortMode::Auto;
-                app.toast("sessions: State".to_string());
-            },
+            run: |app| app.set_sessions_sort(crate::app::SessionsSortMode::Auto),
         },
         Command {
             id: "sessions.sort_manual",
             title: "Sessions: sort by manual order",
             group: "view",
             keys: &[],
-            run: |app| {
-                app.sessions_sort_mode = crate::app::SessionsSortMode::Manual;
-                app.toast("sessions: Manual".to_string());
-            },
+            run: |app| app.set_sessions_sort(crate::app::SessionsSortMode::Manual),
         },
         Command {
             id: "agents.refresh",
