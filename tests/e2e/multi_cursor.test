@@ -84,10 +84,16 @@ key l
 # Enter visual mode (drops anchor at primary cursor + each extra).
 key v
 # Add cursors below (the v is in visual; we ran `v` THEN add_cursor).
-# Move right 3 chars to select "xxx" on row 0; extras select their rows.
+# Move right TWO to select "xxx" on row 0; extras select their rows.
+#
+# Two, not three: vim's charwise visual is INCLUSIVE of the cell under
+# the cursor, so `v` + 2×`l` covers three characters. This said three
+# and expected three characters gone, which only held while mnml's
+# selection was exclusive — the expectation encoded that bug. Checked
+# against real vim: `lll v lll d` on `AAAzzzBBB` gives `AAABB` (it eats
+# the B), and `lll v ll d` gives `AAABBB`.
 command editor.add_cursor_below
 command editor.add_cursor_below
-key l
 key l
 key l
 # Delete every selection (vim visual `d`).
@@ -101,13 +107,17 @@ expect file sel.txt contains "AAABBB\nAAABBB\nAAABBB"
 write paste.txt "A.\nB.\nC."
 open paste.txt
 # Visually select column 0 on rows 0-2 (just to capture 'A' / 'B' / 'C').
-key l
+#
+# `v` alone selects ONE character in vim — charwise visual is inclusive
+# of the cell under the cursor. This used to step right with `l`, drop
+# the anchor, then step back with `h`, on the assumption that a bare `v`
+# selected nothing; that only held while mnml's selection was exclusive.
+# With the inclusive fix that backward selection covers 'A' AND '.',
+# and the clipboard came out as "A.\nB.\nC.". Checked against real vim:
+# `v y 0 P` on `C.` gives `CC.`, while `l v h y` gives `C.C.`.
 key v
 command editor.add_cursor_below
 command editor.add_cursor_below
-# Selections are now zero-width at the dot column on each row — extend
-# left by one with `h` so we cover 'A' / 'B' / 'C'.
-key h
 # Yank — clipboard now holds "A\nB\nC".
 key y
 key escape
@@ -133,7 +143,8 @@ key l
 key v
 command editor.add_cursor_below
 command editor.add_cursor_below
-key l
+# TWO, not three — charwise visual is inclusive, so `v` + 2x`l` covers
+# the three characters `xxx`. See the note on the delete case above.
 key l
 key l
 key c

@@ -2774,22 +2774,42 @@ impl Editor {
             }
             MakeSelectionInclusive => {
                 // Extend the HIGH end by one character (not one byte —
-                // a multi-byte char must move whole).
+                // a multi-byte char must move whole), never crossing
+                // the line terminator: vim's charwise selection stops
+                // at the last cell of the line.
+                //
+                // EVERY cursor, not just the primary. Multi-cursor
+                // visual gives each cursor its own anchor, so widening
+                // only `self.anchor`/`self.cursor` made the primary
+                // delete one character more than its extras — the rows
+                // came out different lengths (CI, 2026-09-03).
+                let text = &self.text;
+                let widen = |anchor: usize, cursor: usize| -> (usize, usize) {
+                    let hi = anchor.max(cursor);
+                    if hi >= text.len() || text.as_bytes()[hi] == b'\n' {
+                        return (anchor, cursor);
+                    }
+                    let next = text[hi..]
+                        .chars()
+                        .next()
+                        .map(|c| hi + c.len_utf8())
+                        .unwrap_or(hi);
+                    if cursor >= anchor {
+                        (anchor, next)
+                    } else {
+                        (next, cursor)
+                    }
+                };
                 if let Some(a) = self.anchor {
-                    let hi = a.max(self.cursor);
-                    // Never swallow the line terminator: vim's charwise
-                    // selection stops at the last cell of the line.
-                    if hi < self.text.len() && self.text.as_bytes()[hi] != b'\n' {
-                        let next = self.text[hi..]
-                            .chars()
-                            .next()
-                            .map(|c| hi + c.len_utf8())
-                            .unwrap_or(hi);
-                        if self.cursor >= a {
-                            self.cursor = next;
-                        } else {
-                            self.anchor = Some(next);
-                        }
+                    let (na, nc) = widen(a, self.cursor);
+                    self.anchor = Some(na);
+                    self.cursor = nc;
+                }
+                for i in 0..self.extra_cursors.len() {
+                    if let Some(a) = self.extra_anchors.get(i).copied().flatten() {
+                        let (na, nc) = widen(a, self.extra_cursors[i]);
+                        self.extra_anchors[i] = Some(na);
+                        self.extra_cursors[i] = nc;
                     }
                 }
             }
