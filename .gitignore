@@ -50,3 +50,6 @@ demo/tapes/sibling-tokens/
 # Regenerated from the .cast files via the recording pipeline — not
 # a source artifact. The rendered .gif is what ships.
 demo/tapes/frames/
+# Added by mnml — workspace state: IPC, session, and HTTP
+# history / captured traffic / env values (these carry secrets)
+.rqst/

@@ -14,6 +14,53 @@ use super::*;
 /// `keychain_active_last_kick_at`.
 const KEYCHAIN_ACTIVE_REFRESH_SECS: u64 = 5 * 60;
 
+// TODO (user ask 2026-09-03) — a SWITCH ADVISOR over the usage panel.
+//
+// Today the panel answers "where do I stand?". The ask is for it to
+// answer "what should I do?": tell me when to move to a cheaper model
+// and when to come back, so I land near zero unused quota instead of
+// either wasting it or hitting the wall mid-task.
+//
+// The user's framing: "stay on it too long and the projection changes
+// to running out, then switch back until safe again." So it is a
+// two-sided signal, not a single warning threshold — coming BACK
+// matters as much as leaving, because quota left unspent at reset is
+// wasted.
+//
+// The user doubts it is achievable, on the grounds that their three
+// accounts renew on different schedules. That is worth answering
+// directly: the differing schedules are the REASON to build it, not
+// the obstacle. Three reset clocks against three burn rates is exactly
+// the arithmetic a person cannot do in their head, which is why the
+// decision currently gets made by feel.
+//
+// **What already exists.** Per-account snapshots with `resets_at`
+// (5-hour window) and `weekly_resets_at`, utilization percentages,
+// account enumeration via `config.claude_accounts()`, and a poll
+// cadence built for precisely this question — see the
+// REFRESH_INTERVAL_SECS doc below, which already says "am I about to
+// run out and have to switch accounts?".
+//
+// **What is missing, and it is the whole job:** there is NO history.
+// Every fetch overwrites the snapshot, so mnml knows the level and not
+// the slope. A projection needs a small per-account time series —
+// (timestamp, utilization) retained across the current window — and
+// nothing keeps one today. Start there; the advice is arithmetic once
+// the series exists.
+//
+// **Two things that will look easy and are not.** A burn rate measured
+// over a 5-minute poll is dominated by whatever you just ran, so it
+// needs smoothing or it will advise a switch every time a long agent
+// turn lands. And "switching to Fable extends the Opus runway" is only
+// true in proportion to how much of the work actually moves — which
+// mnml cannot observe, so the honest v1 projects each account
+// independently and says "Opus exhausts at ~15:40, weekly resets
+// Thursday" rather than pretending to model the counterfactual.
+//
+// Ship the projection before the recommendation. A trustworthy "you
+// run out at X" is useful on its own; a recommendation that is wrong
+// twice will not be read a third time.
+
 /// Fold a failed fetch into the account's *existing* snapshot.
 ///
 /// The numbers deliberately survive (#1217): the endpoint 429s
