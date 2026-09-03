@@ -259,6 +259,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Multi-repo workspaces append `· <repo-name>` to the GIT header so
     // the user knows which repo the rail is currently scoped to. Single-
     // repo case keeps the bare "GIT" label.
+    //
+    // TODO (user ask 2026-09-03) — put `‹ ›` cycle arrows next to the
+    // repo chip so multi-repo workspaces can be stepped through without
+    // opening the dropdown. Match the leaf tab strip's overflow arrows
+    // exactly (`paint_leaf_tab_strip` in ui/mod.rs, #1209): same nerd
+    // glyphs with `<`/`>` ASCII fallbacks, both slots always painted so
+    // the header can't reflow by two cells at either end, and the inert
+    // slot dimmed rather than hidden so a visible arrow is never a dead
+    // click.
+    //
+    // Those arrows want to become a shared component first — the rule
+    // is Rule-of-Three, and this would be the SECOND use, so extract it
+    // when a third appears unless this one already reads as copy-paste.
+    // The reusable part is the enabled/inert styling and the
+    // never-reflow slot reservation; that is the logic worth sharing,
+    // not the two glyphs. Gate: the repo set this steps through is
+    // whatever `git::repos::discover_repos` returns, so land the
+    // single-vs-all option there first or the arrows have nothing to
+    // cycle in the common single-repo case.
     let multi_repo_chip = if app.repos.len() > 1 {
         app.repos
             .get(app.active_repo)

@@ -34,6 +34,19 @@ const MAX_DEPTH: usize = 3;
 ///
 /// Order: workspace root first (when it's a repo), then discovered
 /// sub-repos sorted by name (case-insensitive).
+///
+/// TODO (user ask 2026-09-03) — an easy-to-set option for the git view:
+/// scope it to the SET WORKSPACE only (one repo, one tab), or show every
+/// discovered repo as its own tab (today's behaviour, and the default).
+/// The motivation is load time: someone pointed at a parent directory
+/// pays the multi-repo walk plus per-repo status on every refresh, and
+/// may only care about the one repo they set. This function is the gate
+/// — the "workspace itself is a repo" early return above is already the
+/// single-repo shape, so the option makes that branch reachable by
+/// choice rather than only by accident of directory layout.
+///
+/// Pairs with the `‹ ›` cycle arrows noted in `ui/tree_view.rs`, which
+/// are what make the multi-repo mode navigable without a dropdown.
 pub fn discover_repos(workspace: &Path) -> Vec<RepoEntry> {
     // The "workspace itself is a repo" case wins outright.
     if workspace.join(".git").exists() {
