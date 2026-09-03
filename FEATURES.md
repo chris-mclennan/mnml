@@ -17,7 +17,12 @@ The complete, organised feature inventory. For the front-door overview see
   tree-sitter objects, indent objects); registers (named, numbered delete-ring,
   yank); macros (named, persisted); marks (buffer-local + global, persisted);
   the `.` repeat; jumplist & change-list; `f`/`t` find-char; vim-surround;
-  multi-cursor; flash-motion jumps; abbreviations.
+  multi-cursor; abbreviations. Charwise VISUAL is inclusive of the cell
+  under the cursor, as vim's is, and folds follow vim's directions —
+  `za` toggles while `zo` opens and `zc` closes, each idempotent.
+- **Flash-motion jumps** — `s` plus two characters labels every match on
+  screen (mnml gives `s` to flash rather than vim's substitute); press a
+  label to jump, Esc to cancel. The overlay says so while it is armed.
 - **Ex-command line** — `:w`/`:q`/`:e`, `:%s/old/new/flags` with ranges and
   marks, `:g/`/`:v/` global commands, `:norm`, `:sort`, `:!cmd`, `:r`, line-range
   ops, user-defined `:command`s, history with completion — a deep `:` surface.
@@ -178,13 +183,27 @@ findings}_panel.rs`, `src/ui/list_sort.rs`).
   auto-numbered filename (`note-N.md` / `finding-N.md`), so Enter is
   fast and typing over it is still possible.
 - **Shared panel chrome** — a caps header with a live count (`(N)`, or
-  `(M of N)` while filtered), a `/`-focus filter row, a focused-row
-  accent bar, a scrollbar, and keyboard/wheel/drag scrolling. Right-click
-  the `⟳` chip (shared with the Git / Agents / Cloud Agents / HTTP
-  panels) for "Refresh now", "Auto-refresh: on/off" (persisted per panel
-  via `[ui] auto_refresh_off`), and — TODOS/NOTES/FINDINGS only — a sort
-  toggle between Newest-first and Name A–Z (persisted as `[ui]
-  todos_sort` / `notes_sort` / `findings_sort`).
+  `(M of N)` while filtered; a trailing `+` means the TODOS scan hit its
+  1000-marker cap and the count is a floor), a `/`-focus filter row, a
+  focused-row accent bar, a scrollbar, and keyboard/wheel/drag
+  scrolling. Right-click the `⟳` chip (shared with the Git / Agents /
+  Cloud Agents / HTTP panels) for "Refresh now" and "Auto-refresh:
+  on/off" (persisted per panel via `[ui] auto_refresh_off`).
+- **Sort chip** — a `sort: <mode>` chip in the header of TODOS / NOTES /
+  FINDINGS / SESSIONS, styled like the Cloud Agents `view:` chip. Click
+  cycles; right-click lists every mode with a `✓` on the current one.
+  Narrow panels drop to an icon-only form rather than losing the chip.
+  The three list panels share four modes — Newest first, Oldest first,
+  Name (A–Z), Name (Z–A) — persisted as `[ui] todos_sort` /
+  `notes_sort` / `findings_sort`, and reachable from the palette as
+  `todos.sort` / `notes.sort` / `findings.sort`. SESSIONS sorts on its
+  own axis (State vs Manual, `[ui] sessions_sort`,
+  `sessions.sort_auto` / `sessions.sort_manual`).
+- **Row context menus** — right-click a NOTES / FINDINGS / SEARCH /
+  AGENTS row for Open, Open in split, Reveal in tree, Reveal in
+  Finder/Explorer, Copy path, Rename and Delete as applicable. "Reveal
+  in tree" expands the rail to the file and selects it; the OS reveal is
+  a separate row.
 
 ## AI
 
