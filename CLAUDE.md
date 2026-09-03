@@ -142,64 +142,47 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-**v0.2.20 — the file-manager release (2026-08-31).** 130 commits since
-v0.2.19. Three things dominate.
+**Post-v0.2.21 polish — the panel-chrome + right-click pass
+(2026-09-03).** Driven almost entirely by user reports and two rounds of
+tester agents.
 
-**`Pane::Files` — a file manager as a pane.** Design shape "C": a
-browser is just a pane, so side-by-side comes free from `Layout::Split`
-and the commander arrangement is a layout preset rather than a mode.
-Navigation, sort, hidden toggle, clickable breadcrumb + destinations
-picker (`src/places.rs`), git badges per row, `p` preview, `/` filter,
-multi-select (`Space`/`a`/`Esc`, plus ctrl- and shift-click), and the
-full file-operation set acting on the mark set. `src/file_browser.rs` +
-`src/ui/file_browser_view.rs` + `src/app/file_actions.rs`.
+**A shared `sort:` chip on TODOS / NOTES / FINDINGS / SESSIONS**
+(`panel_chrome::draw_caps_header_with_chips`), styled like CLOUD AGENTS'
+`view:` chip: click cycles, right-click lists every mode with a ✓.
+`ListSort` gained the reversed pairs (Oldest, Z–A). SESSIONS keeps its
+own State/Manual axis rather than borrowing one that doesn't fit.
 
-**Background transfers (`src/transfer.rs` + `src/app/transfers.rs`).**
-Copy/move run off the render thread — the user chose "everything async"
-over a size threshold, so there is ONE path. Statusline chip while
-running, `transfer.cancel_all`, `:qa` refuses mid-transfer. Two
-data-loss bugs were caught in review before shipping: a cancelled
-cross-filesystem move deleted the source (`copy_one` returned `Ok(())`
-on cancel, indistinguishable from success), and `cleanup` could delete
-a pre-existing destination it had not created.
+**The chip shipped broken and two independent bug-hunts caught it.** It
+needed ~38 cells; the default `tree_width = 30` leaves ~26, so at stock
+settings it never rendered at all. The tests bracketed the default (60
+and 24) without testing it. Narrow headers now get an icon-only form,
+and there is a test at 26/30/34. Three more from the same hunts: the
+chip resized with its label and slid out from under a repeat-clicking
+pointer; typing in a filter deleted the refresh chip; and the sort was
+persisted but never read back, so it did not survive a restart.
 
-**Three editor freezes, all measured rather than guessed.**
-1. A 545K-character SINGLE line (minified JSON): the per-visual-row loop
-   did per-LINE work, so ~40 rows each rebuilt a whole-line char vector
-   and colour grid every frame. 745ms/frame → 25ms. `LineRender`
-   pre-pass in `editor_view.rs`.
-2. A 13,210-line file: `line_start` scanned the whole buffer counting
-   newlines on every call, and `line_str` calls it twice.
-   `Editor::line_starts` indexes it; `line_count`, `current_line`,
-   `line_at_byte`, `col_at_byte` all answer from it now.
-3. The statusline breadcrumb ran `extract_symbols` over the whole file
-   EVERY FRAME (45.7ms on that file) — `[ui] breadcrumb` is on by
-   default, so every user paid it. Cached on the Buffer.
+**Right-click audit.** Three menu rows fired command ids that do not
+exist — including the FIRST row of the LSP chip's menu. A structural
+test now resolves every `MenuAction::Command("…")` literal against the
+registry; a wrong id compiles, renders and reviews clean, so clicking
+was previously the only way to find one. Two more rail row families
+(AGENTS, SEARCH) had left-click handlers and no right-click branch.
+Nine rows labelled "Reveal in tree" fired the OS reveal — the in-app
+action did not exist, and `RevealInFinder` was macOS-only besides.
 
-Combined: 300ms → 9ms per frame on a 13k-line file, and it barely scales
-with size now.
+**Vim parity.** Charwise VISUAL was exclusive, so `v` `y` yanked the
+EMPTY STRING and clobbered the register. `zo` / `zc` were both bound to
+the toggle, so `zo` twice closed a fold.
 
-**The lesson worth keeping:** a timing-based regression guard failed
-three separate ways here — an absolute bound broke CI at 1.0998s against
-1s, raising it to 10s stopped catching the bug entirely, and a
-syntax-on/off RATIO passed at 1.04x while being blind to the exact
-regression it was named for. All three guards are STRUCTURAL now:
-thread-local counters asserting the index rebuilds once and the outline
-extracts once. Break-check every guard by restoring the bug.
+**SEV-1:** every picker, `Ctrl+P` included, panicked the process below
+30 columns — the clamp comment claimed it would "clip, fine"; ratatui
+panics instead. The picker's scrollbar was decorative: every piece
+existed, none connected.
 
-**Also in this release:** notification history (persisted per workspace,
-statusline badge, `:messages`); context-menu submenus + the `+` menu
-regrouped from 15 rows to 5 with per-row pin/hide curation; TODO actions
-that discover the workspace's own `.claude/agents|commands|skills` and
-fall back to plain Claude Code / Codex (`src/claude_assets.rs`); the
-`--no-session` / `./run.sh fresh` escape hatch; horizontal scrolling
-fixed (it never moved the render window — pre-existing, found in
-review); and the CodeQL alert backlog closed (2 critical workflow
-injections, 4 missing-permissions).
-
-**Post-release:** verify assets — a green run is not enough.
-`gh release view v0.2.20 --json assets --jq '.assets|length'` wants ~22.
-
+**The lesson worth keeping:** two tests in this batch appeared to pass
+while broken because the break silently had not landed (`cargo fmt` had
+reflowed the line being patched). Break-checking is only evidence if you
+confirm the break is really in the file.
 
 ## Not set up yet (could add later)
 

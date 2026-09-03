@@ -584,6 +584,30 @@ impl VimInputHandler {
 
     /// Map a key to a pure cursor motion (used standalone and after an operator).
     /// `None` ⇒ not a motion.
+    ///
+    /// TODO (nvchad bug-hunt 2026-09-03) — `l` wraps past end-of-line;
+    /// vim's normal-mode `l` stops on the last character of the line.
+    ///
+    /// Not a one-liner, which is why it is a note and not a fix:
+    ///
+    /// 1. `MoveRight` is shared with STANDARD mode, where wrapping is
+    ///    correct (VS Code wraps). So the guard cannot go in
+    ///    `Editor::apply` without the editor branching on the active
+    ///    input handler — the one thing the architecture spine forbids.
+    ///    Either the vim handler withholds the op, or a new
+    ///    `MoveRightWithinLine` variant is added.
+    /// 2. This function is ctx-free (`fn motion(code)`), so it cannot
+    ///    see `cursor_col` / `line_len` — both of which `EditCtx`
+    ///    already carries. The guard therefore belongs at the CALL
+    ///    SITES, not here.
+    /// 3. There are two classes of call site and they want different
+    ///    answers: standalone normal-mode `l` must stop at the last
+    ///    character, while operator-pending `dl` must still delete that
+    ///    character. Fixing only the first is right; fixing both the
+    ///    same way would break `dl` at EOL.
+    ///
+    /// `h` was not reported as wrapping — verify it before assuming the
+    /// two are symmetric.
     fn motion(code: KeyCode) -> Option<EditOp> {
         use EditOp::*;
         Some(match code {
