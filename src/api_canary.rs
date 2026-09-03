@@ -61,36 +61,6 @@ pub fn observe(callsite: &'static str) -> Result<String, std::env::VarError> {
     result
 }
 
-/// Strip `$ANTHROPIC_API_KEY` from a child process's environment.
-///
-/// Task #1206 (2026-08-25) — [`observe`] only catches `env::var`
-/// reads inside mnml. It cannot see the *other* way the key reaches
-/// Anthropic: a spawned `claude` inherits our whole environment, and
-/// Claude Code prefers an inherited key over the user's claude.ai
-/// login ("connectors are disabled because ANTHROPIC_API_KEY … takes
-/// precedence"). So every sub-CLI call mnml makes from a shell that
-/// exports the key bills the metered API — silently, with the canary
-/// showing zero hits. That is exactly what #973's migration to
-/// `claude -p` was meant to prevent.
-///
-/// Call this on every `claude`/`codex` spawn. Named the same and
-/// doing the same thing as `claude-multi.sh`'s `unset
-/// ANTHROPIC_API_KEY`, for the same reason.
-///
-/// Direct-API callers (`ai::api_client`'s streaming paths) must NOT
-/// use this — they read the key deliberately via [`observe`].
-pub fn scrub_key(cmd: &mut std::process::Command) {
-    cmd.env_remove(ENV_KEY);
-}
-
-/// [`scrub_key`] for pty children, which build their command through
-/// `portable_pty` rather than `std::process`. Same rationale: a
-/// Claude Code pane spawned from a key-carrying shell would bill the
-/// API instead of the subscription.
-pub fn scrub_key_pty(cmd: &mut portable_pty::CommandBuilder) {
-    cmd.env_remove(ENV_KEY);
-}
-
 /// Path the canary log is written to. Callers reading the log
 /// (`:api.canary`, tests, users curious about recent hits) go through
 /// here so the location stays a single source of truth.
@@ -250,71 +220,6 @@ mod tests {
     // wrapper around `std::env::var(ENV_KEY)` — pass-through on
     // `Err`, log-and-return on `Ok` — the transparency guarantee
     // is a code-review property, not a runtime property to assert.
-
-    // #1206 — `scrub_key` must record a *removal*, not an
-    // empty-string override. Claude Code treats a set-but-empty
-    // ANTHROPIC_API_KEY as an auth source and fails the request
-    // rather than falling through to the claude.ai login, so
-    // `env("ANTHROPIC_API_KEY", "")` would break every sub call
-    // while looking like a fix. `get_envs` yields `(key, None)`
-    // only for a genuine `env_remove`.
-    #[test]
-    fn scrub_key_removes_rather_than_blanks_the_var() {
-        let mut cmd = std::process::Command::new("true");
-        scrub_key(&mut cmd);
-        let entry = cmd
-            .get_envs()
-            .find(|(k, _)| *k == std::ffi::OsStr::new(ENV_KEY));
-        assert_eq!(
-            entry,
-            Some((std::ffi::OsStr::new(ENV_KEY), None)),
-            "scrub_key must env_remove the key, not set it empty"
-        );
-    }
-
-    // The pty half. `CommandBuilder::new` snapshots the whole parent
-    // environment into its own map (every entry flagged
-    // `is_from_base_env`) and spawns with that map as the complete
-    // env — so `env_remove` really deletes the variable rather than
-    // being a no-op override. Seed the key explicitly here so the
-    // assertion holds whether or not the test runner's own
-    // environment carries one.
-    #[test]
-    fn scrub_key_pty_drops_a_present_key() {
-        let mut cmd = portable_pty::CommandBuilder::new("true");
-        cmd.env(ENV_KEY, "sk-ant-sentinel");
-        assert!(cmd.get_env(ENV_KEY).is_some(), "precondition: key present");
-        scrub_key_pty(&mut cmd);
-        assert!(
-            cmd.get_env(ENV_KEY).is_none(),
-            "pty child would still inherit the key"
-        );
-    }
-
-    // End-to-end: a real child process, spawned the way mnml spawns
-    // `claude`, must not see the key. The two tests above assert the
-    // builder's bookkeeping; this one asserts the kernel actually
-    // handed the child an environment without it. Only meaningful
-    // when the test runner itself inherited a key — skipped
-    // otherwise rather than faked, since setting the var here would
-    // race parallel tests (see the module note above).
-    #[test]
-    fn scrubbed_child_process_cannot_see_an_inherited_key() {
-        let Ok(inherited) = std::env::var(ENV_KEY) else {
-            return;
-        };
-        if inherited.is_empty() {
-            return;
-        }
-        let mut cmd = std::process::Command::new("sh");
-        cmd.args(["-c", "printf '%s' \"$ANTHROPIC_API_KEY\""]);
-        scrub_key(&mut cmd);
-        let out = cmd.output().expect("spawn sh");
-        assert!(
-            out.stdout.is_empty(),
-            "child inherited the key despite scrub_key"
-        );
-    }
 
     #[test]
     fn civil_from_unix_matches_known_dates() {

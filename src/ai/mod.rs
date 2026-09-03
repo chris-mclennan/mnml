@@ -590,7 +590,6 @@ fn stream_cli_to_channel(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    crate::api_canary::scrub_key(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -700,7 +699,6 @@ pub fn one_shot_cancellable(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    crate::api_canary::scrub_key(&mut cmd);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("running `{CLI} -p`: {e} — is the Claude Code CLI on PATH?"))?;

@@ -395,7 +395,6 @@ pub fn nl_to_curl(description: &str, _model: Option<&str>) -> Result<String, Str
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    crate::api_canary::scrub_key(&mut cmd);
     let out = cmd.output().map_err(|e| format!("spawn claude: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);

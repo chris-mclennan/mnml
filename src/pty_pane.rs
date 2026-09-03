@@ -486,23 +486,20 @@ impl PtySession {
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }
-        // #1206 — a Claude Code pane inherits our env, and Claude Code
-        // prefers an inherited $ANTHROPIC_API_KEY over the user's
-        // claude.ai login, silently moving the session onto metered
-        // API billing. Strip it from every pty child; shells included,
-        // since a shell pane is where the user runs `claude` by hand.
+        // ANTHROPIC_API_KEY is INHERITED, not stripped.
         //
-        // Runs AFTER `profile.env` deliberately (pre-push review
-        // caught it running before). `CommandBuilder` is last-write-
-        // wins per key, and the documented `[auth_values]` /
-        // `env_fallback` mechanism lets ANY installed integration's
-        // manifest name an arbitrary env var — including this one —
-        // which then flows to EVERY subsequent Pty spawn. Scrubbing
-        // first would let a single manifest line silently re-arm the
-        // exact billing path #1206 exists to close. An integration
-        // that genuinely needs the key should pass it through a
-        // wrapper script, where the choice is visible.
-        crate::api_canary::scrub_key_pty(&mut cmd);
+        // mnml used to `env_remove` it from every child (#1206), because a key
+        // left ambient in the shell silently outranks the claude.ai login and
+        // moves the session onto metered API billing. That protected the common
+        // case by breaking a legitimate one: someone who exports the key MEANS
+        // it — no subscription, a scripted workflow, a different org's key —
+        // and mnml removing it without asking left them wondering why their
+        // auth was ignored.
+        //
+        // An editor should not rewrite the environment its user handed it. The
+        // original problem was the key being ambient in a shell where nobody
+        // wanted it; that belongs in the shell profile, not in a silent
+        // override here. 2026-09-02, user decision.
         // Themed powerline prompt. Sets `MNML_PROMPT_SCRIPT` (path to the
         // installed `prompt.sh`) plus the palette env vars the script
         // reads. The user opts in once via a one-line source in their
