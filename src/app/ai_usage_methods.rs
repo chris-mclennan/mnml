@@ -71,14 +71,43 @@ const KEYCHAIN_ACTIVE_REFRESH_SECS: u64 = 5 * 60;
 // independently and says "Opus exhausts at ~15:40, weekly resets
 // Thursday" rather than pretending to model the counterfactual.
 //
-// **The 50% days.** The user: "we have those 50% days or something" —
-// periods where the effective allowance differs from the norm. Confirm
-// what these actually are before modelling them, but the design
-// consequence is known either way: a projection that assumes a fixed
-// ceiling will be wrong on exactly the days when the user most wants
-// to spend confidently. Derive the ceiling from the account's own
-// reported numbers rather than a constant, so an unusual day is
-// absorbed rather than mispredicted.
+// **The moving ceiling — and why it forces a two-window model.**
+//
+// What the "50% days" were, per a summary the user supplied on
+// 2026-09-03 (a Google AI Overview aggregating blog posts, NOT an
+// Anthropic source — treat the dates as approximate and re-check
+// before anything depends on them): a promotional +50% to the WEEKLY
+// compute cap, running from around May 2026 and expiring 2026-08-31,
+// with a permanent +25% over the original baseline arriving
+// 2026-09-14. Three ceiling changes in four months.
+//
+// That alone settles the constant-vs-derived question: derive the
+// ceiling from the account's own reported numbers. A hardcoded one
+// would already have been wrong three times, and wrong precisely on
+// the days the user most wants to spend confidently.
+//
+// The sharper consequence is the one that changes the ADVICE. The
+// promotion moved the weekly cap and left the 5-hour rolling window
+// untouched — so the two windows move independently, and the BINDING
+// CONSTRAINT can differ per account.
+//
+// The user's earliest-deadline-first rule ranks on the soonest reset,
+// which in practice is almost always a 5-hour window (those cycle
+// constantly; weeklies do not). Ranked naively, EDF will point at an
+// account whose 5-hour window turns over in minutes but whose WEEKLY
+// quota is nearly exhausted — and burning that is backwards: the
+// weekly does not return for days, while the 5-hour returns in hours.
+//
+// So the ranking is two-level, not one: among accounts with weekly
+// headroom, take the soonest 5-hour reset. An account low on its
+// weekly cap leaves the rotation regardless of how soon its short
+// window resets. Both `resets_at` and `weekly_resets_at` are already
+// on the snapshot, so this costs nothing extra to compute — it is
+// purely a matter of ranking on the right key.
+//
+// Worth surfacing the ceiling changes too. "Your weekly cap changed on
+// <date>" explains a week that felt tight far better than a user
+// re-deriving it from their own burn rate.
 //
 // Ship the projection before the recommendation. A trustworthy "you
 // run out at X" is useful on its own; a recommendation that is wrong
