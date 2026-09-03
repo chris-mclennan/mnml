@@ -128,6 +128,17 @@ impl App {
                 "Copy path",
                 MenuAction::CopyPath(rel_path(&self.workspace, p)),
             ));
+            // Both routes: in-app first, then the OS file
+            // manager. This is the menu a keyboard user reaches
+            // most easily (Shift+F10 with a pane focused), and
+            // it was correctly labelled all along — so it sat
+            // outside the 2026-09-03 pass that gave the
+            // MIS-labelled menus both actions, and ended up the
+            // one place you could not reveal in the tree.
+            items.push(MenuItem::new(
+                "Reveal in tree",
+                MenuAction::RevealInTree(p.clone()),
+            ));
             items.push(MenuItem::new(
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(p.clone()),
@@ -156,6 +167,17 @@ impl App {
             // on Linux. Action under the hood is the same — the
             // RevealInFinder handler shells out to the platform
             // file browser.
+            // Both routes: in-app first, then the OS file
+            // manager. This is the menu a keyboard user reaches
+            // most easily (Shift+F10 with a pane focused), and
+            // it was correctly labelled all along — so it sat
+            // outside the 2026-09-03 pass that gave the
+            // MIS-labelled menus both actions, and ended up the
+            // one place you could not reveal in the tree.
+            items.push(MenuItem::new(
+                "Reveal in tree",
+                MenuAction::RevealInTree(p.clone()),
+            ));
             items.push(MenuItem::new(
                 crate::app::reveal_in_files_label(),
                 MenuAction::RevealInFinder(p.clone()),
@@ -3679,5 +3701,65 @@ mod split_divergence_tests {
             "a pane whose edit never reached disk reports itself saved — \
              the work is unrecoverable and nothing said so"
         );
+    }
+}
+
+#[cfg(test)]
+mod reveal_pane_path_tests {
+    use crate::pane::Pane;
+
+    /// `view.reveal_in_tree` read `active_editor()`, which is `None`
+    /// for a markdown PREVIEW pane — so it fell back to the previously
+    /// active editor and revealed the WRONG file with no sign it had.
+    /// Opening any `.md` auto-routes to a preview, so this was one step
+    /// away (nvchad bug-hunt 2026-09-03, F7).
+    ///
+    /// Asserts the generic accessor answers for every pane kind that
+    /// shows a file, since that is what the fix depends on.
+    #[test]
+    fn a_preview_pane_reports_the_file_it_is_showing() {
+        let d = tempfile::tempdir().unwrap();
+        let md = d.path().join("readme.md");
+        std::fs::write(&md, "# hi\n").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.open_path(&md);
+
+        let pane = app
+            .active
+            .and_then(|i| app.panes.get(i))
+            .expect("no active pane");
+        // A `.md` must have routed to a preview — if this ever stops
+        // being true the test is no longer covering the reported bug.
+        assert!(
+            matches!(pane, Pane::MdPreview(_)),
+            "opening a .md no longer yields a preview pane; this test \
+             no longer exercises F7"
+        );
+        // Canonicalise both sides: on macOS a tempdir is reached via
+        // the `/private` symlink, so the raw paths differ while naming
+        // the same file. Comparing file names alone would pass for a
+        // DIFFERENT readme.md, which is the bug being guarded.
+        let got = pane.file_path().and_then(|p| std::fs::canonicalize(p).ok());
+        assert_eq!(
+            got,
+            std::fs::canonicalize(&md).ok(),
+            "a preview pane does not report its own file, so reveal \
+             would fall back to whatever was open before"
+        );
+    }
+
+    /// A pane with no file must answer `None`, so the caller can say so
+    /// instead of silently leaving a stale tree selection (F8).
+    #[test]
+    fn a_pane_with_no_file_reports_none() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        // A scratch editor with no path on disk.
+        app.split_new_scratch();
+        if let Some(p) = app.active.and_then(|i| app.panes.get(i)) {
+            assert_eq!(p.file_path(), None, "an unsaved buffer claimed a path");
+        }
     }
 }

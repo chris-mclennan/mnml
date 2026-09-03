@@ -784,6 +784,23 @@ impl Pane {
         }
     }
 
+    /// The file this pane is showing, if it is showing one.
+    ///
+    /// 2026-09-03 — `view.reveal_in_tree` read `active_editor()`, which
+    /// is `None` for a markdown PREVIEW pane. It therefore fell back to
+    /// the previously-active editor and revealed the WRONG file, with
+    /// no sign that it had. Opening a `.md` auto-routes to a preview,
+    /// so this was reachable in one step. Callers that mean "the file
+    /// on screen" want this, not `as_editor`.
+    pub fn file_path(&self) -> Option<&std::path::Path> {
+        match self {
+            Pane::Editor(b) => b.path.as_deref(),
+            Pane::MdPreview(p) => Some(p.path.as_path()),
+            Pane::Image(p) => Some(p.path()),
+            _ => None,
+        }
+    }
+
     pub fn as_editor(&self) -> Option<&Buffer> {
         match self {
             Pane::Editor(b) => Some(b),

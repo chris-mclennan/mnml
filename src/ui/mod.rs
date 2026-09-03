@@ -1655,9 +1655,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     glyph_builder_overlay::draw(frame, app, area);
     // Re-paint the picker on top of the edit panel so Ctrl+G /
     // Enter / → from the Glyph field surfaces the picker instead
-    // of hiding it behind the edit box. Cheap no-op when the
-    // picker isn't open.
-    if app.picker.is_some() {
+    // of hiding it behind the edit box.
+    //
+    // 2026-09-03 — this said "cheap no-op when the picker isn't open",
+    // which is true, and irrelevant: it is not a no-op when the picker
+    // IS open, which is the only time it runs. Every picker was laid
+    // out and painted TWICE per frame — full row layout plus the
+    // per-char fuzzy-highlight span split, and the 12k-entry glyph
+    // picker paid it too. The repaint only exists to sit on top of the
+    // glyph-builder edit panel, so gate it on that panel actually
+    // being up.
+    if app.glyph_builder.is_some() && app.picker.is_some() {
         picker::draw(frame, app, area);
     }
     // Help overlay — `?` / view.help (auto-generated keymap reference).

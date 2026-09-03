@@ -11,7 +11,18 @@ use ratatui::widgets::{Clear, Paragraph};
 use crate::app::App;
 use crate::ui::theme;
 
+#[cfg(test)]
+thread_local! {
+    /// How many times `draw` ran this frame. A structural guard, not a
+    /// timing one — see the v0.2.20 lesson in CLAUDE.md: three separate
+    /// timing-based guards failed to catch the regression they were
+    /// named for.
+    pub(crate) static PICKER_DRAWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
+    #[cfg(test)]
+    PICKER_DRAWS.with(|c| c.set(c.get() + 1));
     // Geometry.
     //
     // The comment here used to say "clamps may exceed a tiny screen —
@@ -311,6 +322,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             visible,
             scroll,
         );
+        // Drop any Picker bar left by an earlier `draw` this frame.
+        // `rects.scrollbars` is cleared once per frame, not per
+        // overlay, so the glyph-builder repaint above used to register
+        // a second one — the only duplicated label in the whole rect
+        // dump, and a stale rect for the drag router to pick.
+        app.rects
+            .scrollbars
+            .retain(|h| !matches!(h.kind, crate::app::ScrollbarKind::Picker));
         app.rects.scrollbars.push(crate::app::ScrollbarHit {
             area: sb,
             pane_id: 0,
@@ -1105,6 +1124,58 @@ mod picker_scrollbar_tests {
         assert!(
             after.starts_with(' '),
             "the label runs flush into the right edge: {after:?}"
+        );
+    }
+
+    /// The picker was laid out and painted TWICE per frame — the
+    /// glyph-builder repaint ran unconditionally, and its comment
+    /// ("cheap no-op when the picker isn't open") was true but
+    /// irrelevant: it only ever runs WHEN the picker is open. The
+    /// 12k-entry glyph picker paid a full row layout plus the per-char
+    /// fuzzy-highlight span split twice.
+    ///
+    /// Structural, not timing-based. CLAUDE.md records three separate
+    /// timing guards that failed to catch the regression they were
+    /// named for; a counter cannot be fooled by a fast machine.
+    #[test]
+    fn the_picker_draws_once_per_frame() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        let items: Vec<crate::picker::PickerItem> = (0..50)
+            .map(|i| {
+                crate::picker::PickerItem::new(i.to_string(), format!("entry {i}"), String::new())
+            })
+            .collect();
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Files,
+            "Files".to_string(),
+            items,
+        ));
+        let (w, h) = (120u16, 30u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+
+        super::PICKER_DRAWS.with(|c| c.set(0));
+        term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        assert_eq!(
+            super::PICKER_DRAWS.with(|c| c.get()),
+            1,
+            "the picker was drawn more than once in a single frame"
+        );
+
+        // And exactly one Picker scrollbar registered — a second draw
+        // used to push a duplicate, the only repeated label in the
+        // rect dump and a stale rect for the drag router.
+        let bars = app
+            .rects
+            .scrollbars
+            .iter()
+            .filter(|h| matches!(h.kind, crate::app::ScrollbarKind::Picker))
+            .count();
+        assert!(
+            bars <= 1,
+            "{bars} Picker scrollbars registered in one frame"
         );
     }
 

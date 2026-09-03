@@ -4744,10 +4744,23 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| {
-                let path = app.active_editor().and_then(|b| b.path.clone());
+                // The ACTIVE PANE's file, not the active editor's —
+                // `active_editor()` is None for a markdown preview, so
+                // this used to fall back to the previously-active
+                // editor and reveal the wrong file silently. Opening a
+                // `.md` auto-routes to a preview, so it was one step
+                // away.
+                let path = app
+                    .active
+                    .and_then(|i| app.panes.get(i))
+                    .and_then(|p| p.file_path())
+                    .map(|p| p.to_path_buf());
                 match path {
                     Some(p) => app.reveal_path_in_tree(&p),
-                    None => app.toast("reveal needs a saved file"),
+                    // Say so rather than leaving the old selection in
+                    // place, which reads as "the command did nothing"
+                    // and is indistinguishable from a broken chord.
+                    None => app.toast("reveal: this pane has no file"),
                 }
             },
         },
