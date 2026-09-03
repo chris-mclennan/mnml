@@ -64,7 +64,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!("  ({} of {})", files.len(), all_files.len())
     };
-    app.rects.findings_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+    // The `sort:` chip is the same idiom as CLOUD AGENTS' `view:`
+    // chip — click cycles, right-click lists every mode with a ✓ on
+    // the current one.
+    let sort_chip =
+        crate::ui::panel_chrome::mode_chip_text("sort", app.panel_sort("findings").label());
+    let (findings_sort, findings_refresh) = crate::ui::panel_chrome::draw_caps_header_with_chips(
         frame,
         Rect {
             x: area.x,
@@ -74,10 +79,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         },
         "FINDINGS",
         Some(&subtitle),
+        Some(&sort_chip),
         bg,
         &t,
         app.config.ui.ascii_icons,
     );
+    app.rects.findings_panel_sort_chip = findings_sort;
+    app.rects.findings_panel_refresh_chip = findings_refresh;
 
     // Filter row (row 1) — mirrors todos_panel exactly: chip bg,
     // magnifier glyph, `/ filter` placeholder, `▏` cursor when
@@ -475,6 +483,118 @@ mod tests {
             app.findings_panel_cursor < 2,
             "cursor {} was not clamped to the row count",
             app.findings_panel_cursor
+        );
+    }
+}
+
+#[cfg(test)]
+mod sort_chip_tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// USER 2026-09-03 — "todos and findings and nots still dont have
+    /// the sorting options". The sort existed and was persisted, but
+    /// the only way to reach it was right-clicking the REFRESH chip,
+    /// so nothing on screen said the panel could be sorted at all.
+    ///
+    /// Asserts the chip is visible in the real panel, and that the
+    /// registered rect covers it — a rect that misses the pixels is a
+    /// chip you can see but not click.
+    #[test]
+    fn the_findings_header_shows_a_clickable_sort_chip() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+
+        let (w, h) = (70u16, 10u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let header: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+
+        assert!(
+            header.contains("sort:"),
+            "no sort chip in the FINDINGS header: {header:?}"
+        );
+        let r = app
+            .rects
+            .findings_panel_sort_chip
+            .expect("the chip painted but registered no click target");
+        let covered: String = header
+            .chars()
+            .skip(r.x as usize)
+            .take(r.width as usize)
+            .collect();
+        assert!(
+            covered.contains("sort:"),
+            "the click rect does not cover the chip: {covered:?}"
+        );
+    }
+
+    /// Clicking the chip must CYCLE the mode and persist it. Guards
+    /// the whole path, not just the paint.
+    #[test]
+    fn clicking_the_sort_chip_cycles_the_mode() {
+        // `set_panel_sort` PERSISTS, so redirect MNML_DATA_ROOT or the
+        // click writes into the developer's real config.toml. Lock
+        // first; the EnvGuard is declared after so it drops BEFORE the
+        // lock (locals drop in reverse declaration order).
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let _lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env = crate::EnvGuard::set("MNML_DATA_ROOT", cfg_dir.path());
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+
+        let (w, h) = (70u16, 10u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let r = app.rects.findings_panel_sort_chip.expect("no chip rect");
+        let before = app.panel_sort("findings");
+        crate::tui::mouse::dispatch_mouse(
+            &mut app,
+            ratatui::crossterm::event::MouseEvent {
+                kind: ratatui::crossterm::event::MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left,
+                ),
+                column: r.x + 1,
+                row: r.y,
+                modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+            },
+        );
+        assert_ne!(
+            app.panel_sort("findings"),
+            before,
+            "clicking the sort chip did not change the mode"
         );
     }
 }

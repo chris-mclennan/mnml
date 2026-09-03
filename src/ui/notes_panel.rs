@@ -63,7 +63,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!("  ({} of {})", files.len(), all_files.len())
     };
-    app.rects.notes_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+    // The `sort:` chip is the same idiom as CLOUD AGENTS' `view:`
+    // chip — click cycles, right-click lists every mode with a ✓ on
+    // the current one.
+    let sort_chip =
+        crate::ui::panel_chrome::mode_chip_text("sort", app.panel_sort("notes").label());
+    let (notes_sort, notes_refresh) = crate::ui::panel_chrome::draw_caps_header_with_chips(
         frame,
         Rect {
             x: area.x,
@@ -73,10 +78,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         },
         "NOTES",
         Some(&subtitle),
+        Some(&sort_chip),
         bg,
         &t,
         app.config.ui.ascii_icons,
     );
+    app.rects.notes_panel_sort_chip = notes_sort;
+    app.rects.notes_panel_refresh_chip = notes_refresh;
     // Filter row (row 1). Same idiom as HTTP / Agents / TODOs.
     {
         let y_filter = area.y + 1;

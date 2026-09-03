@@ -3487,6 +3487,34 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.todos_panel_filter_focused = true;
         return;
     }
+    // 2026-09-03 — the header `sort:` chips. Left-click CYCLES to the
+    // next mode (same as the CLOUD AGENTS `view:` chip); right-click
+    // opens the full list. Checked before the panel-body branches
+    // below, which would otherwise swallow a header click.
+    {
+        let sort_chips: [(Option<ratatui::layout::Rect>, &str); 3] = [
+            (app.rects.todos_panel_sort_chip, "todos"),
+            (app.rects.notes_panel_sort_chip, "notes"),
+            (app.rects.findings_panel_sort_chip, "findings"),
+        ];
+        if let Some((_, panel)) = sort_chips
+            .iter()
+            .find(|(r, _)| r.is_some_and(|r| crate::app::dispatch::contains(r, x, y)))
+        {
+            let all = crate::ui::list_sort::ListSort::all();
+            let cur = app.panel_sort(panel);
+            let next = all
+                .iter()
+                .position(|m| *m == cur)
+                .map(|i| all[(i + 1) % all.len()])
+                .unwrap_or_default();
+            // `set_panel_sort` persists, re-sorts, and toasts the new
+            // mode — the toast is the feedback that the click landed.
+            let panel = panel.to_string();
+            app.set_panel_sort(&panel, next.as_str());
+            return;
+        }
+    }
     if let Some(r) = app.rects.todos_panel_refresh_chip
         && crate::app::dispatch::contains(r, x, y)
     {

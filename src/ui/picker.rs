@@ -168,10 +168,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             detail_orig
         };
         let dw = detail.chars().count();
-        // label gets whatever's left after the marker (2) and the detail + a space.
-        let label_avail = lw.saturating_sub(2 + if dw > 0 { dw + 1 } else { 0 });
+        // A detail costs `dw + 2`: one leading space (so the label never
+        // butts into the `ⓘ` icon) and one TRAILING space, so the value
+        // does not sit flush against the scrollbar or the right border
+        // (user 2026-09-03: "can i get an empty char on right side of
+        // time and scrollbar too").
+        let detail_cost = if dw > 0 { dw + 2 } else { 0 };
+        // label gets whatever's left after the marker (2) and the detail.
+        let label_avail = lw.saturating_sub(2 + detail_cost);
         let label: String = item.label.chars().take(label_avail).collect();
-        let used = 2 + label.chars().count() + if dw > 0 { dw + 1 } else { 0 };
+        let used = 2 + label.chars().count() + detail_cost;
         let gap = lw.saturating_sub(used);
         let mut label_style = Style::default().fg(theme::cur().fg).bg(bg);
         if is_sel {
@@ -221,15 +227,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         }
         spans.push(Span::styled(" ".repeat(gap), Style::default().bg(bg)));
         if dw > 0 {
-            // LEADING space, not trailing. The row already budgets
-            // `dw + 1` cells for the detail, but emitting the spare cell
-            // AFTER the detail put it against the right border and left
-            // the label butted straight up against the `ⓘ` icon (user
-            // report: "dont let lines run up to the information icon,
-            // leave at least 1 col char blank there"). The cell was
-            // always reserved — it was simply on the wrong side.
+            // A space on BOTH sides. The leading one keeps the label
+            // off the `ⓘ` icon (user: "dont let lines run up to the
+            // information icon, leave at least 1 col char blank
+            // there"); the trailing one keeps the value off the
+            // scrollbar and the right border.
             spans.push(Span::styled(
-                format!(" {detail}"),
+                format!(" {detail} "),
                 Style::default().fg(theme::cur().comment).bg(bg),
             ));
         }
@@ -733,6 +737,66 @@ mod picker_scrollbar_tests {
             hit.contains("04:47"),
             "the last digit of the clock was clipped by the scrollbar:\n{hit}"
         );
+    }
+
+    /// USER 2026-09-03 — "can i get an empty char on right side of time
+    /// and scrollbar too". The detail ran flush to the row's right edge,
+    /// so the clock touched the scrollbar.
+    ///
+    /// Checks BOTH cases in one test, because the fix has to hold with
+    /// and without a bar: the scrollbar must not be the only thing
+    /// providing the gap.
+    #[test]
+    fn the_detail_never_sits_flush_against_the_right_edge() {
+        for (n, bar) in [(200usize, true), (3usize, false)] {
+            let d = tempfile::tempdir().unwrap();
+            let mut app =
+                crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default())
+                    .unwrap();
+            let items: Vec<crate::picker::PickerItem> = (0..n)
+                .map(|i| {
+                    crate::picker::PickerItem::new(
+                        i.to_string(),
+                        format!("sonos: install the loopback driver first {i}"),
+                        "\u{f071}  04:47".to_string(),
+                    )
+                })
+                .collect();
+            app.open_picker(crate::picker::Picker::new(
+                crate::picker::PickerKind::Messages,
+                format!("Messages ({n})"),
+                items,
+            ));
+            let (w, h) = (100u16, 24u16);
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| {
+                super::draw(
+                    f,
+                    &mut app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: w,
+                        height: h,
+                    },
+                )
+            })
+            .unwrap();
+            let buf = term.backend().buffer();
+            let rows: Vec<String> = (0..h)
+                .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect())
+                .collect();
+            let hit = rows
+                .iter()
+                .find(|r| r.contains("04:47"))
+                .unwrap_or_else(|| panic!("no clock row rendered (bar={bar})"));
+            let after: String = hit.split("04:47").nth(1).unwrap_or("").to_string();
+            assert!(
+                after.starts_with(' '),
+                "the clock is flush against what follows it (bar={bar}): {:?}",
+                after.chars().take(6).collect::<String>()
+            );
+        }
     }
 
     /// A picker that FITS must not grow a bar.

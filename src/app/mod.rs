@@ -2595,6 +2595,14 @@ pub struct PaneRects {
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
     /// 2026-08-07 — Findings panel row rects (mirrors Notes shape).
     pub findings_panel_files: Vec<(Rect, std::path::PathBuf)>,
+    /// Sort-mode chips in the TODOS / NOTES / FINDINGS headers. Click
+    /// cycles the order, right-click opens the full list. Added
+    /// 2026-09-03 — `set_panel_sort` existed and was persisted, but
+    /// had no caller anywhere in the UI, so the setting was reachable
+    /// only by hand-editing `config.toml`.
+    pub todos_panel_sort_chip: Option<Rect>,
+    pub notes_panel_sort_chip: Option<Rect>,
+    pub findings_panel_sort_chip: Option<Rect>,
     pub findings_panel_filter_input: Option<Rect>,
     pub findings_panel_new_chip: Option<Rect>,
     pub todos_panel_new_chip: Option<Rect>,
@@ -3600,6 +3608,10 @@ impl PaneRects {
         self.notes_panel_refresh_chip = None;
         self.findings_panel_refresh_chip = None;
         self.sessions_panel_refresh_chip = None;
+        // 2026-09-03 — header sort chips.
+        self.todos_panel_sort_chip = None;
+        self.notes_panel_sort_chip = None;
+        self.findings_panel_sort_chip = None;
         self.todos_panel_filter_input = None;
         // Sessions panel.
         self.sessions_panel_filter_input = None;

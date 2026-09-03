@@ -88,7 +88,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!("  ({} of {})", filtered.len(), app.todos_hits.len())
     };
-    app.rects.todos_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+    // The `sort:` chip is the same idiom as CLOUD AGENTS' `view:`
+    // chip — click cycles, right-click lists every mode with a ✓ on
+    // the current one.
+    let sort_chip =
+        crate::ui::panel_chrome::mode_chip_text("sort", app.panel_sort("todos").label());
+    let (todos_sort, todos_refresh) = crate::ui::panel_chrome::draw_caps_header_with_chips(
         frame,
         Rect {
             x: area.x,
@@ -98,10 +103,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         },
         "TODOS",
         Some(&subtitle),
+        Some(&sort_chip),
         bg,
         &t,
         app.config.ui.ascii_icons,
     );
+    app.rects.todos_panel_sort_chip = todos_sort;
+    app.rects.todos_panel_refresh_chip = todos_refresh;
     // Filter row (row 1). Matches `http_panel::draw` visual — chip
     // background, magnifier glyph, `/ filter` placeholder, `▏` cursor
     // when focused.
@@ -143,14 +151,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.rects.todos_panel_filter_input = Some(row_rect);
         }
     }
-    // R16 design-critic (2026-08-24) — `area.y + 3` (blank row under
-    // filter) is intentional: TODOS has no `+ New todo` CTA chip like
-    // NOTES/SESSIONS do, so the row acts as breathing room instead of
-    // a chip slot. Matches `findings_panel.rs`.
     // `+ New todo` occupies the row that was deliberately left blank
     // for want of a CTA — the same reasoning that gave FINDINGS its
     // chip. TODOS was then the only list panel with no way to create
     // anything.
+    //
+    // 2026-09-03 (user: "the first todo shobund start 1 line down") —
+    // adding the chip ate the panel's only spacer, so the first row
+    // butted straight against a filled green chip. NOTES and FINDINGS
+    // both put their chip on `+2` and start their list on `+4`, keeping
+    // a blank row between; TODOS was starting on `+3`. Now all three
+    // agree.
     let y = area.y + 2;
     if y < area.y + area.height {
         let label = "+ New todo";
@@ -171,7 +182,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         app.rects.todos_panel_new_chip = Some(new_rect);
     }
-    let mut y = y + 1;
+    // +2, not +1: one row for the chip itself, one blank spacer under
+    // it. Both the empty-state hint and the list start here, so they
+    // stay aligned with the `area.y + 4` geometry below.
+    let mut y = y + 2;
 
     if app.todos_hits.is_empty() {
         // Interpolate the same glyph the header refresh chip uses
@@ -233,11 +247,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // cursor after a filter narrows doesn't paint nothing.
         let clamped_cursor = app.todos_panel_cursor.min(filtered.len().saturating_sub(1));
         app.todos_panel_cursor = clamped_cursor;
-        // Content begins at `area.y + 3`, so THREE rows are chrome — not
-        // the five the row budget used to reserve, which stopped the
-        // list two lines short of the border and made a full panel look
-        // like the end of the list.
-        let visible_rows = (area.height as usize).saturating_sub(3);
+        // Content begins at `area.y + 4`, so FOUR rows are chrome:
+        // header, filter, `+ New todo` chip, spacer. The budget must
+        // match the start row exactly — reserving fewer rows than the
+        // chrome actually occupies runs the list past the bottom
+        // border; reserving more stops it short and makes a full panel
+        // look like the end of the list.
+        let visible_rows = (area.height as usize).saturating_sub(4);
         let mut scroll = app.todos_panel_scroll;
         let (first, shown, needs_sb) = crate::ui::panel_chrome::list_scroll_window(
             &mut scroll,
@@ -409,14 +425,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // to this panel's scroll offset.
         app.rects.todos_panel_area = Some(Rect {
             x: area.x,
-            y: area.y + 3,
+            y: area.y + 4,
             width: area.width,
             height: visible_rows as u16,
         });
         if needs_sb {
             let sb = Rect {
                 x: area.x + row_w,
-                y: area.y + 3,
+                y: area.y + 4,
                 width: 1,
                 height: visible_rows as u16,
             };
@@ -601,6 +617,73 @@ pub fn scan_file(path: &std::path::Path) -> Vec<TodoHit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// USER REPORT 2026-09-03 — "the first todo shobund start 1 line
+    /// down". Adding the `+ New todo` chip consumed the panel's only
+    /// spacer row, so the first row butted straight against a filled
+    /// green chip. NOTES and FINDINGS both keep a blank row there.
+    ///
+    /// Asserts the SPACER, not a magic row number: the row directly
+    /// under the chip must be empty, and the first list row must come
+    /// after it.
+    #[test]
+    fn a_blank_row_separates_the_new_chip_from_the_first_row() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        app.todos_panel_scanned_once = true;
+        app.todos_hits = vec![TodoHit {
+            tag: "REVIEW",
+            path: d.path().join("a.rs"),
+            line: 1,
+            title: "x".into(),
+        }];
+
+        let w = 80u16;
+        let mut term = Terminal::new(TestBackend::new(w, 12)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: 12,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let rows: Vec<String> = (0..12u16)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+
+        let chip_y = rows
+            .iter()
+            .position(|r| r.contains("New todo"))
+            .expect("the + New todo chip did not render");
+        let row_y = rows
+            .iter()
+            .position(|r| r.contains("REVIEW"))
+            .expect("the list row did not render");
+
+        assert!(
+            rows[chip_y + 1].trim().is_empty(),
+            "no spacer under the chip — row {} reads {:?}",
+            chip_y + 1,
+            rows[chip_y + 1].trim()
+        );
+        assert_eq!(
+            row_y,
+            chip_y + 2,
+            "the first row is not one line below the spacer"
+        );
+    }
 
     /// User report — the focused row's highlight started at column 0, so
     /// it read as a full-width band welded to the panel's left edge; and

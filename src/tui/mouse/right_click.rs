@@ -31,11 +31,48 @@ fn refresh_chip_menu_hit(app: &crate::app::App, x: u16, y: u16) -> Option<&'stat
         .map(|(_, id)| *id)
 }
 
+/// Right-click on any panel's `sort:` chip. Same one-line-per-panel
+/// shape as [`refresh_chip_menu_hit`], and for the same reason.
+fn sort_chip_hit(app: &crate::app::App, x: u16, y: u16) -> Option<&'static str> {
+    let chips: [(Option<ratatui::layout::Rect>, &'static str); 3] = [
+        (app.rects.todos_panel_sort_chip, "todos"),
+        (app.rects.notes_panel_sort_chip, "notes"),
+        (app.rects.findings_panel_sort_chip, "findings"),
+    ];
+    chips
+        .iter()
+        .find(|(r, _)| r.is_some_and(|r| crate::app::dispatch::contains(r, x, y)))
+        .map(|(_, id)| *id)
+}
+
 pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     // Checked FIRST: the chips sit inside their panels' headers, so a
     // later panel-body branch would otherwise swallow the click.
     if let Some(panel) = refresh_chip_menu_hit(app, x, y) {
         app.open_refresh_chip_menu(panel, (x, y));
+        return;
+    }
+    if let Some(panel) = sort_chip_hit(app, x, y) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = app.panel_sort(panel);
+        let items = crate::ui::list_sort::ListSort::all()
+            .iter()
+            .map(|m| {
+                // The ✓ marks the active mode, matching the CLOUD
+                // AGENTS density menu. Two leading spaces on the
+                // others so the labels stay column-aligned.
+                let label = if *m == cur {
+                    format!("\u{2713} {}", m.label())
+                } else {
+                    format!("  {}", m.label())
+                };
+                MenuItem::new(
+                    label,
+                    MenuAction::SetPanelSort(panel.to_string(), m.as_str().to_string()),
+                )
+            })
+            .collect::<Vec<_>>();
+        app.context_menu = Some(ContextMenu::new(Some("Sort by".to_string()), (x, y), items));
         return;
     }
     if let Some(r) = app.rects.statusline_notif_chip
@@ -266,6 +303,40 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "note".to_string());
+        let items = vec![
+            MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
+            MenuItem::new("Delete…", MenuAction::Delete(path)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
+    // 2026-09-03 (user: "why cant i right click on findings?") — the
+    // FINDINGS rows had rects and a left-click handler but were never
+    // consulted here, so the right-click fell through to the generic
+    // pane menu. Mirrors the NOTES branch above: both panels list
+    // markdown files, so the same six actions apply.
+    if let Some((i, path)) = app
+        .rects
+        .findings_panel_files
+        .iter()
+        .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|i| (i, app.rects.findings_panel_files[i].1.clone()))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        // Move the cursor to the row being acted on, exactly as the
+        // left-click path does — otherwise the menu names one row
+        // while the highlight sits on another. Window index plus
+        // scroll, not the list index.
+        app.findings_panel_cursor = i + app.findings_panel_scroll;
+        let rel = crate::app::rel_path(&app.workspace, &path);
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "finding".to_string());
         let items = vec![
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
