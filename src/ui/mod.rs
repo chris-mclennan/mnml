@@ -2680,19 +2680,37 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             // 2026-06-24 — resting menu text uses `grey` (darker)
             // instead of `comment` so the menu bar feels less
             // prominent. Active (open) row keeps the cyan invert.
+            // 2026-09-03 (user: "shuold we consider lighting up the
+            // menu bar when mouseover, not too bright but might make a
+            // nice effect"). Per-WORD, not the whole bar: lighting the
+            // strip is a large flash carrying one bit, while lighting
+            // the word under the pointer says which one you would hit —
+            // and it is what every desktop menu bar does.
+            //
+            // The hover state is a foreground lift to `fg` on the
+            // unchanged chrome background, deliberately weaker than the
+            // open state's cyan invert. If hover and open looked alike,
+            // the bar would read as already-open on a mere pass-by.
+            let is_hovered = !is_open
+                && app
+                    .mouse_pos
+                    .is_some_and(|(mxp, myp)| myp == area.y && mxp >= mx && mxp < mx + label_w);
             let (word_fg, word_bg) = if is_open {
                 (t.bg_dark, t.cyan)
+            } else if is_hovered {
+                (t.fg, t.bg_dark)
             } else {
                 (t.grey, t.bg_dark)
             };
-            let base_style = Style::default()
-                .fg(word_fg)
-                .bg(word_bg)
-                .add_modifier(if is_open {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                });
+            let base_style =
+                Style::default()
+                    .fg(word_fg)
+                    .bg(word_bg)
+                    .add_modifier(if is_open || is_hovered {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    });
             // The leading character of an ASCII-letter label is the
             // Alt+<letter> accelerator. Underline it when ANY menu
             // is open so the user discovers the shortcut while
@@ -6995,6 +7013,79 @@ mod menu_bar_auto_tests {
         term.draw(|f| super::draw(f, &mut app)).unwrap();
         let buf = term.backend().buffer();
         (0..w).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    /// Colours of the cell at `x` on the chrome row.
+    fn cell_at(mode: &str, mouse: Option<(u16, u16)>, x: u16) -> (String, ratatui::style::Color) {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.menu_bar = mode.to_string();
+        app.config.ui.ascii_icons = true;
+        app.mouse_pos = mouse;
+        let (w, h) = (120u16, 24u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| super::draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..w).map(|xx| buf[(xx, 0)].symbol()).collect();
+        (row, buf[(x, 0)].fg)
+    }
+
+    /// USER 2026-09-03 — "shuold we consider lighting up the menu bar
+    /// when mouseover, not too bright but might make a nice effect".
+    ///
+    /// Per-word, so the highlight says WHICH menu you'd hit. Asserts
+    /// the hovered word brightens and its neighbours do not — a
+    /// whole-bar wash would brighten both and pass a naive test.
+    #[test]
+    fn hovering_a_menu_word_lights_only_that_word() {
+        let (row, _) = cell_at("always", None, 0);
+        let file_x = row.find("File").expect("no File menu word") as u16;
+        let edit_x = row.find("Edit").expect("no Edit menu word") as u16;
+
+        let (_, resting) = cell_at("always", None, file_x);
+        let (_, hovered) = cell_at("always", Some((file_x, 0)), file_x);
+        assert_ne!(
+            hovered, resting,
+            "the hovered word did not change colour at all"
+        );
+
+        // The neighbour must stay at rest — this is what separates a
+        // per-word highlight from lighting the whole bar.
+        let (_, neighbour) = cell_at("always", Some((file_x, 0)), edit_x);
+        assert_eq!(
+            neighbour, resting,
+            "hovering File also lit Edit — the highlight is not per-word"
+        );
+    }
+
+    /// Hover must stay visually WEAKER than open, or a pass-by reads
+    /// as an already-open menu. Open inverts (dark fg on cyan bg);
+    /// hover only lifts the foreground on the unchanged background.
+    #[test]
+    fn hover_does_not_look_like_an_open_menu() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+        let (w, h) = (120u16, 24u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| super::draw(f, &mut app)).unwrap();
+        let row: String = {
+            let buf = term.backend().buffer();
+            (0..w).map(|x| buf[(x, 0)].symbol()).collect()
+        };
+        let file_x = row.find("File").expect("no File word") as u16;
+
+        app.mouse_pos = Some((file_x, 0));
+        term.draw(|f| super::draw(f, &mut app)).unwrap();
+        let hover_bg = term.backend().buffer()[(file_x, 0)].bg;
+        let t = crate::ui::theme::cur();
+        assert_ne!(
+            hover_bg, t.cyan,
+            "hover used the open menu's cyan background"
+        );
+        assert_eq!(hover_bg, t.bg_dark, "hover changed the chrome background");
     }
 
     /// USER 2026-09-03 — "i tried auto on menubar and thought when

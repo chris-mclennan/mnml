@@ -9,6 +9,38 @@
 //! openable in a pty pane via the `task.run` command; `[startup] tasks = [...]`
 //! lists task names auto-run in pty panes when a workspace opens.
 //!
+//! TODO (user ask 2026-09-03) — settings export / import / versioning.
+//!
+//! Three separable pieces; ship them in this order because each is
+//! useful alone:
+//!
+//! 1. **Export.** Write the EFFECTIVE config (after the four-layer
+//!    merge above) to a file. Not a copy of `~/.config/mnml/config.toml`
+//!    — the point is to capture what mnml is actually running, which is
+//!    exactly what a bug report or a second machine needs. Must redact
+//!    nothing by accident and everything on purpose: `[ai]` and
+//!    `[lsp.*]` can carry tokens, so the exporter needs an explicit
+//!    allow/deny pass, not a blanket serialize. See the CHANGELOG
+//!    secret-scrub trap in CLAUDE.md for what happens when a
+//!    credential-shaped string escapes into a shared artifact.
+//!
+//! 2. **Import.** Merge a file in, with a dry-run diff first — "these
+//!    11 keys change, 2 are unknown to this version". Overwriting a
+//!    config silently is the failure mode to design against.
+//!
+//! 3. **Versioning.** A `version` key written on export, checked on
+//!    import. Its job is to make an OLD export importable into a NEWER
+//!    mnml, which means the migration table lives here and unknown keys
+//!    warn rather than abort. `ListSort::from_token` is the existing
+//!    precedent — an unrecognised value falls back to the default
+//!    instead of erroring, because a typo must not stop mnml drawing.
+//!
+//! Settings-UI note: per the family convention in CLAUDE.md, the
+//! settings UI never edits arrays of complex things. Export/import
+//! sidesteps that limit entirely, which is much of its value — it is
+//! the only route that round-trips `[[workspaces]]` and
+//! `[[bitbucket.repos]]`.
+//!
 //! `[keys.*]` maps **key spec → command id**, like VSCode's `keybindings.json`
 //! (the reverse direction is awkward — a key can only do one thing — and this way
 //! `"ctrl+p" = "none"` cleanly unbinds a default). Sections: `[keys.global]`
