@@ -248,6 +248,25 @@ pub enum EditOp {
     /// upward selections (`V k >`) work the same as downward ones
     /// (`V j >`). R12 vscode-reviewer follow-up 2026-08-23.
     NormalizeLinewiseSelection,
+    /// Widen a CHARWISE selection by one character at its high end, so
+    /// the cell under the cursor is included.
+    ///
+    /// vim's charwise VISUAL is inclusive at both ends: `v` alone
+    /// selects one character, and `v` `l` `l` selects three. mnml's
+    /// selection is `[lo, hi)`, so every `v`+motion yank/delete came up
+    /// one character short and a bare `v` `y` yanked the EMPTY STRING,
+    /// silently clobbering the register (nvchad bug-hunt 2026-09-03).
+    ///
+    /// A plain `MoveRight` cannot do this: on a BACKWARD selection
+    /// (cursor before anchor) it would shrink the range instead of
+    /// growing it. This always extends whichever end is higher, and
+    /// never crosses a line boundary — vim's charwise selection does
+    /// not swallow the newline when the cursor sits on the last cell
+    /// of a line.
+    ///
+    /// No-op without a live selection, and in linewise/blockwise modes,
+    /// which are already inclusive by construction.
+    MakeSelectionInclusive,
     /// vim `f`/`F`/`t`/`T` — find char on the cursor's line. `forward=true`
     /// scans rightward, `forward=false` scans leftward. `before=true` (`t`/`T`)
     /// stops one cell before the match instead of on it. When `inclusive=true`
@@ -554,6 +573,7 @@ impl EditOp {
             | SwapAnchorCursor
             | MoveCursorToSelectionStart
             | NormalizeLinewiseSelection
+            | MakeSelectionInclusive
             | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove

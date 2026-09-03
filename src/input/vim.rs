@@ -3826,12 +3826,29 @@ impl VimInputHandler {
             }
             KeyCode::Char('d') | KeyCode::Char('x') => {
                 self.enter_normal();
-                InputResult::Ops(vec![DeleteSelection])
+                // Charwise visual is INCLUSIVE of the cell under the
+                // cursor (`:help visual-mode`), but mnml's selection is
+                // `[lo, hi)`. Without this every `v`+motion delete came
+                // up one character short — `vll d` left `cdefghij`
+                // where vim leaves `defghij`. Linewise already spans
+                // whole lines, so it must NOT be widened again.
+                if linewise {
+                    InputResult::Ops(vec![DeleteSelection])
+                } else {
+                    InputResult::Ops(vec![MakeSelectionInclusive, DeleteSelection])
+                }
             }
             KeyCode::Char('c') | KeyCode::Char('s') => {
                 self.mode = VimMode::Insert;
                 self.reset_pending();
-                InputResult::Ops(vec![ReplaceSelection(String::new())])
+                if linewise {
+                    InputResult::Ops(vec![ReplaceSelection(String::new())])
+                } else {
+                    InputResult::Ops(vec![
+                        MakeSelectionInclusive,
+                        ReplaceSelection(String::new()),
+                    ])
+                }
             }
             KeyCode::Char('y') => {
                 self.enter_normal();
@@ -3875,7 +3892,16 @@ impl VimInputHandler {
                         SelectClear,
                     ])
                 } else {
-                    InputResult::Ops(vec![YankSelection, MoveCursorToSelectionStart, SelectClear])
+                    // Same inclusivity fix as `d`/`c` above. This is
+                    // the worst case of the three: a bare `v` `y`
+                    // yanked the EMPTY STRING and silently clobbered
+                    // the register with nothing.
+                    InputResult::Ops(vec![
+                        MakeSelectionInclusive,
+                        YankSelection,
+                        MoveCursorToSelectionStart,
+                        SelectClear,
+                    ])
                 }
             }
             KeyCode::Char('o') => {
@@ -4911,9 +4937,15 @@ mod tests {
         // `MoveCursorToSelectionStart` between the yank and the
         // clear so the cursor lands at the selection start (vim
         // `:help v_y`).
+        // 2026-09-03 — `MakeSelectionInclusive` leads, because vim's
+        // charwise visual includes the cell under the cursor. See
+        // `charwise_visual_is_inclusive` in editor/mod.rs for the
+        // behavioural half; this test only pins the op sequence and so
+        // never noticed the range was wrong.
         assert_eq!(
             ops(v.handle_key(k('y'), &ctx())),
             vec![
+                EditOp::MakeSelectionInclusive,
                 EditOp::YankSelection,
                 EditOp::MoveCursorToSelectionStart,
                 EditOp::SelectClear,

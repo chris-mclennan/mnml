@@ -2772,6 +2772,27 @@ impl Editor {
                     self.goal_col = None;
                 }
             }
+            MakeSelectionInclusive => {
+                // Extend the HIGH end by one character (not one byte —
+                // a multi-byte char must move whole).
+                if let Some(a) = self.anchor {
+                    let hi = a.max(self.cursor);
+                    // Never swallow the line terminator: vim's charwise
+                    // selection stops at the last cell of the line.
+                    if hi < self.text.len() && self.text.as_bytes()[hi] != b'\n' {
+                        let next = self.text[hi..]
+                            .chars()
+                            .next()
+                            .map(|c| hi + c.len_utf8())
+                            .unwrap_or(hi);
+                        if self.cursor >= a {
+                            self.cursor = next;
+                        } else {
+                            self.anchor = Some(next);
+                        }
+                    }
+                }
+            }
             NormalizeLinewiseSelection => {
                 // Widen a live selection so it spans the FULL lines
                 // it touches. Direction-normalizing: after this op
@@ -5522,6 +5543,7 @@ mod tests {
     /// `try_iso_date` scans a +/-10-byte window using raw byte offsets;
     /// before the boundary guard, an offset landing inside a multi-byte
     /// char panicked with "byte index 2 is not a char boundary".
+
     #[test]
     fn smart_increment_survives_non_ascii_line() {
         for text in [
@@ -5539,6 +5561,7 @@ mod tests {
     }
 
     /// The boundary guard must not cost us any real ISO-date match.
+
     #[test]
     fn smart_increment_still_bumps_iso_date_after_non_ascii() {
         let text = "due \u{e9} 2026-01-31 x";
@@ -7822,5 +7845,139 @@ mod page_down_eof_tests {
         ed.apply(EditOp::PageDown, 40, &mut clip);
         assert_eq!(ed.current_line(), 2, "should land on 'c'");
         assert_eq!(ed.cursor, ed.text.len(), "and at its end");
+    }
+}
+
+/// Charwise-visual inclusivity — vim's `:help visual-mode` semantics.
+///
+/// Its own module rather than a block inside `mod tests`, so the
+/// helpers it needs are explicit and it cannot be accidentally nested
+/// inside another test's body.
+#[cfg(test)]
+mod charwise_visual_tests {
+    use super::*;
+    use crate::clipboard::Clipboard;
+
+    fn ed(s: &str) -> (Editor, Clipboard) {
+        (Editor::new(s, 4), Clipboard::detached())
+    }
+    fn run(e: &mut Editor, c: &mut Clipboard, ops: &[EditOp]) {
+        for op in ops {
+            e.apply(op.clone(), 10, c);
+        }
+    }
+
+    /// vim's charwise VISUAL is INCLUSIVE of the cell under the cursor.
+    ///
+    /// mnml's selection is `[lo, hi)`, so every `v`+motion operation
+    /// came up one character short, and a bare `v` `y` yanked the EMPTY
+    /// STRING — silently clobbering the register with nothing (nvchad
+    /// bug-hunt 2026-09-03).
+    ///
+    /// The existing test for this path asserted only which OPS were
+    /// emitted, so it passed throughout. This one runs them and checks
+    /// the text, which is the half that was broken. Expectations are
+    /// vim's actual output, from the bug report's table.
+    #[test]
+    fn charwise_visual_is_inclusive() {
+        for (rights, want) in [(0usize, "a"), (2, "abc")] {
+            let (mut e, mut c) = ed("abcdefghij\nklmnopqrst\n");
+            let mut ops = vec![EditOp::SelectStart];
+            for _ in 0..rights {
+                ops.push(EditOp::MoveRight);
+            }
+            ops.extend([
+                EditOp::MakeSelectionInclusive,
+                EditOp::YankSelection,
+                EditOp::SelectClear,
+            ]);
+            run(&mut e, &mut c, &ops);
+            assert_eq!(c.text(), want, "v + {rights}x l + y");
+        }
+
+        // `v` `l` `l` `d` leaves "defghij", not "cdefghij".
+        let (mut e, mut c) = ed("abcdefghij\nklmnopqrst\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::SelectStart,
+                EditOp::MoveRight,
+                EditOp::MoveRight,
+                EditOp::MakeSelectionInclusive,
+                EditOp::DeleteSelection,
+            ],
+        );
+        assert!(
+            e.text().starts_with("defghij"),
+            "vll d left {:?}",
+            e.text().lines().next()
+        );
+    }
+
+    /// A BACKWARD selection must GROW, not shrink. This is why the fix
+    /// is its own op rather than a `MoveRight`: with the cursor before
+    /// the anchor, moving the cursor right would eat into the range.
+    /// vim includes the anchor's own character either way.
+    #[test]
+    fn an_inclusive_backward_selection_still_covers_the_anchor_char() {
+        let (mut e, mut c) = ed("abcdefghij\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::MoveRight,
+                EditOp::MoveRight,
+                EditOp::SelectStart,
+                EditOp::MoveLeft,
+                EditOp::MoveLeft,
+                EditOp::MakeSelectionInclusive,
+                EditOp::YankSelection,
+            ],
+        );
+        assert_eq!(
+            c.text(),
+            "abc",
+            "a backward v-selection lost its anchor char"
+        );
+    }
+
+    /// It must not swallow the newline: vim's charwise selection stops
+    /// at the last cell of a line. Otherwise `v` `y` at end-of-line
+    /// would capture the terminator and paste would split the
+    /// neighbouring line — the same class of bug the `$`-inclusive
+    /// guard already fixed for operator-pending motions.
+    #[test]
+    fn an_inclusive_selection_never_swallows_the_newline() {
+        let (mut e, mut c) = ed("ab\ncd\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::MoveRight,
+                EditOp::SelectStart,
+                EditOp::MakeSelectionInclusive,
+                EditOp::YankSelection,
+            ],
+        );
+        assert_eq!(c.text(), "b", "the selection crossed the line terminator");
+    }
+
+    /// Multi-byte characters must move whole — extending by one BYTE
+    /// would split a UTF-8 sequence and panic on the slice.
+    #[test]
+    fn an_inclusive_selection_extends_by_a_whole_character() {
+        let (mut e, mut c) = ed("h\u{e9}llo\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::MoveRight,
+                EditOp::SelectStart,
+                EditOp::MakeSelectionInclusive,
+                EditOp::YankSelection,
+            ],
+        );
+        assert_eq!(c.text(), "\u{e9}");
     }
 }
