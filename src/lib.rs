@@ -286,6 +286,17 @@ pub enum HoverChip {
     StatuslineWorkspace,
     /// Statusline clock chip (HH:MM or HH:MMZ).
     StatuslineClock,
+    /// Statusline notification bell — quiet when idle, coloured with a
+    /// count when there is something unread.
+    StatuslineNotifications,
+    /// A list panel's `↻` refresh chip. The `&'static str` is the panel
+    /// id (`"todos"`, `"notes"`, …) so one variant covers all seven
+    /// rather than seven near-identical ones.
+    PanelRefreshChip(&'static str),
+    /// A list panel's `+ New …` create chip, by panel id.
+    PanelNewChip(&'static str),
+    /// The `⋮` actions kebab on the focused TODOS row.
+    TodosRowKebab,
     /// Stress meter — 4-block bar that fills as p95 frame time
     /// climbs. Tooltip shows the actual numbers. 2026-07-11.
     StatuslineStress,

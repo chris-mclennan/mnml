@@ -423,6 +423,47 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineLsp);
     }
+    if let Some(r) = app.rects.statusline_notif_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineNotifications);
+    }
+    // The panel chips. Listed together because they behave identically
+    // and only differ by which panel they belong to — a hover-help
+    // audit found all of these wired for click and right-click but
+    // absent from this function, so hovering them could never surface
+    // anything no matter what copy existed.
+    for (rect, panel) in [
+        (app.rects.todos_panel_refresh_chip, "TODOS"),
+        (app.rects.notes_panel_refresh_chip, "NOTES"),
+        (app.rects.findings_panel_refresh_chip, "FINDINGS"),
+        (app.rects.sessions_panel_refresh_chip, "SESSIONS"),
+        (app.rects.agents_panel_refresh_chip, "AGENTS"),
+        (app.rects.cloud_agents_refresh_chip, "CLOUD AGENTS"),
+        (app.rects.git_palette_refresh_chip, "GIT"),
+    ] {
+        if let Some(r) = rect
+            && contains(r, x, y)
+        {
+            return Some(crate::HoverChip::PanelRefreshChip(panel));
+        }
+    }
+    for (rect, panel) in [
+        (app.rects.todos_panel_new_chip, "TODOS"),
+        (app.rects.notes_panel_new_chip, "NOTES"),
+        (app.rects.findings_panel_new_chip, "FINDINGS"),
+    ] {
+        if let Some(r) = rect
+            && contains(r, x, y)
+        {
+            return Some(crate::HoverChip::PanelNewChip(panel));
+        }
+    }
+    if let Some((r, _)) = app.rects.todos_panel_kebab
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::TodosRowKebab);
+    }
     if let Some(r) = app.rects.statusline_wrap_chip
         && contains(r, x, y)
     {
@@ -2943,5 +2984,83 @@ mod scroll_spec_tests {
             total >= 10,
             "steady scrolling moved only {total} lines for 10 notches — jitter is              being misread as the wheel stopping"
         );
+    }
+}
+
+#[cfg(test)]
+mod new_hover_chip_tests {
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::layout::Rect;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    fn r(x: u16, y: u16) -> Rect {
+        Rect {
+            x,
+            y,
+            width: 4,
+            height: 1,
+        }
+    }
+
+    /// HOVER-HELP AUDIT — the bell, the seven refresh chips, the three
+    /// create chips and the TODOS kebab were all wired for click and
+    /// right-click but absent from `hover_chip_at`, the sole producer
+    /// of `app.hover_chip`. Hovering them could never surface help no
+    /// matter what copy existed.
+    #[test]
+    fn the_new_chips_are_hoverable() {
+        let (_d, mut app) = app();
+        app.rects.statusline_notif_chip = Some(r(10, 0));
+        app.rects.todos_panel_refresh_chip = Some(r(20, 0));
+        app.rects.notes_panel_new_chip = Some(r(30, 0));
+        app.rects.todos_panel_kebab = Some((r(40, 0), 0));
+
+        assert_eq!(
+            super::hover_chip_at(&app, 11, 0),
+            Some(crate::HoverChip::StatuslineNotifications),
+            "the notification bell is not hoverable"
+        );
+        assert_eq!(
+            super::hover_chip_at(&app, 21, 0),
+            Some(crate::HoverChip::PanelRefreshChip("TODOS")),
+            "a panel refresh chip is not hoverable"
+        );
+        assert_eq!(
+            super::hover_chip_at(&app, 31, 0),
+            Some(crate::HoverChip::PanelNewChip("NOTES")),
+            "a panel create chip is not hoverable"
+        );
+        assert_eq!(
+            super::hover_chip_at(&app, 41, 0),
+            Some(crate::HoverChip::TodosRowKebab),
+            "the TODOS row kebab is not hoverable"
+        );
+    }
+
+    /// ...and each one resolves to real copy. A hoverable chip with no
+    /// text is the same dead end from the other side.
+    #[test]
+    fn every_new_chip_has_help_copy() {
+        for chip in [
+            crate::HoverChip::StatuslineNotifications,
+            crate::HoverChip::PanelRefreshChip("TODOS"),
+            crate::HoverChip::PanelNewChip("NOTES"),
+            crate::HoverChip::TodosRowKebab,
+        ] {
+            let (_d2, a2) = app();
+            let copy = crate::ui::info_view_copy::lookup(
+                &a2,
+                &crate::ui::info_view::InfoViewTarget::Chip(chip),
+            );
+            let c = copy.unwrap_or_else(|| panic!("{chip:?} has no info-view copy"));
+            assert!(!c.title.is_empty(), "{chip:?} has an empty title");
+            assert!(c.body.len() > 40, "{chip:?} body is a stub: {:?}", c.body);
+        }
     }
 }

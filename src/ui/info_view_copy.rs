@@ -557,6 +557,55 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             )],
             ..Default::default()
         }),
+        // src: src/ui/statusline.rs — the bell, left of the clock
+        StatuslineNotifications => Some(InfoViewCopy {
+            title: "Notifications".into(),
+            body: "Every toast is also written to a history, so a message that \
+                   scrolled past is not lost. The bell is always present: quiet \
+                   when there is nothing, yellow with a count for warnings, red \
+                   for errors — the colour carries the level so the number does \
+                   not have to. Click opens the history; right-click marks it \
+                   read or copies without opening it. Capped at 200 entries and \
+                   7 days."
+                .into(),
+            try_it: vec![PaletteLink::new("messages.show", "Show message history")],
+            ..Default::default()
+        }),
+        // src: src/ui/panel_chrome.rs::draw_caps_header_with_refresh
+        PanelRefreshChip(panel) => Some(InfoViewCopy {
+            title: format!("{panel}: refresh"),
+            body: "Re-scans this panel now. Right-click for the panel's \
+                   settings: auto-refresh on/off, and — on TODOS, NOTES and \
+                   FINDINGS — the row order (newest first, or name A-Z). Both \
+                   are per-panel and persist. Auto-refresh is on by default; \
+                   TODOS is throttled to once every two seconds because its \
+                   scan walks the whole workspace."
+                .into(),
+            ..Default::default()
+        }),
+        // src: the three list panels' create chips
+        PanelNewChip(panel) => Some(InfoViewCopy {
+            title: format!("{panel}: new"),
+            body: "Creates an entry in this panel. A todo is appended to \
+                   TODO.md at the workspace root under an `## Inbox` heading, \
+                   newest first; a note becomes a file in .mnml/notes/, a \
+                   finding in .mnml/findings/. The panel refreshes immediately \
+                   rather than waiting for the next scan."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/todos_panel.rs — focused-row kebab
+        TodosRowKebab => Some(InfoViewCopy {
+            title: "TODO row actions".into(),
+            body: "Shown on the focused row only, the hover-reveal idiom rather \
+                   than a marker repeated down every row. Offers this \
+                   workspace's own Claude agents, skills and slash commands \
+                   (discovered from .claude/), falling back to plain Claude \
+                   Code or Codex — so a marker can be handed straight to an \
+                   agent with the file and line already filled in."
+                .into(),
+            ..Default::default()
+        }),
         StatuslineClock => Some(InfoViewCopy {
             title: "Wall clock".into(),
             body: "Local time (or UTC if the trailing Z is showing). Click to \

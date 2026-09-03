@@ -185,6 +185,36 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("right-click: workspace menu".into()),
             ))
         }
+        HoverChip::StatuslineNotifications => Some((
+            app.rects.statusline_notif_chip?,
+            "click: message history".into(),
+            Some("right-click: mark read · copy".into()),
+        )),
+        HoverChip::PanelRefreshChip(_) => Some((
+            app.rects
+                .todos_panel_refresh_chip
+                .or(app.rects.notes_panel_refresh_chip)
+                .or(app.rects.findings_panel_refresh_chip)
+                .or(app.rects.sessions_panel_refresh_chip)
+                .or(app.rects.agents_panel_refresh_chip)
+                .or(app.rects.cloud_agents_refresh_chip)
+                .or(app.rects.git_palette_refresh_chip)?,
+            "click: refresh now".into(),
+            Some("right-click: auto-refresh · sort".into()),
+        )),
+        HoverChip::PanelNewChip(_) => Some((
+            app.rects
+                .todos_panel_new_chip
+                .or(app.rects.notes_panel_new_chip)
+                .or(app.rects.findings_panel_new_chip)?,
+            "click: create".into(),
+            None,
+        )),
+        HoverChip::TodosRowKebab => Some((
+            app.rects.todos_panel_kebab?.0,
+            "click: row actions".into(),
+            Some("fix with Claude Code / Codex".into()),
+        )),
         HoverChip::StatuslineClock => Some((
             app.rects.statusline_clock_chip?,
             "click: local ⇄ UTC".into(),

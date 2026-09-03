@@ -349,7 +349,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // do in sessions view").
                     Span::styled(
                         if is_focused_row { "▌" } else { " " },
-                        Style::default().fg(t.blue).bg(row_bg),
+                        Style::default().fg(t.green).bg(row_bg),
                     ),
                     Span::styled(
                         hit.tag,
@@ -693,7 +693,7 @@ mod tests {
         );
         assert_eq!(
             buf[(1, y)].fg,
-            theme::cur().blue,
+            theme::cur().green,
             "the accent bar is not the blue every other selected-row \
              marker in mnml uses"
         );

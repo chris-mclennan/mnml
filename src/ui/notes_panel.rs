@@ -271,7 +271,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(" ", Style::default().bg(bg)),
                     Span::styled(
                         if is_focused_row { "▌" } else { " " },
-                        Style::default().fg(t.blue).bg(row_bg),
+                        Style::default().fg(t.green).bg(row_bg),
                     ),
                     Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(row_bg)),
                     Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
@@ -474,7 +474,7 @@ mod tests {
             "the accent bar is not at column 1 — it should sit under the \
              filter row's magnifier"
         );
-        assert_eq!(buf[(1, y)].fg, t.blue, "the accent bar is not blue");
+        assert_eq!(buf[(1, y)].fg, t.green, "the accent bar is not green");
         assert_eq!(
             buf[(1, y)].bg,
             t.bg2,
