@@ -139,5 +139,5 @@ The cross-host workflow was added in 2026-06-06 after the SCM split-out audit fo
 ## Next
 
 - [Building integrations](/manual/integrations/building/) — write your own forge sibling against this same JSON contract
-- [Settings](/manual/settings/#keybindings) — rebind the `<leader>P p` chord if `<leader>P` collides with something in your `[keys.global]`
+- [Settings](/manual/settings/#keysglobal-keysvim-keysstandard) — rebind the `<leader>P p` chord if `<leader>P` collides with something in your `[keys.global]`
 - [Marketplace](/manual/integrations/marketplace/) — where to find installable `mnml-forge-*` siblings

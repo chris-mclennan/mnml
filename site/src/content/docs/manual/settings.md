@@ -145,7 +145,7 @@ Things the overlay does **not** edit:
 
 - Arrays of complex things — `[[workspaces]]`, `[[ui.integration_icon]]`, `[[marketplace.source]]`, `[snippets.<scope>]`, `[tasks.<name>]`, `[formatters.<ext>]`, `[linters.<ext>]`. These stay in TOML.
 - Free-form strings — theme name, ticket prefixes, formatter command templates.
-- `[keys.*]` tables — keybindings are TOML-only (see [Keybindings](#keybindings) below).
+- `[keys.*]` tables — keybindings are TOML-only (see [Keybindings](#keysglobal-keysvim-keysstandard) below).
 
 ### Row → config key mapping
 
@@ -242,7 +242,7 @@ Runtime toggle: `view.toggle_hover_help`, `:set hh` / `:set nohh` / `:set hh!`, 
 
 #### `show_workspace_dots`
 
-Turns the `● / ○` markers on workspace-root rows in the tree on or off. On by default. Runtime toggle: `view.toggle_workspace_dots`, `:set wsdots` / `:set nowsdots` / `:set wsdots!`, the **View → Toggle workspace dots** menu item, or right-click on any workspace-root row → **Hide / Show workspace dots**. See [Workspaces → Workspace dots](/manual/workspaces/#workspace-status-dots).
+Turns the `● / ○` markers on workspace-root rows in the tree on or off. On by default. Runtime toggle: `view.toggle_workspace_dots`, `:set wsdots` / `:set nowsdots` / `:set wsdots!`, the **View → Toggle workspace dots** menu item, or right-click on any workspace-root row → **Hide / Show workspace dots**. See [Workspaces → Workspace dots](/manual/workspaces/#workspace-dots).
 
 #### `menu_bar`
 

@@ -208,7 +208,7 @@ Only fires on macOS — the path is hardcoded to the standard .app bundle locati
 
 On `Enter`, mnml commits the collected answers to your global config in one pass and toasts *"Setup saved. Reopen anytime via `first_launch.show`."*
 
-Writes go through the same `persist_ui_*` / `persist_editor_*` / `persist_ai_*` helpers that every runtime toggle in mnml uses (see [Configuration](/manual/settings/#persisting-toggles) for the in-place TOML merge semantics). Unrelated keys and comments in your `config.toml` survive untouched — only the specific keys the wizard writes get updated.
+Writes go through the same `persist_ui_*` / `persist_editor_*` / `persist_ai_*` helpers that every runtime toggle in mnml uses (see [Configuration](/manual/settings/#whats-in-the-overlay-vs-whats-toml-only) for the in-place TOML merge semantics). Unrelated keys and comments in your `config.toml` survive untouched — only the specific keys the wizard writes get updated.
 
 Concretely, from a stock install choosing `vim`, Claude Code on **Sub**, and the `local` ghost-text backend:
 

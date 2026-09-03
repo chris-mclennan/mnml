@@ -151,7 +151,7 @@ Renames + removals in this menu:
 - **Toggle left panel** — was **Toggle file tree**. The panel hosts Git / Integrations / Agents / HTTP / Findings depending on activity-bar selection, so the label was misleading. The `EC02` codicon matches the sidebar-toggle chip in the palette bar.
 - **Toggle bufferline** — removed. It only affected the launcher-cluster row on the empty welcome screen (which the welcome body renders anyway); the toggle was inert. Deleted alongside the `bufferline_visible` field and `:set [no]bufferline` ex-arms.
 - **Toggle hover-help strip** — toggles the Ableton-style info box docked to the bottom of the left panel. See [Hover-help](/manual/hover-help/) for the full surface.
-- **Toggle workspace dots** — toggles the `● / ○` markers on workspace-root rows in the tree. See [Workspaces → Workspace dots](/manual/workspaces/#workspace-status-dots).
+- **Toggle workspace dots** — toggles the `● / ○` markers on workspace-root rows in the tree. See [Workspaces → Workspace dots](/manual/workspaces/#workspace-dots).
 
 ### Go
 

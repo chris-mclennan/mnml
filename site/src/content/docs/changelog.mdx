@@ -39,7 +39,7 @@ Or watch the repo on GitHub for a notification on every release:
   View all releases on GitHub
 </LinkButton>
 
-Already subscribed? [Manage your subscription](https://buttondown.com/chrismclennan/portal) (change email, unsubscribe, etc.).
+Already subscribed? Every issue carries a manage/unsubscribe link in its footer — that link is personal to your subscription, so there is no generic portal URL to send you to.
 
 ---
 
@@ -127,7 +127,7 @@ Before 0.2, mnml core carried default `IntegrationIcon` entries for every commun
 
 The SDK inverts that:
 
-- Each sibling ships a `--install` subcommand using [`mnml-bridge`](/manual/bridge-mount/#tier-3-mnml-bridge-sdk) 0.3's `install_integration()`. Writes `~/.config/mnml/integrations/<id>.toml`.
+- Each sibling ships a `--install` subcommand using [`mnml-bridge`](/manual/bridge-mount/#tier-3--mnml-bridge-sdk) 0.3's `install_integration()`. Writes `~/.config/mnml/integrations/<id>.toml`.
 - mnml scans that directory on startup + on the new `integrations.refresh` palette command. Rail chip + palette command + chord binding land automatically.
 - Precedence rules keep user config on top: **user config > manifest > built-in default**. A sibling manifest can never clobber a user's own `[[ui.integration_icon]]` override.
 

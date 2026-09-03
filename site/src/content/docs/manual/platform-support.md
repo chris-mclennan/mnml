@@ -9,7 +9,7 @@ This page covers what "supported" means per platform, the Windows-specific choic
 
 ## Supported targets
 
-The release train publishes prebuilt artifacts for these targets via [`cargo-dist`](https://opensource.dev/dist/):
+The release train publishes prebuilt artifacts for these targets via [`cargo-dist`](https://axodotdev.github.io/cargo-dist/):
 
 | Platform | Target triple | Formats |
 |---|---|---|

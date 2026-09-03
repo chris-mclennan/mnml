@@ -97,7 +97,7 @@ Not fired on every keystroke — the idiom is "prettify at pause points" so in-p
 
 Silent no-op when the body doesn't parse as JSON (form-encoded / XML / plain text pass through untouched). The `{ } Format` chip + `Shift+Alt+F` chord remain — those are the "format NOW" path (works even when auto is off).
 
-See [HTTP realistic request generation → Auto-format body](/manual/http-generation/#auto-format-body---http-auto_format_body) for the full behavior.
+See [HTTP realistic request generation → Auto-format body](/manual/http-generation/#auto-format-body--http-auto_format_body) for the full behavior.
 
 ### `Ctrl+Shift+V` vs `Ctrl+V`
 
