@@ -129,7 +129,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
             // half-block) renders as a solid pixel column vs the
             // narrow line `┃` gave us; feels like a proper design-
             // system gutter, not a text glyph.
-            let gutter_span = || Span::styled("▌ ", gutter_style);
+            let gutter_span = || Span::styled(crate::ui::gutter::GLYPH, gutter_style);
             // Helper: wrap a Line so every row in this account's
             // block is prefixed with the gutter span. Consumes the
             // input Line's spans and re-emits them after the gutter.

@@ -1905,7 +1905,11 @@ impl App {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let mut items = vec![
-            MenuItem::new("Reveal in tree", MenuAction::Command("view.reveal_active")),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Copy path (absolute)", MenuAction::CopyPath(abs)),
             MenuItem::new("Copy path (relative)", MenuAction::CopyPath(rel)),
         ];
@@ -2316,10 +2320,8 @@ impl App {
                 self.split_active(crate::layout::SplitDir::Horizontal);
                 self.open_path(&p);
             }
-            RevealInFinder(p) => {
-                // macOS; harmless no-op (an Err we ignore) elsewhere.
-                let _ = std::process::Command::new("open").arg("-R").arg(&p).spawn();
-            }
+            RevealInFinder(p) => self.reveal_in_os_file_manager(&p),
+            RevealInTree(p) => self.reveal_path_in_tree(&p),
             OpenExternally(p) => open_path_external(&p),
             OpenTerminal(dir) => {
                 self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(dir)));
@@ -3402,5 +3404,76 @@ mod bell_menu_tests {
             "the register does not hold the message: {:?}",
             app.clipboard.register
         );
+    }
+}
+
+#[cfg(test)]
+mod reveal_action_tests {
+    use crate::context_menu::MenuAction;
+
+    /// USER 2026-09-03 — "is reveal in tree supposed to open finder? idd
+    /// expect one that oepened in mnml filebrowser view and another that
+    /// opened in finder".
+    ///
+    /// Nine menu rows read "Reveal in tree" while firing the OS reveal,
+    /// so the in-app action did not exist — the label was the only thing
+    /// claiming it did. This asserts the pairing directly on the source,
+    /// because the defect was a label/action mismatch that compiles
+    /// perfectly and no render test would notice.
+    #[test]
+    fn no_menu_row_labelled_reveal_in_tree_fires_the_os_reveal() {
+        let mut offenders = Vec::new();
+        for f in [
+            "src/tui/mouse/right_click.rs",
+            "src/app/context_menus.rs",
+            "src/app/cloud_agents_methods.rs",
+            "src/app/git.rs",
+        ] {
+            let src = std::fs::read_to_string(f).unwrap_or_default();
+            for (i, line) in src.lines().enumerate() {
+                if line.contains("\"Reveal in tree\"")
+                    && (line.contains("RevealInFinder") || line.contains("view.reveal_active"))
+                {
+                    offenders.push(format!("{f}:{}", i + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these rows say \"Reveal in tree\" but open the OS file manager: {offenders:?}"
+        );
+    }
+
+    /// The two actions must stay distinct variants. Collapsing them
+    /// back into one is how the mislabel happened in the first place.
+    #[test]
+    fn reveal_in_tree_and_reveal_in_finder_are_different_actions() {
+        let p = std::path::PathBuf::from("/tmp/x");
+        let tree = MenuAction::RevealInTree(p.clone());
+        let os = MenuAction::RevealInFinder(p);
+        assert!(
+            !matches!(tree, MenuAction::RevealInFinder(_)),
+            "RevealInTree collapsed into RevealInFinder"
+        );
+        assert!(matches!(os, MenuAction::RevealInFinder(_)));
+    }
+
+    /// The OS reveal must not be macOS-only. It shelled out to a bare
+    /// `open -R` for every platform, so "Reveal in Explorer" on Windows
+    /// silently did nothing.
+    #[test]
+    fn the_os_reveal_handles_every_platform() {
+        let src = std::fs::read_to_string("src/app/mod.rs").unwrap();
+        let f = src
+            .split("pub fn reveal_in_os_file_manager")
+            .nth(1)
+            .expect("reveal_in_os_file_manager is gone");
+        let body: String = f.chars().take(900).collect();
+        for needle in ["macos", "windows", "explorer", "open"] {
+            assert!(
+                body.contains(needle),
+                "the OS reveal lost its {needle} path"
+            );
+        }
     }
 }

@@ -675,9 +675,13 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             title: "Active file chip".into(),
             body: "Shows the active buffer's file name with a dirty dot when there \
                    are unsaved edits. Click to reveal it in the file tree; right- \
-                   click for the buffer context menu."
+                   click for the buffer context menu, which also offers revealing \
+                   it in the OS file manager."
                 .into(),
-            try_it: vec![PaletteLink::new("view.reveal_active", "Reveal in tree")],
+            try_it: vec![
+                PaletteLink::new("view.reveal_in_tree", "Reveal in tree"),
+                PaletteLink::new("view.reveal_active", "Reveal in OS file manager"),
+            ],
             ..Default::default()
         }),
         // src: src/ui/tooltip.rs::HoverChip::StatuslineDiagnostics

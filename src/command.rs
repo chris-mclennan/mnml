@@ -4294,6 +4294,30 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.sessions_panel_refresh(),
         },
         Command {
+            // 2026-09-03 — the SESSIONS `sort:` chip's menu rows, and
+            // the keyboard route to the same setting. Registered as
+            // commands rather than a mouse-only handler so the palette
+            // reaches them too, matching every other panel's sort.
+            id: "sessions.sort_auto",
+            title: "Sessions: sort by state (running → recent → idle)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.sessions_sort_mode = crate::app::SessionsSortMode::Auto;
+                app.toast("sessions: State".to_string());
+            },
+        },
+        Command {
+            id: "sessions.sort_manual",
+            title: "Sessions: sort by manual order",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.sessions_sort_mode = crate::app::SessionsSortMode::Manual;
+                app.toast("sessions: Manual".to_string());
+            },
+        },
+        Command {
             id: "agents.refresh",
             title: "Agents: rescan local Claude/Codex sessions",
             group: "view",
@@ -4673,6 +4697,24 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| app.reveal_active_file(),
+        },
+        Command {
+            // 2026-09-03 — the IN-APP counterpart. `view.reveal_active`
+            // leaves mnml for the OS file manager; this one expands the
+            // rail to the file and selects it. The distinction is what
+            // the user expected and what nine mislabelled menu rows had
+            // been claiming to offer.
+            id: "view.reveal_in_tree",
+            title: "Reveal active file in the file tree",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let path = app.active_editor().and_then(|b| b.path.clone());
+                match path {
+                    Some(p) => app.reveal_path_in_tree(&p),
+                    None => app.toast("reveal needs a saved file"),
+                }
+            },
         },
         Command {
             id: "project.todos",

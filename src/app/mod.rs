@@ -1977,6 +1977,35 @@ pub enum SessionsSortMode {
     Manual,
 }
 
+impl SessionsSortMode {
+    /// Label for the header `sort:` chip and its menu.
+    ///
+    /// Deliberately NOT "Newest / A–Z" like the other panels'
+    /// [`crate::ui::list_sort::ListSort`]. Sessions order on a
+    /// different axis — run state vs the order you dragged them into —
+    /// so reusing that enum here would have meant inventing a name
+    /// sort nobody asked for. The chip is shared; the modes are not.
+    pub fn label(self) -> &'static str {
+        match self {
+            SessionsSortMode::Auto => "State",
+            SessionsSortMode::Manual => "Manual",
+        }
+    }
+
+    /// Every mode, in menu order.
+    pub fn all() -> [SessionsSortMode; 2] {
+        [SessionsSortMode::Auto, SessionsSortMode::Manual]
+    }
+
+    /// The next mode, for click-to-cycle on the chip.
+    pub fn next(self) -> Self {
+        match self {
+            SessionsSortMode::Auto => SessionsSortMode::Manual,
+            SessionsSortMode::Manual => SessionsSortMode::Auto,
+        }
+    }
+}
+
 /// land independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySection {
@@ -2603,6 +2632,7 @@ pub struct PaneRects {
     pub todos_panel_sort_chip: Option<Rect>,
     pub notes_panel_sort_chip: Option<Rect>,
     pub findings_panel_sort_chip: Option<Rect>,
+    pub sessions_panel_sort_chip: Option<Rect>,
     pub findings_panel_filter_input: Option<Rect>,
     pub findings_panel_new_chip: Option<Rect>,
     pub todos_panel_new_chip: Option<Rect>,
@@ -3612,6 +3642,7 @@ impl PaneRects {
         self.todos_panel_sort_chip = None;
         self.notes_panel_sort_chip = None;
         self.findings_panel_sort_chip = None;
+        self.sessions_panel_sort_chip = None;
         self.todos_panel_filter_input = None;
         // Sessions panel.
         self.sessions_panel_filter_input = None;
@@ -10123,10 +10154,25 @@ impl App {
             self.toast("reveal needs a saved file");
             return;
         };
+        self.reveal_in_os_file_manager(&path);
+    }
+
+    /// Show `path` in the OS file manager.
+    ///
+    /// The one place that knows how to do this per-platform. macOS uses
+    /// `open -R`; Windows `explorer /select,`; elsewhere `xdg-open` on
+    /// the PARENT directory, which is the closest portable form — no
+    /// desktop-agnostic "select this file" gesture exists on Linux.
+    ///
+    /// 2026-09-03 — extracted because `MenuAction::RevealInFinder` had
+    /// its own hard-coded `open -R`, so every "Reveal in Finder" menu
+    /// row was a silent no-op on Windows and Linux while the palette
+    /// command right beside it worked everywhere.
+    pub fn reveal_in_os_file_manager(&mut self, path: &std::path::Path) {
         if cfg!(target_os = "macos") {
             let _ = std::process::Command::new("open")
                 .arg("-R")
-                .arg(&path)
+                .arg(path)
                 .spawn();
         } else if cfg!(target_os = "windows") {
             let _ = std::process::Command::new("explorer")
@@ -10134,6 +10180,47 @@ impl App {
                 .spawn();
         } else if let Some(parent) = path.parent() {
             open_path_external(parent);
+        }
+    }
+
+    /// Reveal `path` in mnml's OWN file tree — expand every ancestor,
+    /// put the cursor on the row, and focus the tree.
+    ///
+    /// 2026-09-03 (user: "is reveal in tree supposed to open finder? idd
+    /// expect one that oepened in mnml filebrowser view and another that
+    /// opened in finder"). Two menu rows were labelled "Reveal in tree"
+    /// while firing the OS reveal, so the in-app action did not exist at
+    /// all — the label was the only thing that claimed it did.
+    pub fn reveal_path_in_tree(&mut self, path: &std::path::Path) {
+        // Expand every ancestor between the workspace root and the
+        // file, or the row it selects is not visible to scroll to.
+        let root = self.tree.root().to_path_buf();
+        let mut ancestors: Vec<std::path::PathBuf> = Vec::new();
+        let mut cur = path.parent();
+        while let Some(d) = cur {
+            ancestors.push(d.to_path_buf());
+            if d == root {
+                break;
+            }
+            cur = d.parent();
+        }
+        // Outermost first — `expand_dir` only accepts a directory the
+        // tree already knows about, and a child is not known until its
+        // parent has been expanded.
+        for d in ancestors.iter().rev() {
+            self.tree.expand_dir(d);
+        }
+        if let Some(idx) = self.tree.visible_rows().iter().position(|r| r.path == path) {
+            self.tree.set_cursor(idx);
+            self.focus = crate::app::Focus::Tree;
+            self.active_section = crate::app::ActivitySection::Explorer;
+            self.tree_visible = true;
+        } else {
+            // Outside the workspace, or filtered out of the listing.
+            self.toast(format!(
+                "{} is not in the file tree",
+                crate::app::rel_path(&self.workspace, path)
+            ));
         }
     }
 

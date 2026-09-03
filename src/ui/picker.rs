@@ -149,7 +149,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         } else {
             theme::cur().bg_dark
         };
-        let marker = if is_sel { "▌ " } else { "  " };
+        // One cell, no trailing space — see `ui::gutter`. This used
+        // to be `"▌ "` / `"  "`, which put a cell and a half of air
+        // between the bar and the first character while every panel
+        // put none (user report 2026-09-03).
+        let marker = crate::ui::gutter::marker(is_sel);
+        let marker_w = crate::ui::gutter::WIDTH as usize;
         // render-reviewer N-1 + drive-mnml 2026-06-28: cap detail
         // too — was uncapped, so a long command id like
         // `view.toggle_brackets` got ratatui-clipped mid-word
@@ -158,7 +163,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         let min_label: usize = 12;
         let detail_orig = item.detail.clone();
         let detail_orig_w = detail_orig.chars().count();
-        let detail_budget = lw.saturating_sub(2 + min_label + 1);
+        let detail_budget = lw.saturating_sub(marker_w + min_label + 1);
         let detail: String = if detail_orig_w > detail_budget && detail_budget >= 2 {
             let take = detail_budget.saturating_sub(1);
             detail_orig.chars().take(take).collect::<String>() + "…"
@@ -175,9 +180,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // time and scrollbar too").
         let detail_cost = if dw > 0 { dw + 2 } else { 0 };
         // label gets whatever's left after the marker (2) and the detail.
-        let label_avail = lw.saturating_sub(2 + detail_cost);
+        let label_avail = lw.saturating_sub(marker_w + detail_cost);
         let label: String = item.label.chars().take(label_avail).collect();
-        let used = 2 + label.chars().count() + detail_cost;
+        let used = marker_w + label.chars().count() + detail_cost;
         let gap = lw.saturating_sub(used);
         let mut label_style = Style::default().fg(theme::cur().fg).bg(bg);
         if is_sel {
@@ -797,6 +802,64 @@ mod picker_scrollbar_tests {
                 after.chars().take(6).collect::<String>()
             );
         }
+    }
+
+    /// USER 2026-09-03 — "why is there a space between the blue gutter
+    /// here and the a in auto-update ... in other place we use gutter
+    /// its right next to the first char".
+    ///
+    /// The picker's marker was `"▌ "` while every panel used `"▌"`.
+    /// Asserts the label starts in the very next cell after the bar.
+    #[test]
+    fn the_selected_rows_gutter_touches_the_first_character() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let items: Vec<crate::picker::PickerItem> = (0..5)
+            .map(|i| {
+                crate::picker::PickerItem::new(
+                    i.to_string(),
+                    "auto-update: nothing eligible".to_string(),
+                    String::new(),
+                )
+            })
+            .collect();
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Messages,
+            "Messages (5)".to_string(),
+            items,
+        ));
+        let (w, h) = (80u16, 20u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        let row = (0..h)
+            .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .find(|r| r.contains(crate::ui::gutter::GLYPH))
+            .expect("no selected row rendered");
+        // CHAR position, not `str::find`'s byte offset — the row is
+        // full of multi-byte box-drawing glyphs, so the two differ.
+        let bar = row
+            .chars()
+            .position(|c| c.to_string() == crate::ui::gutter::GLYPH)
+            .expect("gutter glyph vanished");
+        let after: String = row.chars().skip(bar + 1).take(12).collect::<String>();
+        assert!(
+            after.starts_with("auto-update"),
+            "the gutter does not touch the first character: {after:?}"
+        );
     }
 
     /// A picker that FITS must not grow a bar.

@@ -13,6 +13,22 @@
 //! chip) and Mount (integration-owned side panel) that individual
 //! integration repos add via the marketplace flow.
 
+//!
+//! TODO (user ask 2026-09-03) — give the activity bar the same three
+//! visibility modes the menu bar has (`[ui] menu_bar`): `always` (the
+//! current and only behaviour), `auto`, and `hidden`. Reuse that
+//! config shape and its vocabulary rather than inventing a second set
+//! of mode names — a user who has set one should be able to guess the
+//! other.
+//!
+//! `auto` is the one with a real design question. The menu bar's
+//! trigger is unambiguous because the chrome row is the top edge of
+//! the terminal, so "pointer on that row" cannot mean anything else.
+//! The activity bar is a vertical strip against the left edge, and the
+//! cells immediately right of it belong to the tree — so a naive
+//! "pointer within N columns" reveal would flash the bar while the
+//! user is aiming at a tree row. Start with pointer in column 0 only,
+//! and widen it only if that proves too fussy in practice.
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};

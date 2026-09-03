@@ -75,6 +75,31 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some("Sort by".to_string()), (x, y), items));
         return;
     }
+    if let Some(r) = app.rects.sessions_panel_sort_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = app.sessions_sort_mode;
+        let items = crate::app::SessionsSortMode::all()
+            .iter()
+            .map(|m| {
+                let label = if *m == cur {
+                    format!("\u{2713} {}", m.label())
+                } else {
+                    format!("  {}", m.label())
+                };
+                MenuItem::new(
+                    label,
+                    MenuAction::Command(match m {
+                        crate::app::SessionsSortMode::Auto => "sessions.sort_auto",
+                        crate::app::SessionsSortMode::Manual => "sessions.sort_manual",
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        app.context_menu = Some(ContextMenu::new(Some("Sort by".to_string()), (x, y), items));
+        return;
+    }
     if let Some(r) = app.rects.statusline_notif_chip
         && crate::app::dispatch::contains(r, x, y)
     {
@@ -306,7 +331,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = vec![
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
@@ -340,7 +369,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = vec![
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
@@ -700,7 +733,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open as text", MenuAction::OpenPathAsText(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
@@ -806,7 +843,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = vec![
             MenuItem::new("Run chain", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open file", MenuAction::OpenPath(path.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
@@ -831,7 +872,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open as text", MenuAction::OpenPathAsText(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
@@ -856,7 +901,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = vec![
             MenuItem::new("New request…", MenuAction::NewFile(dir.clone())),
             MenuItem::new("New sub-collection…", MenuAction::NewFolder(dir.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(dir.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(dir.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(dir.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Rename…", MenuAction::Rename(dir.clone())),
             MenuItem::new("Delete collection…", MenuAction::Delete(dir)),
@@ -881,7 +930,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = vec![
             MenuItem::new("Replay mock", MenuAction::OpenPath(path.clone())),
             MenuItem::new("Open file", MenuAction::OpenPath(path.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(path.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];

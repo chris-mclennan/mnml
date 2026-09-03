@@ -890,28 +890,36 @@ impl App {
     pub fn todos_panel_refresh(&mut self) {
         let mut hits = Vec::new();
         walk_for_todos(&self.workspace, 0, &mut hits);
-        match self.todos_sort {
-            // Path then line — the reading order of the codebase.
-            crate::ui::list_sort::ListSort::Name => {
-                hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-            }
-            // Newest file first, still line-ordered within a file so a
-            // file's own markers never appear shuffled.
-            crate::ui::list_sort::ListSort::Newest => {
-                let mtime = |p: &std::path::Path| {
-                    std::fs::metadata(p)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0)
-                };
-                hits.sort_by(|a, b| {
+        {
+            use crate::ui::list_sort::ListSort as LS;
+            let mtime = |p: &std::path::Path| {
+                std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            };
+            // Line order WITHIN a file is always ascending, in every
+            // mode — a file's own markers must never appear shuffled,
+            // and "Z–A" means the file list reverses, not that a
+            // file's TODOs read bottom-up.
+            match self.todos_sort {
+                // Path then line — the reading order of the codebase.
+                LS::Name => hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line))),
+                LS::NameDesc => hits.sort_by(|a, b| b.path.cmp(&a.path).then(a.line.cmp(&b.line))),
+                LS::Newest => hits.sort_by(|a, b| {
                     mtime(&b.path)
                         .cmp(&mtime(&a.path))
                         .then(a.path.cmp(&b.path))
                         .then(a.line.cmp(&b.line))
-                });
+                }),
+                LS::Oldest => hits.sort_by(|a, b| {
+                    mtime(&a.path)
+                        .cmp(&mtime(&b.path))
+                        .then(a.path.cmp(&b.path))
+                        .then(a.line.cmp(&b.line))
+                }),
             }
         }
         self.todos_hits = hits;

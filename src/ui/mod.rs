@@ -28,6 +28,7 @@ pub mod codex_usage_view;
 pub mod design_tokens;
 pub mod empty_state;
 pub mod filter_placeholder;
+pub mod gutter;
 pub mod list_sort;
 pub mod menu_glyph;
 pub mod panel_chrome;
@@ -2592,8 +2593,21 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.menu_bar_words.clear();
     app.rects.menu_bar_overflow = None;
     let menu_mode = app.config.ui.menu_bar.as_str();
-    let menu_visible =
-        matches!(menu_mode, "always") || (menu_mode == "auto" && app.menu_open.is_some());
+    // 2026-09-03 (user: "i tried auto on menubar and thought when mouse
+    // went close it wouuld show automatically but it didngt"). The
+    // config doc has always described `auto` as "hidden until summoned
+    // via Alt+letter, F10, or MOUSE-AT-TOP-ROW", but the gate only ever
+    // checked `menu_open` — the hover half was documented and never
+    // implemented, so `auto` behaved as `hidden` until you knew the
+    // keyboard route.
+    //
+    // The trigger is the chrome row itself, not a band above it: this
+    // row IS the top of the terminal, so there is nowhere closer for
+    // the pointer to be, and widening it would flash the bar while the
+    // user reaches for a tab on the row below.
+    let mouse_on_chrome_row = app.mouse_pos.is_some_and(|(_, my)| my == area.y);
+    let menu_visible = matches!(menu_mode, "always")
+        || (menu_mode == "auto" && (app.menu_open.is_some() || mouse_on_chrome_row));
     if menu_visible {
         let menus = crate::menu_bar::bar(app);
         let mut mx = area.x;
@@ -6961,5 +6975,62 @@ mod palette_bar_tests {
             app.tree_drag.as_ref().unwrap().armed,
             screen
         );
+    }
+}
+
+#[cfg(test)]
+mod menu_bar_auto_tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn header(mode: &str, mouse: Option<(u16, u16)>) -> String {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.menu_bar = mode.to_string();
+        app.config.ui.ascii_icons = true;
+        app.mouse_pos = mouse;
+        let (w, h) = (120u16, 24u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| super::draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+        (0..w).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    /// USER 2026-09-03 — "i tried auto on menubar and thought when
+    /// mouse went close it wouuld show automatically but it didngt".
+    ///
+    /// `[ui] menu_bar = "auto"` has always been DOCUMENTED as revealing
+    /// on mouse-at-top-row, but the render gate only checked whether a
+    /// menu was already open, so `auto` behaved exactly like `hidden`
+    /// unless you knew the Alt/F10 route.
+    #[test]
+    fn auto_reveals_the_menu_bar_when_the_pointer_is_on_the_chrome_row() {
+        let away = header("auto", Some((40, 12)));
+        assert!(
+            !away.contains("File"),
+            "auto showed the menu with the pointer in the editor: {away:?}"
+        );
+        let on_row = header("auto", Some((40, 0)));
+        assert!(
+            on_row.contains("File") && on_row.contains("Edit"),
+            "auto did not reveal on the chrome row: {on_row:?}"
+        );
+    }
+
+    /// The other two modes must be unaffected — `hidden` especially,
+    /// since a hover reveal there would defeat its whole purpose.
+    #[test]
+    fn hidden_never_reveals_and_always_never_hides() {
+        for mouse in [None, Some((40, 0)), Some((40, 12))] {
+            assert!(
+                !header("hidden", mouse).contains("File"),
+                "hidden revealed the menu bar at {mouse:?}"
+            );
+            assert!(
+                header("always", mouse).contains("File"),
+                "always hid the menu bar at {mouse:?}"
+            );
+        }
     }
 }

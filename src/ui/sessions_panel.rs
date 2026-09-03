@@ -146,7 +146,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         format!("  ({} of {})", pty_indices.len(), all_pty_indices.len())
     };
-    app.rects.sessions_panel_refresh_chip = crate::ui::panel_chrome::draw_caps_header_with_refresh(
+    // 2026-09-03 (user: "add same sort thing to sessions") — the same
+    // `sort:` chip the other panels grew, over SESSIONS' own
+    // State/Manual axis rather than a bolted-on name sort.
+    let sort_chip = crate::ui::panel_chrome::mode_chip_text("sort", app.sessions_sort_mode.label());
+    let (sessions_sort, sessions_refresh) = crate::ui::panel_chrome::draw_caps_header_with_chips(
         frame,
         Rect {
             x: area.x,
@@ -156,10 +160,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         },
         "SESSIONS",
         Some(&count_txt),
+        Some(&sort_chip),
         bg,
         &t,
         app.config.ui.ascii_icons,
     );
+    app.rects.sessions_panel_sort_chip = sessions_sort;
+    app.rects.sessions_panel_refresh_chip = sessions_refresh;
 
     // Filter row (row 1). Same idiom as HTTP / Agents / TODOs /
     // Notes — chip background, magnifier glyph, `/ filter`
@@ -375,7 +382,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // implicit leading pad for each row. Sessions panel width
         // stays the same.
         let accent_lines: Vec<Line<'static>> = (0..TAB_H)
-            .map(|_| Line::from(Span::styled("▌", Style::default().fg(accent_color).bg(bg))))
+            .map(|_| {
+                Line::from(Span::styled(
+                    crate::ui::gutter::GLYPH,
+                    Style::default().fg(accent_color).bg(bg),
+                ))
+            })
             .collect();
         frame.render_widget(
             Paragraph::new(accent_lines),
@@ -963,5 +975,89 @@ mod tests {
             34,
             "the chip is right-aligned like every other panel's"
         );
+    }
+}
+
+#[cfg(test)]
+mod sort_chip_tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// USER 2026-09-03 — "add same sort thing to sessions tha twe have
+    /// in the other areas too". The mode existed but nothing on screen
+    /// showed it or let you change it.
+    #[test]
+    fn the_sessions_header_shows_a_clickable_sort_chip() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.config.ui.ascii_icons = true;
+
+        let (w, h) = (70u16, 10u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+        let header: String = {
+            let buf = term.backend().buffer();
+            (0..w).map(|x| buf[(x, 0)].symbol()).collect()
+        };
+        assert!(
+            header.contains("sort: State"),
+            "no sort chip in the SESSIONS header: {header:?}"
+        );
+        let r = app
+            .rects
+            .sessions_panel_sort_chip
+            .expect("chip painted but registered no click target");
+
+        // Clicking must cycle to the other mode.
+        let before = app.sessions_sort_mode;
+        crate::tui::mouse::dispatch_mouse(
+            &mut app,
+            ratatui::crossterm::event::MouseEvent {
+                kind: ratatui::crossterm::event::MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left,
+                ),
+                column: r.x + 1,
+                row: r.y,
+                modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+            },
+        );
+        assert_ne!(
+            app.sessions_sort_mode, before,
+            "clicking the sessions sort chip did not change the mode"
+        );
+    }
+
+    /// SESSIONS deliberately does NOT use `ListSort` — its axis is run
+    /// state vs manual order, and reusing that enum would have meant
+    /// inventing a name sort nobody asked for. Pins the distinction so
+    /// a later "unify the sorts" pass has to read the reasoning first.
+    #[test]
+    fn sessions_keeps_its_own_axis_not_the_list_panels() {
+        let labels: Vec<&str> = crate::app::SessionsSortMode::all()
+            .iter()
+            .map(|m| m.label())
+            .collect();
+        assert_eq!(labels, vec!["State", "Manual"]);
+        for m in crate::ui::list_sort::ListSort::all() {
+            assert!(
+                !labels.contains(&m.label()),
+                "sessions grew a ListSort mode ({}) — see SessionsSortMode::label",
+                m.label()
+            );
+        }
     }
 }

@@ -278,7 +278,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // together, so the two panels finally agree.
                     Span::styled(" ", Style::default().bg(bg)),
                     Span::styled(
-                        if is_focused_row { "▌" } else { " " },
+                        crate::ui::gutter::marker(is_focused_row),
                         Style::default().fg(t.green).bg(row_bg),
                     ),
                     Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(row_bg)),

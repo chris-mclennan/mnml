@@ -1228,7 +1228,11 @@ impl App {
             .unwrap_or_else(|| path.clone());
         let items = vec![
             MenuItem::new("Open", MenuAction::OpenPath(pb.clone())),
-            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(pb.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInTree(pb.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(pb.clone()),
+            ),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
             MenuItem::new("Open externally", MenuAction::OpenExternally(pb)),
         ];

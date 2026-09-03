@@ -2349,7 +2349,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.statusline_file_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        let _ = crate::command::run("view.reveal_active", app);
+        // 2026-09-03 — was `view.reveal_active`, which leaves mnml for
+        // the OS file manager, while this chip's own hover help said
+        // "Click to reveal it in the file tree". The help was the
+        // better behaviour, so the click now matches it; the OS reveal
+        // is still on the chip's right-click menu.
+        let _ = crate::command::run("view.reveal_in_tree", app);
         return;
     }
     // #polish 2026-07-06 — diagnostics chip → open diagnostics panel.
@@ -3512,6 +3517,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             // mode — the toast is the feedback that the click landed.
             let panel = panel.to_string();
             app.set_panel_sort(&panel, next.as_str());
+            return;
+        }
+        // SESSIONS sorts on its own axis (run state vs manual order),
+        // so it cycles its own enum rather than `ListSort`.
+        if let Some(r) = app.rects.sessions_panel_sort_chip
+            && crate::app::dispatch::contains(r, x, y)
+        {
+            app.sessions_sort_mode = app.sessions_sort_mode.next();
+            let label = app.sessions_sort_mode.label();
+            app.toast(format!("sessions: {label}"));
             return;
         }
     }

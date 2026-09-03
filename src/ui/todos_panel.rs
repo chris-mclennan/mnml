@@ -6,6 +6,24 @@
 //! `todos.refresh`. One row per hit: `TAG  path:line  title`.
 //! Click → jump to the file at that line. Deletion / test-tags /
 //! `.mnml/notes/` markdown checkbox integration are follow-ups.
+//!
+//! TODO (user ask, raised 2026-09-01 and again 2026-09-03: "what
+//! happened to having tree sort on todos?") — a TREE view mode that
+//! groups hits under their directory, collapsible, instead of the flat
+//! list. It was discussed and queued but never started; this note is
+//! so it stops being invisible.
+//!
+//! It does NOT belong in `ui::list_sort::ListSort`. Every mode there
+//! is an ORDER over one flat list, and all three panels share them.
+//! Grouping changes the SHAPE of the list — it adds header rows,
+//! collapse state, and a second axis of navigation — so it wants its
+//! own toggle beside the `sort:` chip (a `view:` chip, matching CLOUD
+//! AGENTS), not a fourth sort mode. Folding it into ListSort would
+//! force NOTES and FINDINGS to grow a tree they have no directory
+//! structure for.
+//!
+//! Reuse `ui::tree_connectors` for the branch glyphs so the grouping
+//! reads like the file tree rather than a second tree idiom.
 
 use ratatui::{
     Frame,
@@ -364,7 +382,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     // gutter i was thinking vertical COLORED bar like we
                     // do in sessions view").
                     Span::styled(
-                        if is_focused_row { "▌" } else { " " },
+                        crate::ui::gutter::marker(is_focused_row),
                         Style::default().fg(t.green).bg(row_bg),
                     ),
                     Span::styled(

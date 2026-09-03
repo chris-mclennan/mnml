@@ -38,10 +38,14 @@ pub fn for_action(a: &MenuAction) -> &'static str {
         | M::JumpToEnvVar(..) => "\u{f07c}", // folder-open
         M::OpenInSplit(..) | M::SplitTabInto(..) | M::HostInBottomPanel(..) => "\u{f0db}", // columns
         M::RevealInFinder(..) => "\u{f002}",                                               // search
+        // A TREE glyph, not the search magnifier — the two reveal rows
+        // sit next to each other, so identical icons would make the
+        // distinction the labels draw invisible at a glance.
+        M::RevealInTree(..) => "\u{f0e8}", // sitemap
         M::OpenExternally(..) | M::OpenUrl(..) => "\u{f08e}", // external-link
-        M::OpenBookmarks(..) => "\u{f02e}",                   // bookmark
+        M::OpenBookmarks(..) => "\u{f02e}", // bookmark
         M::OpenTerminal(..) | M::GitWorktreeShell(..) => "\u{f120}", // terminal
-        M::PreviewMarkdown(..) => "\u{f06e}",                 // eye — matches the Preview chip
+        M::PreviewMarkdown(..) => "\u{f06e}", // eye — matches the Preview chip
 
         // ── Clipboard ──
         M::CopyPath(..)

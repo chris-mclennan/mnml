@@ -49,6 +49,11 @@ pub enum MenuAction {
     Submenu,
     /// Open the file (in the focused leaf).
     OpenPath(PathBuf),
+    /// Reveal in mnml's OWN file tree (expand ancestors, select the
+    /// row, focus the rail). Distinct from [`MenuAction::RevealInFinder`],
+    /// which leaves mnml for the OS file manager — user 2026-09-03
+    /// expected both, and only the latter existed.
+    RevealInTree(PathBuf),
     /// #polish 2026-07-06 — force-open a `.http`/`.curl`/`.rest`
     /// file as a plain text Editor pane (skips the Request-pane
     /// routing in `open_path`). Right-click "Open as text" on
