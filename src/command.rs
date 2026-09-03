@@ -4294,6 +4294,30 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.sessions_panel_refresh(),
         },
         Command {
+            // 2026-09-03 — keyboard parity for the new header sort
+            // chips. Without these the sort was mouse-only, which is
+            // the exact gap R16 closed for the refresh chips.
+            id: "todos.sort",
+            title: "TODOs: cycle sort order",
+            group: "view",
+            keys: &[],
+            run: |app| app.cycle_panel_sort("todos"),
+        },
+        Command {
+            id: "notes.sort",
+            title: "Notes: cycle sort order",
+            group: "view",
+            keys: &[],
+            run: |app| app.cycle_panel_sort("notes"),
+        },
+        Command {
+            id: "findings.sort",
+            title: "Findings: cycle sort order",
+            group: "view",
+            keys: &[],
+            run: |app| app.cycle_panel_sort("findings"),
+        },
+        Command {
             // 2026-09-03 — the SESSIONS `sort:` chip's menu rows, and
             // the keyboard route to the same setting. Registered as
             // commands rather than a mouse-only handler so the palette

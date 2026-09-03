@@ -1191,6 +1191,26 @@ impl App {
         self.toast(format!("{panel}: {}", m.label()));
     }
 
+    /// Advance `panel` to the next sort mode, as the header chip's
+    /// left-click does.
+    ///
+    /// One cycle command per panel rather than one command per
+    /// (panel, mode) pair: four modes across three panels would put
+    /// twelve near-identical rows in the palette, which buries the
+    /// commands a user actually searches for. Choosing a SPECIFIC mode
+    /// stays on the chip's right-click menu, where the options are
+    /// visible together with a ✓ on the current one.
+    pub fn cycle_panel_sort(&mut self, panel: &str) {
+        let all = crate::ui::list_sort::ListSort::all();
+        let cur = self.panel_sort(panel);
+        let next = all
+            .iter()
+            .position(|m| *m == cur)
+            .map(|i| all[(i + 1) % all.len()])
+            .unwrap_or_default();
+        self.set_panel_sort(panel, next.as_str());
+    }
+
     /// Whether `panel` auto-refreshes. ON unless the user turned it
     /// off — see [`crate::config::UiConfig::auto_refresh_off`].
     pub fn panel_auto_refresh(&self, panel: &str) -> bool {
@@ -2973,5 +2993,60 @@ mod list_sort_wiring_tests {
             "findings followed notes"
         );
         assert_eq!(app.todos_sort, ListSort::Newest, "todos followed notes");
+    }
+}
+
+#[cfg(test)]
+mod sort_keyboard_parity_tests {
+    /// Every panel that grew a mouse `sort:` chip must have a keyboard
+    /// route to the same setting. The chips shipped mouse-only, which
+    /// is the exact gap R16 closed for the refresh chips — and it would
+    /// have shipped again here without this test.
+    #[test]
+    fn every_sortable_panel_has_a_palette_command() {
+        let reg = crate::command::registry();
+        let ids: Vec<&str> = reg.all().iter().map(|c| c.id).collect();
+        for want in [
+            "todos.sort",
+            "notes.sort",
+            "findings.sort",
+            "sessions.sort_auto",
+            "sessions.sort_manual",
+        ] {
+            assert!(
+                ids.contains(&want),
+                "`{want}` is missing — that panel's sort is mouse-only"
+            );
+        }
+    }
+
+    /// Cycling must visit every mode and return to the start, or a mode
+    /// exists that no keyboard user can reach.
+    #[test]
+    fn cycling_visits_every_mode_and_returns() {
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let _lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env = crate::EnvGuard::set("MNML_DATA_ROOT", cfg_dir.path());
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+
+        let all = crate::ui::list_sort::ListSort::all();
+        let start = app.panel_sort("todos");
+        let mut seen = vec![start];
+        for _ in 0..all.len() - 1 {
+            app.cycle_panel_sort("todos");
+            let m = app.panel_sort("todos");
+            assert!(
+                !seen.contains(&m),
+                "cycle repeated {m:?} before covering all"
+            );
+            seen.push(m);
+        }
+        assert_eq!(seen.len(), all.len(), "cycle did not reach every mode");
+        app.cycle_panel_sort("todos");
+        assert_eq!(app.panel_sort("todos"), start, "cycle did not wrap");
     }
 }
