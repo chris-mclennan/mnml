@@ -1512,6 +1512,10 @@ impl VimInputHandler {
                                 }
                                 PendingOp::Change => {
                                     ops.push(ReplaceSelection(String::new()));
+                                    // vim closes ONE undo block at `<Esc>` — the
+                                    // operator's delete and the typing that follows
+                                    // undo together. See `ContinueInsertRun`.
+                                    ops.push(ContinueInsertRun);
                                     self.mode = VimMode::Insert;
                                 }
                                 PendingOp::Lower => {
@@ -1783,6 +1787,10 @@ impl VimInputHandler {
                     }
                     PendingOp::Change => {
                         ops.push(ReplaceSelection(String::new()));
+                        // vim closes ONE undo block at `<Esc>` — the
+                        // operator's delete and the typing that follows
+                        // undo together. See `ContinueInsertRun`.
+                        ops.push(ContinueInsertRun);
                         self.mode = VimMode::Insert;
                     }
                     PendingOp::Indent => {
@@ -1992,6 +2000,10 @@ impl VimInputHandler {
                     }
                     PendingOp::Change => {
                         ops.push(ReplaceSelection(String::new()));
+                        // vim closes ONE undo block at `<Esc>` — the
+                        // operator's delete and the typing that follows
+                        // undo together. See `ContinueInsertRun`.
+                        ops.push(ContinueInsertRun);
                         self.mode = VimMode::Insert;
                     }
                     PendingOp::Indent => {
@@ -2430,6 +2442,10 @@ impl VimInputHandler {
                             ops.push(MoveLineEnd);
                         }
                         ops.push(ReplaceSelection(String::new()));
+                        // vim closes ONE undo block at `<Esc>` — the
+                        // operator's delete and the typing that follows
+                        // undo together. See `ContinueInsertRun`.
+                        ops.push(ContinueInsertRun);
                         InputResult::Ops(ops)
                     }
                     // nvchad-round-16 SEV-2 F5 2026-07-16 — `<n>>>`
@@ -2796,6 +2812,10 @@ impl VimInputHandler {
                     }
                     PendingOp::Change => {
                         ops.push(ReplaceSelection(String::new()));
+                        // vim closes ONE undo block at `<Esc>` — the
+                        // operator's delete and the typing that follows
+                        // undo together. See `ContinueInsertRun`.
+                        ops.push(ContinueInsertRun);
                         self.mode = VimMode::Insert;
                     }
                     PendingOp::Indent => {
@@ -3093,6 +3113,10 @@ impl VimInputHandler {
                     ops.push(MoveLineEnd);
                 }
                 ops.push(ReplaceSelection(String::new()));
+                // vim closes ONE undo block at `<Esc>` — the
+                // operator's delete and the typing that follows
+                // undo together. See `ContinueInsertRun`.
+                ops.push(ContinueInsertRun);
                 InputResult::Ops(ops)
             }
             KeyCode::Char('r') if ctrl => {
@@ -3644,9 +3668,25 @@ impl VimInputHandler {
                         self.enter_normal();
                         InputResult::App(AppCommand::RunCommand("editor.fold_selection".into()))
                     }
-                    KeyCode::Char('c' | 'a' | 'A' | 'C') => {
+                    // 2026-09-03 — these must match the normal-mode
+                    // arm: `za`/`zA` toggle, `zo`/`zO` open, `zc`/`zC`
+                    // close. The directional fix landed in normal mode
+                    // only, leaving Visual where every chord toggled
+                    // and `zo` was not bound at all — so `zo` in Visual
+                    // silently did nothing while `zo` in Normal opened
+                    // a fold. Two answers to one chord is worse than
+                    // one wrong answer.
+                    KeyCode::Char('a' | 'A') => {
                         self.enter_normal();
                         InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
+                    }
+                    KeyCode::Char('o' | 'O') => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::RunCommand("editor.open_fold".into()))
+                    }
+                    KeyCode::Char('c' | 'C') => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::RunCommand("editor.close_fold".into()))
                     }
                     KeyCode::Char('M') => {
                         self.enter_normal();
@@ -3879,11 +3919,12 @@ impl VimInputHandler {
                 self.mode = VimMode::Insert;
                 self.reset_pending();
                 if linewise {
-                    InputResult::Ops(vec![ReplaceSelection(String::new())])
+                    InputResult::Ops(vec![ReplaceSelection(String::new()), ContinueInsertRun])
                 } else {
                     InputResult::Ops(vec![
                         MakeSelectionInclusive,
                         ReplaceSelection(String::new()),
+                        ContinueInsertRun,
                     ])
                 }
             }
@@ -3977,26 +4018,25 @@ impl VimInputHandler {
             // vim visual case ops — `u` lowercase, `U` uppercase, `~` toggle.
             // The transform replaces the selection in place; the handler
             // returns to Normal mode (vim convention).
-            KeyCode::Char('u') => {
+            KeyCode::Char('u') | KeyCode::Char('U') | KeyCode::Char('~') => {
+                let how = match key.code {
+                    KeyCode::Char('u') => crate::edit_op::CaseTransform::Lower,
+                    KeyCode::Char('U') => crate::edit_op::CaseTransform::Upper,
+                    _ => crate::edit_op::CaseTransform::Toggle,
+                };
                 self.enter_normal();
-                InputResult::Ops(vec![
-                    TransformSelectionCase(crate::edit_op::CaseTransform::Lower),
-                    SelectClear,
-                ])
-            }
-            KeyCode::Char('U') => {
-                self.enter_normal();
-                InputResult::Ops(vec![
-                    TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
-                    SelectClear,
-                ])
-            }
-            KeyCode::Char('~') => {
-                self.enter_normal();
-                InputResult::Ops(vec![
-                    TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
-                    SelectClear,
-                ])
+                // Inclusive, like every other charwise visual operator.
+                // The 2026-09-03 fix covered `d`/`x`, `c`/`s` and `y`
+                // but not these, so `v l l U` uppercased two characters
+                // where vim does three — the same off-by-one, left
+                // behind in the operators nobody had tested.
+                let mut ops = Vec::new();
+                if !linewise {
+                    ops.push(MakeSelectionInclusive);
+                }
+                ops.push(TransformSelectionCase(how));
+                ops.push(SelectClear);
+                InputResult::Ops(ops)
             }
             // vim visual `*` / `#` — search for the literally-selected text
             // (preserves spaces / punctuation; no word-boundary check, unlike
@@ -5166,7 +5206,11 @@ mod tests {
             ops,
             vec![
                 EditOp::SelectAroundWord,
-                EditOp::ReplaceSelection(String::new())
+                EditOp::ReplaceSelection(String::new()),
+                // The change and the typing that follows undo as ONE
+                // step, as vim's do. See the behavioural test in
+                // editor/mod.rs (`change_family_undoes_in_one_step`).
+                EditOp::ContinueInsertRun,
             ]
         );
         assert_eq!(v.mode(), EditingMode::Insert);
@@ -5222,6 +5266,100 @@ mod tests {
                 }
                 _ => panic!("{key:?} → expected RunCommand({want}), got a different InputResult"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod visual_operator_completeness_tests {
+    use super::*;
+    use crate::config::Config;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn h() -> VimInputHandler {
+        VimInputHandler::new(&Config::default())
+    }
+    fn ctx() -> EditCtx {
+        EditCtx {
+            cursor: 0,
+            line_len: 4,
+            line_idx: 0,
+            line_count: 3,
+            at_line_start: true,
+            at_line_end: false,
+            has_selection: false,
+            line_first_nonws_col: 0,
+            cursor_col: 0,
+            next_find_match: None,
+            prev_find_match: None,
+            wrap_width: None,
+        }
+    }
+    fn k(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+    fn ops(r: InputResult) -> Vec<EditOp> {
+        match r {
+            InputResult::Ops(v) => v,
+            _ => Vec::new(),
+        }
+    }
+
+    /// EVERY charwise visual operator must widen the selection, not
+    /// just the ones that got tested when the fix landed.
+    ///
+    /// The 2026-09-03 inclusivity fix covered `d`/`x`, `c`/`s` and `y`
+    /// and stopped there, so `v l l U` uppercased two characters where
+    /// vim does three. A manual-writer reading the source for
+    /// documentation found the gap — the tests did not, because they
+    /// only checked the operators the fix had touched.
+    ///
+    /// Scans the ops each operator emits rather than testing one, so a
+    /// NEW charwise operator cannot be added without deciding.
+    #[test]
+    fn every_charwise_visual_operator_is_inclusive() {
+        for key in ['d', 'x', 'c', 's', 'y', 'u', 'U', '~'] {
+            let mut v = h();
+            v.handle_key(k('v'), &ctx());
+            let out = ops(v.handle_key(k(key), &ctx()));
+            assert!(
+                out.contains(&EditOp::MakeSelectionInclusive),
+                "visual `{key}` acts on the exclusive range — it is one \
+                 character short of vim. Emitted: {out:?}"
+            );
+        }
+    }
+
+    /// Fold chords must mean the same thing in Visual as in Normal.
+    /// The directional fix landed in the normal-mode arm only, leaving
+    /// Visual where every `z` chord toggled and `zo` was not bound at
+    /// all — so `zo` opened a fold in Normal and silently did nothing
+    /// in Visual. Two answers to one chord is worse than one wrong
+    /// answer.
+    #[test]
+    fn visual_fold_chords_match_normal_mode() {
+        let cmd_for = |mode_setup: fn(&mut VimInputHandler), chord: char| -> Option<String> {
+            let mut v = h();
+            mode_setup(&mut v);
+            v.handle_key(k('z'), &ctx());
+            match v.handle_key(k(chord), &ctx()) {
+                InputResult::App(AppCommand::RunCommand(c)) => Some(c),
+                _ => None,
+            }
+        };
+        for chord in ['a', 'o', 'c', 'A', 'O', 'C'] {
+            let normal = cmd_for(|_| {}, chord);
+            let visual = cmd_for(
+                |v| {
+                    v.handle_key(k('v'), &ctx());
+                },
+                chord,
+            );
+            assert_eq!(
+                normal, visual,
+                "`z{chord}` runs {normal:?} in Normal but {visual:?} in Visual"
+            );
+            assert!(normal.is_some(), "`z{chord}` is not bound in Normal");
         }
     }
 }

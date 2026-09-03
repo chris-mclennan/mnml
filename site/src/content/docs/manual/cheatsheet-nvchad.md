@@ -18,9 +18,11 @@ These work as vim built-ins — no remapping is involved, the vim input handler 
 
 | NvChad / vim chord | mnml chord | Source | Notes |
 |---|---|---|---|
-| `i` `I` `a` `A` `o` `O` `s` `S` `R` | same | `vim.rs` | Insert variants |
+| `i` `I` `a` `A` `o` `O` `S` `R` | same | `vim.rs` | Insert variants |
+| `s` substitute char | `cl` | `vim.rs` | mnml gives Normal-mode `s` to flash (below). Visual `s` still changes the selection |
+| (leap.nvim / flash.nvim `s`) | `s<a><b><label>` | `vim.rs` → `FlashStart` | Label every visible `ab`, press a label to jump, `Esc` cancels |
 | `Esc` / `Ctrl+[` | same | `vim.rs` | Back to Normal |
-| `v` `V` `Ctrl+V` | same | `vim.rs` | Visual / line / block |
+| `v` `V` `Ctrl+V` | same | `vim.rs` | Visual / line / block. Charwise `v` is inclusive of the cell under the cursor, as vim's is — `v` `y` yanks one char, `v` `l` `l` `y` yanks three |
 | `hjkl` | same | `vim.rs` | Cursor |
 | `w` `b` `e` `ge` `W` `B` `E` | same | `vim.rs` | Word motion |
 | `0` `^` `$` `g_` | same | `vim.rs` | Line ends |
@@ -125,11 +127,17 @@ These work as vim built-ins — no remapping is involved, the vim input handler 
 
 | NvChad / vim chord | mnml chord | Command id | Notes |
 |---|---|---|---|
-| `za` | same | `editor.toggle_fold` | Toggle fold |
-| `zR` | same | `editor.unfold_all` | Open every fold |
-| `zM` | (not bound) | — | "Close every fold" not exposed yet |
-| `zo` `zc` | (not bound directly) | — | Use `za`; no separate open/close-only |
+| `za` `zA` | same | `editor.toggle_fold` | Toggle fold at cursor |
+| `zo` `zO` | same | `editor.open_fold` | Open fold — idempotent, `zo` twice stays open |
+| `zc` `zC` | same | `editor.close_fold` | Close fold — idempotent |
+| `zf` | same | `editor.toggle_fold` | Fold the enclosing bracket pair |
+| `zf` (Visual) | same | `editor.fold_selection` | Fold the selected rows |
+| `zR` `zE` | same | `editor.unfold_all` | Open every fold |
+| `zM` | same | `editor.fold_all_brackets` | Fold every multi-line bracket pair |
+| `zj` `zk` | same | `editor.fold_next` / `editor.fold_prev` | Next / previous top-level fold |
 | `zh` `zl` `zH` `zL` | same | `view.hscroll_*` | Horizontal scroll |
+
+`zO` / `zC` are vim's recursive forms; mnml's folds are single-level and line-based, so they reduce to the same action rather than being dead chords. Same reasoning as `zA`. See [Editing → folding chords](/manual/editing/#folding-chords-in-normal-mode).
 
 ## Leader (`<space>`) chords — NvChad parity
 
@@ -405,8 +413,7 @@ Honest gaps. These are either intentional (mnml is not Neovim) or backlogged.
 | `:Trouble` | use `<leader>le` (`lsp.diagnostics`) | |
 | `:DiffviewOpen` | use `git.diff` / `git.graph` | |
 | `<leader>ww` window picker | (not bound) | Use `Ctrl+W w` |
-| `zM` close all folds | (not bound) | `zR` works; close-all is missing — SEV-3 |
-| `zo` / `zc` open / close fold (only) | use `za` toggle | |
+| `s` substitute character | `s` is flash/leap | Use `cl` for vim's substitute; `S` (substitute line) is unchanged |
 | `<leader>uX` UI toggles | spread across `<leader>t…` and palette | mnml has many but no umbrella menu |
 | `<leader>th` ASCII / Nerd toggle | (not bound) | mnml respects `--ascii` flag at launch |
 

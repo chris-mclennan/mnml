@@ -1970,7 +1970,12 @@ pub enum AiPlaceholderKind {
 /// bubble to the top regardless of this setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionsSortMode {
-    /// Sort by state: running → recent → idle → exited.
+    /// Sort by state. THREE tiers, per `session_state_priority`:
+    /// 0 = awaiting approval, 1 = thinking/running, 2 = everything
+    /// else. There is no separate "recent" or "exited" tier — this
+    /// doc claimed four for months, and a manual page nearly shipped
+    /// the wrong order because of it (2026-09-03). "recent" is a
+    /// STATUS-CHIP tier (elapsed < 30s), which is a different thing.
     Auto,
     /// User's manual order (right-click "Move up / down / top /
     /// bottom" bumps a session into this vec).

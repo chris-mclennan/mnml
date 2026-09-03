@@ -449,7 +449,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     // FINDINGS rows had rects and a left-click handler but were never
     // consulted here, so the right-click fell through to the generic
     // pane menu. Mirrors the NOTES branch above: both panels list
-    // markdown files, so the same six actions apply.
+    // markdown files, so the same actions apply.
     if let Some((i, path)) = app
         .rects
         .findings_panel_files

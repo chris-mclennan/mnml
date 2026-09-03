@@ -2772,6 +2772,14 @@ impl Editor {
                     self.goal_col = None;
                 }
             }
+            ContinueInsertRun => {
+                // The caller has just mutated the buffer and is about
+                // to enter insert. `apply` reset `in_insert_run` for
+                // that mutation; re-arm it so the first typed character
+                // coalesces into the entry the mutation already pushed
+                // instead of opening a second one.
+                self.in_insert_run = true;
+            }
             MakeSelectionInclusive => {
                 // Extend the HIGH end by one character (not one byte —
                 // a multi-byte char must move whole), never crossing
@@ -7999,5 +8007,91 @@ mod charwise_visual_tests {
             ],
         );
         assert_eq!(c.text(), "\u{e9}");
+    }
+}
+
+/// vim closes ONE undo block at `<Esc>`.
+#[cfg(test)]
+mod change_undo_tests {
+    use super::*;
+    use crate::clipboard::Clipboard;
+
+    fn ed(s: &str) -> (Editor, Clipboard) {
+        (Editor::new(s, 4), Clipboard::detached())
+    }
+    fn run(e: &mut Editor, c: &mut Clipboard, ops: &[EditOp]) {
+        for op in ops {
+            e.apply(op.clone(), 10, c);
+        }
+    }
+
+    /// `cwXX<Esc>` then a single `u` must restore the original word.
+    ///
+    /// mnml pushed TWO undo entries — one for the operator's delete,
+    /// one for the typing — so `cw`, `ciw`, `cc`, `C`, `S`, `ct<char>`,
+    /// `o` and `O` all needed two `u`. A vim user mashing `u` to walk
+    /// back a refactor got twice as far as intended, per changed word
+    /// (nvchad bug-hunt 2026-09-03, F14).
+    ///
+    /// The intermediate state is the tell: one `u` used to leave the
+    /// word DELETED but not restored.
+    #[test]
+    fn change_family_undoes_in_one_step() {
+        let (mut e, mut c) = ed("abcdefghij\nsecond\n");
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::SelectWord,
+                EditOp::ReplaceSelection(String::new()),
+                EditOp::ContinueInsertRun,
+                EditOp::InsertChar('X'),
+                EditOp::InsertChar('X'),
+            ],
+        );
+        assert!(
+            e.text().starts_with("XX"),
+            "the change did not apply: {:?}",
+            e.text().lines().next()
+        );
+
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(
+            e.text(),
+            "abcdefghij\nsecond\n",
+            "one `u` did not restore the original — the operator's \
+             delete and the typing are still separate undo entries"
+        );
+    }
+
+    /// The join must not glue UNRELATED edits together. A motion
+    /// between two bursts still splits them, and an edit that does not
+    /// enter insert keeps its own entry — otherwise `u` would walk back
+    /// further than the user asked, which is the same class of bug in
+    /// the other direction.
+    #[test]
+    fn the_join_does_not_swallow_a_separate_edit() {
+        let (mut e, mut c) = ed("alpha\n");
+        // A change, then a DIFFERENT edit with no ContinueInsertRun.
+        run(
+            &mut e,
+            &mut c,
+            &[
+                EditOp::SelectWord,
+                EditOp::ReplaceSelection(String::new()),
+                EditOp::ContinueInsertRun,
+                EditOp::InsertChar('X'),
+            ],
+        );
+        let after_change = e.text().to_string();
+        run(&mut e, &mut c, &[EditOp::InsertNewline]);
+        assert_ne!(e.text(), after_change);
+
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(
+            e.text(),
+            after_change,
+            "the second edit was swallowed into the change's undo entry"
+        );
     }
 }

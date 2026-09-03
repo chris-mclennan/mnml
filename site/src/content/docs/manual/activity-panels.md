@@ -1,9 +1,9 @@
 ---
 title: Activity panels
-description: The shared shape every activity-bar panel wears — caps header, count, top-right refresh chip, `/` filter row — and what each of GIT / TODOS / NOTES / FINDINGS / SESSIONS / HTTP / AGENTS does inside it.
+description: The shared shape every activity-bar panel wears — caps header, count, right-aligned chip cluster, `/` filter row — and what each of GIT / TODOS / NOTES / FINDINGS / SESSIONS / HTTP / AGENTS does inside it.
 ---
 
-Every section of the activity bar renders a panel into the same column, and every one of those panels wears the same three rows of chrome: a **caps title with a count**, a **top-right refresh chip**, and a **`/` filter row**. Learn the shape once and it transfers — the keys, the placeholders, the empty-state copy and the glyphs are identical whether you're looking at GIT, TODOS or SESSIONS.
+Every section of the activity bar renders a panel into the same column, and every one of those panels wears the same three rows of chrome: a **caps title with a count**, a **right-aligned chip cluster** ending in the refresh chip, and a **`/` filter row**. Learn the shape once and it transfers — the keys, the placeholders, the empty-state copy and the glyphs are identical whether you're looking at GIT, TODOS or SESSIONS.
 
 That consistency is enforced in code rather than by convention. A set of small shared modules under `src/ui/` own the magnifier glyph, the refresh glyph, the two filter placeholders, the caps-label and subtitle styles, the filter-chip background, the empty-state layout, and the `+ New …` action-button role. Before they existed, ~14 filter rows had drifted to two different magnifier codepoints and six refresh chips to four different glyphs. A design change now lands in every panel at once.
 
@@ -24,15 +24,24 @@ TODOS  (3 of 47)                           ⟳
  󰍉 database▏
 ```
 
+Four panels carry a second chip left of the refresh one — a `sort: <mode>` chip on TODOS / NOTES / FINDINGS / SESSIONS — and two more carry a `view: <mode>` chip (AGENTS, CLOUD AGENTS). They're the same affordance: left-click cycles, right-click lists every mode with a `✓` on the current one.
+
+```
+FINDINGS  (12)      sort: Newest first     ⟳
+```
+
 ### The header row
 
 - **Caps label** — `GIT` / `TODOS` / `NOTES` / `FINDINGS` / `SESSIONS` / `HTTP` / `AGENTS` / `CLOUD AGENTS` / `INTEGRATIONS`. Bold, in the theme's comment color, painted straight on the panel background (not on a chip).
 - **Count subtitle** — dim, in parentheses, immediately after the label. Panels with a single flat list always show it: `(N)` unfiltered, `(M of N)` when a filter narrows it. Multi-section panels (GIT, INTEGRATIONS) deliberately show **no** top-level count — each of their sub-sections carries its own, and one number spanning LOCAL / REMOTE / WORKTREES / PRS / STASHES / TAGS wouldn't obviously mean anything.
+- **Mode chip** — an optional ` key: value ` chip in dark-on-cyan, sitting one cell left of the refresh chip. `sort:` on TODOS / NOTES / FINDINGS / SESSIONS, `view:` on AGENTS / CLOUD AGENTS. It's padded to the widest value it can hold so it can't resize — and therefore can't slide out from under a repeat-clicking pointer — as the mode changes.
 - **Refresh chip** — a 3-cell icon-only chip (` ⟳ `, codicon-refresh `U+EB37`, ASCII fallback `↺`) pinned to the far right of the header row, cyan on the panel background. Same glyph, same size, same corner in every panel and in the file-tree header.
 
-When the panel is too narrow to fit label + chip without clipping the title, the chip is dropped — **glyph and click rect together**, so a narrow panel never leaves an invisible hit target behind.
+Widths resolve **right-to-left**, and each piece is dropped rather than clipped when it won't fit — **glyph and click rect together**, so a narrow panel never leaves an invisible hit target behind. A half-painted chip is a dead click target, which is worse than an absent one.
 
-Six panels route their header through the shared helper (GIT, TODOS, NOTES, FINDINGS, SESSIONS, INTEGRATIONS). AGENTS, CLOUD AGENTS and HTTP compose their own because they carry an extra chip on the same row — a `view: <mode>` chip on the two agents panels, a collapse-all chip on HTTP — but they use the same glyph, the same styles and the same far-right placement, and they apply the same drop-glyph-and-rect rule when the width runs out.
+The drop order is deliberate. The count subtitle goes first: it's informative, the refresh chip is functional, and folding the count into the refresh chip's budget meant typing in the filter — which grows `(N)` into `(N of M)` — could delete the refresh chip mid-interaction. Then the mode chip degrades to an icon-only form (`U+F0DC` for sort, ASCII ` ~ `) before vanishing entirely; right-click still opens its full menu. The refresh chip keeps the last cells, because it's the older affordance and users reach for it by position.
+
+Two shared helpers back this. GIT and INTEGRATIONS use the label-plus-refresh form; TODOS, NOTES, FINDINGS and SESSIONS use the label-plus-chip-cluster form. AGENTS, CLOUD AGENTS and HTTP compose their own headers — the agents panels predate the shared chip and HTTP carries a collapse-all chip — but they use the same glyphs, the same styles and the same far-right placement.
 
 ### What refresh does, per panel
 
@@ -42,13 +51,13 @@ Six panels route their header through the shared helper (GIT, TODOS, NOTES, FIND
 | TODOS | Re-scan the workspace for markers | `todos.refresh` |
 | NOTES | Re-scan `.mnml/notes/` | `notes.refresh` |
 | FINDINGS | Re-scan `.mnml/findings/` | `findings.refresh` |
-| SESSIONS | Drop the render caches + the listening-port cache | — (mouse only) |
+| SESSIONS | Drop the render caches + the listening-port cache | `sessions.refresh` |
 | HTTP | Re-scan all seven sections' caches | `http.refresh` |
 | AGENTS | Force the next poll instead of waiting for the interval | `agents.refresh` |
 
 Each fires a short toast (`todos: rescanned`, `git: refreshed`, …) so a chip click that finds nothing new still reads as having done something.
 
-**Right-click** the chip for the panel's settings menu: **Refresh now**, **Auto-refresh: on / off** (persisted per panel, on by default), and — on TODOS / NOTES / FINDINGS — the two sort rows. See [Activity lists](/manual/activity-lists/#the--chip-refresh-auto-refresh-and-sort).
+**Right-click** the chip for the panel's settings menu: **Refresh now**, **Auto-refresh: on / off** (persisted per panel, on by default), and — on TODOS / NOTES / FINDINGS — the four sort rows, duplicated from the `sort:` chip so the answer is where you already right-click. See [Activity lists](/manual/activity-lists/#the--chip-refresh-and-auto-refresh).
 
 ### The filter row
 
@@ -103,6 +112,32 @@ On a narrow panel the message ellipsizes rather than being clipped mid-word, and
 
 Panels with a create action put it directly under the filter row rather than at the bottom of the list, so it stays one keystroke away when the list scrolls past the panel height. All of them use the same solid-fill "primary action" role: `+ New todo`, `+ New note`, `+ New finding`, `+ New session`. The fill *is* the focus signal — there's no foreground swap on cursor, which at one point produced mid-grey text on mid-green.
 
+### Mode chips
+
+A mode chip is a setting you can read without opening anything. Six panels wear one:
+
+| Panel | Chip | Modes | Persisted as |
+|---|---|---|---|
+| TODOS / NOTES / FINDINGS | `sort:` | Newest first · Oldest first · Name (A–Z) · Name (Z–A) | `[ui] todos_sort` / `notes_sort` / `findings_sort` |
+| SESSIONS | `sort:` | State · Manual | `[ui] sessions_sort` |
+| AGENTS | `view:` | `status` · `workspace` — what the rows group under | session-only |
+| CLOUD AGENTS | `view:` | `compact` · `standard` — row density | session-only |
+
+The gesture is the same on all of them: **left-click cycles**, **right-click opens a menu** listing every mode with a `✓` on the current one. The two `sort:` axes survive a restart; the two `view:` modes are session-only. The chip carries its key rather than just its value, because a bare ` Newest first ` doesn't say what it controls and two chips in one header have to be told apart.
+
+Every chip also has a palette command, so the setting isn't mouse-only: `todos.sort` / `notes.sort` / `findings.sort` cycle, and `sessions.sort_auto` / `sessions.sort_manual` set directly. Full depth on the sort chip — the four modes, the tiebreak rules, the narrow-panel fallback — is in [Activity lists](/manual/activity-lists/#the-sort-chip).
+
+### Row context menus
+
+Rail rows that resolve to a file on disk carry a right-click menu: **Open**, **Open in split**, **Reveal in tree**, **Reveal in Finder/Explorer**, **Copy path**, and — where the row owns the file — **Rename…** and **Delete…**. NOTES, FINDINGS, SEARCH results and AGENTS rows all have one; TODOS rows carry their own AI-action menu instead, since a marker is a location inside a file rather than a file.
+
+Two rules hold across all of them:
+
+- **Right-click moves the row cursor to the row you clicked**, so the menu and the highlight always name the same file.
+- **Both reveal routes are always offered together.** "Reveal in tree" navigates mnml's own file tree; the OS reveal is a separate row. Nine menus once carried the in-app label while firing the OS reveal, so the in-app action didn't exist at all.
+
+See [Activity lists](/manual/activity-lists/#row-context-menus) for what each row does.
+
 ## The TODOs panel
 
 `view.activity_todos` — a workspace-wide scan for marker patterns in comments, one row per hit. The scan runs on first activation and populates a cache; the header's `⟳` (or `todos.refresh`) re-runs it, and auto-refresh re-runs it on a two-second throttle. Full depth — the walker's limits, the markdown rules, the row kebab and `+ New todo` — is in [Activity lists](/manual/activity-lists/#todos).
@@ -150,7 +185,7 @@ The filter matches against the tag, the workspace-relative path plus line number
 
 ## The Notes panel
 
-`view.activity_notes` — persistent workspace scratches under `<workspace>/.mnml/notes/*.md`, sorted most-recently-modified first.
+`view.activity_notes` — persistent workspace scratches under `<workspace>/.mnml/notes/*.md`, newest-modified first until you change the header's `sort:` chip.
 
 `.mnml/` is auto-gitignored (it's mnml-scoped state — see [Security & hardening](/manual/security/#auto-gitignore)), so notes are local by default. Remove the line from `.gitignore` if you want to commit a specific one.
 
@@ -160,7 +195,7 @@ The filter matches the filename without its `.md` extension. Click or `Enter` op
 
 ## The Findings panel
 
-`view.activity_findings` — a workspace-scoped archive of tester and review reports under `<workspace>/.mnml/findings/*.md`, sorted by modification time descending.
+`view.activity_findings` — a workspace-scoped archive of tester and review reports under `<workspace>/.mnml/findings/*.md`, newest-modified first until you change the header's `sort:` chip.
 
 It's zero-config and cross-project: `cd ~/Projects/mixr && mnml .` picks up that repo's `.mnml/findings/` with no setup. Agents and testers write reports there; the panel is where you read them.
 
@@ -168,7 +203,7 @@ Rows are `icon  name  age` — the name is relative to the findings root with th
 
 The filter matches the same rendered relative name the row shows. **`+ New finding`** (chip, or `findings.new`) seeds `finding-1.md`, `finding-2.md`, … into the New file prompt, mirroring `+ New note` exactly — so the row under the filter is a chip slot here too, rather than the lone exception it once was.
 
-Right-click row actions (archive / delete / mark reviewed) are still a follow-up. For the full depth on this panel — the recursive walk, the sort menu and the auto-refresh rules — see [Activity lists](/manual/activity-lists/#findings).
+Right-click a row for Open / Open in split / the two reveals / Copy path / Rename / Delete — the same menu NOTES rows carry. For the full depth on this panel — the recursive walk, the sort chip and the auto-refresh rules — see [Activity lists](/manual/activity-lists/#findings).
 
 ## The Sessions panel
 
@@ -195,9 +230,18 @@ The port chip lists any TCP ports the child is listening on (cached via a period
 
 ### Ordering and pinning
 
-Right-click a session card for the per-session menu: **Pin** / **Unpin**, **Move up** / **Move down** / **Move to top** / **Move to bottom**, **Auto sort** (with a `✓` when active), **Rename…**, a session color submenu, and **Close session**.
+SESSIONS wears the same header `sort:` chip as the three list panels, but over a different axis. Its rows are live panes, not files — there's no mtime to order by, and "A–Z by session name" is a sort nobody asked for:
 
-Pinned sessions always sort first. Below them, **Auto** orders by state (running first) and **Manual** honours the order your move commands produced — any move switches the mode to Manual, and the Auto sort row switches it back.
+| Mode | Config token | Order |
+|---|---|---|
+| **State** | `auto` | needs-approval first, then thinking/running, then idle, then exited |
+| **Manual** | `manual` | the order your move commands produced |
+
+Left-click the chip to flip between them; right-click for the two-row menu. `sessions.sort_auto` and `sessions.sort_manual` are the palette routes. Either way the choice persists to `[ui] sessions_sort`.
+
+The state tiers are read from each pane's live output — a summary still mentioning approval reads as *needs action*, a live spinner as *running* — cached for 500 ms, since the sort runs on every frame. A session that finishes thinking drops a tier within half a second. **Pinned sessions bubble to the top in either mode**, in pane order.
+
+Right-click a session **card** for the per-session menu: **Pin** / **Unpin**, **Move up** / **Move down** / **Move to top** / **Move to bottom**, **Auto sort** (with a `✓` when active), **Rename…**, a session color submenu, and **Close session**. Any move switches the mode to Manual and appends the session to the manual order. The card menu's **Auto sort** row also *clears* that manual order — the state rules take over, so there's nothing left to preserve — where the chip and the palette commands only change the mode.
 
 ### `+ New session`
 
@@ -222,12 +266,13 @@ Three more activity sections wear the same chrome but are documented in depth el
 | | TODOs | Notes | Findings | Sessions |
 |---|---|---|---|---|
 | Source of rows | scan of workspace comments | `.mnml/notes/*.md` | `.mnml/findings/*.md` | AI Pty panes |
-| Order | `newest` / `name`, per panel | `newest` / `name`, per panel | `newest` / `name`, per panel | pinned, then Auto / Manual |
+| Order | `sort:` chip, four modes | `sort:` chip, four modes | `sort:` chip, four modes | `sort:` chip: pinned, then State / Manual |
 | Scan trigger | activation, `⟳`, auto (2s throttle) | activation, `⟳`, auto | activation, `⟳`, auto | continuous (live) |
-| Header count | `(M of N)` when filtered | always | always | always |
+| Header count | always; `+` when the scan capped | always | always | always |
 | Filter matches | tag / path / title | filename | relative name | name / label / branch / cwd / ticket |
 | Row activation | opens file at line | opens the note | opens the report | reveals + focuses the pane |
 | Create chip | `+ New todo` | `+ New note` | `+ New finding` | `+ New session` |
+| Row right-click | AI actions on the marker | file actions | file actions | pin / move / rename / color / close |
 
 ## Next
 

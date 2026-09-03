@@ -40,7 +40,7 @@ These are the chords NvChad ships with mnml's equivalents alongside. Categories 
 
 These are pure-vim behavior, nothing to translate. mnml's vim handler covers them as you'd expect:
 
-- Modes: `Esc` / `i` / `a` / `o` / `O` / `s` / `c…` / `v` / `V` / `Ctrl-V` / `R`
+- Modes: `Esc` / `i` / `a` / `o` / `O` / `S` / `c…` / `v` / `V` / `Ctrl-V` / `R` — note the capital: Normal-mode `s` is [flash](#s-is-flash-not-substitute), not substitute
 - Motions: `hjkl`, `wbge`, `0$^`, `f`/`t`/`F`/`T` plus `;` `,` repeat, `%`, `gg`/`G`, `H`/`M`/`L`, `Ctrl-D`/`Ctrl-U`/`Ctrl-F`/`Ctrl-B`, `{` / `}` for paragraph nav, `( )` for sentence nav
 - Operators: `d` / `c` / `y` / `>` / `<` / `=` / `gU` / `gu` / `gq` / `gJ` (no-space join) / `~` (toggle case)
 - Text objects: `iw`/`aw`, `i(`/`a(`, `i"`/`a"`, `ip`/`ap`, `is`/`as`, plus tree-sitter `if`/`af` (function), `ic`/`ac` (class), `ia`/`aa` (argument), `ii`/`ai` (indent)
@@ -57,6 +57,8 @@ A couple of edge-case motions that match vim exactly (and didn't always):
 - **`*` and `#` advance past the current match** — the star jumps to the *next* occurrence of the word under the cursor (instead of finding the cursor's current word).
 - **`V` doesn't snap the cursor down a row** — the anchor moves to `line_start`, the cursor stays put, and `'<` / `'>` after a yank reflect the correct row range.
 - **`:%s/.../.../g` is one undo step** — a 12-match substitute reverts on one `u`, not twelve.
+- **Charwise `v` is inclusive of the cell under the cursor** — `v` `y` yanks one character, `v` `l` `l` `y` yanks three, `v` `l` `l` `d` leaves `defghij` in `abcdefghij`. It used to come up one short on every `v`+motion `d` / `c` / `y`, and a bare `v` `y` yanked the empty string over your register. `V` and `Ctrl-V` were always correct.
+- **`zo` opens and `zc` closes; only `za` toggles** — all six of `za` `zA` `zo` `zO` `zc` `zC` used to be the same toggle, so `zo` twice closed a fold.
 
 `cc`, `guu`, `gUU`, `g~~` all operate on the full line and leave the cursor at the start of the next line, so `g~~g~~g~~` walks down toggling case line by line.
 
@@ -123,7 +125,19 @@ Marks + macros persist across mnml restarts via per-workspace `<workspace>/.mnml
 
 ### Folding
 
-`za` toggle, `zc` close, `zo` open, `zR` open-all, `zM` close-all, `zf` create fold (visual or with motion). LSP-supplied fold ranges + indent-fallback folds both work; `za` toggles whichever applies at the cursor.
+The vim chords are directional, the way `:help zo` describes them — `zo` opens and stays open, `zc` closes and stays closed, and `za` is the only one that alternates.
+
+| Chord | mnml | Command |
+|---|---|---|
+| `za` / `zA` | toggle at cursor | `editor.toggle_fold` |
+| `zo` / `zO` | open (idempotent) | `editor.open_fold` |
+| `zc` / `zC` | close (idempotent) | `editor.close_fold` |
+| `zf` | fold enclosing bracket pair; in Visual, fold the selection | `editor.toggle_fold` / `editor.fold_selection` |
+| `zR` / `zE` | open every fold | `editor.unfold_all` |
+| `zM` | fold every multi-line bracket pair | `editor.fold_all_brackets` |
+| `zj` / `zk` | next / previous top-level fold | `editor.fold_next` / `editor.fold_prev` |
+
+`zO` / `zC` are the recursive forms in vim. mnml's folds are line-based with a single level per header, so they collapse onto the plain open/close rather than being dead chords — the same call `zA` already made. LSP-supplied fold ranges and indent-fallback folds both work, and the fold set persists across buffer close and mnml restarts.
 
 ## The `<leader>` trie
 
@@ -334,6 +348,29 @@ The [ThePrimeagen Harpoon](https://github.com/ThePrimeagen/harpoon) idiom — pi
 ## Differences worth knowing
 
 Honest list of places where NvChad muscle memory doesn't translate cleanly.
+
+### `s` is flash, not substitute
+
+This is the biggest single divergence from vim canon, and it's on purpose. In mnml's Normal mode, `s` starts a flash/leap-style two-character jump:
+
+1. `s` arms it.
+2. Type two characters you can see at the target.
+3. Every visible occurrence of that pair gets a one-character label. **Press a label to jump**, or `Esc` to cancel.
+
+Three keystrokes, not two — and step 3 is what trips people. `s` `g` `a` over a line containing `gamma` paints an `f` on top of the `ga`, so the line momentarily reads `famma` and the cursor hasn't moved. That's flash armed and waiting, not a corrupted buffer; a bug report once filed `s` as "dead" after stopping at step 2. mnml now paints a cue on the pane's bottom row while labels are up:
+
+```
+ ga → press a label to jump · Esc cancels
+```
+
+Matching is case-insensitive and limited to the visible viewport (at most 60 labels). Labels never reuse the two characters you typed. A jump goes on the nav back-stack, so `Alt-Left` returns.
+
+Two asymmetries to keep straight:
+
+- **Vim's substitute is `cl`** — same edit, one more keystroke.
+- **`S` still substitutes the whole line** (`3S` does three lines, like `3cc`). Only the lowercase half of the pair was reassigned.
+
+Visual-mode `s` is untouched: it still changes the selection.
 
 ### `<leader>i` is integrations, not insert
 

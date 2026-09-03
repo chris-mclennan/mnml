@@ -45,11 +45,13 @@ mnml's vim handler covers modal editing in depth. If you've used vim or Neovim, 
 | Mode | Enter | Use for |
 |---|---|---|
 | **Normal** | `Esc` | Movement, operators, ex-commands |
-| **Insert** | `i` / `a` / `o` / `O` / `s` / `c…` | Typing text |
+| **Insert** | `i` / `a` / `o` / `O` / `S` / `c…` | Typing text |
 | **Visual (char)** | `v` | Char-by-char selection |
 | **Visual (line)** | `V` | Line selection |
 | **Visual block** | `Ctrl-V` | Column / block selection (multi-cursor flavor) |
 | **Replace** | `R` | Overwrite-as-you-type |
+
+`s` is deliberately *not* an insert-entry chord in mnml — it triggers [flash motion](#flash-motion-s). Vim's substitute is still `cl`, and `S` still substitutes the whole line.
 
 The mode chip in the bottom-left of the statusline shows which mode you're in; the cursor shape changes per-mode too (block in Normal, bar in Insert, underline in Replace). The chip distinguishes the three visual flavors — `VISUAL` for char-wise, `V-LINE` for `V`, `V-BLOCK` for `Ctrl-V` — so the geometry is visible at a glance instead of collapsing into one label. The mode-chip tooltip differentiates them too.
 
@@ -79,6 +81,30 @@ This is the kind of behavior you only notice when it's wrong (a `cw` that left t
 
 ![cw at "brown" in "The quick brown fox jumps", type BIG, Esc — line becomes "The quick BIG fox jumps" (space preserved); dd then u then :reg shows the unnamed + numbered registers](../../../assets/tapes/vim-operator-inclusive.gif)
 
+### Charwise VISUAL is inclusive too
+
+The same rule governs Visual mode. Vim's charwise Visual selection *includes* the cell the block cursor sits on (`:help visual-mode`) — `v` on its own selects one character, and `v` `l` `l` selects three. mnml's selection is a half-open `[lo, hi)` range internally, so until this was fixed every `v`+motion operation came up one character short:
+
+| Keys (buffer is `abcdefghij`) | mnml now | mnml before |
+|---|---|---|
+| `v` `y` | yanks `a` | yanked the empty string |
+| `v` `l` `l` `y` | yanks `abc` | yanked `ab` |
+| `v` `e` `y` | yanks `abcdefghij` | yanked `abcdefghi` |
+| `v` `l` `l` `d` | leaves `defghij` | left `cdefghij` |
+
+The bare `v` `y` row is the one that bit: it silently replaced the unnamed register with nothing.
+
+The widening is a dedicated `MakeSelectionInclusive` edit op emitted ahead of `DeleteSelection` / `ReplaceSelection` / `YankSelection`, not an extra `MoveRight` the way the operator-pending motions do it. On a *backward* selection — you pressed `v` then `h` `h`, so the cursor sits before the anchor — moving the cursor right would shrink the range instead of growing it, and vim includes the anchor's own character either way. The op always extends whichever end is higher.
+
+Two guards on top of that:
+
+- **It extends by a whole character, not a byte.** `v` `y` on the `é` of `héllo` yanks `é`, not half a UTF-8 sequence.
+- **It never crosses the line terminator.** Vim's charwise selection stops at the last cell of a line; swallowing the newline would make a later `p` split the neighbouring line — the same class of bug the `$`-inclusive guard already fixed for operator-pending motions.
+
+`V` (linewise) and `Ctrl-V` (blockwise) are untouched. Both are inclusive by construction and widening them again would overshoot. Multi-cursor visual widens *every* cursor's selection rather than just the primary — otherwise the primary deletes one character more than its extras and the rows come out different lengths.
+
+Inclusivity applies to the three operators that take a range out of the buffer: `d` / `x`, `c` / `s`, and `y`. `>` / `<` and the Visual case operators (`u` / `U` / `~`) still act on the un-widened range.
+
 ### `Ctrl+R Ctrl+W` and `Ctrl+R Ctrl+A` in INSERT mode
 
 Two vim chords for inserting the symbol under the cursor without leaving INSERT:
@@ -92,7 +118,23 @@ Useful when extracting a name into a new declaration — type `let `, then `Ctrl
 
 ### Folding chords in NORMAL mode
 
-`Ctrl+Shift+[` and `Ctrl+Shift+]` toggle and unfold respectively, mirroring VS Code's canonical fold/unfold chords. The vim handler's bracket prefix (for `[c` / `]c` git hunks, `[d` / `]d` diagnostics) only consumes the bare bracket when `!ctrl` — the modifier-bearing chord falls through to the chord-chain / global keymap so the editor's fold commands can pick it up. Lowercase `z` (`za` / `zR` / `zM`) still works the same.
+Vim's fold chords are **directional and idempotent** (`:help zo`): `zo` opens a fold and leaves it open, `zc` closes one and leaves it closed. Only `za` alternates. mnml used to bind all six of `za` `zA` `zo` `zO` `zc` `zC` to the same toggle, so pressing `zo` twice *closed* a fold — something vim never does. The `z` prefix now routes three ways:
+
+| Chord | Command | Behavior |
+|---|---|---|
+| `za` / `zA` | `editor.toggle_fold` | Toggle the fold at the cursor |
+| `zo` / `zO` | `editor.open_fold` | Open it — no-op if it's already open |
+| `zc` / `zC` | `editor.close_fold` | Close it — no-op if it's already closed |
+| `zf` | `editor.toggle_fold` | Fold the enclosing bracket pair (in Visual, `editor.fold_selection` folds the selected rows) |
+| `zR` / `zE` | `editor.unfold_all` | Drop every fold in the buffer |
+| `zM` | `editor.fold_all_brackets` | Fold every multi-line bracket pair |
+| `zj` / `zk` | `editor.fold_next` / `editor.fold_prev` | Jump to the next / previous top-level fold |
+
+`zO` / `zC` are vim's *recursive* forms. mnml's folds are line-based with a single level per header, so they reduce to the same action rather than sitting there as dead chords — the same reasoning `zA` already followed.
+
+`editor.open_fold` and `editor.close_fold` are palette commands in their own right (unbound outside the `z` prefix), so you can put them on any chord you like via `[keys.vim]`.
+
+`Ctrl+Shift+[` and `Ctrl+Shift+]` toggle and unfold respectively, mirroring VS Code's canonical fold/unfold chords. The vim handler's bracket prefix (for `[c` / `]c` git hunks, `[d` / `]d` diagnostics) only consumes the bare bracket when `!ctrl` — the modifier-bearing chord falls through to the chord-chain / global keymap so the editor's fold commands can pick it up.
 
 ### `:%s/.../.../g` is one undo step
 
@@ -180,7 +222,35 @@ Visual block (`Ctrl-V`) is the native multi-cursor primitive:
 - Select a column with `Ctrl-V` then `I` to insert at every line's start, `A` to append at every line's end.
 - Use `c` to change every selected cell at once; the change is replicated.
 
-Plus flash-motion jumps — `s<char><char>` jumps to the nearest `<char><char>` digraph in view with a single-letter label. Bypasses the `f` / `t` / `/` / `?` chain when you can see the target.
+[Flash motion](#flash-motion-s) is the other way out of a repetitive `f` / `t` / `/` `?` chain when the target is already on screen.
+
+### Flash motion (`s`)
+
+mnml gives `s` to a flash/leap-style two-character jump rather than to vim's substitute. That's a deliberate trade: vim's `s` is `cl` with fewer keystrokes, while a screen-local jump earns its key several times a minute. Substitute is still reachable as `cl`, and **`S` still substitutes the whole line** — so the pair is asymmetric. Lowercase `s` navigates; uppercase `S` edits.
+
+The gesture is **three keystrokes, not two**:
+
+1. `s` arms flash. The statusline's pending-chord indicator shows `s`.
+2. Type the two characters you can see at the target — the indicator shows `sg`, then flash fires on the second.
+3. Every visible occurrence of that pair is overpainted with a one-character **label**. Press a label to jump to it, or `Esc` to cancel.
+
+Step 3 is the one people miss, and it looks alarming the first time. `s` `g` `a` in a buffer containing `gamma` paints an `f` over the `ga`, so the line momentarily *reads* `famma` — and nothing has moved. That is flash working, waiting for the label press. A bug report filed `s` as "dead: it does not substitute and it does not jump" after stopping at step 2. So while labels are up, mnml paints a cue on the right-hand end of the pane's bottom row:
+
+```
+ ga → press a label to jump · Esc cancels
+```
+
+The cue carries the pair you typed, and it disappears the instant flash does — it never outlives the labels and claims the editor is in a mode it isn't.
+
+The rest of the behavior:
+
+- **Matching is case-insensitive and scoped to what's on screen** in the active pane. Flash is a navigation gesture for the current viewport, not a search — at most 60 matches get labels and the rest are silently dropped.
+- **Labels come from a home-row-biased pool** (`f` `j` `d` `k` `s` `l` `a` …, lowercase before uppercase) with both characters you typed filtered out, so the third keystroke can never be mistaken for the second.
+- **The cursor lands on the first character of the pair.**
+- **A jump pushes the old position onto the navigation back-stack**, so `Alt+Left` (`nav.back`) returns.
+- **A key that isn't a label cancels flash and is then re-dispatched normally** — you don't lose the keystroke.
+- **No match on screen** ⇒ a toast (`flash: no "ab" on screen`) and the cursor stays put.
+- Flash is a **vim-mode, Normal-mode** gesture. In Visual mode `s` keeps its vim meaning (change the selection), and it isn't bound in standard mode at all.
 
 ## Standard mode
 
@@ -264,7 +334,7 @@ Cursor on `(` / `)` / `[` / `]` / `{` / `}` lights up its match in the statuslin
 
 ### Code folding
 
-- Manual: `zf` / `za` / `zo` / `zc` / `zR` / `zM` (vim-style)
+- Manual: `zf` create, `za` toggle, `zo` open, `zc` close, `zR` unfold-all, `zM` fold-all — see [Folding chords in NORMAL mode](#folding-chords-in-normal-mode) for the directional pair.
 - LSP-suggested folds: when the LSP returns folding ranges, they show as fold markers in the gutter; click or `za` to toggle.
 - Indent folds: fall-back fold strategy for languages without LSP fold support — folds at indent boundaries.
 

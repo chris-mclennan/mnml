@@ -267,6 +267,26 @@ pub enum EditOp {
     /// No-op without a live selection, and in linewise/blockwise modes,
     /// which are already inclusive by construction.
     MakeSelectionInclusive,
+    /// Join the edit that just happened to the insert-mode typing that
+    /// follows it, so both undo as ONE step.
+    ///
+    /// vim closes one undo block at `<Esc>`: `cwXX<Esc>` then `u`
+    /// restores the original word in a single press. mnml pushed two
+    /// entries — one for the operator's delete, one for the typing — so
+    /// `cw`, `ciw`, `cc`, `C`, `S`, `ct<char>`, `o` and `O` all needed
+    /// two `u`. A vim user walking back a refactor got twice as far as
+    /// intended, per changed word (nvchad bug-hunt 2026-09-03).
+    ///
+    /// Plain `i` was always correct, because the first typed character
+    /// opens the run itself. This op says "the run is already open",
+    /// which is exactly what the operator's own mutation had just
+    /// reset.
+    ///
+    /// Emitted by the change-family paths only. It is deliberately its
+    /// own op rather than a side effect of `ReplaceSelection`: that op
+    /// is also used where insert does NOT follow, and folding the two
+    /// together would silently glue unrelated edits into one undo step.
+    ContinueInsertRun,
     /// vim `f`/`F`/`t`/`T` — find char on the cursor's line. `forward=true`
     /// scans rightward, `forward=false` scans leftward. `before=true` (`t`/`T`)
     /// stops one cell before the match instead of on it. When `inclusive=true`
@@ -574,6 +594,7 @@ impl EditOp {
             | MoveCursorToSelectionStart
             | NormalizeLinewiseSelection
             | MakeSelectionInclusive
+            | ContinueInsertRun
             | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove

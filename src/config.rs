@@ -976,8 +976,10 @@ pub struct UiConfig {
     pub auto_refresh_off: Vec<String>,
 
     /// Row order for the three activity list panels — `"newest"`
-    /// (default) or `"name"`. Per-panel: browsing notes A–Z does not
-    /// mean you want findings that way too.
+    /// (default), `"oldest"`, `"name"` (A–Z) or `"name_desc"` (Z–A).
+    /// Per-panel: browsing notes A–Z does not mean you want findings
+    /// that way too. An unrecognised value falls back to the default
+    /// rather than erroring — see `ListSort::from_token`.
     /// SESSIONS panel row order — `"auto"` (by run state) or
     /// `"manual"` (your drag order). Its own axis, not the
     /// newest/name one the three list panels share.

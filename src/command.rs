@@ -4340,7 +4340,7 @@ fn builtin_commands() -> Vec<Command> {
             // commands rather than a mouse-only handler so the palette
             // reaches them too, matching every other panel's sort.
             id: "sessions.sort_auto",
-            title: "Sessions: sort by state (running → recent → idle)",
+            title: "Sessions: sort by state (approval → running → rest)",
             group: "view",
             keys: &[],
             run: |app| app.set_sessions_sort(crate::app::SessionsSortMode::Auto),
