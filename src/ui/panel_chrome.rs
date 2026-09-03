@@ -531,3 +531,45 @@ mod mode_chip_tests {
         assert!(row.contains("FINDINGS"));
     }
 }
+
+#[cfg(test)]
+mod drop_order_consistency_tests {
+    /// One answer to "which chip survives narrowing", across every
+    /// panel that has both a mode chip and a refresh chip.
+    ///
+    /// The four list panels dropped their `sort:` chip and kept
+    /// refresh; AGENTS and CLOUD AGENTS did the opposite, because they
+    /// folded the `view:` chip into the refresh budget. Two panels a
+    /// rail apart gave opposite answers (design review 2026-09-03).
+    ///
+    /// Refresh wins: it is a functional button users reach for by
+    /// position, while the mode chip is informational and its menu is
+    /// reachable another way.
+    ///
+    /// Reads the source because the rule lives in three hand-rolled
+    /// budgets. A render test would need each panel's full app state
+    /// and would still only cover the widths it happened to pick.
+    #[test]
+    fn every_panel_drops_its_mode_chip_before_its_refresh_chip() {
+        for f in ["src/ui/agents_panel.rs", "src/ui/cloud_agents_panel.rs"] {
+            let src = std::fs::read_to_string(f).unwrap();
+            assert!(
+                src.contains("let show_view = ") && src.contains("let show_refresh = "),
+                "{f} does not compute the two thresholds separately, so one \
+                 chip cannot drop before the other"
+            );
+            // The refresh threshold must NOT include the view chip's
+            // width — that is exactly the bug: it made refresh the
+            // first thing to go.
+            let refresh_line = src
+                .lines()
+                .find(|l| l.trim_start().starts_with("let show_refresh = "))
+                .unwrap();
+            assert!(
+                !refresh_line.contains("view_w"),
+                "{f}: the refresh threshold still counts the view chip, so \
+                 refresh drops first: {refresh_line}"
+            );
+        }
+    }
+}

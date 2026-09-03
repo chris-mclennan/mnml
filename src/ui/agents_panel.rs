@@ -123,8 +123,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // the rect never leaks past the panel bounds onto the divider.
     // The view chip stays as long as it fits; the count subtitle
     // is the last thing to go, since it's the identity signal.
-    let header_used = 1 + header_left.chars().count() as u16 + count_w + view_w + refresh_w + 2;
-    let show_refresh = area.width >= header_used;
+    // 2026-09-03 design review — refresh survives narrowing, the mode
+    // chip drops first. See the same change in `cloud_agents_panel`:
+    // this panel and the four list panels answered "which chip
+    // survives?" with opposite answers. Refresh is a functional button
+    // users reach for by position; the mode chip is informational.
+    let label_and_count = 1 + header_left.chars().count() as u16 + count_w;
+    let show_view = area.width >= label_and_count + view_w + refresh_w + 2;
+    let show_refresh = area.width >= label_and_count + refresh_w + 2;
+    let header_used = label_and_count
+        + if show_view { view_w } else { 0 }
+        + if show_refresh { refresh_w } else { 0 }
+        + 2;
     let pad = (area.width).saturating_sub(header_used);
     let header_row = Rect {
         x: area.x,
@@ -145,14 +155,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             Span::styled(" ".repeat(pad as usize), Style::default().bg(bg)),
             Span::styled(
-                view_chip,
+                if show_view { view_chip } else { String::new() },
                 Style::default()
                     .fg(t.bg)
                     .bg(t.cyan)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                if show_refresh { " " } else { "" }.to_string(),
+                if show_view && show_refresh { " " } else { "" }.to_string(),
                 Style::default().bg(bg),
             ),
             Span::styled(
@@ -167,21 +177,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         header_row,
     );
     let view_chip_x = area.x + 1 + header_left.chars().count() as u16 + count_w + pad;
-    let chip_rect = Rect {
-        x: view_chip_x,
-        y,
-        width: view_w,
-        height: 1,
-    };
-    app.rects.agents_panel_view_chip = Some(chip_rect);
+    if show_view {
+        app.rects.agents_panel_view_chip = Some(Rect {
+            x: view_chip_x,
+            y,
+            width: view_w,
+            height: 1,
+        });
+    }
     if show_refresh {
-        let refresh_rect = Rect {
-            x: view_chip_x + view_w + 1,
+        app.rects.agents_panel_refresh_chip = Some(Rect {
+            x: view_chip_x + if show_view { view_w + 1 } else { 0 },
             y,
             width: refresh_w,
             height: 1,
-        };
-        app.rects.agents_panel_refresh_chip = Some(refresh_rect);
+        });
     }
     y += 1;
 

@@ -4268,7 +4268,7 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "todos.refresh",
             title: "TODOs: rescan the workspace",
-            group: "view",
+            group: "todos",
             keys: &[],
             run: |app| app.todos_panel_refresh(),
         },
@@ -4282,7 +4282,7 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "findings.refresh",
             title: "Findings: rescan .mnml/findings/",
-            group: "view",
+            group: "findings",
             keys: &[],
             run: |app| app.findings_panel_refresh(),
         },
@@ -4294,7 +4294,7 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "notes.refresh",
             title: "Notes: rescan .mnml/notes/",
-            group: "view",
+            group: "notes",
             keys: &[],
             run: |app| app.notes_panel_refresh(),
         },
@@ -4306,7 +4306,7 @@ fn builtin_commands() -> Vec<Command> {
             // closes the same gap for sessions.
             id: "sessions.refresh",
             title: "Sessions: re-read session transcripts + ports",
-            group: "view",
+            group: "sessions",
             keys: &[],
             run: |app| app.sessions_panel_refresh(),
         },
@@ -4316,21 +4316,21 @@ fn builtin_commands() -> Vec<Command> {
             // the exact gap R16 closed for the refresh chips.
             id: "todos.sort",
             title: "TODOs: cycle sort order",
-            group: "view",
+            group: "todos",
             keys: &[],
             run: |app| app.cycle_panel_sort("todos"),
         },
         Command {
             id: "notes.sort",
             title: "Notes: cycle sort order",
-            group: "view",
+            group: "notes",
             keys: &[],
             run: |app| app.cycle_panel_sort("notes"),
         },
         Command {
             id: "findings.sort",
             title: "Findings: cycle sort order",
-            group: "view",
+            group: "findings",
             keys: &[],
             run: |app| app.cycle_panel_sort("findings"),
         },
@@ -4341,14 +4341,14 @@ fn builtin_commands() -> Vec<Command> {
             // reaches them too, matching every other panel's sort.
             id: "sessions.sort_auto",
             title: "Sessions: sort by state (approval → running → rest)",
-            group: "view",
+            group: "sessions",
             keys: &[],
             run: |app| app.set_sessions_sort(crate::app::SessionsSortMode::Auto),
         },
         Command {
             id: "sessions.sort_manual",
             title: "Sessions: sort by manual order",
-            group: "view",
+            group: "sessions",
             keys: &[],
             run: |app| app.set_sessions_sort(crate::app::SessionsSortMode::Manual),
         },
@@ -8168,6 +8168,42 @@ mod menu_command_id_tests {
             } else if p.extension().is_some_and(|x| x == "rs") {
                 out.push(p);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod command_group_tests {
+    /// A command's `group` should be its id's namespace.
+    ///
+    /// `group` drives the `?` help overlay's sections, the cheatsheet's
+    /// collapsible sections, and the palette's `group · title · id`
+    /// label — so a command filed under the wrong group is invisible
+    /// where a user would look for it. `http.refresh` was grouped
+    /// `"http"` while `todos.refresh` was `"view"` and `todos.new` was
+    /// `"todos"`, which left the cheatsheet's TODOS / NOTES / FINDINGS
+    /// sections nearly empty (design review 2026-09-03).
+    ///
+    /// Scoped to the namespaces that were actually reconciled. Broad
+    /// namespaces like `view.*` and `editor.*` legitimately hold
+    /// commands whose group is a finer category, so asserting this
+    /// globally would be wrong.
+    #[test]
+    fn panel_commands_are_grouped_by_their_namespace() {
+        let reg = super::registry();
+        for ns in ["todos", "notes", "findings", "sessions", "http"] {
+            let prefix = format!("{ns}.");
+            let mut seen = 0;
+            for c in reg.all().iter().filter(|c| c.id.starts_with(&prefix)) {
+                seen += 1;
+                assert_eq!(
+                    c.group, ns,
+                    "`{}` is grouped `{}` — it will not appear under {} in \
+                     the cheatsheet or the help overlay",
+                    c.id, c.group, ns
+                );
+            }
+            assert!(seen > 0, "no commands found in the `{ns}` namespace");
         }
     }
 }

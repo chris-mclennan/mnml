@@ -115,12 +115,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         format!("  ({visible} of {total})")
     };
     let count_w = count_txt.chars().count() as u16;
-    let header_used = 1 + header_label.chars().count() as u16 + count_w + view_w + refresh_w + 2;
-    // R16 vscode-mouse SEV-2 (2026-08-24) — same narrow-panel
-    // guard as AGENTS: when the width can't fit refresh + gaps,
-    // drop the refresh chip (glyph AND rect) so it doesn't leak
-    // past the panel divider.
-    let show_refresh = area.width >= header_used;
+    let label_and_count = 1 + header_label.chars().count() as u16 + count_w;
+    // 2026-09-03 design review — the drop order was BACKWARDS relative
+    // to the four list panels, which drop their mode chip and keep the
+    // refresh chip. Here `header_used` folded the `view:` chip into the
+    // refresh budget, so narrowing dropped REFRESH and kept `view:`.
+    // Two panels a rail apart answered "which chip survives?" with
+    // opposite answers.
+    //
+    // Refresh wins everywhere: it is a functional button users reach
+    // for by position, while the mode chip is informational and its
+    // menu is reachable another way. The view chip now drops first,
+    // and — as the refresh guard already did — it drops its RECT too,
+    // so it cannot leak past the panel divider or leave a dead target.
+    let show_view = area.width >= label_and_count + view_w + refresh_w + 2;
+    let show_refresh = area.width >= label_and_count + refresh_w + 2;
+    let header_used = label_and_count
+        + if show_view { view_w } else { 0 }
+        + if show_refresh { refresh_w } else { 0 }
+        + 2;
     let pad_width = area.width.saturating_sub(header_used) as usize;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -136,14 +149,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ".repeat(pad_width), Style::default().bg(bg)),
             // Match the AGENTS view chip: dark-fg on pale-cyan bg.
             Span::styled(
-                view_chip,
+                if show_view { view_chip } else { String::new() },
                 Style::default()
                     .fg(t.bg)
                     .bg(t.cyan)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                if show_refresh { " " } else { "" }.to_string(),
+                if show_view && show_refresh { " " } else { "" }.to_string(),
                 Style::default().bg(bg),
             ),
             Span::styled(
@@ -158,15 +171,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         header_row,
     );
     let view_chip_x = area.x + 1 + header_label.chars().count() as u16 + count_w + pad_width as u16;
-    app.rects.cloud_agents_view_chip = Some(Rect {
-        x: view_chip_x,
-        y: header_row.y,
-        width: view_w,
-        height: 1,
-    });
+    if show_view {
+        app.rects.cloud_agents_view_chip = Some(Rect {
+            x: view_chip_x,
+            y: header_row.y,
+            width: view_w,
+            height: 1,
+        });
+    }
     if show_refresh {
         app.rects.cloud_agents_refresh_chip = Some(Rect {
-            x: view_chip_x + view_w + 1,
+            x: view_chip_x + if show_view { view_w + 1 } else { 0 },
             y: header_row.y,
             width: refresh_w,
             height: 1,
