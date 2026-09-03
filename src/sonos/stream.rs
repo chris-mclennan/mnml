@@ -42,6 +42,10 @@ pub const LOOPBACK_NAME: &str = "blackhole";
 pub const INSTALL_HINT: &str =
     "install the loopback driver first: brew install --cask blackhole-2ch";
 
+/// The command the toast's Install chip runs. Carried beside the hint
+/// so the message and the action cannot describe different things.
+pub const INSTALL_CMD: &str = "brew install --cask blackhole-2ch";
+
 /// mp3 bitrate for the stream. 256k is transparent enough for a
 /// speaker and small enough to never trouble a LAN.
 const BITRATE: &str = "256k";

@@ -40,6 +40,7 @@ impl App {
                     level,
                     persistent_id: None,
                     repeats: 1,
+                    action: None,
                 };
                 self.toast_stack.push_front(entry);
                 while self.toast_stack.len() > TOAST_STACK_MAX {
@@ -50,6 +51,49 @@ impl App {
         // Recorded even when `:silent` suppressed the visible toast —
         // that is the point of a log.
         self.record_message(s, level);
+    }
+
+    /// A toast that carries something to DO about itself.
+    ///
+    /// Same path as `toast_leveled` — logged, badged, persisted — with
+    /// an offer rendered as a chip on the toast. Coalescing keys on the
+    /// text, so a repeated missing-dependency message keeps its offer
+    /// and gains a count rather than stacking.
+    pub fn toast_with_action(
+        &mut self,
+        msg: impl Into<String>,
+        level: ToastLevel,
+        action: crate::app::ToastAction,
+    ) {
+        let s: String = msg.into();
+        self.toast_leveled(s.clone(), level);
+        if let Some(e) = self.toast_stack.iter_mut().find(|e| e.text == s) {
+            e.action = Some(action);
+        }
+    }
+
+    /// Perform a toast's offer.
+    pub fn run_toast_action(&mut self, action: &crate::app::ToastAction) {
+        match action {
+            // A VISIBLE pane, not a background spawn. The user sees the
+            // command, its output and whether it worked — an install
+            // triggered from a two-second widget should not be silent.
+            crate::app::ToastAction::RunInTerminal { cmd, .. } => {
+                self.open_pty(crate::pty_pane::BinaryProfile::task(
+                    "install",
+                    cmd,
+                    self.workspace.clone(),
+                ));
+            }
+            // The marketplace entry, NOT a direct install: the
+            // description, version and source are visible there before
+            // anything is fetched.
+            crate::app::ToastAction::Marketplace { id, .. } => {
+                self.set_activity_section(crate::app::ActivitySection::Integrations);
+                self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+                self.integrations_panel_filter = id.clone();
+            }
+        }
     }
 
     /// Where a NOTIFICATION enters the log, the badge and the disk.
@@ -135,6 +179,7 @@ impl App {
         } else {
             self.persistent_toasts.push(ToastEntry {
                 repeats: 1,
+                action: None,
                 text: s,
                 created_at: Instant::now(),
                 level,
@@ -471,5 +516,67 @@ mod toast_coalesce_tests {
             .filter(|m| m.text == "repeated failure")
             .count();
         assert_eq!(n, 3, "coalescing dropped occurrences from the history");
+    }
+}
+
+#[cfg(test)]
+mod toast_action_tests {
+    use crate::app::{App, ToastAction, ToastLevel};
+    use crate::config::Config;
+
+    fn app() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        (d, app)
+    }
+
+    /// USER ASK — "a toast that reports a MISSING DEPENDENCY should
+    /// offer to install it". The sonos toast named a brew command and
+    /// then vanished, leaving the user to copy it out of a widget that
+    /// was already gone.
+    ///
+    /// This also guards the ORDERING: `toast_with_action` must attach
+    /// AFTER `toast_leveled`, or coalescing has not created the entry
+    /// yet and the offer lands nowhere. Verified by making the attach
+    /// run first — this test fails, and a separate "the offer survives
+    /// a repeat" test did NOT, which is why that one was deleted rather
+    /// than kept as coverage it could not provide.
+    #[test]
+    fn a_missing_dependency_toast_carries_an_offer() {
+        let (_d, mut app) = app();
+        app.toast_with_action(
+            "sonos: install the loopback driver first",
+            ToastLevel::Error,
+            ToastAction::RunInTerminal {
+                label: "Install".into(),
+                cmd: "brew install --cask blackhole-2ch".into(),
+            },
+        );
+        let e = app.toast_stack.front().expect("no toast");
+        let act = e.action.as_ref().expect("the toast carries no offer");
+        assert_eq!(act.label(), "Install");
+    }
+
+    /// The marketplace variant must NOT install anything directly — it
+    /// routes to the entry, where the source and version are visible.
+    #[test]
+    fn the_marketplace_action_opens_the_entry_rather_than_installing() {
+        let (_d, mut app) = app();
+        let before = app.panes.len();
+        app.run_toast_action(&ToastAction::Marketplace {
+            label: "View".into(),
+            id: "mnml-forge-github".into(),
+        });
+        assert_eq!(
+            app.active_section,
+            crate::app::ActivitySection::Integrations,
+            "did not route to the integrations panel"
+        );
+        assert_eq!(app.integrations_panel_filter, "mnml-forge-github");
+        assert_eq!(
+            app.panes.len(),
+            before,
+            "the marketplace action spawned something — it must only navigate"
+        );
     }
 }

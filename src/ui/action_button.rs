@@ -37,7 +37,7 @@ use crate::ui::theme::Theme;
 /// user report 2026-08-23: chip label unreadable when routed
 /// through `bg_darker`. Rgb(0,0,0) guarantees max contrast
 /// across every theme.
-const CHIP_LABEL_FG: Color = Color::Rgb(0, 0, 0);
+pub(crate) const CHIP_LABEL_FG: Color = Color::Rgb(0, 0, 0);
 
 /// Primary action chip style — the panel's main call-to-action.
 /// Solid green fill + black text. Use for toolbar-level actions

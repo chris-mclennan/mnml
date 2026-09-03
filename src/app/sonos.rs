@@ -231,7 +231,17 @@ impl App {
         // truth.
         #[cfg(target_os = "macos")]
         if crate::sonos::coreaudio::find_output(crate::sonos::stream::LOOPBACK_NAME).is_none() {
-            self.toast(format!("sonos: {}", crate::sonos::stream::INSTALL_HINT));
+            // Offers the install rather than only naming it. The user
+            // had to read a brew command off a widget that then
+            // vanished.
+            self.toast_with_action(
+                format!("sonos: {}", crate::sonos::stream::INSTALL_HINT),
+                crate::app::ToastLevel::Error,
+                crate::app::ToastAction::RunInTerminal {
+                    label: "Install".to_string(),
+                    cmd: crate::sonos::stream::INSTALL_CMD.to_string(),
+                },
+            );
             return;
         }
         let room = self.sonos.room().to_string();

@@ -3982,6 +3982,34 @@ pub enum ConfirmAction {
     OverwriteRequestPane { raw: String },
 }
 
+/// An offer attached to a toast — the thing to DO about the message.
+///
+/// A toast that reports a missing dependency and then vanishes leaves
+/// the user to copy a command out of a widget that is already gone
+/// (user: "a toast that reports a MISSING DEPENDENCY should offer to
+/// install it").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToastAction {
+    /// Run a shell command in a VISIBLE terminal pane.
+    ///
+    /// Deliberately not a silent background install: the user sees the
+    /// command, its output and its exit status. A two-second widget is
+    /// not the place to hide `brew install` behind one click.
+    RunInTerminal { label: String, cmd: String },
+    /// Open an integration's marketplace entry, where the description,
+    /// version and source are visible before anything is installed.
+    Marketplace { label: String, id: String },
+}
+
+impl ToastAction {
+    pub fn label(&self) -> &str {
+        match self {
+            ToastAction::RunInTerminal { label, .. } => label,
+            ToastAction::Marketplace { label, .. } => label,
+        }
+    }
+}
+
 /// One toast in either `toast_stack` (ephemeral, TTL-expiring) or
 /// `persistent_toasts` (pinned until `toast_dismiss`).
 #[derive(Debug, Clone)]
@@ -4002,6 +4030,8 @@ pub struct ToastEntry {
     /// screenshot: `sonos: install the loopback driver first` three
     /// times over).
     pub repeats: u32,
+    /// Optional offer — rendered as a chip on the toast's bottom border.
+    pub action: Option<ToastAction>,
 }
 
 /// Left/right anchor for a dynamic statusline segment.

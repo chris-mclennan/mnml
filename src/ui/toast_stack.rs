@@ -227,6 +227,30 @@ fn draw_toast_box(
     // Painted on the border row rather than inside, so it costs the
     // message no width, and dimmed while the toast is fading out so it
     // does not brighten as everything else recedes.
+    // Action chip on the BOTTOM border, mirroring the close `x` on the
+    // top one — it costs the message no width, and a toast is small
+    // enough that an extra body line would crowd it.
+    if let Some(act) = &entry.action
+        && rect.width > 6
+    {
+        let label = format!(" {} ", act.label());
+        let w = (label.chars().count() as u16).min(rect.width.saturating_sub(4));
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label,
+                Style::default()
+                    .fg(crate::ui::action_button::CHIP_LABEL_FG)
+                    .bg(t.green)
+                    .add_modifier(Modifier::BOLD),
+            ))),
+            ratatui::layout::Rect {
+                x: rect.x + 2,
+                y: rect.y + rect.height.saturating_sub(1),
+                width: w,
+                height: 1,
+            },
+        );
+    }
     if inner.width > 0 {
         let mut style = Style::default().fg(t.red).bg(t.bg_darker);
         if fading {
