@@ -1271,6 +1271,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     if app.picker.is_some() {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // The bar was paint-only: this branch handled
+                // `picker_items` and `picker_box` and swallowed
+                // everything else, so `begin_scrollbar_drag` was
+                // unreachable while a picker was open — even though
+                // `ScrollbarHit { kind: Picker }` is registered and
+                // `set_pane_scroll` has a `ScrollbarKind::Picker` arm.
+                // Both existed and neither could be reached (bug-hunt
+                // 2026-09-03). Checked FIRST: the bar sits inside the
+                // box, so the dismiss-on-outside test below would
+                // otherwise claim it.
+                if app.begin_scrollbar_drag(x, y) {
+                    return;
+                }
                 if let Some(&(_, fi)) = app
                     .rects
                     .picker_items
@@ -1307,6 +1320,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         p.move_down();
                     }
                 }
+            }
+            // A drag that STARTED on the bar must keep steering it,
+            // and the release must end it — otherwise the bar grabs
+            // and then goes inert after one pixel.
+            MouseEventKind::Drag(MouseButton::Left) if app.dragging_scrollbar.is_some() => {
+                drag_left::handle_drag_left(app, x, y);
+            }
+            MouseEventKind::Up(MouseButton::Left) if app.dragging_scrollbar.is_some() => {
+                up_left::handle_up_left(app, x, y);
             }
             _ => {}
         }

@@ -12,8 +12,22 @@ use crate::app::App;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
-    // Geometry: capped (clamps may exceed a tiny screen — it'll clip, fine).
-    let w = screen.width.saturating_sub(8).clamp(30, 90);
+    // Geometry.
+    //
+    // The comment here used to say "clamps may exceed a tiny screen —
+    // it'll clip, fine". It does NOT clip: ratatui panics when a widget
+    // is rendered outside the buffer, so every picker — `Ctrl+P`
+    // included — crashed the process on a terminal under 30 columns
+    // (bug-hunt 2026-09-03, measured: 30 ok, 29 and below panic).
+    //
+    // The 30 floor is a readability preference; the screen width is a
+    // hard limit. Take whichever is smaller, and give up the side
+    // margin before giving up the box.
+    let w = screen
+        .width
+        .saturating_sub(8)
+        .clamp(30, 90)
+        .min(screen.width);
     // Height picks between:
     //   · a compact size that just fits the picker's items when small
     //     (3-line action chooser shouldn't be 22 rows tall)
@@ -29,7 +43,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         .saturating_sub(4)
         .min((screen.height * 4) / 5)
         .max(7);
-    let h = compact.min(generous);
+    // Same hard limit vertically — `generous` has a `.max(7)` floor
+    // that can exceed a very short screen for the same reason.
+    let h = compact.min(generous).min(screen.height);
     let x = screen.x + (screen.width.saturating_sub(w)) / 2;
     // `[ui] picker_position` — `"top"` drops the box flush with the top
     // edge (the common modern quick-open convention); anything else
@@ -859,6 +875,161 @@ mod picker_scrollbar_tests {
         assert!(
             after.starts_with("auto-update"),
             "the gutter does not touch the first character: {after:?}"
+        );
+    }
+
+    /// SEV-1, bug-hunt 2026-09-03 — every picker, `Ctrl+P` included,
+    /// PANICKED the process on a terminal narrower than 30 columns.
+    ///
+    /// `w` was clamped to a 30 minimum with a comment claiming a tiny
+    /// screen would "clip, fine". ratatui does not clip: rendering
+    /// outside the buffer panics.
+    ///
+    /// ```text
+    /// index outside of buffer: the area is Rect { width: 29, .. }
+    /// but index is (29, 2)
+    /// ```
+    #[test]
+    fn a_narrow_or_short_terminal_does_not_panic_the_picker() {
+        for (w, h) in [
+            (29u16, 14u16),
+            (26, 14),
+            (20, 14),
+            (10, 14),
+            (1, 14),
+            (80, 6),
+            (80, 3),
+            (80, 1),
+            (1, 1),
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let mut app =
+                crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default())
+                    .unwrap();
+            let items: Vec<crate::picker::PickerItem> = (0..40)
+                .map(|i| {
+                    crate::picker::PickerItem::new(
+                        i.to_string(),
+                        format!("some reasonably long entry label {i}"),
+                        "detail".to_string(),
+                    )
+                })
+                .collect();
+            app.open_picker(crate::picker::Picker::new(
+                crate::picker::PickerKind::Files,
+                "Files".to_string(),
+                items,
+            ));
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            // The assertion IS that this does not panic.
+            term.draw(|f| {
+                super::draw(
+                    f,
+                    &mut app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: w,
+                        height: h,
+                    },
+                )
+            })
+            .unwrap_or_else(|e| panic!("picker draw failed at {w}x{h}: {e}"));
+        }
+    }
+
+    /// The picker's scrollbar was DECORATIVE — it painted, registered
+    /// a `ScrollbarHit { kind: Picker }`, and `set_pane_scroll` had a
+    /// `ScrollbarKind::Picker` arm — but the picker's mouse branch
+    /// handled only `picker_items` and `picker_box` and swallowed
+    /// everything else, so `begin_scrollbar_drag` could never run
+    /// while a picker was open. Every piece existed; none connected.
+    ///
+    /// Drives the real mouse dispatcher, not the drag helper — the
+    /// defect was entirely in the routing, so calling the helper
+    /// directly would pass against the broken build.
+    #[test]
+    fn dragging_the_picker_scrollbar_scrolls_the_list() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let d = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let items: Vec<crate::picker::PickerItem> = (0..300)
+            .map(|i| {
+                crate::picker::PickerItem::new(i.to_string(), format!("entry {i}"), String::new())
+            })
+            .collect();
+        app.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Files,
+            "Files".to_string(),
+            items,
+        ));
+        let (w, h) = (100u16, 30u16);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            super::draw(
+                f,
+                &mut app,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                },
+            )
+        })
+        .unwrap();
+
+        let bar = app
+            .rects
+            .scrollbars
+            .iter()
+            .find(|hit| matches!(hit.kind, crate::app::ScrollbarKind::Picker))
+            .copied()
+            .expect("the picker registered no scrollbar hit");
+        let before = app.picker.as_ref().unwrap().scroll;
+
+        let ev = |kind, y| MouseEvent {
+            kind,
+            column: bar.area.x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        };
+        // Press near the BOTTOM of the bar — that is a large jump from
+        // the top, so a no-op is unmistakable.
+        let bottom = bar.area.y + bar.area.height - 1;
+        crate::tui::mouse::dispatch_mouse(
+            &mut app,
+            ev(MouseEventKind::Down(MouseButton::Left), bottom),
+        );
+        assert!(
+            app.picker.is_some(),
+            "clicking the scrollbar dismissed the picker — it was treated \
+             as a click outside the box"
+        );
+        let after_press = app.picker.as_ref().unwrap().scroll;
+        assert_ne!(
+            after_press, before,
+            "pressing the scrollbar did not scroll the list"
+        );
+
+        // A drag back to the top must steer it, and the release end it.
+        crate::tui::mouse::dispatch_mouse(
+            &mut app,
+            ev(MouseEventKind::Drag(MouseButton::Left), bar.area.y),
+        );
+        assert_eq!(
+            app.picker.as_ref().unwrap().scroll,
+            0,
+            "dragging to the top of the bar did not scroll back to the top"
+        );
+        crate::tui::mouse::dispatch_mouse(
+            &mut app,
+            ev(MouseEventKind::Up(MouseButton::Left), bar.area.y),
+        );
+        assert!(
+            app.dragging_scrollbar.is_none(),
+            "the scrollbar drag never ended — the bar stays grabbed"
         );
     }
 
