@@ -8,6 +8,23 @@
 #   3. mnml re-scans on `integrations.refresh` (or restart)
 #   4. rail chip + palette command + <leader>iG chord appear
 #
+# ── Why this is a scripted mock, and why that is written down ───────────
+#
+# This tape does NOT run a real install. It cannot: `cargo install --git`
+# needs the network and a published repo, and takes minutes.
+#
+# The PREVIOUS version pretended otherwise — it used `Type "$ cargo
+# install …"` followed by `Enter`, which types that text at a live bash
+# prompt and executes it. bash then answered `bash: $: command not
+# found` on nearly every line, and the same for `[[commands]]` and each
+# `id = '…'` line of the "manifest". The published GIF was a screenful
+# of shell errors.
+#
+# So the transcript is now printed by a prepared script instead. Same
+# visuals, nothing executed, deterministic every render. If you change
+# what the demo claims mnml does, change it here — this file is the only
+# thing asserting it, and nothing verifies it against the real binary.
+#
 # Renders to: sdk-install-flow.gif
 #
 # Regenerate with VHS (https://github.com/charmbracelet/vhs):
@@ -24,96 +41,27 @@ Set Padding     20
 Set TypingSpeed 45ms
 Set Theme       "Catppuccin Mocha"
 
-# ── setup (hidden) ────────────────────────────────────────────────────────
+# ── setup ───────────────────────────────────────────────────────────────
+# The transcript lives in sdk-install-flow.sh next to this file, so it
+# stays readable and diffable instead of being escaped through VHS's
+# `Type` strings (which its lexer will not accept anyway).
+# Render from the REPO ROOT — `Output` above is root-relative, so
+# running vhs from this directory writes a nested site/src/... path.
 Hide
-Type "MNML_DEMO=$(mktemp -d) && cd $MNML_DEMO"
-Enter
 Type "clear"
 Enter
 Sleep 300ms
+
+# Run it off-camera too — only its OUTPUT belongs on screen, not the
+# `bash …` line, which would give the mock away and add nothing.
+Type "bash site/src/assets/tapes/sdk-install-flow.sh"
+Enter
+# Let the script's own `clear` wipe the command line before capturing.
+Sleep 400ms
 Show
 
-# ── 1. install the sibling binary ────────────────────────────────────────
-Type "# 1. Install a sibling binary from GitHub"
-Enter
-Sleep 400ms
-Type "$ cargo install --git https://github.com/chris-mclennan/mnml-forge-github mnml-forge-github"
-Enter
-Sleep 800ms
-Type "#   ...cargo output snipped..."
-Enter
-Sleep 400ms
-Type "#   Installed package mnml-forge-github"
-Enter
-Sleep 1.4s
-
-# ── 2. --install writes the manifest ────────────────────────────────────
-Type "# 2. Register with mnml — writes ~/.config/mnml/integrations/github.toml"
-Enter
-Sleep 400ms
-Type "$ mnml-forge-github --install"
-Enter
-Sleep 500ms
-Type "wrote manifest: /Users/you/.config/mnml/integrations/github.toml"
-Enter
-Sleep 300ms
-Type "run mnml + integrations.refresh (or restart) to pick up the rail chip"
-Enter
-Sleep 1.8s
-
-# ── 3. show the on-disk manifest ─────────────────────────────────────────
-Type "# 3. What did --install write?"
-Enter
-Sleep 300ms
-Type "$ cat ~/.config/mnml/integrations/github.toml"
-Enter
-Sleep 400ms
-Type "id = 'github'"
-Enter
-Type "name = 'GitHub'"
-Enter
-Type "binary = 'mnml-forge-github'"
-Enter
-Type "category = 'forge'"
-Enter
-Type ""
-Enter
-Type "[chip]"
-Enter
-Type "glyph = '4'"
-Enter
-Type "color = 'fg'"
-Enter
-Type "tooltip = 'GitHub Actions + PRs'"
-Enter
-Type "enabled = true"
-Enter
-Type ""
-Enter
-Type "[[commands]]"
-Enter
-Type "id = 'github.open'"
-Enter
-Type "title = 'GitHub: open'"
-Enter
-Type "keys = ['<leader>iG']"
-Enter
-Type "run = ':term mnml-forge-github'"
-Enter
-Sleep 2.2s
-
-# ── 4. mnml would pick this up on next `integrations.refresh` ────────────
-Type "# 4. In mnml:"
-Enter
-Type "#      :integrations.refresh   →   rail chip appears"
-Enter
-Sleep 300ms
-Type "#      <leader>iG              →   fires the sibling"
-Enter
-Sleep 300ms
-Type "#      also runnable from the palette as github.open"
-Enter
-Sleep 2.5s
+# The script paces itself; this just holds the camera open for it.
+Sleep 14s
 
 # ── settle on a final frame ──────────────────────────────────────────────
-Sleep 1.2s
+Sleep 1.5s
