@@ -574,13 +574,34 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
         // src: src/ui/panel_chrome.rs::draw_caps_header_with_refresh
         PanelRefreshChip(panel) => Some(InfoViewCopy {
             title: format!("{panel}: refresh"),
-            body: "Re-scans this panel now. Right-click for the panel's \
-                   settings: auto-refresh on/off, and — on TODOS, NOTES and \
-                   FINDINGS — the row order (newest first, or name A-Z). Both \
-                   are per-panel and persist. Auto-refresh is on by default; \
-                   TODOS is throttled to once every two seconds because its \
-                   scan walks the whole workspace."
+            body: "Re-scans this panel now. Right-click to turn auto-refresh \
+                   on or off — per-panel, and it persists. Auto-refresh is on \
+                   by default; TODOS is throttled to once every two seconds \
+                   because its scan walks the whole workspace. Row order \
+                   lives on the `sort:` chip beside this one."
                 .into(),
+            ..Default::default()
+        }),
+        // src: the four list panels' `sort:` chips
+        PanelSortChip(panel) => Some(InfoViewCopy {
+            title: format!("{panel}: sort"),
+            body: if panel.eq_ignore_ascii_case("sessions") {
+                "Click to switch between State and Manual order. State \
+                 groups by what a session is doing — awaiting approval \
+                 first, then running, then the rest; Manual keeps the \
+                 order you dragged rows into. Pinned sessions stay on top \
+                 either way. Right-click to pick a mode directly. Persists \
+                 as `[ui] sessions_sort`."
+                    .into()
+            } else {
+                "Click to cycle the row order: newest first, oldest first, \
+                 name A-Z, name Z-A. Right-click to pick one directly — \
+                 each mode sits next to its reverse. Per-panel and \
+                 persisted, so notes sorted A-Z does not reorder findings. \
+                 On a narrow rail the chip shrinks to its icon; the menu is \
+                 the same."
+                    .into()
+            },
             ..Default::default()
         }),
         // src: the three list panels' create chips

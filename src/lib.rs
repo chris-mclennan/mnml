@@ -293,6 +293,11 @@ pub enum HoverChip {
     /// id (`"todos"`, `"notes"`, …) so one variant covers all seven
     /// rather than seven near-identical ones.
     PanelRefreshChip(&'static str),
+    /// The `sort:` chip in a list panel's header. Added 2026-09-03 —
+    /// it shipped as the only header affordance with no hover help,
+    /// which matters more for it than for the others: nothing on the
+    /// chip says right-click opens the full mode list.
+    PanelSortChip(&'static str),
     /// A list panel's `+ New …` create chip, by panel id.
     PanelNewChip(&'static str),
     /// The `⋮` actions kebab on the focused TODOS row.

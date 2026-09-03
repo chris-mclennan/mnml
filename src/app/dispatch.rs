@@ -449,6 +449,18 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
         }
     }
     for (rect, panel) in [
+        (app.rects.todos_panel_sort_chip, "TODOS"),
+        (app.rects.notes_panel_sort_chip, "NOTES"),
+        (app.rects.findings_panel_sort_chip, "FINDINGS"),
+        (app.rects.sessions_panel_sort_chip, "SESSIONS"),
+    ] {
+        if let Some(r) = rect
+            && contains(r, x, y)
+        {
+            return Some(crate::HoverChip::PanelSortChip(panel));
+        }
+    }
+    for (rect, panel) in [
         (app.rects.todos_panel_new_chip, "TODOS"),
         (app.rects.notes_panel_new_chip, "NOTES"),
         (app.rects.findings_panel_new_chip, "FINDINGS"),

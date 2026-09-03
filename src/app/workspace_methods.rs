@@ -2093,6 +2093,37 @@ impl crate::app::App {
                 codex: true,
             },
         ));
+        // File actions, matching NOTES / FINDINGS / SEARCH rows.
+        //
+        // 2026-09-03 design review — this menu was AI-fix-only, so the
+        // one panel whose rows point INTO the codebase was the one
+        // panel you could not open, reveal or copy a path from. A TODO
+        // row is a `path:line`; those are the obvious verbs.
+        if let Some(hit) = self.todos_filtered().get(row) {
+            let path = hit.path.clone();
+            let rel = crate::app::rel_path(&self.workspace, &path);
+            let line = hit.line;
+            items.push(MenuItem::new("Open", MenuAction::OpenPath(path.clone())));
+            items.push(MenuItem::new(
+                "Open in split",
+                MenuAction::OpenInSplit(path.clone()),
+            ));
+            items.push(MenuItem::new(
+                "Reveal in tree",
+                MenuAction::RevealInTree(path.clone()),
+            ));
+            items.push(MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(path),
+            ));
+            // `path:line` rather than the bare path — a TODO's whole
+            // identity is where it sits, and this is what pastes
+            // usefully into a message or another tool.
+            items.push(MenuItem::new(
+                "Copy path:line",
+                MenuAction::CopyPath(format!("{rel}:{line}")),
+            ));
+        }
         items
     }
 
@@ -2208,8 +2239,16 @@ mod todo_action_tests {
             .into_iter()
             .map(|i| i.label)
             .collect();
+        // The AI rows specifically — the menu also carries file
+        // actions (Open / Reveal / Copy path:line), which are not what
+        // this test is about. Asserting the whole list made it fail
+        // the moment those were added, without anything being wrong.
+        let ai: Vec<&String> = labels
+            .iter()
+            .filter(|l| l.starts_with("Fix with"))
+            .collect();
         assert_eq!(
-            labels,
+            ai,
             vec!["Fix with Claude Code", "Fix with Codex"],
             "a workspace with no .claude/ got something other than the \
              plain fallbacks: {labels:?}"
@@ -2359,6 +2398,63 @@ mod new_todo_tests {
         assert!(
             !app.workspace.join("TODO.md").exists(),
             "an empty todo created the file anyway"
+        );
+    }
+}
+
+#[cfg(test)]
+mod todos_menu_parity_tests {
+    /// TODOS' row menu was AI-fix-only, so the one panel whose rows
+    /// point INTO the codebase was the one panel you could not open,
+    /// reveal or copy a path from — while NOTES, FINDINGS and SEARCH
+    /// rows all offered exactly that (design review 2026-09-03).
+    #[test]
+    fn a_todo_row_offers_the_same_file_actions_as_its_siblings() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.rs"), "// TODO: wire it up\n").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.todos_panel_refresh();
+        assert!(!app.todos_hits.is_empty(), "the scan found no markers");
+
+        let labels: Vec<String> = app
+            .todos_action_menu_items(0)
+            .into_iter()
+            .map(|i| i.label)
+            .collect();
+        for want in ["Open", "Open in split", "Reveal in tree", "Copy path:line"] {
+            assert!(
+                labels.iter().any(|l| l == want),
+                "TODOS row menu is missing `{want}`: {labels:?}"
+            );
+        }
+        // And it must keep the AI actions that were its whole point.
+        assert!(labels.iter().any(|l| l.starts_with("Fix with")));
+    }
+
+    /// The copy row must carry `path:line`, not a bare path — a TODO's
+    /// identity is where it sits, and `path:line` is what pastes
+    /// usefully into a message or another tool.
+    #[test]
+    fn the_copy_row_carries_the_line_number() {
+        use crate::context_menu::MenuAction;
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.rs"), "fn x() {}\n// TODO: later\n").unwrap();
+        let mut app =
+            crate::app::App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.todos_panel_refresh();
+
+        let copied = app
+            .todos_action_menu_items(0)
+            .into_iter()
+            .find_map(|i| match i.action {
+                MenuAction::CopyPath(t) if i.label == "Copy path:line" => Some(t),
+                _ => None,
+            })
+            .expect("no Copy path:line row");
+        assert!(
+            copied.contains("a.rs:2"),
+            "copy row does not carry the marker's line: {copied:?}"
         );
     }
 }

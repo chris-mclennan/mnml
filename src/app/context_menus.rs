@@ -260,7 +260,7 @@ impl App {
     /// rows, so the gesture means the same thing everywhere.
     pub fn open_refresh_chip_menu(&mut self, panel: &'static str, anchor: (u16, u16)) {
         let on = self.panel_auto_refresh(panel);
-        let mut items = vec![
+        let items = vec![
             crate::context_menu::MenuItem::new(
                 "Refresh now",
                 crate::context_menu::MenuAction::Command(match panel {
@@ -283,23 +283,12 @@ impl App {
                 crate::context_menu::MenuAction::TogglePanelAutoRefresh(panel.to_string()),
             ),
         ];
-        // Sort rows, for the three panels that HAVE a sort. Hung off
-        // the same menu rather than a second affordance: the user asked
-        // "not sure what controls order of notes", so the answer wants
-        // to be where they already right-click.
-        if matches!(panel, "todos" | "notes" | "findings") {
-            let current = self.panel_sort(panel);
-            for m in crate::ui::list_sort::ListSort::all() {
-                let mark = if m == current { "\u{2713} " } else { "  " };
-                items.push(crate::context_menu::MenuItem::new(
-                    format!("{mark}{}", m.label()),
-                    crate::context_menu::MenuAction::SetPanelSort(
-                        panel.to_string(),
-                        m.as_str().to_string(),
-                    ),
-                ));
-            }
-        }
+        // The sort rows used to be appended here, unlabelled, because
+        // the refresh chip's menu was the only affordance the sort
+        // had. It now has its own `sort:` chip whose right-click opens
+        // a titled "Sort by" menu — so keeping them here left four
+        // rows duplicated across two menus, under a chip that
+        // advertises refreshing. Removed 2026-09-03 (design review).
         self.context_menu = Some(crate::context_menu::ContextMenu::new(
             Some(panel.to_uppercase()),
             anchor,

@@ -200,7 +200,18 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .or(app.rects.cloud_agents_refresh_chip)
                 .or(app.rects.git_palette_refresh_chip)?,
             "click: refresh now".into(),
-            Some("right-click: auto-refresh · sort".into()),
+            // Sort moved to its own chip; this menu no longer carries
+            // sort rows (design review 2026-09-03).
+            Some("right-click: auto-refresh".into()),
+        )),
+        HoverChip::PanelSortChip(_) => Some((
+            app.rects
+                .todos_panel_sort_chip
+                .or(app.rects.notes_panel_sort_chip)
+                .or(app.rects.findings_panel_sort_chip)
+                .or(app.rects.sessions_panel_sort_chip)?,
+            "click: next order".into(),
+            Some("right-click: pick an order".into()),
         )),
         HoverChip::PanelNewChip(_) => Some((
             app.rects
