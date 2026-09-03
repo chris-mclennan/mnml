@@ -1162,8 +1162,21 @@ impl VimInputHandler {
                     // reduces to the same toggle in practice — bind
                     // it to the same action rather than leaving a
                     // dead chord that silently no-ops.
-                    KeyCode::Char('a' | 'A' | 'o' | 'O' | 'c' | 'C') => {
+                    // `za` / `zA` TOGGLE. `zo` / `zc` are directional
+                    // and idempotent (`:help zo`) — binding them to the
+                    // toggle meant `zo` twice closed a fold, which vim
+                    // never does. `zO` / `zC` are the recursive forms;
+                    // mnml folds are line-based (single level), so they
+                    // reduce to the same action rather than being dead
+                    // chords.
+                    KeyCode::Char('a' | 'A') => {
                         InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
+                    }
+                    KeyCode::Char('o' | 'O') => {
+                        InputResult::App(AppCommand::RunCommand("editor.open_fold".into()))
+                    }
+                    KeyCode::Char('c' | 'C') => {
+                        InputResult::App(AppCommand::RunCommand("editor.close_fold".into()))
                     }
                     // `zR` opens all folds; `zE` removes every fold (vim
                     // canon — same effect in mnml since folds are line-based

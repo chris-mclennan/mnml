@@ -8,12 +8,45 @@
 
 use super::*;
 
+/// Which direction a fold chord acts in.
+///
+/// vim distinguishes these: `za` toggles, while `zo` opens and `zc`
+/// closes and both are idempotent (`:help zo`). Binding all three to
+/// the toggle meant `zo` `zo` closed a fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FoldAction {
+    Toggle,
+    Open,
+    Close,
+}
+
 impl App {
     /// `editor.toggle_fold` (`za`) — fold/unfold at the cursor. Picks the
     /// smallest enclosing bracket-pair (curly preferred over square over
     /// round) and toggles a fold for the line range it covers. Toasts when
     /// the cursor isn't inside any bracket pair.
     pub fn toggle_fold_at_cursor(&mut self) {
+        self.fold_at_cursor(FoldAction::Toggle);
+    }
+
+    /// `editor.open_fold` (`zo`) — open the fold at the cursor, and do
+    /// nothing if it is already open.
+    ///
+    /// 2026-09-03 — `zo` and `zc` were both bound to the toggle, so
+    /// pressing `zo` twice CLOSED a fold, which vim never does: `zo`
+    /// and `zc` are idempotent in their own direction (`:help zo`).
+    /// Only `za`/`zA` toggle.
+    pub fn open_fold_at_cursor(&mut self) {
+        self.fold_at_cursor(FoldAction::Open);
+    }
+
+    /// `editor.close_fold` (`zc`) — close the fold at the cursor, and do
+    /// nothing if it is already closed. See [`Self::open_fold_at_cursor`].
+    pub fn close_fold_at_cursor(&mut self) {
+        self.fold_at_cursor(FoldAction::Close);
+    }
+
+    fn fold_at_cursor(&mut self, action: FoldAction) {
         let Some(b) = self.active_editor() else {
             self.toast("no active editor");
             return;
@@ -21,10 +54,14 @@ impl App {
         // If the cursor sits on (or in the body of) an existing fold,
         // unfold it instead of folding tighter.
         let cur_row = b.editor.row_col().0;
-        if let Some(&owner) = b.folds.keys().find(|&&s| {
-            let end = b.folds.get(&s).copied().unwrap_or(s);
-            cur_row >= s && cur_row <= end
-        }) {
+        // Already-closed fold under the cursor. `Close` has nothing to
+        // do here; `Open` and `Toggle` unfold it.
+        if action != FoldAction::Close
+            && let Some(&owner) = b.folds.keys().find(|&&s| {
+                let end = b.folds.get(&s).copied().unwrap_or(s);
+                cur_row >= s && cur_row <= end
+            })
+        {
             let mut synced: Option<(PathBuf, Vec<(usize, usize)>)> = None;
             if let Some(b) = self.active_editor_mut() {
                 b.folds.remove(&owner);
@@ -36,6 +73,12 @@ impl App {
             if let Some((p, folds)) = synced {
                 self.note_file_folds(&p, folds);
             }
+            return;
+        }
+        // Past here we would CREATE a fold. `Open` must not — there is
+        // no closed fold under the cursor, so it is already open and
+        // vim's `zo` is a no-op.
+        if action == FoldAction::Open {
             return;
         }
         // Find the smallest enclosing pair across the three bracket kinds.
@@ -439,5 +482,70 @@ impl App {
         if changed {
             self.toast(format!("reflow → {width} cols"));
         }
+    }
+}
+
+#[cfg(test)]
+mod fold_direction_tests {
+    use super::*;
+
+    fn app_with_folded_block() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("a.rs");
+        std::fs::write(&f, "fn main() {\n    let x = 1;\n    let y = 2;\n}\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.open_path(&f);
+        // Cursor on the header line, where `za` picks the block that
+        // STARTS there rather than the enclosing parent.
+        app.active_editor_mut()
+            .expect("no editor")
+            .editor
+            .set_cursor_byte(0);
+        (d, app)
+    }
+
+    fn fold_count(app: &App) -> usize {
+        app.active_editor().map(|b| b.folds.len()).unwrap_or(0)
+    }
+
+    /// vim's `zo` and `zc` are DIRECTIONAL and idempotent (`:help zo`);
+    /// only `za` toggles. All three were bound to the toggle, so
+    /// pressing `zo` twice CLOSED a fold — which vim never does
+    /// (nvchad bug-hunt 2026-09-03).
+    #[test]
+    fn zo_and_zc_are_idempotent_in_their_own_direction() {
+        let (_d, mut app) = app_with_folded_block();
+
+        // zc closes; a second zc must NOT reopen.
+        app.close_fold_at_cursor();
+        let closed = fold_count(&app);
+        assert_eq!(closed, 1, "zc did not create a fold");
+        app.close_fold_at_cursor();
+        assert_eq!(
+            fold_count(&app),
+            closed,
+            "a second zc reopened the fold — zc is behaving as a toggle"
+        );
+
+        // zo opens; a second zo must NOT re-close.
+        app.open_fold_at_cursor();
+        assert_eq!(fold_count(&app), 0, "zo did not open the fold");
+        app.open_fold_at_cursor();
+        assert_eq!(
+            fold_count(&app),
+            0,
+            "a second zo re-closed the fold — zo is behaving as a toggle"
+        );
+    }
+
+    /// `za` must still toggle — the fix must not flatten all three
+    /// chords into one direction instead of the other.
+    #[test]
+    fn za_still_toggles() {
+        let (_d, mut app) = app_with_folded_block();
+        app.toggle_fold_at_cursor();
+        assert_eq!(fold_count(&app), 1, "za did not fold");
+        app.toggle_fold_at_cursor();
+        assert_eq!(fold_count(&app), 0, "za did not unfold");
     }
 }

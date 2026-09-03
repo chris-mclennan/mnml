@@ -1150,6 +1150,23 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_fold_at_cursor(),
         },
         Command {
+            // 2026-09-03 — vim's `zo` / `zc` are DIRECTIONAL and
+            // idempotent; only `za` toggles. Both chords were bound to
+            // the toggle, so `zo` twice closed a fold.
+            id: "editor.open_fold",
+            title: "Editor: open fold at cursor (zo)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.open_fold_at_cursor(),
+        },
+        Command {
+            id: "editor.close_fold",
+            title: "Editor: close fold at cursor (zc)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.close_fold_at_cursor(),
+        },
+        Command {
             id: "editor.unfold_all",
             title: "Unfold every fold in the active buffer (vim `zR`-ish; VS Code Ctrl+Shift+])",
             group: "editor",
