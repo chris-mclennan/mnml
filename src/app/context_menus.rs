@@ -1961,11 +1961,24 @@ impl App {
         // config and re-triggers a chip render.
         let mode = &self.config.ui.coverage_chip_mode;
         let checkmark = |on: bool| if on { "✓ " } else { "  " };
+        // The chip's LEFT-click checks this integration is installed
+        // before firing, and its fallback toast says "right-click for
+        // options" — which pointed the user straight at this row, which
+        // did not check, and answered `no such command`. Guard it the
+        // same way; when it is absent the row says so instead of
+        // pretending to work.
+        let cov_id = "tattle_coverage_ext.open";
+        let cov_installed = crate::command::registry().get(cov_id).is_some()
+            || self.dynamic_commands.iter().any(|c| c.id == cov_id);
         let items = vec![
-            MenuItem::new(
-                "Open coverage pane",
-                MenuAction::Command("tattle_coverage_ext.open"),
-            ),
+            if cov_installed {
+                MenuItem::new("Open coverage pane", MenuAction::Command(cov_id))
+            } else {
+                MenuItem::new(
+                    "Coverage integration not installed",
+                    MenuAction::Command("integrations.show_marketplace"),
+                )
+            },
             MenuItem::new(
                 format!("{}Show both (F + C)", checkmark(mode == "both")),
                 MenuAction::Command("coverage.chip_show_both"),

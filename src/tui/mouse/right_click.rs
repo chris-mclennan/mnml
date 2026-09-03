@@ -315,14 +315,20 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     // #polish 2026-07-06 — right-click on a Notes-panel file row.
-    if let Some(path) = app
+    if let Some((i, path)) = app
         .rects
         .notes_panel_files
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        .map(|(_, p)| p.clone())
+        .position(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|i| (i, app.rects.notes_panel_files[i].1.clone()))
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        // Move the cursor to the row being acted on. The FINDINGS
+        // branch below does this and its comment says it mirrors
+        // NOTES — but NOTES never did, so the menu could name one row
+        // while the highlight sat on another. Window index plus
+        // scroll, not the list index.
+        app.notes_panel_cursor = i + app.notes_panel_scroll;
         let rel = crate::app::rel_path(&app.workspace, &path);
         let title = path
             .file_name()
@@ -341,6 +347,102 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new("Delete…", MenuAction::Delete(path)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
+    // 2026-09-03 right-click audit — AGENTS rail rows. Both
+    // neighbours in this rail (Cloud Agents rows, the Claude Agents
+    // dashboard rows) open menus; these did not.
+    //
+    // The dashboard's `ai.dashboard.*` commands act on the ACTIVE
+    // PANE's selection, so reusing that item list here would act on
+    // whatever the dashboard has selected rather than the row under
+    // the pointer. These items therefore carry the row's own data.
+    if let Some(&(_, row_idx)) = app
+        .rects
+        .agents_panel_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if let Some(row) = app.agents_panel_rows.get(row_idx).cloned() {
+            use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+            let mut items = vec![MenuItem::new(
+                "Yank session id",
+                MenuAction::CopyPath(row.session_id.clone()),
+            )];
+            // A Codex row's transcript path can be a sentinel, and a
+            // cloud row has no local file at all — offering "Open
+            // transcript" for either would be a dead row.
+            if row.transcript_path.is_file() {
+                items.insert(
+                    0,
+                    MenuItem::new(
+                        "Open transcript",
+                        MenuAction::OpenPath(row.transcript_path.clone()),
+                    ),
+                );
+                items.push(MenuItem::new(
+                    "Reveal in tree",
+                    MenuAction::RevealInTree(row.transcript_path.clone()),
+                ));
+                items.push(MenuItem::new(
+                    crate::app::reveal_in_files_label(),
+                    MenuAction::RevealInFinder(row.transcript_path.clone()),
+                ));
+            }
+            if let Some(cwd) = row.cwd.clone() {
+                items.push(MenuItem::new(
+                    "Yank workspace path",
+                    MenuAction::CopyPath(cwd),
+                ));
+            }
+            items.push(MenuItem::new(
+                "Open agents dashboard",
+                MenuAction::Command("ai.dashboard"),
+            ));
+            let title = if row.workspace.is_empty() {
+                row.session_id.clone()
+            } else {
+                row.workspace.clone()
+            };
+            app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        }
+        return;
+    }
+    // 2026-09-03 right-click audit — SEARCH result rows had a
+    // left-click handler and no right-click branch, and nothing
+    // enclosing them offers one. Same shape as the FINDINGS gap
+    // below.
+    if let Some(&(_, idx)) = app
+        .rects
+        .search_section_hit_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if let Some(hit) = app.search_hits.get(idx).cloned() {
+            use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+            // Match the cursor to the row acted on, as the left-click
+            // path does — otherwise the menu names one hit while the
+            // highlight sits on another.
+            app.search_selected = idx;
+            let title = format!("{}:{}", hit.rel, hit.line + 1);
+            let items = vec![
+                MenuItem::new("Open", MenuAction::OpenPath(hit.path.clone())),
+                MenuItem::new("Open in split", MenuAction::OpenInSplit(hit.path.clone())),
+                MenuItem::new("Reveal in tree", MenuAction::RevealInTree(hit.path.clone())),
+                MenuItem::new(
+                    crate::app::reveal_in_files_label(),
+                    MenuAction::RevealInFinder(hit.path.clone()),
+                ),
+                // The matched TEXT is the thing a user most often
+                // wants off a search hit — more than the path.
+                MenuItem::new("Yank match", MenuAction::CopyPath(hit.text.clone())),
+                MenuItem::new(
+                    "Yank path:line",
+                    MenuAction::CopyPath(format!("{}:{}", hit.rel, hit.line + 1)),
+                ),
+            ];
+            app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        }
         return;
     }
     // 2026-09-03 (user: "why cant i right click on findings?") — the
@@ -1302,7 +1404,12 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         // hover, code-actions, diagnostics, plus the raw status.
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let items = vec![
-            MenuItem::new("Status", MenuAction::Command("LspStatus")),
+            // `:LspStatus` is an EX-command, not a registered palette
+            // id, so `MenuAction::Command` toasted `no such command`
+            // — on the FIRST row of this menu. The left-click path
+            // always used `run_ex_command`; `RunCmd` with a leading
+            // colon is the menu equivalent.
+            MenuItem::new("Status", MenuAction::RunCmd(":LspStatus".to_string())),
             MenuItem::new("Symbols in file", MenuAction::Command("lsp.symbols")),
             MenuItem::new(
                 "Symbols in workspace",
@@ -2339,5 +2446,52 @@ mod editor_deadzone_tests {
             );
             app.context_menu = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod right_click_coverage_tests {
+    /// Rail list rows that have a left-click handler should also open a
+    /// context menu — a user who right-clicks a row and gets the
+    /// generic pane menu reads it as the feature being absent.
+    ///
+    /// The 2026-09-03 audit found three of this exact shape (FINDINGS,
+    /// AGENTS, SEARCH), all discovered by noticing a `rects` field used
+    /// in `down_left.rs` and absent here. This test names the ones that
+    /// have been decided, so a future rail panel is a deliberate
+    /// addition to the list rather than a silent omission.
+    #[test]
+    fn every_rail_row_family_with_a_left_handler_has_a_right_branch() {
+        let src = std::fs::read_to_string(file!()).unwrap();
+        for field in [
+            "findings_panel_files",
+            "notes_panel_files",
+            "todos_panel_rows",
+            "agents_panel_rows",
+            "search_section_hit_rects",
+        ] {
+            assert!(
+                src.contains(field),
+                "`{field}` rows have no right-click branch — right-clicking \
+                 one falls through to the generic pane menu"
+            );
+        }
+    }
+
+    /// Both reveal routes must be offered together wherever a row
+    /// resolves to a real file on disk. Offering only the OS one was
+    /// the defect the user hit; offering only the in-app one would be
+    /// the same mistake mirrored.
+    #[test]
+    fn row_menus_offer_both_reveal_routes() {
+        let src = std::fs::read_to_string(file!()).unwrap();
+        let tree = src.matches("MenuAction::RevealInTree").count();
+        let os = src.matches("MenuAction::RevealInFinder").count();
+        assert!(tree > 0 && os > 0, "a reveal route vanished entirely");
+        assert_eq!(
+            tree, os,
+            "the two reveal routes are offered an unequal number of times \
+             ({tree} in-app vs {os} OS) — some menu offers one without the other"
+        );
     }
 }

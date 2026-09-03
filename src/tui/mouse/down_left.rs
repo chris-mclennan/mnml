@@ -488,7 +488,10 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             MenuItem::new("Problems", MenuAction::Command("lsp.diagnostics")),
             MenuItem::new("AI chat", MenuAction::Command("ai.chat")),
             MenuItem::new("Grep", MenuAction::Command("find.grep")),
-            MenuItem::new("Tests", MenuAction::Command("test.run")),
+            // `test.run` has never existed — the registry has
+            // `test.run_all` / `_file` / `_at_cursor`. "Add panel"
+            // wants the whole suite.
+            MenuItem::new("Tests", MenuAction::Command("test.run_all")),
         ];
         app.context_menu = Some(ContextMenu::new(
             Some("Add panel".to_string()),

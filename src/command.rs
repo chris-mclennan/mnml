@@ -8067,3 +8067,83 @@ mod chord_ownership_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod menu_command_id_tests {
+    /// Every `MenuAction::Command("…")` literal in the source must
+    /// resolve to a registered command id.
+    ///
+    /// An unregistered id compiles fine — `Command` holds a plain
+    /// `&'static str` — and fails only at click time, with
+    /// `no such command: <id>` in a toast. So the menu row LOOKS
+    /// correct in review, in the render, and in every screenshot; the
+    /// only way to notice is to click it.
+    ///
+    /// A right-click audit on 2026-09-03 found three such rows this
+    /// way, one of them the FIRST row of the LSP chip's menu. This
+    /// test closes the class rather than the three instances.
+    ///
+    /// Scans source text because that is where the defect lives: the
+    /// ids are scattered across menu-building sites, and there is no
+    /// runtime registry of "ids some menu references".
+    #[test]
+    fn every_menu_command_id_is_registered() {
+        let reg = super::registry();
+        let mut bad: Vec<String> = Vec::new();
+        let mut checked = 0usize;
+
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        collect_rs(std::path::Path::new("src"), &mut files);
+        assert!(files.len() > 50, "source scan found almost nothing");
+
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap_or_default();
+            for (n, line) in src.lines().enumerate() {
+                // Comments mention the pattern (this test's own doc
+                // does), and a mention is not a menu row.
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let mut rest = line;
+                while let Some(i) = rest.find("MenuAction::Command(\"") {
+                    rest = &rest[i + "MenuAction::Command(\"".len()..];
+                    let Some(end) = rest.find('"') else { break };
+                    let id = &rest[..end];
+                    checked += 1;
+                    // A dynamic command is resolved at runtime by
+                    // `run_dynamic_command`; those legitimately are not
+                    // in the static registry. They are never literals,
+                    // so anything reaching here should be static.
+                    if reg.get(id).is_none() {
+                        bad.push(format!("{}:{} → {id}", f.display(), n + 1));
+                    }
+                    rest = &rest[end..];
+                }
+            }
+        }
+        assert!(
+            checked > 100,
+            "only found {checked} menu command ids — the scan is broken"
+        );
+        assert!(
+            bad.is_empty(),
+            "menu rows referencing unregistered command ids (they toast \
+             `no such command` when clicked):\n  {}",
+            bad.join("\n  ")
+        );
+    }
+
+    fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_rs(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+}
