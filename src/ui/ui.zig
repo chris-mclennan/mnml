@@ -39,6 +39,13 @@ pub const prompt = @import("prompt.zig");
 pub const Prompt = prompt;
 pub const confirm = @import("confirm.zig");
 pub const Confirm = confirm;
+pub const which_key = @import("which_key.zig");
+pub const find_bar = @import("find_bar.zig");
+pub const FindBar = find_bar;
+pub const picker = @import("picker.zig");
+pub const Picker = picker;
+pub const toast = @import("toast.zig");
+pub const Toast = toast.Toast;
 
 test {
     @import("std").testing.refAllDecls(@This());
