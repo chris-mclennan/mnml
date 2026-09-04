@@ -7,6 +7,7 @@ const Editor = editor.Editor;
 const charLen = editor.charLen;
 const EditOutcome = @import("edit_op.zig").EditOutcome;
 const delete = @import("delete.zig");
+const mc = @import("multicursor.zig");
 
 pub fn autoPairClose(c: u21) ?u21 {
     return switch (c) {
@@ -45,7 +46,7 @@ fn encode(c: u21, buf: *[4]u8) []const u8 {
     return buf[0..n];
 }
 
-pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) editor.Error!void {
+pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Error!void {
     // A deleted selection already pushed a checkpoint; ride it so the
     // delete + this char undo together (VS Code coalesces).
     if (try delete.deleteSelectionIfAny(ed, out)) {
@@ -54,9 +55,14 @@ pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) editor.Error!void {
     } else {
         try ed.checkpointInsertRun();
     }
-    if (ed.extra_cursors.items.len != 0) return error.Unsupported; // TODO(vim-slice: multicursor) fan-out insert
     var buf: [4]u8 = undefined;
     const s = encode(c, &buf);
+    if (mc.hasExtras(ed)) {
+        // Every cursor types; auto-pair is skipped across N cursors.
+        try mc.insertStrAll(ed, s);
+        out.buffer_changed = true;
+        return;
+    }
     if (ed.auto_pair) {
         if (autoPairClose(c)) |closer| {
             if (nextCharAllowsPair(ed)) {
@@ -86,6 +92,11 @@ pub fn insertStr(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!
     } else {
         try ed.checkpoint();
     }
+    if (mc.hasExtras(ed)) {
+        try mc.insertStrAll(ed, s);
+        out.buffer_changed = true;
+        return;
+    }
     try ed.splice(ed.cursor, ed.cursor, s);
     ed.cursor += s.len;
     out.buffer_changed = true;
@@ -97,6 +108,12 @@ pub fn insertNewline(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
         ed.history.clearRedo();
     } else {
         try ed.checkpoint();
+    }
+    if (mc.hasExtras(ed)) {
+        // Auto-indent is skipped: earlier inserts shift later lines.
+        try mc.insertStrAll(ed, "\n");
+        out.buffer_changed = true;
+        return;
     }
     const indent_src = if (ed.auto_indent) ed.leadingIndent(ed.currentLine(), ed.cursor) else "";
     // The indent slice points into `text`; copy before splicing.

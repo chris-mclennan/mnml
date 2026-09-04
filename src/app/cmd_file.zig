@@ -86,7 +86,7 @@ test "file.save writes the active buffer and clears dirty; a scratch buffer is r
     try t.expect(!e.buf.dirty);
     const back = try tmp.dir.readFileAlloc(t.io, "a.txt", t.allocator, .limited(64));
     defer t.allocator.free(back);
-    try t.expectEqualStrings("hello", back);
+    try t.expectEqualStrings("hello\n", back); // save adds the terminating newline
 }
 
 /// The tmp dir's absolute path, gpa-owned without a sentinel.

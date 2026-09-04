@@ -18,6 +18,9 @@ const select = @import("select.zig");
 const line = @import("line.zig");
 const register = @import("register.zig");
 const undo = @import("undo.zig");
+const mc = @import("multicursor.zig");
+const block = @import("block.zig");
+const surround = @import("surround.zig");
 
 pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *EditOutcome) Error!void {
     switch (op) {
@@ -38,33 +41,66 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         },
 
         // ── motion ──
-        .move_left => motion.left(ed),
-        .move_right => motion.right(ed),
-        .move_up => motion.vertical(ed, -1),
-        .move_down => motion.vertical(ed, 1),
+        .move_left => {
+            motion.left(ed);
+            try mc.moveExtras(ed, motion.left);
+        },
+        .move_right => {
+            motion.right(ed);
+            try mc.moveExtras(ed, motion.right);
+        },
+        .move_up => {
+            motion.vertical(ed, -1);
+            try mc.moveExtras(ed, motion.up);
+        },
+        .move_down => {
+            motion.vertical(ed, 1);
+            try mc.moveExtras(ed, motion.down);
+        },
         .page_up => motion.page(ed, -1, vp),
         .page_down => motion.page(ed, 1, vp),
         .half_page_up => motion.page(ed, -1, vp / 2),
         .half_page_down => motion.page(ed, 1, vp / 2),
-        .move_word_right => motion.wordRight(ed),
+        .move_word_right => {
+            motion.wordRight(ed);
+            try mc.moveExtras(ed, motion.wordRight);
+        },
         .move_word_right_no_cross_line => motion.wordRightNoCrossLine(ed),
-        .move_word_left => motion.wordLeft(ed),
-        .move_word_end => motion.wordEnd(ed),
+        .move_word_left => {
+            motion.wordLeft(ed);
+            try mc.moveExtras(ed, motion.wordLeft);
+        },
+        .move_word_end => {
+            motion.wordEnd(ed);
+            try mc.moveExtras(ed, motion.wordEnd);
+        },
         .move_word_end_back => motion.wordEndBack(ed),
         .move_big_word_right => motion.bigWordRight(ed),
         .move_big_word_right_no_cross_line => motion.bigWordRightNoCrossLine(ed),
         .move_big_word_left => motion.bigWordLeft(ed),
         .move_big_word_end => motion.bigWordEnd(ed),
         .move_big_word_end_back => motion.bigWordEndBack(ed),
-        .move_line_start => motion.lineStart(ed),
-        .move_line_first_non_ws => motion.lineFirstNonWs(ed),
+        .move_line_start => {
+            motion.lineStart(ed);
+            try mc.moveExtras(ed, motion.lineStart);
+        },
+        .move_line_first_non_ws => {
+            motion.lineFirstNonWs(ed);
+            try mc.moveExtras(ed, motion.lineFirstNonWs);
+        },
         .move_down_first_non_ws => motion.downFirstNonWs(ed),
         .move_up_first_non_ws => motion.upFirstNonWs(ed),
         .move_line_last_non_ws => motion.lineLastNonWs(ed),
         .move_paragraph => |p| motion.paragraph(ed, p.forward),
         .move_sentence => |p| motion.sentence(ed, p.forward),
-        .move_line_end => motion.lineEnd(ed),
-        .move_line_last_char => motion.lineLastChar(ed),
+        .move_line_end => {
+            motion.lineEnd(ed);
+            try mc.moveExtras(ed, motion.lineEnd);
+        },
+        .move_line_last_char => {
+            motion.lineLastChar(ed);
+            try mc.moveExtras(ed, motion.lineLastChar);
+        },
         .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end => return error.Unsupported, // TODO(vim-slice: motions) display-row motions under wrap
         .move_buffer_start => motion.bufferStart(ed),
         .move_buffer_end => motion.bufferEnd(ed),
@@ -87,7 +123,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_inner_quote => |q| select.quote(ed, q, false),
         .select_around_quote => |q| select.quote(ed, q, true),
         .select_inner_smart_quote, .select_around_smart_quote => return error.Unsupported, // TODO(vim-slice: text-objects) iq / aq
-        .surround_selection, .delete_surround, .change_surround => return error.Unsupported, // TODO(vim-slice: surround)
+        .surround_selection => |s| try surround.surroundSelection(ed, s.open, s.close, s.pad, out),
+        .delete_surround => |c| try surround.deleteSurround(ed, c, out),
+        .change_surround => |c| try surround.changeSurround(ed, c.from, c.to, out),
         .select_inner_bracket => |b| select.bracket(ed, b, false),
         .select_around_bracket => |b| select.bracket(ed, b, true),
         .select_inner_tag => select.tag(ed, false),
@@ -104,8 +142,14 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .continue_insert_run => select.continueInsertRun(ed),
 
         // ── multi-cursor / block ──
-        .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word => return error.Unsupported, // TODO(vim-slice: multicursor)
-        .block_select_start, .block_select_clear, .yank_block, .delete_block => return error.Unsupported, // TODO(vim-slice: visual-block)
+        .add_cursor_below => try mc.addCursorBelow(ed),
+        .add_cursor_above => try mc.addCursorAbove(ed),
+        .clear_extra_cursors => mc.clear(ed),
+        .add_cursor_at_next_word => try mc.addCursorAtNextWord(ed),
+        .block_select_start => block.selectStart(ed),
+        .block_select_clear => block.selectClear(ed),
+        .yank_block => try block.yankBlock(ed, clip, out),
+        .delete_block => try block.deleteBlock(ed, clip, out),
 
         // ── insert ──
         .insert_char => |c| try insert.insertChar(ed, c, out),
@@ -134,16 +178,16 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         // ── line ops ──
         .indent => try line.indent(ed, out),
         .outdent => try line.outdent(ed, out),
-        .toggle_line_comment => return error.Unsupported, // TODO(vim-slice: comment) needs the language's comment token
+        .toggle_line_comment => try line.toggleLineComment(ed, out),
         .move_line_up => try line.moveLine(ed, -1, out),
         .move_line_down => try line.moveLine(ed, 1, out),
         .duplicate_line => try line.duplicateLine(ed, out),
         .join_lines => |j| try line.joinLines(ed, j.keep_space, out),
         .transform_selection_case => |k| try line.transformSelectionCase(ed, k, out),
         .toggle_case_char => try line.toggleCaseChar(ed, out),
-        .change_number_at_cursor => return error.Unsupported, // TODO(vim-slice: misc) ctrl+a / ctrl+x
-        .reflow_paragraph => return error.Unsupported, // TODO(vim-slice: reflow) gq
-        .align_selection => return error.Unsupported, // TODO(vim-slice: align) gA
+        .change_number_at_cursor => |n| try line.changeNumberAtCursor(ed, n.delta, out),
+        .reflow_paragraph => |r| try line.reflowParagraph(ed, r.width, out),
+        .align_selection => |a| try line.alignSelection(ed, a.on_char, out),
 
         // ── registers ──
         .set_register_hint => |r| register.setRegisterHint(clip, r),
@@ -228,7 +272,7 @@ test "apply: outcome flags, text edit inference, changelist, goal col" {
     _ = try ed.apply(.move_left, 10, &clip, arena);
     try std.testing.expect(ed.goal_col == null);
     // Unsupported tags are reported, not silently dropped.
-    try std.testing.expectError(error.Unsupported, ed.apply(.toggle_line_comment, 10, &clip, arena));
+    try std.testing.expectError(error.Unsupported, ed.apply(.select_inner_smart_quote, 10, &clip, arena));
 }
 
 test "property: cursor stays on a boundary and text stays valid UTF-8" {
@@ -246,39 +290,44 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
     for (0..200) |_| try insert.appendChar(&text, gpa, seed_chars[rnd.uintLessThan(usize, seed_chars.len)]);
     var ed = try Editor.init(gpa, text.items);
     defer ed.deinit();
+    ed.comment_token = "// ";
     const inner_ops = [_]EditOp{ .move_right, .delete_forward, .{ .insert_char = 'z' }, .move_down };
     const ops = [_]EditOp{
-        .move_left,                                             .move_right,                                            .move_up,                                                                                                        .move_down,
-        .move_word_left,                                        .move_word_right,                                       .move_word_end,                                                                                                  .move_word_end_back,
-        .move_big_word_right,                                   .move_big_word_left,                                    .move_big_word_end,                                                                                              .move_big_word_end_back,
-        .move_word_right_no_cross_line,                         .move_big_word_right_no_cross_line,                     .move_line_start,                                                                                                .move_line_end,
-        .move_line_first_non_ws,                                .move_line_last_non_ws,                                 .move_line_last_char,                                                                                            .move_down_first_non_ws,
-        .move_up_first_non_ws,                                  .{ .move_paragraph = .{ .forward = true } },            .{ .move_paragraph = .{ .forward = false } },                                                                    .{ .move_sentence = .{ .forward = true } },
-        .{ .move_sentence = .{ .forward = false } },            .move_buffer_start,                                     .move_buffer_end,                                                                                                .{ .move_to_line = 3 },
-        .{ .move_to_col = 4 },                                  .{ .set_cursor_byte = 7 },                              .page_up,                                                                                                        .page_down,
-        .half_page_up,                                          .half_page_down,                                        .{ .find_char_on_line = .{ .ch = 'a', .forward = true, .before = false, .inclusive = false, .repeat = false } }, .{ .find_char_on_line = .{ .ch = 'b', .forward = false, .before = true, .inclusive = true, .repeat = true } },
-        .select_start,                                          .select_clear,                                          .select_line,                                                                                                    .select_line_to_end,
-        .select_all,                                            .select_word,                                           .select_inner_word,                                                                                              .select_around_word,
-        .select_inner_big_word,                                 .select_around_big_word,                                .{ .select_inner_quote = '"' },                                                                                  .{ .select_around_quote = '"' },
-        .{ .select_inner_bracket = '(' },                       .{ .select_around_bracket = '(' },                      .select_inner_paragraph,                                                                                         .select_around_paragraph,
-        .select_inner_tag,                                      .select_around_tag,                                     .restore_last_selection,                                                                                         .swap_anchor_cursor,
-        .move_cursor_to_selection_start,                        .normalize_linewise_selection,                          .make_selection_inclusive,
+        .move_left,                                                             .move_right,                                            .move_up,                                                                                                        .move_down,
+        .move_word_left,                                                        .move_word_right,                                       .move_word_end,                                                                                                  .move_word_end_back,
+        .move_big_word_right,                                                   .move_big_word_left,                                    .move_big_word_end,                                                                                              .move_big_word_end_back,
+        .move_word_right_no_cross_line,                                         .move_big_word_right_no_cross_line,                     .move_line_start,                                                                                                .move_line_end,
+        .move_line_first_non_ws,                                                .move_line_last_non_ws,                                 .move_line_last_char,                                                                                            .move_down_first_non_ws,
+        .move_up_first_non_ws,                                                  .{ .move_paragraph = .{ .forward = true } },            .{ .move_paragraph = .{ .forward = false } },                                                                    .{ .move_sentence = .{ .forward = true } },
+        .{ .move_sentence = .{ .forward = false } },                            .move_buffer_start,                                     .move_buffer_end,                                                                                                .{ .move_to_line = 3 },
+        .{ .move_to_col = 4 },                                                  .{ .set_cursor_byte = 7 },                              .page_up,                                                                                                        .page_down,
+        .half_page_up,                                                          .half_page_down,                                        .{ .find_char_on_line = .{ .ch = 'a', .forward = true, .before = false, .inclusive = false, .repeat = false } }, .{ .find_char_on_line = .{ .ch = 'b', .forward = false, .before = true, .inclusive = true, .repeat = true } },
+        .select_start,                                                          .select_clear,                                          .select_line,                                                                                                    .select_line_to_end,
+        .select_all,                                                            .select_word,                                           .select_inner_word,                                                                                              .select_around_word,
+        .select_inner_big_word,                                                 .select_around_big_word,                                .{ .select_inner_quote = '"' },                                                                                  .{ .select_around_quote = '"' },
+        .{ .select_inner_bracket = '(' },                                       .{ .select_around_bracket = '(' },                      .select_inner_paragraph,                                                                                         .select_around_paragraph,
+        .select_inner_tag,                                                      .select_around_tag,                                     .restore_last_selection,                                                                                         .swap_anchor_cursor,
+        .move_cursor_to_selection_start,                                        .normalize_linewise_selection,                          .make_selection_inclusive,
         .{ .insert_char = 'é' },
         .{ .insert_char = '\n' },
         .{ .insert_str = "世界" },
-        .{ .insert_char_from_line = .{ .above = true } },       .insert_newline,                                        .insert_newline_below,                                                                                           .insert_newline_above,
-        .backspace,                                             .delete_forward,                                        .delete_word_left,                                                                                               .delete_word_right,
-        .delete_to_line_start,                                  .delete_to_line_end,                                    .delete_line,                                                                                                    .delete_selection,
+        .{ .insert_char_from_line = .{ .above = true } },                       .insert_newline,                                        .insert_newline_below,                                                                                           .insert_newline_above,
+        .backspace,                                                             .delete_forward,                                        .delete_word_left,                                                                                               .delete_word_right,
+        .delete_to_line_start,                                                  .delete_to_line_end,                                    .delete_line,                                                                                                    .delete_selection,
         .{ .replace_selection = "r" },
         .{ .replace_char_at_cursor = '😀' },
-        .{ .overwrite_char_and_advance = 'q' },                 .replace_undo_one,                                      .replace_session_begin,                                                                                          .{ .replace_range = .{ .start = 2, .end = 5, .text = "x" } },
-        .indent,                                                .outdent,                                               .move_line_up,                                                                                                   .move_line_down,
-        .duplicate_line,                                        .{ .join_lines = .{ .keep_space = true } },             .{ .join_lines = .{ .keep_space = false } },                                                                     .{ .transform_selection_case = .toggle },
-        .toggle_case_char,                                      .{ .set_register_hint = 'a' },                          .yank_line,                                                                                                      .{ .yank_lines_count = 2 },
-        .yank_selection,                                        .yank_selection_linewise,                               .cut_selection,                                                                                                  .paste_after,
-        .paste_before,                                          .paste_after_end,                                       .paste_before_end,                                                                                               .paste,
-        .undo,                                                  .redo,                                                  .{ .repeat = .{ .count = 3, .inner = &inner_ops[0] } },                                                          .{ .repeat = .{ .count = 2, .inner = &inner_ops[1] } },
-        .{ .repeat = .{ .count = 2, .inner = &inner_ops[2] } }, .{ .repeat = .{ .count = 4, .inner = &inner_ops[3] } }, .{ .atomic = &inner_ops },                                                                                       .remember_selection,
+        .{ .overwrite_char_and_advance = 'q' },                                 .replace_undo_one,                                      .replace_session_begin,                                                                                          .{ .replace_range = .{ .start = 2, .end = 5, .text = "x" } },
+        .indent,                                                                .outdent,                                               .move_line_up,                                                                                                   .move_line_down,
+        .duplicate_line,                                                        .{ .join_lines = .{ .keep_space = true } },             .{ .join_lines = .{ .keep_space = false } },                                                                     .{ .transform_selection_case = .toggle },
+        .toggle_case_char,                                                      .{ .set_register_hint = 'a' },                          .yank_line,                                                                                                      .{ .yank_lines_count = 2 },
+        .yank_selection,                                                        .yank_selection_linewise,                               .cut_selection,                                                                                                  .paste_after,
+        .paste_before,                                                          .paste_after_end,                                       .paste_before_end,                                                                                               .paste,
+        .undo,                                                                  .redo,                                                  .{ .repeat = .{ .count = 3, .inner = &inner_ops[0] } },                                                          .{ .repeat = .{ .count = 2, .inner = &inner_ops[1] } },
+        .{ .repeat = .{ .count = 2, .inner = &inner_ops[2] } },                 .{ .repeat = .{ .count = 4, .inner = &inner_ops[3] } }, .{ .atomic = &inner_ops },                                                                                       .remember_selection,
+        .add_cursor_below,                                                      .add_cursor_above,                                      .add_cursor_at_next_word,                                                                                        .clear_extra_cursors,
+        .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
+        .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
+        .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];
@@ -286,6 +335,10 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         try std.testing.expect(ed.isBoundary(ed.cursor));
         try std.testing.expect(ed.cursor <= ed.len());
         if (ed.anchor) |a| try std.testing.expect(ed.isBoundary(a) and a <= ed.len());
+        for (ed.extra_cursors.items, ed.extra_anchors.items) |c, a| {
+            try std.testing.expect(ed.isBoundary(c) and c <= ed.len() and c != ed.cursor);
+            if (a) |av| try std.testing.expect(ed.isBoundary(av) and av <= ed.len());
+        }
         try std.testing.expect(std.unicode.utf8ValidateSlice(ed.text.items));
         if (ed.len() > 20_000) try ed.setText("reset\n");
     }

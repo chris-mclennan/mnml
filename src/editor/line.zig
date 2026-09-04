@@ -7,6 +7,7 @@ const Editor = editor.Editor;
 const edit_op = @import("edit_op.zig");
 const EditOutcome = edit_op.EditOutcome;
 const CaseTransform = edit_op.CaseTransform;
+const select = @import("select.zig");
 
 /// vim `J` (`keep_space`) / `gJ`.
 pub fn joinLines(ed: *Editor, keep_space: bool, out: *EditOutcome) Allocator.Error!void {
@@ -181,7 +182,277 @@ pub fn toggleCaseChar(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     ed.cursor = ed.nextBoundary(ed.cursor);
 }
 
+// ─── comment / number / reflow / align ──────────────────────────────────
+
+/// `gcc` / `gc{motion}` / Ctrl+/: put the buffer's comment token after
+/// the indent of every selected line (plus the closer at EOL for block
+/// styles), or strip it when the first line already carries one. Blank
+/// lines are skipped; an empty token makes this a no-op.
+pub fn toggleLineComment(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
+    const token = ed.comment_token;
+    if (std.mem.trim(u8, token, " \t").len == 0) return;
+    const close = ed.comment_token_close;
+    const trimmed = std.mem.trimEnd(u8, token, " \t");
+    const close_trimmed = std.mem.trimStart(u8, close, " \t");
+    const range = selectedLineRange(ed);
+    // The cursor comes back to the range's first line, where `gcip` found it.
+    const pos = ed.rowColAt(if (ed.selection()) |s| s[0] else ed.cursor);
+    const already = std.mem.startsWith(u8, ed.bytes()[ed.firstNonWs(range[0])..], trimmed);
+    try ed.checkpoint();
+    var changed = false;
+    var line = range[1] + 1;
+    while (line > range[0]) {
+        line -= 1;
+        const ie = ed.firstNonWs(line);
+        const eol = ed.lineEnd(line);
+        if (ie >= eol) continue;
+        if (already) {
+            const body = ed.bytes()[ie..eol];
+            if (close.len > 0) {
+                if (std.mem.endsWith(u8, body, close)) {
+                    try ed.splice(eol - close.len, eol, "");
+                    changed = true;
+                } else if (std.mem.endsWith(u8, body, close_trimmed)) {
+                    try ed.splice(eol - close_trimmed.len, eol, "");
+                    changed = true;
+                }
+            }
+            const rest = ed.bytes()[ie..];
+            if (std.mem.startsWith(u8, rest, token)) {
+                try ed.splice(ie, ie + token.len, "");
+                changed = true;
+            } else if (std.mem.startsWith(u8, rest, trimmed)) {
+                try ed.splice(ie, ie + trimmed.len, "");
+                changed = true;
+            }
+        } else {
+            if (close.len > 0) try ed.splice(eol, eol, close);
+            try ed.splice(ie, ie, token);
+            changed = true;
+        }
+    }
+    if (changed) {
+        restoreCursorAfterLineOp(ed, pos);
+        out.buffer_changed = true;
+    } else {
+        ed.popCheckpoint();
+        ed.anchor = null;
+    }
+}
+
+/// Ctrl+A / Ctrl+X: the number under or after the cursor on this line,
+/// with a leading `-` when it is not glued to an identifier. The cursor
+/// lands on the number's last digit (vim).
+pub fn changeNumberAtCursor(ed: *Editor, delta: i64, out: *EditOutcome) Allocator.Error!void {
+    const line = ed.currentLine();
+    const bol = ed.lineStart(line);
+    const eol = ed.lineEnd(line);
+    const t = ed.bytes();
+    var p = @max(ed.cursor, bol);
+    while (p < eol and !std.ascii.isDigit(t[p])) p += 1;
+    if (p >= eol) return;
+    var start = p;
+    while (start > bol and std.ascii.isDigit(t[start - 1])) start -= 1;
+    if (start > bol and t[start - 1] == '-') {
+        const glued = start - 1 > bol and (std.ascii.isAlphanumeric(t[start - 2]) or t[start - 2] == '_');
+        if (!glued) start -= 1;
+    }
+    var end = p;
+    while (end < eol and std.ascii.isDigit(t[end])) end += 1;
+    const n = std.fmt.parseInt(i64, t[start..end], 10) catch return;
+    var buf: [24]u8 = undefined;
+    const new_s = std.fmt.bufPrint(&buf, "{d}", .{n +| delta}) catch return;
+    if (std.mem.eql(u8, new_s, t[start..end])) return;
+    try ed.checkpoint();
+    try ed.splice(start, end, new_s);
+    ed.cursor = start + new_s.len - 1;
+    ed.anchor = null;
+    out.buffer_changed = true;
+}
+
+/// `gq`: greedy word-wrap of the paragraph under the cursor to `width`,
+/// keeping the first line's indent on every line. Words are runs of
+/// non-blanks joined by one space.
+pub fn reflowParagraph(ed: *Editor, width: usize, out: *EditOutcome) Allocator.Error!void {
+    const b = select.paragraphBounds(ed, false);
+    if (b[1] <= b[0]) return;
+    const body = ed.bytes()[b[0]..b[1]];
+    if (std.mem.trim(u8, body, " \t\r\n").len == 0) return;
+    const first_end = std.mem.indexOfScalar(u8, body, '\n') orelse body.len;
+    var indent_len: usize = 0;
+    while (indent_len < first_end and (body[indent_len] == ' ' or body[indent_len] == '\t')) indent_len += 1;
+    const lead = body[0..indent_len];
+    const target = @max(width, indent_len + 8);
+    var wrapped: std.ArrayList(u8) = .empty;
+    defer wrapped.deinit(ed.gpa);
+    var it = std.mem.tokenizeAny(u8, body, " \t\r\n");
+    var line_chars: usize = 0;
+    var first = true;
+    while (it.next()) |w| {
+        const wlen = std.unicode.utf8CountCodepoints(w) catch w.len;
+        if (first) {
+            try wrapped.appendSlice(ed.gpa, lead);
+            first = false;
+            line_chars = indent_len + wlen;
+        } else if (line_chars + 1 + wlen > target) {
+            try wrapped.append(ed.gpa, '\n');
+            try wrapped.appendSlice(ed.gpa, lead);
+            line_chars = indent_len + wlen;
+        } else {
+            try wrapped.append(ed.gpa, ' ');
+            line_chars += 1 + wlen;
+        }
+        try wrapped.appendSlice(ed.gpa, w);
+    }
+    if (std.mem.eql(u8, wrapped.items, body)) return;
+    try ed.checkpoint();
+    try ed.splice(b[0], b[1], wrapped.items);
+    ed.cursor = b[0];
+    ed.anchor = null;
+    out.buffer_changed = true;
+}
+
+/// `gA{motion}<c>` (mini.align): pad every selected line before its
+/// first `on_char` so they line up at the widest column. Lines without
+/// the char are left alone; an already-aligned range just drops the
+/// selection.
+pub fn alignSelection(ed: *Editor, on_char: u21, out: *EditOutcome) Allocator.Error!void {
+    const sel = ed.selection() orelse return;
+    const first = ed.lineOfByte(sel[0]);
+    var last = ed.lineOfByte(sel[1]);
+    if (sel[1] > sel[0] and ed.bytes()[sel[1] - 1] == '\n') last -|= 1;
+    last = @min(last, ed.lineCount() - 1);
+    if (last < first) return;
+    const Target = struct { byte: usize, col: usize };
+    var targets: std.ArrayList(Target) = .empty;
+    defer targets.deinit(ed.gpa);
+    var max_col: usize = 0;
+    for (first..last + 1) |line| {
+        var byte = ed.lineStart(line);
+        const eol = ed.lineEnd(line);
+        var col: usize = 0;
+        while (byte < eol) : (col += 1) {
+            if (ed.charAt(byte) == on_char) {
+                try targets.append(ed.gpa, .{ .byte = byte, .col = col });
+                max_col = @max(max_col, col);
+                break;
+            }
+            byte = ed.nextBoundary(byte);
+        }
+    }
+    var needs = false;
+    for (targets.items) |tg| if (tg.col < max_col) {
+        needs = true;
+    };
+    if (!needs) {
+        ed.cursor = sel[0];
+        ed.anchor = null;
+        return;
+    }
+    try ed.checkpoint();
+    var i = targets.items.len;
+    while (i > 0) {
+        i -= 1;
+        const pad = max_col - targets.items[i].col;
+        if (pad == 0) continue;
+        const spaces = try ed.gpa.alloc(u8, pad);
+        defer ed.gpa.free(spaces);
+        @memset(spaces, ' ');
+        try ed.splice(targets.items[i].byte, targets.items[i].byte, spaces);
+    }
+    ed.cursor = ed.lineStart(first);
+    ed.anchor = null;
+    out.buffer_changed = true;
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
+
+test "toggle comment: line and block styles, indent kept, blank lines skipped, empty token no-op" {
+    var ed = try Editor.init(std.testing.allocator, "  a\n\nb");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    try toggleLineComment(&ed, &out); // no token yet
+    try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+    try std.testing.expectEqual(@as(usize, 0), ed.history.undoLen());
+    ed.comment_token = "// ";
+    ed.anchor = 0;
+    ed.cursor = 7;
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("  // a\n\n// b", ed.text.items);
+    try std.testing.expect(ed.anchor == null);
+    ed.anchor = 0;
+    ed.cursor = ed.len();
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+    ed.comment_token = "<!-- ";
+    ed.comment_token_close = " -->";
+    ed.cursor = 0;
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("  <!-- a -->\n\nb", ed.text.items);
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+}
+
+test "change number: under or after the cursor, a free minus, counts, saturation, cursor on the last digit" {
+    var ed = try Editor.init(std.testing.allocator, "value = 41 x-1 y -1");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    try changeNumberAtCursor(&ed, 1, &out);
+    try std.testing.expectEqualStrings("value = 42 x-1 y -1", ed.text.items);
+    try std.testing.expectEqual(@as(usize, 9), ed.cursor);
+    try changeNumberAtCursor(&ed, -3, &out);
+    try std.testing.expectEqualStrings("value = 39 x-1 y -1", ed.text.items);
+    ed.cursor = 12; // on `-` glued to `x`: the number is `1`
+    try changeNumberAtCursor(&ed, 1, &out);
+    try std.testing.expectEqualStrings("value = 39 x-2 y -1", ed.text.items);
+    ed.cursor = 16; // `-1` stands alone
+    try changeNumberAtCursor(&ed, -1, &out);
+    try std.testing.expectEqualStrings("value = 39 x-2 y -2", ed.text.items);
+    try changeNumberAtCursor(&ed, 2, &out);
+    try std.testing.expectEqualStrings("value = 39 x-2 y 0", ed.text.items);
+    try ed.setText("no digits");
+    ed.cursor = 0;
+    try changeNumberAtCursor(&ed, 1, &out);
+    try std.testing.expectEqualStrings("no digits", ed.text.items);
+    try ed.setText("9223372036854775807");
+    ed.cursor = 0;
+    try changeNumberAtCursor(&ed, 1, &out); // saturates: nothing to change
+    try std.testing.expectEqualStrings("9223372036854775807", ed.text.items);
+}
+
+test "reflow wraps greedily at the width, keeps the indent, leaves a short paragraph alone" {
+    var ed = try Editor.init(std.testing.allocator, "  aaa bbb\n  ccc ddd eee\n\nnext");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    ed.cursor = 3;
+    try reflowParagraph(&ed, 12, &out);
+    try std.testing.expectEqualStrings("  aaa bbb\n  ccc ddd\n  eee\n\nnext", ed.text.items);
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    try reflowParagraph(&ed, 80, &out);
+    try std.testing.expectEqualStrings("  aaa bbb ccc ddd eee\n\nnext", ed.text.items);
+    ed.cursor = ed.len();
+    const undo_len = ed.history.undoLen();
+    try reflowParagraph(&ed, 80, &out); // already flowed
+    try std.testing.expectEqual(undo_len, ed.history.undoLen());
+}
+
+test "align pads before the first char per line; lines without it are untouched; aligned range just deselects" {
+    var ed = try Editor.init(std.testing.allocator, "let a = 1\nlet bb = 2\nnone\nlet ccc = 3\n");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    ed.anchor = 0;
+    ed.cursor = ed.len();
+    try alignSelection(&ed, '=', &out);
+    try std.testing.expectEqualStrings("let a   = 1\nlet bb  = 2\nnone\nlet ccc = 3\n", ed.text.items);
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    try std.testing.expect(ed.anchor == null);
+    ed.anchor = 0;
+    ed.cursor = ed.len();
+    const undo_len = ed.history.undoLen();
+    try alignSelection(&ed, '=', &out);
+    try std.testing.expectEqual(undo_len, ed.history.undoLen());
+    try std.testing.expect(ed.anchor == null);
+}
 
 test "J trims and inserts one space; gJ keeps whitespace" {
     var ed = try Editor.init(std.testing.allocator, "ab  \n   cd\nef");

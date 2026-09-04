@@ -25,6 +25,22 @@ pub const Key = input.Key;
 
 pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
 
+/// `(open, close)` comment tokens for a file extension; both empty for a
+/// commentless file so a toggle is a no-op instead of a stray literal.
+pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
+    const e = ext orelse return .{ "", "" };
+    const slash = [_][]const u8{ "zig", "rs", "ts", "tsx", "js", "jsx", "cjs", "mjs", "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "swift", "php", "scss", "less" };
+    const hash = [_][]const u8{ "py", "rb", "sh", "bash", "zsh", "toml", "yaml", "yml", "ini", "conf" };
+    const dash = [_][]const u8{ "lua", "sql" };
+    const angle = [_][]const u8{ "html", "htm", "xml", "vue", "svelte", "astro", "md", "markdown" };
+    for (slash) |x| if (std.mem.eql(u8, e, x)) return .{ "// ", "" };
+    for (hash) |x| if (std.mem.eql(u8, e, x)) return .{ "# ", "" };
+    for (dash) |x| if (std.mem.eql(u8, e, x)) return .{ "-- ", "" };
+    for (angle) |x| if (std.mem.eql(u8, e, x)) return .{ "<!-- ", " -->" };
+    if (std.mem.eql(u8, e, "css")) return .{ "/* ", " */" };
+    return .{ "", "" };
+}
+
 pub const Buffer = struct {
     gpa: Allocator,
     editor: Editor,
@@ -44,6 +60,11 @@ pub const Buffer = struct {
     /// `@tagName` of the last op the editor refused with `Unsupported`,
     /// for the app to toast. Static string.
     last_unsupported: ?[]const u8 = null,
+    /// Rust mnml's `[editor] ensure_trailing_newline`: a file gets its
+    /// terminating newline on save. It goes through `apply` so undo can
+    /// take it back — and, like any `replace_range`, leaves the cursor
+    /// after the inserted text.
+    ensure_trailing_newline: bool = true,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -125,14 +146,31 @@ pub const Buffer = struct {
         self.language = null;
         const ext = std.fs.path.extension(path);
         if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
+        const tok = commentTokenFor(self.language);
+        self.editor.comment_token = tok[0];
+        self.editor.comment_token_close = tok[1];
     }
 
     pub const SaveError = Allocator.Error || Io.Dir.WriteFileError || error{NoPath};
 
     pub fn save(self: *Buffer, io: Io) SaveError!void {
         const path = self.path orelse return error.NoPath;
+        if (self.ensure_trailing_newline) try self.fixTrailingNewline();
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = self.editor.bytes() });
         try self.markSaved();
+    }
+
+    fn fixTrailingNewline(self: *Buffer) Allocator.Error!void {
+        const n = self.editor.len();
+        if (n == 0 or self.editor.bytes()[n - 1] == '\n') return;
+        var clip = Clipboard.init(self.gpa);
+        defer clip.deinit();
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        _ = self.editor.apply(.{ .replace_range = .{ .start = n, .end = n, .text = "\n" } }, 0, &clip, arena.allocator()) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unsupported => return,
+        };
     }
 
     /// Record the current text as the on-disk text.
@@ -478,6 +516,12 @@ pub const Harness = struct {
         }
     }
 
+    /// Ops that arrive as commands rather than keys (`editor.add_cursor_below`).
+    pub fn ops(h: *Harness, list: []const EditOp) !void {
+        _ = h.arena.reset(.retain_capacity);
+        _ = try h.buf.applyOps(list, &h.clip, 10, h.arena.allocator());
+    }
+
     /// The text with `|` at the cursor.
     pub fn marked(h: *Harness, gpa: Allocator) ![]u8 {
         const t = h.buf.editor.bytes();
@@ -724,7 +768,134 @@ test "vim marks, macros and visual mode" {
     try vim("vVd", "a\n|b\nc", "a\n|c");
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");
     try vim("vv", "|abc", "|abc");
-    try vim("<c-v>jd", "|ab\ncd", "ab\n|cd"); // block ops are unsupported: only the motion lands
+    try vim("<c-v>jd", "|ab\ncd", "|b\nd");
+    try vim("<c-v>jld", "a|bcd\nefgh\nij", "a|d\neh\nij");
+    try vim("<c-v>jlx", "a|bcd\nefgh", "a|d\neh");
+    try vim("<c-v>jldp", "a|bcd\nefgh", "adbc\nfg|\neh"); // the block is in the register charwise (Rust parity)
+    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcdbc\nfg|\nefgh");
+    try vim("<c-v>jlyP", "a|bcd\nefgh", "abc\nfg|bcd\nefgh"); // `y` parks at the rectangle's top-left; `P` lands after the text
+    try vim("<c-v>jl<esc>x", "a|bcd\nefgh", "abcd\nef|h");
+    try vim("<c-v>kd", "ab\n|cd", "|b\nd"); // the rectangle is anchor→cursor in either direction
+    try vim("<c-v>jjld", "|abc\nx\nabc", "|c\n\nc"); // a short row contributes nothing
+    try vim("<c-v>jvd", "|ab\ncd", "ab\n|d"); // `v` / `V` from V-BLOCK re-anchor at the cursor (Rust parity; vim keeps the anchor)
+    try vim("<c-v>jVd", "a|b\ncd\ne", "ab\n|e");
+    try vim("<c-v>jd", "|ab\ncd", "|b\nd");
+    try vim("<c-v>jdu", "|ab\ncd", "ab\n|cd"); // one undo step; the snapshot cursor comes back
+}
+
+/// `feed` / `ops` interleaved: each row is a list of steps.
+const Step = union(enum) { keys: []const u8, op: EditOp };
+
+fn multi(before: []const u8, steps: []const Step, after: []const u8) !void {
+    var h = try Harness.init(testing.allocator, .vim, before);
+    defer h.deinit();
+    for (steps) |st| switch (st) {
+        .keys => |k| try h.feed(k),
+        .op => |o| try h.ops(&.{o}),
+    };
+    const got = try h.marked(testing.allocator);
+    defer testing.allocator.free(got);
+    testing.expectEqualStrings(after, got) catch |err| {
+        std.debug.print("\n  before: {s}\n", .{before});
+        return err;
+    };
+}
+
+test "vim multi-cursor: typing, deletes, selections and puts fan out over every cursor" {
+    const below: Step = .{ .op = .add_cursor_below };
+    const next_word: Step = .{ .op = .add_cursor_at_next_word };
+    try multi("|alpha\nbeta\ngamma", &.{ .{ .keys = "i" }, below, below, .{ .keys = "X<esc>" } }, "|Xalpha\nXbeta\nXgamma");
+    try multi("|Yone\nYtwo", &.{ .{ .keys = "li" }, below, .{ .keys = "<bs><esc>" } }, "|one\ntwo");
+    try multi("|foo bar foo baz foo", &.{ .{ .keys = "l" }, next_word, next_word, .{ .keys = "iX<esc>" } }, "|X bar X baz foo");
+    try multi("|old one\nold two", &.{ .{ .keys = "ea" }, below, .{ .keys = "<c-w><esc>" } }, "| one\n two");
+    try multi("|AAAxxxBBB\nAAAyyyBBB", &.{ .{ .keys = "lllv" }, below, .{ .keys = "lld" } }, "AAA|BBB\nAAABBB");
+    try multi("|AAAxxxBBB\nAAAyyyBBB", &.{ .{ .keys = "lllv" }, below, .{ .keys = "llcZ<esc>" } }, "AAA|ZBBB\nAAAZBBB");
+    try multi("|A.\nB.", &.{ .{ .keys = "v" }, below, .{ .keys = "y0" }, below, .{ .keys = "P" } }, "A|A.\nBB.");
+    try multi("|ab\ncd", &.{ .{ .keys = "i" }, below, .{ .keys = "<cr><esc>" } }, "|\nab\n\ncd");
+    try multi("|ab\ncd", &.{ .{ .keys = "A" }, below, .{ .keys = "<bs>!<esc>" } }, "a|!\nc!");
+    try multi("|ab cd\nef gh", &.{ .{ .keys = "i" }, below, .{ .keys = "<c-right>-<esc>" } }, "ab |-cd\nef -gh");
+    // The clear op collapses to the primary; the next edit is single-cursor again.
+    try multi("|a\nb", &.{ .{ .keys = "i" }, below, .{ .op = .clear_extra_cursors }, .{ .keys = "X<esc>" } }, "|Xa\nb");
+}
+
+test "vim surround: ys over motions and objects, yss, visual S, ds, cs" {
+    try vim("ysiw\"", "hello |world", "hello \"world|\"");
+    try vim("ysiw(", "|x y", "( x |) y"); // an opener pads; the cursor lands on the closer
+    try vim("ysiw)", "|x y", "(x|) y");
+    try vim("ysiwb", "|x y", "(x|) y");
+    try vim("ysiwB", "|x y", "{x|} y");
+    try vim("ys$'", "a|bc", "a'bc|'");
+    try vim("ysfc]", "|abcd", "[abc|]d");
+    try vim("ys2w\"", "|a b c", "\"a b |\"c");
+    try vim("yss\"", "  |ab cd", "  \"ab cd|\"");
+    try vim("yss<esc>", "|ab", "|ab"); // Esc drops the pending range
+    try vim("ysiwt", "|ab", "|ab"); // a tag needs a name: not here
+    try vim("vllS\"", "|abc def", "\"abc|\" def");
+    try vim("vllS{", "|abc def", "{ abc |} def");
+    try vim("VS(", "|ab\ncd", "( ab\n |)cd"); // linewise: the whole line, newline included
+    try vim("ds\"", "x \"a |b\" y", "x |a b y");
+    try vim("ds\"", "x |\"a b\" y", "x |a b y"); // on the opener counts as inside
+    try vim("ds(", "f( a|b )", "f|ab");
+    try vim("ds)", "f( a|b )", "f| ab ");
+    try vim("dsb", "f( a|b )", "f| ab ");
+    try vim("ds]", "[[a|b]]", "[|ab]");
+    try vim("dst", "<b>h|i</b>", "|hi");
+    try vim("dsx", "(a|b)", "(a|b)"); // not a pair char
+    try vim("ds(", "a|b", "a|b"); // nothing to delete
+    try vim("cs\"'", "s = \"fo|o\";", "s = |'foo';");
+    try vim("cs(<", "let t = (|1, 2);", "let t = |<1, 2>;");
+    try vim("cs({", "(|a)", "|{ a }");
+    try vim("cs{)", "{ |a }", "|(a)");
+    try vim("cst\"", "<b>h|i</b>", "|\"hi\"");
+    try vim("cs\"x", "\"a|b\"", "\"a|b\""); // not a pair char
+    try vim("cs\"<esc>x", "\"a|b\"", "\"a|\""); // Esc cancels
+    try vim("ds\"u", "x \"a |b\" y", "x \"a |b\" y"); // one undo step
+}
+
+test "vim ctrl+a / ctrl+x, gA align, gq reflow" {
+    try vim("<c-a>", "|value = 41", "value = 4|2");
+    try vim("<c-x><c-x>", "|value = 41", "value = 3|9");
+    try vim("5<c-a>", "|x 9", "x 1|4");
+    try vim("10<c-x>", "|5", "-|5");
+    try vim("<c-a>", "|a-1", "a-|2"); // a minus glued to an identifier is not a sign
+    try vim("<c-a>", "|x -1", "x |0");
+    try vim("<c-a>", "|none", "|none");
+    try vim("<c-a>u", "|41", "|41");
+    try vim("gAip=", "|a = 1\nbb = 2\n\nc = 3", "|a  = 1\nbb = 2\n\nc = 3");
+    try vim("gAj=", "|a = 1\nbb = 2\nc = 3", "|a  = 1\nbb = 2\nc = 3");
+    try vim("VjgA=", "|a = 1\nbb = 2", "|a  = 1\nbb = 2");
+    try vim("vjgA=", "|a = 1\nbb = 2", "|a  = 1\nbb = 2");
+    try vim("gAip<esc>x", "|a = 1\nbb = 2", "| = 1\nbb = 2"); // Esc drops the range
+    try vim("gAip=", "|a = 1\nb = 2", "|a = 1\nb = 2"); // already aligned
+    const long = "word " ** 19 ++ "word";
+    try vim("gqq", "|" ++ long, "|" ++ "word " ** 15 ++ "word\n" ++ "word " ** 3 ++ "word");
+    try vim("gqip", "|" ++ long, "|" ++ "word " ** 15 ++ "word\n" ++ "word " ** 3 ++ "word");
+    try vim("gqj", "|a\nb\n\nc", "|a b\n\nc");
+    try vim("gqq", "|a b", "|a b");
+}
+
+test "vim comment toggle uses the buffer's token; a commentless buffer is a no-op" {
+    var h = try Harness.init(testing.allocator, .vim, "|a\n  b\nc");
+    defer h.deinit();
+    try h.feed("gcc");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    h.buf.editor.comment_token = "// ";
+    try h.feed("gcc");
+    try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("gcj");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("gcip");
+    try testing.expectEqualStrings("// a\n  // b\n// c", h.buf.editor.bytes());
+    try h.feed("j.");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes()); // `.` replays the whole-paragraph toggle
+    try h.feed("<c-/>"); // the paragraph toggle left the cursor on its first line
+    try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("u");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    try testing.expectEqualStrings("// ", commentTokenFor("zig")[0]);
+    try testing.expectEqualStrings(" -->", commentTokenFor("html")[1]);
+    try testing.expectEqualStrings("", commentTokenFor("txt")[0]);
+    try testing.expectEqualStrings("", commentTokenFor(null)[0]);
 }
 
 test "vim replace mode and cmdline" {
@@ -870,13 +1041,56 @@ test "buffer: unsupported ops are skipped and named; folds shift with edits" {
     var h = try Harness.init(testing.allocator, .vim, "|a\nb\nc\nd");
     defer h.deinit();
     try h.buf.folds.put(testing.allocator, 2, 3);
-    try h.feed("<c-a>");
-    try testing.expectEqualStrings("change_number_at_cursor", h.buf.last_unsupported.?);
+    try h.feed("diq");
+    try testing.expectEqualStrings("select_inner_smart_quote", h.buf.last_unsupported.?);
     try h.feed("O!<esc>");
     try testing.expectEqual(@as(usize, 3), h.buf.folds.keys()[0]);
     try testing.expectEqual(@as(usize, 4), h.buf.folds.values()[0]);
     try h.feed("dd");
     try testing.expectEqual(@as(usize, 2), h.buf.folds.keys()[0]);
+}
+
+test "buffer: save adds the trailing newline and parks the cursor after it (Rust parity: R then A<esc>R! appends)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(path);
+    const file = try std.fs.path.join(gpa, &.{ path, "data.txt" });
+    defer gpa.free(file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = "abcdef" });
+    var buf = try Buffer.load(gpa, io, file, .vim, .{});
+    defer buf.deinit();
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const feed = struct {
+        fn run(b: *Buffer, c: *Clipboard, a: Allocator, spec: []const u8) !void {
+            const keys = try parseKeys(testing.allocator, spec);
+            defer testing.allocator.free(keys);
+            for (keys) |k| _ = try b.feedKey(k, c, 10, null, a);
+        }
+    }.run;
+    try feed(&buf, &clip, arena.allocator(), "RXYZ<esc>");
+    try buf.save(io);
+    try testing.expectEqualStrings("XYZdef\n", buf.editor.bytes());
+    try testing.expectEqual(buf.editor.len(), buf.editor.cursor);
+    try testing.expect(!buf.dirty);
+    try feed(&buf, &clip, arena.allocator(), "A<esc>R!<esc>");
+    try buf.save(io);
+    const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
+    defer gpa.free(back);
+    try testing.expectEqualStrings("XYZdef!\n", back);
+    // Off, the buffer is written verbatim.
+    buf.ensure_trailing_newline = false;
+    try feed(&buf, &clip, arena.allocator(), "GA<del><esc>");
+    try buf.save(io);
+    try testing.expectEqualStrings("XYZdef!", buf.editor.bytes());
+    const verbatim = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
+    defer gpa.free(verbatim);
+    try testing.expectEqualStrings("XYZdef!", verbatim);
 }
 
 test "buffer: load and save round-trip through the file system" {

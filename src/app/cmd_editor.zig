@@ -41,6 +41,15 @@ pub const table = .{
     .@"editor.move_line_up" = &moveLineUp,
     .@"editor.move_line_down" = &moveLineDown,
     .@"editor.toggle_line_comment" = &toggleLineComment,
+    .@"editor.reflow_paragraph" = &reflowParagraph,
+    .@"editor.section_next_start" = &sectionNextStart,
+    .@"editor.section_prev_start" = &sectionPrevStart,
+    .@"editor.section_next_end" = &sectionNextEnd,
+    .@"editor.section_prev_end" = &sectionPrevEnd,
+    .@"editor.method_next" = &methodNext,
+    .@"editor.method_prev" = &methodPrev,
+    .@"project.next_todo" = &nextTodo,
+    .@"project.prev_todo" = &prevTodo,
 };
 
 fn one(app: *App, op: EditOp) CommandError!void {
@@ -97,6 +106,82 @@ fn moveLineDown(app: *App) CommandError!void {
 }
 fn toggleLineComment(app: *App) CommandError!void {
     return one(app, .toggle_line_comment);
+}
+fn reflowParagraph(app: *App) CommandError!void {
+    return one(app, .{ .reflow_paragraph = .{ .width = app.cfg.text_width } });
+}
+
+// ─── `]]` `[[` `][` `[]` `]m` `[m` `]t` `[t` ──────────────────────────
+
+/// A section starts on a line whose first char is `{` or a top-level
+/// scope keyword at column 0.
+fn isSectionStart(line: []const u8) bool {
+    if (line.len == 0) return false;
+    if (line[0] == '{') return true;
+    const kws = [_][]const u8{ "fn ", "pub fn ", "class ", "struct ", "impl ", "trait ", "enum ", "def ", "function ", "async " };
+    for (kws) |kw| if (std.mem.startsWith(u8, line, kw)) return true;
+    return false;
+}
+
+/// A method starts on a line whose first non-blank opens a function,
+/// at any indent.
+fn isMethodStart(line: []const u8) bool {
+    const body = std.mem.trimStart(u8, line, " \t");
+    const kws = [_][]const u8{ "fn ", "pub fn ", "async fn ", "def ", "async def ", "function ", "async function ", "func ", "static fn " };
+    for (kws) |kw| if (std.mem.startsWith(u8, body, kw)) return true;
+    return false;
+}
+
+fn isTodoLine(line: []const u8) bool {
+    const marks = [_][]const u8{ "TODO", "FIXME", "HACK", "XXX" };
+    for (marks) |m| if (std.mem.indexOf(u8, line, m) != null) return true;
+    return false;
+}
+
+/// Walk from the cursor's line in `dir` to the first line `pred` accepts.
+/// `land_on_end` stops one line short of it (the end of the previous
+/// section). Toasts `none` when nothing matches.
+fn jumpToLine(app: *App, comptime pred: fn ([]const u8) bool, forward: bool, land_on_end: bool, none: []const u8) CommandError!void {
+    const e = try app.requireEditor();
+    const ed = &e.buf.editor;
+    const cur = ed.currentLine();
+    const total = ed.lineCount();
+    var row = cur;
+    while (if (forward) row + 1 < total else row > 0) {
+        row = if (forward) row + 1 else row - 1;
+        if (!pred(ed.lineSlice(row))) continue;
+        const target = if (!land_on_end) row else if (forward) row -| 1 else @min(row + 1, total - 1);
+        ed.placeCursor(target, 0);
+        ed.cursor = ed.firstNonWs(target);
+        app.needs_render = true;
+        return;
+    }
+    app.toast("{s}", .{none});
+}
+
+fn sectionNextStart(app: *App) CommandError!void {
+    return jumpToLine(app, isSectionStart, true, false, "]] — no section forward");
+}
+fn sectionPrevStart(app: *App) CommandError!void {
+    return jumpToLine(app, isSectionStart, false, false, "[[ — no section back");
+}
+fn sectionNextEnd(app: *App) CommandError!void {
+    return jumpToLine(app, isSectionStart, true, true, "][ — no section forward");
+}
+fn sectionPrevEnd(app: *App) CommandError!void {
+    return jumpToLine(app, isSectionStart, false, true, "[] — no section back");
+}
+fn methodNext(app: *App) CommandError!void {
+    return jumpToLine(app, isMethodStart, true, false, "]m — no method forward");
+}
+fn methodPrev(app: *App) CommandError!void {
+    return jumpToLine(app, isMethodStart, false, false, "[m — no method back");
+}
+fn nextTodo(app: *App) CommandError!void {
+    return jumpToLine(app, isTodoLine, true, false, "]t — no TODO forward");
+}
+fn prevTodo(app: *App) CommandError!void {
+    return jumpToLine(app, isTodoLine, false, false, "[t — no TODO back");
 }
 
 fn useVim(app: *App) CommandError!void {
@@ -412,6 +497,36 @@ test "change list: g; walks back through edits, g, forward, with the toasts the 
     try t.expectEqualStrings("g, → 6:2", app.lastToast().?);
     try command.run(&app, .{ .static = .@"editor.jump_next_edit" });
     try t.expectEqualStrings("at newest edit", app.lastToast().?);
+}
+
+test "section, method and TODO jumps walk the file both ways and toast at the ends" {
+    var app = try appWith("use x;\n\nfn a() {\n    fn inner() {}\n    // TODO one\n}\n\nstruct B;\n    def m():\n        pass\n");
+    defer app.deinit();
+    const e = app.activeEditor().?;
+    try command.run(&app, .{ .static = .@"editor.section_next_start" });
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"editor.section_next_start" });
+    try t.expectEqual(@as(usize, 7), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"editor.section_next_start" });
+    try t.expectEqualStrings("]] — no section forward", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.section_prev_end" });
+    try t.expectEqual(@as(usize, 3), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"editor.section_prev_start" });
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"editor.method_next" });
+    try t.expectEqual(@as(usize, 3), e.buf.editor.currentLine());
+    try t.expectEqual(@as(usize, 4), e.buf.editor.colAtByte(e.buf.editor.cursor));
+    try command.run(&app, .{ .static = .@"editor.method_next" });
+    try t.expectEqual(@as(usize, 8), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"editor.method_prev" });
+    try command.run(&app, .{ .static = .@"editor.method_prev" });
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"project.next_todo" });
+    try t.expectEqual(@as(usize, 4), e.buf.editor.currentLine());
+    try command.run(&app, .{ .static = .@"project.next_todo" });
+    try t.expectEqualStrings("]t — no TODO forward", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"project.prev_todo" });
+    try t.expectEqualStrings("[t — no TODO back", app.lastToast().?);
 }
 
 test "goto_line opens the prompt titled exactly `Go to line`" {

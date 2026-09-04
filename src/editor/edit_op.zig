@@ -70,7 +70,8 @@ pub const EditOp = union(enum) {
     select_around_quote: u21,
     select_inner_smart_quote,
     select_around_smart_quote,
-    surround_selection: struct { open: u21, close: u21 },
+    /// `pad`: a space inside each delimiter (vim-surround's opener form).
+    surround_selection: struct { open: u21, close: u21, pad: bool = false },
     delete_surround: u21,
     change_surround: struct { from: u21, to: u21 },
     select_inner_bracket: u21,

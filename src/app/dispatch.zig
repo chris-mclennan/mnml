@@ -125,8 +125,9 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
             },
         }
     }
-    // The editor cannot hold a block anchor yet; remember where the
-    // visual block started so `I` / `A` / `c` know their rectangle.
+    // The pane mirrors the editor's block anchor for the `I` / `A` / `c`
+    // / `r` app commands, which arrive after the handler has already
+    // left V-BLOCK.
     const after_mode = e.buf.input.mode();
     if (after_mode == .visual_block and before_mode != .visual_block) e.block_anchor = e.buf.editor.cursor;
     if (after_mode != .visual_block) e.block_anchor = null;
@@ -671,8 +672,8 @@ pub fn runExLine(app: *App, line: []const u8) Allocator.Error!void {
 // ── visual block ──
 
 fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1: usize } {
-    const anchor = e.block_anchor orelse return null;
     const ed = &e.buf.editor;
+    const anchor = ed.block_anchor orelse e.block_anchor orelse return null;
     const a = ed.rowColAt(anchor);
     const b = ed.rowCol();
     return .{ .r0 = @min(a.row, b.row), .r1 = @max(a.row, b.row), .c0 = @min(a.col, b.col), .c1 = @max(a.col, b.col) };
@@ -682,12 +683,14 @@ fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1
 /// the cursor on the first row at the insert column, enter Insert, and
 /// remember the rectangle so the typed run is replayed on Esc.
 fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, change: bool) Allocator.Error!void {
+    const ed = &e.buf.editor;
     const rect = blockRect(e) orelse {
+        ed.block_anchor = null;
         e.buf.input.requestInsertMode();
         return;
     };
     e.block_anchor = null;
-    const ed = &e.buf.editor;
+    ed.block_anchor = null;
     var col = if (append) rect.c1 + 1 else rect.c0;
     if (change) {
         // Delete the rectangle bottom-up so earlier offsets stay valid.
@@ -711,9 +714,11 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
 
 /// `r<ch>` on a visual block: every cell in the rectangle becomes `ch`.
 fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
+    const ed = &e.buf.editor;
     const rect = blockRect(e) orelse return;
     e.block_anchor = null;
-    const ed = &e.buf.editor;
+    ed.block_anchor = null;
+    ed.anchor = null;
     var glyph: [4]u8 = undefined;
     const n = std.unicode.utf8Encode(ch, &glyph) catch return;
     try ed.checkpoint();

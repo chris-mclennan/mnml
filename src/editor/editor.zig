@@ -86,6 +86,10 @@ pub const Editor = struct {
     replace_stack: std.ArrayList(?u21) = .empty,
     /// AI ghost text painted after the cursor. Owned.
     ghost_suggestion: ?[]u8 = null,
+    /// The language's line-comment token (`// `) and, for block styles
+    /// (`<!-- ` … ` -->`), its closer. Static; empty = commentless file.
+    comment_token: []const u8 = "",
+    comment_token_close: []const u8 = "",
     /// `:changes` — where each mutation left the cursor, newest last.
     change_list: std.ArrayList(Pos) = .empty,
     history: undo.History,
@@ -296,8 +300,9 @@ pub const Editor = struct {
         return b;
     }
 
-    /// Char column of `b` within its line.
-    pub fn colAtByte(self: *const Editor, b: usize) usize {
+    /// Char column of `b` within its line (`b` is clamped to the text).
+    pub fn colAtByte(self: *const Editor, b_in: usize) usize {
+        const b = @min(b_in, self.text.items.len);
         const line = self.lineOfByte(b);
         var i = self.lineStart(line);
         var c: usize = 0;
@@ -448,6 +453,23 @@ pub const Editor = struct {
         return self.history.undoLen() > 0;
     }
 
+    /// An op that did not fan out (a page motion, `dd`, undo) can leave
+    /// an extra off a boundary or on the primary; keep both invariants.
+    fn normalizeExtras(self: *Editor) void {
+        var i: usize = 0;
+        while (i < self.extra_cursors.items.len) {
+            const c = self.snapBoundary(self.extra_cursors.items[i]);
+            if (c == self.cursor) {
+                _ = self.extra_cursors.orderedRemove(i);
+                _ = self.extra_anchors.orderedRemove(i);
+                continue;
+            }
+            self.extra_cursors.items[i] = c;
+            if (self.extra_anchors.items[i]) |a| self.extra_anchors.items[i] = self.snapBoundary(a);
+            i += 1;
+        }
+    }
+
     fn recordChange(self: *Editor) Allocator.Error!void {
         const pos = self.rowCol();
         if (self.change_list.items.len > 0) {
@@ -486,7 +508,9 @@ pub const Editor = struct {
         // it past the end or mid-char; keep the selection invariant too.
         if (out.buffer_changed) {
             if (self.anchor) |a| self.anchor = self.snapBoundary(a);
+            if (self.block_anchor) |a| self.block_anchor = self.snapBoundary(a);
         }
+        if (self.extra_cursors.items.len != 0) self.normalizeExtras();
         if (out.buffer_changed and !is_undo_redo) try self.recordChange();
         if (!keep_goal) self.goal_col = null;
 
@@ -587,6 +611,21 @@ test "boundaries, columns and rows on multibyte text" {
     try std.testing.expectEqual(@as(usize, 14), ed.byteAtCol(1, 99));
     ed.setCursor(2);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
+}
+
+test "colAtByte past EOF terminates; a stale block anchor is snapped after a shrink" {
+    var ed = try Editor.init(std.testing.allocator, "ab\ncd");
+    defer ed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), ed.colAtByte(99));
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    ed.cursor = 4;
+    _ = try ed.apply(.block_select_start, 10, &clip, arena_state.allocator());
+    ed.cursor = 0;
+    _ = try ed.apply(.{ .replace_range = .{ .start = 1, .end = 5, .text = "" } }, 10, &clip, arena_state.allocator());
+    try std.testing.expectEqual(@as(?usize, 1), ed.block_anchor);
 }
 
 test "inferSingleEdit covers insert, backspace, forward delete" {

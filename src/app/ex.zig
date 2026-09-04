@@ -812,7 +812,7 @@ test "ex: write, abbreviations, set, registers, unknown verbs" {
     try f.ex("w");
     const back = try f.tmp.dir.readFileAlloc(testing.io, "doc.txt", testing.allocator, .limited(64));
     defer testing.allocator.free(back);
-    try testing.expectEqualStrings("changed", back);
+    try testing.expectEqualStrings("changed\n", back); // `:w` adds the terminating newline
     try f.ex("w copy.txt");
     try testing.expectEqualStrings("copy.txt", f.app.panes.get(f.app.active.?).?.title());
     _ = try f.tmp.dir.statFile(testing.io, "copy.txt", .{});
