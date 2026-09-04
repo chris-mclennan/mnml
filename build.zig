@@ -117,7 +117,13 @@ pub fn build(b: *std.Build) void {
     // src/tui through its barrel: the input worker's key naming and parser
     // tests, and term.zig's capability detection. libc for the same reason
     // as the main executable (Io.Threaded cancelation of blocked reads).
-    const tui_tests = b.addTest(.{
+    // The pty module and the terminal session are POSIX (openpty / fork /
+    // poll / termios / a SIGWINCH self-pipe) until ConPTY lands in Phase 8,
+    // so their tests and demos are only part of the graph on non-Windows
+    // targets; the exe still links both modules everywhere and gates the
+    // interactive loop at runtime.
+    const pty_supported = target.result.os.tag != .windows;
+    const tui_tests: ?*std.Build.Step.Compile = if (pty_supported) b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tui/tui.zig"),
             .target = target,
@@ -127,13 +133,8 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "vaxis", .module = vaxis_mod },
             },
         }),
-    });
-    test_step.dependOn(&b.addRunArtifact(tui_tests).step);
-
-    // The pty module is POSIX (openpty / fork / poll) until ConPTY lands
-    // in Phase 8, so its tests and demo are only part of the graph on
-    // non-Windows targets; the exe still links the module everywhere.
-    const pty_supported = target.result.os.tag != .windows;
+    }) else null;
+    if (tui_tests) |t| test_step.dependOn(&b.addRunArtifact(t).step);
     const pty_tests: ?*std.Build.Step.Compile = if (pty_supported) b.addTest(.{ .root_module = pty_mod }) else null;
     if (pty_tests) |t| {
         const pty_test_run = b.addRunArtifact(t);
@@ -209,7 +210,7 @@ pub fn build(b: *std.Build) void {
     });
     const canvas_demo = b.addExecutable(.{ .name = "canvas-demo", .root_module = canvas_demo_mod });
     const canvas_demo_install = b.addInstallArtifact(canvas_demo, .{});
-    b.getInstallStep().dependOn(&canvas_demo_install.step);
+    if (pty_supported) b.getInstallStep().dependOn(&canvas_demo_install.step);
     const canvas_demo_run = b.addRunArtifact(canvas_demo);
     canvas_demo_run.step.dependOn(&canvas_demo_install.step);
     const canvas_demo_step = b.step("canvas-demo", "Run the canvas demo (Term + Canvas on the real terminal)");
