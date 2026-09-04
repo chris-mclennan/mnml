@@ -43,6 +43,17 @@ pub const Pos = struct {
     pub fn eql(a: Pos, b: Pos) bool {
         return a.seg == b.seg and a.off == b.off;
     }
+
+    /// The end of one segment and the start of the next are the same
+    /// place; fold the first spelling into the second so positions
+    /// produced by different walks compare equal.
+    pub fn canonical(p: Pos, segs: []const Segment) Pos {
+        var q = p;
+        while (q.seg < segs.len and q.off >= segs[q.seg].text.len) {
+            q = .{ .seg = q.seg + 1, .off = 0 };
+        }
+        return q;
+    }
 };
 
 pub const Glyph = struct {
@@ -346,7 +357,8 @@ fn paintLine(c: Canvas, x0: u16, y: u16, max_w: u16, line: Line, segs: []const S
     var s = Stream.init(segs, c.widthMethod(), line.start);
     var hskip = scroll_x;
     var col: u16 = 0;
-    while (!s.pos.eql(line.end)) {
+    const end = line.end.canonical(segs);
+    while (!s.pos.canonical(segs).eql(end)) {
         const g = s.next() orelse break;
         if (g.width == 0 or g.width > max_w) continue;
         if (hskip > 0) {
@@ -550,4 +562,17 @@ test "wide glyph that cannot fit at the row end never smears" {
     _ = draw(c, Rect.init(0, 0, 5, 1), &one("abcd漢"), .{});
     try testing.expectEqualStrings("│", f.screen.readCell(5, 0).?.char.grapheme);
     try testing.expectEqualStrings(" ", f.screen.readCell(4, 0).?.char.grapheme);
+}
+
+test "a newline at the start of the next segment ends the row" {
+    var f = try Fixture.init(10, 4);
+    defer f.deinit();
+    const segs = [_]Segment{ .{ .text = "ab" }, .{ .text = "\ncd" } };
+    const rows = draw(f.c(), Rect.init(0, 0, 10, 4), &segs, .{ .wrap = .word });
+    try testing.expectEqual(@as(u16, 2), rows);
+    try f.expectRows(&.{ "ab", "cd", "", "" });
+    var g = try Fixture.init(10, 4);
+    defer g.deinit();
+    _ = draw(g.c(), Rect.init(0, 0, 10, 4), &segs, .{ .wrap = .none });
+    try g.expectRows(&.{ "ab", "cd", "", "" });
 }
