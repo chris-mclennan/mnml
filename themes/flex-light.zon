@@ -1,0 +1,43 @@
+// flex-light — converted from mnml's themes/flex-light.toml by tools/theme_toml2zon.zig.
+// The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
+// note: base_16 lacks 14 slot(s) — onedark fills them at load
+.{
+    .name = "flex-light",
+    .kind = .light,
+    .base_30 = .{
+        .white = 0x2a2929,
+        .darker_black = 0xf7f4e9,
+        .black = 0xfffcf0,
+        .black2 = 0xf2efe4,
+        .one_bg = 0xebe8dd,
+        .one_bg2 = 0xd6d4ca,
+        .one_bg3 = 0xc7c5bb,
+        .grey = 0xb8b5ad,
+        .grey_fg = 0xadaba3,
+        .grey_fg2 = 0xa3a19a,
+        .light_grey = 0x94928b,
+        .red = 0xd14d41,
+        .baby_pink = 0xd574a6,
+        .pink = 0xce5d97,
+        .line = 0xd6d4ca,
+        .green = 0x879a39,
+        .vibrant_green = 0x66800b,
+        .nord_blue = 0x4385be,
+        .blue = 0x4385be,
+        .yellow = 0xd0a215,
+        .sun = 0xd2a721,
+        .purple = 0x8b7ec8,
+        .dark_purple = 0x8376bc,
+        .teal = 0x008080,
+        .orange = 0xda702c,
+        .cyan = 0x3aa99f,
+        .statusline_bg = 0xf7f4e9,
+        .lightbg = 0xebe8dd,
+        .pmenu_bg = 0x3aa99f,
+        .folder_bg = 0x6f6e69,
+    },
+    .base_16 = .{
+        .base06 = 0xb6bdca,
+        .base07 = 0xc8ccd4,
+    },
+}

@@ -1,0 +1,43 @@
+// flexoki — converted from mnml's themes/flexoki.toml by tools/theme_toml2zon.zig.
+// The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
+// note: base_16 lacks 14 slot(s) — onedark fills them at load
+.{
+    .name = "flexoki",
+    .kind = .dark,
+    .base_30 = .{
+        .white = 0xcecdc3,
+        .darker_black = 0x171616,
+        .black = 0x100f0f,
+        .black2 = 0x1c1b1b,
+        .one_bg = 0x292626,
+        .one_bg2 = 0x353232,
+        .one_bg3 = 0x373434,
+        .grey = 0x393636,
+        .grey_fg = 0x555050,
+        .grey_fg2 = 0x5f5959,
+        .light_grey = 0x6a6363,
+        .red = 0xd14d41,
+        .baby_pink = 0xd36da1,
+        .pink = 0xce5d97,
+        .line = 0x292626,
+        .green = 0x879a39,
+        .vibrant_green = 0x7e9f0e,
+        .nord_blue = 0x4385be,
+        .blue = 0x4385be,
+        .yellow = 0xd0a215,
+        .sun = 0xeabb2b,
+        .purple = 0x8b7ec8,
+        .dark_purple = 0x7f70c2,
+        .teal = 0x519aba,
+        .orange = 0xda702c,
+        .cyan = 0x3aa99f,
+        .statusline_bg = 0x171616,
+        .lightbg = 0x292626,
+        .pmenu_bg = 0x3aa99f,
+        .folder_bg = 0x4385be,
+    },
+    .base_16 = .{
+        .base06 = 0xb6bdca,
+        .base07 = 0xc8ccd4,
+    },
+}

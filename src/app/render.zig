@@ -163,7 +163,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     };
     const focused = app.active == id and app.focus == .pane;
     if (e.hl_dirty) {
-        try e.syntax.refresh(e.buf.editor.bytes());
+        try e.syntax.refresh(e.buf.editor.bytes(), &app.theme);
         e.hl_dirty = false;
     }
     const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());

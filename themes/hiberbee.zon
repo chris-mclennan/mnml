@@ -1,0 +1,48 @@
+// hiberbee — converted from mnml's themes/hiberbee.toml by tools/theme_toml2zon.zig.
+// The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
+// note: base_16 lacks 13 slot(s) — onedark fills them at load
+// note: 1 extra key(s) kept under .extra
+.{
+    .name = "hiberbee",
+    .kind = .dark,
+    .base_30 = .{
+        .white = 0xfffefd,
+        .darker_black = 0x090908,
+        .black = 0x121110,
+        .black2 = 0x221f1e,
+        .one_bg = 0x2a2625,
+        .one_bg2 = 0x322d2c,
+        .one_bg3 = 0x3a3433,
+        .grey = 0x423b3a,
+        .grey_fg = 0x4a4241,
+        .grey_fg2 = 0x524948,
+        .light_grey = 0x5a504f,
+        .red = 0xee7762,
+        .baby_pink = 0xff2a7b,
+        .pink = 0xed005c,
+        .line = 0x322d2c,
+        .green = 0x92d923,
+        .vibrant_green = 0x98dd2e,
+        .nord_blue = 0x5ca5fa,
+        .blue = 0x409cff,
+        .yellow = 0xffb900,
+        .sun = 0xf5d277,
+        .purple = 0x9380ff,
+        .dark_purple = 0x9280ff,
+        .teal = 0x00b7c3,
+        .orange = 0xf59762,
+        .cyan = 0x7fdbca,
+        .statusline_bg = 0x221f1e,
+        .lightbg = 0x322d2c,
+        .pmenu_bg = 0xee7762,
+        .folder_bg = 0x7fdbca,
+    },
+    .base_16 = .{
+        .base05 = 0xbbbab9,
+        .base06 = 0xefeeed,
+        .base07 = 0xdfdedd,
+    },
+    .extra = .{
+        .{ .name = "turquoise", .hex = 0x0e9c9e },
+    },
+}

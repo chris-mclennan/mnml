@@ -1,0 +1,46 @@
+// poimandres — converted from mnml's themes/poimandres.toml by tools/theme_toml2zon.zig.
+// The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
+// note: base_16 lacks 16 slot(s) — onedark fills them at load
+// note: 2 extra key(s) kept under .extra
+.{
+    .name = "poimandres",
+    .kind = .dark,
+    .base_30 = .{
+        .white = 0xe4f0fb,
+        .darker_black = 0x171922,
+        .black = 0x1b1e28,
+        .black2 = 0x222633,
+        .one_bg = 0x2b3040,
+        .one_bg2 = 0x32384a,
+        .one_bg3 = 0x3b4258,
+        .grey = 0x48506a,
+        .grey_fg = 0x515977,
+        .grey_fg2 = 0x5d678a,
+        .light_grey = 0x657096,
+        .red = 0xd0679d,
+        .baby_pink = 0xfae4fc,
+        .pink = 0xfcc5e9,
+        .line = 0x303340,
+        .green = 0x5fb3a1,
+        .vibrant_green = 0x71bbab,
+        .nord_blue = 0x91b4d5,
+        .blue = 0x89ddff,
+        .yellow = 0xfffac2,
+        .sun = 0xfff691,
+        .purple = 0xa6accd,
+        .dark_purple = 0xb6d7f4,
+        .teal = 0x5de4c7,
+        .orange = 0x91b4d5,
+        .cyan = 0x92e0ff,
+        .statusline_bg = 0x222633,
+        .lightbg = 0x32384a,
+        .pmenu_bg = 0x5fb3a1,
+        .folder_bg = 0x91b4d5,
+    },
+    .base_16 = .{
+    },
+    .extra = .{
+        .{ .name = "ogwhite", .hex = 0xffffff },
+        .{ .name = "seablue", .hex = 0xadd7ff },
+    },
+}

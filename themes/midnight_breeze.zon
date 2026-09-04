@@ -1,0 +1,48 @@
+// midnight_breeze — converted from mnml's themes/midnight_breeze.toml by tools/theme_toml2zon.zig.
+// The palette as NvChad ships it; src/ui/theme.zig derives every UI role from it.
+// note: base_16 lacks 13 slot(s) — onedark fills them at load
+// note: 1 extra key(s) kept under .extra
+.{
+    .name = "midnight_breeze",
+    .kind = .dark,
+    .base_30 = .{
+        .white = 0xc9d1d9,
+        .darker_black = 0x070a0d,
+        .black = 0x0d1117,
+        .black2 = 0x121619,
+        .one_bg = 0x161b22,
+        .one_bg2 = 0x1b2128,
+        .one_bg3 = 0x21262d,
+        .grey = 0x313641,
+        .grey_fg = 0x434b59,
+        .grey_fg2 = 0x4f5969,
+        .light_grey = 0x8b949e,
+        .red = 0xfb6f6f,
+        .baby_pink = 0xffa3a0,
+        .pink = 0xffb3a8,
+        .line = 0x21262d,
+        .green = 0x56d364,
+        .vibrant_green = 0x57d27d,
+        .nord_blue = 0x58a6ff,
+        .blue = 0x58a6ff,
+        .yellow = 0xffdf5d,
+        .sun = 0xf0b000,
+        .purple = 0xbc8cff,
+        .dark_purple = 0xa259ff,
+        .teal = 0x39c5cf,
+        .orange = 0xffab70,
+        .cyan = 0x39c5cf,
+        .statusline_bg = 0x161b22,
+        .lightbg = 0x212831,
+        .pmenu_bg = 0x58a6ff,
+        .folder_bg = 0x6e7681,
+    },
+    .base_16 = .{
+        .base06 = 0xd3dbe3,
+        .base07 = 0xdde5ed,
+        .base0F = 0x85e89d,
+    },
+    .extra = .{
+        .{ .name = "seablue", .hex = 0x39c5cf },
+    },
+}

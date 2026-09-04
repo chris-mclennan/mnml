@@ -191,7 +191,7 @@ pub const AppDriver = struct {
         const app = &cast(p).app;
         const e = app.activeEditor() orelse return null;
         if (e.hl_dirty) {
-            e.syntax.refresh(e.buf.editor.bytes()) catch return null;
+            e.syntax.refresh(e.buf.editor.bytes(), &app.theme) catch return null;
             e.hl_dirty = false;
         }
         return e.syntax.spans.items.len;
