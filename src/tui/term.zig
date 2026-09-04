@@ -190,6 +190,9 @@ pub fn deinit(self: *Term) void {
     self.input.stop();
     self.freeQueued();
     self.vx.deinit(self.gpa, self.writer());
+    // The probe turns mode 2048 on blind; vaxis only turns it off if a
+    // report came back. Reset it regardless — a no-op where unsupported.
+    self.writeRaw(ctlseqs.in_band_resize_reset) catch {};
     self.restoreTermios();
     if (self.opened_dev_tty) closeTty(self.tty_in, self.io);
 }

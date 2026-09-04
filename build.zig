@@ -160,6 +160,26 @@ pub fn build(b: *std.Build) void {
     const demo_step = b.step("pty-demo", "Run the pty demo (a shell in a ghostty-vt Terminal)");
     demo_step.dependOn(&demo_run.step);
 
+    // ── canvas-demo ──
+    // The terminal layer end to end: Term + input worker + Canvas
+    // primitives on a real tty. `zig build canvas-demo` runs it.
+    const canvas_demo_mod = b.createModule(.{
+        .root_source_file = b.path("src/canvas_demo.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "vaxis", .module = vaxis_mod },
+        },
+    });
+    const canvas_demo = b.addExecutable(.{ .name = "canvas-demo", .root_module = canvas_demo_mod });
+    const canvas_demo_install = b.addInstallArtifact(canvas_demo, .{});
+    b.getInstallStep().dependOn(&canvas_demo_install.step);
+    const canvas_demo_run = b.addRunArtifact(canvas_demo);
+    canvas_demo_run.step.dependOn(&canvas_demo_install.step);
+    const canvas_demo_step = b.step("canvas-demo", "Run the canvas demo (Term + Canvas on the real terminal)");
+    canvas_demo_step.dependOn(&canvas_demo_run.step);
+
     const pty_step = b.step("pty", "Build the pty module, its tests and the demo without running");
     pty_step.dependOn(&pty_tests.step);
     pty_step.dependOn(&demo_install.step);
