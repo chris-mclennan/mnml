@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 ids, titles, palette groups
+//! Every command mnml-zig knows about — 797 Rust ids plus 3 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -449,6 +449,12 @@ pub const specs = [_]Spec{
     .{ .id = "notes.refresh", .title = "Notes: rescan .mnml/notes/", .group = "notes" },
     .{ .id = "sessions.refresh", .title = "Sessions: re-read session transcripts + ports", .group = "sessions" },
     .{ .id = "todos.sort", .title = "TODOs: cycle sort order", .group = "todos" },
+    // Zig-only (not in Rust mnml's 797): the kebab menu rows act on the
+    // selected marker through commands, so a `MenuAction{ .command }`
+    // can name them.
+    .{ .id = "todos.open", .title = "TODOs: open the selected marker at its line", .group = "todos" },
+    .{ .id = "todos.copy_path", .title = "TODOs: copy the selected marker's path:line", .group = "todos" },
+    .{ .id = "todos.ignore_file", .title = "TODOs: hide the selected marker's file this session", .group = "todos" },
     .{ .id = "notes.sort", .title = "Notes: cycle sort order", .group = "notes" },
     .{ .id = "findings.sort", .title = "Findings: cycle sort order", .group = "findings" },
     .{ .id = "sessions.sort_auto", .title = "Sessions: sort by state (approval → running → rest)", .group = "sessions" },
@@ -839,7 +845,8 @@ pub const specs = [_]Spec{
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
 };
 
-test "797 specs, unique ids" {
-    try std.testing.expectEqual(@as(usize, 797), specs.len);
+test "800 specs, unique ids" {
+    // 797 Rust ids + the three Zig-only `todos.*` menu commands.
+    try std.testing.expectEqual(@as(usize, 800), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

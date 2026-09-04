@@ -30,6 +30,10 @@ pub const table = .{
     .@"view.scroll_buffer_down" = &scrollDown,
     .@"view.scroll_buffer_up" = &scrollUp,
     .@"view.redraw" = &redraw,
+    .@"view.toggle_right_panel" = &toggleRightPanel,
+    .@"view.focus_right_panel" = &focusRightPanel,
+    .@"view.right_panel_close_tab" = &closeRightPanel,
+    .@"view.activity_todos" = &activityTodos,
     .@"tab.new" = &tabNew,
     .@"tab.next" = &tabNext,
     .@"tab.prev" = &tabPrev,
@@ -60,6 +64,40 @@ fn toggleLineNumbers(app: *App) CommandError!void {
 
 fn redraw(app: *App) CommandError!void {
     app.needs_render = true;
+}
+
+// ─── the right panel ────────────────────────────────────────────────────
+// One slot, one panel at a time (`App.right_panel`). `activity_<x>`
+// shows and focuses a panel; toggle hides it or brings TODOS back (the
+// only panel in this build — a "last shown" slot comes with the next).
+
+fn showRightPanel(app: *App, which: app_mod.PanelId) void {
+    app.right_panel = which;
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .{ .panel = which };
+    app.needs_render = true;
+}
+
+fn hideRightPanel(app: *App) void {
+    app.right_panel = null;
+    if (app.focus == .panel) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+    app.needs_render = true;
+}
+
+fn toggleRightPanel(app: *App) CommandError!void {
+    if (app.right_panel != null) hideRightPanel(app) else showRightPanel(app, .todos);
+}
+
+fn focusRightPanel(app: *App) CommandError!void {
+    showRightPanel(app, app.right_panel orelse .todos);
+}
+
+fn closeRightPanel(app: *App) CommandError!void {
+    hideRightPanel(app);
+}
+
+fn activityTodos(app: *App) CommandError!void {
+    showRightPanel(app, .todos);
 }
 
 // ─── splits ─────────────────────────────────────────────────────────────
