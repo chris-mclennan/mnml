@@ -1309,3 +1309,216 @@ test "watches: add via the prompt, the debug pane lists them, the picker removes
     try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"dap.exceptions" }));
     try testing.expectEqualStrings("dap: adapter advertised no exception filters", app.lastToast().?);
 }
+
+// ─── a scripted adapter, in process ─────────────────────────────────────
+
+/// What the fake saw on the wire, for the assertions.
+const FakeLog = struct {
+    lock: std.Io.Mutex = .init,
+    bp_lines: [8]u32 = undefined,
+    bp_count: usize = 0,
+    filters_count: usize = 0,
+    launched: bool = false,
+    configured: bool = false,
+    set_variable: bool = false,
+
+    fn note(self: *FakeLog, comptime field: []const u8, value: anytype) void {
+        self.lock.lockUncancelable(testing.io);
+        defer self.lock.unlock(testing.io);
+        @field(self, field) = value;
+    }
+};
+
+fn fakeReply(io: std.Io, gpa: Allocator, out: std.Io.File, seq: *i64, request_seq: i64, cmd: []const u8, body: []const u8) void {
+    seq.* += 1;
+    const text = std.fmt.allocPrint(gpa, "{{\"seq\":{d},\"type\":\"response\",\"request_seq\":{d},\"command\":\"{s}\",\"success\":true,\"body\":{s}}}", .{ seq.*, request_seq, cmd, body }) catch return;
+    defer gpa.free(text);
+    jsonrpc.writeFrame(io, out, text) catch {};
+}
+
+fn fakeEvent(io: std.Io, gpa: Allocator, out: std.Io.File, seq: *i64, name: []const u8, body: []const u8) void {
+    seq.* += 1;
+    const text = std.fmt.allocPrint(gpa, "{{\"seq\":{d},\"type\":\"event\",\"event\":\"{s}\",\"body\":{s}}}", .{ seq.*, name, body }) catch return;
+    defer gpa.free(text);
+    jsonrpc.writeFrame(io, out, text) catch {};
+}
+
+/// A debugpy-shaped adapter: stops on `launch` at line 3 of the file,
+/// steps to line 4 on `next`, answers the inspection requests with
+/// one scope / one variable, echoes evaluations as `<expr> = 42`.
+fn fakeAdapter(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File, log: *FakeLog, file: []const u8) std.Io.Cancelable!void {
+    var buf: [8192]u8 = undefined;
+    var fr = in.readerStreaming(io, &buf);
+    var seq: i64 = 1000;
+    var line: u32 = 3;
+    while (true) {
+        const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
+        defer gpa.free(body);
+        var parsed = std.json.parseFromSlice(jsonrpc.Value, gpa, body, .{}) catch return;
+        defer parsed.deinit();
+        const v = parsed.value;
+        const cmd = jsonrpc.getStr(v, "command") orelse continue;
+        const rseq = jsonrpc.getInt(v, "seq") orelse 0;
+        const args = jsonrpc.getField(v, "arguments") orelse jsonrpc.Value.null;
+        if (std.mem.eql(u8, cmd, "initialize")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"exceptionBreakpointFilters\":[{\"filter\":\"uncaught\",\"label\":\"Uncaught Exceptions\",\"default\":true},{\"filter\":\"raised\",\"label\":\"Raised Exceptions\",\"default\":false}]}");
+            fakeEvent(io, gpa, out, &seq, "initialized", "{}");
+        } else if (std.mem.eql(u8, cmd, "setBreakpoints")) {
+            const lines: []const jsonrpc.Value = jsonrpc.getArr(args, "lines") orelse &.{};
+            log.lock.lockUncancelable(io);
+            log.bp_count = @min(lines.len, log.bp_lines.len);
+            for (lines[0..log.bp_count], 0..) |l, i| log.bp_lines[i] = @intCast(jsonrpc.asInt(l) orelse 0);
+            log.lock.unlock(io);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"breakpoints\":[{\"verified\":true}]}");
+        } else if (std.mem.eql(u8, cmd, "setExceptionBreakpoints")) {
+            const filters: []const jsonrpc.Value = jsonrpc.getArr(args, "filters") orelse &.{};
+            log.note("filters_count", filters.len);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+        } else if (std.mem.eql(u8, cmd, "launch")) {
+            log.note("launched", true);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+        } else if (std.mem.eql(u8, cmd, "configurationDone")) {
+            log.note("configured", true);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            fakeEvent(io, gpa, out, &seq, "output", "{\"category\":\"stdout\",\"output\":\"hello\\n\"}");
+            fakeEvent(io, gpa, out, &seq, "stopped", "{\"reason\":\"breakpoint\",\"threadId\":1}");
+        } else if (std.mem.eql(u8, cmd, "threads")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"threads\":[{\"id\":1,\"name\":\"MainThread\"}]}");
+        } else if (std.mem.eql(u8, cmd, "stackTrace")) {
+            const b = std.fmt.allocPrint(gpa, "{{\"stackFrames\":[{{\"id\":100,\"name\":\"main\",\"line\":{d},\"column\":1,\"source\":{{\"path\":\"{s}\"}}}}]}}", .{ line, file }) catch return;
+            defer gpa.free(b);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, b);
+        } else if (std.mem.eql(u8, cmd, "scopes")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"scopes\":[{\"name\":\"Locals\",\"variablesReference\":10,\"expensive\":false}]}");
+        } else if (std.mem.eql(u8, cmd, "variables")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"variables\":[{\"name\":\"a\",\"value\":\"1\",\"type\":\"int\",\"variablesReference\":0}]}");
+        } else if (std.mem.eql(u8, cmd, "evaluate")) {
+            const expr = jsonrpc.getStr(args, "expression") orelse "";
+            const b = std.fmt.allocPrint(gpa, "{{\"result\":\"{s} = 42\",\"type\":\"int\",\"variablesReference\":0}}", .{expr}) catch return;
+            defer gpa.free(b);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, b);
+        } else if (std.mem.eql(u8, cmd, "setVariable")) {
+            log.note("set_variable", true);
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{\"value\":\"7\"}");
+        } else if (std.mem.eql(u8, cmd, "next")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            fakeEvent(io, gpa, out, &seq, "continued", "{\"threadId\":1}");
+            line += 1;
+            fakeEvent(io, gpa, out, &seq, "stopped", "{\"reason\":\"step\",\"threadId\":1}");
+        } else if (std.mem.eql(u8, cmd, "disconnect") or std.mem.eql(u8, cmd, "terminate")) {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+            if (std.mem.eql(u8, cmd, "disconnect")) return;
+        } else {
+            fakeReply(io, gpa, out, &seq, rseq, cmd, "{}");
+        }
+    }
+}
+
+/// Tick the app until `cond` holds or the budget runs out.
+fn pumpUntil(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, budget_ms: u32) !void {
+    var spent: u32 = 0;
+    while (!cond(ctx)) : (spent += 10) {
+        if (spent > budget_ms) return error.Timeout;
+        try testing.io.sleep(.fromMilliseconds(10), .awake);
+        try app.tick(App.nowMs(app.io));
+    }
+}
+
+test "a scripted adapter: the handshake, a stop with frames/scopes/variables/watches, the REPL, setVariable, a step" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const file = "/tmp/mnml-zig-fake-dap.py";
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath(file);
+    try e.buf.editor.setText("import x\n\nx = 1\ny = 2\nprint(x)\n");
+    e.buf.editor.placeCursor(2, 0);
+    try command.run(&app, .{ .static = .@"dap.toggle_breakpoint" });
+    try addWatch(&app, "a");
+
+    const c2s = try std.Io.Threaded.pipe2(.{});
+    const s2c = try std.Io.Threaded.pipe2(.{});
+    const F = std.Io.File;
+    const flags: F.Flags = .{ .nonblocking = false };
+    var log: FakeLog = .{};
+    var group: std.Io.Group = .init;
+    try group.concurrent(io, fakeAdapter, .{ io, gpa, F{ .handle = c2s[0], .flags = flags }, F{ .handle = s2c[1], .flags = flags }, &log, file });
+    const s = try Session.initFiles(gpa, io, &app.events, app.dap.next_session, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, "{\"program\":\"x\"}");
+    app.dap.next_session += 1;
+    app.dap.session = s;
+    try s.initialize();
+
+    // The stop: frames, scope, its variables, the watch, the ▶ mark.
+    const Cond = struct {
+        fn stopped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.stopped != null and ss.variables.contains(10) and ss.watch_results.contains("a") and ss.threads.len > 0;
+        }
+        fn replied(a: *App) bool {
+            const id = a.panes.findKind(.dap_repl) orelse return false;
+            const p = &a.panes.get(id).?.dap_repl;
+            return p.history.items.len > 0 and !p.history.items[0].pending;
+        }
+        fn stepped(a: *App) bool {
+            const ss = a.dap.session orelse return false;
+            return ss.frames.len > 0 and ss.frames[0].line == 4 and ss.variables.contains(10);
+        }
+        fn setVar(a: *App) bool {
+            return a.lastToast() != null and std.mem.startsWith(u8, a.lastToast().?, "set = 7");
+        }
+    };
+    try pumpUntil(&app, &app, Cond.stopped, 5000);
+    try testing.expect(s.initialized);
+    try testing.expect(log.launched and log.configured);
+    try testing.expectEqual(@as(usize, 1), log.bp_count);
+    try testing.expectEqual(@as(u32, 3), log.bp_lines[0]);
+    try testing.expectEqual(@as(usize, 1), log.filters_count); // the default-on filter
+    try testing.expect(s.enabled_filters.contains("uncaught"));
+    try testing.expectEqual(@as(usize, 2), s.filters.items.len);
+    try testing.expectEqualStrings("breakpoint", s.stopped.?.reason);
+    try testing.expectEqualStrings("main", s.frames[0].name);
+    try testing.expectEqualStrings("MainThread", s.threads[0].name);
+    try testing.expectEqual(@as(u32, 2), app.dap.arrow.?.line);
+    try testing.expectEqualStrings(file, app.dap.arrow.?.path);
+    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try testing.expectEqualStrings("a = 42", s.watch_results.get("a").?.value);
+    try testing.expectEqualStrings("hello", s.output.items[0].text);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const rows = try s.variableRows(arena.allocator());
+    try testing.expectEqual(@as(usize, 2), rows.len);
+    try testing.expectEqualStrings("a: int", rows[1].label);
+    const marks = try marksFor(&app, arena.allocator(), file, &app.theme, false);
+    try testing.expectEqualStrings("▶", marks[0].glyph);
+
+    // The REPL evaluates against the stop.
+    try command.run(&app, .{ .static = .@"dap.repl" });
+    for ("a + 1") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try pumpUntil(&app, &app, Cond.replied, 5000);
+    const repl = &app.panes.get(app.panes.findKind(.dap_repl).?).?.dap_repl;
+    try testing.expectEqualStrings("a + 1 = 42", repl.history.items[0].value);
+    try testing.expectEqualStrings("int", repl.history.items[0].ty.?);
+
+    // setVariable round-trips and re-fetches the parent.
+    try acceptSetVariable(&app, 10, "a", "7");
+    try pumpUntil(&app, &app, Cond.setVar, 5000);
+    try testing.expect(log.set_variable);
+
+    // A step: continued clears the cache, the next stop refills it one line down.
+    try command.run(&app, .{ .static = .@"dap.next" });
+    try pumpUntil(&app, &app, Cond.stepped, 5000);
+    try testing.expectEqualStrings("step", s.stopped.?.reason);
+    try testing.expectEqual(@as(u32, 3), app.dap.arrow.?.line);
+
+    // Goodbye: terminate drops the session; the fake leaves on disconnect.
+    try command.run(&app, .{ .static = .@"dap.terminate" });
+    try testing.expect(app.dap.session == null);
+    try testing.expect(app.dap.arrow == null);
+    try group.await(io);
+    (F{ .handle = c2s[0], .flags = flags }).close(io);
+    (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
