@@ -268,10 +268,11 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         info.mode_label = if (p.exit == null) "TERM" else "EXITED";
         info.mode_kind = .edit;
         info.file = p.childTitle() orelse p.label;
-        if (app.cursor_pos) |c| {
+        // The grid was refreshed by drawBody; its cursor is pane-relative.
+        if (pty_pane.supported) if (p.grid.cursor()) |c| {
             info.line = c.y + 1;
             info.col = c.x + 1;
-        }
+        };
         info.total_lines = p.rows;
     };
     statusline.draw(ui, area, info);
