@@ -239,10 +239,20 @@ other than the cost.
 
 ## Not roadmap, but blocking
 
-**Issue #34 — 5 mouse/file-tree e2e tests failing on `main` since
-v0.2.17.** 193 `.test` scripts are worth much less when red is the
-normal state of the suite; a red baseline is how a real regression gets
-waved through. Fix or delete them, but do not leave them red.
+**~~Issue #34 — 5 mouse/file-tree e2e tests failing on `main`~~ —
+CLOSED 2026-09-03, and it was never true of `main`.** The report was
+filed against a clean checkout of tag `v0.2.17`; both fixes
+(`a8178bf4`, `f02215d4`) had landed on `main` the day before. The app
+was never broken — `a76e7de3` moved the `..` row into the header chip,
+shifting every tree row up by one, and the scripts kept clicking the
+old coordinates.
+
+The suite is green: 225/225, verified across three runs at HEAD.
+
+The point the entry was making still stands, so keep it: a red baseline
+is how a real regression gets waved through, and 225 `.test` scripts are
+worth much less if red is ever normal. It just is not the state today,
+and this file should not have said it was without checking.
 
 **Adoption — a decision, not a task.** 6 stars, 4 forks, 68 downloads on
 the latest release. Every item in TODO.md and most of this file improves
