@@ -28,6 +28,17 @@ test {
     _ = @import("core/panel.zig");
     _ = @import("core/hooks.zig");
     _ = @import("app.zig");
+    _ = @import("editor/edit_op.zig");
+    _ = @import("editor/clipboard.zig");
+    _ = @import("editor/editor.zig");
+    _ = @import("editor/undo.zig");
+    _ = @import("editor/motion.zig");
+    _ = @import("editor/insert.zig");
+    _ = @import("editor/delete.zig");
+    _ = @import("editor/select.zig");
+    _ = @import("editor/line.zig");
+    _ = @import("editor/register.zig");
+    _ = @import("editor/apply.zig");
 }
 
 test "version string is set" {
