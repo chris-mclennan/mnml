@@ -708,6 +708,11 @@ pub const App = struct {
             self.change_nav = null;
         }
         self.active = id;
+        // The focused pane is its leaf's shown tab.
+        if (id) |i| {
+            const layout = self.layouts.current();
+            if (layout.leafOf(i)) |lid| layout.leaf(lid).?.active = i;
+        }
         self.focus = if (id != null) .{ .pane = id.? } else .tree;
         self.needs_render = true;
         self.hooks.emit(self, .{ .pane_focus = .{ .pane = id } });

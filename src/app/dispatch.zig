@@ -1026,7 +1026,13 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         .right_divider => if (m.kind == .drag) {
             app.right_panel_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
-        .select => |sel| extendSelection(app, sel, m.x, m.y),
+        .select => |sel| {
+            extendSelection(app, sel, m.x, m.y);
+            // A press-and-release on one cell is a click: no selection.
+            if (m.kind == .release) if (app.panes.editor(sel.pane)) |e| {
+                if (e.buf.editor.anchor != null and e.buf.editor.anchor.? == e.buf.editor.cursor) e.buf.editor.anchor = null;
+            };
+        },
         .scrollbar => |sb| dragScrollbar(app, sb.pane, sb.grab, m.y),
         .tab => |*tb| {
             if (m.kind == .drag) {
@@ -1644,4 +1650,162 @@ test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring o
     try std.testing.expectEqualStrings("s", app.overlay.which_key.slice());
     try key(&app, Key.named(.esc));
     try std.testing.expect(app.overlay == .none);
+}
+
+fn press(app: *App, x: u16, y: u16, button: key_mod.MouseButton) !void {
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = button } });
+}
+
+fn release(app: *App, x: u16, y: u16) !void {
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .release, .button = .left } });
+}
+
+fn dragTo(app: *App, x: u16, y: u16) !void {
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .drag, .button = .left } });
+}
+
+test "stale rects: a click after a layout change routes against a fresh frame, not the last one" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("alpha\nbeta\ngamma\ndelta");
+    try app.render();
+    // Row 5 is the fourth text line while there is one leaf.
+    try std.testing.expectEqual(@as(u32, 3), app.hits.at(6, 5).?.editor_cell.line);
+    // Split down WITHOUT rendering: the old hit map still says line 3.
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const b = app.active.?;
+    app.setActive(a);
+    try std.testing.expectEqual(@as(u32, 3), app.hits.at(6, 5).?.editor_cell.line);
+    // The click is routed against the new frame: row 5 is still the top
+    // pane's fourth line (the split is below), and a press on the lower
+    // pane's body focuses it — a stale map would have called it `a`.
+    try press(&app, 6, 5, .left);
+    try release(&app, 6, 5);
+    try std.testing.expectEqual(a, app.active.?);
+    try std.testing.expectEqual(@as(usize, 3), app.activeEditor().?.buf.editor.currentLine());
+    try press(&app, 6, 30, .left);
+    try release(&app, 6, 30);
+    try std.testing.expectEqual(b, app.active.?);
+}
+
+test "wheel: a burst folds into one batch per tick; standard pins the view, vim moves the cursor" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (0..100) |i| try text.print(std.testing.allocator, "L{d}\n", .{i});
+    try app.activeEditor().?.buf.editor.setText(text.items);
+    try app.render();
+    // Thirty wheel events at one cell: nothing moves until the tick.
+    for (0..30) |_| try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+    try std.testing.expectEqual(@as(u32, 0), app.activeEditor().?.view.scroll_line);
+    try std.testing.expectEqual(@as(u16, 30), app.wheel.pending.?.count);
+    try app.tick(app.now_ms);
+    // 30 × 3 lines, clamped to the last line; the cursor stayed at 0 and the
+    // view is pinned there through a render.
+    try std.testing.expectEqual(@as(u32, 90), app.activeEditor().?.view.scroll_line);
+    try std.testing.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
+    try app.render();
+    try std.testing.expect(app.activeEditor().?.view.scroll_line >= 80);
+    // A cursor motion releases the pin: the view comes back to the cursor.
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.render();
+    try std.testing.expectEqual(@as(u32, 1), app.activeEditor().?.view.scroll_line);
+    // A click between wheel events flushes the batch first, in order.
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+    try press(&app, 10, 3, .left);
+    try std.testing.expect(app.wheel.pending == null);
+    try std.testing.expectEqual(@as(u32, 4), app.activeEditor().?.view.scroll_line);
+    // vim: the cursor follows.
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 5, .kind = .scroll_down } });
+    try app.tick(app.now_ms);
+    try std.testing.expectEqual(@as(usize, 8), app.activeEditor().?.buf.editor.currentLine());
+}
+
+test "editor clicks: one places the cursor, two select the word, three the line; shift extends; drag selects" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("alpha beta gamma\nsecond line here");
+    try app.render();
+    // 80 wide: palette bar, strip, then the text from row 2. The gutter
+    // is 5 cells, so column 12 is `beta`'s `e` (byte 7).
+    try press(&app, 12, 2, .left);
+    try release(&app, 12, 2);
+    try std.testing.expectEqual(@as(usize, 7), e.buf.editor.cursor);
+    try std.testing.expect(e.buf.editor.anchor == null);
+    try press(&app, 12, 2, .left);
+    try release(&app, 12, 2);
+    try std.testing.expectEqualStrings("beta", e.buf.editor.selectedText());
+    try press(&app, 12, 2, .left);
+    try release(&app, 12, 2);
+    try std.testing.expectEqualStrings("alpha beta gamma\n", e.buf.editor.selectedText());
+    // Shift+click from a fresh cursor extends to the click.
+    try press(&app, 5, 2, .left);
+    try release(&app, 5, 2);
+    app.last_click = null;
+    try app.handle(.{ .mouse = .{ .x = 10, .y = 2, .kind = .press, .button = .left, .mods = .{ .shift = true } } });
+    try release(&app, 10, 2);
+    try std.testing.expectEqualStrings("alpha", e.buf.editor.selectedText());
+    // Drag from `beta` down to the second line.
+    app.last_click = null;
+    try press(&app, 11, 2, .left);
+    try dragTo(&app, 11, 3);
+    try release(&app, 11, 3);
+    try std.testing.expectEqualStrings("beta gamma\nsecond", e.buf.editor.selectedText());
+    try std.testing.expect(app.drag == null);
+}
+
+test "gestures: a divider drag resizes with the minimum kept, a tab drag reorders, the + opens a scratch" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    try app.render();
+    try std.testing.expect(app.hits.at(60, 10).? == .divider);
+    try press(&app, 60, 10, .left);
+    try std.testing.expect(app.drag.? == .divider);
+    try dragTo(&app, 30, 10);
+    try release(&app, 30, 10);
+    try std.testing.expect(app.drag == null);
+    try app.render();
+    try std.testing.expect(app.hits.at(30, 10).? == .divider);
+    try press(&app, 30, 10, .left);
+    try dragTo(&app, 2, 10);
+    try release(&app, 2, 10);
+    try app.render();
+    try std.testing.expect(app.hits.at(layout_mod.min_pane_w, 10).? == .divider);
+    // Two tabs in the left leaf: drag the first past the second.
+    app.setActive(a);
+    const b = try app.openScratch();
+    try app.activeEditor().?.buf.setPath("/tmp/bb.txt");
+    app.showPane(a);
+    try app.activeEditor().?.buf.setPath("/tmp/aa.txt");
+    try app.render();
+    try std.testing.expectEqual(@as(u16, 0), app.hits.at(3, 1).?.tab.idx);
+    try press(&app, 3, 1, .left);
+    try dragTo(&app, 4, 1);
+    try dragTo(&app, 9, 1);
+    try release(&app, 9, 1);
+    const leaf = app.layouts.current().leaf(app.layouts.current().leafOf(a).?).?;
+    try std.testing.expectEqualSlices(PaneId, &.{ b, a }, leaf.tabs.items);
+    // The `+` after the tabs opens a scratch in that leaf (once the
+    // leaf is wide enough to paint it).
+    try command.run(&app, .{ .static = .@"view.equalize_splits" });
+    try app.render();
+    var plus: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .button and h.target.button == render.Button.newTab(0)) {
+        plus = h.rect;
+    };
+    try press(&app, plus.?.x + 1, plus.?.y, .left);
+    try std.testing.expectEqual(@as(usize, 3), leaf.tabs.items.len);
 }
