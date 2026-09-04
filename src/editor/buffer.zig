@@ -780,6 +780,40 @@ test "vim multi-cursor: typing, deletes, selections and puts fan out over every 
     try multi("|a\nb", &.{ .{ .keys = "i" }, below, .{ .op = .clear_extra_cursors }, .{ .keys = "X<esc>" } }, "|Xa\nb");
 }
 
+test "vim surround: ys over motions and objects, yss, visual S, ds, cs" {
+    try vim("ysiw\"", "hello |world", "hello \"world|\"");
+    try vim("ysiw(", "|x y", "( x |) y"); // an opener pads; the cursor lands on the closer
+    try vim("ysiw)", "|x y", "(x|) y");
+    try vim("ysiwb", "|x y", "(x|) y");
+    try vim("ysiwB", "|x y", "{x|} y");
+    try vim("ys$'", "a|bc", "a'bc|'");
+    try vim("ysfc]", "|abcd", "[abc|]d");
+    try vim("ys2w\"", "|a b c", "\"a b |\"c");
+    try vim("yss\"", "  |ab cd", "  \"ab cd|\"");
+    try vim("yss<esc>", "|ab", "|ab"); // Esc drops the pending range
+    try vim("ysiwt", "|ab", "|ab"); // a tag needs a name: not here
+    try vim("vllS\"", "|abc def", "\"abc|\" def");
+    try vim("vllS{", "|abc def", "{ abc |} def");
+    try vim("VS(", "|ab\ncd", "( ab\n |)cd"); // linewise: the whole line, newline included
+    try vim("ds\"", "x \"a |b\" y", "x |a b y");
+    try vim("ds\"", "x |\"a b\" y", "x |a b y"); // on the opener counts as inside
+    try vim("ds(", "f( a|b )", "f|ab");
+    try vim("ds)", "f( a|b )", "f| ab ");
+    try vim("dsb", "f( a|b )", "f| ab ");
+    try vim("ds]", "[[a|b]]", "[|ab]");
+    try vim("dst", "<b>h|i</b>", "|hi");
+    try vim("dsx", "(a|b)", "(a|b)"); // not a pair char
+    try vim("ds(", "a|b", "a|b"); // nothing to delete
+    try vim("cs\"'", "s = \"fo|o\";", "s = |'foo';");
+    try vim("cs(<", "let t = (|1, 2);", "let t = |<1, 2>;");
+    try vim("cs({", "(|a)", "|{ a }");
+    try vim("cs{)", "{ |a }", "|(a)");
+    try vim("cst\"", "<b>h|i</b>", "|\"hi\"");
+    try vim("cs\"x", "\"a|b\"", "\"a|b\""); // not a pair char
+    try vim("cs\"<esc>x", "\"a|b\"", "\"a|\""); // Esc cancels
+    try vim("ds\"u", "x \"a |b\" y", "x \"a |b\" y"); // one undo step
+}
+
 test "vim replace mode and cmdline" {
     try vim("RXY<esc>", "|abc", "X|Yc");
     try vim("RXYZW<esc>", "|abc", "XYZ|W");

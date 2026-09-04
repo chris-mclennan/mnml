@@ -20,6 +20,7 @@ const register = @import("register.zig");
 const undo = @import("undo.zig");
 const mc = @import("multicursor.zig");
 const block = @import("block.zig");
+const surround = @import("surround.zig");
 
 pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *EditOutcome) Error!void {
     switch (op) {
@@ -122,7 +123,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_inner_quote => |q| select.quote(ed, q, false),
         .select_around_quote => |q| select.quote(ed, q, true),
         .select_inner_smart_quote, .select_around_smart_quote => return error.Unsupported, // TODO(vim-slice: text-objects) iq / aq
-        .surround_selection, .delete_surround, .change_surround => return error.Unsupported, // TODO(vim-slice: surround)
+        .surround_selection => |s| try surround.surroundSelection(ed, s.open, s.close, s.pad, out),
+        .delete_surround => |c| try surround.deleteSurround(ed, c, out),
+        .change_surround => |c| try surround.changeSurround(ed, c.from, c.to, out),
         .select_inner_bracket => |b| select.bracket(ed, b, false),
         .select_around_bracket => |b| select.bracket(ed, b, true),
         .select_inner_tag => select.tag(ed, false),
@@ -289,39 +292,40 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
     defer ed.deinit();
     const inner_ops = [_]EditOp{ .move_right, .delete_forward, .{ .insert_char = 'z' }, .move_down };
     const ops = [_]EditOp{
-        .move_left,                                             .move_right,                                            .move_up,                                                                                                        .move_down,
-        .move_word_left,                                        .move_word_right,                                       .move_word_end,                                                                                                  .move_word_end_back,
-        .move_big_word_right,                                   .move_big_word_left,                                    .move_big_word_end,                                                                                              .move_big_word_end_back,
-        .move_word_right_no_cross_line,                         .move_big_word_right_no_cross_line,                     .move_line_start,                                                                                                .move_line_end,
-        .move_line_first_non_ws,                                .move_line_last_non_ws,                                 .move_line_last_char,                                                                                            .move_down_first_non_ws,
-        .move_up_first_non_ws,                                  .{ .move_paragraph = .{ .forward = true } },            .{ .move_paragraph = .{ .forward = false } },                                                                    .{ .move_sentence = .{ .forward = true } },
-        .{ .move_sentence = .{ .forward = false } },            .move_buffer_start,                                     .move_buffer_end,                                                                                                .{ .move_to_line = 3 },
-        .{ .move_to_col = 4 },                                  .{ .set_cursor_byte = 7 },                              .page_up,                                                                                                        .page_down,
-        .half_page_up,                                          .half_page_down,                                        .{ .find_char_on_line = .{ .ch = 'a', .forward = true, .before = false, .inclusive = false, .repeat = false } }, .{ .find_char_on_line = .{ .ch = 'b', .forward = false, .before = true, .inclusive = true, .repeat = true } },
-        .select_start,                                          .select_clear,                                          .select_line,                                                                                                    .select_line_to_end,
-        .select_all,                                            .select_word,                                           .select_inner_word,                                                                                              .select_around_word,
-        .select_inner_big_word,                                 .select_around_big_word,                                .{ .select_inner_quote = '"' },                                                                                  .{ .select_around_quote = '"' },
-        .{ .select_inner_bracket = '(' },                       .{ .select_around_bracket = '(' },                      .select_inner_paragraph,                                                                                         .select_around_paragraph,
-        .select_inner_tag,                                      .select_around_tag,                                     .restore_last_selection,                                                                                         .swap_anchor_cursor,
-        .move_cursor_to_selection_start,                        .normalize_linewise_selection,                          .make_selection_inclusive,
+        .move_left,                                                             .move_right,                                            .move_up,                                                                                                        .move_down,
+        .move_word_left,                                                        .move_word_right,                                       .move_word_end,                                                                                                  .move_word_end_back,
+        .move_big_word_right,                                                   .move_big_word_left,                                    .move_big_word_end,                                                                                              .move_big_word_end_back,
+        .move_word_right_no_cross_line,                                         .move_big_word_right_no_cross_line,                     .move_line_start,                                                                                                .move_line_end,
+        .move_line_first_non_ws,                                                .move_line_last_non_ws,                                 .move_line_last_char,                                                                                            .move_down_first_non_ws,
+        .move_up_first_non_ws,                                                  .{ .move_paragraph = .{ .forward = true } },            .{ .move_paragraph = .{ .forward = false } },                                                                    .{ .move_sentence = .{ .forward = true } },
+        .{ .move_sentence = .{ .forward = false } },                            .move_buffer_start,                                     .move_buffer_end,                                                                                                .{ .move_to_line = 3 },
+        .{ .move_to_col = 4 },                                                  .{ .set_cursor_byte = 7 },                              .page_up,                                                                                                        .page_down,
+        .half_page_up,                                                          .half_page_down,                                        .{ .find_char_on_line = .{ .ch = 'a', .forward = true, .before = false, .inclusive = false, .repeat = false } }, .{ .find_char_on_line = .{ .ch = 'b', .forward = false, .before = true, .inclusive = true, .repeat = true } },
+        .select_start,                                                          .select_clear,                                          .select_line,                                                                                                    .select_line_to_end,
+        .select_all,                                                            .select_word,                                           .select_inner_word,                                                                                              .select_around_word,
+        .select_inner_big_word,                                                 .select_around_big_word,                                .{ .select_inner_quote = '"' },                                                                                  .{ .select_around_quote = '"' },
+        .{ .select_inner_bracket = '(' },                                       .{ .select_around_bracket = '(' },                      .select_inner_paragraph,                                                                                         .select_around_paragraph,
+        .select_inner_tag,                                                      .select_around_tag,                                     .restore_last_selection,                                                                                         .swap_anchor_cursor,
+        .move_cursor_to_selection_start,                                        .normalize_linewise_selection,                          .make_selection_inclusive,
         .{ .insert_char = 'é' },
         .{ .insert_char = '\n' },
         .{ .insert_str = "世界" },
-        .{ .insert_char_from_line = .{ .above = true } },       .insert_newline,                                        .insert_newline_below,                                                                                           .insert_newline_above,
-        .backspace,                                             .delete_forward,                                        .delete_word_left,                                                                                               .delete_word_right,
-        .delete_to_line_start,                                  .delete_to_line_end,                                    .delete_line,                                                                                                    .delete_selection,
+        .{ .insert_char_from_line = .{ .above = true } },                       .insert_newline,                                        .insert_newline_below,                                                                                           .insert_newline_above,
+        .backspace,                                                             .delete_forward,                                        .delete_word_left,                                                                                               .delete_word_right,
+        .delete_to_line_start,                                                  .delete_to_line_end,                                    .delete_line,                                                                                                    .delete_selection,
         .{ .replace_selection = "r" },
         .{ .replace_char_at_cursor = '😀' },
-        .{ .overwrite_char_and_advance = 'q' },                 .replace_undo_one,                                      .replace_session_begin,                                                                                          .{ .replace_range = .{ .start = 2, .end = 5, .text = "x" } },
-        .indent,                                                .outdent,                                               .move_line_up,                                                                                                   .move_line_down,
-        .duplicate_line,                                        .{ .join_lines = .{ .keep_space = true } },             .{ .join_lines = .{ .keep_space = false } },                                                                     .{ .transform_selection_case = .toggle },
-        .toggle_case_char,                                      .{ .set_register_hint = 'a' },                          .yank_line,                                                                                                      .{ .yank_lines_count = 2 },
-        .yank_selection,                                        .yank_selection_linewise,                               .cut_selection,                                                                                                  .paste_after,
-        .paste_before,                                          .paste_after_end,                                       .paste_before_end,                                                                                               .paste,
-        .undo,                                                  .redo,                                                  .{ .repeat = .{ .count = 3, .inner = &inner_ops[0] } },                                                          .{ .repeat = .{ .count = 2, .inner = &inner_ops[1] } },
-        .{ .repeat = .{ .count = 2, .inner = &inner_ops[2] } }, .{ .repeat = .{ .count = 4, .inner = &inner_ops[3] } }, .{ .atomic = &inner_ops },                                                                                       .remember_selection,
-        .add_cursor_below,                                      .add_cursor_above,                                      .add_cursor_at_next_word,                                                                                        .clear_extra_cursors,
-        .block_select_start,                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
+        .{ .overwrite_char_and_advance = 'q' },                                 .replace_undo_one,                                      .replace_session_begin,                                                                                          .{ .replace_range = .{ .start = 2, .end = 5, .text = "x" } },
+        .indent,                                                                .outdent,                                               .move_line_up,                                                                                                   .move_line_down,
+        .duplicate_line,                                                        .{ .join_lines = .{ .keep_space = true } },             .{ .join_lines = .{ .keep_space = false } },                                                                     .{ .transform_selection_case = .toggle },
+        .toggle_case_char,                                                      .{ .set_register_hint = 'a' },                          .yank_line,                                                                                                      .{ .yank_lines_count = 2 },
+        .yank_selection,                                                        .yank_selection_linewise,                               .cut_selection,                                                                                                  .paste_after,
+        .paste_before,                                                          .paste_after_end,                                       .paste_before_end,                                                                                               .paste,
+        .undo,                                                                  .redo,                                                  .{ .repeat = .{ .count = 3, .inner = &inner_ops[0] } },                                                          .{ .repeat = .{ .count = 2, .inner = &inner_ops[1] } },
+        .{ .repeat = .{ .count = 2, .inner = &inner_ops[2] } },                 .{ .repeat = .{ .count = 4, .inner = &inner_ops[3] } }, .{ .atomic = &inner_ops },                                                                                       .remember_selection,
+        .add_cursor_below,                                                      .add_cursor_above,                                      .add_cursor_at_next_word,                                                                                        .clear_extra_cursors,
+        .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
+        .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

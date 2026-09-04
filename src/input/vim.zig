@@ -18,6 +18,7 @@ const AppCommand = input.AppCommand;
 const CommandId = input.CommandId;
 const ops = input.ops;
 const repeated = input.repeated;
+const surround = @import("../editor/surround.zig");
 
 pub const VimMode = enum { normal, insert, replace, visual, visual_line, visual_block };
 
@@ -772,7 +773,14 @@ pub const Vim = struct {
                 try b.push(.toggle_line_comment);
                 try b.push(.select_clear);
             },
-            .surround_add, .@"align", .filter => return .consumed, // TODO(vim-slice: surround / align / filter)
+            .surround_add => {
+                // The range goes live now; the surround char closes it.
+                self.prefix = .surround_add_char_wait;
+            },
+            .@"align" => {
+                self.prefix = .align_char_wait;
+            },
+            .filter => return .consumed, // TODO(vim-slice: filter) `!{motion}`
         }
         return b.finish();
     }
@@ -931,7 +939,11 @@ pub const Vim = struct {
                     'c' => runCmd(.@"git.jump_prev_change"),
                     'd' => runCmd(.@"lsp.prev_diagnostic"),
                     'q' => runCmd(.@"qf.prev"),
-                    else => .consumed, // TODO(vim-slice: misc) [t [[ [] [m
+                    't' => runCmd(.@"project.prev_todo"),
+                    '[' => runCmd(.@"editor.section_prev_start"),
+                    ']' => runCmd(.@"editor.section_prev_end"),
+                    'm' => runCmd(.@"editor.method_prev"),
+                    else => .consumed,
                 };
             },
             .bracket_close => {
@@ -941,7 +953,11 @@ pub const Vim = struct {
                     'c' => runCmd(.@"git.jump_next_change"),
                     'd' => runCmd(.@"lsp.next_diagnostic"),
                     'q' => runCmd(.@"qf.next"),
-                    else => .consumed, // TODO(vim-slice: misc) ]t ]] ][ ]m
+                    't' => runCmd(.@"project.next_todo"),
+                    ']' => runCmd(.@"editor.section_next_start"),
+                    '[' => runCmd(.@"editor.section_next_end"),
+                    'm' => runCmd(.@"editor.method_next"),
+                    else => .consumed,
                 };
             },
             .register => {
@@ -992,9 +1008,32 @@ pub const Vim = struct {
                     else => .consumed, // TODO(vim-slice: splits) the rest of ctrl+w
                 };
             },
-            .surround_delete, .surround_change, .surround_add_char_wait => {
+            .surround_delete => {
                 self.resetPending();
-                return .consumed; // TODO(vim-slice: surround)
+                const c = ch orelse return .consumed;
+                if (!surround.isSurroundChar(c)) return .consumed;
+                return ops(arena, &.{.{ .delete_surround = c }});
+            },
+            .surround_change => |from| {
+                const c = ch orelse {
+                    self.resetPending();
+                    return .consumed;
+                };
+                if (from == 0) {
+                    if (surround.isSurroundChar(c)) self.prefix = .{ .surround_change = c } else self.resetPending();
+                    return .consumed;
+                }
+                self.resetPending();
+                if (!surround.isSurroundChar(c)) return .consumed;
+                return ops(arena, &.{.{ .change_surround = .{ .from = from, .to = c } }});
+            },
+            .surround_add_char_wait => {
+                // The selection is live; a pair char wraps it, anything
+                // else (Esc, `t`, a stray key) drops it and parks the
+                // cursor back at the range start.
+                self.resetPending();
+                const p = surround.pairFor(ch orelse 0) orelse return ops(arena, &.{ .move_cursor_to_selection_start, .select_clear });
+                return ops(arena, &.{ .{ .surround_selection = .{ .open = p.open, .close = p.close, .pad = p.pad } }, .select_clear });
             },
             .flash1 => {
                 self.prefix = .none;
@@ -1009,7 +1048,8 @@ pub const Vim = struct {
             },
             .align_char_wait => {
                 self.resetPending();
-                return .consumed; // TODO(vim-slice: align)
+                const c = ch orelse return ops(arena, &.{.select_clear});
+                return ops(arena, &.{ .{ .align_selection = .{ .on_char = c } }, .select_clear });
             },
         }
 
@@ -1521,17 +1561,22 @@ pub const Vim = struct {
                 .filter => return .{ .app = .{ .filter_lines_from_cursor = .{ .count = n } } },
                 .reflow => return ops(arena, &.{.{ .reflow_paragraph = .{ .width = self.text_width } }}),
                 .comment => return ops(arena, &.{.toggle_line_comment}),
-                .surround_add, .@"align" => return .consumed, // TODO(vim-slice: surround / align)
+                .surround_add => {
+                    // `yss<c>`: the line's content, leading blanks excluded.
+                    self.prefix = .surround_add_char_wait;
+                    return ops(arena, &.{ .move_line_first_non_ws, .select_start, .move_line_end });
+                },
+                .@"align" => return .consumed, // `gAA` has no meaning
             }
         }
         if (ch == 's' and (op == .delete or op == .change or op == .yank)) {
-            // TODO(vim-slice: surround) ds / cs / ys
-            self.prefix = switch (op) {
-                .delete => .surround_delete,
-                .change => .{ .surround_change = 0 },
-                else => .surround_add_char_wait,
-            };
-            if (op == .yank) self.op = .surround_add;
+            // `ds<c>` / `cs<from><to>` name their pair next; `ys` is an
+            // operator of its own and waits for a motion first.
+            switch (op) {
+                .delete => self.prefix = .surround_delete,
+                .change => self.prefix = .{ .surround_change = 0 },
+                else => self.op = .surround_add,
+            }
             return .consumed;
         }
         if (ch == 'i' or ch == 'a') {
@@ -1647,7 +1692,12 @@ pub const Vim = struct {
                 self.resetPending();
                 const c = ch orelse return .consumed;
                 switch (c) {
-                    'A' => return .consumed, // TODO(vim-slice: align)
+                    'A' => {
+                        // The alignment char arrives next; widen now so
+                        // the last line is inside the range.
+                        self.prefix = .align_char_wait;
+                        return ops(arena, &.{if (linewise) .normalize_linewise_selection else .make_selection_inclusive});
+                    },
                     'n', 'N' => {
                         const forward = c == 'n';
                         const r = (if (forward) ctx.next_find_match else ctx.prev_find_match) orelse
@@ -1679,9 +1729,9 @@ pub const Vim = struct {
                 return ops(arena, &.{op});
             },
             .align_char_wait => {
-                self.resetPending();
                 self.enterNormal();
-                return ops(arena, &.{.select_clear}); // TODO(vim-slice: align)
+                const c = ch orelse return ops(arena, &.{.select_clear});
+                return ops(arena, &.{ .{ .align_selection = .{ .on_char = c } }, .select_clear });
             },
             else => {},
         }
@@ -1818,9 +1868,10 @@ pub const Vim = struct {
                 return ops(arena, &.{.remember_selection});
             },
             'S' => {
+                // vim-surround: wrap the selection with the next char.
                 self.vmode = .normal;
                 self.prefix = .surround_add_char_wait;
-                return .consumed; // TODO(vim-slice: surround)
+                return ops(arena, &.{widen});
             },
             else => return .consumed,
         }
