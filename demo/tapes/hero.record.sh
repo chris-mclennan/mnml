@@ -326,6 +326,21 @@ PY
 
 echo "[demo-record] cast size (trimmed): $(du -h "$CAST" | cut -f1)"
 
+# 2026-09-04 — restore the demo workspace before converting.
+#
+# The driver TYPES into `demo/workspace/src/store.ts` (a duplicate
+# `reset` fn) to make the LSP diagnostics appear in the hero. It never
+# undid that, so every recording left the fixture dirty — and the NEXT
+# recording would start from an already-broken file and type a second
+# duplicate on top. The residue also showed up as an unrelated
+# modified file in `git status` after every run.
+if git -C "$REPO" diff --quiet -- demo/workspace 2>/dev/null; then
+    :
+else
+    echo "[demo-record] restoring demo/workspace (driver typed into it)"
+    git -C "$REPO" checkout -- demo/workspace 2>/dev/null || true
+fi
+
 # ── Convert cast → GIF via agg ────────────────────────────────
 # --idle-time-limit clamps long pauses (the driver's sleep_ms
 # waits) so the GIF loops in a reasonable time.
