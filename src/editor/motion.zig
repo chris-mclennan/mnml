@@ -35,6 +35,15 @@ pub fn vertical(ed: *Editor, dir: i2) void {
     ed.cursor = ed.byteAtCol(target, gc);
 }
 
+/// `vertical` as unary motions — the shape a multi-cursor fan-out takes.
+pub fn up(ed: *Editor) void {
+    vertical(ed, -1);
+}
+
+pub fn down(ed: *Editor) void {
+    vertical(ed, 1);
+}
+
 pub fn page(ed: *Editor, dir: i2, rows: usize) void {
     for (0..@max(rows, 1)) |_| vertical(ed, dir);
 }

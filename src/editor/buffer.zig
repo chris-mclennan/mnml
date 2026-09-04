@@ -478,6 +478,12 @@ pub const Harness = struct {
         }
     }
 
+    /// Ops that arrive as commands rather than keys (`editor.add_cursor_below`).
+    pub fn ops(h: *Harness, list: []const EditOp) !void {
+        _ = h.arena.reset(.retain_capacity);
+        _ = try h.buf.applyOps(list, &h.clip, 10, h.arena.allocator());
+    }
+
     /// The text with `|` at the cursor.
     pub fn marked(h: *Harness, gpa: Allocator) ![]u8 {
         const t = h.buf.editor.bytes();
@@ -725,6 +731,41 @@ test "vim marks, macros and visual mode" {
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");
     try vim("vv", "|abc", "|abc");
     try vim("<c-v>jd", "|ab\ncd", "ab\n|cd"); // block ops are unsupported: only the motion lands
+}
+
+/// `feed` / `ops` interleaved: each row is a list of steps.
+const Step = union(enum) { keys: []const u8, op: EditOp };
+
+fn multi(before: []const u8, steps: []const Step, after: []const u8) !void {
+    var h = try Harness.init(testing.allocator, .vim, before);
+    defer h.deinit();
+    for (steps) |st| switch (st) {
+        .keys => |k| try h.feed(k),
+        .op => |o| try h.ops(&.{o}),
+    };
+    const got = try h.marked(testing.allocator);
+    defer testing.allocator.free(got);
+    testing.expectEqualStrings(after, got) catch |err| {
+        std.debug.print("\n  before: {s}\n", .{before});
+        return err;
+    };
+}
+
+test "vim multi-cursor: typing, deletes, selections and puts fan out over every cursor" {
+    const below: Step = .{ .op = .add_cursor_below };
+    const next_word: Step = .{ .op = .add_cursor_at_next_word };
+    try multi("|alpha\nbeta\ngamma", &.{ .{ .keys = "i" }, below, below, .{ .keys = "X<esc>" } }, "|Xalpha\nXbeta\nXgamma");
+    try multi("|Yone\nYtwo", &.{ .{ .keys = "li" }, below, .{ .keys = "<bs><esc>" } }, "|one\ntwo");
+    try multi("|foo bar foo baz foo", &.{ .{ .keys = "l" }, next_word, next_word, .{ .keys = "iX<esc>" } }, "|X bar X baz foo");
+    try multi("|old one\nold two", &.{ .{ .keys = "ea" }, below, .{ .keys = "<c-w><esc>" } }, "| one\n two");
+    try multi("|AAAxxxBBB\nAAAyyyBBB", &.{ .{ .keys = "lllv" }, below, .{ .keys = "lld" } }, "AAA|BBB\nAAABBB");
+    try multi("|AAAxxxBBB\nAAAyyyBBB", &.{ .{ .keys = "lllv" }, below, .{ .keys = "llcZ<esc>" } }, "AAA|ZBBB\nAAAZBBB");
+    try multi("|A.\nB.", &.{ .{ .keys = "v" }, below, .{ .keys = "y0" }, below, .{ .keys = "P" } }, "A|A.\nBB.");
+    try multi("|ab\ncd", &.{ .{ .keys = "i" }, below, .{ .keys = "<cr><esc>" } }, "|\nab\n\ncd");
+    try multi("|ab\ncd", &.{ .{ .keys = "A" }, below, .{ .keys = "<bs>!<esc>" } }, "a|!\nc!");
+    try multi("|ab cd\nef gh", &.{ .{ .keys = "i" }, below, .{ .keys = "<c-right>-<esc>" } }, "ab |-cd\nef -gh");
+    // The clear op collapses to the primary; the next edit is single-cursor again.
+    try multi("|a\nb", &.{ .{ .keys = "i" }, below, .{ .op = .clear_extra_cursors }, .{ .keys = "X<esc>" } }, "|Xa\nb");
 }
 
 test "vim replace mode and cmdline" {

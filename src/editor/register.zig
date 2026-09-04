@@ -9,6 +9,7 @@ const Editor = editor.Editor;
 const Clipboard = editor.Clipboard;
 const EditOutcome = @import("edit_op.zig").EditOutcome;
 const delete = @import("delete.zig");
+const mc = @import("multicursor.zig");
 
 pub fn setRegisterHint(clip: *Clipboard, reg: ?u21) void {
     clip.setPendingRegister(reg);
@@ -41,6 +42,17 @@ pub fn yankLinesCount(ed: *Editor, n: u32, clip: *Clipboard, out: *EditOutcome) 
 }
 
 pub fn yankSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    if (mc.hasExtras(ed)) {
+        // Every cursor's range joined by `\n`; each extra's selection ends.
+        const text = (try mc.joinedSelections(ed)) orelse return;
+        defer ed.gpa.free(text);
+        try clip.setYank(text, false);
+        out.clipboard_set = clip.lastWritten();
+        out.yanked_range = mc.selectionsExtent(ed);
+        ed.rememberSelection();
+        mc.clearExtraAnchors(ed);
+        return;
+    }
     const sel = ed.selection() orelse return;
     try clip.setYank(ed.bytes()[sel[0]..sel[1]], false);
     out.clipboard_set = clip.lastWritten();
@@ -72,6 +84,11 @@ fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcom
     const s = clip.text();
     if (s.len == 0) return;
     try ed.checkpoint();
+    if (mc.hasExtras(ed)) {
+        try putAll(ed, s, where == .after);
+        out.buffer_changed = true;
+        return;
+    }
     if (clip.isLinewise()) {
         const line = ed.currentLine();
         if (where == .after) {
@@ -102,6 +119,24 @@ fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcom
     }
     ed.anchor = null;
     out.buffer_changed = true;
+}
+
+/// Multi-cursor put: a clipboard with exactly one line per cursor is
+/// distributed (vim's block-paste convention); anything else lands whole
+/// at every cursor. Every selection ends.
+fn putAll(ed: *Editor, s: []const u8, after: bool) Allocator.Error!void {
+    const total = ed.extra_cursors.items.len + 1;
+    if (std.mem.count(u8, s, "\n") + 1 == total) {
+        const parts = try ed.gpa.alloc([]const u8, total);
+        defer ed.gpa.free(parts);
+        var it = std.mem.splitScalar(u8, s, '\n');
+        for (parts) |*p| p.* = it.next().?;
+        try mc.pasteDistribute(ed, parts, after);
+    } else {
+        try mc.insertStrAll(ed, s);
+    }
+    ed.anchor = null;
+    mc.clearExtraAnchors(ed);
 }
 
 /// `p`.

@@ -312,11 +312,24 @@ pub fn moveCursorToSelectionStart(ed: *Editor) void {
 /// Widen the high end by one char, never across a `\n`: vim's charwise
 /// visual is inclusive.
 pub fn makeSelectionInclusive(ed: *Editor) void {
-    const a = ed.anchor orelse return;
-    const hi = @max(a, ed.cursor);
-    if (hi >= ed.len() or ed.bytes()[hi] == '\n') return;
+    if (ed.anchor) |a| {
+        const w = widenInclusive(ed, a, ed.cursor);
+        ed.anchor = w[0];
+        ed.cursor = w[1];
+    }
+    for (ed.extra_anchors.items, ed.extra_cursors.items) |*a, *c| {
+        const av = a.* orelse continue;
+        const w = widenInclusive(ed, av, c.*);
+        a.* = w[0];
+        c.* = w[1];
+    }
+}
+
+fn widenInclusive(ed: *const Editor, anchor: usize, cursor: usize) [2]usize {
+    const hi = @max(anchor, cursor);
+    if (hi >= ed.len() or ed.bytes()[hi] == '\n') return .{ anchor, cursor };
     const next = ed.nextBoundary(hi);
-    if (ed.cursor >= a) ed.cursor = next else ed.anchor = next;
+    return if (cursor >= anchor) .{ anchor, next } else .{ next, cursor };
 }
 
 /// Widen to full lines: anchor at the first line's start, cursor one past

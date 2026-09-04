@@ -448,6 +448,23 @@ pub const Editor = struct {
         return self.history.undoLen() > 0;
     }
 
+    /// An op that did not fan out (a page motion, `dd`, undo) can leave
+    /// an extra off a boundary or on the primary; keep both invariants.
+    fn normalizeExtras(self: *Editor) void {
+        var i: usize = 0;
+        while (i < self.extra_cursors.items.len) {
+            const c = self.snapBoundary(self.extra_cursors.items[i]);
+            if (c == self.cursor) {
+                _ = self.extra_cursors.orderedRemove(i);
+                _ = self.extra_anchors.orderedRemove(i);
+                continue;
+            }
+            self.extra_cursors.items[i] = c;
+            if (self.extra_anchors.items[i]) |a| self.extra_anchors.items[i] = self.snapBoundary(a);
+            i += 1;
+        }
+    }
+
     fn recordChange(self: *Editor) Allocator.Error!void {
         const pos = self.rowCol();
         if (self.change_list.items.len > 0) {
@@ -487,6 +504,7 @@ pub const Editor = struct {
         if (out.buffer_changed) {
             if (self.anchor) |a| self.anchor = self.snapBoundary(a);
         }
+        if (self.extra_cursors.items.len != 0) self.normalizeExtras();
         if (out.buffer_changed and !is_undo_redo) try self.recordChange();
         if (!keep_goal) self.goal_col = null;
 

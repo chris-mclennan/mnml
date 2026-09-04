@@ -8,9 +8,11 @@ const Editor = editor.Editor;
 const Clipboard = editor.Clipboard;
 const EditOutcome = @import("edit_op.zig").EditOutcome;
 const motion = @import("motion.zig");
+const mc = @import("multicursor.zig");
 
 /// Delete the active selection if there is one. True when it deleted.
 pub fn deleteSelectionIfAny(ed: *Editor, out: *EditOutcome) Allocator.Error!bool {
+    if (mc.hasExtras(ed)) return deleteSelectionsAll(ed, out);
     const sel = ed.selection() orelse return false;
     if (sel[1] <= sel[0]) {
         ed.anchor = null;
@@ -25,8 +27,30 @@ pub fn deleteSelectionIfAny(ed: *Editor, out: *EditOutcome) Allocator.Error!bool
     return true;
 }
 
+/// Multi-cursor: every cursor drops its own range in one undo step.
+fn deleteSelectionsAll(ed: *Editor, out: *EditOutcome) Allocator.Error!bool {
+    const primary_has = if (ed.anchor) |a| a != ed.cursor else false;
+    if (!primary_has and !mc.extrasHaveSelection(ed)) {
+        ed.anchor = null;
+        return false;
+    }
+    ed.rememberSelection();
+    try ed.checkpoint();
+    try mc.deleteRangePerCursor(ed, {}, mc.ownRange);
+    ed.anchor = null;
+    mc.clearExtraAnchors(ed);
+    out.buffer_changed = true;
+    return true;
+}
+
 pub fn backspace(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try deleteSelectionIfAny(ed, out)) return;
+    if (mc.hasExtras(ed)) {
+        try ed.checkpoint();
+        try mc.deleteBackwardAll(ed);
+        out.buffer_changed = true;
+        return;
+    }
     if (ed.cursor == 0) return;
     try ed.checkpoint();
     const prev = ed.prevBoundary(ed.cursor);
@@ -52,6 +76,12 @@ pub fn backspace(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 
 pub fn deleteForward(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try deleteSelectionIfAny(ed, out)) return;
+    if (mc.hasExtras(ed)) {
+        try ed.checkpoint();
+        try mc.deleteForwardAll(ed);
+        out.buffer_changed = true;
+        return;
+    }
     if (ed.cursor >= ed.len()) return;
     try ed.checkpoint();
     const next = ed.nextBoundary(ed.cursor);
@@ -59,8 +89,31 @@ pub fn deleteForward(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     out.buffer_changed = true;
 }
 
+fn wordLeftRange(_: void, ed: *const Editor, _: usize, p: usize) [2]usize {
+    return .{ motion.wordLeftFrom(ed, p), p };
+}
+fn wordRightRange(_: void, ed: *const Editor, _: usize, p: usize) [2]usize {
+    return .{ p, motion.wordRightFrom(ed, p) };
+}
+fn toLineStartRange(_: void, ed: *const Editor, _: usize, p: usize) [2]usize {
+    return .{ ed.lineStart(ed.lineOfByte(p)), p };
+}
+fn toLineEndRange(_: void, ed: *const Editor, _: usize, p: usize) [2]usize {
+    return .{ p, ed.lineEnd(ed.lineOfByte(p)) };
+}
+
+/// A per-cursor range delete when extras exist. True when it ran.
+fn deleteRangeAllIfMulti(ed: *Editor, comptime rangeFor: fn (void, *const Editor, usize, usize) [2]usize, out: *EditOutcome) Allocator.Error!bool {
+    if (!mc.hasExtras(ed)) return false;
+    try ed.checkpoint();
+    try mc.deleteRangePerCursor(ed, {}, rangeFor);
+    out.buffer_changed = true;
+    return true;
+}
+
 pub fn deleteWordLeft(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try deleteSelectionIfAny(ed, out)) return;
+    if (try deleteRangeAllIfMulti(ed, wordLeftRange, out)) return;
     const target = motion.wordLeftFrom(ed, ed.cursor);
     if (target == ed.cursor) return;
     try ed.checkpoint();
@@ -71,6 +124,7 @@ pub fn deleteWordLeft(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 
 pub fn deleteWordRight(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try deleteSelectionIfAny(ed, out)) return;
+    if (try deleteRangeAllIfMulti(ed, wordRightRange, out)) return;
     const target = motion.wordRightFrom(ed, ed.cursor);
     if (target == ed.cursor) return;
     try ed.checkpoint();
@@ -79,6 +133,7 @@ pub fn deleteWordRight(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 }
 
 pub fn deleteToLineStart(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
+    if (try deleteRangeAllIfMulti(ed, toLineStartRange, out)) return;
     const bol = ed.lineStart(ed.currentLine());
     if (bol == ed.cursor) return;
     try ed.checkpoint();
@@ -88,6 +143,7 @@ pub fn deleteToLineStart(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 }
 
 pub fn deleteToLineEnd(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
+    if (try deleteRangeAllIfMulti(ed, toLineEndRange, out)) return;
     const eol = ed.lineEnd(ed.currentLine());
     if (eol == ed.cursor) return;
     try ed.checkpoint();
@@ -124,6 +180,16 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
 
 /// `d{motion}` after a `select_start` + motion: yank then delete.
 pub fn deleteSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    if (mc.hasExtras(ed)) {
+        // Every cursor's range, joined by `\n`, is the yank.
+        if (try mc.joinedSelections(ed)) |text| {
+            defer ed.gpa.free(text);
+            try clip.pushDelete(text, false);
+            out.clipboard_set = clip.lastWritten();
+        }
+        _ = try deleteSelectionIfAny(ed, out);
+        return;
+    }
     if (ed.selection()) |s| {
         if (s[1] > s[0]) {
             try clip.pushDelete(ed.text.items[s[0]..s[1]], false);
@@ -135,6 +201,14 @@ pub fn deleteSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocat
 
 pub fn replaceSelection(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!void {
     try ed.checkpoint();
+    if (mc.hasExtras(ed)) {
+        try mc.deleteRangePerCursor(ed, {}, mc.ownRange);
+        if (s.len > 0) try mc.insertStrAll(ed, s);
+        ed.anchor = null;
+        mc.clearExtraAnchors(ed);
+        out.buffer_changed = true;
+        return;
+    }
     if (ed.selection()) |sel| {
         try ed.splice(sel[0], sel[1], s);
         ed.cursor = sel[0] + s.len;

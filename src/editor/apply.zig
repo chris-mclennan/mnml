@@ -18,6 +18,7 @@ const select = @import("select.zig");
 const line = @import("line.zig");
 const register = @import("register.zig");
 const undo = @import("undo.zig");
+const mc = @import("multicursor.zig");
 
 pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *EditOutcome) Error!void {
     switch (op) {
@@ -38,33 +39,66 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         },
 
         // ── motion ──
-        .move_left => motion.left(ed),
-        .move_right => motion.right(ed),
-        .move_up => motion.vertical(ed, -1),
-        .move_down => motion.vertical(ed, 1),
+        .move_left => {
+            motion.left(ed);
+            try mc.moveExtras(ed, motion.left);
+        },
+        .move_right => {
+            motion.right(ed);
+            try mc.moveExtras(ed, motion.right);
+        },
+        .move_up => {
+            motion.vertical(ed, -1);
+            try mc.moveExtras(ed, motion.up);
+        },
+        .move_down => {
+            motion.vertical(ed, 1);
+            try mc.moveExtras(ed, motion.down);
+        },
         .page_up => motion.page(ed, -1, vp),
         .page_down => motion.page(ed, 1, vp),
         .half_page_up => motion.page(ed, -1, vp / 2),
         .half_page_down => motion.page(ed, 1, vp / 2),
-        .move_word_right => motion.wordRight(ed),
+        .move_word_right => {
+            motion.wordRight(ed);
+            try mc.moveExtras(ed, motion.wordRight);
+        },
         .move_word_right_no_cross_line => motion.wordRightNoCrossLine(ed),
-        .move_word_left => motion.wordLeft(ed),
-        .move_word_end => motion.wordEnd(ed),
+        .move_word_left => {
+            motion.wordLeft(ed);
+            try mc.moveExtras(ed, motion.wordLeft);
+        },
+        .move_word_end => {
+            motion.wordEnd(ed);
+            try mc.moveExtras(ed, motion.wordEnd);
+        },
         .move_word_end_back => motion.wordEndBack(ed),
         .move_big_word_right => motion.bigWordRight(ed),
         .move_big_word_right_no_cross_line => motion.bigWordRightNoCrossLine(ed),
         .move_big_word_left => motion.bigWordLeft(ed),
         .move_big_word_end => motion.bigWordEnd(ed),
         .move_big_word_end_back => motion.bigWordEndBack(ed),
-        .move_line_start => motion.lineStart(ed),
-        .move_line_first_non_ws => motion.lineFirstNonWs(ed),
+        .move_line_start => {
+            motion.lineStart(ed);
+            try mc.moveExtras(ed, motion.lineStart);
+        },
+        .move_line_first_non_ws => {
+            motion.lineFirstNonWs(ed);
+            try mc.moveExtras(ed, motion.lineFirstNonWs);
+        },
         .move_down_first_non_ws => motion.downFirstNonWs(ed),
         .move_up_first_non_ws => motion.upFirstNonWs(ed),
         .move_line_last_non_ws => motion.lineLastNonWs(ed),
         .move_paragraph => |p| motion.paragraph(ed, p.forward),
         .move_sentence => |p| motion.sentence(ed, p.forward),
-        .move_line_end => motion.lineEnd(ed),
-        .move_line_last_char => motion.lineLastChar(ed),
+        .move_line_end => {
+            motion.lineEnd(ed);
+            try mc.moveExtras(ed, motion.lineEnd);
+        },
+        .move_line_last_char => {
+            motion.lineLastChar(ed);
+            try mc.moveExtras(ed, motion.lineLastChar);
+        },
         .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end => return error.Unsupported, // TODO(vim-slice: motions) display-row motions under wrap
         .move_buffer_start => motion.bufferStart(ed),
         .move_buffer_end => motion.bufferEnd(ed),
@@ -104,7 +138,10 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .continue_insert_run => select.continueInsertRun(ed),
 
         // ── multi-cursor / block ──
-        .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word => return error.Unsupported, // TODO(vim-slice: multicursor)
+        .add_cursor_below => try mc.addCursorBelow(ed),
+        .add_cursor_above => try mc.addCursorAbove(ed),
+        .clear_extra_cursors => mc.clear(ed),
+        .add_cursor_at_next_word => try mc.addCursorAtNextWord(ed),
         .block_select_start, .block_select_clear, .yank_block, .delete_block => return error.Unsupported, // TODO(vim-slice: visual-block)
 
         // ── insert ──
@@ -279,6 +316,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .paste_before,                                          .paste_after_end,                                       .paste_before_end,                                                                                               .paste,
         .undo,                                                  .redo,                                                  .{ .repeat = .{ .count = 3, .inner = &inner_ops[0] } },                                                          .{ .repeat = .{ .count = 2, .inner = &inner_ops[1] } },
         .{ .repeat = .{ .count = 2, .inner = &inner_ops[2] } }, .{ .repeat = .{ .count = 4, .inner = &inner_ops[3] } }, .{ .atomic = &inner_ops },                                                                                       .remember_selection,
+        .add_cursor_below,                                      .add_cursor_above,                                      .add_cursor_at_next_word,                                                                                        .clear_extra_cursors,
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];
@@ -286,6 +324,10 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         try std.testing.expect(ed.isBoundary(ed.cursor));
         try std.testing.expect(ed.cursor <= ed.len());
         if (ed.anchor) |a| try std.testing.expect(ed.isBoundary(a) and a <= ed.len());
+        for (ed.extra_cursors.items, ed.extra_anchors.items) |c, a| {
+            try std.testing.expect(ed.isBoundary(c) and c <= ed.len() and c != ed.cursor);
+            if (a) |av| try std.testing.expect(ed.isBoundary(av) and av <= ed.len());
+        }
         try std.testing.expect(std.unicode.utf8ValidateSlice(ed.text.items));
         if (ed.len() > 20_000) try ed.setText("reset\n");
     }
