@@ -17,6 +17,7 @@ const keymap = @import("../core/keymap.zig");
 const cmd_tab = @import("cmd_tab.zig");
 const runners = @import("runners.zig");
 const tasks = @import("tasks.zig");
+const ai_app = @import("ai.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -268,6 +269,25 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             if (ref) |r| command.run(app, r) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {},
+            };
+        },
+        .ai_suggest_backend => {
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            ai_app.setupAccept(app, i) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => {},
+                else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
+            };
+        },
+        .ai_session => {
+            const sid = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            ai_app.sessionAccept(app, sid) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => {},
+                else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
         .go_run_cmd, .tools, .tasks => |kind| {
