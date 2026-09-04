@@ -233,6 +233,21 @@ test {
     _ = @import("ipc/root.zig");
     _ = @import("e2e/root.zig");
     _ = @import("headless.zig");
+    _ = @import("editor/edit_op.zig");
+    _ = @import("editor/clipboard.zig");
+    _ = @import("editor/editor.zig");
+    _ = @import("editor/undo.zig");
+    _ = @import("editor/motion.zig");
+    _ = @import("editor/insert.zig");
+    _ = @import("editor/delete.zig");
+    _ = @import("editor/select.zig");
+    _ = @import("editor/line.zig");
+    _ = @import("editor/register.zig");
+    _ = @import("editor/apply.zig");
+    _ = @import("editor/buffer.zig");
+    _ = @import("input/mod.zig");
+    _ = @import("input/standard.zig");
+    _ = @import("input/vim.zig");
 }
 
 test "version string is set" {

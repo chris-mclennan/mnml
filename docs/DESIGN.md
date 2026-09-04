@@ -193,6 +193,8 @@ pub const InputHandler = union(enum) { standard: Standard, vim: Vim,
 ```
 Seam kept: `InputResult{ops: []const EditOp, consumed, ignored, app: AppCommand}`, `EditCtx` (13 scalars, by value), `BufferEvent`, `AppCommand` (with `run_command: CommandId` — enum, not string). `EditOp` = `union(enum)` 131 tags; `repeat: struct{count, inner: *const EditOp}` / `atomic: []const EditOp` point into **`app.frame`**; dot-repeat + macro registers (the only cross-iteration holders) call `EditOp.dupe(gpa)`/`free(gpa)`. `apply_one`: **one exhaustive `switch` in `editor/apply.zig`**, grouped prongs delegating to family modules (`motion/insert/delete/select/undo/fold/case/multicursor.zig`). Undo: snapshot arena + ring instead of `Vec<String>` with `remove(0)`.
 
+*// changed 2026-09-04 (editor slice):* `handleKey` is `Allocator.Error!InputResult` — an op list is built on the frame arena, so building it can fail. `EditCtx` has 12 scalars, not 13 (the Rust struct has 12). `Editor.apply` takes the frame arena for `text_edits`; `Buffer.feedKey` takes it too and handles the buffer-local `AppCommand`s (marks, `.`, `q`/`@`) itself. The line index is patched incrementally in `splice` (O(lines) per edit, infallible reads) instead of lazily invalidated — a lazy rebuild would make every line read fallible. Undo snapshots own their text per entry on the gpa; an arena cannot release an evicted entry. `Buffer` keeps `folds` in an `AutoArrayHashMap`, shifted in place + `reIndex` after edits.
+
 ### D4b. Keymap profiles — vim and standard are first-class, each complete (added 2026-09-04)
 
 User requirement: vim users get hotkeys/chords that match **Neovim + NvChad** exactly; standard users get **VS Code**. Segregate so each feels at home. Mechanism:
