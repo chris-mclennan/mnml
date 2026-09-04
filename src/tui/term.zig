@@ -162,6 +162,7 @@ pub fn init(self: *Term, io: Io, gpa: std.mem.Allocator, env: *std.process.Envir
         try w.writeAll(ctlseqs.csi_u_pop);
         self.vx.state.kitty_keyboard = false;
     }
+    applyTerminalQuirks(&self.vx.caps, env);
 
     self.caps = .{
         .kitty_keyboard = self.vx.state.kitty_keyboard,
@@ -286,6 +287,26 @@ fn closeTty(file: Io.File, io: Io) void {
     file.close(io);
 }
 
+// ── what the probe gets wrong ──
+
+/// Corrections to what the probe concluded, for terminals known to answer
+/// it misleadingly.
+///
+/// Apple Terminal does not know OSC 66. It prints the payload of the
+/// explicit-width probe (`OSC 66 ; w=1 ; SPACE ST`) as text, the space
+/// moves the cursor to column 2, and the cursor-position reply reads as
+/// "explicit width works". vaxis then wraps every wide glyph in OSC 66 —
+/// which Terminal.app swallows whole, so CJK and emoji vanish and the row
+/// drifts. It has neither mode 2027 nor OSC 66: wcwidth, always.
+pub fn applyTerminalQuirks(caps: *vaxis.Vaxis.Capabilities, env: *const std.process.Environ.Map) void {
+    const prog = env.get("TERM_PROGRAM") orelse return;
+    if (std.mem.eql(u8, prog, "Apple_Terminal")) {
+        caps.explicit_width = false;
+        caps.scaled_text = false;
+        caps.unicode = .wcwidth;
+    }
+}
+
 // ── truecolor ──
 
 /// vaxis never sets `caps.rgb`, and no probe answers "24-bit". The
@@ -401,6 +422,24 @@ test "detectRgb: the rgb terminals count without COLORTERM; xterm alone does not
     var empty = try envWith(&.{});
     defer empty.deinit();
     try testing.expect(!detectRgb(&empty));
+}
+
+test "applyTerminalQuirks: Apple Terminal's false explicit-width claim is dropped" {
+    var apple = try envWith(&.{.{ "TERM_PROGRAM", "Apple_Terminal" }});
+    defer apple.deinit();
+    var caps: vaxis.Vaxis.Capabilities = .{ .explicit_width = true, .scaled_text = true, .unicode = .unicode };
+    applyTerminalQuirks(&caps, &apple);
+    try testing.expect(!caps.explicit_width);
+    try testing.expect(!caps.scaled_text);
+    try testing.expectEqual(vaxis.gwidth.Method.wcwidth, caps.unicode);
+
+    // ghostty's claim stands.
+    var ghostty = try envWith(&.{.{ "TERM_PROGRAM", "ghostty" }});
+    defer ghostty.deinit();
+    caps = .{ .explicit_width = true, .unicode = .unicode };
+    applyTerminalQuirks(&caps, &ghostty);
+    try testing.expect(caps.explicit_width);
+    try testing.expectEqual(vaxis.gwidth.Method.unicode, caps.unicode);
 }
 
 test "Capabilities.write: one status-line summary" {
