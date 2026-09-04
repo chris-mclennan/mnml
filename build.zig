@@ -80,6 +80,17 @@ const grammars = [_]Grammar{
     .{ .name = "markdown_inline", .dep = "ts_md", .src = "tree-sitter-markdown-inline/src", .scanner = true, .query_dir = "tree-sitter-markdown-inline/queries", .queries = &.{ "highlights", "injections" } },
     .{ .name = "c", .dep = "ts_c" },
     .{ .name = "bash", .dep = "ts_bash", .scanner = true },
+    .{ .name = "css", .dep = "ts_css", .scanner = true },
+    .{ .name = "html", .dep = "ts_html", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    .{ .name = "cpp", .dep = "ts_cpp", .scanner = true },
+    .{ .name = "ruby", .dep = "ts_ruby", .scanner = true },
+    .{ .name = "java", .dep = "ts_java" },
+    .{ .name = "yaml", .dep = "ts_yaml", .scanner = true },
+    .{ .name = "c_sharp", .dep = "ts_c_sharp", .scanner = true },
+    .{ .name = "lua", .dep = "ts_lua", .scanner = true },
+    .{ .name = "scala", .dep = "ts_scala", .scanner = true },
+    .{ .name = "elixir", .dep = "ts_elixir", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    .{ .name = "haskell", .dep = "ts_haskell", .scanner = true, .queries = &.{ "highlights", "injections" } },
 };
 
 /// Queries mnml ships itself (`src/highlight/queries/`), for grammars whose crate has
