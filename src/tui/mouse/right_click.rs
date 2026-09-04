@@ -349,6 +349,24 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
     }
+    // 2026-09-03 — the top-right `+`. Its LEFT click makes a new tab
+    // page (what its position promises); the full "Create…" menu that
+    // #1210 put on the click lives here instead, so that affordance
+    // survives without the button lying about what it does.
+    if let Some(r) = app.rects.bufferline_new_tab_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::ContextMenu;
+        let items = super::down_left::plus_menu_items(app);
+        let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        // Only the `+` menu opts into curation — Pin / Hide make sense
+        // for a launcher you own, not for a file's right-click menu.
+        menu.curatable = true;
+        menu.selected = 0;
+        menu.interacted = true;
+        app.context_menu = Some(menu);
+        return;
+    }
     // 2026-09-03 right-click audit — AGENTS rail rows. Both
     // neighbours in this rail (Cloud Agents rows, the Claude Agents
     // dashboard rows) open menus; these did not.

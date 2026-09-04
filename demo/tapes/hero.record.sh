@@ -329,13 +329,27 @@ echo "[demo-record] cast size (trimmed): $(du -h "$CAST" | cut -f1)"
 # ── Convert cast → GIF via agg ────────────────────────────────
 # --idle-time-limit clamps long pauses (the driver's sleep_ms
 # waits) so the GIF loops in a reasonable time.
+# 2026-09-03 (user: "wrong font used in hero video, icons look
+# small") — MnmlSymbols must be in this list. It is the font mnml
+# BAKES ITS OWN GLYPHS INTO, at codepoints it owns (integration
+# chips, AI icons, the tree connectors). Without it those codepoints
+# fall back to whatever JetBrainsMono NF happens to have there, which
+# renders them at the wrong size or as the wrong mark entirely. Every
+# VHS tape lists it; this recorder did not, so the hero — the first
+# image anyone sees — was the one asset showing the wrong icons.
+#
+# Order matters and is not alphabetical: the TEXT font stays first.
+# `f28636e1` fixed the mirror-image mistake, where a glyph-only
+# supplementary font sat first and stretched every letter because it
+# has no real letterforms.
+#
 # --font-family prefers Nerd-Font-embedded monospace so the
 # activity-bar icons + statusline glyphs render (falls back on
 # platform monospaces if Nerd Font isn't installed).
 echo "[demo-record] rendering GIF → $GIF_OUT"
 agg --cols "$COLS" --rows "$ROWS" \
     --font-size "$FONT_SIZE" \
-    --font-family "JetBrainsMono Nerd Font Mono,JetBrains Mono" \
+    --font-family "JetBrainsMono Nerd Font Mono,MnmlSymbols,JetBrains Mono" \
     --theme monokai \
     --idle-time-limit 2 \
     --fps-cap 20 \

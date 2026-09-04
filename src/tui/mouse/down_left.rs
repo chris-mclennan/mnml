@@ -28,7 +28,7 @@ use crate::pane::Pane;
 /// builder means a row added here shows up on every `+`, which is
 /// what "behavior parity between the `+` chips" was already trying
 /// to promise.
-fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
+pub(super) fn plus_menu_items(app: &App) -> Vec<crate::context_menu::MenuItem> {
     use crate::context_menu::{MenuAction, MenuItem};
     // Grouped into submenus rather than one flat list.
     //
@@ -1673,22 +1673,21 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.bufferline_new_tab_button
         && crate::app::dispatch::contains(r, x, y)
     {
-        // #1210 — was `app.tab_new(None)` with no menu. This is the
-        // top-right cluster's `+`, and with every pane closed it is
-        // the ONLY `+` on screen — so the one state where you most
-        // need "reopen what I just closed" was the one state with no
-        // menu to offer it. Now shows the same rows as the other two
-        // chips; "New tab page" is still in there, one row down, so
-        // the old action isn't lost.
-        use crate::context_menu::ContextMenu;
-        let items = plus_menu_items(app);
-        let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
-        // Only the `+` menu opts into curation — Pin / Hide make sense
-        // for a launcher you own, not for a file's right-click menu.
-        menu.curatable = true;
-        menu.selected = 0;
-        menu.interacted = true;
-        app.context_menu = Some(menu);
+        // 2026-09-03 (user: "the plus button at top right used to add
+        // a new tab/workspace but now it seems to do what the other
+        // plus does — can you put it back").
+        //
+        // #1210 had replaced the direct `tab_new` with the shared
+        // "Create…" menu, for a real reason: with every pane closed
+        // this is the ONLY `+` on screen, so the state where you most
+        // need "reopen what I just closed" was the state with no menu
+        // offering it. Reverting outright would put that hole back.
+        //
+        // So: click does the thing, right-click offers the options —
+        // the same split the sort chips and refresh chips use. The
+        // #1210 affordance survives one button press away, and the
+        // button goes back to meaning what its position says it means.
+        app.tab_new(None);
         return;
     }
     // Inline `+` new-request chip — sits just past the last tab in
