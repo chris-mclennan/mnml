@@ -155,7 +155,7 @@ pub fn openReplacePrompt(app: *App) Allocator.Error!void {
     const id = app.active orelse return;
     const e = app.panes.editor(id) orelse return;
     if (!e.find.isActive()) {
-        if (app.cfg.input_style == .vim) {
+        if (app.input_style == .vim) {
             app.toast(":%s/old/new/g — substitute across buffer", .{});
             return;
         }

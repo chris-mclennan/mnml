@@ -27,6 +27,8 @@ const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const settings_app = @import("settings.zig");
+const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
 const Confirm = app_mod.Confirm;
 const Picker = app_mod.Picker;
@@ -96,7 +98,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const mark_key: ?u8 = if (k.typed()) |c| (if (c < 128 and std.ascii.isAlphabetic(@intCast(c))) @as(u8, @intCast(c)) else null) else null;
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
-    const wrap_width: ?usize = if (e.wrap orelse app.cfg.wrap) app.pane_cols else null;
+    const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
     cmd_find.seedCtxMatches(e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
@@ -114,13 +116,17 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
     }
+    // An app command may have opened or closed panes (`:e b.txt` grows
+    // the store and moves every pane): `e` is stale from here. Look the
+    // pane up again, and stop if it is gone.
+    const still = app.panes.editor(pane_id) orelse return true;
     // Marks toast from here: the buffer handles them silently.
     if (mark != null and mark_key != null and ev != .unhandled) {
         const c = mark_key.?;
         switch (mark.?) {
             .set => app.toast("mark '{c} set", .{c}),
             .jump => if (!had_mark) app.toast("no mark '{c}", .{c}) else {
-                const p = e.buf.editor.rowCol();
+                const p = still.buf.editor.rowCol();
                 app.toast("→ '{c} {d}:{d}", .{ c, p.row + 1, p.col + 1 });
             },
         }
@@ -128,9 +134,9 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // The pane mirrors the editor's block anchor for the `I` / `A` / `c`
     // / `r` app commands, which arrive after the handler has already
     // left V-BLOCK.
-    const after_mode = e.buf.input.mode();
-    if (after_mode == .visual_block and before_mode != .visual_block) e.block_anchor = e.buf.editor.cursor;
-    if (after_mode != .visual_block) e.block_anchor = null;
+    const after_mode = still.buf.input.mode();
+    if (after_mode == .visual_block and before_mode != .visual_block) still.block_anchor = still.buf.editor.cursor;
+    if (after_mode != .visual_block) still.block_anchor = null;
     try finishDeferredInserts(app);
     return true;
 }
@@ -192,12 +198,12 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
         },
         .pending_with_fallback => |t| {
             try setFallback(app, t);
-            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
             return true;
         },
         .pending => {
             try setFallback(app, null);
-            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
             return true;
         },
         .none => {
@@ -226,11 +232,11 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
                 },
                 .pending_with_fallback => |t| {
                     try setFallback(app, t);
-                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
                     return true;
                 },
                 .pending => {
-                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
                     return true;
                 },
                 .none => {
@@ -358,11 +364,19 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             }
         },
         .picker => |*p| switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
-            .consumed => {},
-            .cancel => closeOverlay(app),
-            .changed => try refilterPicker(app),
+            .consumed => cmd_picker.preview(app),
+            .cancel => {
+                cmd_picker.cancel(app);
+                closeOverlay(app);
+            },
+            .changed => {
+                try refilterPicker(app);
+                cmd_picker.preview(app);
+            },
             .accept => |i| try cmd_picker.accept(app, i),
         },
+        .settings => try settings_app.key(app, k),
+        .wizard => try first_launch.key(app, k),
         .menu => |*m| {
             const last = m.items.len -| 1;
             switch (k.code) {
@@ -430,6 +444,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
 
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
     switch (purpose) {
+        .trust_workspace => try @import("trust.zig").answer(app, choice),
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;
@@ -502,12 +517,13 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
     const target = app.hits.at(m.x, m.y) orelse {
-        if (m.kind == .press and app.overlay == .menu) closeOverlay(app);
+        if (m.kind == .press) dismissOverlay(app);
         return;
     };
-    // A press anywhere but on the menu dismisses it; the press then
-    // goes on to whatever it landed on.
-    if (m.kind == .press and app.overlay == .menu and target != .menu_item) closeOverlay(app);
+    // A press anywhere but on the overlay itself dismisses it — a menu,
+    // a picker (its preview restored), the settings box (its writes
+    // kept); the press then goes on to whatever it landed on.
+    if (m.kind == .press and target != .menu_item and target != .overlay_item and target != .scrollbar) dismissOverlay(app);
     switch (target) {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
@@ -590,6 +606,8 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
                     if (i >= kids.len) return;
                     try overlayKey(app, Key.char(kids[i].key));
                 },
+                .settings => try settings_app.click(app, i),
+                .wizard => first_launch.click(app, i),
                 else => {},
             }
         },
@@ -608,6 +626,15 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
         },
         else => {},
     }
+}
+
+/// Click-outside: close whatever overlay is up. A themes picker puts
+/// its preview back first; everything else closes as Enter would not —
+/// a confirm unanswered, a settings box kept.
+fn dismissOverlay(app: *App) void {
+    if (app.overlay == .none) return;
+    cmd_picker.cancel(app);
+    closeOverlay(app);
 }
 
 fn hitRect(app: *App, x: u16, y: u16) ?@import("../ui/rect.zig") {

@@ -8,6 +8,7 @@ const app_driver = @import("app/driver.zig");
 const loop = @import("tui/loop.zig");
 const Term = @import("tui/term.zig");
 const input = @import("input/mod.zig");
+const config = @import("config/root.zig");
 
 pub const version = "0.3.0-dev";
 
@@ -43,7 +44,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--headless] | test [PATH…] [--gate]");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] | test [PATH…] [--gate]");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -52,9 +53,10 @@ pub fn main(init: std.process.Init) !u8 {
     return terminalMain(gpa, io, env, args[1..], w);
 }
 
-/// `--input vim|standard` / `--input=vim`, anywhere on the line.
-fn parseInputFlag(argv: []const [:0]const u8, w: *Io.Writer) !input.Style {
-    var style: input.Style = .standard;
+/// `--input vim|standard` / `--input=vim`, anywhere on the line; null
+/// when absent (the config decides).
+fn parseInputFlag(argv: []const [:0]const u8, w: *Io.Writer) !?input.Style {
+    var style: ?input.Style = null;
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -82,6 +84,43 @@ fn parseInputFlag(argv: []const [:0]const u8, w: *Io.Writer) !input.Style {
 
 // ─── mnml-zig [WS] [FILE…] ──────────────────────────────────────────────
 
+/// `--config PATH` / `--config=PATH`, anywhere on the line.
+fn parseConfigFlag(argv: []const [:0]const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        const a = argv[i];
+        if (std.mem.eql(u8, a, "--config")) {
+            if (i + 1 < argv.len) return argv[i + 1];
+            return null;
+        }
+        if (std.mem.startsWith(u8, a, "--config=")) return a["--config=".len..];
+    }
+    return null;
+}
+
+/// The three config layers for `workspace`, with the command line's
+/// overrides applied, plus where mnml keeps its state. `loaded` is the
+/// caller's to hand on (the App frees it).
+const Startup = struct { loaded: config.Loaded, data_root: []u8 };
+
+fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: []const u8, argv: []const [:0]const u8, ascii: bool) !Startup {
+    const exe_dir: ?[]u8 = std.process.executableDirPathAlloc(io, gpa) catch null;
+    defer if (exe_dir) |d| gpa.free(d);
+    const cfg_env: config.data_root.Env = .{ .vars = env, .exe_dir = exe_dir };
+    const data_root = try config.data_root.dataRoot(gpa, io, cfg_env);
+    errdefer gpa.free(data_root);
+    var loaded = try config.load.load(gpa, io, .{
+        .explicit = parseConfigFlag(argv),
+        .workspace = workspace,
+        .trust = .ask,
+        .data_root = data_root,
+        .env = cfg_env,
+    });
+    if (ascii) loaded.config.ui.ascii_icons = true;
+    if (app_driver.default_factory.input_style) |s| loaded.config.editor.input_style = @import("app.zig").App.configStyleOf(s);
+    return .{ .loaded = loaded, .data_root = data_root };
+}
+
 /// The terminal: the first non-flag argument that is a directory is the
 /// workspace (default: cwd); every other non-flag argument is opened.
 fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
@@ -94,7 +133,7 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
-        if (std.mem.eql(u8, a, "--input")) {
+        if (std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config")) {
             i += 1;
             continue;
         }
@@ -120,10 +159,12 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
     const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, "workspace is not a directory");
     const ws_abs = cwd_buf[0..ws_len];
+    const startup = try loadConfig(gpa, io, env, ws_abs, argv, ascii);
+    defer gpa.free(startup.data_root);
     const cfg: loop.Options = .{
-        .cfg = .{ .input_style = app_driver.default_factory.input_style, .ascii = ascii },
+        .loaded = startup.loaded,
         .workspace = ws_abs,
-        .data_root = env.get("MNML_DATA_ROOT") orelse "",
+        .data_root = startup.data_root,
         .files = files.items,
     };
     return loop.run(gpa, io, env, cfg) catch |err| switch (err) {
@@ -312,15 +353,16 @@ fn headlessSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, arg
         .size = size,
         .ipc = .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = build_options.ipc_subdir },
     };
-    const data_root = env.get("MNML_DATA_ROOT") orelse "";
-    const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = data_root, .cols = size.cols, .rows = size.rows };
-
     var stub_factory: e2e.driver.StubFactory = .{};
     const factory: e2e.Factory = if (use_stub) stub_factory.factory() else app_factory orelse {
         try w.writeAll("mnml-zig --headless: no App driver yet (use --stub to drive the recording stub)\n");
         try w.flush();
         return 2;
     };
+    const startup = try loadConfig(gpa, io, env, ws_abs, argv, false);
+    defer gpa.free(startup.data_root);
+    // `make` owns `loaded` from here, whatever it returns.
+    const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded };
     const driver = try factory.make(gpa, io, cfg);
     defer driver.deinit();
     const restart = try headless.run(gpa, io, driver, ws_abs, opts);

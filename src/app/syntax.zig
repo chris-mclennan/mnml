@@ -9,45 +9,42 @@ const ts = highlight.ts;
 const table = highlight.table;
 const editor_view = @import("../ui/editor_view.zig");
 const color = @import("../ui/color.zig");
+const Theme = @import("../ui/theme.zig");
 
 pub const Span = editor_view.Span;
 pub const Style = color.Style;
 
-fn rgb(r: u8, g: u8, b: u8) color.Color {
-    return .{ .rgb = .{ r, g, b } };
-}
-
-/// Capture name prefix → style. First match wins, so `function.method`
-/// lands on `function`.
-const palette = [_]struct { []const u8, Style }{
-    .{ "comment", .{ .fg = rgb(0x6c, 0x70, 0x86), .italic = true } },
-    .{ "string", .{ .fg = rgb(0xa6, 0xe3, 0xa1) } },
-    .{ "keyword", .{ .fg = rgb(0xcb, 0xa6, 0xf7) } },
-    .{ "function", .{ .fg = rgb(0x89, 0xb4, 0xfa) } },
-    .{ "method", .{ .fg = rgb(0x89, 0xb4, 0xfa) } },
-    .{ "type", .{ .fg = rgb(0xf9, 0xe2, 0xaf) } },
-    .{ "constructor", .{ .fg = rgb(0xf9, 0xe2, 0xaf) } },
-    .{ "number", .{ .fg = rgb(0xfa, 0xb3, 0x87) } },
-    .{ "constant", .{ .fg = rgb(0xfa, 0xb3, 0x87) } },
-    .{ "boolean", .{ .fg = rgb(0xfa, 0xb3, 0x87) } },
-    .{ "operator", .{ .fg = rgb(0x94, 0xe2, 0xd5) } },
-    .{ "punctuation", .{ .fg = rgb(0x93, 0x9a, 0xb7) } },
-    .{ "property", .{ .fg = rgb(0xf5, 0xc2, 0xe7) } },
-    .{ "attribute", .{ .fg = rgb(0xf9, 0xe2, 0xaf) } },
-    .{ "variable", .{ .fg = rgb(0xcd, 0xd6, 0xf4) } },
-    .{ "tag", .{ .fg = rgb(0xf3, 0x8b, 0xa8) } },
-    .{ "label", .{ .fg = rgb(0x89, 0xdc, 0xeb) } },
-    .{ "namespace", .{ .fg = rgb(0xf9, 0xe2, 0xaf) } },
-    .{ "module", .{ .fg = rgb(0xf9, 0xe2, 0xaf) } },
-    .{ "text", .{ .fg = rgb(0xcd, 0xd6, 0xf4) } },
-    .{ "markup", .{ .fg = rgb(0xcd, 0xd6, 0xf4) } },
-    .{ "escape", .{ .fg = rgb(0xf3, 0x8b, 0xa8) } },
-    .{ "embedded", .{ .fg = rgb(0xcd, 0xd6, 0xf4) } },
+/// Capture name prefix → the theme's syntax role. First match wins, so
+/// `function.method` lands on `function`.
+const roles = [_]struct { []const u8, []const u8 }{
+    .{ "comment", "comment" },
+    .{ "string", "string" },
+    .{ "keyword", "keyword" },
+    .{ "function", "function" },
+    .{ "method", "function" },
+    .{ "type", "type" },
+    .{ "constructor", "constructor" },
+    .{ "number", "number" },
+    .{ "constant", "constant" },
+    .{ "boolean", "constant" },
+    .{ "operator", "operator" },
+    .{ "punctuation", "punctuation" },
+    .{ "property", "property" },
+    .{ "attribute", "attribute" },
+    .{ "variable", "variable" },
+    .{ "tag", "tag" },
+    .{ "label", "label" },
+    .{ "namespace", "namespace" },
+    .{ "module", "namespace" },
+    .{ "text", "text" },
+    .{ "markup", "text" },
+    .{ "escape", "escape" },
+    .{ "embedded", "text" },
 };
 
-pub fn styleForCapture(name: []const u8) ?Style {
-    for (palette) |p| {
-        if (std.mem.startsWith(u8, name, p[0])) return p[1];
+pub fn styleForCapture(name: []const u8, t: *const Theme) ?Style {
+    inline for (roles) |r| {
+        if (std.mem.startsWith(u8, name, r[0])) return @field(t.syntax, r[1]);
     }
     return null;
 }
@@ -105,9 +102,10 @@ pub const Syntax = struct {
         self.query = ts.Query.init(e.language(), table.highlightSource(i), null) catch null;
     }
 
-    /// Re-parse `text` and rebuild the spans. Spans are sorted by start,
-    /// innermost capture last so a later (more specific) capture wins.
-    pub fn refresh(self: *Syntax, text: []const u8) Allocator.Error!void {
+    /// Re-parse `text` and rebuild the spans in `t`'s colours. Spans are
+    /// sorted by start, innermost capture last so a later (more specific)
+    /// capture wins. A theme switch re-runs this on every pane.
+    pub fn refresh(self: *Syntax, text: []const u8, t: *const Theme) Allocator.Error!void {
         self.spans.clearRetainingCapacity();
         const parser = self.parser orelse return;
         const query = self.query orelse return;
@@ -119,7 +117,7 @@ pub const Syntax = struct {
         while (cursor.nextMatch()) |m| {
             for (m.slice()) |cap| {
                 const name = query.captureName(cap.index);
-                const style = styleForCapture(name) orelse continue;
+                const style = styleForCapture(name, t) orelse continue;
                 const s = cap.node.startByte();
                 const e = cap.node.endByte();
                 if (e <= s or e > text.len) continue;
@@ -134,10 +132,10 @@ test "syntax: a rust file gets spans, an unknown extension gets none" {
     var s = Syntax.init(gpa);
     defer s.deinit();
     s.setLanguage("/ws/main.rs");
-    try s.refresh("fn main() {\n    let s = \"hi\";\n}\n");
+    try s.refresh("fn main() {\n    let s = \"hi\";\n}\n", &Theme.default);
     try std.testing.expect(s.spans.items.len > 0);
     s.setLanguage("/ws/notes.xyz");
-    try s.refresh("plain");
+    try s.refresh("plain", &Theme.default);
     try std.testing.expectEqual(@as(usize, 0), s.spans.items.len);
     try std.testing.expectEqualStrings("make", keyForPath("/x/Makefile").?);
 }

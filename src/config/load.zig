@@ -20,6 +20,7 @@ const patch_mod = @import("patch.zig");
 const decode_mod = @import("decode.zig");
 const diag_mod = @import("diag.zig");
 const trust_mod = @import("trust.zig");
+const trusted = @import("trusted.zig");
 const data_root = @import("data_root.zig");
 
 pub const Patch = patch_mod.Patch;
@@ -27,7 +28,18 @@ pub const apply = patch_mod.apply;
 pub const Diagnostics = diag_mod.Diagnostics;
 pub const Diagnostic = diag_mod.Diagnostic;
 
-pub const Trust = enum { trusted, untrusted };
+/// How the workspace layer is treated. `.ask` consults the trust store
+/// under `Options.data_root`: a remembered fingerprint applies the layer
+/// in full, anything else strips it and sets `Loaded.trust_prompt` so
+/// the app can put the question.
+pub const Trust = enum { trusted, untrusted, ask };
+
+/// What the trust dialog shows: the workspace's exec-bearing claims and
+/// the digest that, once remembered, keeps it from asking again.
+pub const TrustPrompt = struct {
+    claims: []const trust_mod.Claim,
+    fingerprint: u64,
+};
 
 /// Largest config file the loader will read.
 pub const max_file_bytes = 16 * 1024 * 1024;
@@ -43,6 +55,22 @@ pub const Loaded = struct {
     home_path: ?[]const u8,
     workspace_path: []const u8,
     explicit_path: ?[]const u8,
+    /// Set when the workspace layer was stripped under `.ask` and the
+    /// user has not answered yet.
+    trust_prompt: ?TrustPrompt = null,
+    /// Whether the workspace layer applied in full.
+    workspace_trusted: bool,
+    /// The options this was loaded with, strings re-homed on the arena,
+    /// so `reload` can run the same load with a different trust.
+    opts: Options,
+
+    /// The same three layers again, with `trust` — what Trust in the
+    /// dialog does. A fresh `Loaded`; the caller retires this one.
+    pub fn reload(self: *const Loaded, gpa: Allocator, io: Io, trust: Trust) Allocator.Error!Loaded {
+        var o = self.opts;
+        o.trust = trust;
+        return load(gpa, io, o);
+    }
 
     pub fn allocator(self: *const Loaded) Allocator {
         return self.arena.allocator();
@@ -125,6 +153,8 @@ pub const Options = struct {
     /// Absolute workspace root; its `.mnml/config.zon` is the middle layer.
     workspace: []const u8,
     trust: Trust = .trusted,
+    /// Where `trusted_workspaces.zon` lives; required for `.ask`.
+    data_root: ?[]const u8 = null,
     env: data_root.Env,
 };
 
@@ -142,30 +172,78 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
         .home_path = try data_root.homeConfigPath(arena, io, opts.env),
         .workspace_path = try std.fs.path.join(arena, &.{ opts.workspace, ".mnml", data_root.config_file }),
         .explicit_path = if (opts.explicit) |p| try arena.dupe(u8, p) else null,
+        .workspace_trusted = opts.trust == .trusted,
+        .opts = .{
+            .explicit = if (opts.explicit) |p| try arena.dupe(u8, p) else null,
+            .workspace = try arena.dupe(u8, opts.workspace),
+            .trust = opts.trust,
+            .data_root = if (opts.data_root) |d| try arena.dupe(u8, d) else null,
+            .env = .{ .vars = opts.env.vars, .exe_dir = if (opts.env.exe_dir) |d| try arena.dupe(u8, d) else null },
+        },
     };
-    if (loaded.home_path) |p| try applyFile(arena, io, &loaded.config, &loaded.diagnostics, p, .trusted);
-    try applyFile(arena, io, &loaded.config, &loaded.diagnostics, loaded.workspace_path, opts.trust);
-    if (loaded.explicit_path) |p| try applyFile(arena, io, &loaded.config, &loaded.diagnostics, p, .trusted);
+    if (loaded.home_path) |p| {
+        if (try readLayer(arena, io, &loaded.diagnostics, p)) |patch| try apply(arena, &loaded.config, patch);
+    }
+    if (try readLayer(arena, io, &loaded.diagnostics, loaded.workspace_path)) |patch| {
+        var p = patch;
+        const trust: Trust = switch (opts.trust) {
+            .trusted, .untrusted => opts.trust,
+            .ask => try decideTrust(gpa, io, &loaded, p),
+        };
+        loaded.workspace_trusted = trust == .trusted;
+        if (trust == .untrusted) {
+            const n = try trust_mod.strip(arena, &p);
+            if (n != 0) try loaded.diagnostics.addFmt(loaded.workspace_path, 0, 0, "untrusted workspace: {d} exec-bearing setting(s) ignored", .{n});
+        }
+        try apply(arena, &loaded.config, p);
+    }
+    if (loaded.explicit_path) |p| {
+        if (try readLayer(arena, io, &loaded.diagnostics, p)) |patch| try apply(arena, &loaded.config, patch);
+    }
 
     try normalize(arena, &loaded.config, &loaded.diagnostics, opts.env.vars.get("HOME"));
     return loaded;
 }
 
-fn applyFile(arena: Allocator, io: Io, cfg: *Config, diags: *Diagnostics, path: []const u8, trust: Trust) Allocator.Error!void {
+/// One layer file as a patch; null when the file is absent (fine) or
+/// unreadable (a diagnostic). An absent `.zon` with a 0.2.x
+/// `config.toml` beside it gets a pointer at the converter — the one
+/// thing mnml-zig will ever say about TOML.
+fn readLayer(arena: Allocator, io: Io, diags: *Diagnostics, path: []const u8) Allocator.Error!?Patch(Config) {
     const src = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(max_file_bytes), .of(u8), 0) catch |e| switch (e) {
-        error.FileNotFound => return, // absent — fine
+        error.FileNotFound => {
+            if (std.mem.endsWith(u8, path, ".zon")) {
+                const toml = try std.mem.concat(arena, u8, &.{ path[0 .. path.len - ".zon".len], ".toml" });
+                Io.Dir.cwd().access(io, toml, .{}) catch return null;
+                try diags.addFmt(toml, 0, 0, "mnml-zig reads config.zon, not TOML — run `mnml export-config-zon` (0.2.22) to convert this file", .{});
+            }
+            return null;
+        },
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try diags.addFmt(path, 0, 0, "cannot read: {s}", .{@errorName(e)});
-            return;
+            return null;
         },
     };
-    var p = try parseLayer(arena, src, path, diags);
-    if (trust == .untrusted) {
-        const n = try trust_mod.strip(arena, &p);
-        if (n != 0) try diags.addFmt(path, 0, 0, "untrusted workspace: {d} exec-bearing setting(s) ignored", .{n});
+    return try parseLayer(arena, src, path, diags);
+}
+
+/// `.ask`: a layer with no exec-bearing claim needs no answer; one whose
+/// claims match the store is trusted; anything else is stripped and the
+/// prompt is set for the app.
+fn decideTrust(gpa: Allocator, io: Io, loaded: *Loaded, p: Patch(Config)) Allocator.Error!Trust {
+    const arena = loaded.arena.allocator();
+    const claims = try trust_mod.claims(arena, p);
+    if (claims.len == 0) return .trusted;
+    const fp = trust_mod.fingerprint(claims);
+    if (loaded.opts.data_root) |root| {
+        const store = try trusted.storePath(arena, root);
+        if (try trusted.lookup(gpa, io, store, loaded.opts.workspace)) |remembered| {
+            if (remembered == fp) return .trusted;
+        }
     }
-    try apply(arena, cfg, p);
+    loaded.trust_prompt = .{ .claims = claims, .fingerprint = fp };
+    return .untrusted;
 }
 
 // ─── after the merge ─────────────────────────────────────────────────────
@@ -456,6 +534,19 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         defer loaded.deinit();
         try t.expectEqual(@as(u8, 2), loaded.config.editor.tab_width); // home still applies
         try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
+    }
+    // a 0.2.x config.toml where the .zon would be: one pointer at the converter
+    {
+        try tmp.dir.createDirPath(t.io, "old/.mnml");
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "old/.mnml/config.toml", .data = "[ui]\ntheme = \"gruvbox\"\n" });
+        const old = try std.fs.path.join(t.allocator, &.{ root, "old" });
+        defer t.allocator.free(old);
+        var loaded = try load(t.allocator, t.io, .{ .workspace = old, .env = .{ .vars = &vars } });
+        defer loaded.deinit();
+        try t.expectEqualStrings("onedark", loaded.config.ui.theme); // not read
+        try t.expectEqual(@as(usize, 1), loaded.diagnostics.count());
+        try t.expect(std.mem.indexOf(u8, loaded.diagnostics.items.items[0].msg, "export-config-zon") != null);
+        try t.expect(std.mem.endsWith(u8, loaded.diagnostics.items.items[0].file, "config.toml"));
     }
 }
 

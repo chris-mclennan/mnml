@@ -61,6 +61,16 @@ pub fn build(b: *std.Build) void {
     // ── syntax: tree-sitter ──
     const ts = addTreeSitter(b, target, optimize);
 
+    // ── themes ──
+    // `themes/root.zig` imports every `themes/*.zon` at comptime, so a
+    // malformed palette fails the build. It is its own module because the
+    // main module is rooted at `src/` and cannot reach a sibling directory.
+    const themes_mod = b.createModule(.{
+        .root_source_file = b.path("themes/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // ── command table: -Dpartial ──
     // Downgrades "command id has no runner" from a compile error to a
     // runtime toast. The spike ships with it ON because only the todos
@@ -90,6 +100,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "pty", .module = pty_mod },
             .{ .name = "tree_sitter", .module = ts.runtime },
             .{ .name = "highlight", .module = ts.highlight },
+            .{ .name = "themes", .module = themes_mod },
         },
     });
     root_module.addOptions("build_options", build_options);
@@ -206,6 +217,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "vaxis", .module = vaxis_mod },
+            .{ .name = "themes", .module = themes_mod },
         },
     });
     const canvas_demo = b.addExecutable(.{ .name = "canvas-demo", .root_module = canvas_demo_mod });

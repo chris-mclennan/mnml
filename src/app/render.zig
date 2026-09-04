@@ -32,6 +32,10 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
+const settings_app = @import("settings.zig");
+const settings_ui = @import("../ui/settings.zig");
+const first_launch = @import("first_launch.zig");
+const wizard_ui = @import("../ui/wizard.zig");
 
 /// The right panel's width; the divider takes one more column.
 pub const right_panel_width: u16 = 40;
@@ -51,7 +55,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .arena = arena,
         .focus = app.focus,
         .hover = if (app.hover) |h| .{ .x = h.x, .y = h.y } else null,
-        .ascii = app.cfg.ascii,
+        .ascii = app.cfg.ui.ascii_icons,
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);
@@ -163,7 +167,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     };
     const focused = app.active == id and app.focus == .pane;
     if (e.hl_dirty) {
-        try e.syntax.refresh(e.buf.editor.bytes());
+        try e.syntax.refresh(e.buf.editor.bytes(), &app.theme);
         e.hl_dirty = false;
     }
     const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());
@@ -180,9 +184,9 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .spans = e.syntax.spans.items,
         .matches = matches,
         .current_match = e.find.current,
-        .wrap = e.wrap orelse app.cfg.wrap,
-        .tab_width = app.cfg.tab_width,
-        .line_numbers = app.cfg.line_numbers,
+        .wrap = e.wrap orelse app.cfg.ui.wrap,
+        .tab_width = app.cfg.editor.tab_width,
+        .line_numbers = app.cfg.ui.line_numbers,
         .cursor_shape = switch (mode) {
             .insert, .none => .bar,
             .replace => .underline,
@@ -198,7 +202,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         var digits: u16 = 1;
         var n = e.buf.editor.lineCount();
         while (n >= 10) : (n /= 10) digits += 1;
-        const gutter: u16 = if (app.cfg.line_numbers) digits + 2 else 0;
+        const gutter: u16 = if (app.cfg.ui.line_numbers) digits + 2 else 0;
         app.pane_cols = @max(rect.w -| gutter, 1);
         if (focused) app.cursor_pos = cursor;
     }
@@ -216,7 +220,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .line = 0,
         .col = 0,
         .total_lines = 0,
-        .input_style = @tagName(app.cfg.input_style),
+        .input_style = @tagName(app.input_style),
     };
     if (app.activeEditor()) |e| {
         const ed = &e.buf.editor;
@@ -272,6 +276,18 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         // A menu is anchored where the click was, which may be in the
         // tree or the right panel: it clamps against the whole screen.
         .menu => |*m| drawMenu(ui, ui.canvas.full(), m),
+        .settings => |*s| {
+            const items = try settings_app.items(app, ui.arena);
+            const sub = try settings_app.footer(app, ui.arena, items);
+            // Centered on the screen, but the tab strip and the statusline
+            // stay: the box never covers row 0 or the last row.
+            const full = ui.canvas.full();
+            settings_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &s.ui, items, sub);
+        },
+        .wizard => |*w| {
+            const full = ui.canvas.full();
+            wizard_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &w.ui, first_launch.model(app));
+        },
     }
 }
 

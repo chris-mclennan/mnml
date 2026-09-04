@@ -1,21 +1,37 @@
 //! Theme — every color the UI layer paints with, as ready-made styles.
 //!
 //! Components never name a color; they name a role (`theme.selection`,
-//! `theme.mode_insert`) and the theme decides. `default` is a dark theme
-//! built from NvChad's onedark palette (the same seed the Rust mnml
-//! ships), in rgb; the Canvas folds rgb onto the 256-color cube when the
-//! terminal has no truecolor, so a theme never has to think about it.
+//! `theme.mode_insert`) and the theme decides. A theme is derived from a
+//! palette: NvChad's `base_30` (the chrome) and `base_16` (the syntax
+//! slots), as shipped in `themes/*.zon` and imported at comptime through
+//! the `themes` module — so `all` is a table in rodata, `byName` is a
+//! scan over it, and a palette that does not parse is a build failure.
 //!
-//! Every style carries a background on purpose: a chip painted over a
-//! panel must not inherit the terminal's default bg through a hole.
+//! A palette may be partial (upstream leaves slots out); `resolve` fills
+//! each role through the same fallback chain mnml 0.2 used, and a missing
+//! `base_16` slot takes onedark's, so every bundled theme paints every
+//! role. `default` is onedark, the theme the shipped config names.
+//!
+//! Every chrome style carries a background on purpose: a chip painted
+//! over a panel must not inherit the terminal's default bg through a
+//! hole. Syntax styles are foreground-only — they sit on the row's ground.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const themes = @import("themes");
 
 pub const Style = vaxis.Style;
 pub const Color = vaxis.Color;
+pub const Source = themes.Source;
+pub const Kind = themes.Kind;
 
 const Theme = @This();
+
+name: []const u8,
+kind: Kind,
+/// The resolved colours, for the few places that want a named colour
+/// rather than a role (a brand chip, a diagnostic severity).
+palette: Palette,
 
 /// Editor body: text on the darkest ground.
 bg: Style,
@@ -68,6 +84,73 @@ info_fg: Style,
 fold: Style,
 /// Rendered whitespace / indent guides.
 whitespace: Style,
+/// Tree-sitter capture roles, foreground only.
+syntax: Syntax,
+
+/// What a highlight capture paints as. `styleForCapture` in
+/// `app/syntax.zig` maps capture-name prefixes onto these.
+pub const Syntax = struct {
+    comment: Style,
+    string: Style,
+    keyword: Style,
+    function: Style,
+    type: Style,
+    constructor: Style,
+    number: Style,
+    constant: Style,
+    operator: Style,
+    punctuation: Style,
+    property: Style,
+    attribute: Style,
+    variable: Style,
+    tag: Style,
+    label: Style,
+    namespace: Style,
+    text: Style,
+    escape: Style,
+};
+
+/// The palette after every fallback: the 25 named chrome colours mnml
+/// 0.2 kept on its `Theme`, plus the sixteen syntax slots.
+pub const Palette = struct {
+    /// one_bg — secondary panel ground
+    bg: Color,
+    /// one_bg2 — selected row / hover
+    bg2: Color,
+    /// one_bg3
+    bg3: Color,
+    /// black — the editor body
+    bg_dark: Color,
+    /// darker_black — tree rail, bufferline, overlays
+    bg_darker: Color,
+    /// statusline_bg
+    statusline: Color,
+    /// current-line ground and separators
+    line: Color,
+    /// lightbg — file-tab body
+    lightbg: Color,
+    /// white — primary text
+    fg: Color,
+    /// light_grey / grey_fg2
+    comment: Color,
+    grey: Color,
+    grey_fg: Color,
+    red: Color,
+    pink: Color,
+    green: Color,
+    vibrant_green: Color,
+    yellow: Color,
+    sun: Color,
+    orange: Color,
+    blue: Color,
+    nord_blue: Color,
+    teal: Color,
+    cyan: Color,
+    purple: Color,
+    dark_purple: Color,
+    /// `base00`..`base0F`.
+    base16: [16]Color,
+};
 
 pub fn rgb(hex: u24) Color {
     return .{ .rgb = .{
@@ -77,31 +160,65 @@ pub fn rgb(hex: u24) Color {
     } };
 }
 
-/// NvChad onedark, base_30 + base_16 — the values the Rust mnml keeps
-/// hardcoded as its seed theme.
-pub const onedark = struct {
-    pub const one_bg = rgb(0x282c34);
-    pub const one_bg2 = rgb(0x353b45);
-    pub const one_bg3 = rgb(0x373b43);
-    pub const black = rgb(0x1e222a);
-    pub const darker_black = rgb(0x1b1f27);
-    pub const statusline_bg = rgb(0x22262e);
-    pub const line = rgb(0x31353d);
-    pub const light_bg = rgb(0x2d3139);
-    pub const white = rgb(0xabb2bf);
-    pub const comment = rgb(0x80848d);
-    pub const grey = rgb(0x42464e);
-    pub const grey_fg = rgb(0x565c64);
-    pub const red = rgb(0xe06c75);
-    pub const green = rgb(0x98c379);
-    pub const yellow = rgb(0xe7c787);
-    pub const orange = rgb(0xfca2aa);
-    pub const blue = rgb(0x61afef);
-    pub const cyan = rgb(0xa3b8ef);
-    pub const purple = rgb(0xde98fd);
-    pub const base02 = rgb(0x3e4451);
-    pub const base03 = rgb(0x545862);
+// ─── the palette ─────────────────────────────────────────────────────────
+
+/// The first of `keys` the source sets, else `fallback`.
+fn pick(src: Source, comptime keys: []const []const u8, fallback: Color) Color {
+    inline for (keys) |k| {
+        if (@field(src.base_30, k)) |hex| return rgb(hex);
+    }
+    return fallback;
+}
+
+/// onedark's `base_16`, the fill for a slot a palette leaves out.
+const onedark_base16 = [16]u24{
+    0x1e222a, 0x353b45, 0x3e4451, 0x545862, 0x565c64, 0xabb2bf, 0xb6bdca, 0xc8ccd4,
+    0xe06c75, 0xd19a66, 0xe5c07b, 0x98c379, 0x56b6c2, 0x61afef, 0xc678dd, 0xbe5046,
 };
+const onedark_fg = rgb(0xabb2bf);
+const onedark_bg_dark = rgb(0x1e222a);
+
+/// Resolve every role through its fallback chain (the chains mnml 0.2's
+/// `theme.rs` used, kept verbatim so a partial upstream palette lands on
+/// the same colours it did there).
+pub fn resolve(src: Source) Palette {
+    const white = pick(src, &.{"white"}, onedark_fg);
+    const black = pick(src, &.{"black"}, onedark_bg_dark);
+    var base16: [16]Color = undefined;
+    inline for (std.meta.fields(themes.Base16), 0..) |f, i| {
+        base16[i] = rgb(@field(src.base_16, f.name) orelse onedark_base16[i]);
+    }
+    return .{
+        .bg = pick(src, &.{ "one_bg", "black" }, black),
+        .bg2 = pick(src, &.{ "one_bg2", "one_bg" }, black),
+        .bg3 = pick(src, &.{ "one_bg3", "one_bg2" }, black),
+        .bg_dark = black,
+        .bg_darker = pick(src, &.{"darker_black"}, black),
+        .statusline = pick(src, &.{ "statusline_bg", "black2" }, black),
+        .line = pick(src, &.{ "line", "one_bg3" }, black),
+        .lightbg = pick(src, &.{ "lightbg", "one_bg" }, black),
+        .fg = white,
+        .comment = pick(src, &.{ "light_grey", "grey_fg2", "grey_fg", "grey" }, white),
+        .grey = pick(src, &.{ "grey", "grey_fg" }, white),
+        .grey_fg = pick(src, &.{ "grey_fg", "grey" }, white),
+        .red = pick(src, &.{"red"}, white),
+        .pink = pick(src, &.{ "pink", "baby_pink" }, white),
+        .green = pick(src, &.{"green"}, white),
+        .vibrant_green = pick(src, &.{ "vibrant_green", "green" }, white),
+        .yellow = pick(src, &.{"yellow"}, white),
+        .sun = pick(src, &.{ "sun", "yellow" }, white),
+        .orange = pick(src, &.{"orange"}, white),
+        .blue = pick(src, &.{"blue"}, white),
+        .nord_blue = pick(src, &.{ "nord_blue", "blue" }, white),
+        .teal = pick(src, &.{"teal"}, white),
+        .cyan = pick(src, &.{ "cyan", "blue" }, white),
+        .purple = pick(src, &.{"purple"}, white),
+        .dark_purple = pick(src, &.{ "dark_purple", "purple" }, white),
+        .base16 = base16,
+    };
+}
+
+// ─── the styles ──────────────────────────────────────────────────────────
 
 fn on(fg: Color, bg: Color) Style {
     return .{ .fg = fg, .bg = bg };
@@ -111,41 +228,134 @@ fn bold(fg: Color, bg: Color) Style {
     return .{ .fg = fg, .bg = bg, .bold = true };
 }
 
-pub const default: Theme = blk: {
-    const p = onedark;
-    break :blk .{
-        .bg = on(p.white, p.black),
-        .fg = on(p.white, p.black),
-        .muted = on(p.comment, p.black),
-        .accent = on(p.blue, p.black),
-        .border = on(p.line, p.black),
-        .gutter = on(p.base03, p.black),
-        .cursor_line = on(p.white, p.line),
-        .selection = on(p.white, p.base02),
-        .match = on(p.white, rgb(0x4d4a30)),
-        .current_match = bold(p.black, p.yellow),
-        .statusline = on(p.white, p.statusline_bg),
-        .bufferline = on(p.grey_fg, p.darker_black),
-        .tab_active = bold(p.white, p.black),
-        .tab_inactive = on(p.grey_fg, p.darker_black),
-        .tab_dirty = on(p.orange, p.darker_black),
-        .mode_normal = bold(p.black, p.red),
-        .mode_insert = bold(p.black, p.green),
-        .mode_visual = bold(p.black, p.purple),
-        .mode_replace = bold(p.black, p.orange),
-        .mode_edit = bold(p.black, p.green),
-        .panel_bg = on(p.white, p.darker_black),
-        .chip = on(p.white, p.one_bg2),
-        .chip_active = bold(p.black, p.cyan),
-        .overlay_bg = on(p.white, p.one_bg2),
-        .overlay_border = on(p.white, p.one_bg2),
-        .overlay_title = bold(p.comment, p.one_bg2),
-        .error_fg = on(p.red, p.black),
-        .warn_fg = on(p.yellow, p.black),
-        .info_fg = on(p.blue, p.black),
-        .fold = .{ .fg = p.comment, .bg = p.black, .italic = true },
-        .whitespace = on(p.grey, p.black),
+fn fgOnly(fg: Color) Style {
+    return .{ .fg = fg };
+}
+
+/// A palette → the roles. Pure, so it runs at comptime for the bundled
+/// table and at runtime for a `--theme-dir` file alike.
+pub fn derive(src: Source) Theme {
+    const p = resolve(src);
+    const b16 = p.base16;
+    return .{
+        .name = src.name,
+        .kind = src.kind,
+        .palette = p,
+        .bg = on(p.fg, p.bg_dark),
+        .fg = on(p.fg, p.bg_dark),
+        .muted = on(p.comment, p.bg_dark),
+        .accent = on(p.blue, p.bg_dark),
+        .border = on(p.line, p.bg_dark),
+        .gutter = on(b16[3], p.bg_dark),
+        .cursor_line = on(p.fg, p.line),
+        .selection = on(p.fg, b16[2]),
+        .match = on(p.fg, p.grey),
+        .current_match = bold(p.bg_dark, p.yellow),
+        .statusline = on(p.fg, p.statusline),
+        .bufferline = on(p.grey_fg, p.bg_darker),
+        .tab_active = bold(p.fg, p.bg_dark),
+        .tab_inactive = on(p.grey_fg, p.bg_darker),
+        .tab_dirty = on(p.orange, p.bg_darker),
+        .mode_normal = bold(p.bg_dark, p.red),
+        .mode_insert = bold(p.bg_dark, p.green),
+        .mode_visual = bold(p.bg_dark, p.purple),
+        .mode_replace = bold(p.bg_dark, p.orange),
+        .mode_edit = bold(p.bg_dark, p.green),
+        .panel_bg = on(p.fg, p.bg_darker),
+        .chip = on(p.fg, p.bg2),
+        .chip_active = bold(p.bg_dark, p.cyan),
+        .overlay_bg = on(p.fg, p.bg2),
+        .overlay_border = on(p.fg, p.bg2),
+        .overlay_title = bold(p.comment, p.bg2),
+        .error_fg = on(p.red, p.bg_dark),
+        .warn_fg = on(p.yellow, p.bg_dark),
+        .info_fg = on(p.blue, p.bg_dark),
+        .fold = .{ .fg = p.comment, .bg = p.bg_dark, .italic = true },
+        .whitespace = on(p.grey, p.bg_dark),
+        // base16 roles: 03 comments, 05 default fg, 08 variables, 09
+        // numbers / constants, 0A types, 0B strings, 0C escapes /
+        // constructors, 0D functions, 0E keywords, 0F punctuation.
+        .syntax = .{
+            .comment = .{ .fg = b16[3], .italic = true },
+            .string = fgOnly(b16[0xB]),
+            .keyword = fgOnly(b16[0xE]),
+            .function = fgOnly(b16[0xD]),
+            .type = fgOnly(b16[0xA]),
+            .constructor = fgOnly(b16[0xC]),
+            .number = fgOnly(b16[9]),
+            .constant = fgOnly(b16[9]),
+            .operator = fgOnly(b16[5]),
+            .punctuation = fgOnly(b16[0xF]),
+            .property = fgOnly(b16[8]),
+            .attribute = fgOnly(b16[0xA]),
+            .variable = fgOnly(b16[8]),
+            .tag = fgOnly(b16[8]),
+            .label = fgOnly(b16[0xC]),
+            .namespace = fgOnly(b16[0xA]),
+            .text = fgOnly(b16[5]),
+            .escape = fgOnly(b16[0xC]),
+        },
     };
+}
+
+// ─── the table ───────────────────────────────────────────────────────────
+
+/// Every bundled theme, derived at comptime, in `themes/root.zig` order
+/// (alphabetical by file).
+pub const all: [themes.all.len]Theme = blk: {
+    @setEvalBranchQuota(200_000);
+    var out: [themes.all.len]Theme = undefined;
+    for (themes.all, 0..) |src, i| out[i] = derive(src);
+    break :blk out;
+};
+
+pub const default_name = "onedark";
+
+/// Case-insensitive, whitespace-trimmed lookup.
+pub fn byName(name: []const u8) ?*const Theme {
+    const want = std.mem.trim(u8, name, " \t\r\n");
+    for (&all) |*t| {
+        if (std.ascii.eqlIgnoreCase(t.name, want)) return t;
+    }
+    return null;
+}
+
+/// The first theme of `kind` whose name is not `except` — what
+/// `theme.toggle` reaches for when `ui.theme_toggle` is unset.
+pub fn firstOfKind(kind: Kind, except: []const u8) ?*const Theme {
+    for (&all) |*t| {
+        if (t.kind == kind and !std.ascii.eqlIgnoreCase(t.name, except)) return t;
+    }
+    return null;
+}
+
+/// The shipped default: onedark, which `Config{}` names.
+pub const default: Theme = blk: {
+    @setEvalBranchQuota(200_000);
+    for (all) |t| if (std.mem.eql(u8, t.name, default_name)) break :blk t;
+    @compileError("themes/: no " ++ default_name ++ ".zon — the default theme is not bundled");
+};
+
+/// onedark's named colours, for the tests and demos that want a known
+/// colour without naming a role.
+pub const onedark = struct {
+    pub const one_bg = default.palette.bg;
+    pub const one_bg2 = default.palette.bg2;
+    pub const black = default.palette.bg_dark;
+    pub const darker_black = default.palette.bg_darker;
+    pub const statusline_bg = default.palette.statusline;
+    pub const line = default.palette.line;
+    pub const white = default.palette.fg;
+    pub const comment = default.palette.comment;
+    pub const grey = default.palette.grey;
+    pub const grey_fg = default.palette.grey_fg;
+    pub const red = default.palette.red;
+    pub const green = default.palette.green;
+    pub const yellow = default.palette.yellow;
+    pub const orange = default.palette.orange;
+    pub const blue = default.palette.blue;
+    pub const cyan = default.palette.cyan;
+    pub const purple = default.palette.purple;
 };
 
 /// `base` with its background replaced — a chip's text color on the
@@ -163,27 +373,95 @@ pub fn withFg(base: Style, fg: Color) Style {
     return out;
 }
 
-test "default theme is rgb throughout and every style has a background" {
-    inline for (std.meta.fields(Theme)) |f| {
-        const s: Style = @field(default, f.name);
-        try std.testing.expect(s.bg == .rgb);
-        try std.testing.expect(s.fg == .rgb);
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "every bundled theme derives with rgb in every chrome role" {
+    try testing.expect(all.len >= 94);
+    for (&all) |*t| {
+        try testing.expect(t.name.len > 0);
+        inline for (std.meta.fields(Theme)) |f| {
+            if (f.type == Style) {
+                const s: Style = @field(t, f.name);
+                try testing.expect(s.bg == .rgb);
+                try testing.expect(s.fg == .rgb);
+            }
+        }
+        inline for (std.meta.fields(Syntax)) |f| {
+            try testing.expect(@field(t.syntax, f.name).fg == .rgb);
+        }
     }
+}
+
+test "default is onedark and matches the seed values mnml 0.2 hardcoded" {
+    try testing.expectEqualStrings("onedark", default.name);
+    try testing.expect(default.kind == .dark);
+    try testing.expect(Color.eql(default.palette.bg_dark, rgb(0x1e222a)));
+    try testing.expect(Color.eql(default.palette.fg, rgb(0xabb2bf)));
+    try testing.expect(Color.eql(default.palette.comment, rgb(0x80848d)));
+    try testing.expect(Color.eql(default.palette.base16[0xE], rgb(0xc678dd)));
+    try testing.expect(Color.eql(default.selection.bg, rgb(0x3e4451)));
+    try testing.expect(Color.eql(default.gutter.fg, rgb(0x545862)));
+}
+
+test "byName is case-insensitive and trims; unknown is null" {
+    try testing.expectEqualStrings("onedark", byName("OneDark").?.name);
+    try testing.expectEqualStrings("gruvbox", byName("  gruvbox ").?.name);
+    try testing.expectEqualStrings("catppuccin-latte", byName("Catppuccin-Latte").?.name);
+    try testing.expect(byName("catppuccin-latte").?.kind == .light);
+    try testing.expect(byName("no-such-theme") == null);
+    try testing.expect(firstOfKind(.light, "onedark").?.kind == .light);
+    try testing.expect(!std.mem.eql(u8, firstOfKind(.dark, "aquarium").?.name, "aquarium"));
+}
+
+test "a partial palette resolves through the fallback chains" {
+    // Only `black` and `white`, one syntax slot: everything else chains
+    // down to those two, and the other fifteen slots are onedark's.
+    const src: Source = .{
+        .name = "bare",
+        .kind = .dark,
+        .base_30 = .{ .black = 0x101010, .white = 0xf0f0f0, .blue = 0x0000ff, .grey = 0x404040 },
+        .base_16 = .{ .base0B = 0x00ff00 },
+    };
+    const p = resolve(src);
+    try testing.expect(Color.eql(p.bg, rgb(0x101010))); // one_bg → black
+    try testing.expect(Color.eql(p.bg2, rgb(0x101010))); // one_bg2 → one_bg → black
+    try testing.expect(Color.eql(p.statusline, rgb(0x101010))); // statusline_bg → black2 → black
+    try testing.expect(Color.eql(p.comment, rgb(0x404040))); // light_grey → grey_fg2 → grey_fg → grey
+    try testing.expect(Color.eql(p.grey_fg, rgb(0x404040))); // grey_fg → grey
+    try testing.expect(Color.eql(p.red, rgb(0xf0f0f0))); // red → white
+    try testing.expect(Color.eql(p.cyan, rgb(0x0000ff))); // cyan → blue
+    try testing.expect(Color.eql(p.nord_blue, rgb(0x0000ff)));
+    try testing.expect(Color.eql(p.base16[0xB], rgb(0x00ff00)));
+    try testing.expect(Color.eql(p.base16[0xE], rgb(0xc678dd))); // onedark's keyword slot
+    const t = derive(src);
+    try testing.expect(Color.eql(t.syntax.string.fg, rgb(0x00ff00)));
+    try testing.expect(Color.eql(t.bg.bg, rgb(0x101010)));
+}
+
+test "the two upstream palettes with no base_16 at all paint onedark's syntax" {
+    for ([_][]const u8{ "nano-light", "poimandres" }) |n| {
+        const t = byName(n).?;
+        try testing.expect(Color.eql(t.syntax.keyword.fg, rgb(0xc678dd)));
+    }
+    // catppuccin-latte's upstream typo was folded onto vibrant_green.
+    try testing.expect(!Color.eql(byName("catppuccin-latte").?.palette.vibrant_green, byName("catppuccin-latte").?.palette.green));
 }
 
 test "rgb unpacks channels" {
     const c = rgb(0x61afef);
-    try std.testing.expectEqual(@as(u8, 0x61), c.rgb[0]);
-    try std.testing.expectEqual(@as(u8, 0xaf), c.rgb[1]);
-    try std.testing.expectEqual(@as(u8, 0xef), c.rgb[2]);
+    try testing.expectEqual(@as(u8, 0x61), c.rgb[0]);
+    try testing.expectEqual(@as(u8, 0xaf), c.rgb[1]);
+    try testing.expectEqual(@as(u8, 0xef), c.rgb[2]);
 }
 
 test "onBg and withFg replace one channel" {
     const s = onBg(default.mode_insert, onedark.statusline_bg);
-    try std.testing.expect(s.bold);
-    try std.testing.expect(Color.eql(s.bg, onedark.statusline_bg));
-    try std.testing.expect(Color.eql(s.fg, default.mode_insert.fg));
+    try testing.expect(s.bold);
+    try testing.expect(Color.eql(s.bg, onedark.statusline_bg));
+    try testing.expect(Color.eql(s.fg, default.mode_insert.fg));
     const t = withFg(default.chip, onedark.red);
-    try std.testing.expect(Color.eql(t.fg, onedark.red));
-    try std.testing.expect(Color.eql(t.bg, default.chip.bg));
+    try testing.expect(Color.eql(t.fg, onedark.red));
+    try testing.expect(Color.eql(t.bg, default.chip.bg));
 }

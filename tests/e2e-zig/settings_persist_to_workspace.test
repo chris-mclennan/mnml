@@ -1,0 +1,37 @@
+# zig-only
+# The mnml-zig form of tests/e2e/settings_persist_to_workspace.test: the
+# same flow against the per-project file <workspace>/.mnml/config.zon
+# (mnml-zig's config is ZON; the shared file seeds and asserts TOML).
+#
+# Changing a setting in the overlay writes it to the workspace file at
+# once, keystroke-driven end-to-end through the real key dispatcher. Esc
+# restores the file's opened-state bytes, so the adjustment is undone on
+# disk while a seeded value survives; Enter / click-outside keeps it.
+write a.txt hello
+open a.txt
+
+# Seed an existing workspace config so Esc provably RESTORES it (not just
+# deletes) and unrelated content survives a setting write.
+write .mnml/config.zon .{\n    .ui = .{\n        .tree_width = 40,\n    },\n}\n
+
+command view.settings
+expect screen contains "Settings"
+
+# Row 0 (first focusable) is `ui.line_numbers`. `→` adjusts it; the
+# overlay writes the change live into the workspace file, beside the seed.
+key right
+expect file .mnml/config.zon contains ".line_numbers = false"
+expect file .mnml/config.zon contains ".tree_width = 40"
+
+# Esc cancels — the workspace file goes back to its pre-open bytes.
+key esc
+expect screen lacks "Settings"
+expect file .mnml/config.zon lacks "line_numbers"
+expect file .mnml/config.zon contains ".tree_width = 40"
+
+# Reopen, adjust, and leave via click-outside (the keep path).
+command view.settings
+key right
+click 1 1
+expect screen lacks "Settings"
+expect file .mnml/config.zon contains ".line_numbers = false"

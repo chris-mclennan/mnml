@@ -1,18 +1,9 @@
 //! ZON config — barrel. See `docs/DESIGN.md` E1 and `docs/CONFIG.md`.
 //!
-//! TODO(merge): `app.Config` (src/app.zig) is replaced by this `Config`
-//! at merge. The fields it carries today map as:
-//!   input_style      ← config.editor.input_style   (same enum shape as input.Style)
-//!   tab_width        ← config.editor.tab_width
-//!   text_width       ← config.editor.text_width
-//!   wrap             ← config.ui.wrap
-//!   breadcrumb       ← config.editor.breadcrumb
-//!   line_numbers     ← config.ui.line_numbers
-//!   chord_timeout_ms ← config.editor.chord_timeout_ms
-//!   ascii            ← config.ui.ascii_icons
-//!   toast_ttl_ms     — no config key; keep the App default
-//! Not adapted here: importing app.zig from this leaf would drag the
-//! whole App into a self-contained module for a ten-line function.
+//! `App.cfg` is this `Config` (`src/app.zig`); the loader's `Loaded`
+//! travels with it and is freed last, since every string in the merged
+//! config borrows the loader's arena. The one enum the input layer keeps
+//! for itself (`input.Style`) is reconciled by `App.styleOf`.
 
 pub const Config = @import("Config.zig");
 pub const Dynamic = @import("Dynamic.zig").Dynamic;
@@ -26,6 +17,8 @@ pub const load = @import("load.zig");
 pub const Loaded = load.Loaded;
 pub const Trust = load.Trust;
 pub const trust = @import("trust.zig");
+pub const trusted = @import("trusted.zig");
+pub const TrustPrompt = load.TrustPrompt;
 pub const data_root = @import("data_root.zig");
 pub const persist = @import("persist.zig");
 
@@ -38,6 +31,7 @@ test {
     _ = @import("decode.zig");
     _ = @import("load.zig");
     _ = @import("trust.zig");
+    _ = @import("trusted.zig");
     _ = @import("data_root.zig");
     _ = @import("persist.zig");
 }
