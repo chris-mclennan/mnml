@@ -353,10 +353,33 @@ in `src/config/load.zig`) — it cannot drift from the schema.
 ## Workspace trust
 
 A workspace config is written by whoever owns the repo. Before its
-exec-bearing keys apply, mnml lists them and asks once; the answer is
-remembered against a fingerprint of the claims, so a later change to any
-command asks again while ordinary edits do not. Until trusted, these
-are dropped from the workspace layer and everything else still applies:
+exec-bearing keys apply, mnml lists them and asks once:
+
+```
+ Trust this workspace?
+   proj runs programs from its .mnml/config.zon:
+     • language server zig — runs `zls` when you open a file
+     • format on save zig — runs `zig fmt` when you save
+   Until trusted these settings are ignored; the rest apply.
+                                        [T]rust   [D]on't trust
+```
+
+*Don't trust* is the focused choice, so a reflexive Enter is the safe
+answer; the question comes back next launch. *Trust* records a
+fingerprint of the claims — FNV-1a over each `kind / key / command`
+line, sorted — in `<data root>/trusted_workspaces.zon`, keyed by the
+canonical workspace path:
+
+```zon
+.{
+    .@"/Users/me/proj" = "3f2a9c0e11d4b7a8",
+}
+```
+
+A later change to any command changes the fingerprint and asks again;
+ordinary edits to the file do not. A workspace file with no
+exec-bearing key never asks. Until trusted, these are dropped from the
+workspace layer and everything else still applies:
 
 | key | runs |
 |---|---|
@@ -389,12 +412,121 @@ section is appended. An unchanged value is not written. Before every
 write the previous file is copied to `backups/config.<YYYY-MM-DD-HHMMSS>.zon`
 next to it, keeping the newest 50.
 
+### The settings overlay
+
+`view.settings`, `:settings`, or `Ctrl+,` opens the sectioned list —
+`── UI ──`, `── Editor ──`, `── Integrations ──`, `── Reset ──` — one row
+per discrete-choice key:
+
+```
+ ▸ Line numbers:      off / [on]
+   TODOS sort:        [newest] / oldest / name / name_desc
+   Theme:             [onedark] ‹ 62/94 ›
+   Input style:       vim / [standard]  *
+```
+
+`▸` marks focus, `[brackets]` the current choice, a trailing `*` a value
+that is not the shipped default. `←→` / `h l` adjust, `↑↓` / `j k` move,
+`r` resets the row, `R` everything, `Enter` (or a click outside) keeps
+and closes, `Esc` cancels.
+
+**The file follows the row.** Adjusting a row applies at once and writes
+the value to the row's file, so what you see is what is on disk. Which
+file depends on the row: a per-project view setting (line numbers, wrap,
+format on save, …) goes to the workspace's `.mnml/config.zon`; a
+preference (theme, input style, ASCII icons, AI, Sonos, …) goes to the
+home config. The title names the focused row's file. `Esc` puts back
+the config, the input style, the theme, and the exact bytes of every
+file written since the overlay opened — a file that did not exist is
+removed again.
+
+v1 rows are discrete choices only (bools, enums, the theme); numbers
+and text (`tree_width`, `projects_dir`, …) stay TOML-era file edits
+until v2.
+
+### Themes
+
+`.ui.theme` names one of the bundled themes — every `themes/*.zon`,
+the 94 NvChad palettes, matched case-insensitively (`"OneDark"` is
+`onedark`). `theme.pick` / `:theme` opens a picker that previews as you
+move and writes the pick to the home config on Enter; `:theme <name>`
+and `:set theme=<name>` pick directly. `theme.toggle` flips to
+`.ui.theme_toggle`, or to the first bundled theme of the other kind
+when it is unset; `theme.reset` returns to `.ui.theme`;
+`theme.auto_system` follows the OS appearance (checked every 15 s) and
+`theme.auto_system_off` freezes it. Only a pick writes the file.
+
+A theme file is the palette as NvChad ships it, `0xrrggbb` values:
+
+```zon
+.{
+    .name = "onedark",
+    .kind = .dark, // .dark | .light
+    .base_30 = .{ .white = 0xabb2bf, .black = 0x1e222a, /* … */ },
+    .base_16 = .{ .base00 = 0x1e222a, /* … base0F */ },
+}
+```
+
+Every UI role derives from it at build time with the same fallback
+chains 0.2.x used (`one_bg2 → one_bg → black`, `light_grey → grey_fg2
+→ grey_fg → grey → white`, `cyan → blue`, …); a missing `base_16` slot
+takes onedark's. A malformed theme fails the build, not the launch.
+
+### First launch
+
+`.ui.first_launch_complete` gates the setup wizard: while it is false
+the terminal loop opens it on start (after the trust dialog, if any).
+Enter writes only what was touched — `editor.input_style`,
+`ui.ascii_icons`, `ai.routing.<product>.backend`,
+`ai.inline_suggestions` — plus `first_launch_complete = true`, to the
+home config. Esc writes nothing and asks again next launch;
+`first_launch.show` reopens it any time.
+
 ## Coming from 0.2.x (TOML)
 
-`mnml export-config-zon` in the last Rust release writes this file from
-your `config.toml`. Renames: `[abbr]` → `.abbr`; `[startup] tasks`,
-`[[startup.layout]]` and `default_workspace` → `.startup`;
-`[[marketplace.source]] type = "…"` → the tagged union;
-`[[ui.integration_icon]]` → `.ui.integration_icons`;
-`md_preview_engine = "custom:x"` → `.{ .custom = "x" }`; a formatter or
-linter `cmd` string → a list; `claude_show_all_accounts` → a bool.
+mnml-zig reads no TOML — not `config.toml`, not the theme files, not
+`trusted_workspaces.toml`. The last Rust release (0.2.22) carries the
+converter, since it is the one that still has the typed TOML config:
+
+```
+mnml export-config-zon                # writes ~/.config/mnml/config.zon
+mnml export-config-zon --out PATH     # or wherever you like
+```
+
+Run it once per config file you keep: the home file, and each
+workspace's `.mnml/config.toml` (from inside that workspace, with
+`--out .mnml/config.zon`). The output carries a `//` comment per key
+from the schema's own doc table, and every key it could not place lands
+verbatim in a trailing `// unmigrated:` block so nothing is lost
+silently. The TOML file is left where it was; mnml-zig ignores it.
+
+What changes shape on the way:
+
+| 0.2.x TOML | ZON |
+|---|---|
+| `[abbr]` | `.abbr` |
+| `[startup] tasks`, `[[startup.layout]]`, `default_workspace` | `.startup = .{ .tasks, .layout, .default_workspace }` |
+| `[[marketplace.source]] type = "crates_keyword"` | `.marketplace.sources = .{ .{ .crates_keyword = .{ … } } }` (a tagged union) |
+| `[[ui.integration_icon]]` | `.ui.integration_icons = .{ … }` |
+| `md_preview_engine = "custom:cmd"` | `.md_preview_engine = .{ .custom = "cmd" }` |
+| `input_style = "vim"` and every other closed-set string | an enum literal: `.input_style = .vim` |
+| a formatter / linter `cmd = "rustfmt"` string | a list: `.cmd = .{ "rustfmt" }` |
+| `claude_show_all_accounts = "true"` (bool-or-string) | a bool |
+| `[keys.global] "ctrl+p" = "picker.files"` | `.keys = .{ .global = .{ .@"ctrl+p" = "picker.files" } }` |
+| legacy glyph names, `DEAD_INTEGRATION_IDS` | remapped / dropped |
+
+What does not need migrating:
+
+- **Themes.** All 94 bundled themes ship as `themes/*.zon`; a custom
+  `.toml` in your data root is not read. Convert it with the same shape
+  as above (`tools/theme_toml2zon.zig` in the repo is the script that
+  produced the bundled files) and drop it beside them.
+- **Trust.** `trusted_workspaces.toml` is not read; each workspace with
+  exec-bearing settings asks once more and is remembered in
+  `trusted_workspaces.zon`.
+- **`session.json`, `.rqst/history.jsonl`.** JSON, read best-effort with
+  unknown fields ignored and rewritten in the 0.3 shape.
+
+Nothing is automatic: a 0.3.0 launch with no `config.zon` starts on the
+shipped defaults and the first-launch wizard, and says so in a toast if
+a `config.toml` is sitting next to where the ZON file would be.

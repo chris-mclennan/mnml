@@ -206,10 +206,19 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
 }
 
 /// One layer file as a patch; null when the file is absent (fine) or
-/// unreadable (a diagnostic).
+/// unreadable (a diagnostic). An absent `.zon` with a 0.2.x
+/// `config.toml` beside it gets a pointer at the converter — the one
+/// thing mnml-zig will ever say about TOML.
 fn readLayer(arena: Allocator, io: Io, diags: *Diagnostics, path: []const u8) Allocator.Error!?Patch(Config) {
     const src = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(max_file_bytes), .of(u8), 0) catch |e| switch (e) {
-        error.FileNotFound => return null,
+        error.FileNotFound => {
+            if (std.mem.endsWith(u8, path, ".zon")) {
+                const toml = try std.mem.concat(arena, u8, &.{ path[0 .. path.len - ".zon".len], ".toml" });
+                Io.Dir.cwd().access(io, toml, .{}) catch return null;
+                try diags.addFmt(toml, 0, 0, "mnml-zig reads config.zon, not TOML — run `mnml export-config-zon` (0.2.22) to convert this file", .{});
+            }
+            return null;
+        },
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try diags.addFmt(path, 0, 0, "cannot read: {s}", .{@errorName(e)});
@@ -525,6 +534,19 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         defer loaded.deinit();
         try t.expectEqual(@as(u8, 2), loaded.config.editor.tab_width); // home still applies
         try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
+    }
+    // a 0.2.x config.toml where the .zon would be: one pointer at the converter
+    {
+        try tmp.dir.createDirPath(t.io, "old/.mnml");
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "old/.mnml/config.toml", .data = "[ui]\ntheme = \"gruvbox\"\n" });
+        const old = try std.fs.path.join(t.allocator, &.{ root, "old" });
+        defer t.allocator.free(old);
+        var loaded = try load(t.allocator, t.io, .{ .workspace = old, .env = .{ .vars = &vars } });
+        defer loaded.deinit();
+        try t.expectEqualStrings("onedark", loaded.config.ui.theme); // not read
+        try t.expectEqual(@as(usize, 1), loaded.diagnostics.count());
+        try t.expect(std.mem.indexOf(u8, loaded.diagnostics.items.items[0].msg, "export-config-zon") != null);
+        try t.expect(std.mem.endsWith(u8, loaded.diagnostics.items.items[0].file, "config.toml"));
     }
 }
 
