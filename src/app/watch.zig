@@ -1,0 +1,182 @@
+//! The file watcher: every 2 s each open file is stat'ed and compared
+//! with the stamp taken when it was last read or written. A clean buffer
+//! reloads in place (cursor row and scroll kept) with a `reloaded`
+//! toast; a dirty one is left alone with a warning that names the way
+//! out, and restamped so the warning fires once per change.
+//!
+//! No inotify / kqueue: a stat per open buffer every two seconds is
+//! nothing, and it behaves the same on every platform.
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const PaneId = app_mod.PaneId;
+const EditorPane = app_mod.EditorPane;
+const pane_mod = @import("pane.zig");
+const hooks = @import("../core/hooks.zig");
+
+pub const interval_ms: i64 = 2000;
+
+/// What is on disk for `path` right now, or null when it cannot be read.
+pub fn stamp(io: Io, path: []const u8) ?pane_mod.DiskStamp {
+    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
+    return .{ .mtime_ns = st.mtime.toNanoseconds(), .size = st.size };
+}
+
+/// Record the file as it is now — after a read or a write.
+pub fn restamp(app: *App, e: *EditorPane) void {
+    const path = e.buf.path orelse {
+        e.disk = null;
+        return;
+    };
+    e.disk = stamp(app.io, path);
+}
+
+/// `save_post` subscriber: the buffer just wrote the file.
+pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
+    const e = app.panes.editor(args.save_post.pane) orelse return;
+    restamp(app, e);
+}
+
+/// Every tick; does its work at most once per `interval_ms`.
+pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    if (now - app.last_watch_ms < interval_ms) return;
+    app.last_watch_ms = now;
+    try check(app);
+}
+
+/// The 2 s pass, on demand.
+pub fn check(app: *App) Allocator.Error!void {
+    for (app.panes.slots.items, 0..) |*slot, i| {
+        const pane = &(slot.* orelse continue);
+        const e = pane.asEditor() orelse continue;
+        const path = e.buf.path orelse continue;
+        const known = e.disk orelse continue;
+        const now_on_disk = stamp(app.io, path) orelse continue;
+        if (now_on_disk.mtime_ns == known.mtime_ns and now_on_disk.size == known.size) continue;
+        const rel = app.relPath(path);
+        if (e.buf.dirty) {
+            app.toast("{s} changed on disk — :e! to discard / save to overwrite", .{rel});
+            e.disk = now_on_disk;
+            continue;
+        }
+        reload(app, @intCast(i)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                app.toast("{s}: reload failed: {s}", .{ rel, @errorName(err) });
+                e.disk = now_on_disk;
+                continue;
+            },
+        };
+        app.toast("{s} reloaded", .{rel});
+    }
+}
+
+pub const ReloadError = Allocator.Error || Io.Dir.ReadFileAllocError || error{NoPath};
+
+/// Replace the buffer's text with the file's, as one undo step, keeping
+/// the cursor's row and the scroll where they were. Marks the buffer
+/// clean and restamps it. `:e!` and the watcher both come through here.
+pub fn reload(app: *App, id: PaneId) ReloadError!void {
+    const e = app.panes.editor(id) orelse return error.NoPath;
+    const path = e.buf.path orelse return error.NoPath;
+    const text = try Io.Dir.cwd().readFileAlloc(app.io, path, app.frame.allocator(), .limited(1 << 30));
+    const ed = &e.buf.editor;
+    const row = ed.currentLine();
+    const scroll = e.view.scroll_line;
+    try app.splice(e, 0, ed.len(), text);
+    try e.buf.markSaved();
+    const last = ed.lineCount() -| 1;
+    ed.placeCursor(@min(row, last), 0);
+    e.view.scroll_line = @intCast(@min(@as(usize, scroll), last));
+    e.hl_dirty = true;
+    restamp(app, e);
+    app.needs_render = true;
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+const Fixture = struct {
+    tmp: std.testing.TmpDir,
+    root: []u8,
+    app: App,
+
+    fn init() !Fixture {
+        var tmp = t.tmpDir(.{});
+        errdefer tmp.cleanup();
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try tmp.dir.realPath(t.io, &buf);
+        const root = try t.allocator.dupe(u8, buf[0..n]);
+        errdefer t.allocator.free(root);
+        const app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 60, .rows = 12 });
+        return .{ .tmp = tmp, .root = root, .app = app };
+    }
+
+    fn deinit(f: *Fixture) void {
+        f.app.deinit();
+        t.allocator.free(f.root);
+        f.tmp.cleanup();
+    }
+
+    fn open(f: *Fixture, rel: []const u8) !PaneId {
+        const abs = try std.fs.path.join(t.allocator, &.{ f.root, rel });
+        defer t.allocator.free(abs);
+        return f.app.openPath(abs);
+    }
+};
+
+test "a clean buffer reloads when the file changes on disk; the cursor row survives; a dirty one is warned once" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "one\ntwo\nthree\n" });
+    const id = try f.open("notes.txt");
+    const e = f.app.panes.editor(id).?;
+    try t.expect(e.disk != null);
+    e.buf.editor.placeCursor(2, 0);
+    // Nothing changed: no toast.
+    f.app.last_watch_ms = 0;
+    try tick(&f.app, interval_ms);
+    try t.expect(f.app.lastToast() == null);
+    // The size changes, so the stamp differs whatever the mtime granularity.
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "one\ntwo\nthree\nfour\nfive\n" });
+    try tick(&f.app, interval_ms + 100); // within the interval: not yet
+    try t.expect(f.app.lastToast() == null);
+    try tick(&f.app, 2 * interval_ms);
+    try t.expectEqualStrings("notes.txt reloaded", f.app.lastToast().?);
+    try t.expectEqualStrings("one\ntwo\nthree\nfour\nfive\n", e.buf.editor.bytes());
+    try t.expect(!e.buf.dirty);
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    // Dirty: warned, not reloaded, and only once for this change.
+    _ = try f.app.applyOps(e, &.{.{ .insert_str = "EDIT " }});
+    try t.expect(e.buf.dirty);
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "changed again\n" });
+    f.app.dismissToasts();
+    try tick(&f.app, 3 * interval_ms);
+    try t.expectEqualStrings("notes.txt changed on disk — :e! to discard / save to overwrite", f.app.lastToast().?);
+    try t.expect(std.mem.indexOf(u8, e.buf.editor.bytes(), "EDIT") != null);
+    f.app.dismissToasts();
+    try tick(&f.app, 4 * interval_ms);
+    try t.expect(f.app.lastToast() == null);
+    // :e! discards and takes the disk's text.
+    try f.app.runEx("e!");
+    try t.expectEqualStrings("changed again\n", e.buf.editor.bytes());
+    try t.expect(!e.buf.dirty);
+}
+
+test "a save restamps the file so the writer's own change is not reported" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "x\n" });
+    const id = try f.open("a.txt");
+    const e = f.app.panes.editor(id).?;
+    _ = try f.app.applyOps(e, &.{.{ .insert_str = "more text " }});
+    try f.app.runEx("w");
+    try t.expect(!e.buf.dirty);
+    f.app.dismissToasts();
+    try tick(&f.app, 10 * interval_ms);
+    try t.expect(f.app.lastToast() == null);
+}

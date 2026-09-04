@@ -82,7 +82,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         app.quit = true;
         return;
     }
-    if (eqAny(verb, &.{ "e", "ed", "edit" })) return edit(app, args);
+    if (eqAny(verb, &.{ "e", "ed", "edit" })) return edit(app, args, bang);
     if (eqAny(verb, &.{"enew"})) {
         _ = app.openScratch() catch return error.OutOfMemory;
         return;
@@ -279,17 +279,17 @@ fn quit(app: *App, bang: bool) CommandError!void {
     if (app.panes.count() == 0) app.quit = true;
 }
 
-fn edit(app: *App, arg: []const u8) CommandError!void {
+fn edit(app: *App, arg: []const u8, bang: bool) CommandError!void {
     const arena = app.frame.allocator();
     if (arg.len == 0 or std.mem.eql(u8, arg, "%")) {
-        // Reload from disk.
+        // Reload from disk; `:e!` discards unsaved changes.
         const e = try editor(app, ":e");
         const path = e.buf.path orelse return app.diag.fail(arena, ":e — no file name", .{});
-        if (e.buf.dirty) return app.diag.fail(arena, ":e — unsaved changes (use :e! to discard)", .{});
-        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(1 << 30)) catch |err| return app.diag.fail(arena, ":e — {s}", .{@errorName(err)});
-        e.buf.editor.setText(text) catch return error.OutOfMemory;
-        e.buf.markSaved() catch return error.OutOfMemory;
-        e.hl_dirty = true;
+        if (e.buf.dirty and !bang) return app.diag.fail(arena, ":e — unsaved changes (use :e! to discard)", .{});
+        @import("watch.zig").reload(app, app.active.?) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return app.diag.fail(arena, ":e — {s}", .{@errorName(err)}),
+        };
         app.toast("reloaded {s}", .{app.relPath(path)});
         return;
     }

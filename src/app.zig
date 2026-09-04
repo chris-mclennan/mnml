@@ -49,6 +49,7 @@ const panel_mod = @import("core/panel.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
+const watch = @import("app/watch.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -291,6 +292,8 @@ pub const App = struct {
     /// `g;` / `g,` position in the active editor's change list.
     change_nav: ?ChangeNav = null,
     now_ms: i64 = 0,
+    /// When the file watcher last stat'ed the open files.
+    last_watch_ms: i64 = 0,
     /// Frames since something changed; the loop skips idle renders.
     needs_render: bool = true,
 
@@ -341,6 +344,7 @@ pub const App = struct {
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
+        try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         app.now_ms = nowMs(io);
         return app;
     }
@@ -530,6 +534,7 @@ pub const App = struct {
         syn.setLanguage(path);
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn } });
         // Moved into the store: the errdefers above must not run from here.
+        watch.restamp(self, self.panes.editor(id).?);
         self.showPane(id);
         self.hooks.emit(self, .{ .open = .{ .path = self.relPath(path), .pane = id } });
         return id;
@@ -770,6 +775,7 @@ pub const App = struct {
         }
         try dispatch.finishDeferredInserts(self);
         pty_pane.tickAll(self);
+        try watch.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -832,6 +838,7 @@ test {
     _ = @import("app/pty_pane.zig");
     _ = @import("app/runners.zig");
     _ = @import("app/tasks.zig");
+    _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
     _ = @import("ui/hit.zig");
