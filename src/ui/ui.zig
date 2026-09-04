@@ -5,6 +5,7 @@
 //! without the main executable having to import them.
 
 pub const Rect = @import("rect.zig");
+pub const color = @import("color.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
