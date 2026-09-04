@@ -15,6 +15,8 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const event = @import("../core/event.zig");
 const key_mod = @import("../core/key.zig");
+const config = @import("../config/root.zig");
+const tasks = @import("../app/tasks.zig");
 
 pub const Options = struct {
     cfg: app_mod.Config = .{},
@@ -35,8 +37,15 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     defer term.deinit();
 
     const size = term.screen();
-    var app = try App.initWith(gpa, io, .{ .cfg = opts.cfg, .workspace = opts.workspace, .data_root = opts.data_root, .cols = size.width, .rows = size.height });
+    var app = try App.initWith(gpa, io, .{ .cfg = opts.cfg, .workspace = opts.workspace, .data_root = opts.data_root, .cols = size.width, .rows = size.height, .env = env });
     defer app.deinit();
+    // The typed config's tasks + startup list. The rest of the config's
+    // wiring is Phase 1; this hands the runner what it reads.
+    {
+        var loaded = try config.load.load(gpa, io, .{ .workspace = opts.workspace, .env = .{ .vars = env } });
+        defer loaded.deinit();
+        try tasks.installFromConfig(&app, &loaded.config);
+    }
     for (opts.files) |f| {
         const abs = try app.absPath(f);
         _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ f, @errorName(err) });

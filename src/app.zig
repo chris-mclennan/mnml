@@ -48,6 +48,7 @@ const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
 const pty_pane = @import("app/pty_pane.zig");
 const runners = @import("app/runners.zig");
+const tasks_mod = @import("app/tasks.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -101,7 +102,7 @@ pub const InitOptions = struct {
 
 pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo, npm_run_script, go_run_path };
 pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit, install_tool: u16 };
-pub const PickerKind = enum { buffers, files, go_run_cmd, tools };
+pub const PickerKind = enum { buffers, files, go_run_cmd, tools, tasks };
 
 pub const Overlay = union(enum) {
     none,
@@ -256,6 +257,7 @@ pub const App = struct {
     /// focus must not lose the file's directory (monorepo detection).
     last_editor: ?PaneId = null,
     runners: runners.State = .{},
+    tasks: tasks_mod.State = .{},
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -338,6 +340,7 @@ pub const App = struct {
         errdefer app.hooks.deinit();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
+        try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         app.now_ms = nowMs(io);
         return app;
     }
@@ -365,6 +368,7 @@ pub const App = struct {
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
         self.runners.deinit(gpa);
+        self.tasks.deinit(gpa);
         self.chord.clear(gpa);
         self.hooks.deinit();
         self.dyn_commands.deinit();
@@ -827,6 +831,7 @@ test {
     _ = @import("app/cmd_term.zig");
     _ = @import("app/pty_pane.zig");
     _ = @import("app/runners.zig");
+    _ = @import("app/tasks.zig");
     _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
     _ = @import("ui/hit.zig");

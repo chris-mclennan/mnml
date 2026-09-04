@@ -121,6 +121,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "tabo", "tabonly" })) return command.run(app, .{ .static = .@"tab.only" });
     if (eqAny(verb, &.{"tabs"})) return command.run(app, .{ .static = .@"tab.list" });
     if (eqAny(verb, &.{ "term", "terminal" })) return @import("cmd_term.zig").termEx(app, args);
+    if (eqAny(verb, &.{"task"})) return @import("tasks.zig").runNamed(app, args);
 
     // A registered command by id.
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);

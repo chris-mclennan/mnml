@@ -11,6 +11,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const dispatch = @import("dispatch.zig");
 const runners = @import("runners.zig");
+const tasks = @import("tasks.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -135,13 +136,14 @@ pub fn accept(app: *App, idx: usize) !void {
                 return;
             };
         },
-        .go_run_cmd, .tools => |kind| {
+        .go_run_cmd, .tools, .tasks => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
             const result = switch (kind) {
                 .go_run_cmd => runners.goRunAccept(app, label),
                 .tools => runners.toolAccept(app, label),
+                .tasks => tasks.runNamed(app, label),
                 else => unreachable,
             };
             result catch |err| switch (err) {
