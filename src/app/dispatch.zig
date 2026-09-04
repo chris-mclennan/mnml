@@ -358,9 +358,15 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             }
         },
         .picker => |*p| switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
-            .consumed => {},
-            .cancel => closeOverlay(app),
-            .changed => try refilterPicker(app),
+            .consumed => cmd_picker.preview(app),
+            .cancel => {
+                cmd_picker.cancel(app);
+                closeOverlay(app);
+            },
+            .changed => {
+                try refilterPicker(app);
+                cmd_picker.preview(app);
+            },
             .accept => |i| try cmd_picker.accept(app, i),
         },
         .menu => |*m| {

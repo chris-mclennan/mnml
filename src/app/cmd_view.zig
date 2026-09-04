@@ -1,7 +1,9 @@
-//! `view.*` and `tab.*` runners: wrap and gutter toggles, splits and
-//! split focus, viewport scrolling, and tab pages.
+//! `view.*`, `tab.*` and `theme.*` runners: wrap and gutter toggles,
+//! splits and split focus, viewport scrolling, tab pages, and the theme
+//! picker with its toggle / reset / follow-the-OS companions.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
@@ -10,6 +12,9 @@ const layout_mod = @import("layout.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const Rect = @import("../ui/rect.zig");
+const Theme = @import("../ui/theme.zig");
+const cmd_picker = @import("cmd_picker.zig");
+const settings = @import("settings.zig");
 
 pub const table = .{
     .@"view.toggle_wrap" = &toggleWrap,
@@ -42,6 +47,11 @@ pub const table = .{
     .@"tab.close" = &tabClose,
     .@"tab.only" = &tabOnly,
     .@"tab.list" = &tabList,
+    .@"theme.pick" = &pickTheme,
+    .@"theme.toggle" = &toggleTheme,
+    .@"theme.reset" = &resetTheme,
+    .@"theme.auto_system" = &autoSystemTheme,
+    .@"theme.auto_system_off" = &autoSystemThemeOff,
 };
 
 fn toggleWrap(app: *App) CommandError!void {
@@ -360,9 +370,184 @@ fn tabList(app: *App) CommandError!void {
     app.toast(":tabs · {s}", .{parts.items});
 }
 
+// ─── themes ─────────────────────────────────────────────────────────────
+// `ui.theme` names the theme at startup; the picker previews while you
+// move and Enter writes the pick to the home config. toggle / reset /
+// auto_system change what is painted, not the file — `ui.theme` stays
+// the theme you come back to.
+
+/// How often `theme.auto_system` looks at the OS appearance.
+pub const system_poll_ms: i64 = 15_000;
+
+fn pickTheme(app: *App) CommandError!void {
+    const gpa = app.gpa;
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+    }
+    for (&Theme.all) |*th| try labels.append(gpa, try gpa.dupe(u8, th.name));
+    const current = Theme.byName(app.theme.name);
+    try cmd_picker.open(app, "Themes", .themes, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+    app.overlay.picker.restore_theme = current;
+    // Start on the theme that is painted, so Enter is a no-op pick.
+    for (app.overlay.picker.filtered.items, 0..) |idx, i| {
+        if (std.mem.eql(u8, app.overlay.picker.labels[idx], app.theme.name)) app.overlay.picker.state.cursor = i;
+    }
+}
+
+/// Paint the candidate under the picker's cursor.
+pub fn previewTheme(app: *App) void {
+    const name = cmd_picker.cursorLabel(app) orelse return;
+    if (Theme.byName(name)) |th| if (!std.mem.eql(u8, th.name, app.theme.name)) app.setTheme(th);
+}
+
+/// The pick: paint it, make it `ui.theme`, write it home.
+pub fn acceptTheme(app: *App, name: []const u8) CommandError!void {
+    const th = Theme.byName(name) orelse return app.diag.fail(app.frame.allocator(), "no theme named {s}", .{name});
+    app.setTheme(th);
+    app.cfg.ui.theme = th.name;
+    _ = try settings.persist(app, .home, &.{ "ui", "theme" }, th.name);
+    app.toast("theme: {s}", .{th.name});
+}
+
+/// `:set theme=<name>` / `:theme <name>`: the same as a pick.
+pub fn useTheme(app: *App, name: []const u8) CommandError!void {
+    return acceptTheme(app, std.mem.trim(u8, name, " \t"));
+}
+
+/// The other half of the pair: `ui.theme_toggle` when set, otherwise the
+/// first bundled theme of the opposite kind.
+fn toggleTheme(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const base = app.cfg.ui.theme;
+    const on_base = std.ascii.eqlIgnoreCase(app.theme.name, base);
+    const other: *const Theme = blk: {
+        if (app.cfg.ui.theme_toggle) |name| {
+            if (Theme.byName(name)) |th| break :blk th;
+            app.toast("ui.theme_toggle \"{s}\" is not a bundled theme", .{name});
+        }
+        const want: Theme.Kind = if (app.theme.kind == .dark) .light else .dark;
+        break :blk Theme.firstOfKind(want, app.theme.name) orelse return app.diag.fail(arena, "no {s} theme to toggle to", .{@tagName(want)});
+    };
+    const next = if (on_base) other else (Theme.byName(base) orelse other);
+    app.setTheme(next);
+    app.toast("theme: {s} ({s})", .{ next.name, @tagName(next.kind) });
+}
+
+fn resetTheme(app: *App) CommandError!void {
+    app.theme_auto_poll_ms = null;
+    try app.applyTheme();
+    app.toast("theme: {s} (config default)", .{app.theme.name});
+}
+
+/// Follow the OS appearance: dark → `ui.theme` when it is dark else the
+/// toggle partner; light the other way round. Re-checked every 15 s.
+fn autoSystemTheme(app: *App) CommandError!void {
+    app.theme_auto_poll_ms = app.now_ms;
+    try pollSystemTheme(app);
+    app.toast("theme follows the system ({s})", .{@tagName(app.theme.kind)});
+}
+
+fn autoSystemThemeOff(app: *App) CommandError!void {
+    app.theme_auto_poll_ms = null;
+    app.toast("theme frozen on {s}", .{app.theme.name});
+}
+
+/// One poll: ask the OS, switch kinds if it disagrees, schedule the next.
+pub fn pollSystemTheme(app: *App) std.mem.Allocator.Error!void {
+    app.theme_auto_poll_ms = app.now_ms + system_poll_ms;
+    const dark = detectSystemDark(app.gpa, app.io) orelse return;
+    const want: Theme.Kind = if (dark) .dark else .light;
+    if (app.theme.kind == want) return;
+    const base = Theme.byName(app.cfg.ui.theme);
+    const partner: ?*const Theme = if (app.cfg.ui.theme_toggle) |n| Theme.byName(n) else null;
+    const pick: ?*const Theme = if (base != null and base.?.kind == want) base else if (partner != null and partner.?.kind == want) partner else Theme.firstOfKind(want, app.theme.name);
+    if (pick) |th| app.setTheme(th);
+}
+
+/// Does the OS report a dark appearance? null when it cannot be asked
+/// (no tool, not a desktop, spawn refused) — fail closed on "unknown"
+/// rather than guessing a switch.
+pub fn detectSystemDark(gpa: std.mem.Allocator, io: std.Io) ?bool {
+    const argv: []const []const u8 = switch (builtin.os.tag) {
+        .macos => &.{ "defaults", "read", "-g", "AppleInterfaceStyle" },
+        .linux => &.{ "gsettings", "get", "org.gnome.desktop.interface", "color-scheme" },
+        else => return null,
+    };
+    const result = std.process.run(gpa, io, .{ .argv = argv }) catch return null;
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    return switch (builtin.os.tag) {
+        // The key only exists when dark; light exits non-zero.
+        .macos => result.term == .exited and result.term.exited == 0 and std.mem.indexOf(u8, result.stdout, "Dark") != null,
+        .linux => std.mem.indexOf(u8, result.stdout, "prefer-dark") != null,
+        else => null,
+    };
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "theme.pick previews under the cursor, Esc restores, Enter persists ui.theme to the home config" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try t.expectEqualStrings("onedark", app.theme.name);
+
+    try command.run(&app, .{ .static = .@"theme.pick" });
+    try t.expect(app.overlay == .picker);
+    try t.expect(app.overlay.picker.kind == .themes);
+    try t.expectEqualStrings("onedark", app.overlay.picker.labels[app.overlay.picker.filtered.items[app.overlay.picker.state.cursor]]);
+    // moving previews
+    try app.handle(.{ .key = app_mod.Key.named(.down) });
+    try t.expect(!std.mem.eql(u8, app.theme.name, "onedark"));
+    // Esc puts it back and writes nothing
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("onedark", app.theme.name);
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "config.zon", .{}));
+    // typing filters; Enter picks and persists
+    try command.run(&app, .{ .static = .@"theme.pick" });
+    for ("gruvbox") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
+    try t.expectEqualStrings("gruvbox", app.theme.name); // previewed as the filter narrows
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("gruvbox", app.theme.name);
+    try t.expectEqualStrings("gruvbox", app.cfg.ui.theme);
+    const text = try tmp.dir.readFileAlloc(t.io, "config.zon", t.allocator, .unlimited);
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".theme = \"gruvbox\"") != null);
+    // the pane is still there and focused
+    try t.expect(app.focus == .pane);
+}
+
+test "theme.toggle flips to the partner or the other kind; reset returns to ui.theme; :set theme= is a pick" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"theme.toggle" });
+    try t.expect(app.theme.kind == .light);
+    try command.run(&app, .{ .static = .@"theme.toggle" });
+    try t.expectEqualStrings("onedark", app.theme.name);
+    app.cfg.ui.theme_toggle = "catppuccin-latte";
+    try command.run(&app, .{ .static = .@"theme.toggle" });
+    try t.expectEqualStrings("catppuccin-latte", app.theme.name);
+    try command.run(&app, .{ .static = .@"theme.reset" });
+    try t.expectEqualStrings("onedark", app.theme.name);
+    try t.expectEqualStrings("onedark", app.cfg.ui.theme); // toggle never touched the config
+    try @import("dispatch.zig").runExLine(&app, "set theme=Gruvbox");
+    try t.expectEqualStrings("gruvbox", app.theme.name);
+    try t.expectEqualStrings("gruvbox", app.cfg.ui.theme);
+    try @import("dispatch.zig").runExLine(&app, "theme nope");
+    try t.expectEqualStrings("no theme named nope", app.lastToast().?);
+    try t.expectEqualStrings("gruvbox", app.theme.name);
+}
 
 test "wrap toggles per pane; splits add leaves; focus moves between them; tabs cycle" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });

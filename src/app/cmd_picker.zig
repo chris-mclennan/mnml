@@ -3,6 +3,7 @@
 //! the labels against the query and `accept` opens the pick.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
@@ -15,6 +16,19 @@ pub const table = .{
     .@"picker.buffers" = &buffers,
     .@"picker.files" = &files,
 };
+
+/// Open the one picker overlay over `labels` (gpa-owned, taken over)
+/// with `panes` parallel to it (empty when not a buffer list).
+pub fn open(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId) CommandError!void {
+    return openPicker(app, title, kind, labels, panes);
+}
+
+/// The label under the picker's cursor, or null on an empty list.
+pub fn cursorLabel(app: *App) ?[]const u8 {
+    const p = &app.overlay.picker;
+    if (p.state.cursor >= p.filtered.items.len) return null;
+    return p.labels[p.filtered.items[p.state.cursor]];
+}
 
 /// Directories a workspace walk never enters.
 const skip_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache", ".mnml", "vendor", "dist", "build" };
@@ -111,7 +125,7 @@ fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: []
 }
 
 /// The pick at `idx` (an index into the filtered order) is chosen.
-pub fn accept(app: *App, idx: usize) !void {
+pub fn accept(app: *App, idx: usize) Allocator.Error!void {
     const p = &app.overlay.picker;
     if (idx >= p.filtered.items.len) return;
     const i = p.filtered.items[idx];
@@ -132,8 +146,32 @@ pub fn accept(app: *App, idx: usize) !void {
                 return;
             };
         },
+        .themes => {
+            const name = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            // The name came off the table, so the only way this fails is
+            // the write — which acceptTheme has already toasted.
+            @import("cmd_view.zig").acceptTheme(app, name) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+        },
     }
     app.needs_render = true;
+}
+
+/// The cursor moved or the filter changed: a themes picker paints the
+/// candidate under the cursor. Other kinds have nothing to preview.
+pub fn preview(app: *App) void {
+    if (app.overlay != .picker or app.overlay.picker.kind != .themes) return;
+    @import("cmd_view.zig").previewTheme(app);
+}
+
+/// The picker is closing without a pick: put a previewed theme back.
+pub fn cancel(app: *App) void {
+    if (app.overlay != .picker) return;
+    if (app.overlay.picker.restore_theme) |th| app.setTheme(th);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

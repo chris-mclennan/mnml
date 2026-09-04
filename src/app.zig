@@ -91,7 +91,7 @@ pub const toast_ttl_ms: i64 = 4000;
 
 pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo };
 pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit, trust_workspace };
-pub const PickerKind = enum { buffers, files };
+pub const PickerKind = enum { buffers, files, themes };
 
 pub const Overlay = union(enum) {
     none,
@@ -114,6 +114,9 @@ pub const Overlay = union(enum) {
         panes: []PaneId,
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
+        /// The themes picker previews as the cursor moves; Esc puts
+        /// this one back.
+        restore_theme: ?*const theme_mod = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
@@ -278,6 +281,8 @@ pub const App = struct {
     /// `g;` / `g,` position in the active editor's change list.
     change_nav: ?ChangeNav = null,
     now_ms: i64 = 0,
+    /// `theme.auto_system`: when the OS appearance is next polled.
+    theme_auto_poll_ms: ?i64 = null,
     /// Frames since something changed; the loop skips idle renders.
     needs_render: bool = true,
 
@@ -832,11 +837,13 @@ pub const App = struct {
             } else i += 1;
         }
         try dispatch.finishDeferredInserts(self);
+        if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
     pub fn nextDeadlineMs(self: *const App) ?i64 {
         var next: ?i64 = self.chord.deadline_ms;
+        if (self.theme_auto_poll_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
         if (self.todos.scanning) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         for (self.toasts.items) |t| {
@@ -875,6 +882,7 @@ pub const App = struct {
 
 test {
     _ = @import("app/trust.zig");
+    _ = @import("app/settings.zig");
     _ = @import("app/pane.zig");
     _ = @import("app/layout.zig");
     _ = @import("app/find.zig");

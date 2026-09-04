@@ -104,6 +104,11 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{"marks"})) return marks(app);
     if (eqAny(verb, &.{ "delm", "delmarks" })) return delmarks(app, args, bang);
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
+    if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
+    if (eqAny(verb, &.{ "theme", "colorscheme", "colo" })) {
+        if (args.len == 0) return command.run(app, .{ .static = .@"theme.pick" });
+        return @import("cmd_view.zig").useTheme(app, args);
+    }
     if (eqAny(verb, &.{ "noh", "nohlsearch", "nohl" })) return command.run(app, .{ .static = .@"find.clear" });
     if (eqAny(verb, &.{ "echo", "Echo" })) {
         app.toast("{s}", .{args});
@@ -685,6 +690,9 @@ fn set(app: *App, args: []const u8) CommandError!void {
         } else if (eqAny(name, &.{ "nu", "number" })) {
             app.cfg.ui.line_numbers = !off;
             app.toast(":set {s}", .{opt});
+        } else if (eqAny(name, &.{ "theme", "colorscheme" })) {
+            const v = value orelse return app.diag.fail(arena, ":set theme=<name>", .{});
+            try @import("cmd_view.zig").useTheme(app, v);
         } else if (eqAny(name, &.{ "input", "keymap" })) {
             const v = value orelse return app.diag.fail(arena, ":set input=vim|standard", .{});
             const style: input.Style = if (std.mem.eql(u8, v, "vim")) .vim else if (std.mem.eql(u8, v, "standard")) .standard else return app.diag.fail(arena, ":set input — unknown style \"{s}\"", .{v});
