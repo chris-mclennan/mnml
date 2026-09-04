@@ -1,6 +1,6 @@
 # mnml → Zig port plan
 
-> Status: **Phase 0 VERDICT: CONTINUE** (2026-09-04, evidence in `docs/SPIKE_RESULTS.md`) — gate 41/47, all five targets cross-compile, 332 unit tests, 88 commits. Next: the six editor slices, todos.zig, Phase 1. Sections: Context → Execution (Phase 0 spike, Phases 1–8, dependencies, side-by-side, cutover) → Verification → Design (trunk D1–D10, externals E1–E8) → Research appendix (raw findings; where the appendix and the decisions disagree — TOML, bridge — the decisions win).
+> Status: **Phase 0 CLOSED — CONTINUE** (2026-09-04; `docs/SPIKE_RESULTS.md`): gate 47/47, sweep 141/141, corpus 107/225, 351 unit tests, all five targets. **Phase 1 in progress** (layout/mouse/chrome, config wiring + themes as ZON, plus Phase 2 language layer and Phase 3 runners in parallel).
 
 ## Context
 
