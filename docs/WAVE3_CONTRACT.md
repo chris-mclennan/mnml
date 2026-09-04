@@ -58,6 +58,8 @@ pub const HitMap = struct {
     pub const Entry = struct { rect: Rect, target: HitTarget };
     items: std.ArrayListUnmanaged(Entry) = .empty,
     pub fn reset(h: *HitMap) void;                                        // frame start; storage is the frame arena
+    // changed (app): the frame arena is reset at the top of `App.render`, not the loop iteration,
+    // so the map registered during a frame is still valid when the next mouse event is routed.
     pub fn add(h: *HitMap, arena: Allocator, r: Rect, t: HitTarget) Allocator.Error!void;
     pub fn at(h: *const HitMap, x: u16, y: u16) ?HitTarget;                // back-to-front: last painted wins
     pub fn writeRectsJson(h: *const HitMap, w: *std.Io.Writer) std.Io.Writer.Error!void; // [{"label","x","y","w","h"}]
@@ -222,6 +224,8 @@ pub const Picker = struct {
 ## App-side obligations (app)
 
 - Layout per frame (row 0 palette/bufferline as in the Rust `breadcrumb=false` layout: **row 0 bufferline, rows 1..H-2 panes, row H-1 statusline** — the `.test` mouse coordinates assume this). `App.render()` builds `Ui` on the frame arena, resets `HitMap`, draws panes → overlays → toasts, sets the terminal cursor from `editor_view.draw`'s return.
+  - changed (app): the body is **tree (30 cols) | divider (1) | panes**, as Rust's default layout (`tree_width = 30`); `wrap.test` measures the editor width against it. The tree is `src/app/tree.zig` (state + its own draw glue, `.tree_node` hits); `view.toggle_tree` hides it and the panes take the whole body.
+  - changed (app): `Pane.editor` holds an `EditorPane` (`Buffer` + `ViewState` + find state + wrap override + syntax cache + block anchor), not a bare `Buffer` — the per-pane view state the contract lists as "persistent per pane" has to live somewhere.
 - Mouse: `switch (app.hits.at(x, y))` is the one routing point.
 - Implements the `e2e.Driver` vtable (`src/e2e/driver.zig`) and sets `main.app_factory`.
 - Fills `ipc.Status` (`src/ipc/screen.zig`).

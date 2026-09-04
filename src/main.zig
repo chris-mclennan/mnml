@@ -4,12 +4,20 @@ const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
+const app_driver = @import("app/driver.zig");
+const loop = @import("tui/loop.zig");
+const Term = @import("tui/term.zig");
+const input = @import("input/mod.zig");
 
 pub const version = "0.3.0-dev";
 
-/// The application's driver factory. Null until the App lands; `test`
-/// and `--headless` then fail honestly instead of passing vacuously.
-pub const app_factory: ?e2e.Factory = null;
+/// A crash prints its trace on a readable terminal, not inside the alt
+/// screen with the mouse still reporting.
+pub const panic = Term.Panic;
+
+/// The application's driver factory: the same App the terminal runs,
+/// behind the `e2e.Driver` vtable for `test` and `--headless`.
+pub const app_factory: ?e2e.Factory = app_driver.default_factory.factory();
 
 pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
@@ -24,11 +32,91 @@ pub fn main(init: std.process.Init) !u8 {
     const w = &out.interface;
 
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
+    for (args[1..]) |a| {
+        if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
+            try w.print("mnml-zig {s}\n", .{version});
+            try w.flush();
+            return 0;
+        }
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--headless] | test [PATH…] [--gate]");
+    }
+    if (parseInputFlag(args[1..], w)) |style| {
+        app_driver.default_factory.input_style = style;
+    } else |_| return 2;
     for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) return headlessSubcommand(gpa, io, env, args[1..], w);
+    return terminalMain(gpa, io, env, args[1..], w);
+}
 
-    try w.print("mnml-zig {s}\n", .{version});
-    try w.flush();
-    return 0;
+/// `--input vim|standard` / `--input=vim`, anywhere on the line.
+fn parseInputFlag(argv: []const [:0]const u8, w: *Io.Writer) !input.Style {
+    var style: input.Style = .standard;
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        const a = argv[i];
+        var value: ?[]const u8 = null;
+        if (std.mem.eql(u8, a, "--input")) {
+            i += 1;
+            if (i >= argv.len) {
+                _ = try usage(w, "--input needs vim or standard");
+                return error.Usage;
+            }
+            value = argv[i];
+        } else if (std.mem.startsWith(u8, a, "--input=")) value = a["--input=".len..];
+        const v = value orelse continue;
+        if (std.mem.eql(u8, v, "vim")) {
+            style = .vim;
+        } else if (std.mem.eql(u8, v, "standard")) {
+            style = .standard;
+        } else {
+            _ = try usage(w, "--input needs vim or standard");
+            return error.Usage;
+        }
+    }
+    return style;
+}
+
+// ─── mnml-zig [WS] [FILE…] ──────────────────────────────────────────────
+
+/// The terminal: the first non-flag argument that is a directory is the
+/// workspace (default: cwd); every other non-flag argument is opened.
+fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var workspace: ?[]const u8 = null;
+    var files: std.ArrayList([]const u8) = .empty;
+    var ascii = false;
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        const a = argv[i];
+        if (std.mem.eql(u8, a, "--input")) {
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--ascii")) {
+            ascii = true;
+            continue;
+        }
+        if (a.len > 0 and a[0] == '-') continue;
+        const st = Io.Dir.cwd().statFile(io, a, .{}) catch {
+            try files.append(arena, a);
+            continue;
+        };
+        if (st.kind == .directory and workspace == null) workspace = a else try files.append(arena, a);
+    }
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, "workspace is not a directory");
+    const ws_abs = cwd_buf[0..ws_len];
+    const cfg: loop.Options = .{
+        .cfg = .{ .input_style = app_driver.default_factory.input_style, .ascii = ascii },
+        .workspace = ws_abs,
+        .data_root = env.get("MNML_DATA_ROOT") orelse "",
+        .files = files.items,
+    };
+    return loop.run(gpa, io, env, cfg) catch |err| switch (err) {
+        error.NotATty => return usage(w, "stdout is not a terminal (use --headless)"),
+        else => return err,
+    };
 }
 
 // ─── mnml-zig test ──────────────────────────────────────────────────────
@@ -248,6 +336,9 @@ test {
     _ = @import("input/mod.zig");
     _ = @import("input/standard.zig");
     _ = @import("input/vim.zig");
+    _ = @import("app/driver.zig");
+    _ = @import("app/smoke_test.zig");
+    _ = @import("tui/loop.zig");
 }
 
 test "version string is set" {

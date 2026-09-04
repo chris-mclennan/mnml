@@ -91,6 +91,14 @@ pub fn name(id: CommandId) [:0]const u8 {
 /// line here; its `pub const table = .{ .@"ns.verb" = &fn, … }` is merged.
 const runner_tables = .{
     @import("../todos.zig"),
+    @import("../app/cmd_file.zig"),
+    @import("../app/cmd_buffer.zig"),
+    @import("../app/cmd_editor.zig"),
+    @import("../app/cmd_find.zig"),
+    @import("../app/cmd_view.zig"),
+    @import("../app/cmd_picker.zig"),
+    @import("../app/cmd_app.zig"),
+    @import("../app/tree.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {

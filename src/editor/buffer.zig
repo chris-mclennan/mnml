@@ -44,6 +44,10 @@ pub const Buffer = struct {
     /// `@tagName` of the last op the editor refused with `Unsupported`,
     /// for the app to toast. Static string.
     last_unsupported: ?[]const u8 = null,
+    /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
+    /// The find state lives with the app; it seeds these before a key.
+    find_next: ?[2]usize = null,
+    find_prev: ?[2]usize = null,
 
     /// Dot-repeat: the last change, gpa-owned ops.
     dot: ?[]EditOp = null,
@@ -167,8 +171,8 @@ pub const Buffer = struct {
             .has_selection = ed.hasSelection(),
             .line_first_nonws_col = ed.colAtByte(ed.firstNonWs(line)),
             .cursor_col = ed.colAtByte(ed.cursor),
-            .next_find_match = null, // TODO(find): the find state lives with the app
-            .prev_find_match = null,
+            .next_find_match = self.find_next,
+            .prev_find_match = self.find_prev,
             .wrap_width = wrap_width,
         };
     }
