@@ -28,6 +28,8 @@ pub const chip = @import("chip.zig");
 pub const text_field = @import("text_field.zig");
 pub const scrollbar = @import("scrollbar.zig");
 pub const empty_state = @import("empty_state.zig");
+pub const header = @import("header.zig");
+pub const filter_input = @import("filter_input.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
