@@ -18,6 +18,10 @@ pub fn main() !void {
     try out.interface.flush();
 }
 
+test {
+    _ = @import("core/alloc.zig");
+}
+
 test "version string is set" {
     try std.testing.expect(version.len > 0);
 }
