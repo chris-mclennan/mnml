@@ -322,6 +322,7 @@ fn headlessSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, arg
 }
 
 test {
+    _ = @import("config/root.zig");
     _ = @import("core/alloc.zig");
     _ = @import("core/key.zig");
     _ = @import("core/event.zig");
