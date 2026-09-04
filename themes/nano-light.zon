@@ -37,8 +37,7 @@
         .pmenu_bg = 0x673ab7,
         .folder_bg = 0x4c566a,
     },
-    .base_16 = .{
-    },
+    .base_16 = .{},
     .extra = .{
         .{ .name = "deep_black", .hex = 0x263238 },
         .{ .name = "faded_grey", .hex = 0x8497a0 },
