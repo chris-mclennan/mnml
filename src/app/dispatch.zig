@@ -100,6 +100,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         if (try chordChain(app, k)) return;
     }
     const e = ed orelse return;
+    if (try snippets.interceptKey(app, pane_id.?, e, k)) return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);
 }
@@ -128,6 +129,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .redraw => {},
         .edited => {
             e.hl_dirty = true;
+            snippets.afterEdit(app, pane_id, e);
             if (trigger) try expandAbbreviation(app, e);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),

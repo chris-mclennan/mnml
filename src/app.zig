@@ -253,6 +253,7 @@ pub const App = struct {
     /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
     right_panel: ?PanelId = null,
     todos: todos.State,
+    snippets: snippets.State,
     focus: FocusId = .tree,
     active: ?PaneId = null,
     hits: hit.HitMap = .{},
@@ -325,6 +326,7 @@ pub const App = struct {
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa),
+            .snippets = snippets.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -342,6 +344,7 @@ pub const App = struct {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
         self.todos.deinit(gpa, self.io);
+        self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
             fb.state.deinit(gpa);
@@ -658,6 +661,7 @@ pub const App = struct {
     /// Run editor ops on `pane`. Returns whether the text changed. An op
     /// the editor refuses is toasted by name.
     pub fn applyOps(self: *App, pane: *EditorPane, ops: []const edit_op.EditOp) Allocator.Error!bool {
+        self.attachSeams(pane);
         const changed = try pane.buf.applyOps(ops, &self.clipboard, self.pane_rows, self.frame.allocator());
         if (pane.buf.last_unsupported) |name| {
             self.toast("{s}: not supported yet", .{name});
@@ -837,6 +841,12 @@ pub const App = struct {
 
 test {
     _ = @import("app/pane.zig");
+    _ = @import("app/outline.zig");
+    _ = @import("app/md_preview.zig");
+    _ = @import("app/snippets.zig");
+    _ = @import("app/sticky.zig");
+    _ = @import("ui/outline_view.zig");
+    _ = @import("ui/md_view.zig");
     _ = @import("app/layout.zig");
     _ = @import("app/find.zig");
     _ = @import("app/syntax.zig");

@@ -104,8 +104,7 @@ pub const AppDriver = struct {
     }
 
     fn vSnippet(p: *anyopaque, scope: []const u8, trigger: []const u8, expansion: []const u8) Error!void {
-        _ = expansion;
-        cast(p).app.toast("snippets are not in this build ({s}: {s})", .{ scope, trigger }); // TODO(snippets)
+        try cast(p).app.snippets.seed(scope, trigger, expansion);
     }
 
     fn vGhost(p: *anyopaque, text: []const u8) Error!void {

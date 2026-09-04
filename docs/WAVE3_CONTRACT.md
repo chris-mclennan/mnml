@@ -282,3 +282,53 @@ that the oldest slot reads `+K more…`.
 - Implements the `e2e.Driver` vtable (`src/e2e/driver.zig`) and sets `main.app_factory`.
 - Fills `ipc.Status` (`src/ipc/screen.zig`).
 - Chrome strings the gate asserts and the app supplies: toast `"mark 'a set"`, `"→ 'a 3:1"`, `"no mark 'z"`; the find bar's `Info`; `"Go to line"` prompt title; `"Unsaved changes"` confirm title with choices Save/Discard/Cancel; which-key entries from the keymap prefix.
+
+---
+
+## Language layer (Phase 2) — `// changed:` notes (2026-09-04)
+
+- `// changed (ui):` `Theme` gains ten syntax slots — `syn_comment, syn_default,
+  syn_variable, syn_constant, syn_type, syn_string, syn_special, syn_function,
+  syn_keyword, syn_punctuation` (base16 03/05/08/09/0A/0B/0C/0D/0E/0F) — and
+  `Theme.syntax(role)`, which maps a `highlight.Role` (the capture→role table in
+  `src/highlight/role.zig`) to a `Style`; the text modifiers (`strong`,
+  `emphasis`, `title`, `uri`) are a slot plus an SGR attribute. New fields and
+  their `default` values only; the loader is untouched.
+- `// changed (app):` `Pane` has two more variants — `outline: OutlinePane`
+  (`src/app/outline.zig`) and `md_preview: MdPreviewPane`
+  (`src/app/md_preview.zig`). Both reuse the `.editor_cell{pane, line, col}`
+  hit: on an outline row it names the symbol's source position (a click jumps),
+  on a preview row the logical line (the wheel scrolls). `PaneStore` gains
+  `findPreview(path)` / `findOutline(source)`.
+- `// changed (app):` `App.openPath` routes a markdown file to its rendered
+  preview (`Config.markdown_opens_rendered`, default on) unless an editor already
+  holds it; `App.openEditor` is the raw path. `Config` gains `auto_md_preview`,
+  `markdown_opens_rendered`, `sticky_context` (the `[ui]` keys of the same names).
+- `// changed (app):` the bufferline strip carries one chip at its right end —
+  `✏ Edit` on a preview, ` Preview` on a markdown editor — registered as
+  `.button(md_preview.button_edit / button_preview)`; `dispatch` runs
+  `markdown.edit_raw` / `markdown.preview` for them.
+- `// changed (editor):` `Editor.edits: EditLog` — every `splice` leaves a
+  `Splice` record (pre-edit bytes plus row/byte-col points); `setText` and an undo
+  restore mark the log lost. Consumers pull by seq (`since`, `head`,
+  `lostSince`) and the render trims it. This is the incremental-parse contract's
+  source of truth; `EditOutcome.text_edits` is still filled but the highlighter
+  and the snippet session read the log instead.
+- `// changed (editor):` `Editor.objects: ?ObjectProvider` — the app installs
+  it (`App.attachSeams`) so `select_inner/around_function` and `_class` ask the
+  pane's syntax tree; `select_inner/around_argument` is text-only. No new
+  `EditOp`.
+- `// changed (spec):` the brief named `view.outline` / `view.md_preview`
+  toggles; those ids are not in `commands/specs.zig` and the registry is a
+  closed set, so the shipped surface is `outline.show` (open / refresh; `q` on
+  the pane closes), `markdown.preview`, `markdown.edit_raw`,
+  `view.toggle_auto_md_preview`, `view.toggle_sticky_context` (also
+  `:set stickycontext`), `snippet.expand` / `next_placeholder` /
+  `prev_placeholder`. `snippet.pick` / `snippet.pick_all` are not in this build.
+- Highlighting precedence follows tree-sitter-highlight (the grammars' own
+  queries assume it): inner node over outer, first pattern keeps a node,
+  injected layer over host. `#set! injection.combined` and
+  `injection.include-children` are parsed but each content node is parsed on
+  its own; the highlight idle gate is 120 ms from the frame that first sees a
+  dirty pane (a throttle while typing), with the cached spans shifted every
+  frame so nothing drifts in between.
