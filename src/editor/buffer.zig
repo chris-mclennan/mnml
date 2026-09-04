@@ -730,7 +730,19 @@ test "vim marks, macros and visual mode" {
     try vim("vVd", "a\n|b\nc", "a\n|c");
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");
     try vim("vv", "|abc", "|abc");
-    try vim("<c-v>jd", "|ab\ncd", "ab\n|cd"); // block ops are unsupported: only the motion lands
+    try vim("<c-v>jd", "|ab\ncd", "|b\nd");
+    try vim("<c-v>jld", "a|bcd\nefgh\nij", "a|d\neh\nij");
+    try vim("<c-v>jlx", "a|bcd\nefgh", "a|d\neh");
+    try vim("<c-v>jldp", "a|bcd\nefgh", "adbc\nfg|\neh"); // the block is in the register charwise (Rust parity)
+    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcdbc\nfg|\nefgh");
+    try vim("<c-v>jlyP", "a|bcd\nefgh", "abc\nfg|bcd\nefgh"); // `y` parks at the rectangle's top-left; `P` lands after the text
+    try vim("<c-v>jl<esc>x", "a|bcd\nefgh", "abcd\nef|h");
+    try vim("<c-v>kd", "ab\n|cd", "|b\nd"); // the rectangle is anchor→cursor in either direction
+    try vim("<c-v>jjld", "|abc\nx\nabc", "|c\n\nc"); // a short row contributes nothing
+    try vim("<c-v>jvd", "|ab\ncd", "ab\n|d"); // `v` / `V` from V-BLOCK re-anchor at the cursor (Rust parity; vim keeps the anchor)
+    try vim("<c-v>jVd", "a|b\ncd\ne", "ab\n|e");
+    try vim("<c-v>jd", "|ab\ncd", "|b\nd");
+    try vim("<c-v>jdu", "|ab\ncd", "ab\n|cd"); // one undo step; the snapshot cursor comes back
 }
 
 /// `feed` / `ops` interleaved: each row is a list of steps.

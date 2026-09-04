@@ -296,8 +296,9 @@ pub const Editor = struct {
         return b;
     }
 
-    /// Char column of `b` within its line.
-    pub fn colAtByte(self: *const Editor, b: usize) usize {
+    /// Char column of `b` within its line (`b` is clamped to the text).
+    pub fn colAtByte(self: *const Editor, b_in: usize) usize {
+        const b = @min(b_in, self.text.items.len);
         const line = self.lineOfByte(b);
         var i = self.lineStart(line);
         var c: usize = 0;
@@ -503,6 +504,7 @@ pub const Editor = struct {
         // it past the end or mid-char; keep the selection invariant too.
         if (out.buffer_changed) {
             if (self.anchor) |a| self.anchor = self.snapBoundary(a);
+            if (self.block_anchor) |a| self.block_anchor = self.snapBoundary(a);
         }
         if (self.extra_cursors.items.len != 0) self.normalizeExtras();
         if (out.buffer_changed and !is_undo_redo) try self.recordChange();
@@ -605,6 +607,21 @@ test "boundaries, columns and rows on multibyte text" {
     try std.testing.expectEqual(@as(usize, 14), ed.byteAtCol(1, 99));
     ed.setCursor(2);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
+}
+
+test "colAtByte past EOF terminates; a stale block anchor is snapped after a shrink" {
+    var ed = try Editor.init(std.testing.allocator, "ab\ncd");
+    defer ed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), ed.colAtByte(99));
+    var clip = Clipboard.init(std.testing.allocator);
+    defer clip.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    ed.cursor = 4;
+    _ = try ed.apply(.block_select_start, 10, &clip, arena_state.allocator());
+    ed.cursor = 0;
+    _ = try ed.apply(.{ .replace_range = .{ .start = 1, .end = 5, .text = "" } }, 10, &clip, arena_state.allocator());
+    try std.testing.expectEqual(@as(?usize, 1), ed.block_anchor);
 }
 
 test "inferSingleEdit covers insert, backspace, forward delete" {

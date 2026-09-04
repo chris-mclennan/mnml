@@ -19,6 +19,7 @@ const line = @import("line.zig");
 const register = @import("register.zig");
 const undo = @import("undo.zig");
 const mc = @import("multicursor.zig");
+const block = @import("block.zig");
 
 pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *EditOutcome) Error!void {
     switch (op) {
@@ -142,7 +143,10 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .add_cursor_above => try mc.addCursorAbove(ed),
         .clear_extra_cursors => mc.clear(ed),
         .add_cursor_at_next_word => try mc.addCursorAtNextWord(ed),
-        .block_select_start, .block_select_clear, .yank_block, .delete_block => return error.Unsupported, // TODO(vim-slice: visual-block)
+        .block_select_start => block.selectStart(ed),
+        .block_select_clear => block.selectClear(ed),
+        .yank_block => try block.yankBlock(ed, clip, out),
+        .delete_block => try block.deleteBlock(ed, clip, out),
 
         // ── insert ──
         .insert_char => |c| try insert.insertChar(ed, c, out),
@@ -317,6 +321,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .undo,                                                  .redo,                                                  .{ .repeat = .{ .count = 3, .inner = &inner_ops[0] } },                                                          .{ .repeat = .{ .count = 2, .inner = &inner_ops[1] } },
         .{ .repeat = .{ .count = 2, .inner = &inner_ops[2] } }, .{ .repeat = .{ .count = 4, .inner = &inner_ops[3] } }, .{ .atomic = &inner_ops },                                                                                       .remember_selection,
         .add_cursor_below,                                      .add_cursor_above,                                      .add_cursor_at_next_word,                                                                                        .clear_extra_cursors,
+        .block_select_start,                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];
