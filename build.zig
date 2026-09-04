@@ -138,11 +138,17 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(tui_tests).step);
 
-    const pty_tests = b.addTest(.{ .root_module = pty_mod });
-    const pty_test_run = b.addRunArtifact(pty_tests);
-    const pty_test_step = b.step("pty-test", "Run the pty module tests");
-    pty_test_step.dependOn(&pty_test_run.step);
-    test_step.dependOn(&pty_test_run.step);
+    // The pty module is POSIX (openpty / fork / poll) until ConPTY lands
+    // in Phase 8, so its tests and demo are only part of the graph on
+    // non-Windows targets; the exe still links the module everywhere.
+    const pty_supported = target.result.os.tag != .windows;
+    const pty_tests: ?*std.Build.Step.Compile = if (pty_supported) b.addTest(.{ .root_module = pty_mod }) else null;
+    if (pty_tests) |t| {
+        const pty_test_run = b.addRunArtifact(t);
+        const pty_test_step = b.step("pty-test", "Run the pty module tests");
+        pty_test_step.dependOn(&pty_test_run.step);
+        test_step.dependOn(&pty_test_run.step);
+    }
 
     const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime });
     const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight });
@@ -157,7 +163,7 @@ pub fn build(b: *std.Build) void {
     // `zig build gate-build -Dtarget=…` is what proves a target builds.
     const gate_step = b.step("gate-build", "Compile the exe and all test binaries without running (cross-target gate)");
     const gate_dir: std.Build.InstallDir = .{ .custom = "gate" };
-    const GateBin = struct { compile: *std.Build.Step.Compile, name: []const u8 };
+    const GateBin = struct { compile: ?*std.Build.Step.Compile, name: []const u8 };
     for ([_]GateBin{
         .{ .compile = exe, .name = "mnml-zig" },
         .{ .compile = tests, .name = "test-main" },
@@ -166,8 +172,9 @@ pub fn build(b: *std.Build) void {
         .{ .compile = ts_tests, .name = "test-tree-sitter" },
         .{ .compile = highlight_tests, .name = "test-highlight" },
     }) |g| {
+        const compile = g.compile orelse continue;
         const suffix = if (target.result.os.tag == .windows) ".exe" else "";
-        gate_step.dependOn(&b.addInstallArtifact(g.compile, .{
+        gate_step.dependOn(&b.addInstallArtifact(compile, .{
             .dest_dir = .{ .override = gate_dir },
             .dest_sub_path = b.fmt("{s}{s}", .{ g.name, suffix }),
         }).step);
@@ -176,20 +183,26 @@ pub fn build(b: *std.Build) void {
     // ── pty-demo ──
     // The spike's proving ground: a login shell in a ghostty-vt Terminal,
     // painted with plain ANSI. Throwaway once vaxis hosts the pane.
-    const demo_mod = b.createModule(.{
-        .root_source_file = b.path("src/pty_demo.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    demo_mod.addImport("pty", pty_mod);
-    const demo = b.addExecutable(.{ .name = "pty-demo", .root_module = demo_mod });
-    const demo_install = b.addInstallArtifact(demo, .{});
-    const demo_run = b.addRunArtifact(demo);
-    demo_run.step.dependOn(&demo_install.step);
-    if (b.args) |args| demo_run.addArgs(args);
-    const demo_step = b.step("pty-demo", "Run the pty demo (a shell in a ghostty-vt Terminal)");
-    demo_step.dependOn(&demo_run.step);
+    if (pty_tests) |t| {
+        const demo_mod = b.createModule(.{
+            .root_source_file = b.path("src/pty_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        demo_mod.addImport("pty", pty_mod);
+        const demo = b.addExecutable(.{ .name = "pty-demo", .root_module = demo_mod });
+        const demo_install = b.addInstallArtifact(demo, .{});
+        const demo_run = b.addRunArtifact(demo);
+        demo_run.step.dependOn(&demo_install.step);
+        if (b.args) |args| demo_run.addArgs(args);
+        const demo_step = b.step("pty-demo", "Run the pty demo (a shell in a ghostty-vt Terminal)");
+        demo_step.dependOn(&demo_run.step);
+
+        const pty_step = b.step("pty", "Build the pty module, its tests and the demo without running");
+        pty_step.dependOn(&t.step);
+        pty_step.dependOn(&demo_install.step);
+    }
 
     // ── canvas-demo ──
     // The terminal layer end to end: Term + input worker + Canvas
@@ -210,10 +223,6 @@ pub fn build(b: *std.Build) void {
     canvas_demo_run.step.dependOn(&canvas_demo_install.step);
     const canvas_demo_step = b.step("canvas-demo", "Run the canvas demo (Term + Canvas on the real terminal)");
     canvas_demo_step.dependOn(&canvas_demo_run.step);
-
-    const pty_step = b.step("pty", "Build the pty module, its tests and the demo without running");
-    pty_step.dependOn(&pty_tests.step);
-    pty_step.dependOn(&demo_install.step);
 }
 
 // ── tree-sitter ──────────────────────────────────────────────────────────────
