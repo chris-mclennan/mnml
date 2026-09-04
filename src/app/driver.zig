@@ -1,0 +1,332 @@
+//! The `e2e.Driver` over a real `App`: what the `.test` runner and the
+//! headless loop drive. One instance per file (and per size); the App
+//! lives on the driver's own allocator so a leak is that file's failure.
+//!
+//! `status` fills `ipc.Status` the way mnml 0.2 does: 1-based cursor,
+//! the mode label or `none`, every live pane's title + dirty flag.
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const dispatch = @import("dispatch.zig");
+const e2e = @import("../e2e/driver.zig");
+const key_mod = @import("../core/key.zig");
+const command = @import("../core/command.zig");
+const ipc = @import("../ipc/root.zig");
+const screen_mod = @import("../ipc/screen.zig");
+const input = @import("../input/mod.zig");
+
+const Error = e2e.Error;
+
+pub const AppDriver = struct {
+    gpa: Allocator,
+    app: App,
+
+    pub fn create(gpa: Allocator, io: Io, cfg: e2e.Config, style: input.Style) !*AppDriver {
+        const self = try gpa.create(AppDriver);
+        errdefer gpa.destroy(self);
+        self.* = .{ .gpa = gpa, .app = try App.initWith(gpa, io, .{
+            .cfg = .{ .input_style = style },
+            .workspace = cfg.workspace,
+            .data_root = cfg.data_root,
+            .cols = cfg.cols,
+            .rows = cfg.rows,
+        }) };
+        return self;
+    }
+
+    pub fn driver(self: *AppDriver) e2e.Driver {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    fn cast(p: *anyopaque) *AppDriver {
+        return @ptrCast(@alignCast(p));
+    }
+
+    const vtable: e2e.Driver.VTable = .{
+        .open = vOpen,
+        .key = vKey,
+        .mouse = vMouse,
+        .command = vCommand,
+        .ex = vEx,
+        .snippet = vSnippet,
+        .ghost = vGhost,
+        .tick = vTick,
+        .expireChords = vExpireChords,
+        .render = vRender,
+        .screen = vScreen,
+        .status = vStatus,
+        .rectsJson = vRectsJson,
+        .dirty = vDirty,
+        .paneTitle = vPaneTitle,
+        .highlightCount = vHighlightCount,
+        .ipcCommand = vIpcCommand,
+        .pluginInvocations = vPluginInvocations,
+        .requestQuit = vRequestQuit,
+        .deinit = vDeinit,
+    };
+
+    fn vOpen(p: *anyopaque, path: []const u8) Error!void {
+        const app = &cast(p).app;
+        _ = app.openPath(path) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                app.toast("open {s}: {s}", .{ app.relPath(path), @errorName(err) });
+                return error.Failed;
+            },
+        };
+    }
+
+    fn vKey(p: *anyopaque, k: key_mod.Key) Error!void {
+        try cast(p).app.handle(.{ .key = k });
+    }
+
+    fn vMouse(p: *anyopaque, m: key_mod.Mouse) Error!void {
+        try cast(p).app.handle(.{ .mouse = m });
+    }
+
+    /// An unknown id is the step's failure; a command that ran and
+    /// failed has toasted its reason and the script goes on, as under
+    /// the Rust runner.
+    fn vCommand(p: *anyopaque, id: []const u8) Error!void {
+        const app = &cast(p).app;
+        const ref = command.resolve(app, id) orelse return error.NoSuchCommand;
+        command.run(app, ref) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        };
+    }
+
+    fn vEx(p: *anyopaque, line: []const u8) Error!void {
+        try dispatch.runExLine(&cast(p).app, line);
+    }
+
+    fn vSnippet(p: *anyopaque, scope: []const u8, trigger: []const u8, expansion: []const u8) Error!void {
+        _ = expansion;
+        cast(p).app.toast("snippets are not in this build ({s}: {s})", .{ scope, trigger }); // TODO(snippets)
+    }
+
+    fn vGhost(p: *anyopaque, text: []const u8) Error!void {
+        const app = &cast(p).app;
+        const e = app.activeEditor() orelse return error.NoActiveEditor;
+        try e.buf.editor.setGhostSuggestion(text);
+        app.needs_render = true;
+    }
+
+    fn vTick(p: *anyopaque) Error!void {
+        const app = &cast(p).app;
+        try app.tick(App.nowMs(app.io));
+    }
+
+    fn vExpireChords(p: *anyopaque) Error!void {
+        try dispatch.expireChords(&cast(p).app);
+    }
+
+    fn vRender(p: *anyopaque) Error!void {
+        try cast(p).app.render();
+    }
+
+    fn vScreen(p: *anyopaque) *const screen_mod.Screen {
+        return &cast(p).app.screen;
+    }
+
+    fn vStatus(p: *anyopaque, a: Allocator) Error!screen_mod.Status {
+        const app = &cast(p).app;
+        var panes: std.ArrayListUnmanaged(screen_mod.PaneStatus) = .empty;
+        for (app.panes.slots.items) |*slot| if (slot.*) |*pane| {
+            try panes.append(a, .{ .title = try a.dupe(u8, pane.title()), .dirty = pane.dirty() });
+        };
+        var st: screen_mod.Status = .{
+            .focus = switch (app.focus) {
+                .tree => .tree,
+                .pane, .overlay => .pane,
+                .panel => .right_panel,
+            },
+            .active_pane = if (app.active) |id| @as(usize, id) else null,
+            .active_file = "",
+            .cursor_line = 0,
+            .cursor_col = 0,
+            .mode = "none",
+            .tree_cursor = app.tree.cursor,
+            .tree_selection = try a.dupe(u8, try app.tree.selectionPath(app)),
+            .tree_visible = app.tree.visible,
+            .right_panel_visible = false,
+            .right_panel_panes = &.{},
+            .right_panel_active_idx = 0,
+            .panes = panes.items,
+            .quit = app.quit,
+        };
+        if (app.activeEditor()) |e| {
+            const pos = e.buf.editor.rowCol();
+            st.cursor_line = pos.row + 1;
+            st.cursor_col = pos.col + 1;
+            st.active_file = if (e.buf.path) |path| try a.dupe(u8, path) else "";
+            st.mode = e.buf.input.mode().label() orelse "none";
+        }
+        return st;
+    }
+
+    fn vRectsJson(p: *anyopaque, a: Allocator) Error![]u8 {
+        var out: Io.Writer.Allocating = .init(a);
+        errdefer out.deinit();
+        cast(p).app.hits.writeRectsJson(&out.writer) catch return error.OutOfMemory;
+        return out.toOwnedSlice();
+    }
+
+    fn vDirty(p: *anyopaque) ?bool {
+        const e = cast(p).app.activeEditor() orelse return null;
+        return e.buf.dirty;
+    }
+
+    fn vPaneTitle(p: *anyopaque, a: Allocator) Error!?[]u8 {
+        const app = &cast(p).app;
+        const id = app.active orelse return null;
+        const pane = app.panes.get(id) orelse return null;
+        return try a.dupe(u8, pane.title());
+    }
+
+    fn vHighlightCount(p: *anyopaque) ?usize {
+        const app = &cast(p).app;
+        const e = app.activeEditor() orelse return null;
+        if (e.hl_dirty) {
+            e.syntax.refresh(e.buf.editor.bytes()) catch return null;
+            e.hl_dirty = false;
+        }
+        return e.syntax.spans.items.len;
+    }
+
+    /// The tier-2 IPC commands: toasts, and command registration.
+    fn vIpcCommand(p: *anyopaque, cmd: *const ipc.Command) Error!void {
+        const app = &cast(p).app;
+        switch (cmd.*) {
+            .toast => |tst| try app.toastLevel(switch (tst.level) {
+                .info => .info,
+                .warn => .warn,
+                .@"error" => .err,
+            }, "{s}", .{tst.text}),
+            .toast_persistent => |tst| try app.toastPersistent(tst.id, tst.text, switch (tst.level) {
+                .info => .info,
+                .warn => .warn,
+                .@"error" => .err,
+            }),
+            .toast_dismiss => |id| app.dismissToast(id),
+            .notify => |n| try app.toastLevel(.info, "{s}: {s}", .{ n.title, n.body }),
+            .register_command => |r| {
+                _ = app.dyn_commands.register(.{ .id = r.id, .title = r.title, .group = r.group, .keys = r.keys, .owner = .ipc }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.ShadowsBuiltin => {
+                        app.toast("register-command: {s} shadows a built-in", .{r.id});
+                        return error.Failed;
+                    },
+                };
+                for (r.keys) |k| try app.keymap.bindNow(k, r.id);
+            },
+            .progress_start => |pr| try app.toastPersistent(pr.id, pr.label, .info),
+            .progress_update => |pr| if (pr.label) |label| try app.toastPersistent(pr.id, label, .info),
+            .progress_end => |pr| app.dismissToast(pr.id),
+            else => app.toast("ipc {s}: not in this build", .{@tagName(cmd.*)}), // TODO(ipc-tier2)
+        }
+    }
+
+    fn vPluginInvocations(p: *anyopaque, a: Allocator) Error![]const []const u8 {
+        const app = &cast(p).app;
+        const out = try a.alloc([]const u8, app.plugin_invocations.items.len);
+        for (app.plugin_invocations.items, 0..) |id, i| out[i] = try a.dupe(u8, id);
+        for (app.plugin_invocations.items) |id| app.gpa.free(id);
+        app.plugin_invocations.clearRetainingCapacity();
+        return out;
+    }
+
+    fn vRequestQuit(p: *anyopaque, restart: bool) void {
+        const app = &cast(p).app;
+        app.quit = true;
+        app.restart = restart;
+    }
+
+    fn vDeinit(p: *anyopaque) void {
+        const self = cast(p);
+        const gpa = self.gpa;
+        self.app.deinit();
+        gpa.destroy(self);
+    }
+};
+
+/// What `main.app_factory` points at. `input_style` is the `--input`
+/// flag for the terminal / headless paths; `.test` files start standard
+/// and switch with `editor.use_vim` themselves.
+pub const AppFactory = struct {
+    input_style: input.Style = .standard,
+
+    pub fn factory(self: *AppFactory) e2e.Factory {
+        return .{ .ptr = self, .create = create };
+    }
+
+    fn create(p: *anyopaque, gpa: Allocator, io: Io, cfg: e2e.Config) anyerror!e2e.Driver {
+        const self: *AppFactory = @ptrCast(@alignCast(p));
+        const d = try AppDriver.create(gpa, io, cfg, self.input_style);
+        return d.driver();
+    }
+};
+
+/// The process-wide factory `main` hands to the runner and the headless loop.
+pub var default_factory: AppFactory = .{};
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+test "driver: open, type, status, dirty, title, rects, quit — the runner's contract" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "first line" });
+    var f: AppFactory = .{};
+    const d = try f.factory().make(t.allocator, t.io, .{ .workspace = root, .data_root = "", .cols = 60, .rows = 12 });
+    defer d.deinit();
+    const path = try std.fs.path.join(t.allocator, &.{ root, "notes.txt" });
+    defer t.allocator.free(path);
+    try d.open(path);
+    try d.render();
+    const txt = try screen_mod.toTestText(t.allocator, d.screen());
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "first line") != null);
+    try t.expectEqual(false, d.dirty().?);
+    const title = (try d.paneTitle(t.allocator)).?;
+    defer t.allocator.free(title);
+    try t.expectEqualStrings("notes.txt", title);
+    try d.typeText("TYPED ");
+    try t.expectEqual(true, d.dirty().?);
+    try t.expectError(error.NoSuchCommand, d.command("nope.nope"));
+    try d.command("file.save");
+    try t.expectEqual(false, d.dirty().?);
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const st = try d.status(arena.allocator());
+    try t.expectEqual(@as(usize, 1), st.cursor_line);
+    try t.expectEqual(@as(usize, 7), st.cursor_col);
+    try t.expectEqualStrings("none", st.mode);
+    try t.expectEqualStrings(path, st.active_file);
+    try t.expectEqual(@as(usize, 1), st.panes.len);
+    try t.expectEqualStrings("notes.txt", st.panes[0].title);
+    try t.expect(st.focus == .pane);
+    const rects = try d.rectsJson(arena.allocator());
+    try t.expect(std.mem.indexOf(u8, rects, "\"label\":\"pane:0\"") != null);
+    try t.expect(std.mem.indexOf(u8, rects, "editor_cell:0:0:0") != null);
+    try d.ex("set input=vim");
+    const st2 = try d.status(arena.allocator());
+    try t.expectEqualStrings("NORMAL", st2.mode);
+    try t.expect(d.highlightCount() != null);
+    d.requestQuit(true);
+    const st3 = try d.status(arena.allocator());
+    try t.expect(st3.quit);
+}
+
+/// The tmp dir's absolute path, gpa-owned without a sentinel.
+fn realRoot(tmp: *std.testing.TmpDir, gpa: std.mem.Allocator) ![]u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    return gpa.dupe(u8, buf[0..n]);
+}

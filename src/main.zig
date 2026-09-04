@@ -4,12 +4,13 @@ const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
+const app_driver = @import("app/driver.zig");
 
 pub const version = "0.3.0-dev";
 
-/// The application's driver factory. Null until the App lands; `test`
-/// and `--headless` then fail honestly instead of passing vacuously.
-pub const app_factory: ?e2e.Factory = null;
+/// The application's driver factory: the same App the terminal will
+/// run, behind the `e2e.Driver` vtable for `test` and `--headless`.
+pub const app_factory: ?e2e.Factory = app_driver.default_factory.factory();
 
 pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
@@ -248,6 +249,8 @@ test {
     _ = @import("input/mod.zig");
     _ = @import("input/standard.zig");
     _ = @import("input/vim.zig");
+    _ = @import("app/driver.zig");
+    _ = @import("app/smoke_test.zig");
 }
 
 test "version string is set" {
