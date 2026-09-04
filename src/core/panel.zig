@@ -4,7 +4,7 @@
 
 const std = @import("std");
 
-pub const PanelId = enum { todos, notes, findings, sessions };
+pub const PanelId = enum { todos, notes, findings, sessions, git };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

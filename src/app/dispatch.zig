@@ -52,6 +52,7 @@ const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const runners = @import("runners.zig");
+const git_app = @import("git.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     if (app.focus == .panel and app.right_panel != null) {
         const took = switch (app.focus.panel) {
             .todos => try todos.handleKey(app, k),
+            .git => try git_app.handleKey(app, k),
             .notes, .findings, .sessions => false,
         };
         if (took) return;
@@ -98,6 +100,21 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .list => |*l| {
             if (try listPaneKey(app, id, l, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .git_status => |*s| {
+            if (try git_app.statusPaneKey(app, id, s, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .diff => |*d| {
+            if (try git_app.diffKey(app, id, d, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .git_graph => |*g| {
+            if (try git_app.graphKey(app, id, g, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -408,7 +425,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
-            .notes, .findings, .sessions => {},
+            .notes, .findings, .sessions, .git => {},
         },
         .none => {},
     }
@@ -537,6 +554,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         },
         .replace => try cmd_find.replaceAll(app, text),
         .filter_shell => try filterThroughShell(app, text),
+        .git => try toastOnFail(app, git_app.acceptPrompt(app, text)),
         .new_todo => todos.appendTodo(app, text) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Canceled => {},
@@ -593,6 +611,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .delete_path => |rel| if (choice == 0) try tree_mod.acceptDelete(app, rel),
         .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
+        .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
     }
 }
 
@@ -677,23 +696,28 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
             .todos => try todos.rowMouse(app, pr.idx, m),
+            .git => try git_app.rowMouse(app, pr.idx, m),
             .notes, .findings, .sessions => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
+            .git => try git_app.kebabMouse(app, pr.idx, m),
             .notes, .findings, .sessions => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
+            .git => try git_app.chipMouse(app, c.kind, m),
             .notes, .findings, .sessions => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
+            .git => git_app.filterMouse(app, m),
             .notes, .findings, .sessions => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
             .panel => |p| switch (p) {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
+                .git => if (hitRect(app, m.x, m.y)) |r| git_app.scrollbarMouse(app, r, m),
                 .notes, .findings, .sessions => {},
             },
             .pane => |id| {
@@ -828,7 +852,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .script_hit => |sh| {
             if (wheel) return wheelOnPane(app, sh.pane, m, count);
-            if (m.kind != .press or m.button != .left) return;
+            if (m.kind != .press) return;
+            if (m.button != .left and m.button != .right) return;
             if (app.overlay != .none) closeOverlay(app);
             if (app.active != sh.pane) app.showPane(sh.pane);
             const pane = app.panes.get(sh.pane) orelse return;
@@ -838,6 +863,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     if (sh.id < l.entries.items.len) {
                         if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
                     }
+                },
+                .git_status => |*s| try git_app.statusPaneClick(app, s, sh.id, m),
+                .diff => |*d| if (sh.id < d.rows.len) {
+                    d.cursor = sh.id;
+                },
+                .git_graph => |*g| if (sh.id < g.commits.len) {
+                    if (g.cursor == sh.id and m.button == .left) git_app.runToast(app, git_app.showSelectedCommit(app, g)) else g.cursor = sh.id;
                 },
                 .editor, .outline, .md_preview, .pty => {},
             }
@@ -1069,6 +1101,9 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .git_status => |*s| s.cursor = if (down) @min(s.cursor + n, app.git.rows.items.len -| 1) else s.cursor -| n,
+        .diff => |*d| d.cursor = if (down) @min(d.cursor + n, d.rows.len -| 1) else d.cursor -| n,
+        .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.commits.len -| 1) else g.cursor -| n,
     }
 }
 

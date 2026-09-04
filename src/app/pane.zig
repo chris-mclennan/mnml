@@ -19,6 +19,7 @@ const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_pane = @import("pty_pane.zig");
+const git_app = @import("git.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -102,6 +103,12 @@ pub const Pane = union(enum) {
     list: ListPane,
     /// A shell or a command, painted from the ghostty-vt grid.
     pty: PtyPane,
+    /// The git status rows as a pane (the rail's list when the rail is hidden).
+    git_status: git_app.StatusPane,
+    /// One diff: a file, the worktree, HEAD, the index, a commit.
+    diff: git_app.DiffPane,
+    /// The commit DAG of one repo.
+    git_graph: git_app.GraphPane,
 
     pub fn deinit(self: *Pane, gpa: Allocator) void {
         switch (self.*) {
@@ -111,6 +118,9 @@ pub const Pane = union(enum) {
             .cheatsheet => |*c| c.deinit(),
             .list => |*l| l.deinit(),
             .pty => |*p| p.deinit(gpa),
+            .git_status => {},
+            .diff => |*d| d.deinit(),
+            .git_graph => |*g| g.deinit(),
         }
     }
 
@@ -125,13 +135,16 @@ pub const Pane = union(enum) {
             .cheatsheet => return "Cheatsheet",
             .list => |*l| return l.title(),
             .pty => |*p| return p.label,
+            .git_status => return "git status",
+            .diff => |*d| return d.title,
+            .git_graph => return "git graph",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph => false,
         };
     }
 

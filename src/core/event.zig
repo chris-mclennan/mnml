@@ -11,6 +11,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const key = @import("key.zig");
 const todos = @import("../todos.zig");
+const git_client = @import("../git/client.zig");
 
 pub const PtyId = u32;
 
@@ -24,7 +25,6 @@ pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, 
 pub const LspEvent = struct { _todo: u8 = 0 }; // TODO(lsp)
 pub const DapEvent = struct { _todo: u8 = 0 }; // TODO(dap)
 pub const CdpEvent = struct { _todo: u8 = 0 }; // TODO(cdp)
-pub const GitResult = struct { _todo: u8 = 0 }; // TODO(git)
 pub const HttpJobResult = struct { _todo: u8 = 0 }; // TODO(http)
 pub const SseChunk = struct { _todo: u8 = 0 }; // TODO(http)
 pub const WsFrame = struct { _todo: u8 = 0 }; // TODO(http)
@@ -46,7 +46,8 @@ pub const AppEvent = union(enum) {
     lsp: struct { server: u32, msg: *LspEvent },
     dap: struct { session: u32, msg: *DapEvent },
     cdp: CdpEvent,
-    git: *GitResult,
+    /// A finished git job. Owned; `git.handle` adopts or destroys it.
+    git: *git_client.Result,
     http: *HttpJobResult,
     sse: SseChunk,
     ws: WsFrame,
@@ -80,7 +81,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .todos => |r| r.destroy(gpa),
         .lsp => |l| gpa.destroy(l.msg),
         .dap => |d| gpa.destroy(d.msg),
-        .git => |p| gpa.destroy(p),
+        .git => |r| r.destroy(gpa),
         .http => |p| gpa.destroy(p),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| gpa.destroy(p),
