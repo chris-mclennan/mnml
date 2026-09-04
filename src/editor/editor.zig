@@ -243,8 +243,15 @@ pub const Editor = struct {
 
     // ─── lines ──────────────────────────────────────────────────────
 
+    /// Lines as every editor counts them: a trailing `\n` terminates the
+    /// last line rather than opening an empty one (`"a\nb\n"` is 2).
+    /// The index still holds the phantom start so a cursor at EOF has a
+    /// line (`lineOfByte` may return `lineCount()`).
     pub fn lineCount(self: *const Editor) usize {
-        return self.line_starts.items.len;
+        const nl = self.line_starts.items.len - 1;
+        if (nl == 0) return 1;
+        if (self.text.items[self.text.items.len - 1] == '\n') return nl;
+        return nl + 1;
     }
 
     /// Byte offset of line `line`'s first char (clamped to the last line).
@@ -520,6 +527,9 @@ test "line index after init and splice matches a full rebuild" {
     defer ed.deinit();
     try std.testing.expectEqualSlices(usize, &.{ 0, 3, 6, 7 }, ed.line_starts.items);
     try std.testing.expectEqual(@as(usize, 4), ed.lineCount());
+    try ed.splice(9, 9, "\n");
+    try std.testing.expectEqual(@as(usize, 4), ed.lineCount()); // trailing newline terminates
+    try ed.splice(9, 10, "");
     try std.testing.expectEqual(@as(usize, 5), ed.lineEnd(1));
     try std.testing.expectEqual(@as(usize, 9), ed.lineEnd(3));
     try std.testing.expectEqual(@as(usize, 2), ed.lineOfByte(6));

@@ -492,11 +492,11 @@ test "paragraph, buffer end, goto line/col, find char" {
     paragraph(&ed, false);
     try std.testing.expectEqual(@as(usize, 4), ed.cursor);
     bufferEnd(&ed);
-    try std.testing.expectEqual(@as(usize, 12), ed.cursor);
+    try std.testing.expectEqual(@as(usize, 10), ed.cursor); // the trailing newline opens no line
     toLine(&ed, 2);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
     toLine(&ed, 999);
-    try std.testing.expectEqual(@as(usize, 12), ed.cursor);
+    try std.testing.expectEqual(@as(usize, 10), ed.cursor);
     var ed2 = try mk("a-b-c-d", 0);
     defer ed2.deinit();
     findCharOnLine(&ed2, '-', true, false, false, false);

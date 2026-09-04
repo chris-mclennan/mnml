@@ -63,7 +63,9 @@ pub fn indent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
         const bol = ed.lineStart(line);
         try ed.splice(bol, bol, pad);
     }
-    restoreCursorAfterLineOp(ed, .{ .row = pos.row, .col = pos.col + pad.len });
+    // The cursor keeps its (row, col) — Rust mnml parity; vim would go
+    // to the first non-blank.
+    restoreCursorAfterLineOp(ed, pos);
     out.buffer_changed = true;
 }
 
@@ -72,7 +74,6 @@ pub fn outdent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const pos = ed.rowCol();
     const range = selectedLineRange(ed);
     var changed = false;
-    var removed_on_cursor_line: usize = 0;
     var line = range[0];
     while (line <= range[1]) : (line += 1) {
         const bol = ed.lineStart(line);
@@ -90,11 +91,10 @@ pub fn outdent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
         if (remove > 0) {
             try ed.splice(bol, bol + remove, "");
             changed = true;
-            if (line == pos.row) removed_on_cursor_line = remove;
         }
     }
     if (changed) {
-        restoreCursorAfterLineOp(ed, .{ .row = pos.row, .col = pos.col -| removed_on_cursor_line });
+        restoreCursorAfterLineOp(ed, pos);
         out.buffer_changed = true;
     } else {
         ed.popCheckpoint();

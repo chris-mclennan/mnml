@@ -39,6 +39,10 @@ test {
     _ = @import("editor/line.zig");
     _ = @import("editor/register.zig");
     _ = @import("editor/apply.zig");
+    _ = @import("editor/buffer.zig");
+    _ = @import("input/mod.zig");
+    _ = @import("input/standard.zig");
+    _ = @import("input/vim.zig");
 }
 
 test "version string is set" {

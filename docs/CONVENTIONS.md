@@ -97,6 +97,27 @@ There is no third option, and no handler may stash the raw pointer to
 - Keys are declared per profile in `commands/specs.zig` (`Keys{ vim, standard, both }`).
   Chord collisions are a compile error per profile.
 
+## Editor + input (D4, `src/editor/`, `src/input/`)
+
+- Text changes only through `Editor.splice(start, end, new)`; it patches
+  the line index incrementally, so every line read is infallible.
+  `Editor.apply` is the only caller path a handler reaches.
+- `Editor.apply(op, viewport_rows, clip, arena) Error!EditOutcome`:
+  `error.Unsupported` is a real answer for a tag no slice has landed yet
+  (`apply.zig` names the slice in a `TODO(vim-slice: …)`). `Buffer`
+  skips such an op and records `@tagName` in `last_unsupported`.
+- `InputHandler.handleKey(key, ctx, arena) Allocator.Error!InputResult`:
+  the op list, `repeat.inner` and string payloads live in the frame
+  arena. Only `Buffer.feedKey` destructures an `InputResult`.
+- Dot-repeat and macro registers are `Buffer` state: ops are
+  `EditOp.dupe(gpa)`d when recorded and `free(gpa)`d when replaced;
+  macros store raw `Key`s and replay through `feedKey`.
+- Undo snapshots own their text on the gpa, one per entry; the ring frees
+  an entry when it evicts it.
+- Behaviour follows Rust mnml even where it differs from vim (cursor
+  keeps its column after `>>`; `Y` is charwise; `dip` is a charwise
+  range). Deviations are noted at the test that pins them.
+
 ## Tests
 
 - `std.testing.allocator` only.
