@@ -32,6 +32,15 @@ pub const table = .{
 pub const default_width: u16 = 30;
 /// Never entered by `expand_all`; a click still opens them.
 const noisy_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache" };
+/// Build artifacts hidden even without a `.gitignore` — the same set
+/// the file picker skips, so the two surfaces agree. `H` (show hidden)
+/// reveals them like any dot entry.
+pub const artifact_dirs = [_][]const u8{ "node_modules", "__pycache__", ".next", "dist", "build", "target", "vendor", ".venv", "venv", "zig-out", ".zig-cache", "zig-cache" };
+
+pub fn isArtifactDir(name: []const u8) bool {
+    for (artifact_dirs) |d| if (std.mem.eql(u8, name, d)) return true;
+    return false;
+}
 
 pub const Row = struct {
     /// Workspace-relative, owned.
@@ -93,6 +102,7 @@ pub const Tree = struct {
         var it = dir.iterate();
         while (it.next(app.io) catch null) |entry| {
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
+            if (!self.show_hidden and entry.kind == .directory and isArtifactDir(entry.name)) continue;
             if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
             const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
             errdefer gpa.free(rel);
@@ -340,4 +350,30 @@ test "tree: lists dirs first, expands on Enter, opens a file, hides dot entries 
     try t.expect(!try app.tree.handleKey(&app, Key.ctrl('p')));
     try command.run(&app, .{ .static = .@"tree.collapse_all" });
     try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+}
+
+test "tree: artifact directories stay out of the rows without a .gitignore; H shows them" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "__pycache__");
+    try tmp.dir.createDirPath(t.io, "node_modules/x");
+    try tmp.dir.createDirPath(t.io, "vendor");
+    try tmp.dir.createDirPath(t.io, "src");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "build", .data = "a file named build stays" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer names.deinit(t.allocator);
+    for (app.tree.rows.items) |r| try names.append(t.allocator, r.name());
+    try t.expectEqual(@as(usize, 2), names.items.len);
+    try t.expectEqualStrings("src", names.items[0]);
+    try t.expectEqualStrings("build", names.items[1]);
+    app.tree.show_hidden = true;
+    try app.tree.refresh(&app);
+    try t.expectEqual(@as(usize, 5), app.tree.rows.items.len);
 }
