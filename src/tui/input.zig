@@ -6,8 +6,10 @@
 //!
 //! Both tasks live in one `Io.Group`; `stop` cancels the group, which makes
 //! `Io.Threaded` interrupt the blocked reads. Capability replies from the
-//! probe are folded into `*vaxis.Vaxis` by upstream's `handleEventGeneric`,
-//! so what the terminal answers is interpreted exactly as vaxis would.
+//! probe are folded into `*vaxis.Vaxis` by `fold`, which mirrors upstream's
+//! `Loop.handleEventGeneric` prong for prong — that function cannot be
+//! analyzed under `zig test` on macOS (vaxis 0.6.0's non-Linux `TestTty`
+//! has no `resetSignalHandler`), and owning the fold makes it testable.
 //!
 //! Terminals without mode 2048 (Terminal.app) resize via the pipe; ghostty
 //! reports in-band and the pipe path is skipped once vaxis has seen one.
@@ -87,7 +89,7 @@ pub fn stop(self: *Input) void {
     if (self.old_winch) |*old| posix.sigaction(posix.SIG.WINCH, old, null);
     winch_fd.store(-1, .release);
     for (self.winch_pipe) |fd| {
-        if (fd >= 0) (Io.File{ .handle = fd }).close(self.io);
+        if (fd >= 0) (Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(self.io);
     }
     self.winch_pipe = .{ -1, -1 };
 }
@@ -127,7 +129,7 @@ fn handleWinch(_: posix.SIG) callconv(.c) void {
 fn readerTask(self: *Input) Io.Cancelable!void {
     // The initial size, like vaxis's loop, so the app can allocate its screen.
     if (self.getWinsize()) |ws| {
-        try self.postEvent(.{ .winsize = ws }) catch |err| return mapQueueErr(err);
+        self.postEvent(.{ .winsize = ws }) catch |err| return mapQueueErr(err);
     } else |_| {}
 
     var parser: vaxis.Parser = .{};
@@ -155,18 +157,75 @@ fn readerTask(self: *Input) Io.Cancelable!void {
             }
             pos += result.n;
             const event = result.event orelse continue;
-            vaxis.loop.handleEventGeneric(self, self.vx, &self.cache, Event, event, self.gpa) catch |err| {
-                if (err == error.Canceled) return error.Canceled;
-                return;
-            };
+            self.fold(event) catch |err| return mapQueueErr(err);
         } else {
             carry = 0;
         }
     }
 }
 
+/// One parsed event: capability replies update `vx`, everything else is
+/// posted. `key.text` points into the parser's read buffer, so it is
+/// copied into the grapheme ring before the event leaves this thread.
+fn fold(self: *Input, event: Event) !void {
+    const vx = self.vx;
+    switch (event) {
+        .key_press => |key| {
+            // The explicit-width / scaled-text probes end in a cursor
+            // position report, which parses as shift+F3 / alt+F3 while the
+            // queries are outstanding (column 2 or 3 ⇒ the OSC 66 moved
+            // the cursor). Never deliver those as keys.
+            if (key.codepoint == Key.f3 and !vx.queries_done.load(.unordered)) {
+                if (key.mods.shift) {
+                    vx.caps.explicit_width = true;
+                    vx.caps.unicode = .unicode;
+                    vx.screen.width_method = .unicode;
+                    return;
+                }
+                if (key.mods.alt) {
+                    vx.caps.scaled_text = true;
+                    return;
+                }
+            }
+            try self.postEvent(.{ .key_press = self.cacheText(key) });
+        },
+        .key_release => |key| try self.postEvent(.{ .key_release = self.cacheText(key) }),
+        .mouse => |mouse| try self.postEvent(.{ .mouse = vx.translateMouse(mouse) }),
+        .mouse_leave, .focus_in, .focus_out, .paste_start, .paste_end => try self.postEvent(event),
+        // Owned by the event; the consumer frees it.
+        .paste => try self.postEvent(event),
+        .color_report, .color_scheme => try self.postEvent(event),
+        .cap_kitty_keyboard => vx.caps.kitty_keyboard = true,
+        .cap_kitty_graphics => vx.caps.kitty_graphics = true,
+        .cap_rgb => vx.caps.rgb = true,
+        .cap_unicode => {
+            vx.caps.unicode = .unicode;
+            vx.screen.width_method = .unicode;
+        },
+        .cap_sgr_pixels => vx.caps.sgr_pixels = true,
+        .cap_color_scheme_updates => vx.caps.color_scheme_updates = true,
+        .cap_multi_cursor => vx.caps.multi_cursor = true,
+        .cap_da1 => {
+            // The probe's last reply: wake `queryTerminal`.
+            vx.queries_done.store(true, .unordered);
+            Io.futexWake(self.io, std.atomic.Value(u32), &vx.query_futex, 10);
+        },
+        .winsize => |ws| {
+            // Mode 2048 report. From here on the SIGWINCH path is skipped.
+            vx.state.in_band_resize = true;
+            try self.postEvent(.{ .winsize = ws });
+        },
+    }
+}
+
+fn cacheText(self: *Input, key: Key) Key {
+    var out = key;
+    if (key.text) |text| out.text = self.cache.put(text);
+    return out;
+}
+
 fn winchTask(self: *Input) Io.Cancelable!void {
-    const pipe_r: Io.File = .{ .handle = self.winch_pipe[0] };
+    const pipe_r: Io.File = .{ .handle = self.winch_pipe[0], .flags = .{ .nonblocking = false } };
     var byte: [16]u8 = undefined;
     while (true) {
         _ = pipe_r.readStreaming(self.io, &.{&byte}) catch |err| switch (err) {
@@ -287,6 +346,52 @@ test "keyName: plain, modified, named and legacy control keys" {
 test "keyName: caps/num lock are not spelled; lone modifiers are" {
     try expectName("a", .{ .codepoint = 'a', .mods = .{ .caps_lock = true, .num_lock = true } });
     try expectName("ctrl", .{ .codepoint = Key.left_control, .mods = .{ .ctrl = true } });
+}
+
+fn testInput(vx: *vaxis.Vaxis) !*Input {
+    const in = try testing.allocator.create(Input);
+    in.init(testing.io, testing.allocator, vx, .stdin());
+    return in;
+}
+
+test "fold: capability replies land in vaxis, DA1 ends the probe, keys are posted" {
+    var env: std.process.Environ.Map = .init(testing.allocator);
+    defer env.deinit();
+    var vx = try vaxis.init(testing.io, testing.allocator, &env, .{});
+    var sink_buf: [256]u8 = undefined;
+    var sink: Io.Writer.Discarding = .init(&sink_buf);
+    defer vx.deinit(testing.allocator, &sink.writer);
+    const in = try testInput(&vx);
+    defer testing.allocator.destroy(in);
+
+    vx.queries_done.store(false, .unordered);
+    try in.fold(.cap_kitty_keyboard);
+    try in.fold(.cap_kitty_graphics);
+    try in.fold(.cap_sgr_pixels);
+    try in.fold(.cap_unicode);
+    // shift+F3 while probing is the explicit-width reply, not a key.
+    try in.fold(.{ .key_press = .{ .codepoint = Key.f3, .mods = .{ .shift = true } } });
+    try in.fold(.{ .winsize = .{ .rows = 10, .cols = 20, .x_pixel = 0, .y_pixel = 0 } });
+    try in.fold(.cap_da1);
+
+    try testing.expect(vx.caps.kitty_keyboard);
+    try testing.expect(vx.caps.kitty_graphics);
+    try testing.expect(vx.caps.sgr_pixels);
+    try testing.expect(vx.caps.explicit_width);
+    try testing.expectEqual(vaxis.gwidth.Method.unicode, vx.caps.unicode);
+    try testing.expect(vx.state.in_band_resize);
+    try testing.expect(vx.queries_done.load(.unordered));
+
+    // After the probe, shift+F3 is an ordinary key.
+    try in.fold(.{ .key_press = .{ .codepoint = Key.f3, .mods = .{ .shift = true } } });
+    try in.fold(.{ .key_press = .{ .codepoint = 'a', .text = "a" } });
+
+    var buf: [8]Event = undefined;
+    const n = try in.drain(&buf);
+    try testing.expectEqual(@as(usize, 3), n);
+    try testing.expectEqual(@as(u16, 20), buf[0].winsize.cols);
+    try testing.expectEqual(@as(u21, Key.f3), buf[1].key_press.codepoint);
+    try testing.expectEqualStrings("a", buf[2].key_press.text.?);
 }
 
 test "parser distinguishes chords the legacy encoding folds together" {
