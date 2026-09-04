@@ -88,6 +88,8 @@ pub const Caps = struct {
     document_highlight: bool = false,
     selection_range: bool = false,
     folding_range: bool = false,
+    /// `completionProvider.resolveProvider`: accept asks for the full item.
+    completion_resolve: bool = false,
     /// `textDocumentSync.change == 2`.
     incremental: bool = false,
 };
@@ -425,6 +427,7 @@ pub const Server = struct {
                 if (s.len == 1) try chars.append(self.gpa, s[0]);
             };
             caps.trigger_chars = try chars.toOwnedSlice(self.gpa);
+            caps.completion_resolve = jsonrpc.getBool(cp, "resolveProvider") orelse false;
         }
         if (jsonrpc.getField(c, "textDocumentSync")) |sync| caps.incremental = switch (sync) {
             .integer => |i| i == 2,

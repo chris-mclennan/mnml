@@ -4,7 +4,9 @@
 
 const std = @import("std");
 
-pub const PanelId = enum { todos, notes, findings, sessions };
+/// // changed (lsp): `diagnostics` — the LSP problems list lives in the
+/// right slot like the other list panels.
+pub const PanelId = enum { todos, notes, findings, sessions, diagnostics };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

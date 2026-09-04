@@ -401,3 +401,60 @@ that the oldest slot reads `+K more…`.
   `pty_pane.tickAll` and `watch.tick` after the theme poll; `deinit`
   frees runners / tasks state with the other lists, `env` after the
   panes, and the `Loaded` config last.
+
+---
+
+## LSP + DAP (Phase 5) — `// changed:` notes (2026-09-04)
+
+- `// changed (ui):` `editor_view.Doc` gains two slices the app fills per
+  frame: `marks: []const GutterMark` (`{ line, glyph, style }` — one sign
+  painted in the gutter's first column on that line; the app resolves
+  priority by ordering the list, the view paints the first match) and
+  `underlines: []const Underline` (`{ start, end, style }` — byte ranges
+  drawn over the syntax style with the style's `fg` as the underline
+  colour and its `ul_style`, `.curly` when unset). The debugger's
+  breakpoints (`● ◆ ◈`) and the stop arrow (`▶`) are marks; a diagnostic's
+  severity dot is a mark on the lines the debugger leaves; a diagnostic's
+  range is an underline.
+- `// changed (core):` `PanelId` gains `diagnostics` — the LSP problems
+  list is a `ListPanel(DiagRow)` in the right slot like TODOS
+  (`lsp.diagnostics` shows it; `lsp.diagnostics_filter` cycles the
+  severity chip; Enter opens the row). `cmd_view.showRightPanel` is pub
+  so a command can route a panel there.
+- `// changed (app):` `Pane` gains `debug: dap.DebugPane` and
+  `dap_repl: dap.DapReplPane` (`src/app/dap.zig`), painted by
+  `ui/dap_view.zig` and `ui/dap_repl_view.zig`; their rows register
+  `.script_hit{ pane, id }` (a frame is its index, a variable row is
+  `vars_base + i`, a watch is `watch_base + i`, the REPL's input row is
+  `input_hit`). Both open beside the active pane and are singletons.
+- `// changed (app):` `PromptPurpose` gains `dap_add_watch`,
+  `dap_bp_condition` / `dap_hit_count` (`BpTarget{ path, line }`),
+  `dap_set_variable`, `lsp_rename`, `lsp_workspace_symbol`; `PickerKind`
+  gains `dap_remove_watch`, `dap_exceptions`, `dap_threads`,
+  `lsp_locations`, `lsp_code_actions`, `lsp_symbols`.
+- `// changed (app):` the completion popup, the hover / signature box and
+  the peek overlay are `app.lsp` state, not `Overlay` variants — the
+  popup coexists with typing. Their rows register `.overlay_item(i)` with
+  no overlay up; `dispatch` routes those to the popup. `lsp.interceptKey`
+  runs after the find bar and before any pane routing.
+- `// changed (app):` document sync reads `Editor.edits` (the `EditLog`
+  the highlighter and the snippet session already read), not
+  `EditOutcome.text_edits`: one splice on an incremental server goes as
+  a range when it converts exactly (an insertion, or utf-8 positions),
+  anything else as the full text. It runs from the frame (`drawEditor`),
+  so every mutation path — ops, `setText`, undo — is covered.
+- `// changed (app):` a language server is spawned only when a root
+  marker is found for it (or its spec has none); the missing-binary toast
+  (`LSP: <cmd> not installed — \`<hint>\``, once per server per session)
+  is decided by a PATH probe independent of the root, so a marker-less
+  temp workspace never launches a server it would only confuse. The
+  `.open` / `save_pre` / `save_post` hooks carry attach, format-on-save
+  and `didSave`; `forceClosePane` sends `didClose` for the last editor on
+  a file.
+- `// changed (app):` the outline prefers a server's `documentSymbol`
+  list (`lsp.symbolsFor`) to the tree-sitter walk when one has landed;
+  `lsp.highlight_symbol` lands in the pane's find matches (same paint);
+  `lsp.fold_all` fills `Buffer.folds`.
+- `// changed (spec):` `dap.attach` is a launch body with
+  `.request = "attach"` (no process picker); `lsp.inlay_hints_toggle`
+  flips the config flag and says painting is a later slice.

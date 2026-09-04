@@ -62,6 +62,7 @@ const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
 const dap = @import("app/dap.zig");
+const lsp = @import("app/lsp.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -129,6 +130,10 @@ pub const PromptPurpose = union(enum) {
     dap_hit_count: BpTarget,
     /// DAP: a new value for `name` under `parent_ref` (owned name).
     dap_set_variable: struct { parent_ref: i64, name: []u8 },
+    /// LSP: the new name for the symbol at the cursor.
+    lsp_rename,
+    /// LSP: a `workspace/symbol` query.
+    lsp_workspace_symbol,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -164,7 +169,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, dap_remove_watch, dap_exceptions, dap_threads };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -372,6 +377,7 @@ pub const App = struct {
     todos: todos.State,
     snippets: snippets.State,
     dap: dap.State = .{},
+    lsp: lsp.State = .{},
     focus: FocusId = .tree,
     active: ?PaneId = null,
     /// The editor pane most recently active — a runner pane taking
@@ -489,6 +495,10 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
+        // A file opened / saved reaches its language server.
+        try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
+        try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
+        try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
         app.now_ms = nowMs(io);
         app.tree.width = app.cfg.ui.tree_width;
         try app.toastConfigDiagnostics();
@@ -583,6 +593,7 @@ pub const App = struct {
         // Workers first: they borrow `workspace` and post into `events`.
         self.todos.deinit(gpa, self.io);
         self.dap.deinit(gpa);
+        self.lsp.deinit(gpa);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
@@ -949,9 +960,13 @@ pub const App = struct {
         if (self.repeat_insert) |r| if (r.pane == id) {
             self.repeat_insert = null;
         };
+        // The language server hears about the last editor on a file
+        // closing, once the store no longer has it.
+        const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
         const layout = self.layouts.current();
         const next = layout.removePane(id);
         self.panes.remove(id);
+        if (closed_path) |p| lsp.onClose(self, id, p);
         if (self.last_editor == id) self.last_editor = null;
         if (self.active == id) {
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
@@ -1099,6 +1114,7 @@ pub const App = struct {
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
             .dap => |d| try dap.handle(self, d.session, d.msg),
+            .lsp => |l| try lsp.handle(self, l.server, l.msg),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1274,6 +1290,12 @@ test {
     _ = @import("lsp/client.zig");
     _ = @import("app/dap.zig");
     _ = @import("app/cmd_dap.zig");
+    _ = @import("app/lsp.zig");
+    _ = @import("app/cmd_lsp.zig");
+    _ = @import("ui/completion_view.zig");
+    _ = @import("ui/hover_view.zig");
+    _ = @import("ui/peek_view.zig");
+    _ = @import("ui/diagnostics_view.zig");
     _ = @import("ui/dap_view.zig");
     _ = @import("ui/dap_repl_view.zig");
     _ = @import("ui/hit.zig");

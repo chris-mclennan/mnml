@@ -53,6 +53,7 @@ const cheatsheet = @import("cheatsheet.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
 const dap = @import("dap.zig");
+const lsp = @import("lsp.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -150,6 +151,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
+    try lsp.drawPopups(app, ui, panes_area);
     toast_mod.draw(ui, panes_area, try app.visibleToasts(arena));
 }
 
@@ -200,6 +202,7 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocator.Error!void {
     switch (which) {
         .todos => try todos.draw(app, ui, area),
+        .diagnostics => try lsp.drawPanel(app, ui, area),
         .notes, .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
             const caps = ui.fmt(" {s}", .{@tagName(which)});
@@ -339,6 +342,17 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     }
 }
 
+/// The gutter's signs: the debugger's first (a breakpoint, the ▶ of a
+/// stop), then a diagnostic's dot on the lines they leave — the view
+/// paints the first mark it finds for a line.
+fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
+    const d = try dap.marksFor(app, arena, e.buf.path, &app.theme, ascii);
+    const l = try lsp.marksFor(app, arena, e.buf.path, &app.theme, ascii);
+    if (l.len == 0) return d;
+    if (d.len == 0) return l;
+    return std.mem.concat(arena, editor_view.GutterMark, &.{ d, l });
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
@@ -352,6 +366,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     };
     const focused = app.active == id and app.focus == .pane;
     const ed = &e.buf.editor;
+    // The language server hears every edit before the frame paints.
+    lsp.syncPane(app, id, e);
     // Highlighting: every frame folds the edits since the last one into
     // the tree and slides the cached spans along, so what is painted
     // lines up with the text; the reparse itself waits for the idle
@@ -398,7 +414,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .focused = focused,
         .visual_block = mode == .visual_block,
         .scrollbar = app.cfg.ui.scrollbar,
-        .marks = try dap.marksFor(app, arena, e.buf.path, &app.theme, ui.ascii),
+        .marks = try gutterMarks(app, arena, e, ui.ascii),
+        .underlines = try lsp.underlinesFor(app, arena, e, &app.theme),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     const headers = try sticky.headerLines(app, e, arena);
@@ -487,6 +504,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.pending = try e.buf.input.pendingDisplay(ui.arena);
         if (e.buf.recording) |r| info.macro_recording = r.reg;
+        if (try lsp.statusSegment(app, ui.arena, e, ui.ascii)) |seg| info.right = try ui.arena.dupe([]const u8, &.{seg});
     } else if (app.active) |id| if (app.panes.pty(id)) |p| {
         info.mode_label = if (p.exit == null) "TERM" else "EXITED";
         info.mode_kind = .edit;

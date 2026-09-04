@@ -53,6 +53,7 @@ const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const runners = @import("runners.zig");
 const dap = @import("dap.zig");
+const lsp = @import("lsp.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         else => return overlayKey(app, k),
     }
     if (app.find_bar != null) return findBarKey(app, k);
+    // The completion / hover / peek popups take their keys first.
+    if (try lsp.interceptKey(app, k)) return;
     if (app.focus == .tree and app.tree.visible) {
         if (try app.tree.handleKey(app, k)) return;
         _ = try chordChain(app, k);
@@ -71,6 +74,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     if (app.focus == .panel and app.right_panel != null) {
         const took = switch (app.focus.panel) {
             .todos => try todos.handleKey(app, k),
+            .diagnostics => try lsp.panelKey(app, k),
             .notes, .findings, .sessions => false,
         };
         if (took) return;
@@ -216,6 +220,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
             e.hl_dirty = true;
             snippets.afterEdit(app, pane_id, e);
             if (trigger) try expandAbbreviation(app, e);
+            try lsp.onTyped(app, pane_id, e, k);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
     }
@@ -419,7 +424,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
-            .notes, .findings, .sessions => {},
+            .notes, .findings, .sessions, .diagnostics => {},
         },
         .none => {},
     }
@@ -562,6 +567,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_bp_condition => |b| try dap.acceptCondition(app, b.path, b.line, text),
         .dap_hit_count => |b| try dap.acceptHitCount(app, b.path, b.line, text),
         .dap_set_variable => |sv| try dap.acceptSetVariable(app, sv.parent_ref, sv.name, text),
+        .lsp_rename => try lsp.acceptRename(app, text),
+        .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
     }
 }
 
@@ -692,23 +699,27 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
             .todos => try todos.rowMouse(app, pr.idx, m),
+            .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .notes, .findings, .sessions => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
-            .notes, .findings, .sessions => {},
+            .notes, .findings, .sessions, .diagnostics => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
+            .diagnostics => try lsp.chipMouse(app, m),
             .notes, .findings, .sessions => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
+            .diagnostics => lsp.filterMouse(app, m),
             .notes, .findings, .sessions => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
             .panel => |p| switch (p) {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
+                .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .notes, .findings, .sessions => {},
             },
             .pane => |id| {
@@ -812,7 +823,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .settings => try settings_app.click(app, i),
                 .wizard => first_launch.click(app, i),
-                else => {},
+                // The completion popup registers its rows here with no overlay up.
+                else => if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
             }
         },
         .pane => |id| {

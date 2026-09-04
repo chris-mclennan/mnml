@@ -130,7 +130,7 @@ fn toggleKeymap(app: *App) CommandError!void {
 // shows and focuses a panel; toggle hides it or brings the last one
 // back. Panels without a module in this build name themselves.
 
-fn showRightPanel(app: *App, which: app_mod.PanelId) void {
+pub fn showRightPanel(app: *App, which: app_mod.PanelId) void {
     app.right_panel = which;
     if (app.activeBuffer()) |b| b.input.onBlur();
     app.focus = .{ .panel = which };

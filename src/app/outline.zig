@@ -25,6 +25,8 @@ const outline_view = @import("../ui/outline_view.zig");
 const syntax = @import("syntax.zig");
 const highlight = @import("highlight");
 const structure = highlight.structure;
+const lsp = @import("lsp.zig");
+const lsp_types = @import("../lsp/types.zig");
 
 pub const table = .{
     .@"outline.show" = &show,
@@ -110,7 +112,11 @@ pub fn refresh(app: *App, id: PaneId) Allocator.Error!void {
     defer arena.deinit();
     const a = arena.allocator();
     o.clear();
-    if (try src.syntax.symbols(&src.buf.editor, a)) |syms| {
+    // A language server's symbols first; the tree-sitter walk otherwise.
+    const from_server: ?[]const lsp_types.Symbol = if (src.buf.path) |p| lsp.symbolsFor(app, p) else null;
+    if (from_server) |syms| {
+        for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = lsp_types.symbolKindLabel(s.kind), .line = s.line, .col = s.character, .depth = s.depth });
+    } else if (try src.syntax.symbols(&src.buf.editor, a)) |syms| {
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = s.kind.label(), .line = s.line, .col = s.col, .depth = s.depth });
     } else {
         var buf: [32]u8 = undefined;
