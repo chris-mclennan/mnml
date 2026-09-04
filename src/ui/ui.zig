@@ -25,6 +25,7 @@ pub const statusline = @import("statusline.zig");
 pub const bufferline = @import("bufferline.zig");
 
 pub const chip = @import("chip.zig");
+pub const text_field = @import("text_field.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
