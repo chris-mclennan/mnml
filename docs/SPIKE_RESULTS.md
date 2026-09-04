@@ -82,6 +82,16 @@ runner's abandoned-job hand-off. The D3 cancel probe passes: an
 `io.concurrent` task blocked on a pipe read returns `error.Canceled`
 within 1 s of `group.cancel(io)`.
 
+## Resolved after the verdict
+
+- **ReleaseSafe parse crashes.** Four tests (highlight fixtures, captures,
+  syntax spans, the `:A` smoke) died with SIGTRAP under
+  `-Doptimize=ReleaseSafe` — Zig builds C with UBSan in trap mode in that
+  mode too, and optimized grammar lexers trip it. The tree-sitter runtime
+  and grammar units now compile with `-fno-sanitize=undefined
+  -fno-sanitize-trap=undefined` (what ghostty does for its vendored C).
+  `zig build test -Doptimize=ReleaseSafe`: 379 / 379.
+
 ## Open risks
 
 1. **Zig 0.16.0 x86-64 Debug backend TODO** (`writeToPackedMemory`) reached

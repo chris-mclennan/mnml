@@ -314,7 +314,11 @@ const local_queries = [_]LocalQuery{
     .{ .out = "vue/injections.scm", .src = "src/highlight/queries/vue.injections.scm" },
 };
 
-const c_flags = [_][]const u8{"-std=c11"};
+// Grammar lexers and the runtime are C that Zig would otherwise build with
+// UBSan in trap mode (Debug and ReleaseSafe alike). Optimized grammar code
+// trips it — four parse tests died with SIGTRAP under ReleaseSafe — so the
+// sanitizer is off for these units, as ghostty does for its vendored C.
+const c_flags = [_][]const u8{ "-std=c11", "-fno-sanitize=undefined", "-fno-sanitize-trap=undefined" };
 
 const TreeSitter = struct {
     /// `@import("tree_sitter")` — the runtime bindings, with both static libs linked.
