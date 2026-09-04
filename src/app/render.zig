@@ -53,6 +53,12 @@ const cheatsheet = @import("cheatsheet.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
+const ai_app = @import("ai.zig");
+const agents = @import("agents.zig");
+const spend = @import("spend.zig");
+const ai_view = @import("../ui/ai_view.zig");
+const agents_view = @import("../ui/agents_view.zig");
+const spend_view = @import("../ui/spend_view.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -240,7 +246,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -298,6 +304,12 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .git_status => |*s| try git_app.drawStatusPane(app, ui, pr.pane, s, rect),
             .diff => |*d| git_app.drawDiffPane(app, ui, pr.pane, d, rect),
             .git_graph => |*g| git_app.drawGraphPane(app, ui, pr.pane, g, rect),
+            .ai => |*a| drawAi(app, ui, pr.pane, a, rect),
+            .claude_agents => |*a| try drawAgents(app, ui, pr.pane, a, rect),
+            .spend_report => |*s| {
+                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
+                spend_view.draw(ui, pr.pane, rect, s, app.active == pr.pane and app.focus == .pane);
+            },
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -346,6 +358,65 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
         if (focused) if (cursor) |c| {
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         };
+    }
+}
+
+/// The AI answer pane; the scroll is clamped to what overflowed.
+fn drawAi(app: *App, ui: Ui, id: PaneId, a: *ai_app.AiPane, rect: Rect) void {
+    const focused = app.active == id and app.focus == .pane;
+    if (app.active == id) app.pane_rows = @max(rect.h, 1);
+    const over = ai_view.draw(ui, id, rect, .{
+        .title = a.title,
+        .status = a.statusLabel(),
+        .prompt = a.prompt,
+        .answer = a.answer.items,
+        .err = a.err,
+        .scroll = a.scroll,
+        .focused = focused,
+        .running = a.status == .running,
+    });
+    if (a.scroll > over) a.scroll = over;
+}
+
+/// The Claude Agents dashboard: rows in the pane's display order.
+fn drawAgents(app: *App, ui: Ui, id: PaneId, a: *agents.AgentsPane, rect: Rect) Allocator.Error!void {
+    if (app.active == id) app.pane_rows = @max(rect.h, 1);
+    const rows = try ui.arena.alloc(agents.Row, a.visible.items.len);
+    for (a.visible.items, 0..) |idx, i| rows[i] = a.rows[idx];
+    const focused = app.active == id and app.focus == .pane;
+    const caret = agents_view.draw(ui, id, rect, a, .{
+        .rows = rows,
+        .cursor = a.cursor,
+        .focused = focused,
+        .workspace = app.workspace,
+        .now_s = @divFloor(app.now_ms, 1000),
+    });
+    if (focused) if (caret) |c| {
+        app.cursor_pos = .{ .x = c.x, .y = c.y };
+    };
+}
+
+/// The ghost text: the suggestion's first line at the cursor, the
+/// rest of the current line pushed right behind it, further lines on
+/// the rows below. Dim, so it reads as a proposal.
+fn drawGhost(ui: Ui, rect: Rect, cursor: editor_view.Cursor, ed: *const @import("../editor/editor.zig").Editor, ghost: []const u8, gutter: u16) void {
+    const th = ui.theme;
+    var style = Theme.onBg(th.muted, th.bg.bg);
+    style.italic = true;
+    var lines = std.mem.splitScalar(u8, ghost, '\n');
+    var y = cursor.y;
+    var first = true;
+    while (lines.next()) |line| : (y += 1) {
+        if (y >= rect.bottom()) break;
+        const x: u16 = if (first) cursor.x else rect.x + gutter;
+        if (x >= rect.right()) continue;
+        var used = ui.putStr(x, y, rect.right() - x, line, style);
+        if (first) {
+            first = false;
+            const cur_line = ed.currentLine();
+            const rest = ed.bytes()[ed.cursor..ed.lineEnd(cur_line)];
+            if (rest.len > 0 and x + used < rect.right()) used += ui.putStr(x + used, y, rect.right() - (x + used), rest, Theme.onBg(th.fg, th.bg.bg));
+        }
     }
 }
 
@@ -412,6 +483,13 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
+    if (ed.ghost_suggestion) |ghost| if (cursor) |c| {
+        var digits: u16 = 1;
+        var n = ed.lineCount();
+        while (n >= 10) : (n /= 10) digits += 1;
+        const gutter: u16 = if (app.cfg.ui.line_numbers) @max(digits, 3) + 2 else 0;
+        drawGhost(ui, rect, c, ed, ghost, gutter);
+    };
     const headers = try sticky.headerLines(app, e, arena);
     if (headers.len > 0) sticky.draw(ui, id, e, rect, headers, app.cfg.ui.line_numbers);
     if (app.active == id) {
@@ -509,11 +587,23 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.total_lines = p.rows;
     };
-    // The branch segment: `main ↑2 ↓1 ●3`, before the input style.
-    if (try git_app.statusSegment(app, ui.arena)) |seg| {
-        const segs = try ui.arena.alloc([]const u8, info.right.len + 1);
+    // The branch segment (`main ↑2 ↓1 ●3`) then the AI meter, before the
+    // input style.
+    const branch_seg = try git_app.statusSegment(app, ui.arena);
+    const meter_seg = try ai_app.meterSegment(app, ui.arena);
+    const extra: usize = @as(usize, @intFromBool(branch_seg != null)) + @intFromBool(meter_seg != null);
+    if (extra > 0) {
+        const segs = try ui.arena.alloc([]const u8, info.right.len + extra);
         @memcpy(segs[0..info.right.len], info.right);
-        segs[info.right.len] = seg;
+        var n = info.right.len;
+        if (branch_seg) |seg| {
+            segs[n] = seg;
+            n += 1;
+        }
+        if (meter_seg) |seg| {
+            segs[n] = seg;
+            n += 1;
+        }
         info.right = segs;
     }
     statusline.draw(ui, area, info);

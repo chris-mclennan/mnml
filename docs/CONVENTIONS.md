@@ -140,6 +140,15 @@ There is no third option, and no handler may stash the raw pointer to
   the test fail, grep that the break really landed.
 - Test the shipped default, not values around it.
 
+## Reverse channels (D3) — `src/app/ai.zig`
+
+A worker that needs an answer from the UI owns the channel: `ai.Job.confirm`
+is an `Io.Queue(bool)` with a one-slot ring inside the heap-allocated job.
+The worker posts `.confirm` and parks on `getOne`; the UI answers with
+`putOne` from the confirm box — and from every other way the box can close
+(`dispatch.closeOverlay` → `ai.overlayClosing`), so a dismissed box is a
+"no", never a hang. No global map of senders; the job dies with its queue.
+
 ## The reference module — `src/todos.zig` (D8)
 
 Every convention above has one concrete instance in `src/todos.zig`.

@@ -62,6 +62,9 @@ const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
 const git_app = @import("app/git.zig");
+const ai_app = @import("app/ai.zig");
+const agents = @import("app/agents.zig");
+const spend = @import("app/spend.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -124,6 +127,13 @@ pub const PromptPurpose = union(enum) {
     new_folder: []u8,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
+    /// AI: a bare question; a question with the file + selection;
+    /// a transcript search; a branch description; the OAuth token.
+    ai_ask,
+    ai_chat,
+    ai_search,
+    ai_branch_name,
+    ai_token,
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
@@ -145,10 +155,15 @@ pub const ConfirmPurpose = union(enum) {
     delete_path: []u8,
     /// Move `from` into directory `into` (both workspace-relative, owned).
     move_path: struct { from: []u8, into: []u8 },
+    /// An AI job's write_file waits on this box (the job id).
+    ai_tool: u64,
+    /// SIGTERM these sessions (owned).
+    kill_pids: []u32,
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
             .delete_path => |s| gpa.free(s),
+            .kill_pids => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
                 gpa.free(m.into);
@@ -157,7 +172,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -365,6 +380,7 @@ pub const App = struct {
     todos: todos.State,
     git: git_app.State,
     snippets: snippets.State,
+    ai: ai_app.State = .{},
     focus: FocusId = .tree,
     active: ?PaneId = null,
     /// The editor pane most recently active — a runner pane taking
@@ -465,7 +481,7 @@ pub const App = struct {
             .workspace = ws,
             .data_root = dr,
             .env = env,
-            .panes = PaneStore.init(gpa),
+            .panes = PaneStore.init(gpa, io),
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa),
@@ -577,6 +593,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
+        self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.git.deinit(gpa, self.io);
         self.snippets.deinit();
@@ -1095,6 +1112,9 @@ pub const App = struct {
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
             .git => |result| try git_app.handle(self, result),
+            .agents => |result| try agents.handle(self, result),
+            .spend => |result| try spend.handle(self, result),
+            .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1167,6 +1187,7 @@ pub const App = struct {
         pty_pane.tickAll(self);
         try watch.tick(self, now);
         try git_app.tick(self, now);
+        try ai_app.tick(self);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1185,6 +1206,7 @@ pub const App = struct {
         if (self.todos.scanning or self.git.busy > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
+        if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -1269,6 +1291,16 @@ test {
     _ = @import("app/tasks.zig");
     _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");
+    _ = @import("app/ai.zig");
+    _ = @import("app/agents.zig");
+    _ = @import("app/spend.zig");
+    _ = @import("ai/suggest.zig");
+    _ = @import("ai/transcript.zig");
+    _ = @import("ai/api_client.zig");
+    _ = @import("ai/cli.zig");
+    _ = @import("ui/ai_view.zig");
+    _ = @import("ui/agents_view.zig");
+    _ = @import("ui/spend_view.zig");
     _ = @import("todos.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
@@ -1289,8 +1321,10 @@ test {
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
     defer app.deinit();
-    try std.testing.expectError(error.Failed, command.run(&app, .{ .static = .@"ai.ask" }));
-    try std.testing.expectEqualStrings("ai.ask: not implemented yet", app.lastToast().?);
+    // `http.send` has a spec and no runner until the http track lands
+    // (`ai.ask` and `git.commit` both grew runners).
+    try std.testing.expectError(error.Failed, command.run(&app, .{ .static = .@"http.send" }));
+    try std.testing.expectEqualStrings("http.send: not implemented yet", app.lastToast().?);
     try std.testing.expectError(error.Failed, command.runNamed(&app, "nope.nope"));
     try std.testing.expectEqualStrings("no such command: nope.nope", app.lastToast().?);
     // A dyn command with an ex runner reaches the interpreter.

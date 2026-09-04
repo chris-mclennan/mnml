@@ -20,6 +20,9 @@ const md_preview = @import("md_preview.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
+const ai_app = @import("ai.zig");
+const agents = @import("agents.zig");
+const spend = @import("spend.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -109,8 +112,15 @@ pub const Pane = union(enum) {
     diff: git_app.DiffPane,
     /// The commit DAG of one repo.
     git_graph: git_app.GraphPane,
+    /// An AI answer: the prompt and what the job streamed back.
+    ai: ai_app.AiPane,
+    /// The Claude Agents dashboard (one at a time).
+    claude_agents: agents.AgentsPane,
+    /// The AI spend report (one at a time).
+    spend_report: spend.SpendPane,
 
-    pub fn deinit(self: *Pane, gpa: Allocator) void {
+    /// `io` cancels the workers a dashboard pane owns before its arena goes.
+    pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
         switch (self.*) {
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
@@ -121,6 +131,9 @@ pub const Pane = union(enum) {
             .git_status => {},
             .diff => |*d| d.deinit(),
             .git_graph => |*g| g.deinit(),
+            .ai => |*a| a.deinit(),
+            .claude_agents => |*a| a.deinit(io),
+            .spend_report => |*s| s.deinit(io),
         }
     }
 
@@ -138,13 +151,16 @@ pub const Pane = union(enum) {
             .git_status => return "git status",
             .diff => |*d| return d.title,
             .git_graph => return "git graph",
+            .ai => |*a| return a.title,
+            .claude_agents => return "Claude Agents",
+            .spend_report => return "AI spend (24h)",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report => false,
         };
     }
 
@@ -179,17 +195,21 @@ pub const Pane = union(enum) {
 
 /// Panes by stable id. Slots freed by `remove` go on a free list and are
 /// reused, so ids are dense but never shift under a live overlay.
+/// // changed: `Pane.deinit(gpa)` had no io; the agents and spend panes
+/// own an `Io.Group` each and must cancel it before their arena goes, so
+/// the store carries the io it was made with.
 pub const PaneStore = struct {
     gpa: Allocator,
+    io: std.Io,
     slots: std.ArrayListUnmanaged(?Pane) = .empty,
     free: std.ArrayListUnmanaged(PaneId) = .empty,
 
-    pub fn init(gpa: Allocator) PaneStore {
-        return .{ .gpa = gpa };
+    pub fn init(gpa: Allocator, io: std.Io) PaneStore {
+        return .{ .gpa = gpa, .io = io };
     }
 
     pub fn deinit(self: *PaneStore) void {
-        for (self.slots.items) |*slot| if (slot.*) |*p| p.deinit(self.gpa);
+        for (self.slots.items) |*slot| if (slot.*) |*p| p.deinit(self.gpa, self.io);
         self.slots.deinit(self.gpa);
         self.free.deinit(self.gpa);
     }
@@ -230,7 +250,7 @@ pub const PaneStore = struct {
     pub fn remove(self: *PaneStore, id: PaneId) void {
         if (id >= self.slots.items.len) return;
         if (self.slots.items[id]) |*p| {
-            p.deinit(self.gpa);
+            p.deinit(self.gpa, self.io);
             self.slots.items[id] = null;
             self.free.append(self.gpa, id) catch {};
         }
@@ -292,7 +312,7 @@ pub const PaneStore = struct {
 
 test "pane store: stable ids, free-list reuse, path lookup" {
     const gpa = std.testing.allocator;
-    var store = PaneStore.init(gpa);
+    var store = PaneStore.init(gpa, std.testing.io);
     defer store.deinit();
     const mk = struct {
         fn pane(g: Allocator, path: []const u8) !Pane {

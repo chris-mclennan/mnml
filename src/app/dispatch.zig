@@ -53,6 +53,9 @@ const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const runners = @import("runners.zig");
 const git_app = @import("git.zig");
+const ai_app = @import("ai.zig");
+const agents = @import("agents.zig");
+const spend = @import("spend.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -118,7 +121,27 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
             _ = try chordChain(app, k);
             return;
         },
+        .ai => |*a| {
+            if (try ai_app.paneKey(app, id, a, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .claude_agents => |*a| {
+            if (try agents.handleKey(app, id, a, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .spend_report => |*s| {
+            if (try spend.handleKey(app, id, s, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
         .editor => {},
+    };
+    // A ghost suggestion owns Tab / ctrl+→ / ctrl+↓ ahead of the chord
+    // chain; any other key dismisses it and goes on as usual.
+    if (pane_id) |id| if (app.panes.editor(id)) |e| if (e.buf.editor.ghost_suggestion != null) {
+        if (try ai_app.interceptKey(app, e, k)) return;
     };
     const ed: ?*EditorPane = if (pane_id) |id| app.panes.editor(id) else null;
     const mode: input.EditingMode = if (ed) |e| e.buf.input.mode() else .none;
@@ -221,6 +244,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .edited => {
             e.hl_dirty = true;
             snippets.afterEdit(app, pane_id, e);
+            ai_app.noteEdit(app);
             if (trigger) try expandAbbreviation(app, e);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
@@ -403,6 +427,8 @@ fn restoreFocus(app: *App) void {
 }
 
 fn closeOverlay(app: *App) void {
+    // A confirm that a worker is parked on answers no before it goes.
+    ai_app.overlayClosing(app);
     const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
@@ -565,6 +591,11 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
         .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
+        .ai_ask => try toastOnFail(app, ai_app.askAccept(app, text)),
+        .ai_chat => try toastOnFail(app, ai_app.chatAccept(app, text)),
+        .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
+        .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
+        .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
     }
 }
 
@@ -612,6 +643,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
+        .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
+        .kill_pids => |pids| if (choice == 0) try agents.killAccept(app, pids),
     }
 }
 
@@ -858,8 +891,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.active != sh.pane) app.showPane(sh.pane);
             const pane = app.panes.get(sh.pane) orelse return;
             switch (pane.*) {
-                .cheatsheet => |*c| try cheatsheet.click(app, c, sh.id),
-                .list => |*l| {
+                .cheatsheet => |*c| if (m.button == .left) try cheatsheet.click(app, c, sh.id),
+                .list => |*l| if (m.button == .left) {
                     if (sh.id < l.entries.items.len) {
                         if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
                     }
@@ -871,7 +904,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git_graph => |*g| if (sh.id < g.commits.len) {
                     if (g.cursor == sh.id and m.button == .left) git_app.runToast(app, git_app.showSelectedCommit(app, g)) else g.cursor = sh.id;
                 },
-                .editor, .outline, .md_preview, .pty => {},
+                .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
+                .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
+                .editor, .outline, .md_preview, .pty, .ai => {},
             }
         },
         .tree_node => |idx| switch (m.kind) {
@@ -1104,6 +1139,9 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .git_status => |*s| s.cursor = if (down) @min(s.cursor + n, app.git.rows.items.len -| 1) else s.cursor -| n,
         .diff => |*d| d.cursor = if (down) @min(d.cursor + n, d.rows.len -| 1) else d.cursor -| n,
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.commits.len -| 1) else g.cursor -| n,
+        .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 

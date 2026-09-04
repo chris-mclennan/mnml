@@ -442,3 +442,50 @@ that the oldest slot reads `+K more…`.
   `App.tick` asks for a fresh status 3 s after the last one landed;
   `save_post` asks at once; the `open` hook switches the active repo to
   the one holding the file.
+
+---
+
+## Phase 7 — AI, agents, spend — `// changed:` notes (2026-09-04)
+
+- `// changed (core):` `AppEvent.ai` is real: `.{ job: u64, msg: AiMsg }` with
+  `AiMsg = union(enum){ suggestion{pane, generation, text}, text, done, failed,
+  confirm }` — every slice gpa-owned by the event (`event.freeAiMsg`). Two
+  more payloads: `agents: *agents.ScanResult` and `spend: *spend.Result`,
+  adopted by the pane that asked (`generation` + pane id checked) or freed.
+- `// changed (app):` `Pane` gains `ai: ai.AiPane` (`src/app/ai.zig`),
+  `claude_agents: agents.AgentsPane` (`src/app/agents.zig`) and
+  `spend_report: spend.SpendPane` (`src/app/spend.zig`). The two dashboards
+  each own an `Io.Group`, so `Pane.deinit(gpa, io)` takes the io and
+  `PaneStore.init(gpa, io)` carries it — a pane closing cancels its scan
+  before its arena goes. Their rows / chips register `.script_hit{pane, id}`
+  (ids in each module), routed by the `.script_hit` prong.
+- `// changed (app):` the D3 reverse channel's first real use: `ai.Job`
+  (heap, freed at `ai.State.deinit`) owns an `Io.Queue(bool)`; the API
+  worker posts `.confirm` and parks on `getOne`; the confirm box
+  (`ConfirmPurpose.ai_tool`) answers with `putOne`. `dispatch.closeOverlay`
+  calls `ai.overlayClosing` first so a box dismissed any other way answers
+  no — a worker is never left parked.
+- `// changed (app):` ghost text is painted by `render.drawGhost` after
+  `editor_view.draw` — `Doc` is untouched; the suggestion's first line sits
+  at the returned cursor with the rest of the line pushed right, further
+  lines on the rows below. `dispatch.key` hands a key to `ai.interceptKey`
+  before the chord chain whenever the editor holds a ghost (Tab / ctrl+→ /
+  ctrl+↓ accept; anything else dismisses and goes on). `feedEditor`'s
+  `.edited` arms `ai.noteEdit` (the 300 ms debounce, a generation per fire).
+- `// changed (app):` `PromptPurpose` gains `ai_ask / ai_chat / ai_search /
+  ai_branch_name / ai_token`; `ConfirmPurpose` gains `ai_tool: u64` and
+  `kill_pids: []u32` (owned); `PickerKind` gains `ai_suggest_backend` and
+  `ai_session`. `ai.session_search` fills the quickfix `ListPane`.
+- `// changed (config):` `[ai] suggest_backend / suggest_model / model /
+  system_prompt / api_tools / api_write_tools / max_tokens / layout_mode` are
+  read from `Ai.extra` (the decoder's unknown-key bag); the setup picker
+  persists `suggest_backend` through `settings.persist`. `suggest_backend =
+  "local"` toasts the migration note (local FIM is API-only in 0.3.0).
+- `// changed (app):` the statusline's right segments carry the AI meter
+  (`ai.meterSegment`, `claude_meter_mode` off / compact / ticker) once
+  `ai.refresh_usage` or the spend pane has computed a snapshot. The quota
+  endpoint (OAuth usage) is not in this build; the meter is the local 24 h
+  spend.
+- Cloud agents (`cloud_agents.*`) are registered and say "not in this build";
+  `ai.canary`, `ai.claude_rename_account`, `ai.show_last_response`,
+  `agents.new_from_pr` likewise.
