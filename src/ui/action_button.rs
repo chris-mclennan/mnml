@@ -188,6 +188,18 @@ impl<'a> Button<'a> {
         }
     }
 
+    /// This button with its label dropped — the COMPACT form.
+    ///
+    /// Icon only, so it survives a narrow row. A button with no icon
+    /// keeps its label, because a compact button with neither would be
+    /// an unlabelled box.
+    pub fn compact(self) -> Self {
+        if self.icon.is_none() {
+            return self;
+        }
+        Self { label: "", ..self }
+    }
+
     /// The refresh affordance, in one of its two sizes.
     ///
     /// `label: None` is the COMPACT form — icon only, for a tight panel
@@ -278,6 +290,38 @@ impl<'a> Button<'a> {
         icon_w
             .saturating_add(self.label.chars().count() as u16)
             .saturating_add(2)
+    }
+
+    /// Fit a row of buttons into `avail` cells.
+    ///
+    /// Returns the buttons — expanded if they fit, otherwise all
+    /// compact — and the width they will occupy including `sep` cells
+    /// between each.
+    ///
+    /// 2026-09-04, user report: buttons ran off the right edge of the
+    /// Jira work rows, "how will i click the button?". The first fix
+    /// attempt simply skipped the click rect for an off-screen button,
+    /// which is worse: the button is still PAINTED, so it looks
+    /// clickable and is not. The answer is to never let it leave the
+    /// row — the surrounding TEXT yields, because the buttons are the
+    /// only interactive thing in it and the text is readable elsewhere.
+    ///
+    /// Never drops a button. Losing one silently removes an action the
+    /// user can perform, which is a worse failure than a cramped row —
+    /// if even the compact set overflows, the caller is told the true
+    /// width and can decide.
+    pub fn fit_row(buttons: Vec<Button<'a>>, avail: u16, sep: u16) -> (Vec<Button<'a>>, u16) {
+        let width_of = |bs: &[Button<'a>]| -> u16 {
+            let inner: u16 = bs.iter().map(|b| b.width()).sum();
+            inner.saturating_add(sep.saturating_mul(bs.len().saturating_sub(1) as u16))
+        };
+        let full = width_of(&buttons);
+        if full <= avail {
+            return (buttons, full);
+        }
+        let compact: Vec<Button<'a>> = buttons.into_iter().map(|b| b.compact()).collect();
+        let w = width_of(&compact);
+        (compact, w)
     }
 
     /// Render to spans. Owned (`'static`) so callers can build a row of
@@ -540,5 +584,70 @@ mod button_tests {
             .take(1)
             .collect();
         assert_eq!(after, " ", "icon runs straight into the label: {painted:?}");
+    }
+
+    /// A row that fits stays expanded — compacting when there is room
+    /// would throw away labels for nothing.
+    #[test]
+    fn a_row_that_fits_keeps_its_labels() {
+        let th = crate::ui::theme::cur();
+        let btns = vec![
+            Button::refresh(&th, false, Some("Refresh")),
+            Button::refresh(&th, false, Some("Reload")),
+        ];
+        let want: u16 = btns.iter().map(|b| b.width()).sum::<u16>() + 1;
+        let (out, w) = Button::fit_row(btns, 200, 1);
+        assert_eq!(w, want);
+        assert!(
+            out.iter().all(|b| !b.label.is_empty()),
+            "labels were dropped with room to spare"
+        );
+    }
+
+    /// Too narrow → compact. The buttons must SHRINK rather than run
+    /// off the row: an off-screen button is painted and unclickable,
+    /// which is what the user hit.
+    #[test]
+    fn a_row_that_does_not_fit_goes_compact() {
+        let th = crate::ui::theme::cur();
+        let btns = vec![
+            Button::refresh(&th, false, Some("Refresh")),
+            Button::refresh(&th, false, Some("Reload")),
+        ];
+        let (out, w) = Button::fit_row(btns, 12, 1);
+        assert!(
+            out.iter().all(|b| b.label.is_empty()),
+            "labels survived a too-narrow row"
+        );
+        assert!(w <= 12, "compact row still overflows: {w} > 12");
+        assert!(
+            out.iter().all(|b| b.icon.is_some()),
+            "a compact button lost its icon too"
+        );
+    }
+
+    /// Never drop a button. Losing one silently removes an action the
+    /// user can perform — a worse failure than a cramped row.
+    #[test]
+    fn fitting_never_drops_a_button() {
+        let th = crate::ui::theme::cur();
+        for avail in [0u16, 1, 3, 7, 40] {
+            let btns = vec![
+                Button::refresh(&th, false, Some("Refresh")),
+                Button::refresh(&th, false, Some("Reload")),
+                Button::refresh(&th, false, Some("Retry")),
+            ];
+            let (out, _) = Button::fit_row(btns, avail, 1);
+            assert_eq!(out.len(), 3, "a button vanished at avail={avail}");
+        }
+    }
+
+    /// A button with no icon keeps its label — compacting it to
+    /// nothing would leave an unlabelled box.
+    #[test]
+    fn an_iconless_button_keeps_its_label_when_compacted() {
+        let th = crate::ui::theme::cur();
+        let b = Button::primary(&th, "Install").compact();
+        assert_eq!(b.label, "Install");
     }
 }
