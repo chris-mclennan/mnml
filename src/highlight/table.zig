@@ -48,7 +48,9 @@ pub const entries = [_]Entry{
     .{ .key = "md", .language = tree_sitter_markdown, .highlights = &.{q.markdown_highlights}, .injections = q.markdown_injections, .fixture = "# Title\n\nSome *text* with `code`.\n" },
     .{ .key = "markdown_inline", .language = tree_sitter_markdown_inline, .highlights = &.{q.markdown_inline_highlights}, .injections = q.markdown_inline_injections, .fixture = "Some *emphasis* and `code` and [a link](http://x).\n" },
     .{ .key = "c", .language = tree_sitter_c, .highlights = &.{q.c_highlights}, .fixture = "int main(void) {\n    return 0;\n}\n" },
-    .{ .key = "cpp", .language = tree_sitter_cpp, .highlights = &.{q.cpp_highlights}, .fixture = "#include <vector>\nint main() { std::vector<int> v; return 0; }\n" },
+    // C++'s own query is the delta over C (`; inherits: c` in neovim's
+    // layout); without the C layer, `int main() { return 0; }` paints nothing.
+    .{ .key = "cpp", .language = tree_sitter_cpp, .highlights = &.{ q.c_highlights, q.cpp_highlights }, .fixture = "#include <vector>\nint main() { std::vector<int> v; return 0; }\n" },
     .{ .key = "rb", .language = tree_sitter_ruby, .highlights = &.{q.ruby_highlights}, .fixture = "def hi(name)\n  puts \"hi #{name}\"\nend\n" },
     .{ .key = "java", .language = tree_sitter_java, .highlights = &.{q.java_highlights}, .fixture = "class A {\n    int f() { return 1; }\n}\n" },
     .{ .key = "cs", .language = tree_sitter_c_sharp, .highlights = &.{q.c_sharp_highlights}, .fixture = "class A {\n    int F() => 1;\n}\n" },

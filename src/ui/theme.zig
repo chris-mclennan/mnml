@@ -68,6 +68,22 @@ info_fg: Style,
 fold: Style,
 /// Rendered whitespace / indent guides.
 whitespace: Style,
+/// Syntax roles, one per base16 slot the highlighter paints with
+/// (`highlight.Role`): 03 comments · 05 operators, plain variables ·
+/// 08 members, properties, parameters · 09 numbers, booleans, constants ·
+/// 0A types, attributes, tags, labels, modules · 0B strings · 0C
+/// constructors, escapes, uris · 0D functions, headings · 0E keywords ·
+/// 0F punctuation. Every one carries the editor background.
+syn_comment: Style,
+syn_default: Style,
+syn_variable: Style,
+syn_constant: Style,
+syn_type: Style,
+syn_string: Style,
+syn_special: Style,
+syn_function: Style,
+syn_keyword: Style,
+syn_punctuation: Style,
 
 pub fn rgb(hex: u24) Color {
     return .{ .rgb = .{
@@ -101,6 +117,15 @@ pub const onedark = struct {
     pub const purple = rgb(0xde98fd);
     pub const base02 = rgb(0x3e4451);
     pub const base03 = rgb(0x545862);
+    pub const base05 = rgb(0xabb2bf);
+    pub const base08 = rgb(0xe06c75);
+    pub const base09 = rgb(0xd19a66);
+    pub const base0A = rgb(0xe5c07b);
+    pub const base0B = rgb(0x98c379);
+    pub const base0C = rgb(0x56b6c2);
+    pub const base0D = rgb(0x61afef);
+    pub const base0E = rgb(0xc678dd);
+    pub const base0F = rgb(0xbe5046);
 };
 
 fn on(fg: Color, bg: Color) Style {
@@ -145,8 +170,56 @@ pub const default: Theme = blk: {
         .info_fg = on(p.blue, p.black),
         .fold = .{ .fg = p.comment, .bg = p.black, .italic = true },
         .whitespace = on(p.grey, p.black),
+        .syn_comment = .{ .fg = p.comment, .bg = p.black, .italic = true },
+        .syn_default = on(p.base05, p.black),
+        .syn_variable = on(p.base08, p.black),
+        .syn_constant = on(p.base09, p.black),
+        .syn_type = on(p.base0A, p.black),
+        .syn_string = on(p.base0B, p.black),
+        .syn_special = on(p.base0C, p.black),
+        .syn_function = on(p.base0D, p.black),
+        .syn_keyword = on(p.base0E, p.black),
+        .syn_punctuation = on(p.base0F, p.black),
     };
 };
+
+/// The style a highlighter role paints with. The text modifiers
+/// (strong / emphasis / title / uri) are the base slot plus an SGR
+/// attribute, so a theme never has to list them.
+pub fn syntax(t: *const Theme, role: anytype) Style {
+    return switch (role) {
+        .none, .default => t.syn_default,
+        .comment => t.syn_comment,
+        .variable => t.syn_variable,
+        .constant => t.syn_constant,
+        .type => t.syn_type,
+        .string => t.syn_string,
+        .special => t.syn_special,
+        .function => t.syn_function,
+        .keyword => t.syn_keyword,
+        .punctuation => t.syn_punctuation,
+        .strong => blk: {
+            var s = t.syn_default;
+            s.bold = true;
+            break :blk s;
+        },
+        .emphasis => blk: {
+            var s = t.syn_default;
+            s.italic = true;
+            break :blk s;
+        },
+        .title => blk: {
+            var s = t.syn_function;
+            s.bold = true;
+            break :blk s;
+        },
+        .uri => blk: {
+            var s = t.syn_special;
+            s.ul_style = .single;
+            break :blk s;
+        },
+    };
+}
 
 /// `base` with its background replaced — a chip's text color on the
 /// row's ground, a mode color on the statusline.

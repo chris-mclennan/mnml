@@ -60,6 +60,19 @@ pub const QueryCapture = extern struct {
     index: u32,
 };
 
+/// One step of a pattern's predicate list (`#eq?`, `#set!`, …): the runtime
+/// stores predicates as flat `(type, value_id)` triples terminated by `.done`.
+pub const QueryPredicateStepType = enum(c_uint) {
+    done = 0,
+    capture = 1,
+    string = 2,
+};
+
+pub const QueryPredicateStep = extern struct {
+    type: QueryPredicateStepType,
+    value_id: u32,
+};
+
 pub const QueryMatch = extern struct {
     id: u32,
     pattern_index: u16,
@@ -109,6 +122,7 @@ comptime {
     // TSQueryMatch { uint32_t id; uint16_t pattern_index; uint16_t capture_count; const TSQueryCapture *captures; }
     std.debug.assert(@sizeOf(QueryMatch) == 8 + ptr);
     std.debug.assert(@sizeOf(QueryError) == @sizeOf(c_uint));
+    std.debug.assert(@sizeOf(QueryPredicateStep) == 8);
 }
 
 // ── opaque handles ───────────────────────────────────────────────────────────
@@ -229,6 +243,21 @@ pub const Node = extern struct {
     pub fn nextSibling(n: Node) Node {
         return ts_node_next_sibling(n);
     }
+    pub fn prevSibling(n: Node) Node {
+        return ts_node_prev_sibling(n);
+    }
+    pub fn nextNamedSibling(n: Node) Node {
+        return ts_node_next_named_sibling(n);
+    }
+    /// The child bound to `field` in the grammar (`name`, `body`, `receiver`),
+    /// or a null node.
+    pub fn childByFieldName(n: Node, field: []const u8) Node {
+        return ts_node_child_by_field_name(n, field.ptr, @intCast(field.len));
+    }
+    /// The smallest NAMED node spanning `[start, end]`.
+    pub fn namedDescendantForByteRange(n: Node, start: u32, end: u32) Node {
+        return ts_node_named_descendant_for_byte_range(n, start, end);
+    }
     pub fn descendantForByteRange(n: Node, start: u32, end: u32) Node {
         return ts_node_descendant_for_byte_range(n, start, end);
     }
@@ -297,6 +326,13 @@ pub const Query = opaque {
         const p = ts_query_string_value_for_id(q, index, &len);
         return p[0..len];
     }
+    /// The flat predicate steps of `pattern` — every `(#name? …)` and
+    /// `(#set! …)` in source order, each list ending in a `.done` step.
+    pub fn predicatesForPattern(q: *const Query, pattern: u32) []const QueryPredicateStep {
+        var len: u32 = 0;
+        const p = ts_query_predicates_for_pattern(q, pattern, &len);
+        return p[0..len];
+    }
 };
 
 pub const QueryCursor = opaque {
@@ -354,6 +390,10 @@ pub extern fn ts_node_child_count(self: Node) u32;
 pub extern fn ts_node_named_child(self: Node, child_index: u32) Node;
 pub extern fn ts_node_named_child_count(self: Node) u32;
 pub extern fn ts_node_next_sibling(self: Node) Node;
+pub extern fn ts_node_prev_sibling(self: Node) Node;
+pub extern fn ts_node_next_named_sibling(self: Node) Node;
+pub extern fn ts_node_child_by_field_name(self: Node, name: [*]const u8, name_length: u32) Node;
+pub extern fn ts_node_named_descendant_for_byte_range(self: Node, start: u32, end: u32) Node;
 pub extern fn ts_node_descendant_for_byte_range(self: Node, start: u32, end: u32) Node;
 
 pub extern fn ts_tree_cursor_new(node: Node) TreeCursor;
@@ -370,6 +410,7 @@ pub extern fn ts_query_capture_count(self: *const Query) u32;
 pub extern fn ts_query_string_count(self: *const Query) u32;
 pub extern fn ts_query_capture_name_for_id(self: *const Query, index: u32, length: *u32) [*]const u8;
 pub extern fn ts_query_string_value_for_id(self: *const Query, index: u32, length: *u32) [*]const u8;
+pub extern fn ts_query_predicates_for_pattern(self: *const Query, pattern_index: u32, step_count: *u32) [*]const QueryPredicateStep;
 
 pub extern fn ts_query_cursor_new() ?*QueryCursor;
 pub extern fn ts_query_cursor_delete(self: *QueryCursor) void;
