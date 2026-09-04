@@ -70,6 +70,13 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "partial", partial);
 
+    // ── e2e: IPC namespacing ──
+    // Where the file-IPC channel lives under `<ws>/.mnml/`. Rust mnml owns
+    // `ipc`; dev builds of the Zig host use `ipc-zig` so both can run on
+    // one workspace until cutover, when the default flips back.
+    const ipc_subdir = b.option([]const u8, "ipc-subdir", "IPC directory name under <ws>/.mnml/ (default: ipc-zig)") orelse "ipc-zig";
+    build_options.addOption([]const u8, "ipc_subdir", ipc_subdir);
+
     // ── main executable ──
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -124,6 +131,18 @@ pub fn build(b: *std.Build) void {
     const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight });
     test_step.dependOn(&b.addRunArtifact(ts_tests).step);
     test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
+
+    // ── e2e: gate-build ──
+    // Compile the exe and every test binary for the selected target without
+    // running them, installed under zig-out/gate/. The exe alone is not a
+    // cross-compile gate for the foreign code — nothing in main references
+    // the grammars yet — but the test binaries link all 43 of them, so
+    // `zig build gate-build -Dtarget=…` is what proves a target builds.
+    const gate_step = b.step("gate-build", "Compile the exe and all test binaries without running (cross-target gate)");
+    const gate_dir: std.Build.InstallDir = .{ .custom = "gate" };
+    for ([_]*std.Build.Step.Compile{ exe, tests, ui_tests, pty_tests, ts_tests, highlight_tests }) |c| {
+        gate_step.dependOn(&b.addInstallArtifact(c, .{ .dest_dir = .{ .override = gate_dir } }).step);
+    }
 
     // ── pty-demo ──
     // The spike's proving ground: a login shell in a ghostty-vt Terminal,
