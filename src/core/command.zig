@@ -1,0 +1,467 @@
+//! The command registry (D5, D10.1). `CommandId` is an enum derived at
+//! comptime from `commands/specs.zig`, so a menu item, a keybinding or a
+//! `.test` step cannot name a command that does not exist. Runners are
+//! merged at comptime from each subsystem's `pub const table`; with
+//! `-Dpartial=false` a spec without a runner is a compile error.
+//!
+//! Errors (D2): a command returns `CommandError!void`. A user-facing
+//! reason goes in `app.diag` right before `error.Failed`; `run` toasts
+//! `diag.msg` (or `<title>: <@errorName>`) and returns the error so the
+//! `.test` runner and IPC see the failure too.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const build_options = @import("build_options");
+const specs = @import("../commands/specs.zig");
+const keymap = @import("keymap.zig");
+const key_mod = @import("key.zig");
+const panel = @import("panel.zig");
+const App = @import("../app.zig").App;
+
+pub const Spec = specs.Spec;
+pub const Keys = specs.Keys;
+
+pub const CommandError = error{
+    NoActivePane,
+    NotAnEditor,
+    NoWorkspace,
+    NoRepo,
+    NoSelection,
+    Unsupported,
+    Canceled,
+    Failed,
+} || Allocator.Error || std.Io.Cancelable;
+
+pub const CommandFn = *const fn (*App) CommandError!void;
+
+/// The one place a command explains itself. `msg` is frame-arena memory,
+/// valid until the next loop iteration.
+pub const Diag = struct {
+    msg: ?[]const u8 = null,
+
+    pub fn clear(d: *Diag) void {
+        d.msg = null;
+    }
+
+    /// Record a reason and return `error.Failed` in one expression:
+    /// `return app.diag.fail(arena, "no TODO at row {d}", .{row});`
+    pub fn fail(d: *Diag, arena: Allocator, comptime fmt: []const u8, args: anytype) error{Failed} {
+        d.msg = std.fmt.allocPrint(arena, fmt, args) catch null;
+        return error.Failed;
+    }
+};
+
+// ─── the static registry ────────────────────────────────────────────────
+
+pub const CommandId = blk: {
+    @setEvalBranchQuota(200_000);
+    var names: [specs.specs.len][]const u8 = undefined;
+    for (specs.specs, 0..) |s, i| names[i] = s.id;
+    break :blk @Enum(u16, .exhaustive, &names, &std.simd.iota(u16, specs.specs.len));
+};
+
+pub const count = specs.specs.len;
+
+pub const by_name: std.StaticStringMap(CommandId) = blk: {
+    @setEvalBranchQuota(400_000);
+    const KV = struct { []const u8, CommandId };
+    var kvs: [count]KV = undefined;
+    for (specs.specs, 0..) |s, i| kvs[i] = .{ s.id, @enumFromInt(i) };
+    break :blk .initComptime(kvs);
+};
+
+pub fn spec(id: CommandId) *const Spec {
+    return &specs.specs[@intFromEnum(id)];
+}
+
+pub fn title(id: CommandId) []const u8 {
+    return spec(id).title;
+}
+
+pub fn group(id: CommandId) []const u8 {
+    return spec(id).group;
+}
+
+/// The external, string form of an id — identical to the spec's `id`.
+pub fn name(id: CommandId) [:0]const u8 {
+    return @tagName(id);
+}
+
+/// Every subsystem that exposes runners. Adding a subsystem = adding a
+/// line here; its `pub const table = .{ .@"ns.verb" = &fn, … }` is merged.
+const runner_tables = .{
+    @import("../todos.zig"),
+};
+
+pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
+    @setEvalBranchQuota(200_000);
+    var r = std.enums.EnumArray(CommandId, ?CommandFn).initFill(null);
+    for (runner_tables) |mod| {
+        const T = @TypeOf(mod.table);
+        for (@typeInfo(T).@"struct".fields) |f| {
+            const id = by_name.get(f.name) orelse @compileError("runner table names unknown command id `" ++ f.name ++ "`");
+            if (r.get(id) != null) @compileError("two runners for `" ++ f.name ++ "`");
+            r.set(id, @field(mod.table, f.name));
+        }
+    }
+    if (!build_options.partial) {
+        for (specs.specs, 0..) |s, i| {
+            if (r.get(@enumFromInt(i)) == null) @compileError("command `" ++ s.id ++ "` has no runner (build with -Dpartial to allow)");
+        }
+    }
+    break :blk r;
+};
+
+/// How many specs have a runner in this build — the parity meter.
+pub const implemented: usize = blk: {
+    var n: usize = 0;
+    for (0..count) |i| {
+        if (runners.get(@enumFromInt(i)) != null) n += 1;
+    }
+    break :blk n;
+};
+
+// ─── comptime checks ────────────────────────────────────────────────────
+
+comptime {
+    @setEvalBranchQuota(1_000_000);
+    // Ids are `<namespace>.<verb>`; duplicates are rejected by the enum
+    // construction itself ("duplicate enum field").
+    // changed: DESIGN D5 said `group == namespace prefix` for every id.
+    // In practice 140 Rust commands file under a finer palette group
+    // (`picker.files` → "go", `tree.refresh` → "view"); the Rust test
+    // only enforces the rule for the panel namespaces, so that is the
+    // rule kept here.
+    const strict_namespaces = [_][]const u8{ "todos", "notes", "findings", "sessions", "http" };
+    for (specs.specs) |s| {
+        const dot = std.mem.indexOfScalar(u8, s.id, '.');
+        if (dot == null and !std.mem.eql(u8, s.id, "palette") and !std.mem.eql(u8, s.id, "noop"))
+            @compileError("command id `" ++ s.id ++ "` is not `<namespace>.<verb>`");
+        if (dot) |d| {
+            for (strict_namespaces) |ns| {
+                if (std.mem.eql(u8, s.id[0..d], ns) and !std.mem.eql(u8, s.group, ns))
+                    @compileError("`" ++ s.id ++ "` is grouped `" ++ s.group ++ "` — it will not appear under " ++ ns);
+            }
+        }
+        // Every default chord parses.
+        for (.{ s.keys.vim, s.keys.standard, s.keys.both }) |list| {
+            for (list) |k| {
+                if (keymap.parseKeySeqComptime(k) == null)
+                    @compileError("command `" ++ s.id ++ "` declares key `" ++ k ++ "` that does not parse");
+            }
+        }
+    }
+    // Chord collisions, per profile. An exact duplicate sequence between
+    // two commands means the later one silently wins — a compile error
+    // instead. A binding that is also a prefix of a longer one is fine
+    // (that is `pending_with_fallback`).
+    for (.{ keymap.Profile.vim, keymap.Profile.standard }) |profile| {
+        const Owned = struct { seq: []const key_mod.Chord, id: []const u8, spec: []const u8 };
+        var owned: []const Owned = &.{};
+        for (specs.specs) |s| {
+            const lists = .{ s.keys.both, switch (profile) {
+                .vim => s.keys.vim,
+                .standard => s.keys.standard,
+            } };
+            for (lists) |list| {
+                for (list) |k| {
+                    const seq = keymap.parseKeySeqComptime(k).?;
+                    for (owned) |o| {
+                        if (o.seq.len != seq.len) continue;
+                        var same = true;
+                        for (o.seq, seq) |a, b| {
+                            if (!a.eql(b)) {
+                                same = false;
+                                break;
+                            }
+                        }
+                        if (same and !std.mem.eql(u8, o.id, s.id))
+                            @compileError(@tagName(profile) ++ " profile: chord `" ++ k ++ "` is bound by both `" ++ o.id ++ "` and `" ++ s.id ++ "`");
+                    }
+                    owned = owned ++ &[_]Owned{.{ .seq = seq, .id = s.id, .spec = k }};
+                }
+            }
+        }
+    }
+}
+
+// ─── dynamic commands (IPC / manifest / Lua) ────────────────────────────
+
+pub const LuaRef = u32;
+
+pub const Owner = union(enum) {
+    /// Registered by an installed integration; the id is gpa-owned.
+    integration: []u8,
+    /// Registered from a user script; bulk-unregistered on reload.
+    script,
+    /// Registered over the file-IPC channel.
+    ipc,
+
+    fn deinit(o: Owner, gpa: Allocator) void {
+        switch (o) {
+            .integration => |s| gpa.free(s),
+            .script, .ipc => {},
+        }
+    }
+};
+
+pub const DynRunner = union(enum) {
+    /// An ex-command line to run.
+    ex: []u8,
+    /// Acknowledge over IPC (`plugin-command` event) and nothing else.
+    ipc,
+    /// A Lua function held in the registry.
+    lua: LuaRef,
+
+    fn deinit(r: DynRunner, gpa: Allocator) void {
+        switch (r) {
+            .ex => |s| gpa.free(s),
+            .ipc, .lua => {},
+        }
+    }
+};
+
+pub const DynCommand = struct {
+    id: []u8,
+    title: []u8,
+    group: []u8,
+    keys: [][]u8,
+    runner: DynRunner,
+    owner: Owner,
+
+    fn deinit(c: *DynCommand, gpa: Allocator) void {
+        gpa.free(c.id);
+        gpa.free(c.title);
+        gpa.free(c.group);
+        for (c.keys) |k| gpa.free(k);
+        gpa.free(c.keys);
+        c.runner.deinit(gpa);
+        c.owner.deinit(gpa);
+    }
+};
+
+/// What a caller passes to `register` — borrowed; the registry dupes.
+pub const DynInit = struct {
+    id: []const u8,
+    title: []const u8 = "",
+    group: []const u8 = "plugin",
+    keys: []const []const u8 = &.{},
+    runner: union(enum) { ex: []const u8, ipc, lua: LuaRef } = .ipc,
+    owner: union(enum) { integration: []const u8, script, ipc } = .ipc,
+};
+
+pub const DynRegistry = struct {
+    gpa: Allocator,
+    list: std.ArrayList(DynCommand) = .empty,
+    /// Slots freed by `unregister` are `null` so indices stay stable.
+    by_name: std.StringHashMapUnmanaged(u32) = .empty,
+    live: std.ArrayList(bool) = .empty,
+
+    pub fn init(gpa: Allocator) DynRegistry {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(self: *DynRegistry) void {
+        for (self.list.items, self.live.items) |*c, alive| if (alive) c.deinit(self.gpa);
+        self.list.deinit(self.gpa);
+        self.live.deinit(self.gpa);
+        self.by_name.deinit(self.gpa);
+    }
+
+    /// Register or replace. Static ids cannot be shadowed. Returns the slot.
+    pub fn register(self: *DynRegistry, init_: DynInit) (Allocator.Error || error{ShadowsBuiltin})!u32 {
+        if (by_name.has(init_.id)) return error.ShadowsBuiltin;
+        const gpa = self.gpa;
+        var c: DynCommand = .{
+            .id = try gpa.dupe(u8, init_.id),
+            .title = undefined,
+            .group = undefined,
+            .keys = &.{},
+            .runner = .ipc,
+            .owner = .ipc,
+        };
+        errdefer gpa.free(c.id);
+        c.title = try gpa.dupe(u8, if (init_.title.len == 0) init_.id else init_.title);
+        errdefer gpa.free(c.title);
+        c.group = try gpa.dupe(u8, init_.group);
+        errdefer gpa.free(c.group);
+        const keys = try gpa.alloc([]u8, init_.keys.len);
+        var filled: usize = 0;
+        errdefer {
+            for (keys[0..filled]) |k| gpa.free(k);
+            gpa.free(keys);
+        }
+        for (init_.keys) |k| {
+            keys[filled] = try gpa.dupe(u8, k);
+            filled += 1;
+        }
+        c.keys = keys;
+        c.runner = switch (init_.runner) {
+            .ex => |line| .{ .ex = try gpa.dupe(u8, line) },
+            .ipc => .ipc,
+            .lua => |r| .{ .lua = r },
+        };
+        errdefer c.runner.deinit(gpa);
+        c.owner = switch (init_.owner) {
+            .integration => |id| .{ .integration = try gpa.dupe(u8, id) },
+            .script => .script,
+            .ipc => .ipc,
+        };
+        errdefer c.owner.deinit(gpa);
+
+        if (self.by_name.get(c.id)) |slot| {
+            // The map key is the OLD id slice; swap it for the new one before
+            // the old command (and its id) is freed.
+            _ = self.by_name.remove(c.id);
+            try self.by_name.put(gpa, c.id, slot);
+            self.list.items[slot].deinit(gpa);
+            self.list.items[slot] = c;
+            self.live.items[slot] = true;
+            return slot;
+        }
+        const slot: u32 = @intCast(self.list.items.len);
+        try self.list.append(gpa, c);
+        errdefer _ = self.list.pop();
+        try self.live.append(gpa, true);
+        errdefer _ = self.live.pop();
+        try self.by_name.put(gpa, self.list.items[slot].id, slot);
+        return slot;
+    }
+
+    pub fn get(self: *const DynRegistry, id: []const u8) ?u32 {
+        return self.by_name.get(id);
+    }
+
+    pub fn at(self: *const DynRegistry, slot: u32) ?*const DynCommand {
+        if (slot >= self.list.items.len or !self.live.items[slot]) return null;
+        return &self.list.items[slot];
+    }
+
+    pub fn unregister(self: *DynRegistry, id: []const u8) bool {
+        const slot = self.by_name.get(id) orelse return false;
+        _ = self.by_name.remove(id);
+        self.list.items[slot].deinit(self.gpa);
+        self.live.items[slot] = false;
+        return true;
+    }
+
+    /// Drop every command with the given owner kind (script reload,
+    /// integration uninstall). Returns how many went.
+    pub fn unregisterOwner(self: *DynRegistry, owner: std.meta.Tag(Owner)) usize {
+        var n: usize = 0;
+        for (self.list.items, self.live.items, 0..) |*c, alive, i| {
+            if (!alive or std.meta.activeTag(c.owner) != owner) continue;
+            _ = self.by_name.remove(c.id);
+            c.deinit(self.gpa);
+            self.live.items[i] = false;
+            n += 1;
+        }
+        return n;
+    }
+};
+
+// ─── dispatch ───────────────────────────────────────────────────────────
+
+pub const CommandRef = union(enum) {
+    static: CommandId,
+    dyn: u32,
+};
+
+/// Resolve a command by its string id: built-ins first, then dynamic.
+pub fn resolve(app: *const App, id: []const u8) ?CommandRef {
+    if (by_name.get(id)) |c| return .{ .static = c };
+    if (app.dyn_commands.get(id)) |slot| return .{ .dyn = slot };
+    return null;
+}
+
+/// Run a command. Clears `app.diag`, calls the runner, toasts a failure
+/// (Canceled is silent) and returns the error so callers can see it.
+pub fn run(app: *App, ref: CommandRef) CommandError!void {
+    app.diag.clear();
+    const result: CommandError!void = switch (ref) {
+        .static => |id| if (runners.get(id)) |f| f(app) else app.diag.fail(app.frame.allocator(), "{s}: not implemented yet", .{name(id)}),
+        .dyn => |slot| runDyn(app, slot),
+    };
+    result catch |err| {
+        if (err != error.Canceled) {
+            if (app.diag.msg) |m| {
+                app.toast("{s}", .{m});
+            } else {
+                const t = switch (ref) {
+                    .static => |id| title(id),
+                    .dyn => |slot| if (app.dyn_commands.at(slot)) |c| c.title else "command",
+                };
+                app.toast("{s}: {s}", .{ t, @errorName(err) });
+            }
+        }
+        return err;
+    };
+}
+
+/// Run by string id. Unknown ids toast and return `error.Failed`.
+pub fn runNamed(app: *App, id: []const u8) CommandError!void {
+    const ref = resolve(app, id) orelse {
+        app.diag.clear();
+        const err = app.diag.fail(app.frame.allocator(), "no such command: {s}", .{id});
+        app.toast("{s}", .{app.diag.msg orelse "no such command"});
+        return err;
+    };
+    return run(app, ref);
+}
+
+fn runDyn(app: *App, slot: u32) CommandError!void {
+    const c = app.dyn_commands.at(slot) orelse return app.diag.fail(app.frame.allocator(), "command slot {d} was unregistered", .{slot});
+    switch (c.runner) {
+        .ex => |line| return app.runEx(line),
+        .ipc => return app.ackPluginCommand(c.id),
+        .lua => return error.Unsupported, // TODO(lua): registry lookup + protectedCall with budget (D10.1)
+    }
+}
+
+// ─── menus ──────────────────────────────────────────────────────────────
+
+/// What a context-menu row does. A static command is an enum — a menu
+/// cannot name an id that does not exist.
+pub const MenuAction = union(enum) {
+    command: CommandId,
+    dyn: u32,
+    set_panel_sort: struct { panel: panel.PanelId, sort: panel.ListSort },
+    none,
+};
+
+pub const MenuItem = struct {
+    label: []const u8,
+    action: MenuAction,
+    checked: bool = false,
+    separator_before: bool = false,
+};
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+test "ids round-trip through by_name and @tagName" {
+    try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
+    try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
+    try std.testing.expect(by_name.get("nope.nope") == null);
+    try std.testing.expectEqual(@as(usize, 797), count);
+    try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
+}
+
+test "dyn registry: register / lookup / replace / unregister / owner sweep" {
+    const gpa = std.testing.allocator;
+    var reg = DynRegistry.init(gpa);
+    defer reg.deinit();
+    try std.testing.expectError(error.ShadowsBuiltin, reg.register(.{ .id = "app.quit" }));
+    const a = try reg.register(.{ .id = "jira.open", .title = "Open Jira", .keys = &.{"ctrl+k j"}, .owner = .{ .integration = "jira" } });
+    const b = try reg.register(.{ .id = "user.hello", .runner = .{ .ex = "echo hi" }, .owner = .script });
+    try std.testing.expectEqual(a, reg.get("jira.open").?);
+    try std.testing.expectEqualStrings("Open Jira", reg.at(a).?.title);
+    // Re-register replaces in place, same slot.
+    const a2 = try reg.register(.{ .id = "jira.open", .title = "Open Jira issue", .owner = .{ .integration = "jira" } });
+    try std.testing.expectEqual(a, a2);
+    try std.testing.expectEqualStrings("Open Jira issue", reg.at(a).?.title);
+    try std.testing.expectEqual(@as(usize, 1), reg.unregisterOwner(.script));
+    try std.testing.expect(reg.at(b) == null);
+    try std.testing.expect(reg.get("user.hello") == null);
+    try std.testing.expect(reg.unregister("jira.open"));
+    try std.testing.expect(!reg.unregister("jira.open"));
+}

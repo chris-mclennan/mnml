@@ -61,24 +61,32 @@ pub fn build(b: *std.Build) void {
     // ── syntax: tree-sitter ──
     const ts = addTreeSitter(b, target, optimize);
 
+    // ── command table: -Dpartial ──
+    // Downgrades "command id has no runner" from a compile error to a
+    // runtime toast. The spike ships with it ON because only the todos
+    // runners exist; parity flips it OFF so a missing runner fails the
+    // build (D5).
+    const partial = b.option(bool, "partial", "Allow command ids without runners (spike builds)") orelse true;
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "partial", partial);
+
     // ── main executable ──
-    const exe = b.addExecutable(.{
-        .name = "mnml-zig",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            // Io.Threaded can only interrupt a blocked tty read (cancelation
-            // via pthread_kill(SIGIO)) when libc is linked.
-            .link_libc = true,
-            .imports = &.{
-                .{ .name = "vaxis", .module = vaxis_mod },
-                .{ .name = "pty", .module = pty_mod },
-                .{ .name = "tree_sitter", .module = ts.runtime },
-                .{ .name = "highlight", .module = ts.highlight },
-            },
-        }),
+    const root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        // Io.Threaded can only interrupt a blocked tty read (cancelation
+        // via pthread_kill(SIGIO)) when libc is linked.
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "vaxis", .module = vaxis_mod },
+            .{ .name = "pty", .module = pty_mod },
+            .{ .name = "tree_sitter", .module = ts.runtime },
+            .{ .name = "highlight", .module = ts.highlight },
+        },
     });
+    root_module.addOptions("build_options", build_options);
+    const exe = b.addExecutable(.{ .name = "mnml-zig", .root_module = root_module });
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run mnml-zig");

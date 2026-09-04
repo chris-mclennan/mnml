@@ -18,6 +18,18 @@ pub fn main() !void {
     try out.interface.flush();
 }
 
+test {
+    _ = @import("core/alloc.zig");
+    _ = @import("core/key.zig");
+    _ = @import("core/event.zig");
+    _ = @import("commands/specs.zig");
+    _ = @import("core/keymap.zig");
+    _ = @import("core/command.zig");
+    _ = @import("core/panel.zig");
+    _ = @import("core/hooks.zig");
+    _ = @import("app.zig");
+}
+
 test "version string is set" {
     try std.testing.expect(version.len > 0);
 }
