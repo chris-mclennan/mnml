@@ -32,6 +32,7 @@ const Confirm = app_mod.Confirm;
 const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
+const todos = @import("../todos.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -44,6 +45,15 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     if (app.find_bar != null) return findBarKey(app, k);
     if (app.focus == .tree and app.tree.visible) {
         if (try app.tree.handleKey(app, k)) return;
+        _ = try chordChain(app, k);
+        return;
+    }
+    if (app.focus == .panel and app.right_panel != null) {
+        const took = switch (app.focus.panel) {
+            .todos => try todos.handleKey(app, k),
+            .notes, .findings, .sessions => false,
+        };
+        if (took) return;
         _ = try chordChain(app, k);
         return;
     }
@@ -277,8 +287,32 @@ fn restoreFocus(app: *App) void {
 }
 
 fn closeOverlay(app: *App) void {
+    const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
     app.overlay.deinit(app.gpa);
-    restoreFocus(app);
+    if (back) |f| {
+        app.focus = f;
+        if (f == .panel and app.right_panel == null) restoreFocus(app);
+    } else restoreFocus(app);
+}
+
+/// A menu row was chosen: close the menu, then act.
+fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
+    closeOverlay(app);
+    switch (action) {
+        .command => |id| command.run(app, .{ .static = id }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .dyn => |slot| command.run(app, .{ .dyn = slot }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .set_panel_sort => |s| switch (s.panel) {
+            .todos => try todos.setSort(app, s.sort),
+            .notes, .findings, .sessions => {},
+        },
+        .none => {},
+    }
 }
 
 fn overlayKey(app: *App, k: Key) Allocator.Error!void {
@@ -328,6 +362,24 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .changed => try refilterPicker(app),
             .accept => |i| try cmd_picker.accept(app, i),
         },
+        .menu => |*m| {
+            const last = m.items.len -| 1;
+            switch (k.code) {
+                .esc => closeOverlay(app),
+                .enter => if (m.items.len > 0) try runMenuAction(app, m.items[m.cursor].action),
+                .up => m.cursor -|= 1,
+                .down => m.cursor = @min(m.cursor + 1, last),
+                .home => m.cursor = 0,
+                .end => m.cursor = last,
+                .char => |c| switch (c) {
+                    'k' => m.cursor -|= 1,
+                    'j' => m.cursor = @min(m.cursor + 1, last),
+                    'q' => closeOverlay(app),
+                    else => {},
+                },
+                else => {},
+            }
+        },
     }
 }
 
@@ -367,6 +419,11 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         },
         .replace => try cmd_find.replaceAll(app, text),
         .filter_shell => try filterThroughShell(app, text),
+        .new_todo => todos.appendTodo(app, text) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Canceled => {},
+            else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("todo: {s}", .{@errorName(err)}),
+        },
     }
 }
 
@@ -442,8 +499,45 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
 
 pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
     app.needs_render = true;
-    const target = app.hits.at(m.x, m.y) orelse return;
+    app.hover = .{ .x = m.x, .y = m.y };
+    const target = app.hits.at(m.x, m.y) orelse {
+        if (m.kind == .press and app.overlay == .menu) closeOverlay(app);
+        return;
+    };
+    // A press anywhere but on the menu dismisses it; the press then
+    // goes on to whatever it landed on.
+    if (m.kind == .press and app.overlay == .menu and target != .menu_item) closeOverlay(app);
     switch (target) {
+        // The list panels (D6): one prong per hit kind, routed by panel.
+        .row => |pr| switch (pr.panel) {
+            .todos => try todos.rowMouse(app, pr.idx, m),
+            .notes, .findings, .sessions => {},
+        },
+        .kebab => |pr| switch (pr.panel) {
+            .todos => try todos.kebabMouse(app, pr.idx, m),
+            .notes, .findings, .sessions => {},
+        },
+        .chip => |c| switch (c.panel) {
+            .todos => try todos.chipMouse(app, c.kind, m),
+            .notes, .findings, .sessions => {},
+        },
+        .filter_input => |p| switch (p) {
+            .todos => todos.filterMouse(app, m),
+            .notes, .findings, .sessions => {},
+        },
+        .scrollbar => |sb| switch (sb.owner) {
+            .panel => |p| switch (p) {
+                .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
+                .notes, .findings, .sessions => {},
+            },
+            .pane => {},
+        },
+        .menu_item => |mi| if (m.kind == .press) {
+            if (app.overlay != .menu) return;
+            const items = app.overlay.menu.items;
+            if (mi.idx >= items.len) return;
+            try runMenuAction(app, items[mi.idx].action);
+        },
         .editor_cell => |cell| {
             if (m.kind == .scroll_up or m.kind == .scroll_down) {
                 const e = app.panes.editor(cell.pane) orelse return;

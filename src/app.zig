@@ -44,8 +44,11 @@ const picker_mod = @import("ui/picker.zig");
 const find_bar_mod = @import("ui/find_bar.zig");
 const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
+const todos = @import("todos.zig");
+const panel_mod = @import("core/panel.zig");
 
 pub const PaneId = ids.PaneId;
+pub const PanelId = panel_mod.PanelId;
 pub const FocusId = ids.FocusId;
 pub const Pane = pane_mod.Pane;
 pub const EditorPane = pane_mod.EditorPane;
@@ -90,7 +93,7 @@ pub const InitOptions = struct {
     rows: u16 = 40,
 };
 
-pub const PromptPurpose = enum { goto_line, replace, filter_shell };
+pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo };
 pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit };
 pub const PickerKind = enum { buffers, files };
 
@@ -116,10 +119,13 @@ pub const Overlay = union(enum) {
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
     },
+    /// A context menu (a panel row's kebab, a chip's right-click).
+    menu: MenuState,
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
             .none, .which_key => {},
+            .menu => |*m| gpa.free(m.items),
             .prompt => |*p| {
                 Prompt.deinit(&p.state, gpa);
                 if (p.title_owned) |t| gpa.free(t);
@@ -135,6 +141,19 @@ pub const Overlay = union(enum) {
         }
         self.* = .none;
     }
+};
+
+/// A context menu: rows the opener built (gpa-owned slice, literal
+/// labels), anchored at the cell that was clicked. `MenuAction` names a
+/// static command by enum, so a row cannot point at a missing id.
+pub const MenuState = struct {
+    title: []const u8,
+    items: []command.MenuItem,
+    x: u16,
+    y: u16,
+    cursor: usize = 0,
+    /// Where the keyboard goes back to when the menu closes.
+    return_focus: FocusId,
 };
 
 /// The find bar docked under the active pane while it is open.
@@ -219,9 +238,16 @@ pub const App = struct {
     panes: PaneStore,
     layouts: LayoutState,
     tree: tree_mod.Tree,
+    /// The right-hand panel slot (Rust's activity panel). One panel at a
+    /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
+    right_panel: ?PanelId = null,
+    todos: todos.State,
     focus: FocusId = .tree,
     active: ?PaneId = null,
     hits: hit.HitMap = .{},
+    /// Where the pointer last was; the frame paints hover affordances
+    /// (a row's kebab) from it.
+    hover: ?struct { x: u16, y: u16 } = null,
     screen: vaxis.Screen,
     /// Rows / text columns of the active pane at the last render; they
     /// size page motions and the wrap width.
@@ -287,18 +313,24 @@ pub const App = struct {
             .panes = PaneStore.init(gpa),
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
+            .todos = todos.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
             .dyn_commands = .init(gpa),
             .hooks = hooks.Hooks.init(gpa),
         };
+        errdefer app.hooks.deinit();
+        // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
+        try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
         app.now_ms = nowMs(io);
         return app;
     }
 
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
+        // Workers first: they borrow `workspace` and post into `events`.
+        self.todos.deinit(gpa, self.io);
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
             fb.state.deinit(gpa);
@@ -624,6 +656,18 @@ pub const App = struct {
         return false;
     }
 
+    // ─── overlays every subsystem can open ───
+
+    /// Open a context menu. Takes ownership of `items` (gpa); the labels
+    /// must be literals or otherwise outlive the menu.
+    pub fn openMenu(self: *App, title: []const u8, items: []command.MenuItem, x: u16, y: u16) Allocator.Error!void {
+        self.overlay.deinit(self.gpa);
+        const back: FocusId = if (self.focus == .overlay) (if (self.active) |a| .{ .pane = a } else .tree) else self.focus;
+        self.overlay = .{ .menu = .{ .title = title, .items = items, .x = x, .y = y, .return_focus = back } };
+        self.focus = .overlay;
+        self.needs_render = true;
+    }
+
     // ─── the loop's three entry points ───
 
     pub fn handle(self: *App, ev: AppEvent) Allocator.Error!void {
@@ -636,14 +680,31 @@ pub const App = struct {
                 try dispatch.paste(self, text);
             },
             .focus => {},
+            // D1: the payload is the handler's to adopt or free.
+            .todos => |result| try todos.handle(self, result),
             .err => |e| {
                 defer self.gpa.free(e.msg);
+                if (e.source == .todos) self.todos.scanning = false;
                 try self.toastLevel(.err, "{s}: {s}", .{ @tagName(e.source), e.msg });
             },
             .timer => {},
             else => event.freeEvent(self.gpa, ev),
         }
         self.needs_render = true;
+    }
+
+    /// Drain the inbound queue without blocking. The terminal loop does
+    /// this itself before `tick`; the headless / `.test` drivers reach it
+    /// through `tick`, so a worker's result lands there too.
+    /// // changed: D3 has the runner call `pumpEvents` beside `tick`;
+    /// `tick` calls it instead so the `e2e.Driver` vtable stays as is.
+    pub fn pumpEvents(self: *App) Allocator.Error!void {
+        var buf: [64]AppEvent = undefined;
+        while (true) {
+            const n = self.events.drain(self.io, &buf);
+            if (n == 0) break;
+            for (buf[0..n]) |ev| try self.handle(ev);
+        }
     }
 
     pub fn resize(self: *App, cols: u16, rows: u16) Allocator.Error!void {
@@ -658,6 +719,7 @@ pub const App = struct {
     /// Timers: the chord chain, toast expiry, the deferred replays.
     pub fn tick(self: *App, now: i64) Allocator.Error!void {
         self.now_ms = now;
+        try self.pumpEvents();
         if (self.chord.deadline_ms) |d| if (now >= d) try dispatch.expireChords(self);
         var i: usize = 0;
         while (i < self.toasts.items.len) {
@@ -673,6 +735,8 @@ pub const App = struct {
     /// The next moment `tick` has something to do, or null when idle.
     pub fn nextDeadlineMs(self: *const App) ?i64 {
         var next: ?i64 = self.chord.deadline_ms;
+        // A spinner is animating: keep frames coming.
+        if (self.todos.scanning) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -724,6 +788,7 @@ test {
     _ = @import("app/cmd_view.zig");
     _ = @import("app/cmd_picker.zig");
     _ = @import("app/cmd_app.zig");
+    _ = @import("todos.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");
     _ = @import("ui/confirm.zig");

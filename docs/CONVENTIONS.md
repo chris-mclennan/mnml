@@ -139,3 +139,56 @@ There is no third option, and no handler may stash the raw pointer to
 - Every behaviour test ships with a break-check: revert the fix, watch
   the test fail, grep that the break really landed.
 - Test the shipped default, not values around it.
+
+## The reference module — `src/todos.zig` (D8)
+
+Every convention above has one concrete instance in `src/todos.zig`.
+When a new subsystem is written, it is written against these lines;
+when a convention is argued about, this is the code the argument is
+about. (Line numbers are as of the commit that added this section;
+the function names are the stable handles.)
+
+| convention | where |
+|---|---|
+| **Payload ownership** (D1): the worker owns the result until the post; the handler adopts or frees, on every path | `scanWorker` (`todos.zig:204`): `errdefer result.destroy(gpa)` at 209, `events.post(io, .{ .todos = result })` at 217. `handle` (`:365`): `defer result.destroy(app.gpa)` at 367 — the box dies whether or not it was adopted. `App.handle`'s `.todos => \|result\| try todos.handle(self, result)` (`app.zig:684`) is the only place the event is touched. |
+| **Snapshot arena** (D1): one arena per replace-wholesale dataset | `State.snapshot: alloc.SnapshotArena` (`:131`); `st.snapshot.reset()` then the copy loop in `handle` (`:374`–`:385`). `State.items` borrows from it and is re-pointed in the same function. |
+| **Cancellation** (D3): one `Io.Group` per subsystem; cancel-on-rescan; stale results dropped by generation | `State.group: Io.Group` (`:128`); `refresh` (`:187`): `group.cancel(io)` → `generation +%= 1` → `group.concurrent(...)`. The worker is a cancel point per file (`io.checkCancel()` at `:261`, and every read). `handle` drops `result.generation != st.generation` (`:368`). `State.deinit` (`:158`) cancels before anything the worker borrows is freed — `App.deinit` calls it first. The test at `:981` starts three scans over 400 files and asserts only the third lands and nothing leaks. |
+| **Workers never toast** (D2) | `postErr` (`:221`) posts `.err = .{ .source = .todos, .msg }`; `App.handle` toasts it and clears `scanning`. |
+| **Errors** (D2): `diag.fail` right before `error.Failed`; `errdefer` after every acquire | `refresh`'s `catch` (`:194`), `openItem` / `copyPathCmd` / `ignoreFileCmd` (`:470`–`:530`); `ignoreFileCmd`'s `errdefer app.gpa.free(key)`. |
+| **Command table** (D5): `pub const table = .{ .@"todos.<verb>" = &fn, … }`, merged at comptime; menu rows name ids as enums | `pub const table` (`:104`). `openRowMenu` (`:680`) builds `MenuAction{ .command = .@"todos.open" }` rows — a missing id is a compile error. `command.zig`'s `runner_tables` lists `@import("../todos.zig")`. |
+| **Hook subscriber** (D10.2): a Zig `Subscriber` on a curated hook | `onSavePost` (`:177`), subscribed in `App.initWith` (`app.zig:325`) as `.{ .zig = &todos.onSavePost }`. The test at `:1110` saves a file with a new marker and asserts the generation moved. |
+| **Component draw + hit registration** (D6): a `Ui`, a rect, hits in the same statement as the paint | `draw` (`:706`) hands `ListPanel(Item)` its rows, `paintRow` (`:772`), the sort chip label and the empty state; the panel registers `.row` / `.kebab` / `.chip` / `.filter_input` / `.scrollbar` itself. `paintRow` receives a `Ui` clipped to its row and never reaches `*App`. |
+| **Mouse routing** (D6): one `switch (app.hits.at(x, y))`, one prong per hit kind, routed by `PanelId` | `dispatch.zig:512` onward — `.row` → `todos.rowMouse` (`:610`), `.kebab` → `kebabMouse`, `.chip` → `chipMouse` (`:641`), `.filter_input` → `filterMouse`, `.scrollbar` (owner `.panel`) → `scrollbarMouse`, `.menu_item` → `runMenuAction` (`dispatch.zig:299`). |
+| **Keys**: the component's `handleKey` first, then the panel's own letters, then the chord chain | `handleKey` (`:561`) — `Panel.handleKey` decides motion / filter / enter; `r` `s` `n` `esc` after; `false` lets `dispatch.zig:51` fall through to the chord chain. |
+| **Tests** on `std.testing.allocator`, one `.test` e2e | `:815`–`:1110`; `tests/e2e-zig/todos_panel.test`. |
+
+Things that did not hold as written, fixed in the same change:
+
+- `// changed:` D8 named `todos.cycle_sort`; the spec table (Rust
+  parity) spells it `todos.sort`. Three Zig-only ids were added so the
+  kebab menu rows can be `MenuAction{ .command }`: `todos.open`,
+  `todos.copy_path`, `todos.ignore_file` — the count pins read 800.
+- `// changed:` `ListPanel.Props` has no busy flag, so the scanning
+  spinner overpaints the refresh chip's three cells from `draw`
+  (`paintSpinner`, `:744`); the chip's hit is untouched. A `busy:
+  bool` on `Props` is the right home once the ui side takes it.
+- `// changed:` D3 has the `.test` runner call `pumpEvents` / `tick` /
+  `render`; `App.tick` calls `pumpEvents` itself (`app.zig:701`) so
+  the `e2e.Driver` vtable did not change and a worker result lands
+  through the same `tick` the headless loop already calls.
+- `// changed:` `tests/e2e` is a symlink into Rust mnml's suite, whose
+  runner recurses and knows no `# zig-only`. Zig-only scripts live in
+  `tests/e2e-zig/`, a second default root of `mnml-zig test`.
+- The right-panel slot did not exist: `App.right_panel: ?PanelId`
+  (40 columns + a divider, `render.zig`), with
+  `view.activity_todos` / `view.toggle_right_panel` /
+  `view.focus_right_panel` / `view.right_panel_close_tab` in
+  `cmd_view.zig`. One panel at a time; other panels paint a
+  placeholder until their module lands.
+- A context-menu overlay did not exist: `Overlay.menu` (`MenuState`
+  in `app.zig`, `App.openMenu`), drawn by `render.zig`'s `drawMenu`
+  with `.menu_item{0, idx}` hits; keys and clicks in `dispatch.zig`.
+  A press anywhere else dismisses it.
+- `App.hover` tracks the pointer so the kebab-on-hover paints; the
+  frame passes it as `Ui.hover`.
+

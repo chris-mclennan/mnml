@@ -1,0 +1,34 @@
+# zig-only
+# The TODOS panel (src/todos.zig, the reference module): a scan runs in a
+# worker and lands through the event queue; the panel lists every marker
+# as `<marker> <title>  <path>:<line>`, the header carries the sort chip,
+# and enter opens the selected marker at its line.
+write src/a.zig "const x = 1;\n// TODO: wire the frobnicator\n// FIXME: leaks on error\n"
+write docs/plan.md "# Plan\n- REVIEW the retry budget\n"
+command view.activity_todos
+command todos.refresh
+expect screen contains TODOS
+expect screen contains "sort: Newest first"
+expect screen contains "wire the frobnicator"
+expect screen contains "leaks on error"
+expect screen contains "a.zig:3"
+expect screen contains "the retry budget"
+# The filter narrows by title, path and marker, case-insensitively.
+key /
+type FIX
+expect screen contains "(1 of 3)"
+expect screen lacks "wire the frobnicator"
+key esc
+key esc
+expect screen contains "wire the frobnicator"
+# The sort chip cycles.
+command todos.sort
+expect screen contains "sort: Oldest first"
+# Filter down to one marker; enter (blur the filter) then enter opens it
+# in an editor pane with the cursor on its line.
+key /
+type leaks
+key enter
+key enter
+expect pane a.zig
+expect screen contains "Ln 3/"

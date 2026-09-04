@@ -29,6 +29,16 @@ const find_bar_mod = @import("../ui/find_bar.zig");
 const toast_mod = @import("../ui/toast.zig");
 const whichkey = @import("whichkey.zig");
 const input = @import("../input/mod.zig");
+const overlay_mod = @import("../ui/overlay.zig");
+const Theme = @import("../ui/theme.zig");
+const todos = @import("../todos.zig");
+
+/// The right panel's width; the divider takes one more column.
+pub const right_panel_width: u16 = 40;
+/// The divider hit ids the body does not use (`.divider` is otherwise
+/// an index into the split tree's dividers).
+pub const tree_divider_id: u32 = std.math.maxInt(u32);
+pub const right_divider_id: u32 = std.math.maxInt(u32) - 1;
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
@@ -40,6 +50,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .theme = &app.theme,
         .arena = arena,
         .focus = app.focus,
+        .hover = if (app.hover) |h| .{ .x = h.x, .y = h.y } else null,
         .ascii = app.cfg.ascii,
     };
     const full = ui.canvas.full();
@@ -58,17 +69,42 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         const cols = body.splitLeft(w);
         const div = cols.rest.splitLeft(1);
         try app.tree.draw(app, ui, cols.left);
-        ui.canvas.fill(div.left, app.theme.border);
-        var y: u16 = div.left.y;
-        while (y < div.left.bottom()) : (y += 1) ui.canvas.put(div.left.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = app.theme.border });
-        try ui.hits.add(ui.arena, div.left, .{ .divider = std.math.maxInt(u32) });
+        drawDivider(app, ui, div.left, tree_divider_id);
         panes_area = div.rest;
     }
+    // The right panel takes its width plus a divider off the far side.
+    if (app.right_panel) |which| if (panes_area.w > right_panel_width + 21) {
+        const cols = panes_area.splitRight(right_panel_width);
+        const div = cols.left.splitRight(1);
+        panes_area = div.left;
+        drawDivider(app, ui, div.rest, right_divider_id);
+        try drawRightPanel(app, ui, cols.rest, which);
+    };
     try drawBufferline(app, ui, .{ .x = panes_area.x, .y = top.top.y, .w = panes_area.w, .h = 1 });
     try drawBody(app, ui, panes_area);
     try drawStatusline(app, ui, bottom.rest);
     try drawOverlay(app, ui, panes_area);
     toast_mod.draw(ui, panes_area, try app.visibleToasts(arena));
+}
+
+fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
+    ui.canvas.fill(r, app.theme.border);
+    var y: u16 = r.y;
+    while (y < r.bottom()) : (y += 1) ui.canvas.put(r.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = app.theme.border });
+    ui.hit(r, .{ .divider = id });
+}
+
+/// The panel in the right slot. Only TODOS draws today; the others
+/// name themselves until their module lands.
+fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocator.Error!void {
+    switch (which) {
+        .todos => try todos.draw(app, ui, area),
+        .notes, .findings, .sessions => {
+            ui.fill(area, app.theme.panel_bg);
+            const msg = ui.fmt(" {s}: not in this build yet", .{@tagName(which)});
+            _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(msg, area.w), Theme.onBg(app.theme.muted, app.theme.panel_bg.bg));
+        },
+    }
 }
 
 fn drawBufferline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
@@ -233,6 +269,49 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             }
             which_key.draw(ui, body, title, entries);
         },
+        // A menu is anchored where the click was, which may be in the
+        // tree or the right panel: it clamps against the whole screen.
+        .menu => |*m| drawMenu(ui, ui.canvas.full(), m),
+    }
+}
+
+/// A context menu anchored at the click, pulled inside `screen` when it
+/// would run off the edge. Every row registers `.menu_item{0, idx}`; a
+/// separator paints a rule and registers nothing.
+fn drawMenu(ui: Ui, screen: Rect, m: *const app_mod.MenuState) void {
+    const th = ui.theme;
+    var widest: u16 = ui.width(m.title) + 2;
+    var rows: u16 = 0;
+    for (m.items) |it| {
+        widest = @max(widest, ui.width(it.label));
+        rows += 1;
+        if (it.separator_before) rows += 1;
+    }
+    // ✓ column + label + a cell of air each side, inside the frame.
+    const w: u16 = @min(widest + 2 + 2 + 2, screen.w);
+    const h: u16 = @min(rows + 2, screen.h);
+    const x = @min(m.x, (screen.x + screen.w) -| w);
+    const y = @min(m.y, (screen.y + screen.h) -| h);
+    const inner = overlay_mod.frame(ui, Rect.init(x, y, w, h), m.title);
+    if (inner.isEmpty()) return;
+    var row: u16 = 0;
+    for (m.items, 0..) |it, i| {
+        if (it.separator_before and row < inner.h) {
+            const r = inner.row(row);
+            var xx: u16 = r.x;
+            while (xx < r.right()) : (xx += 1) _ = ui.putStr(xx, r.y, 1, if (ui.ascii) "-" else "─", Theme.onBg(th.overlay_border, th.overlay_bg.bg));
+            row += 1;
+        }
+        if (row >= inner.h) break;
+        const r = inner.row(row);
+        const selected = i == m.cursor;
+        const style = if (selected) Theme.onBg(th.overlay_bg, th.cursor_line.bg) else th.overlay_bg;
+        ui.fill(r, style);
+        var xx = r.x + 1;
+        xx += ui.putStr(xx, r.y, r.right() -| xx, if (it.checked) (if (ui.ascii) "* " else "✓ ") else "  ", Theme.withFg(style, th.accent.fg));
+        _ = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(it.label, r.right() -| xx), Theme.onBg(th.fg, style.bg));
+        ui.hit(r, .{ .menu_item = .{ .menu = 0, .idx = @intCast(i) } });
+        row += 1;
     }
 }
 
