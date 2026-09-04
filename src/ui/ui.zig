@@ -20,6 +20,8 @@ pub const HitTarget = hit.HitTarget;
 pub const ChipKind = hit.ChipKind;
 pub const Ui = @import("context.zig");
 
+pub const editor_view = @import("editor_view.zig");
+
 test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("test_fixture.zig");
