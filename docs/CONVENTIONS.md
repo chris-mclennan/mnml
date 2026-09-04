@@ -12,7 +12,7 @@ before you write `alloc`.
 |---|---|---|---|
 | **gpa** | `app.gpa` (passed to `App.init(gpa, io)`) | process | the owner's `deinit` |
 | **snapshot** | `sub.snapshot.allocator()` — one `SnapshotArena` per replace-wholesale dataset | until the next dataset lands | `SnapshotArena.replace` / `reset` |
-| **frame** | `app.frame.allocator()` | one loop iteration (dispatch → tick → render) | nobody — `FrameArena.begin` at the top of the next iteration |
+| **frame** | `app.frame.allocator()` | one frame: from the top of `render` to the top of the next `render` | nobody — `FrameArena.begin` at the top of `App.render` |
 
 ```zig
 // gpa: lives as long as the buffer
@@ -32,6 +32,11 @@ Rules:
   `Editor`/`Buffer` hold gpa-owned `ArrayList`s and free them in `deinit`.
 - Nothing allocated from `app.frame` may be stored in `App` or any
   subsystem `State`. If you need it next iteration, `gpa.dupe` it.
+  // changed: the reset moved from the top of the loop iteration to the
+  top of `App.render`. The hit map is registered during a frame and
+  read by the *next* iteration's mouse event; resetting between them
+  would hand the router freed rects. Dispatch and tick allocate on the
+  arena freely — a render always follows an event.
 
 ## String ownership is spelled by the type
 
@@ -87,6 +92,16 @@ There is no third option, and no handler may stash the raw pointer to
   see `*App`.
 - Layout is the parent's job (`Rect.split*`); a component paints inside
   the rect it is given and clips to it.
+
+## Keys reach the editor before the keymap in vim's modal states
+
+- In vim Normal / Visual, every unmodified key is the handler's (`g`,
+  `d`, `z`, `m`… are its prefixes). Only modified chords (`ctrl+…`,
+  `alt+…`) and the bare leader `space` go through the chord chain
+  first. A `Keys.vim` entry like `g d` is therefore documentation for
+  which-key / the cheatsheet; the handler emits the same command itself.
+- The `:` line takes every key while open; Insert / Replace keep every
+  unmodified key; an operator-pending state keeps every unmodified key.
 
 ## Commands (D5)
 

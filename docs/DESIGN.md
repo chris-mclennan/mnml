@@ -180,6 +180,8 @@ while (!app.quit) {
 ```
 Replaces the 40/120 ms adaptive poll: idle sleeps until the next timer; a pty burst wakes immediately; a 16 ms frame budget coalesces. `.test` runner / headless call `pumpEvents / tick / render` directly (no wait) — preserves "every step → render".
 
+*// changed 2026-09-04 (app core):* `app.frame.reset` runs at the top of `App.render`, not the loop iteration — the hit map registered by a frame must survive until the next iteration's mouse event routes through it. The loop's deadline is `App.nextDeadlineMs()` (chord timeout, toast expiry) through `Io.Event.waitTimeout`. Terminal input keeps `Term`'s own reader worker; a bridge task in an `Io.Group` re-posts its events as `AppEvent`s so the UI thread still has exactly one wait. The 16 ms frame budget is not in the spike loop: a burst of events drains before one render.
+
 **Pty hot path:** per-session 256 KiB SPSC byte ring (`page_allocator`, atomic head/tail); reader writes into ring, posts `.pty_readable` only on empty→non-empty; `pump` drains ring → `vt_write`. Zero allocs (Rust: one `Vec` per 8 KiB). **Reverse channels** (AI confirm, CDP outbound): per-job/per-client `std.Io.Queue(T)` owned by the job struct — cancelable, no global `HashMap<u64, Sender>`.
 
 ### D4. Input — `union(enum)` + `inline else`, `EditOp` recursion into the frame arena
