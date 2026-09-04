@@ -1,0 +1,51 @@
+# Phase-0 gate: the 47 .test files that use only write/open/key/type and
+# expect screen|file|dirty|pane plus editor/find/buffer commands. The
+# VIABILITY VERDICT needs ≥ 40 passing unmodified, leak-clean.
+# `mnml-zig test --gate` runs exactly these (resolved under tests/e2e/).
+edit_and_save
+standard_ctrl_l_selects_whole_line
+bracket_match
+fold_chord
+folds
+wrap
+marks
+goto_line
+find
+find_incremental
+replace
+substitute
+multi_cursor
+whichkey
+alternate_file
+buffers
+buffer_reopen
+close_prompt
+vim_abbreviations
+vim_align
+vim_case_ops
+vim_cgn
+vim_change_list
+vim_cmdline_cursor
+vim_cmdline_tab_complete
+vim_count_replace
+vim_delete_history
+vim_dot_repeat
+vim_find_char
+vim_first_nonws_motions
+vim_line_range_marks
+vim_literal_next_tab_aliases
+vim_macros
+vim_misc_chords
+vim_mode
+vim_named_macros
+vim_named_registers
+vim_percent_pipe
+vim_repeat_insert
+vim_replace_mode
+vim_search_chords
+vim_sort_retab
+vim_surround
+vim_text_objects
+vim_visual_block
+vim_visual_block_change
+vim_visual_block_insert
