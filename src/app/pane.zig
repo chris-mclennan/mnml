@@ -1,7 +1,7 @@
 //! `Pane` — the open-thing union — and `PaneStore`, the arena that hands
 //! out stable `PaneId`s. Editor, the symbol outline, the rendered
-//! markdown preview, the cheatsheet and the list panes (cmdline
-//! history, quickfix) today; Pty / Request / Diff / Ai are additive
+//! markdown preview, the cheatsheet, the list panes (cmdline history,
+//! quickfix) and the pty today; Request / Diff / Ai are additive
 //! variants later.
 //!
 //! // changed: WAVE3 said `editor: Buffer`; the editor pane also owns
@@ -18,9 +18,14 @@ const syntax = @import("syntax.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const cheatsheet = @import("cheatsheet.zig");
+const pty_pane = @import("pty_pane.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
+pub const PtyPane = pty_pane.PtyPane;
+
+/// What the file watcher last saw on disk for an editor's file.
+pub const DiskStamp = struct { mtime_ns: i128, size: u64 };
 
 pub const EditorPane = struct {
     buf: Buffer,
@@ -38,6 +43,9 @@ pub const EditorPane = struct {
     /// the handler enters V-BLOCK so `I` / `A` / `c` / `r` know their
     /// rectangle; the editor's own block ops are a later slice.
     block_anchor: ?usize = null,
+    /// The file's mtime + size when it was last read or written; the
+    /// watcher compares against it every 2 s. Null for a scratch buffer.
+    disk: ?DiskStamp = null,
 
     pub fn deinit(self: *EditorPane) void {
         self.buf.deinit();
@@ -92,19 +100,23 @@ pub const Pane = union(enum) {
     md_preview: MdPreviewPane,
     cheatsheet: cheatsheet.State,
     list: ListPane,
+    /// A shell or a command, painted from the ghostty-vt grid.
+    pty: PtyPane,
 
-    pub fn deinit(self: *Pane) void {
+    pub fn deinit(self: *Pane, gpa: Allocator) void {
         switch (self.*) {
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
             .cheatsheet => |*c| c.deinit(),
             .list => |*l| l.deinit(),
+            .pty => |*p| p.deinit(gpa),
         }
     }
 
     /// The tab label: the file's basename, or `[scratch]`. A preview's
-    /// tab is the bare filename too — it stands in for the file.
+    /// tab is the bare filename too — it stands in for the file. A pty's
+    /// is its label.
     pub fn title(self: *const Pane) []const u8 {
         switch (self.*) {
             .editor => |*e| return if (e.buf.path) |p| std.fs.path.basename(p) else "[scratch]",
@@ -112,13 +124,14 @@ pub const Pane = union(enum) {
             .md_preview => |*m| return std.fs.path.basename(m.path),
             .cheatsheet => return "Cheatsheet",
             .list => |*l| return l.title(),
+            .pty => |*p| return p.label,
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty => false,
         };
     }
 
@@ -142,6 +155,13 @@ pub const Pane = union(enum) {
             else => null,
         };
     }
+
+    pub fn asPty(self: *Pane) ?*PtyPane {
+        return switch (self.*) {
+            .pty => |*p| p,
+            else => null,
+        };
+    }
 };
 
 /// Panes by stable id. Slots freed by `remove` go on a free list and are
@@ -156,7 +176,7 @@ pub const PaneStore = struct {
     }
 
     pub fn deinit(self: *PaneStore) void {
-        for (self.slots.items) |*slot| if (slot.*) |*p| p.deinit();
+        for (self.slots.items) |*slot| if (slot.*) |*p| p.deinit(self.gpa);
         self.slots.deinit(self.gpa);
         self.free.deinit(self.gpa);
     }
@@ -172,6 +192,13 @@ pub const PaneStore = struct {
         return id;
     }
 
+    /// The id the next `add` will hand out — for a pane that must know
+    /// its own id before it exists (a pty's reader wire).
+    pub fn peekId(self: *const PaneStore) PaneId {
+        if (self.free.items.len > 0) return self.free.items[self.free.items.len - 1];
+        return @intCast(self.slots.items.len);
+    }
+
     pub fn get(self: *PaneStore, id: PaneId) ?*Pane {
         if (id >= self.slots.items.len) return null;
         return if (self.slots.items[id]) |*p| p else null;
@@ -182,10 +209,15 @@ pub const PaneStore = struct {
         return p.asEditor();
     }
 
+    pub fn pty(self: *PaneStore, id: PaneId) ?*PtyPane {
+        const p = self.get(id) orelse return null;
+        return p.asPty();
+    }
+
     pub fn remove(self: *PaneStore, id: PaneId) void {
         if (id >= self.slots.items.len) return;
         if (self.slots.items[id]) |*p| {
-            p.deinit();
+            p.deinit(self.gpa);
             self.slots.items[id] = null;
             self.free.append(self.gpa, id) catch {};
         }
@@ -257,6 +289,7 @@ test "pane store: stable ids, free-list reuse, path lookup" {
             return .{ .editor = .{ .buf = buf, .find = find.FindState.init(g), .syntax = syntax.Syntax.init(g) } };
         }
     };
+    try std.testing.expectEqual(@as(PaneId, 0), store.peekId());
     const a = try store.add(try mk.pane(gpa, "/ws/a.txt"));
     const b = try store.add(try mk.pane(gpa, "/ws/b.txt"));
     try std.testing.expectEqual(@as(PaneId, 0), a);
@@ -266,6 +299,7 @@ test "pane store: stable ids, free-list reuse, path lookup" {
     store.remove(a);
     try std.testing.expect(store.get(a) == null);
     try std.testing.expectEqual(@as(usize, 1), store.count());
+    try std.testing.expectEqual(a, store.peekId());
     const c = try store.add(try mk.pane(gpa, "/ws/c.txt"));
     try std.testing.expectEqual(a, c);
     try std.testing.expectEqual(@as(usize, 2), store.count());

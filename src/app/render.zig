@@ -50,6 +50,8 @@ const md_preview = @import("md_preview.zig");
 const layout_mod = @import("layout.zig");
 const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
+const pty_view = @import("../ui/pty_view.zig");
+const pty_pane = @import("pty_pane.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -228,7 +230,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list => return,
+        .outline, .cheatsheet, .list, .pty => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -282,6 +284,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .md_preview => |*m| try md_preview.draw(app, ui, pr.pane, m, rect),
             .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
             .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
+            .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -310,6 +313,27 @@ fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
         }
     }
     _ = pane;
+}
+
+/// A pty pane: the layout's rect is what the child sees (resize is a
+/// no-op when unchanged), then the grid is refreshed and painted.
+fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allocator.Error!void {
+    if (!pty_pane.supported) return;
+    const focused = app.active == id and app.focus == .pane;
+    p.fit(rect.w, rect.h);
+    try p.grid.update(app.gpa, p.session.terminal());
+    const exit_label: ?[]const u8 = if (p.exit) |e| switch (e) {
+        .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
+        .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
+    } else null;
+    const cursor = pty_view.draw(ui, rect, &p.grid, .{ .focused = focused, .exit_label = exit_label });
+    if (app.active == id) {
+        app.pane_rows = @max(rect.h, 1);
+        app.pane_cols = @max(rect.w, 1);
+        if (focused) if (cursor) |c| {
+            app.cursor_pos = .{ .x = c.x, .y = c.y };
+        };
+    }
 }
 
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
@@ -459,7 +483,17 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.pending = try e.buf.input.pendingDisplay(ui.arena);
         if (e.buf.recording) |r| info.macro_recording = r.reg;
-    }
+    } else if (app.active) |id| if (app.panes.pty(id)) |p| {
+        info.mode_label = if (p.exit == null) "TERM" else "EXITED";
+        info.mode_kind = .edit;
+        info.file = p.childTitle() orelse p.label;
+        // The grid was refreshed by drawBody; its cursor is pane-relative.
+        if (pty_pane.supported) if (p.grid.cursor()) |c| {
+            info.line = c.y + 1;
+            info.col = c.x + 1;
+        };
+        info.total_lines = p.rows;
+    };
     statusline.draw(ui, area, info);
 }
 

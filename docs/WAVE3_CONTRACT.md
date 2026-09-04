@@ -371,3 +371,33 @@ that the oldest slot reads `+K more…`.
 - `// changed (app):` the markdown chip rides the active leaf's tab strip
   (`render.drawMdChip`), and the outline / preview panes take the wheel
   through `wheelOnPane` like every other pane.
+
+---
+
+## Merge notes — runners ⨯ (config-wire + lang + mouse) (2026-09-04)
+
+- `// changed (app):` `Pane` gains `pty: PtyPane` (`app/pty_pane.zig`,
+  painted by `ui/pty_view.zig`) beside `editor / outline / md_preview /
+  cheatsheet / list`; `Pane.deinit` takes the gpa. `PromptPurpose` keeps
+  its tagged-union shape and adds `npm_run_script` / `go_run_path`;
+  `ConfirmPurpose` adds `install_tool: u16`; `PickerKind` adds
+  `go_run_cmd / tools / tasks`.
+- `// changed (app):` runners' flat-config reads are repointed at the ZON
+  sections (`cfg.ui.ascii_icons`, `app.editorConfig()`); the `.tasks` /
+  `.startup.tasks` tables come from the config the App already owns —
+  `tui/loop.zig` calls `tasks.installFromConfig(&app, &app.cfg)` right
+  after `App.initWith` and before the `startup` hook, instead of loading
+  the config a second time. `InitOptions.env` (the children's
+  environment) rides alongside `cfg` / `loaded`.
+- `// changed (app):` the pty pane sits inside mouse's frame: the render
+  switch paints it into the strip-subtracted rect; `dispatch.key`'s
+  non-editor block routes it to `ptyKey` (plain keys to the child,
+  bound modified chords to the chord chain, `childOwned` chords to the
+  child, any key closes an exited pane); the `.pane` hit feeds SGR
+  reports to a child that tracks the mouse (origin below the tab
+  strip) and otherwise lets `wheelOnPane` scroll the scrollback.
+- `// changed (app):` the statusline's pty row (TERM / EXITED, the
+  grid's own cursor) lives in `render.drawStatusline`; `App.tick` runs
+  `pty_pane.tickAll` and `watch.tick` after the theme poll; `deinit`
+  frees runners / tasks state with the other lists, `env` after the
+  panes, and the `Loaded` config last.

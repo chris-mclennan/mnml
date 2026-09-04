@@ -57,6 +57,11 @@ const scroll_mod = @import("app/scroll.zig");
 const Rect = @import("ui/rect.zig");
 const Ui = @import("ui/context.zig");
 const Canvas = @import("ui/canvas.zig");
+const pty_pane = @import("app/pty_pane.zig");
+const runners = @import("app/runners.zig");
+const tasks_mod = @import("app/tasks.zig");
+const watch = @import("app/watch.zig");
+const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -94,6 +99,9 @@ pub const InitOptions = struct {
     data_root: []const u8 = "",
     cols: u16 = 120,
     rows: u16 = 40,
+    /// The environment children inherit (a pty's shell). The process's
+    /// own when null.
+    env: ?*const std.process.Environ.Map = null,
 };
 
 /// How long an ordinary toast stays.
@@ -104,6 +112,9 @@ pub const PromptPurpose = union(enum) {
     replace,
     filter_shell,
     new_todo,
+    /// Runners: the npm script / the `go run` path typed into the prompt.
+    npm_run_script,
+    go_run_path,
     /// A workspace-relative path typed into the prompt; the payload is
     /// the directory it is created in (owned).
     new_file: []u8,
@@ -123,6 +134,8 @@ pub const ConfirmPurpose = union(enum) {
     quit,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
+    /// Install the missing tool (`runners.zig`); the payload indexes the installer table.
+    install_tool: u16,
     /// Delete the workspace-relative path (owned).
     delete_path: []u8,
     /// Move `from` into directory `into` (both workspace-relative, owned).
@@ -139,7 +152,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -333,6 +346,8 @@ pub const App = struct {
     /// Absolute. Owned.
     workspace: []u8,
     data_root: []u8,
+    /// What a spawned child inherits. Owned.
+    env: std.process.Environ.Map,
     quit: bool = false,
     restart: bool = false,
 
@@ -346,6 +361,11 @@ pub const App = struct {
     snippets: snippets.State,
     focus: FocusId = .tree,
     active: ?PaneId = null,
+    /// The editor pane most recently active — a runner pane taking
+    /// focus must not lose the file's directory (monorepo detection).
+    last_editor: ?PaneId = null,
+    runners: runners.State = .{},
+    tasks: tasks_mod.State = .{},
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -394,6 +414,8 @@ pub const App = struct {
     now_ms: i64 = 0,
     /// `theme.auto_system`: when the OS appearance is next polled.
     theme_auto_poll_ms: ?i64 = null,
+    /// When the file watcher last stat'ed the open files.
+    last_watch_ms: i64 = 0,
     /// Frames since something changed; the loop skips idle renders.
     needs_render: bool = true,
 
@@ -414,6 +436,8 @@ pub const App = struct {
         errdefer gpa.free(ws);
         const dr = try gpa.dupe(u8, opts.data_root);
         errdefer gpa.free(dr);
+        var env = if (opts.env) |e| try e.clone(gpa) else try processEnv(gpa);
+        errdefer env.deinit();
         var events = try event.EventQueue.init(gpa, 256);
         errdefer events.deinit(io);
         const style = styleOf(opts.cfg.editor.input_style);
@@ -434,6 +458,7 @@ pub const App = struct {
             .input_style = style,
             .workspace = ws,
             .data_root = dr,
+            .env = env,
             .panes = PaneStore.init(gpa),
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
@@ -449,6 +474,8 @@ pub const App = struct {
         opts.loaded = null; // owned by `app` from here
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
+        try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
+        try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         app.now_ms = nowMs(io);
         app.tree.width = app.cfg.ui.tree_width;
         try app.toastConfigDiagnostics();
@@ -565,6 +592,8 @@ pub const App = struct {
         self.recent.deinit(gpa);
         for (self.cmd_history.items) |c| gpa.free(c);
         self.cmd_history.deinit(gpa);
+        self.runners.deinit(gpa);
+        self.tasks.deinit(gpa);
         self.chord.clear(gpa);
         self.hooks.deinit();
         self.dyn_commands.deinit();
@@ -576,10 +605,23 @@ pub const App = struct {
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
+        self.env.deinit();
         gpa.free(self.data_root);
         gpa.free(self.workspace);
         // Last: `cfg` borrowed from it until here.
         if (self.loaded) |*l| l.deinit();
+    }
+
+    /// The process environment as a map. Empty where libc's `environ`
+    /// is not available (Windows: no pty there yet anyway).
+    fn processEnv(gpa: Allocator) Allocator.Error!std.process.Environ.Map {
+        if (builtin.os.tag == .windows) return .init(gpa);
+        const raw: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
+        const environ: std.process.Environ = .{ .block = .{ .slice = std.mem.span(raw) } };
+        return std.process.Environ.createMap(environ, gpa) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return .init(gpa),
+        };
     }
 
     pub fn profileOf(style: input.Style) keymap.Profile {
@@ -756,6 +798,7 @@ pub const App = struct {
         syn.setLanguage(path, buf.editor.bytes());
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn } });
         // Moved into the store: the errdefers above must not run from here.
+        watch.restamp(self, self.panes.editor(id).?);
         self.showPane(id);
         self.hooks.emit(self, .{ .open = .{ .path = self.relPath(path), .pane = id } });
         return id;
@@ -847,6 +890,9 @@ pub const App = struct {
             const layout = self.layouts.current();
             if (layout.leafOf(i)) |lid| layout.leaf(lid).?.active = i;
         }
+        if (id) |i| if (self.panes.editor(i) != null) {
+            self.last_editor = i;
+        };
         self.focus = if (id != null) .{ .pane = id.? } else .tree;
         self.needs_render = true;
         self.hooks.emit(self, .{ .pane_focus = .{ .pane = id } });
@@ -892,6 +938,7 @@ pub const App = struct {
         const layout = self.layouts.current();
         const next = layout.removePane(id);
         self.panes.remove(id);
+        if (self.last_editor == id) self.last_editor = null;
         if (self.active == id) {
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
             self.active = null;
@@ -1037,6 +1084,7 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
                 if (e.source == .todos) self.todos.scanning = false;
@@ -1101,6 +1149,8 @@ pub const App = struct {
         }
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
+        pty_pane.tickAll(self);
+        try watch.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1195,6 +1245,12 @@ test {
     _ = @import("app/scroll.zig");
     _ = @import("app/context_menus.zig");
     _ = @import("app/cheatsheet.zig");
+    _ = @import("app/cmd_term.zig");
+    _ = @import("app/pty_pane.zig");
+    _ = @import("app/runners.zig");
+    _ = @import("app/tasks.zig");
+    _ = @import("app/watch.zig");
+    _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");

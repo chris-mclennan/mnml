@@ -15,6 +15,8 @@ const CommandError = command.CommandError;
 const dispatch = @import("dispatch.zig");
 const keymap = @import("../core/keymap.zig");
 const cmd_tab = @import("cmd_tab.zig");
+const runners = @import("runners.zig");
+const tasks = @import("tasks.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -72,6 +74,7 @@ fn pushBuffer(app: *App, labels: *std.ArrayListUnmanaged([]u8), panes: *std.Arra
         .editor => |*e| try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (e.buf.path) |path| app.relPath(path) else "[scratch]", if (e.buf.dirty) " ●" else "" }),
         .outline => |*o| try std.fmt.allocPrint(gpa, "outline: {s}", .{o.title}),
         .md_preview => |*m| try std.fmt.allocPrint(gpa, "{s} (preview)", .{app.relPath(m.path)}),
+        .pty => |*term| try std.fmt.allocPrint(gpa, "{s} [term]", .{term.label}),
         else => try gpa.dupe(u8, p.title()),
     };
     errdefer gpa.free(label);
@@ -265,6 +268,22 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             if (ref) |r| command.run(app, r) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {},
+            };
+        },
+        .go_run_cmd, .tools, .tasks => |kind| {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            const result = switch (kind) {
+                .go_run_cmd => runners.goRunAccept(app, label),
+                .tools => runners.toolAccept(app, label),
+                .tasks => tasks.runNamed(app, label),
+                else => unreachable,
+            };
+            result catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => {},
+                else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
     }

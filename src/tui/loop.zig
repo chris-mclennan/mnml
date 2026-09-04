@@ -19,6 +19,7 @@ const config = @import("../config/root.zig");
 const ipc = @import("../ipc/root.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const build_options = @import("build_options");
+const tasks = @import("../app/tasks.zig");
 
 pub const Options = struct {
     /// The merged config; the App takes ownership.
@@ -47,6 +48,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         .data_root = opts.data_root,
         .cols = size.width,
         .rows = size.height,
+        .env = env,
     });
     defer app.deinit();
     // `ipc.write_screen`: mirror every frame into `<ws>/.mnml/<ipc>/screen.txt`,
@@ -60,6 +62,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         };
     }
     defer if (screen_dump) |*c| c.deinit();
+    // The typed config's tasks + startup list, from the config the App
+    // already owns; the `startup` hook below runs the startup names.
+    try tasks.installFromConfig(&app, &app.cfg);
     for (opts.files) |f| {
         const abs = try app.absPath(f);
         _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ f, @errorName(err) });

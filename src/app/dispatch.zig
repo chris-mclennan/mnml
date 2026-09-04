@@ -50,6 +50,8 @@ const bufferline = @import("../ui/bufferline.zig");
 const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
+const pty_pane = @import("pty_pane.zig");
+const runners = @import("runners.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -78,6 +80,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     const pane_id = app.active;
     // The non-editor panes take their own keys first.
     if (pane_id) |id| if (app.panes.get(id)) |p| switch (p.*) {
+        .pty => |*term| return ptyKey(app, id, term, k),
         .outline => {
             if (try outline.handleKey(app, id, k)) return;
             _ = try chordChain(app, k);
@@ -151,6 +154,29 @@ fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Er
     }
     app.needs_render = true;
     return true;
+}
+
+/// A focused pty pane takes every plain key (Esc included — terminal
+/// programs need it; the app's chords are the way out). A modified
+/// chord goes to the chord chain first when the keymap binds it, except
+/// the ones a terminal owns outright (`pty_pane.childOwned`). An exited
+/// pane closes on any plain key.
+fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!void {
+    if (app.chord.len > 0) {
+        _ = try chordChain(app, k);
+        return;
+    }
+    const modified = k.mods.ctrl or k.mods.alt or k.mods.super;
+    if (p.exit != null) {
+        if (modified and try chordChain(app, k)) return;
+        try app.forceClosePane(id);
+        return;
+    }
+    if (modified and !pty_pane.childOwned(k)) {
+        const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;
+        if (bound and try chordChain(app, k)) return;
+    }
+    pty_pane.feedKey(app, p, k);
 }
 
 /// Feed one key to the editor and act on what it reports. Returns
@@ -519,7 +545,19 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
         .new_folder => |dir| try tree_mod.acceptNewFolder(app, dir, text),
         .rename => |from| try tree_mod.acceptRename(app, from, text),
+        .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
+        .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
     }
+}
+
+/// A command-shaped call from an overlay: its reason is toasted the way
+/// `command.run` would have.
+fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!void {
+    result catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => {},
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
+    };
 }
 
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
@@ -554,6 +592,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         },
         .delete_path => |rel| if (choice == 0) try tree_mod.acceptDelete(app, rel),
         .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
+        .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
     }
 }
 
@@ -588,6 +627,9 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
         else => {},
     }
     if (app.find_bar) |*fb| return FindBar.paste(&fb.state, app.gpa, text);
+    if (app.active) |id| if (app.panes.pty(id)) |p| {
+        if (app.focus == .pane) return pty_pane.paste(app, p, text);
+    };
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
     _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
@@ -759,6 +801,23 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .pane => |id| {
+            if (app.panes.pty(id)) |p| {
+                // The child tracks the mouse: every report goes to it,
+                // pane-relative (the tab strip is the rect's first row).
+                // Otherwise the wheel scrolls the scrollback.
+                if (m.kind == .press) {
+                    if (app.overlay != .none) closeOverlay(app);
+                    if (app.active != id or app.focus != .pane) app.showPane(id);
+                }
+                if (p.encoding().mouse == .none) {
+                    if (wheel) return wheelOnPane(app, id, m, count);
+                    return;
+                }
+                const r = hitRect(app, m.x, m.y) orelse return;
+                const strip: u16 = if (r.h >= 2) 1 else 0;
+                pty_pane.mouse(app, p, m, .{ .x = r.x, .y = r.y + strip });
+                return;
+            }
             if (wheel) return wheelOnPane(app, id, m, count);
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
@@ -780,7 +839,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
                     }
                 },
-                .editor, .outline, .md_preview => {},
+                .editor, .outline, .md_preview, .pty => {},
             }
         },
         .tree_node => |idx| switch (m.kind) {
@@ -1009,6 +1068,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
             o.cursor = if (down) @min(o.cursor + n, o.items.items.len -| 1) else o.cursor -| n;
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
     }
 }
 
