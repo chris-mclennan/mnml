@@ -47,6 +47,7 @@ const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
 const pty_pane = @import("app/pty_pane.zig");
+const runners = @import("app/runners.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -98,9 +99,9 @@ pub const InitOptions = struct {
     env: ?*const std.process.Environ.Map = null,
 };
 
-pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo };
-pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit };
-pub const PickerKind = enum { buffers, files };
+pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo, npm_run_script, go_run_path };
+pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit, install_tool: u16 };
+pub const PickerKind = enum { buffers, files, go_run_cmd, tools };
 
 pub const Overlay = union(enum) {
     none,
@@ -251,6 +252,10 @@ pub const App = struct {
     todos: todos.State,
     focus: FocusId = .tree,
     active: ?PaneId = null,
+    /// The editor pane most recently active — a runner pane taking
+    /// focus must not lose the file's directory (monorepo detection).
+    last_editor: ?PaneId = null,
+    runners: runners.State = .{},
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -359,6 +364,7 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
+        self.runners.deinit(gpa);
         self.chord.clear(gpa);
         self.hooks.deinit();
         self.dyn_commands.deinit();
@@ -549,6 +555,9 @@ pub const App = struct {
             self.change_nav = null;
         }
         self.active = id;
+        if (id) |i| if (self.panes.editor(i) != null) {
+            self.last_editor = i;
+        };
         self.focus = if (id != null) .{ .pane = id.? } else .tree;
         self.needs_render = true;
         self.hooks.emit(self, .{ .pane_focus = .{ .pane = id } });
@@ -594,6 +603,7 @@ pub const App = struct {
         const layout = self.layouts.current();
         const next = layout.removePane(id);
         self.panes.remove(id);
+        if (self.last_editor == id) self.last_editor = null;
         if (self.active == id) {
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
             self.active = null;
@@ -816,6 +826,7 @@ test {
     _ = @import("app/cmd_app.zig");
     _ = @import("app/cmd_term.zig");
     _ = @import("app/pty_pane.zig");
+    _ = @import("app/runners.zig");
     _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
     _ = @import("ui/hit.zig");

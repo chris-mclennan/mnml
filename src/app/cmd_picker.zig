@@ -10,6 +10,7 @@ const Picker = app_mod.Picker;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const dispatch = @import("dispatch.zig");
+const runners = @import("runners.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -103,7 +104,8 @@ fn walk(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
     return false;
 }
 
-fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId) CommandError!void {
+/// Fill the one picker overlay. Takes ownership of `labels` and `panes`.
+pub fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId) CommandError!void {
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .picker = .{ .state = .{ .title = title }, .kind = kind, .labels = labels, .panes = panes, .filtered = .empty } };
     try dispatch.refilterPicker(app);
@@ -131,6 +133,21 @@ pub fn accept(app: *App, idx: usize) !void {
             _ = app.openPath(abs) catch |err| {
                 app.toast("open {s}: {s}", .{ rel, @errorName(err) });
                 return;
+            };
+        },
+        .go_run_cmd, .tools => |kind| {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            const result = switch (kind) {
+                .go_run_cmd => runners.goRunAccept(app, label),
+                .tools => runners.toolAccept(app, label),
+                else => unreachable,
+            };
+            result catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => {},
+                else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
     }

@@ -34,6 +34,7 @@ const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
 const pty_pane = @import("pty_pane.zig");
+const runners = @import("runners.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -450,7 +451,19 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             error.Canceled => {},
             else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("todo: {s}", .{@errorName(err)}),
         },
+        .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
+        .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
     }
+}
+
+/// A command-shaped call from an overlay: its reason is toasted the way
+/// `command.run` would have.
+fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!void {
+    result catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => {},
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
+    };
 }
 
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
@@ -482,6 +495,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             1 => app.quit = true,
             else => {},
         },
+        .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
     }
 }
 
