@@ -458,3 +458,47 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
     }
 }
+
+test "docs config example parses clean" {
+    // The reference file IS the schema, or it is wrong: `docs/CONFIG.md`'s
+    // ```zon block must decode with zero diagnostics.
+    const md = try Io.Dir.cwd().readFileAlloc(t.io, "docs/CONFIG.md", t.allocator, .limited(1 << 20));
+    defer t.allocator.free(md);
+    const open = std.mem.indexOf(u8, md, "```zon\n") orelse return error.TestUnexpectedResult;
+    const body_start = open + "```zon\n".len;
+    const close = std.mem.indexOfPos(u8, md, body_start, "\n```") orelse return error.TestUnexpectedResult;
+    const src = try t.allocator.dupeZ(u8, md[body_start..close]);
+    defer t.allocator.free(src);
+
+    const f = try Fixture.init();
+    defer f.deinit();
+    const p = try parseLayer(f.arena(), src, "docs/CONFIG.md", &f.diags);
+    if (f.diags.count() != 0) {
+        const text = try f.rendered();
+        defer t.allocator.free(text);
+        std.debug.print("docs/CONFIG.md example has diagnostics:\n{s}", .{text});
+        return error.TestUnexpectedResult;
+    }
+    // every section is present in the example
+    inline for (@typeInfo(Patch(Config)).@"struct".fields) |fld| {
+        const v = @field(p, fld.name);
+        if (comptime patch_mod.isMap(fld.type)) {
+            if (v.count() == 0) {
+                std.debug.print("docs/CONFIG.md example is missing map section .{s}\n", .{fld.name});
+                return error.TestUnexpectedResult;
+            }
+        } else if (v == null) {
+            std.debug.print("docs/CONFIG.md example is missing section .{s}\n", .{fld.name});
+            return error.TestUnexpectedResult;
+        }
+    }
+    // and it applies onto the default
+    var cfg: Config = .{};
+    try apply(f.arena(), &cfg, p);
+    try normalize(f.arena(), &cfg, &f.diags, "/home/u");
+    try t.expectEqual(@as(usize, 0), f.diags.count());
+    try t.expectEqualStrings("rust-analyzer", cfg.lsp.get("rust").?.cmd.?);
+    try t.expectEqual(@as(usize, 2), cfg.startup.layout.len);
+    try t.expectEqual(Config.LintParser.shellcheck, cfg.linters.get("sh").?.parser);
+    try t.expectEqualStrings("work", cfg.ai.extra.get("claude_accounts").?.array[0].get("name").?.string);
+}
