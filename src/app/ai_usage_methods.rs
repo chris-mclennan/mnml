@@ -191,7 +191,47 @@ impl App {
     /// Anthropic's rate limits clear in minutes-to-hours; polling
     /// twice per minute is what created the problem the fast-retry
     /// was meant to solve. See task #943.
+    /// Warn once per run when two accounts share one credential.
+    ///
+    /// Cheap (a few file reads) and silent unless something is wrong,
+    /// so it runs on the fetch path rather than needing a schedule of
+    /// its own.
+    ///
+    /// The `warned` latch matters: without it this would toast on
+    /// every round, and a warning that repeats every few minutes gets
+    /// dismissed rather than read. Once per run is enough to notice;
+    /// the accounts view is where the standing state belongs.
+    fn warn_on_duplicate_credentials(&mut self) {
+        if self.dup_credentials_warned {
+            return;
+        }
+        let accounts = self.config.claude_accounts();
+        if accounts.len() < 2 {
+            return;
+        }
+        let dupes = crate::ai_usage::duplicate_credential_accounts(&accounts);
+        if dupes.is_empty() {
+            return;
+        }
+        self.dup_credentials_warned = true;
+        // Name both sides. "Some accounts are duplicated" would leave
+        // the user hashing files by hand, which is exactly how this
+        // was found the first time.
+        let pairs = dupes
+            .iter()
+            .map(|(a, b)| format!("{a} = {b}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.toast_leveled(
+            format!(
+                "Claude accounts share one login ({pairs}) — their usage numbers                  are the same account. Re-auth in the Claude usage pane."
+            ),
+            crate::app::ToastLevel::Warn,
+        );
+    }
+
     pub fn maybe_refresh_ai_usage(&mut self) {
+        self.warn_on_duplicate_credentials();
         // #ai-429 — the ACTIVE account refreshes often; the others
         // rarely.
         //
@@ -671,6 +711,26 @@ impl App {
     /// ai_token.<name>` step with one that verifies identity before
     /// writing, so logging in as the wrong account can't silently
     /// overwrite a good credential.
+    /// Open `claude login` in a Pty pane.
+    ///
+    /// The guided re-auth block has always said "1. run: claude login
+    /// / 2. press R" — but step 1 was PROSE. The user had to leave
+    /// mnml, find a terminal, log in, come back and press R. Step 2
+    /// was a keystroke and step 1 was homework.
+    ///
+    /// mnml already runs Pty panes, so step 1 can be a keystroke too:
+    /// the real CLI, in a pane, with its output visible. The OAuth
+    /// flow itself stays where it belongs — mnml never handles the
+    /// credentials, it just stops making you go elsewhere to start.
+    pub fn open_claude_login_pane(&mut self) {
+        self.toast("opening `claude login` — press R here after it finishes".to_string());
+        self.open_pty(crate::pty_pane::BinaryProfile::task(
+            "claude login",
+            "claude login",
+            self.workspace.clone(),
+        ));
+    }
+
     pub fn recapture_claude_token_from_keychain(&mut self) {
         if self.pending_keychain_recapture.is_some() {
             self.toast("already capturing…".to_string());

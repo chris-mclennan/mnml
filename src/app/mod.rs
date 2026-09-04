@@ -5594,6 +5594,10 @@ pub struct App {
     /// [`crate::app::workspace_methods::TODOS_SCAN_CAP`], so the list
     /// is an arbitrary subset and the sort order does not mean what it
     /// says. Surfaced in the panel header.
+    /// Latch for the duplicate-credential warning, so it toasts once
+    /// per run rather than on every fetch round — a warning that
+    /// repeats every few minutes gets dismissed rather than read.
+    pub dup_credentials_warned: bool,
     pub todos_truncated: bool,
     pub todos_sort: crate::ui::list_sort::ListSort,
     pub notes_sort: crate::ui::list_sort::ListSort,
@@ -6864,6 +6868,7 @@ impl App {
             todos_panel_cursor: 0,
             notes_panel_cursor: 0,
             findings_panel_cursor: 0,
+            dup_credentials_warned: false,
             todos_truncated: false,
             todos_sort: sort_todos,
             notes_sort: sort_notes,

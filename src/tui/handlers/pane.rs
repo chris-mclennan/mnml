@@ -1194,6 +1194,9 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // keychain and file it under whichever account it
             // actually belongs to, verified over the wire.
             KeyCode::Char('R') => app.recapture_claude_token_from_keychain(),
+            // Step 1 of the guided re-auth, made actionable. It used
+            // to be prose telling the user to go run this elsewhere.
+            KeyCode::Char('L') => app.open_claude_login_pane(),
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::ClaudeUsage(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(1);

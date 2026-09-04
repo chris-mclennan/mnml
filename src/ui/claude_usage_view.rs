@@ -55,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "· r refresh · R re-auth from keychain · esc close".to_string(),
+                "· r refresh · L claude login · R capture · esc close".to_string(),
                 Style::default()
                     .fg(t.comment)
                     .add_modifier(Modifier::ITALIC),
@@ -252,7 +252,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pid: PaneId, area: Rect, focused: 
                     Style::default().fg(t.yellow),
                 ))));
                 rows.push(with_gutter(Line::from(Span::styled(
-                    format!("    1. run:  claude login   (as {})", account.name),
+                    format!("    1. press L to run `claude login` (as {})", account.name),
                     Style::default().fg(t.comment),
                 ))));
                 rows.push(with_gutter(Line::from(Span::styled(

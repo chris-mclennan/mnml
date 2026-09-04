@@ -804,6 +804,54 @@ pub fn verify_blob_belongs_to(name: &str, blob: &str, account_count: usize) -> R
     }
 }
 
+/// Accounts whose token files hold the SAME credential.
+///
+/// Returns `(name, name)` pairs, each reported once, for accounts
+/// sharing an access token. Purely local — no network, no keychain, so
+/// it is cheap enough to run on every fetch round.
+///
+/// #1232 left a hole this closes. That guard stops one account's
+/// credential being WRITTEN over another's, and it works. But a
+/// collapse that already happened is invisible to it: once several
+/// files share a refresh token, each account's own perfectly
+/// legitimate refresh rewrites its own file with the same new
+/// credential, forever. No improper write ever occurs, so no guard
+/// fires.
+///
+/// That is not hypothetical. On 2026-09-03 a user with three
+/// configured accounts had three byte-identical token files and had
+/// been reading one account's numbers off three chips for days —
+/// making account-switching decisions on what looked like three
+/// independent readings. It was found by hashing the files by hand.
+/// Nothing in mnml was looking.
+///
+/// Comparing ACCESS tokens rather than whole files: two accounts can
+/// legitimately differ in whitespace or key order and still be the
+/// same login, and the access token is the thing that actually
+/// determines whose usage gets reported.
+pub fn duplicate_credential_accounts(
+    accounts: &[crate::config::ClaudeAccountConfig],
+) -> Vec<(String, String)> {
+    use std::collections::HashMap;
+    let mut by_token: HashMap<String, String> = HashMap::new();
+    let mut dupes = Vec::new();
+    for a in accounts {
+        let Ok(raw) = std::fs::read_to_string(a.resolved_token_path()) else {
+            continue;
+        };
+        let Some(tok) = parse_token_blob(&raw) else {
+            continue;
+        };
+        match by_token.get(&tok) {
+            Some(first) => dupes.push((first.clone(), a.name.clone())),
+            None => {
+                by_token.insert(tok, a.name.clone());
+            }
+        }
+    }
+    dupes
+}
+
 /// One configured account, as far as the recapture worker cares.
 pub struct RecaptureTarget {
     pub name: String,
@@ -1875,5 +1923,78 @@ mod identity_guard_tests {
     fn identity_comparison_is_case_and_space_insensitive() {
         assert!(same_identity(" You@Example.com ", "you@example.com"));
         assert!(!same_identity("you@example.com", "other@example.com"));
+    }
+}
+
+#[cfg(test)]
+mod duplicate_credential_tests {
+    use super::*;
+    use crate::config::ClaudeAccountConfig;
+
+    fn acct(name: &str, path: &std::path::Path) -> ClaudeAccountConfig {
+        ClaudeAccountConfig {
+            name: name.to_string(),
+            token_path: path.to_string_lossy().into_owned(),
+            active: false,
+        }
+    }
+    fn write_token(dir: &std::path::Path, name: &str, access: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(
+            &p,
+            format!(
+                r#"{{"claudeAiOauth":{{"accessToken":"{access}","refreshToken":"r","expiresAt":1}}}}"#
+            ),
+        )
+        .unwrap();
+        p
+    }
+
+    /// The real 2026-09-03 state: three configured accounts, three
+    /// byte-identical token files, one credential. The user had been
+    /// reading one account's numbers off three chips for days and
+    /// making switching decisions on them. Nothing in mnml was looking.
+    #[test]
+    fn three_accounts_sharing_one_login_are_all_reported() {
+        let d = tempfile::tempdir().unwrap();
+        let accounts = vec![
+            acct("personal", &write_token(d.path(), "a", "SAME")),
+            acct("work", &write_token(d.path(), "b", "SAME")),
+            acct("consulting", &write_token(d.path(), "c", "SAME")),
+        ];
+        let dupes = duplicate_credential_accounts(&accounts);
+        assert_eq!(dupes.len(), 2, "expected two collisions, got {dupes:?}");
+        // Every duplicate must be NAMED — "some accounts are
+        // duplicated" would leave the user hashing files by hand,
+        // which is how this was found the first time.
+        let named: Vec<&str> = dupes.iter().map(|(_, b)| b.as_str()).collect();
+        assert!(named.contains(&"work") && named.contains(&"consulting"));
+    }
+
+    /// Genuinely distinct accounts must stay silent, or the warning
+    /// becomes noise and gets dismissed.
+    #[test]
+    fn distinct_accounts_report_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let accounts = vec![
+            acct("personal", &write_token(d.path(), "a", "AAA")),
+            acct("work", &write_token(d.path(), "b", "BBB")),
+            acct("consulting", &write_token(d.path(), "c", "CCC")),
+        ];
+        assert!(duplicate_credential_accounts(&accounts).is_empty());
+    }
+
+    /// A missing or unreadable token file is not a duplicate. An
+    /// account that has never been seeded would otherwise pair with
+    /// every other unseeded one.
+    #[test]
+    fn missing_token_files_are_not_collisions() {
+        let d = tempfile::tempdir().unwrap();
+        let accounts = vec![
+            acct("personal", &d.path().join("nope-1")),
+            acct("work", &d.path().join("nope-2")),
+            acct("consulting", &write_token(d.path(), "c", "CCC")),
+        ];
+        assert!(duplicate_credential_accounts(&accounts).is_empty());
     }
 }
