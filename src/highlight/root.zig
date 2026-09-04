@@ -7,6 +7,13 @@ const std = @import("std");
 pub const ts = @import("tree_sitter");
 pub const queries = @import("ts_queries");
 pub const table = @import("table.zig");
+pub const engine = @import("engine.zig");
+pub const role = @import("role.zig");
+pub const predicate = @import("predicate.zig");
+pub const pattern = @import("pattern.zig");
+pub const structure = @import("structure.zig");
+pub const Highlighter = engine.Highlighter;
+pub const Role = role.Role;
 
 const testing = std.testing;
 
@@ -136,4 +143,9 @@ test "extension, filename and injection-name lookups" {
 
 test {
     _ = queries;
+    _ = engine;
+    _ = role;
+    _ = predicate;
+    _ = pattern;
+    _ = structure;
 }

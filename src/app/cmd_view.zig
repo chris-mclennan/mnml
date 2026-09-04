@@ -39,6 +39,8 @@ pub const table = .{
     .@"view.focus_right_panel" = &focusRightPanel,
     .@"view.right_panel_close_tab" = &closeRightPanel,
     .@"view.activity_todos" = &activityTodos,
+    .@"view.toggle_sticky_context" = &toggleStickyContext,
+    .@"view.toggle_auto_md_preview" = &toggleAutoMdPreview,
     .@"tab.new" = &tabNew,
     .@"tab.next" = &tabNext,
     .@"tab.prev" = &tabPrev,
@@ -75,6 +77,18 @@ fn toggleLineNumbers(app: *App) CommandError!void {
 }
 
 fn redraw(app: *App) CommandError!void {
+    app.needs_render = true;
+}
+
+fn toggleStickyContext(app: *App) CommandError!void {
+    app.cfg.ui.sticky_context = !app.cfg.ui.sticky_context;
+    app.toast("sticky context: {s}", .{if (app.cfg.ui.sticky_context) "on" else "off"});
+    app.needs_render = true;
+}
+
+fn toggleAutoMdPreview(app: *App) CommandError!void {
+    app.cfg.ui.auto_md_preview = !app.cfg.ui.auto_md_preview;
+    app.toast("auto-preview md: {s}", .{if (app.cfg.ui.auto_md_preview) "on" else "off"});
     app.needs_render = true;
 }
 

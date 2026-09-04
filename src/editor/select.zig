@@ -225,6 +225,90 @@ pub fn paragraph(ed: *Editor, around: bool) void {
     ed.cursor = b[1];
 }
 
+/// `if` / `af` / `ic` / `ac`: the innermost function or class around the
+/// cursor, by the syntax tree the app installed. No provider (a file
+/// with no grammar) leaves the selection alone.
+pub fn object(ed: *Editor, kind: editor.ObjectKind, around: bool) void {
+    const p = ed.objects orelse return;
+    const r = p.lookup(p.ctx, ed, kind, ed.cursor, around) orelse return;
+    ed.anchor = r[0];
+    ed.cursor = r[1];
+}
+
+/// Byte range of the argument under the cursor inside the innermost
+/// `(...)`: the contents split at top-level commas (depth-balanced over
+/// `()[]{}`, quote-aware), trimmed. `around` swallows the trailing comma
+/// and the blanks after it — or, on the last argument, the comma and
+/// blanks before it.
+pub fn argumentBounds(ed: *const Editor, around: bool) ?[2]usize {
+    const pair = enclosingBracketPair(ed, '(', ')') orelse return null;
+    const t = ed.bytes();
+    const body_start = ed.nextBoundary(pair[0]);
+    const body_end = pair[1];
+    var args: [64][2]usize = undefined;
+    var n: usize = 0;
+    var depth: usize = 0;
+    var in_str: ?u8 = null;
+    var arg_start = body_start;
+    var i = body_start;
+    while (i < body_end) : (i += 1) {
+        const b = t[i];
+        if (in_str) |q| {
+            if (b == q and (i == 0 or t[i - 1] != '\\')) in_str = null;
+            continue;
+        }
+        switch (b) {
+            '"', '\'', '`' => in_str = b,
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            ',' => if (depth == 0) {
+                if (n == args.len) return null;
+                args[n] = .{ arg_start, i };
+                n += 1;
+                arg_start = i + 1;
+            },
+            else => {},
+        }
+    }
+    if (n == args.len) return null;
+    args[n] = .{ arg_start, body_end };
+    n += 1;
+    const cur = ed.cursor;
+    var idx: ?usize = null;
+    for (args[0..n], 0..) |a, k| if (cur >= a[0] and cur <= a[1]) {
+        idx = k;
+        break;
+    };
+    const k = idx orelse return null;
+    const a = args[k];
+    var lo = a[0];
+    var hi = a[1];
+    while (lo < hi and isBlank(t[lo])) lo += 1;
+    while (hi > lo and isBlank(t[hi - 1])) hi -= 1;
+    if (!around) return .{ lo, hi };
+    // Prefer the trailing comma; the last argument takes the leading one.
+    if (k + 1 < n and a[1] < body_end and t[a[1]] == ',') {
+        var e = a[1] + 1;
+        while (e < body_end and (t[e] == ' ' or t[e] == '\t')) e += 1;
+        return .{ lo, e };
+    }
+    var s = lo;
+    while (s > body_start and (t[s - 1] == ' ' or t[s - 1] == '\t')) s -= 1;
+    if (s > body_start and t[s - 1] == ',') s -= 1;
+    return .{ s, hi };
+}
+
+fn isBlank(b: u8) bool {
+    return b == ' ' or b == '\t' or b == '\n' or b == '\r';
+}
+
+/// `ia` / `aa`.
+pub fn argument(ed: *Editor, around: bool) void {
+    const r = argumentBounds(ed, around) orelse return;
+    ed.anchor = r[0];
+    ed.cursor = r[1];
+}
+
 /// `<name …>` … `</name>` around the cursor. Returns the byte ranges of
 /// the opening tag and the closing tag: `{ open_start, open_end,
 /// close_start, close_end }`. Self-closing and `<!…>` tags are skipped;
@@ -444,4 +528,38 @@ test "line-to-end, inclusive, linewise normalize, swap, gv" {
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
     moveCursorToSelectionStart(&ed);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+}
+
+test "argument object: inner trims, around takes the trailing comma, the last arg takes the leading one" {
+    var ed = try Editor.init(std.testing.allocator, "let r = call(foo, bar, baz);\n");
+    defer ed.deinit();
+    const text = ed.bytes();
+    ed.cursor = std.mem.indexOf(u8, text, "bar").?;
+    try std.testing.expectEqualSlices(usize, &.{ 18, 21 }, &argumentBounds(&ed, false).?);
+    try std.testing.expectEqualSlices(usize, &.{ 18, 23 }, &argumentBounds(&ed, true).?);
+    ed.cursor = std.mem.indexOf(u8, text, "baz").?;
+    try std.testing.expectEqualSlices(usize, &.{ 21, 26 }, &argumentBounds(&ed, true).?);
+    ed.cursor = 0;
+    try std.testing.expect(argumentBounds(&ed, false) == null);
+}
+
+test "function / class objects go through the installed provider; none installed is a no-op" {
+    var ed = try Editor.init(std.testing.allocator, "fn a() { x }");
+    defer ed.deinit();
+    ed.cursor = 9;
+    object(&ed, .function, false);
+    try std.testing.expect(ed.anchor == null);
+    const Fake = struct {
+        fn lookup(_: *anyopaque, _: *const Editor, kind: editor.ObjectKind, _: usize, around: bool) ?[2]usize {
+            if (kind != .function) return null;
+            return if (around) .{ 0, 12 } else .{ 8, 11 };
+        }
+    };
+    var dummy: u8 = 0;
+    ed.objects = .{ .ctx = &dummy, .lookup = &Fake.lookup };
+    object(&ed, .function, false);
+    try std.testing.expectEqual(@as(?usize, 8), ed.anchor);
+    try std.testing.expectEqual(@as(usize, 11), ed.cursor);
+    object(&ed, .class, true);
+    try std.testing.expectEqual(@as(?usize, 8), ed.anchor); // unchanged: no class
 }

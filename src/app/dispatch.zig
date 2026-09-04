@@ -35,6 +35,9 @@ const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
+const snippets = @import("snippets.zig");
+const outline = @import("outline.zig");
+const md_preview = @import("md_preview.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -61,6 +64,20 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     }
 
     const pane_id = app.active;
+    // The non-editor panes take their own keys first.
+    if (pane_id) |id| if (app.panes.get(id)) |p| switch (p.*) {
+        .outline => {
+            if (try outline.handleKey(app, id, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .md_preview => {
+            if (try md_preview.handleKey(app, id, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .editor => {},
+    };
     const ed: ?*EditorPane = if (pane_id) |id| app.panes.editor(id) else null;
     const mode: input.EditingMode = if (ed) |e| e.buf.input.mode() else .none;
     const cmdline_open = if (ed) |e| e.buf.input.isCmdlineOpen() else false;
@@ -85,6 +102,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         if (try chordChain(app, k)) return;
     }
     const e = ed orelse return;
+    if (try snippets.interceptKey(app, pane_id.?, e, k)) return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);
 }
@@ -100,6 +118,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
     cmd_find.seedCtxMatches(e);
+    app.attachSeams(e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
     if (e.buf.last_unsupported) |name| {
@@ -112,6 +131,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .redraw => {},
         .edited => {
             e.hl_dirty = true;
+            snippets.afterEdit(app, pane_id, e);
             if (trigger) try expandAbbreviation(app, e);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
@@ -556,6 +576,30 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
             try runMenuAction(app, items[mi.idx].action);
         },
         .editor_cell => |cell| {
+            // The outline and the preview reuse the cell hit: a row is a
+            // jump, a row is a scroll target.
+            if (app.panes.get(cell.pane)) |p| switch (p.*) {
+                .outline => {
+                    if (m.kind == .press and m.button == .left) {
+                        if (app.overlay != .none) closeOverlay(app);
+                        outline.clickRow(app, cell.pane, cell.line, cell.col);
+                    }
+                    return;
+                },
+                .md_preview => |*mp| {
+                    switch (m.kind) {
+                        .scroll_up => md_preview.scrollBy(app, mp, -3),
+                        .scroll_down => md_preview.scrollBy(app, mp, 3),
+                        .press => {
+                            if (app.overlay != .none) closeOverlay(app);
+                            app.showPane(cell.pane);
+                        },
+                        else => {},
+                    }
+                    return;
+                },
+                .editor => {},
+            };
             if (m.kind == .scroll_up or m.kind == .scroll_down) {
                 const e = app.panes.editor(cell.pane) orelse return;
                 const delta: i32 = if (m.kind == .scroll_up) -3 else 3;
@@ -614,6 +658,13 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
         .pane => |id| if (m.kind == .press) {
             if (app.overlay != .none) closeOverlay(app);
             app.showPane(id);
+        },
+        .button => |id| if (m.kind == .press) {
+            const cmd: ?command.CommandId = if (id == md_preview.button_edit) .@"markdown.edit_raw" else if (id == md_preview.button_preview) .@"markdown.preview" else null;
+            if (cmd) |c| command.run(app, .{ .static = c }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
         },
         .tree_node => |idx| switch (m.kind) {
             .press => {

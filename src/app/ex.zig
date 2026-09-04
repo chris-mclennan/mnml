@@ -242,7 +242,7 @@ fn write(app: *App, path_arg: []const u8, then_close: bool) CommandError!void {
     if (path_arg.len > 0) {
         const abs = try app.absPath(path_arg);
         e.buf.setPath(abs) catch return error.OutOfMemory;
-        e.syntax.setLanguage(abs);
+        e.syntax.setLanguage(abs, e.buf.editor.bytes());
         e.hl_dirty = true;
     }
     const path = e.buf.path orelse return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
@@ -264,6 +264,7 @@ fn saveAll(app: *App) CommandError!void {
             e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
             n += 1;
         },
+        else => {},
     };
     app.toast("saved {d} file(s)", .{n});
 }
@@ -693,6 +694,10 @@ fn set(app: *App, args: []const u8) CommandError!void {
         } else if (eqAny(name, &.{ "theme", "colorscheme" })) {
             const v = value orelse return app.diag.fail(arena, ":set theme=<name>", .{});
             try @import("cmd_view.zig").useTheme(app, v);
+        } else if (eqAny(name, &.{ "stickycontext", "sticky", "stickycontext!", "invstickycontext" })) {
+            const toggle = std.mem.endsWith(u8, name, "!") or std.mem.startsWith(u8, name, "inv");
+            app.cfg.ui.sticky_context = if (toggle) !app.cfg.ui.sticky_context else !off;
+            app.toast("sticky context: {s}", .{if (app.cfg.ui.sticky_context) "on" else "off"});
         } else if (eqAny(name, &.{ "input", "keymap" })) {
             const v = value orelse return app.diag.fail(arena, ":set input=vim|standard", .{});
             const style: input.Style = if (std.mem.eql(u8, v, "vim")) .vim else if (std.mem.eql(u8, v, "standard")) .standard else return app.diag.fail(arena, ":set input — unknown style \"{s}\"", .{v});
@@ -704,6 +709,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
             app.cfg.editor.tab_width = @max(n, 1);
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .editor => |*e| e.buf.editor.tab_width = @max(n, 1),
+                else => {},
             };
             app.toast(":set {s}={d}", .{ name, n });
         } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "ai", "autoindent", "et", "expandtab", "rnu", "relativenumber", "list", "cul", "cursorline" })) {

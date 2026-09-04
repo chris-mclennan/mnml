@@ -28,10 +28,13 @@ const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const buffer_mod = @import("editor/buffer.zig");
 const edit_op = @import("editor/edit_op.zig");
+const edit_op_editor = @import("editor/editor.zig");
 const pane_mod = @import("app/pane.zig");
 const layout_mod = @import("app/layout.zig");
 const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
+const snippets = @import("app/snippets.zig");
+const md_preview = @import("app/md_preview.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
 const ex = @import("app/ex.zig");
@@ -253,6 +256,7 @@ pub const App = struct {
     /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
     right_panel: ?PanelId = null,
     todos: todos.State,
+    snippets: snippets.State,
     focus: FocusId = .tree,
     active: ?PaneId = null,
     hits: hit.HitMap = .{},
@@ -332,6 +336,7 @@ pub const App = struct {
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa),
+            .snippets = snippets.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -389,6 +394,7 @@ pub const App = struct {
         self.theme = t.*;
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.hl_dirty = true,
+            else => {},
         };
         self.needs_render = true;
     }
@@ -434,6 +440,7 @@ pub const App = struct {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
         self.todos.deinit(gpa, self.io);
+        self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
             fb.state.deinit(gpa);
@@ -582,9 +589,26 @@ pub const App = struct {
         return self.panes.editor(id) orelse error.NotAnEditor;
     }
 
+    /// Open `path` (absolute): a markdown file goes to its rendered
+    /// preview (`markdown_opens_rendered`) unless it is already open in
+    /// an editor; anything else to an editor pane. With `auto_md_preview`
+    /// a markdown file gets the editor AND a preview split beside it.
+    pub fn openPath(self: *App, path: []const u8) !PaneId {
+        const is_md = md_preview.isMarkdownPath(path);
+        if (is_md and self.cfg.ui.markdown_opens_rendered and !self.cfg.ui.auto_md_preview and self.panes.findPath(path) == null) {
+            return md_preview.open(self, path, .here, null);
+        }
+        const id = try self.openEditor(path);
+        if (is_md and self.cfg.ui.auto_md_preview and self.panes.findPreview(path) == null) {
+            _ = try md_preview.open(self, path, .beside, id);
+            self.setActive(id);
+        }
+        return id;
+    }
+
     /// Open `path` (absolute) in an editor pane and focus it. An already
     /// open file is revealed instead. A missing file is a new buffer.
-    pub fn openPath(self: *App, path: []const u8) !PaneId {
+    pub fn openEditor(self: *App, path: []const u8) !PaneId {
         if (self.panes.findPath(path)) |id| {
             self.showPane(id);
             return id;
@@ -615,7 +639,7 @@ pub const App = struct {
         }
         var syn = syntax.Syntax.init(gpa);
         errdefer syn.deinit();
-        syn.setLanguage(path);
+        syn.setLanguage(path, buf.editor.bytes());
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn } });
         // Moved into the store: the errdefers above must not run from here.
         self.showPane(id);
@@ -711,8 +735,26 @@ pub const App = struct {
         self.chord.clear(self.gpa);
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.buf.setInputStyle(style, self.editorConfig()),
+            else => {},
         };
         self.needs_render = true;
+    }
+
+    /// The tree-sitter text-object provider every editor pane gets: the
+    /// pane whose editor asked answers from its own syntax state.
+    fn objectLookup(ctx: *anyopaque, ed: *const edit_op_editor.Editor, kind: edit_op_editor.ObjectKind, byte: usize, around: bool) ?[2]usize {
+        const self: *App = @ptrCast(@alignCast(ctx));
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (&e.buf.editor == ed) return e.syntax.objectRange(ed, kind, byte, around),
+            else => {},
+        };
+        return null;
+    }
+
+    /// Install the app's seams on an editor pane (idempotent; called on
+    /// the way into every key and op).
+    pub fn attachSeams(self: *App, e: *EditorPane) void {
+        e.buf.editor.objects = .{ .ctx = self, .lookup = &objectLookup };
     }
 
     /// Workspace-relative when inside it, else the path itself.
@@ -734,6 +776,7 @@ pub const App = struct {
     /// Run editor ops on `pane`. Returns whether the text changed. An op
     /// the editor refuses is toasted by name.
     pub fn applyOps(self: *App, pane: *EditorPane, ops: []const edit_op.EditOp) Allocator.Error!bool {
+        self.attachSeams(pane);
         const changed = try pane.buf.applyOps(ops, &self.clipboard, self.pane_rows, self.frame.allocator());
         if (pane.buf.last_unsupported) |name| {
             self.toast("{s}: not supported yet", .{name});
@@ -742,8 +785,18 @@ pub const App = struct {
         if (changed) {
             pane.hl_dirty = true;
             self.needs_render = true;
+            if (self.paneIdOf(pane)) |id| snippets.afterEdit(self, id, pane);
         }
         return changed;
+    }
+
+    /// The id of an editor pane, by address.
+    pub fn paneIdOf(self: *App, e: *const EditorPane) ?PaneId {
+        for (self.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
+            .editor => |*ep| if (ep == e) return @intCast(i),
+            else => {},
+        };
+        return null;
     }
 
     /// Replace `[start, end)` with `text` as one undo step, cursor after it.
@@ -859,6 +912,14 @@ pub const App = struct {
     pub fn nextDeadlineMs(self: *const App) ?i64 {
         var next: ?i64 = self.chord.deadline_ms;
         if (self.theme_auto_poll_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
+        // A pane waiting out the highlight idle gate wants a frame then.
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (e.hl_dirty) {
+                const due = (e.hl_since_ms orelse self.now_ms) + syntax.idle_ms;
+                next = @min(next orelse std.math.maxInt(i64), due);
+            },
+            else => {},
+        };
         // A spinner is animating: keep frames coming.
         if (self.todos.scanning) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         for (self.toasts.items) |t| {
@@ -900,6 +961,12 @@ test {
     _ = @import("app/settings.zig");
     _ = @import("app/first_launch.zig");
     _ = @import("app/pane.zig");
+    _ = @import("app/outline.zig");
+    _ = @import("app/md_preview.zig");
+    _ = @import("app/snippets.zig");
+    _ = @import("app/sticky.zig");
+    _ = @import("ui/outline_view.zig");
+    _ = @import("ui/md_view.zig");
     _ = @import("app/layout.zig");
     _ = @import("app/find.zig");
     _ = @import("app/syntax.zig");

@@ -36,6 +36,10 @@ const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
 const wizard_ui = @import("../ui/wizard.zig");
+const syntax = @import("syntax.zig");
+const sticky = @import("sticky.zig");
+const outline = @import("outline.zig");
+const md_preview = @import("md_preview.zig");
 
 /// The right panel's width; the divider takes one more column.
 pub const right_panel_width: u16 = 40;
@@ -123,6 +127,25 @@ fn drawBufferline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = app.active == id });
     }
     bufferline.draw(ui, area, tabs.items);
+    drawMdChip(app, ui, area);
+}
+
+/// The markdown chip at the right end of the strip: `✏ Edit` on a
+/// preview, ` Preview` on a markdown editor. A click is the command.
+fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
+    const active = app.active orelse return;
+    const pane = app.panes.get(active) orelse return;
+    const label: []const u8, const button: u32 = switch (pane.*) {
+        .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
+        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
+        .outline => return,
+    };
+    const w = ui.width(label);
+    if (area.w < w + 2) return;
+    const r = Rect.init(area.right() - w, area.y, w, 1);
+    ui.fill(r, app.theme.chip);
+    _ = ui.putStr(r.x, r.y, w, label, app.theme.chip);
+    ui.hit(r, .{ .button = button });
 }
 
 fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
@@ -150,6 +173,11 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
         switch (pane.*) {
             .editor => |*e| try drawEditor(app, ui, pr.pane, e, pr.rect),
+            .outline => |*o| {
+                if (app.active == pr.pane) app.pane_rows = @max(pr.rect.h, 1);
+                try outline.draw(app, ui, pr.pane, o, pr.rect);
+            },
+            .md_preview => |*m| try md_preview.draw(app, ui, pr.pane, m, pr.rect),
         }
     }
 }
@@ -166,10 +194,28 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         bar = s.rest;
     };
     const focused = app.active == id and app.focus == .pane;
-    if (e.hl_dirty) {
-        try e.syntax.refresh(e.buf.editor.bytes(), &app.theme);
+    const ed = &e.buf.editor;
+    // Highlighting: every frame folds the edits since the last one into
+    // the tree and slides the cached spans along, so what is painted
+    // lines up with the text; the reparse itself waits for the idle
+    // gate — or runs at once for a first parse or a lost log.
+    if (e.hl_dirty and e.hl_since_ms == null) e.hl_since_ms = app.now_ms;
+    const lost = e.syntax.absorb(ed);
+    const due = e.hl_dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.hl_since_ms.? >= syntax.idle_ms);
+    if (due) {
+        try e.syntax.refresh(ed);
         e.hl_dirty = false;
+        e.hl_since_ms = null;
     }
+    ed.edits.trim(e.syntax.seen_seq);
+    // Spans for a window around the viewport and the cursor — the view
+    // may scroll to the cursor inside `draw`, so both are covered.
+    const line_count = ed.lineCount();
+    const rows: usize = @max(rect.h, 1);
+    const cur_line = ed.currentLine();
+    const lo_line = @min(@min(e.view.scroll_line -| rows, cur_line -| rows), line_count - 1);
+    const hi_line = @min(@max(e.view.scroll_line + 2 * rows, cur_line + rows), line_count - 1);
+    const spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
     const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());
     for (e.buf.folds.keys(), e.buf.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
@@ -181,7 +227,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .anchor = e.buf.editor.anchor,
         .extra_cursors = e.buf.editor.extra_cursors.items,
         .folds = folds,
-        .spans = e.syntax.spans.items,
+        .spans = spans,
         .matches = matches,
         .current_match = e.find.current,
         .wrap = e.wrap orelse app.cfg.ui.wrap,
@@ -196,6 +242,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .visual_block = mode == .visual_block,
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
+    const headers = try sticky.headerLines(app, e, arena);
+    if (headers.len > 0) sticky.draw(ui, id, e, rect, headers, app.cfg.ui.line_numbers);
     if (app.active == id) {
         app.pane_rows = @max(rect.h, 1);
         // Text columns: the gutter takes the digits plus two.

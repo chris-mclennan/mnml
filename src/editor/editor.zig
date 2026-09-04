@@ -28,6 +28,90 @@ pub const Error = error{Unsupported} || Allocator.Error;
 
 pub const Pos = struct { row: usize, col: usize };
 
+/// A (row, byte column) position — what tree-sitter's `InputEdit` wants.
+pub const Point = struct { row: u32, col: u32 };
+
+/// One `splice`, in pre-edit byte coordinates plus the points on either
+/// side of it. `seq` climbs by one per record, so a consumer that
+/// remembers the last `seq` it applied can pull exactly the edits it
+/// missed (`EditLog.since`).
+pub const Splice = struct {
+    start: usize,
+    old_end: usize,
+    new_end: usize,
+    start_pt: Point,
+    old_end_pt: Point,
+    new_end_pt: Point,
+    seq: u64,
+};
+
+/// The incremental-parse contract, kept where the text changes. Every
+/// `splice` appends a record; a wholesale replacement (`setText`, an
+/// undo restore) has no record and instead bumps `lost_at`, telling a
+/// consumer whose `seen` predates it to rebuild from scratch. The log
+/// is trimmed by its slowest consumer (`trim`) and capped so a
+/// consumer that never reads it cannot grow it without bound.
+pub const EditLog = struct {
+    items: std.ArrayList(Splice) = .empty,
+    next_seq: u64 = 1,
+    lost_at: u64 = 0,
+
+    pub const cap = 4096;
+
+    /// Records after `seen`, oldest first.
+    pub fn since(self: *const EditLog, seen: u64) []const Splice {
+        const items = self.items.items;
+        var lo: usize = 0;
+        var hi: usize = items.len;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2;
+            if (items[mid].seq <= seen) lo = mid + 1 else hi = mid;
+        }
+        return items[lo..];
+    }
+
+    /// True when the text changed in a way the records after `seen` do
+    /// not describe.
+    pub fn lostSince(self: *const EditLog, seen: u64) bool {
+        return self.lost_at > seen;
+    }
+
+    /// The seq a consumer is current at once it has applied `since(seen)`.
+    pub fn head(self: *const EditLog) u64 {
+        return self.next_seq - 1;
+    }
+
+    /// Drop records at or before `seq` (every consumer has seen them).
+    pub fn trim(self: *EditLog, seq: u64) void {
+        const items = self.items.items;
+        var n: usize = 0;
+        while (n < items.len and items[n].seq <= seq) n += 1;
+        if (n == 0) return;
+        std.mem.copyForwards(Splice, items[0 .. items.len - n], items[n..]);
+        self.items.items.len -= n;
+    }
+
+    fn markLost(self: *EditLog) void {
+        self.items.clearRetainingCapacity();
+        self.lost_at = self.next_seq;
+        self.next_seq += 1;
+    }
+};
+
+/// Which structural object a text-object op asks for. The editor knows
+/// nothing about syntax trees; the app installs an `ObjectProvider`
+/// backed by the pane's highlighter, and `select_inner_function` & co.
+/// ask it.
+pub const ObjectKind = enum { function, class };
+
+pub const ObjectProvider = struct {
+    ctx: *anyopaque,
+    /// Byte range `[start, end)` of the innermost object of `kind`
+    /// containing `byte`, or null. `around` spans the whole definition;
+    /// otherwise just its body.
+    lookup: *const fn (ctx: *anyopaque, ed: *const Editor, kind: ObjectKind, byte: usize, around: bool) ?[2]usize,
+};
+
 /// Cap for `change_list` — vim's `:changes` shows the last ~100.
 pub const change_list_max = 100;
 
@@ -95,6 +179,12 @@ pub const Editor = struct {
     history: undo.History,
     /// A coalescing run of typed chars is open.
     in_insert_run: bool = false,
+    /// Every `splice`, for incremental consumers (the highlighter's tree,
+    /// a snippet session's tab stops).
+    edits: EditLog = .{},
+    /// Tree-sitter text objects, installed by the app; null = the ops
+    /// that need one are no-ops.
+    objects: ?ObjectProvider = null,
 
     pub fn init(gpa: Allocator, text: []const u8) Allocator.Error!Editor {
         var ed: Editor = .{ .gpa = gpa, .history = .init(gpa) };
@@ -113,6 +203,7 @@ pub const Editor = struct {
         self.replace_stack.deinit(gpa);
         if (self.ghost_suggestion) |g| gpa.free(g);
         self.change_list.deinit(gpa);
+        self.edits.items.deinit(gpa);
         self.history.deinit();
     }
 
@@ -132,6 +223,7 @@ pub const Editor = struct {
         self.text.clearRetainingCapacity();
         try self.text.appendSlice(self.gpa, text);
         try self.rebuildLineIndex();
+        self.edits.markLost();
         self.anchor = null;
         self.goal_col = null;
         self.setCursor(self.cursor);
@@ -151,6 +243,9 @@ pub const Editor = struct {
         const gpa = self.gpa;
         const nl_new = std.mem.count(u8, new, "\n");
         try self.line_starts.ensureUnusedCapacity(gpa, nl_new);
+        try self.edits.items.ensureUnusedCapacity(gpa, 1);
+        const start_pt = self.pointAt(start);
+        const old_end_pt = self.pointAt(end);
         try self.text.replaceRange(gpa, start, end - start, new);
 
         const ls = &self.line_starts;
@@ -175,6 +270,26 @@ pub const Editor = struct {
         }
         const delta: isize = @as(isize, @intCast(new.len)) - @as(isize, @intCast(end - start));
         for (ls.items[lo + nl_new ..]) |*e| e.* = @intCast(@as(isize, @intCast(e.*)) + delta);
+
+        if (self.edits.items.items.len >= EditLog.cap) self.edits.markLost();
+        const new_end = start + new.len;
+        self.edits.items.appendAssumeCapacity(.{
+            .start = start,
+            .old_end = end,
+            .new_end = new_end,
+            .start_pt = start_pt,
+            .old_end_pt = old_end_pt,
+            .new_end_pt = self.pointAt(new_end),
+            .seq = self.edits.next_seq,
+        });
+        self.edits.next_seq += 1;
+    }
+
+    /// `(row, byte column)` of byte `b` — the shape tree-sitter positions
+    /// take. Infallible: the line index is always current.
+    pub fn pointAt(self: *const Editor, b: usize) Point {
+        const row = self.lineOfByte(@min(b, self.text.items.len));
+        return .{ .row = @intCast(row), .col = @intCast(@min(b, self.text.items.len) - self.lineStart(row)) };
     }
 
     /// Full rescan — `init`, `setText`, and the property test that checks
@@ -634,4 +749,26 @@ test "inferSingleEdit covers insert, backspace, forward delete" {
     try std.testing.expectEqual(TextEdit{ .start_byte = 3, .old_end_byte = 5, .new_end_byte = 3 }, inferSingleEdit(10, 8, 3, 3).?);
     try std.testing.expect(inferSingleEdit(10, 10, 3, 3) == null);
     try std.testing.expect(inferSingleEdit(10, 8, 3, 9) == null);
+}
+
+test "the edit log records every splice with points, marks wholesale replacements lost, and trims" {
+    var ed = try Editor.init(std.testing.allocator, "ab\ncd");
+    defer ed.deinit();
+    try ed.splice(1, 1, "X\nY");
+    try ed.splice(0, 2, "");
+    const recs = ed.edits.since(0);
+    try std.testing.expectEqual(@as(usize, 2), recs.len);
+    try std.testing.expectEqual(Point{ .row = 0, .col = 1 }, recs[0].start_pt);
+    try std.testing.expectEqual(Point{ .row = 0, .col = 1 }, recs[0].old_end_pt);
+    try std.testing.expectEqual(Point{ .row = 1, .col = 1 }, recs[0].new_end_pt);
+    try std.testing.expectEqual(@as(usize, 4), recs[0].new_end);
+    try std.testing.expectEqual(@as(u64, 2), ed.edits.head());
+    try std.testing.expectEqual(@as(usize, 1), ed.edits.since(1).len);
+    try std.testing.expect(!ed.edits.lostSince(0));
+    ed.edits.trim(1);
+    try std.testing.expectEqual(@as(usize, 1), ed.edits.items.items.len);
+    try ed.setText("fresh");
+    try std.testing.expect(ed.edits.lostSince(2));
+    try std.testing.expect(!ed.edits.lostSince(ed.edits.head()));
+    try std.testing.expectEqual(@as(usize, 0), ed.edits.since(0).len);
 }

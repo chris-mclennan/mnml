@@ -358,6 +358,44 @@ pub const onedark = struct {
     pub const purple = default.palette.purple;
 };
 
+/// The style a highlighter role paints with. The text modifiers
+/// (strong / emphasis / title / uri) are the base slot plus an SGR
+/// attribute, so a theme never has to list them.
+pub fn roleStyle(t: *const Theme, role: anytype) Style {
+    return switch (role) {
+        .none, .default => t.fg,
+        .comment => t.syntax.comment,
+        .variable => t.syntax.variable,
+        .constant => t.syntax.constant,
+        .type => t.syntax.type,
+        .string => t.syntax.string,
+        .special => t.syntax.escape,
+        .function => t.syntax.function,
+        .keyword => t.syntax.keyword,
+        .punctuation => t.syntax.punctuation,
+        .strong => blk: {
+            var s = t.fg;
+            s.bold = true;
+            break :blk s;
+        },
+        .emphasis => blk: {
+            var s = t.fg;
+            s.italic = true;
+            break :blk s;
+        },
+        .title => blk: {
+            var s = t.syntax.function;
+            s.bold = true;
+            break :blk s;
+        },
+        .uri => blk: {
+            var s = t.syntax.escape;
+            s.ul_style = .single;
+            break :blk s;
+        },
+    };
+}
+
 /// `base` with its background replaced — a chip's text color on the
 /// row's ground, a mode color on the statusline.
 pub fn onBg(base: Style, bg: Color) Style {

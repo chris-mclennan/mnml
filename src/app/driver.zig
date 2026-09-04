@@ -115,8 +115,7 @@ pub const AppDriver = struct {
     }
 
     fn vSnippet(p: *anyopaque, scope: []const u8, trigger: []const u8, expansion: []const u8) Error!void {
-        _ = expansion;
-        cast(p).app.toast("snippets are not in this build ({s}: {s})", .{ scope, trigger }); // TODO(snippets)
+        try cast(p).app.snippets.seed(scope, trigger, expansion);
     }
 
     fn vGhost(p: *anyopaque, text: []const u8) Error!void {
@@ -198,14 +197,20 @@ pub const AppDriver = struct {
         return try a.dupe(u8, pane.title());
     }
 
+    /// Spans across the visible lines of the active editor — what the
+    /// frame just painted, or would paint once the idle gate opens.
     fn vHighlightCount(p: *anyopaque) ?usize {
         const app = &cast(p).app;
         const e = app.activeEditor() orelse return null;
+        const ed = &e.buf.editor;
         if (e.hl_dirty) {
-            e.syntax.refresh(e.buf.editor.bytes(), &app.theme) catch return null;
+            e.syntax.refresh(ed) catch return null;
             e.hl_dirty = false;
+            e.hl_since_ms = null;
         }
-        return e.syntax.spans.items.len;
+        const first: usize = e.view.scroll_line;
+        const last = @min(first + @max(app.pane_rows, 1), ed.lineCount()) -| 1;
+        return e.syntax.countIn(ed.lineStart(@min(first, ed.lineCount() - 1)), ed.lineEnd(last));
     }
 
     /// The tier-2 IPC commands: toasts, and command registration.
