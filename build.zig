@@ -114,6 +114,23 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(ui_tests).step);
 
+    // ── tui tests ──
+    // src/tui through its barrel: the input worker's key naming and parser
+    // tests, and term.zig's capability detection. libc for the same reason
+    // as the main executable (Io.Threaded cancelation of blocked reads).
+    const tui_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tui/tui.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "vaxis", .module = vaxis_mod },
+            },
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(tui_tests).step);
+
     const pty_tests = b.addTest(.{ .root_module = pty_mod });
     const pty_test_run = b.addRunArtifact(pty_tests);
     const pty_test_step = b.step("pty-test", "Run the pty module tests");
