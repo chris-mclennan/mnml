@@ -76,9 +76,12 @@ extern "c" fn openpty(
 
 /// Called from the reader thread: once when the ring goes from empty to
 /// readable (see `Ring.commit`), and once when the child's output ends.
-/// The UI side answers by calling `Session.pump`. `ctx` must outlive every
-/// session that can fire it — in the app that is the event queue, which
-/// lives for the whole process.
+/// The UI side answers by calling `Session.pump`. The call is made under
+/// `Shared.notify_lock`, and `Session.deinit` disarms it under that same
+/// lock before letting go — so `ctx` only has to outlive the *session*,
+/// not the detached reader. The callback must therefore never block on
+/// something the UI thread provides (a full event queue drained only by
+/// the UI thread would deadlock a `deinit` waiting for the lock).
 pub const Notify = struct {
     ctx: ?*anyopaque = null,
     fn_ptr: ?*const fn (?*anyopaque) void = null,
@@ -125,6 +128,19 @@ pub const SpawnError = error{
     ArgvEmpty,
 } || Allocator.Error || std.Thread.SpawnError || Io.Cancelable;
 
+/// A test-and-set lock for the two-line critical sections in `Shared`.
+const SpinLock = struct {
+    held: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *SpinLock) void {
+        while (self.held.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *SpinLock) void {
+        self.held.store(false, .release);
+    }
+};
+
 /// State the reader thread and the session both reach. Refcounted; see the
 /// module doc for why it is not simply owned by the session.
 const Shared = struct {
@@ -132,6 +148,12 @@ const Shared = struct {
     master: posix.fd_t,
     child: posix.pid_t,
     notify: Notify,
+    /// Guards `notify`: the reader calls it under the lock, `Session.deinit`
+    /// clears it under the lock. After `deinit` returns the callback is
+    /// never entered again, whatever the reader is doing. A spinlock —
+    /// both critical sections are a handful of instructions, and the
+    /// reader is a raw thread with no `Io` to park on.
+    notify_lock: SpinLock = .{},
     poll_interval_ms: i32,
     /// Set by `Session.deinit`. The reader exits at its next poll wakeup.
     closing: std.atomic.Value(bool) = .init(false),
@@ -145,6 +167,20 @@ const Shared = struct {
         if (self.refs.fetchSub(1, .acq_rel) != 1) return;
         self.ring.deinit();
         gpa.destroy(self);
+    }
+
+    /// Reader side: fire the callback unless the session has let go.
+    fn callNotify(self: *Shared) void {
+        self.notify_lock.lock();
+        defer self.notify_lock.unlock();
+        self.notify.call();
+    }
+
+    /// Session side: no callback fires after this returns.
+    fn disarmNotify(self: *Shared) void {
+        self.notify_lock.lock();
+        defer self.notify_lock.unlock();
+        self.notify = .none;
     }
 };
 
@@ -255,6 +291,7 @@ pub const Session = struct {
     /// Hang up on the child and let go. Returns immediately (see module doc).
     pub fn deinit(self: *Session) void {
         const gpa = self.gpa;
+        self.shared.disarmNotify();
         self.shared.closing.store(true, .release);
         // The child called setsid, so its pid is its process group: hang up on
         // everything it started, not just the shell.
@@ -389,7 +426,7 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
             else => break,
         };
         if (got == 0) break;
-        if (shared.ring.commit(got)) shared.notify.call();
+        if (shared.ring.commit(got)) shared.callNotify();
     }
     shared.eof.store(true, .release);
     _ = c.close(shared.master);
@@ -399,7 +436,7 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
         _ = c.waitpid(shared.child, &status, 0);
         shared.reaped.store(true, .release);
     }
-    shared.notify.call();
+    shared.callNotify();
 }
 
 // ── child side ──────────────────────────────────────────────────────
@@ -691,4 +728,35 @@ test "deinit while the child is still running does not hang" {
     // The detached reader owns the rest; give it a beat so the leak
     // checker sees the shared block freed on this run rather than later.
     sleepMs(100);
+}
+
+test "no notify fires after deinit — the reader's EOF wakeup is disarmed under the lock" {
+    var env = try testEnv();
+    defer env.deinit();
+    const Counter = struct {
+        n: std.atomic.Value(u32) = .init(0),
+        fn bump(ctx: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            _ = self.n.fetchAdd(1, .acq_rel);
+        }
+    };
+    var counter: Counter = .{};
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 4,
+        .env = &env,
+        .argv = &.{ "/bin/sh", "-c", "echo one; sleep 30" },
+        .poll_interval_ms = 20,
+        .notify = .{ .ctx = &counter, .fn_ptr = &Counter.bump },
+    });
+    // The first line's wakeup lands.
+    var waited: u32 = 0;
+    while (counter.n.load(.acquire) == 0 and waited < 5000) : (waited += 5) sleepMs(5);
+    try testing.expect(counter.n.load(.acquire) >= 1);
+    const before = counter.n.load(.acquire);
+    s.deinit();
+    // The reader wakes within one poll interval, sees `closing`, closes
+    // the master and reaches its final notify — which must be a no-op now.
+    sleepMs(150);
+    try testing.expectEqual(before, counter.n.load(.acquire));
 }
