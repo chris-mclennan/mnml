@@ -876,12 +876,15 @@ pub const Vim = struct {
                 return .consumed;
             },
             .gq => {
+                // The reflow is paragraph-shaped whatever the range
+                // (Rust parity), so any motion or object lands the same op.
                 self.resetPending();
-                if (ch == 'q') return runCmd(.@"editor.reflow_paragraph");
                 if (ch == 'i' or ch == 'a') {
                     self.op = .reflow;
                     self.prefix = if (ch == 'i') .text_object_inner else .text_object_around;
+                    return .consumed;
                 }
+                if (ch == 'q' or motion(key.code) != null) return ops(arena, &.{.{ .reflow_paragraph = .{ .width = self.text_width } }});
                 return .consumed;
             },
             .mark_set => {
@@ -1047,8 +1050,9 @@ pub const Vim = struct {
                 return .{ .app = .{ .flash_start = .{ .a = a, .b = c } } };
             },
             .align_char_wait => {
+                // The range is live; a cancel parks the cursor at its start.
                 self.resetPending();
-                const c = ch orelse return ops(arena, &.{.select_clear});
+                const c = ch orelse return ops(arena, &.{ .move_cursor_to_selection_start, .select_clear });
                 return ops(arena, &.{ .{ .align_selection = .{ .on_char = c } }, .select_clear });
             },
         }
@@ -1624,12 +1628,13 @@ pub const Vim = struct {
             // `>j` / `<k`: one line op over a selection spanning the lines
             // (a per-line op without a selection would hit the cursor
             // line every time).
-            if (op == .indent or op == .outdent) {
+            if (op == .indent or op == .outdent or op == .@"align") {
                 try b.push(.select_start);
                 for (0..n) |_| try b.push(if (dir < 0) .move_up else .move_down);
                 // Park at the last line's end so a selection ending on a
                 // line start does not exclude that line.
                 try b.push(.move_line_end);
+                if (op == .@"align") return self.finishOperator(&b, op, ctx, false);
                 try b.push(if (op == .indent) .indent else .outdent);
                 try b.push(.select_clear);
                 return b.finish();

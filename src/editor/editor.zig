@@ -86,6 +86,10 @@ pub const Editor = struct {
     replace_stack: std.ArrayList(?u21) = .empty,
     /// AI ghost text painted after the cursor. Owned.
     ghost_suggestion: ?[]u8 = null,
+    /// The language's line-comment token (`// `) and, for block styles
+    /// (`<!-- ` … ` -->`), its closer. Static; empty = commentless file.
+    comment_token: []const u8 = "",
+    comment_token_close: []const u8 = "",
     /// `:changes` — where each mutation left the cursor, newest last.
     change_list: std.ArrayList(Pos) = .empty,
     history: undo.History,

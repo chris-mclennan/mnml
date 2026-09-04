@@ -25,6 +25,22 @@ pub const Key = input.Key;
 
 pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
 
+/// `(open, close)` comment tokens for a file extension; both empty for a
+/// commentless file so a toggle is a no-op instead of a stray literal.
+pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
+    const e = ext orelse return .{ "", "" };
+    const slash = [_][]const u8{ "zig", "rs", "ts", "tsx", "js", "jsx", "cjs", "mjs", "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "swift", "php", "scss", "less" };
+    const hash = [_][]const u8{ "py", "rb", "sh", "bash", "zsh", "toml", "yaml", "yml", "ini", "conf" };
+    const dash = [_][]const u8{ "lua", "sql" };
+    const angle = [_][]const u8{ "html", "htm", "xml", "vue", "svelte", "astro", "md", "markdown" };
+    for (slash) |x| if (std.mem.eql(u8, e, x)) return .{ "// ", "" };
+    for (hash) |x| if (std.mem.eql(u8, e, x)) return .{ "# ", "" };
+    for (dash) |x| if (std.mem.eql(u8, e, x)) return .{ "-- ", "" };
+    for (angle) |x| if (std.mem.eql(u8, e, x)) return .{ "<!-- ", " -->" };
+    if (std.mem.eql(u8, e, "css")) return .{ "/* ", " */" };
+    return .{ "", "" };
+}
+
 pub const Buffer = struct {
     gpa: Allocator,
     editor: Editor,
@@ -125,6 +141,9 @@ pub const Buffer = struct {
         self.language = null;
         const ext = std.fs.path.extension(path);
         if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
+        const tok = commentTokenFor(self.language);
+        self.editor.comment_token = tok[0];
+        self.editor.comment_token_close = tok[1];
     }
 
     pub const SaveError = Allocator.Error || Io.Dir.WriteFileError || error{NoPath};
@@ -814,6 +833,52 @@ test "vim surround: ys over motions and objects, yss, visual S, ds, cs" {
     try vim("ds\"u", "x \"a |b\" y", "x \"a |b\" y"); // one undo step
 }
 
+test "vim ctrl+a / ctrl+x, gA align, gq reflow" {
+    try vim("<c-a>", "|value = 41", "value = 4|2");
+    try vim("<c-x><c-x>", "|value = 41", "value = 3|9");
+    try vim("5<c-a>", "|x 9", "x 1|4");
+    try vim("10<c-x>", "|5", "-|5");
+    try vim("<c-a>", "|a-1", "a-|2"); // a minus glued to an identifier is not a sign
+    try vim("<c-a>", "|x -1", "x |0");
+    try vim("<c-a>", "|none", "|none");
+    try vim("<c-a>u", "|41", "|41");
+    try vim("gAip=", "|a = 1\nbb = 2\n\nc = 3", "|a  = 1\nbb = 2\n\nc = 3");
+    try vim("gAj=", "|a = 1\nbb = 2\nc = 3", "|a  = 1\nbb = 2\nc = 3");
+    try vim("VjgA=", "|a = 1\nbb = 2", "|a  = 1\nbb = 2");
+    try vim("vjgA=", "|a = 1\nbb = 2", "|a  = 1\nbb = 2");
+    try vim("gAip<esc>x", "|a = 1\nbb = 2", "| = 1\nbb = 2"); // Esc drops the range
+    try vim("gAip=", "|a = 1\nb = 2", "|a = 1\nb = 2"); // already aligned
+    const long = "word " ** 19 ++ "word";
+    try vim("gqq", "|" ++ long, "|" ++ "word " ** 15 ++ "word\n" ++ "word " ** 3 ++ "word");
+    try vim("gqip", "|" ++ long, "|" ++ "word " ** 15 ++ "word\n" ++ "word " ** 3 ++ "word");
+    try vim("gqj", "|a\nb\n\nc", "|a b\n\nc");
+    try vim("gqq", "|a b", "|a b");
+}
+
+test "vim comment toggle uses the buffer's token; a commentless buffer is a no-op" {
+    var h = try Harness.init(testing.allocator, .vim, "|a\n  b\nc");
+    defer h.deinit();
+    try h.feed("gcc");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    h.buf.editor.comment_token = "// ";
+    try h.feed("gcc");
+    try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("gcj");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("gcip");
+    try testing.expectEqualStrings("// a\n  // b\n// c", h.buf.editor.bytes());
+    try h.feed("j.");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes()); // `.` replays the whole-paragraph toggle
+    try h.feed("<c-/>"); // the paragraph toggle left the cursor on its first line
+    try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("u");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    try testing.expectEqualStrings("// ", commentTokenFor("zig")[0]);
+    try testing.expectEqualStrings(" -->", commentTokenFor("html")[1]);
+    try testing.expectEqualStrings("", commentTokenFor("txt")[0]);
+    try testing.expectEqualStrings("", commentTokenFor(null)[0]);
+}
+
 test "vim replace mode and cmdline" {
     try vim("RXY<esc>", "|abc", "X|Yc");
     try vim("RXYZW<esc>", "|abc", "XYZ|W");
@@ -957,8 +1022,8 @@ test "buffer: unsupported ops are skipped and named; folds shift with edits" {
     var h = try Harness.init(testing.allocator, .vim, "|a\nb\nc\nd");
     defer h.deinit();
     try h.buf.folds.put(testing.allocator, 2, 3);
-    try h.feed("<c-a>");
-    try testing.expectEqualStrings("change_number_at_cursor", h.buf.last_unsupported.?);
+    try h.feed("diq");
+    try testing.expectEqualStrings("select_inner_smart_quote", h.buf.last_unsupported.?);
     try h.feed("O!<esc>");
     try testing.expectEqual(@as(usize, 3), h.buf.folds.keys()[0]);
     try testing.expectEqual(@as(usize, 4), h.buf.folds.values()[0]);

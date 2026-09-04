@@ -178,16 +178,16 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         // ── line ops ──
         .indent => try line.indent(ed, out),
         .outdent => try line.outdent(ed, out),
-        .toggle_line_comment => return error.Unsupported, // TODO(vim-slice: comment) needs the language's comment token
+        .toggle_line_comment => try line.toggleLineComment(ed, out),
         .move_line_up => try line.moveLine(ed, -1, out),
         .move_line_down => try line.moveLine(ed, 1, out),
         .duplicate_line => try line.duplicateLine(ed, out),
         .join_lines => |j| try line.joinLines(ed, j.keep_space, out),
         .transform_selection_case => |k| try line.transformSelectionCase(ed, k, out),
         .toggle_case_char => try line.toggleCaseChar(ed, out),
-        .change_number_at_cursor => return error.Unsupported, // TODO(vim-slice: misc) ctrl+a / ctrl+x
-        .reflow_paragraph => return error.Unsupported, // TODO(vim-slice: reflow) gq
-        .align_selection => return error.Unsupported, // TODO(vim-slice: align) gA
+        .change_number_at_cursor => |n| try line.changeNumberAtCursor(ed, n.delta, out),
+        .reflow_paragraph => |r| try line.reflowParagraph(ed, r.width, out),
+        .align_selection => |a| try line.alignSelection(ed, a.on_char, out),
 
         // ── registers ──
         .set_register_hint => |r| register.setRegisterHint(clip, r),
@@ -272,7 +272,7 @@ test "apply: outcome flags, text edit inference, changelist, goal col" {
     _ = try ed.apply(.move_left, 10, &clip, arena);
     try std.testing.expect(ed.goal_col == null);
     // Unsupported tags are reported, not silently dropped.
-    try std.testing.expectError(error.Unsupported, ed.apply(.toggle_line_comment, 10, &clip, arena));
+    try std.testing.expectError(error.Unsupported, ed.apply(.select_inner_smart_quote, 10, &clip, arena));
 }
 
 test "property: cursor stays on a boundary and text stays valid UTF-8" {
@@ -290,6 +290,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
     for (0..200) |_| try insert.appendChar(&text, gpa, seed_chars[rnd.uintLessThan(usize, seed_chars.len)]);
     var ed = try Editor.init(gpa, text.items);
     defer ed.deinit();
+    ed.comment_token = "// ";
     const inner_ops = [_]EditOp{ .move_right, .delete_forward, .{ .insert_char = 'z' }, .move_down };
     const ops = [_]EditOp{
         .move_left,                                                             .move_right,                                            .move_up,                                                                                                        .move_down,
@@ -326,6 +327,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .add_cursor_below,                                                      .add_cursor_above,                                      .add_cursor_at_next_word,                                                                                        .clear_extra_cursors,
         .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
         .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
+        .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];
