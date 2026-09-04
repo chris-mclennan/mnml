@@ -33,8 +33,14 @@ pub const State = struct {
 
 pub const Outcome = union(enum) { consumed, cancel, choose: usize };
 
+/// The box for a one-line message; each further `\n` in the message
+/// adds a row.
 pub const height: u16 = 6;
 pub const min_inner_width: u16 = 28;
+
+fn lineCount(s: []const u8) u16 {
+    return @intCast(std.mem.count(u8, s, "\n") + 1);
+}
 
 /// The choice's letter (either case), ←/→ + enter, esc → cancel.
 pub fn handleKey(s: *State, key: Key) Outcome {
@@ -73,20 +79,30 @@ pub fn buttonText(ui: Ui, c: Choice) []const u8 {
     return ui.fmt("  [{c}] {s}  ", .{ std.ascii.toUpper(c.key), c.label });
 }
 
-/// Message on the first inner row, the choices on the last; the box a
-/// third of the way down. Registers `.overlay_item(i)` per choice.
+/// Message on the first inner rows (one per line), the choices on the
+/// last; the box a third of the way down. Registers `.overlay_item(i)`
+/// per choice.
 pub fn draw(ui: Ui, area: Rect, s: *const State) void {
     const t = ui.theme;
-    const msg = ui.fmt("  {s}", .{s.message});
     var buttons_w: u16 = 0;
     for (s.choices) |c| buttons_w += ui.width(buttonText(ui, c)) + 2;
-    const inner_w = @max(@max(ui.width(msg), buttons_w + 2), @max(min_inner_width, ui.width(s.title) + 4));
+    var msg_w: u16 = 0;
+    var lines = std.mem.splitScalar(u8, s.message, '\n');
+    while (lines.next()) |line| msg_w = @max(msg_w, ui.width(line) + 2);
+    const inner_w = @max(@max(msg_w, buttons_w + 2), @max(min_inner_width, ui.width(s.title) + 4));
     const w = @min(inner_w + 2, area.w -| 2);
-    const inner = overlay.box(ui, area, @max(w, @min(area.w, 8)), height, s.title, .third);
+    const h = height + lineCount(s.message) - 1;
+    const inner = overlay.box(ui, area, @max(w, @min(area.w, 8)), h, s.title, .third);
     if (inner.isEmpty() or inner.h < 2) return;
 
-    const msg_row = inner.row(0);
-    _ = ui.putStr(msg_row.x, msg_row.y, msg_row.w, ui.clipStr(msg, msg_row.w), Theme.onBg(t.fg, t.overlay_bg.bg));
+    lines = std.mem.splitScalar(u8, s.message, '\n');
+    var row: u16 = 0;
+    while (lines.next()) |line| : (row += 1) {
+        if (row + 1 >= inner.h) break;
+        const msg_row = inner.row(row);
+        const text = ui.fmt("  {s}", .{line});
+        _ = ui.putStr(msg_row.x, msg_row.y, msg_row.w, ui.clipStr(text, msg_row.w), Theme.onBg(t.fg, t.overlay_bg.bg));
+    }
 
     const by = inner.bottom() - 1;
     var bx = inner.x + 1;

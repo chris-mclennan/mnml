@@ -47,6 +47,7 @@ const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
+const trust_app = @import("app/trust.zig");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -89,7 +90,7 @@ pub const InitOptions = struct {
 pub const toast_ttl_ms: i64 = 4000;
 
 pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo };
-pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit };
+pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit, trust_workspace };
 pub const PickerKind = enum { buffers, files };
 
 pub const Overlay = union(enum) {
@@ -333,7 +334,31 @@ pub const App = struct {
         app.tree.width = app.cfg.ui.tree_width;
         try app.toastConfigDiagnostics();
         try app.applyTheme();
+        try trust_app.promptIfNeeded(&app);
         return app;
+    }
+
+    /// Load the three layers again with `trust` and switch to the result:
+    /// the keymap, the input style, the tree width and the theme follow.
+    /// The old `Loaded` is retired after `cfg` has stopped borrowing it.
+    pub fn reloadConfig(self: *App, trust: config.Trust) Allocator.Error!void {
+        const old = &(self.loaded orelse return);
+        var fresh = try old.reload(self.gpa, self.io, trust);
+        errdefer fresh.deinit();
+        var km = try buildKeymap(self.gpa, styleOf(fresh.config.editor.input_style), fresh.config.keys);
+        errdefer km.deinit();
+        self.cfg = fresh.config;
+        old.deinit();
+        self.loaded = fresh;
+        self.keymap.deinit();
+        self.keymap = km;
+        self.chord.clear(self.gpa);
+        const style = styleOf(self.cfg.editor.input_style);
+        if (style != self.input_style) try self.setInputStyle(style);
+        self.tree.width = self.cfg.ui.tree_width;
+        try self.toastConfigDiagnostics();
+        try self.applyTheme();
+        self.needs_render = true;
     }
 
     /// `ui.theme` → `theme`. An unknown name keeps what is painted and
@@ -849,6 +874,7 @@ pub const App = struct {
 };
 
 test {
+    _ = @import("app/trust.zig");
     _ = @import("app/pane.zig");
     _ = @import("app/layout.zig");
     _ = @import("app/find.zig");

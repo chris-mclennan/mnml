@@ -430,6 +430,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
 
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
     switch (purpose) {
+        .trust_workspace => try @import("trust.zig").answer(app, choice),
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;

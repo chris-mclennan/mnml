@@ -112,7 +112,8 @@ fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: 
     var loaded = try config.load.load(gpa, io, .{
         .explicit = parseConfigFlag(argv),
         .workspace = workspace,
-        .trust = .untrusted,
+        .trust = .ask,
+        .data_root = data_root,
         .env = cfg_env,
     });
     if (ascii) loaded.config.ui.ascii_icons = true;
