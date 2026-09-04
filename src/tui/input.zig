@@ -172,20 +172,21 @@ fn fold(self: *Input, event: Event) !void {
     switch (event) {
         .key_press => |key| {
             // The explicit-width / scaled-text probes end in a cursor
-            // position report, which parses as shift+F3 / alt+F3 while the
-            // queries are outstanding (column 2 or 3 ⇒ the OSC 66 moved
-            // the cursor). Never deliver those as keys.
+            // position report, `CSI row ; col R`, which the parser reads
+            // as F3 with `col` as its modifier: column 2 ⇒ shift (OSC 66
+            // moved the cursor, explicit width works), 3 ⇒ alt (scaled
+            // text). A terminal without OSC 66 answers column 1 — a plain
+            // F3 — and upstream vaxis delivers that as a key press. While
+            // the queries are outstanding every F3 is a reply, never a key.
             if (key.codepoint == Key.f3 and !vx.queries_done.load(.unordered)) {
                 if (key.mods.shift) {
                     vx.caps.explicit_width = true;
                     vx.caps.unicode = .unicode;
                     vx.screen.width_method = .unicode;
-                    return;
-                }
-                if (key.mods.alt) {
+                } else if (key.mods.alt) {
                     vx.caps.scaled_text = true;
-                    return;
                 }
+                return;
             }
             try self.postEvent(.{ .key_press = self.cacheText(key) });
         },
@@ -369,8 +370,10 @@ test "fold: capability replies land in vaxis, DA1 ends the probe, keys are poste
     try in.fold(.cap_kitty_graphics);
     try in.fold(.cap_sgr_pixels);
     try in.fold(.cap_unicode);
-    // shift+F3 while probing is the explicit-width reply, not a key.
+    // shift+F3 while probing is the explicit-width reply, not a key; a
+    // plain F3 is the same report from a terminal without OSC 66.
     try in.fold(.{ .key_press = .{ .codepoint = Key.f3, .mods = .{ .shift = true } } });
+    try in.fold(.{ .key_press = .{ .codepoint = Key.f3 } });
     try in.fold(.{ .winsize = .{ .rows = 10, .cols = 20, .x_pixel = 0, .y_pixel = 0 } });
     try in.fold(.cap_da1);
 
