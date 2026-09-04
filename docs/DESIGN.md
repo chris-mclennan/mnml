@@ -193,6 +193,16 @@ pub const InputHandler = union(enum) { standard: Standard, vim: Vim,
 ```
 Seam kept: `InputResult{ops: []const EditOp, consumed, ignored, app: AppCommand}`, `EditCtx` (13 scalars, by value), `BufferEvent`, `AppCommand` (with `run_command: CommandId` — enum, not string). `EditOp` = `union(enum)` 131 tags; `repeat: struct{count, inner: *const EditOp}` / `atomic: []const EditOp` point into **`app.frame`**; dot-repeat + macro registers (the only cross-iteration holders) call `EditOp.dupe(gpa)`/`free(gpa)`. `apply_one`: **one exhaustive `switch` in `editor/apply.zig`**, grouped prongs delegating to family modules (`motion/insert/delete/select/undo/fold/case/multicursor.zig`). Undo: snapshot arena + ring instead of `Vec<String>` with `remove(0)`.
 
+### D4b. Keymap profiles — vim and standard are first-class, each complete (added 2026-09-04)
+
+User requirement: vim users get hotkeys/chords that match **Neovim + NvChad** exactly; standard users get **VS Code**. Segregate so each feels at home. Mechanism:
+- `Spec.keys` becomes `Keys{ vim: []const []const u8 = &.{}, standard: []const []const u8 = &.{}, both: []const []const u8 = &.{} }`. A command declares its chord per profile (`picker.files`: vim `space f f`, standard `ctrl+p`). **No strip-list** — the vim profile simply never binds `ctrl+w/g/d/u/e/y/r/n/h/j/t/f` to non-vim things.
+- The vim profile's defaults are derived from NvChad's `mappings.lua` (leader menus: `<leader>f*` find, `<leader>g*`/`cm` git, `<leader>t*` themes/terms, `<leader>x` close buffer, `<Tab>/<S-Tab>` bufferline, `<C-n>`/`<leader>e` tree, `<C-h/j/k/l>` window nav, `<leader>/` comment, `<leader>fm` format, `<leader>ra`/`ca`, `gd/gD/gr/K`, `[d ]d`, `<leader>ch` cheatsheet, `<leader>wK` which-key) plus Neovim defaults; the standard profile from VS Code (`ctrl+p`, `ctrl+shift+p`, `ctrl+b`, `` ctrl+` ``, `ctrl+shift+e/f/g/d`, `f12`, `ctrl+.`, `f2`, `ctrl+/`, `alt+↑↓`, `ctrl+d`, `ctrl+g`, …). A pinned test asserts the profile tables against a checked-in reference list so drift is a test failure.
+- Comptime: chord collisions checked **per profile**; every spec parses; `[keys.global]` still applies to both, `[keys.vim]`/`[keys.standard]` overlay their profile.
+- Which-key, cheatsheet, tooltips, and the palette's key hints render **per active profile**.
+- **Kitty-keyboard fallbacks:** chords only distinguishable under the kitty keyboard protocol (`ctrl+shift+p`, `alt+i`, `ctrl+;`, `ctrl+enter`) declare an alternate for terminals without it (`Keys.standard_legacy` or a `fallback:` on the spec) — ghostty is first-class, Windows Terminal/xterm must still reach every command.
+- Backport candidate: the same per-profile `keys` split in Rust `Command`.
+
 ### D5. Commands — comptime `CommandId` enum derived from a spec table
 
 ```zig
