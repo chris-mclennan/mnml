@@ -16,6 +16,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const color = @import("color.zig");
+const clip_mod = @import("clip.zig");
 
 pub const Cell = vaxis.Cell;
 pub const Style = vaxis.Style;
@@ -66,6 +67,12 @@ pub fn cellWidth(c: Canvas, grapheme: []const u8) u16 {
 pub fn measureWidth(grapheme: []const u8, method: vaxis.gwidth.Method) u16 {
     if (grapheme.len == 1 and grapheme[0] >= 0x20 and grapheme[0] < 0x7f) return 1;
     return vaxis.gwidth.gwidth(grapheme, method);
+}
+
+/// Truncates `s` to `max_cells` under this canvas's width method, with an
+/// ellipsis. Always allocates — hand it the frame arena.
+pub fn clipCells(c: Canvas, alloc: std.mem.Allocator, s: []const u8, max_cells: u16, ellipsis: clip_mod.Ellipsis) std.mem.Allocator.Error![]u8 {
+    return clip_mod.clipCells(alloc, s, max_cells, .{ .method = c.screen.width_method, .ellipsis = ellipsis });
 }
 
 pub fn blank(style: Style) Cell {
@@ -249,6 +256,15 @@ test "fill is clipped, styled, and breaks a wide head on its left edge" {
     }
     // Row 1 untouched by the height-1 clip.
     try std.testing.expect(screen.readCell(2, 1).?.style.bg == .default);
+}
+
+test "clipCells uses the screen's width method" {
+    var screen = try testScreen(4, 1);
+    defer screen.deinit(std.testing.allocator);
+    const c = Canvas.init(&screen, .{});
+    const got = try c.clipCells(std.testing.allocator, "漢字漢字", 5, .unicode);
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqualStrings("漢字…", got);
 }
 
 test "zero-width grapheme alone paints nothing" {
