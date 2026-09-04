@@ -1270,6 +1270,8 @@ test {
     _ = @import("rpc/jsonrpc.zig");
     _ = @import("dap/types.zig");
     _ = @import("dap/client.zig");
+    _ = @import("lsp/types.zig");
+    _ = @import("lsp/client.zig");
     _ = @import("app/dap.zig");
     _ = @import("app/cmd_dap.zig");
     _ = @import("ui/dap_view.zig");
