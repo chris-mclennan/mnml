@@ -6,6 +6,8 @@
 //!   grid.zig     — read the Terminal's render state out into plain cells
 const std = @import("std");
 pub const vt = @import("ghostty-vt");
+pub const ring = @import("ring.zig");
+pub const Ring = ring.Ring;
 
 test "ghostty-vt module is importable and prints" {
     var t: vt.Terminal = try .init(std.testing.io, std.testing.allocator, .{ .cols = 20, .rows = 2 });
@@ -14,4 +16,8 @@ test "ghostty-vt module is importable and prints" {
     const s = try t.plainString(std.testing.allocator);
     defer std.testing.allocator.free(s);
     try std.testing.expectEqualStrings("hello, mnml", s);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }
