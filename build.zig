@@ -41,4 +41,19 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = exe.root_module });
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+
+    // ── ui tests ──
+    // src/ui is reached through its barrel so every primitive's tests run
+    // under `zig build test` on std.testing.allocator (leak = failure).
+    const ui_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ui/ui.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "vaxis", .module = vaxis_mod },
+            },
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(ui_tests).step);
 }
