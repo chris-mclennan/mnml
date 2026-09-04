@@ -68,6 +68,25 @@ pub fn build(b: *std.Build) void {
     pty_test_step.dependOn(&pty_test_run.step);
     test_step.dependOn(&pty_test_run.step);
 
-    const pty_step = b.step("pty", "Build the pty module (and its tests) without running");
+    // `pty-demo` is the spike's proving ground: a login shell in a
+    // ghostty-vt Terminal, painted with plain ANSI. Throwaway once vaxis
+    // hosts the pane; see src/pty_demo.zig.
+    const demo_mod = b.createModule(.{
+        .root_source_file = b.path("src/pty_demo.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    demo_mod.addImport("pty", pty_mod);
+    const demo = b.addExecutable(.{ .name = "pty-demo", .root_module = demo_mod });
+    const demo_install = b.addInstallArtifact(demo, .{});
+    const demo_run = b.addRunArtifact(demo);
+    demo_run.step.dependOn(&demo_install.step);
+    if (b.args) |args| demo_run.addArgs(args);
+    const demo_step = b.step("pty-demo", "Run the pty demo (a shell in a ghostty-vt Terminal)");
+    demo_step.dependOn(&demo_run.step);
+
+    const pty_step = b.step("pty", "Build the pty module, its tests and the demo without running");
     pty_step.dependOn(&pty_tests.step);
+    pty_step.dependOn(&demo_install.step);
 }

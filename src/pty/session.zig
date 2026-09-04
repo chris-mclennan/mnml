@@ -195,6 +195,8 @@ pub const Session = struct {
 
         const cwd_z: ?[:0]const u8 = if (opts.cwd) |d| try gpa.dupeZ(u8, d) else null;
         defer if (cwd_z) |d| gpa.free(d);
+        const path_z: ?[:0]const u8 = if (env.get("PATH")) |p| try gpa.dupeZ(u8, p) else null;
+        defer if (path_z) |p| gpa.free(p);
 
         const self = try gpa.create(Session);
         errdefer gpa.destroy(self);
@@ -219,7 +221,7 @@ pub const Session = struct {
 
         const pid = c.fork();
         if (pid < 0) return error.ForkFailed;
-        if (pid == 0) childExec(master, slave, exe, argvp, envp, cwd_z);
+        if (pid == 0) childExec(master, slave, exe, argvp, envp, cwd_z, path_z);
         _ = c.close(slave);
 
         // ── wire the session ──
@@ -412,6 +414,7 @@ fn childExec(
     argv: [*:null]const ?[*:0]const u8,
     envp: std.process.Environ.PosixBlock,
     cwd: ?[:0]const u8,
+    path: ?[:0]const u8,
 ) noreturn {
     var sa: posix.Sigaction = .{
         .handler = .{ .handler = posix.SIG.DFL },
@@ -432,6 +435,21 @@ fn childExec(
     if (cwd) |d| _ = c.chdir(d.ptr);
 
     const env_ptr: [*:null]const ?[*:0]const u8 = @ptrCast(envp.slice.ptr);
+    // A bare name is looked up on the child's PATH; execve itself does
+    // not. Stack buffer only — no allocation after fork.
+    if (std.mem.indexOfScalar(u8, exe, '/') == null) {
+        if (path) |p| {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var it = std.mem.splitScalar(u8, p, ':');
+            while (it.next()) |dir| {
+                if (dir.len == 0) continue;
+                const full = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ dir, exe }) catch continue;
+                _ = c.execve(full.ptr, argv, env_ptr);
+                // ENOENT / ENOTDIR / EACCES: try the next directory.
+            }
+        }
+        c._exit(127);
+    }
     _ = c.execve(exe.ptr, argv, env_ptr);
     c._exit(127);
 }
@@ -639,6 +657,23 @@ test "resize reaches the child as a new window size" {
     const text = try s.terminal().plainString(testing.allocator);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "25 100") != null);
+}
+
+test "a bare program name is resolved on the child's PATH" {
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 4,
+        .env = &env,
+        .argv = &.{ "sh", "-c", "echo found-on-path" },
+    });
+    defer s.deinit();
+    const exit = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
+    try testing.expectEqual(Exit{ .code = 0 }, exit);
+    const text = try s.terminal().plainString(testing.allocator);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "found-on-path") != null);
 }
 
 test "deinit while the child is still running does not hang" {
