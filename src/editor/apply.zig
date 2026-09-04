@@ -132,7 +132,12 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_around_tag => select.tag(ed, true),
         .select_inner_paragraph => select.paragraph(ed, false),
         .select_around_paragraph => select.paragraph(ed, true),
-        .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument => return error.Unsupported, // TODO(vim-slice: text-objects) tree-sitter objects
+        .select_inner_function => select.object(ed, .function, false),
+        .select_around_function => select.object(ed, .function, true),
+        .select_inner_class => select.object(ed, .class, false),
+        .select_around_class => select.object(ed, .class, true),
+        .select_inner_argument => select.argument(ed, false),
+        .select_around_argument => select.argument(ed, true),
         .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block => return error.Unsupported, // TODO(vim-slice: text-objects) ii / ai / aI
         .restore_last_selection => select.restoreLastSelection(ed),
         .swap_anchor_cursor => select.swapAnchorCursor(ed),
