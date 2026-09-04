@@ -69,7 +69,20 @@ pub const Doc = struct {
     /// A vertical scrollbar in the last column when the text outgrows
     /// the pane.
     scrollbar: bool = false,
+    /// Git change marks, sorted by line: a coloured bar in the gutter's
+    /// last cell. Empty when there are none (or no repo).
+    gutter_marks: []const GutterMark = &.{},
+    /// Blame mode: one label per line (`<sha7> <author> <age>`) painted
+    /// INSTEAD of the line number; empty when blame is off. A line past
+    /// the slice paints blank.
+    blame: []const []const u8 = &.{},
 };
+
+pub const MarkKind = enum { added, modified, deleted };
+/// A changed line, 0-based; `deleted` sits on the line after the run.
+pub const GutterMark = struct { line: u32, kind: MarkKind };
+/// The widest blame label the gutter will show.
+pub const blame_max_w: u16 = 32;
 
 /// Persistent per pane; `draw` adjusts it to keep the cursor visible —
 /// unless `pin` names the cursor's current byte, in which case the
@@ -308,11 +321,34 @@ fn RangeCursor(comptime T: type) type {
 }
 
 fn gutterWidth(doc: Doc, total: u32) u16 {
-    if (!doc.line_numbers) return 0;
+    if (doc.blame.len > 0) {
+        // Blame replaces the numbers: the widest label, capped.
+        var w: usize = 0;
+        for (doc.blame) |l| w = @max(w, std.unicode.utf8CountCodepoints(l) catch l.len);
+        return @as(u16, @intCast(@min(w, blame_max_w))) + 2;
+    }
+    if (!doc.line_numbers) return if (doc.gutter_marks.len > 0) 1 else 0;
     var digits: u16 = 1;
     var n = total;
     while (n >= 10) : (n /= 10) digits += 1;
     return @max(digits, 3) + 2;
+}
+
+/// The mark on `line`, if any (marks are sorted).
+fn markAt(marks: []const GutterMark, line: u32) ?MarkKind {
+    for (marks) |m| {
+        if (m.line == line) return m.kind;
+        if (m.line > line) return null;
+    }
+    return null;
+}
+
+pub fn markStyle(t: *const Theme, kind: MarkKind, base: Style) Style {
+    return Theme.withFg(base, switch (kind) {
+        .added => t.syntax.string.fg,
+        .modified => t.warn_fg.fg,
+        .deleted => t.error_fg.fg,
+    });
 }
 
 /// Rows `line` takes at `text_w` (1 when not wrapping or folded).
@@ -474,9 +510,26 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 const gr = Rect.init(area.x, y, gutter_w, 1);
                 const gstyle = if (is_cursor_line) Theme.onBg(Theme.withFg(t.gutter, t.fg.fg), row_style.bg) else t.gutter;
                 if (ri == 0 and num_w > 0) {
-                    const num = ui.fmt("{d}", .{line + 1});
-                    _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
+                    if (doc.blame.len > 0) {
+                        const label = if (line < doc.blame.len) doc.blame[line] else "";
+                        _ = ui.putStr(area.x + 1, y, num_w, ui.clipStr(label, num_w), Theme.onBg(t.muted, row_style.bg));
+                    } else {
+                        const num = ui.fmt("{d}", .{line + 1});
+                        _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
+                    }
                 }
+                // The change mark takes the gutter's last cell.
+                if (ri == 0) if (markAt(doc.gutter_marks, line)) |kind| {
+                    const mark_glyph: []const u8 = if (ui.ascii) (switch (kind) {
+                        .added => "+",
+                        .modified => "~",
+                        .deleted => "_",
+                    }) else (switch (kind) {
+                        .added, .modified => "▎",
+                        .deleted => "▁",
+                    });
+                    _ = ui.putStr(area.x + gutter_w - 1, y, 1, mark_glyph, markStyle(t, kind, row_style));
+                };
                 ui.hit(gr, .{ .editor_cell = .{ .pane = pane, .line = line, .col = 0 } });
             }
 

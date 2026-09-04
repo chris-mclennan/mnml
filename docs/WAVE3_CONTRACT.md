@@ -401,3 +401,44 @@ that the oldest slot reads `+K more…`.
   `pty_pane.tickAll` and `watch.tick` after the theme poll; `deinit`
   frees runners / tasks state with the other lists, `env` after the
   panes, and the `Loaded` config last.
+
+---
+
+## Git (Phase 4) — `// changed:` notes (2026-09-04)
+
+- `// changed (ui):` `editor_view.Doc` gains two fields. `gutter_marks:
+  []const GutterMark = &.{}` (`GutterMark{ line: u32, kind: enum { added,
+  modified, deleted } }`, 0-based, sorted by line) paints a coloured bar in
+  the gutter's last cell — `▎` for added / modified, `▁` for a deleted run,
+  ascii `+ ~ _`; with line numbers off the gutter is one cell wide while
+  marks exist. `blame: []const []const u8 = &.{}` is blame mode: one label
+  per line (`<sha7> <author> <age>`) painted INSTEAD of the line number,
+  the gutter widened to the widest label (capped at `blame_max_w = 32`).
+  Both empty = the old paint, byte for byte.
+- `// changed (ui):` three new views, all app-data-only (they import
+  `src/git/parse.zig`, a pure text module, never `App`):
+  `ui/git_status_view.zig` (`Row`, `paintRow` for the rail's `ListPanel`,
+  `drawPane` for `Pane.git_status` with `.script_hit{pane, row}` hits),
+  `ui/diff_view.zig` (`Row`, `flatten(arena, files)`, `State{scroll}`,
+  `draw(ui, pane, area, &state, Doc{files, rows, cursor, focused,
+  header})`), `ui/git_graph_view.zig` (`layout(arena, commits) []Lane` —
+  lanes from parent ids — and `draw` with `Doc.lane_spacing` from
+  `cfg.git_graph`).
+- `// changed (core):` `PanelId` gains `.git`; `AppEvent.git` is
+  `*git.client.Result` (the placeholder is gone), destroyed by
+  `freeEvent` and adopted by `app/git.zig`'s `handle`.
+- `// changed (app):` `Pane` gains `git_status: git.StatusPane`, `diff:
+  git.DiffPane`, `git_graph: git.GraphPane`. `PickerKind`, `PromptPurpose`
+  and `ConfirmPurpose` each gain one `git` variant; what it means lives in
+  `git.State.{pick, prompt, confirm}` so the trunk has one prong per
+  overlay, not one per git command. Seven Zig-only ids (`git.refresh`,
+  `git.stage`, `git.unstage`, `git.stage_all`, `git.unstage_all`,
+  `git.discard`, `git.open_file`) give the row menu enums to name; the
+  spec count pins read 812.
+- `// changed (app):` no git runs on the UI thread. `src/git/client.zig`
+  is one worker per repo (`Repo` in its own `Io.Group`, a `Job` queue,
+  `std.process.run` per job); the operation-level undo / redo stack is
+  the worker's, so `commit` then `undo` serialise through the queue.
+  `App.tick` asks for a fresh status 3 s after the last one landed;
+  `save_post` asks at once; the `open` hook switches the active repo to
+  the one holding the file.
