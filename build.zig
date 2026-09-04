@@ -140,8 +140,20 @@ pub fn build(b: *std.Build) void {
     // `zig build gate-build -Dtarget=…` is what proves a target builds.
     const gate_step = b.step("gate-build", "Compile the exe and all test binaries without running (cross-target gate)");
     const gate_dir: std.Build.InstallDir = .{ .custom = "gate" };
-    for ([_]*std.Build.Step.Compile{ exe, tests, ui_tests, pty_tests, ts_tests, highlight_tests }) |c| {
-        gate_step.dependOn(&b.addInstallArtifact(c, .{ .dest_dir = .{ .override = gate_dir } }).step);
+    const GateBin = struct { compile: *std.Build.Step.Compile, name: []const u8 };
+    for ([_]GateBin{
+        .{ .compile = exe, .name = "mnml-zig" },
+        .{ .compile = tests, .name = "test-main" },
+        .{ .compile = ui_tests, .name = "test-ui" },
+        .{ .compile = pty_tests, .name = "test-pty" },
+        .{ .compile = ts_tests, .name = "test-tree-sitter" },
+        .{ .compile = highlight_tests, .name = "test-highlight" },
+    }) |g| {
+        const suffix = if (target.result.os.tag == .windows) ".exe" else "";
+        gate_step.dependOn(&b.addInstallArtifact(g.compile, .{
+            .dest_dir = .{ .override = gate_dir },
+            .dest_sub_path = b.fmt("{s}{s}", .{ g.name, suffix }),
+        }).step);
     }
 
     // ── pty-demo ──
