@@ -33,6 +33,13 @@ pub const filter_input = @import("filter_input.zig");
 pub const list_panel = @import("list_panel.zig");
 pub const ListPanel = list_panel.ListPanel;
 
+pub const fuzzy = @import("fuzzy.zig");
+pub const overlay = @import("overlay.zig");
+pub const prompt = @import("prompt.zig");
+pub const Prompt = prompt;
+pub const confirm = @import("confirm.zig");
+pub const Confirm = confirm;
+
 test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("test_fixture.zig");
