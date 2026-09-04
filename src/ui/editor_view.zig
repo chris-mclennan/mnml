@@ -15,6 +15,12 @@
 //! line's length. A collapsed fold paints as ONE row: the first line's
 //! text and then ` ⋯ folded · N lines hidden` (ascii: ` ... folded - N
 //! lines hidden`) — the gate asserts both words.
+//!
+//! // changed: `Doc.scrollbar` paints the one-cell vertical bar in the
+//! pane's last column (registered `.scrollbar{pane, v}`) when the text
+//! outgrows the rows, and `ViewState.pin` lets the app scroll the
+//! viewport away from the cursor (a wheel in standard mode): while the
+//! cursor stays at the pinned byte the view is not pulled back to it.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -22,6 +28,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
+const scrollbar = @import("scrollbar.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -59,10 +66,27 @@ pub const Doc = struct {
     focused: bool,
     /// Paint a rectangle from anchor→cursor instead of a byte range.
     visual_block: bool = false,
+    /// A vertical scrollbar in the last column when the text outgrows
+    /// the pane.
+    scrollbar: bool = false,
 };
 
-/// Persistent per pane; `draw` adjusts it to keep the cursor visible.
-pub const ViewState = struct { scroll_line: u32 = 0, scroll_col: u32 = 0 };
+/// Persistent per pane; `draw` adjusts it to keep the cursor visible —
+/// unless `pin` names the cursor's current byte, in which case the
+/// scroll offsets are the app's and the cursor may sit off-screen.
+pub const ViewState = struct {
+    scroll_line: u32 = 0,
+    scroll_col: u32 = 0,
+    pin: ?usize = null,
+
+    /// Keep the view where the app put it until the cursor moves.
+    pub fn pinAt(v: *ViewState, cursor: usize) void {
+        v.pin = cursor;
+    }
+};
+
+/// The text column the bar leaves at the right edge.
+pub const scrollbar_w: u16 = 1;
 
 pub const Cursor = struct { x: u16, y: u16 };
 
@@ -303,6 +327,10 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
     const total = lines.count();
     if (view.scroll_line >= total) view.scroll_line = total - 1;
     view.scroll_line = visibleOwner(doc.folds, view.scroll_line);
+    if (view.pin) |p| {
+        if (p == doc.cursor) return tailClamp(ui, doc, lines, view, text_w, text_h);
+        view.pin = null;
+    }
 
     const cur_line = visibleOwner(doc.folds, lines.lineOf(doc.cursor));
     const cur_cells = try layoutLine(ui, lines.slice(doc.text, cur_line), doc.tab_width);
@@ -336,8 +364,14 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
         if (sum + subrow >= text_h) view.scroll_line = cur_line;
     }
 
-    // Tail clamp: never leave rows blank below the last line when an
-    // earlier scroll would fill them.
+    try tailClamp(ui, doc, lines, view, text_w, text_h);
+    try followCursorCol(ui, doc, view, cur_cells, cur_off, text_w);
+}
+
+/// Never leave rows blank below the last line when an earlier scroll
+/// would fill them.
+fn tailClamp(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u16, text_h: u16) Allocator.Error!void {
+    const total = lines.count();
     while (view.scroll_line > 0) {
         var rows: u32 = 0;
         var line = view.scroll_line;
@@ -352,7 +386,10 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
         if (rows + prev_rows > text_h) break;
         view.scroll_line = prev;
     }
+}
 
+fn followCursorCol(ui: Ui, doc: Doc, view: *ViewState, cur_cells: []const CellInfo, cur_off: u32, text_w: u16) Allocator.Error!void {
+    _ = ui;
     if (doc.wrap) {
         view.scroll_col = 0;
     } else if (text_w > 0) {
@@ -394,9 +431,10 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     const total = lines.count();
     const gutter_w = @min(gutterWidth(doc, total), area.w);
     const num_w: u16 = gutter_w -| 2;
-    const text_w = area.w - gutter_w;
-    const text_x = area.x + gutter_w;
     const text_h = area.h;
+    const bar = doc.scrollbar and total > text_h and area.w > gutter_w + 4;
+    const text_w = area.w - gutter_w - @as(u16, if (bar) scrollbar_w else 0);
+    const text_x = area.x + gutter_w;
 
     try keepCursorVisible(ui, doc, lines, view, text_w, text_h);
 
@@ -552,6 +590,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             y += 1;
         }
     }
+    if (bar) scrollbar.drawVertical(ui, Rect.init(area.right() - scrollbar_w, area.y, scrollbar_w, area.h), .{ .pane = pane }, total, text_h, view.scroll_line);
     return found;
 }
 

@@ -98,10 +98,13 @@ const runner_tables = .{
     @import("../app/cmd_view.zig"),
     @import("../app/cmd_picker.zig"),
     @import("../app/cmd_app.zig"),
+    @import("../app/cmd_tab.zig"),
     @import("../app/tree.zig"),
     @import("../app/outline.zig"),
     @import("../app/md_preview.zig"),
     @import("../app/snippets.zig"),
+    @import("../app/context_menus.zig"),
+    @import("../app/cheatsheet.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
@@ -125,6 +128,7 @@ pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
 
 /// How many specs have a runner in this build — the parity meter.
 pub const implemented: usize = blk: {
+    @setEvalBranchQuota(20_000);
     var n: usize = 0;
     for (0..count) |i| {
         if (runners.get(@enumFromInt(i)) != null) n += 1;
@@ -453,7 +457,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 800), count);
+    try std.testing.expectEqual(@as(usize, 805), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

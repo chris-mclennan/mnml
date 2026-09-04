@@ -78,6 +78,7 @@ otherwise. Copy what you need; leave the rest out.
         .tree_preview_on_arrow = true,
         .syntax = true,
         .scrollbar = true,
+        .wheel_lines = 3, // lines per wheel notch
         .highlight_trailing_ws = false,
         .clock = true,
         .stress_meter = false,

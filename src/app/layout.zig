@@ -36,7 +36,32 @@ pub const Node = union(enum) {
 };
 
 pub const PaneRect = struct { pane: PaneId, rect: Rect, leaf: NodeId };
-pub const Rects = struct { panes: []PaneRect, dividers: []Rect };
+/// A divider between the two halves of `split`, which was laid out in
+/// `area` — what a drag needs to turn a pointer cell into a new ratio.
+pub const DividerRect = struct { rect: Rect, split: NodeId, dir: SplitDir, area: Rect };
+pub const Rects = struct { panes: []PaneRect, dividers: []DividerRect };
+
+/// The smallest a half may be dragged to: a pane keeps a gutter and a
+/// few text columns, a stacked pane keeps its strip and a couple of rows.
+pub const min_pane_w: u16 = 10;
+pub const min_pane_h: u16 = 3;
+
+/// Cells the first half gets of `len` at `ratio` percent, keeping both
+/// halves at least `min` when `len` allows it (the divider takes one).
+pub fn firstLen(len: u16, ratio: u16, min: u16) u16 {
+    const r: u32 = std.math.clamp(ratio, 1, 99);
+    var first: u16 = @intCast(@as(u32, len) * r / 100);
+    if (len >= 2 * min + 1) {
+        first = std.math.clamp(first, min, len - 1 - min);
+    }
+    return first;
+}
+
+/// The ratio that puts the divider at `pos` cells into `len`.
+pub fn ratioAt(len: u16, pos: u16) u16 {
+    if (len == 0) return 50;
+    return @intCast(std.math.clamp(@as(u32, pos) * 100 / len, 1, 99));
+}
 
 pub const Layout = struct {
     gpa: Allocator,
@@ -163,7 +188,7 @@ pub const Layout = struct {
         return l.active;
     }
 
-    fn parentOf(self: *const Layout, id: NodeId) ?NodeId {
+    pub fn parentOf(self: *const Layout, id: NodeId) ?NodeId {
         for (self.nodes.items, 0..) |n, i| switch (n) {
             .split => |s| if (s.first == id or s.second == id) return @intCast(i),
             else => {},
@@ -205,33 +230,58 @@ pub const Layout = struct {
         return new_leaf;
     }
 
+    /// Set a split's ratio so its divider lands `pos` cells into the
+    /// split's `area` (which `computeRects` reports per divider).
+    pub fn setRatio(self: *Layout, split_id: NodeId, ratio: u16) void {
+        switch (self.nodes.items[split_id]) {
+            .split => |*s| s.ratio = std.math.clamp(ratio, 1, 99),
+            else => {},
+        }
+    }
+
+    /// Every split back to 50/50 (vim `Ctrl+W =`).
+    pub fn equalize(self: *Layout) void {
+        for (self.nodes.items) |*n| switch (n.*) {
+            .split => |*s| s.ratio = 50,
+            else => {},
+        };
+    }
+
+    /// Move `pane` to position `idx` among the tabs of the leaf it is
+    /// in. Out-of-range appends.
+    pub fn reorderTab(self: *Layout, pane: PaneId, idx: usize) void {
+        const lid = self.leafOf(pane) orelse return;
+        const l = self.leaf(lid).?;
+        const cur = std.mem.indexOfScalar(PaneId, l.tabs.items, pane) orelse return;
+        _ = l.tabs.orderedRemove(cur);
+        const at = @min(idx, l.tabs.items.len);
+        l.tabs.insertAssumeCapacity(at, pane);
+    }
+
     /// Every pane rect plus divider rects for `area`.
     pub fn computeRects(self: *const Layout, area: Rect, arena: Allocator) Allocator.Error!Rects {
         var panes: std.ArrayListUnmanaged(PaneRect) = .empty;
-        var dividers: std.ArrayListUnmanaged(Rect) = .empty;
+        var dividers: std.ArrayListUnmanaged(DividerRect) = .empty;
         if (self.root) |r| try self.rectsFor(r, area, arena, &panes, &dividers);
         return .{ .panes = panes.items, .dividers = dividers.items };
     }
 
-    fn rectsFor(self: *const Layout, id: NodeId, area: Rect, arena: Allocator, panes: *std.ArrayListUnmanaged(PaneRect), dividers: *std.ArrayListUnmanaged(Rect)) Allocator.Error!void {
+    fn rectsFor(self: *const Layout, id: NodeId, area: Rect, arena: Allocator, panes: *std.ArrayListUnmanaged(PaneRect), dividers: *std.ArrayListUnmanaged(DividerRect)) Allocator.Error!void {
         switch (self.nodes.items[id]) {
             .leaf => |l| try panes.append(arena, .{ .pane = l.active, .rect = area, .leaf = id }),
             .split => |s| {
-                const ratio: u32 = std.math.clamp(s.ratio, 10, 90);
                 switch (s.dir) {
                     .horizontal => {
-                        const first_w: u16 = @intCast(@as(u32, area.w) * ratio / 100);
-                        const a = area.splitLeft(first_w);
+                        const a = area.splitLeft(firstLen(area.w, s.ratio, min_pane_w));
                         const div = a.rest.splitLeft(1);
-                        try dividers.append(arena, div.left);
+                        try dividers.append(arena, .{ .rect = div.left, .split = id, .dir = s.dir, .area = area });
                         try self.rectsFor(s.first, a.left, arena, panes, dividers);
                         try self.rectsFor(s.second, div.rest, arena, panes, dividers);
                     },
                     .vertical => {
-                        const first_h: u16 = @intCast(@as(u32, area.h) * ratio / 100);
-                        const a = area.splitTop(first_h);
+                        const a = area.splitTop(firstLen(area.h, s.ratio, min_pane_h));
                         const div = a.rest.splitTop(1);
-                        try dividers.append(arena, div.top);
+                        try dividers.append(arena, .{ .rect = div.top, .split = id, .dir = s.dir, .area = area });
                         try self.rectsFor(s.first, a.top, arena, panes, dividers);
                         try self.rectsFor(s.second, div.rest, arena, panes, dividers);
                     },
@@ -239,6 +289,12 @@ pub const Layout = struct {
             },
             .free => {},
         }
+    }
+
+    /// The leaf at position `idx` of `leaves` order, if any.
+    pub fn leafAt(self: *const Layout, arena: Allocator, idx: usize) Allocator.Error!?NodeId {
+        const ls = try self.leaves(arena);
+        return if (idx < ls.len) ls[idx] else null;
     }
 
     /// Every pane in every leaf, tabs included, in tree + tab order.
@@ -250,6 +306,44 @@ pub const Layout = struct {
         return out.items;
     }
 };
+
+// ─── drop zones ─────────────────────────────────────────────────────────
+
+/// Where a dragged tab or file lands on a pane body: an edge splits the
+/// pane in that direction, the centre moves the drop into it.
+pub const DropZone = enum { left, right, top, bottom, center };
+
+/// The middle third on both axes is the centre; otherwise the nearest
+/// edge, distances normalised so a tall narrow pane compares fairly.
+pub fn zoneFor(r: Rect, x: u16, y: u16) DropZone {
+    const w: u32 = @max(r.w, 1);
+    const h: u32 = @max(r.h, 1);
+    const dx: u32 = x -| r.x;
+    const dy: u32 = y -| r.y;
+    const center_x = dx * 3 >= w and dx * 3 < w * 2;
+    const center_y = dy * 3 >= h and dy * 3 < h * 2;
+    if (center_x and center_y) return .center;
+    const left = dx * 1000 / w;
+    const right = 1000 -| left;
+    const top = dy * 1000 / h;
+    const bottom = 1000 -| top;
+    const m = @min(@min(left, right), @min(top, bottom));
+    if (m == left) return .left;
+    if (m == top) return .top;
+    if (m == bottom) return .bottom;
+    return .right;
+}
+
+/// The part of a pane body a zone covers — what the drop hint tints.
+pub fn zoneRect(r: Rect, zone: DropZone) Rect {
+    return switch (zone) {
+        .left => Rect.init(r.x, r.y, r.w / 2, r.h),
+        .right => Rect.init(r.x + (r.w - r.w / 2), r.y, r.w / 2, r.h),
+        .top => Rect.init(r.x, r.y, r.w, r.h / 2),
+        .bottom => Rect.init(r.x, r.y + (r.h - r.h / 2), r.w, r.h / 2),
+        .center => Rect.init(r.x + r.w / 3, r.y + r.h / 3, @max(r.w / 3, 1), @max(r.h / 3, 1)),
+    };
+}
 
 /// Tab pages: a list of layouts and which one is showing.
 pub const LayoutState = struct {
@@ -339,4 +433,66 @@ test "layout: showing the last tab of one leaf in another keeps the target leaf'
     try std.testing.expect(l.leaf(l3) == null);
     const after = try l.computeRects(Rect.init(0, 1, 100, 20), arena.allocator());
     try std.testing.expectEqual(@as(usize, 2), after.panes.len);
+}
+
+test "layout: min sizes clamp a dragged ratio, equalize resets, tabs reorder, dividers name their split" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const left = try l.showIn(null, 0);
+    _ = try l.showIn(left, 1);
+    _ = try l.showIn(left, 2);
+    l.reorderTab(2, 0);
+    try std.testing.expectEqualSlices(PaneId, &.{ 2, 0, 1 }, l.leaf(left).?.tabs.items);
+    l.reorderTab(2, 99);
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 1, 2 }, l.leaf(left).?.tabs.items);
+    _ = try l.split(0, .horizontal, 7);
+    const rects = try l.computeRects(Rect.init(0, 1, 100, 20), a);
+    try std.testing.expectEqual(@as(usize, 1), rects.dividers.len);
+    const d = rects.dividers[0];
+    try std.testing.expectEqual(SplitDir.horizontal, d.dir);
+    try std.testing.expectEqual(@as(u16, 50), d.rect.x);
+    try std.testing.expect(d.area.eql(Rect.init(0, 1, 100, 20)));
+    // Drag the divider to column 3: the left half keeps its minimum.
+    l.setRatio(d.split, ratioAt(d.area.w, 3));
+    const dragged = try l.computeRects(Rect.init(0, 1, 100, 20), a);
+    try std.testing.expectEqual(min_pane_w, dragged.panes[0].rect.w);
+    // ...and to column 97: the right half keeps its minimum.
+    l.setRatio(d.split, ratioAt(d.area.w, 97));
+    const far = try l.computeRects(Rect.init(0, 1, 100, 20), a);
+    try std.testing.expectEqual(min_pane_w, far.panes[1].rect.w);
+    try std.testing.expectEqual(@as(u16, 100 - min_pane_w - 1), far.panes[0].rect.w);
+    l.equalize();
+    const eq = try l.computeRects(Rect.init(0, 1, 100, 20), a);
+    try std.testing.expectEqual(@as(u16, 50), eq.panes[0].rect.w);
+    // Too narrow for two minimums: the ratio rules, nothing panics.
+    l.setRatio(d.split, 1);
+    const tiny = try l.computeRects(Rect.init(0, 1, 12, 20), a);
+    try std.testing.expectEqual(@as(usize, 2), tiny.panes.len);
+    try std.testing.expectEqual(@as(u16, 0), tiny.panes[0].rect.w);
+    // The leaf ids survive a remove: pane 7's leaf goes, pane 0's leaf
+    // (the split moved it out of `left`, which became the split node)
+    // keeps its id and is the first — only — leaf.
+    const l0 = l.leafOf(0).?;
+    try std.testing.expect(l.removePane(7) == null);
+    try std.testing.expectEqual(l0, l.leafOf(0).?);
+    try std.testing.expectEqual(l0, (try l.leafAt(a, 0)).?);
+    try std.testing.expect((try l.leafAt(a, 1)) == null);
+}
+
+test "drop zones: the middle third is the centre, otherwise the nearest edge" {
+    const r = Rect.init(10, 5, 30, 20);
+    try std.testing.expectEqual(DropZone.center, zoneFor(r, 25, 15));
+    try std.testing.expectEqual(DropZone.left, zoneFor(r, 11, 15));
+    try std.testing.expectEqual(DropZone.right, zoneFor(r, 39, 15));
+    try std.testing.expectEqual(DropZone.top, zoneFor(r, 25, 5));
+    try std.testing.expectEqual(DropZone.bottom, zoneFor(r, 25, 24));
+    try std.testing.expect(zoneRect(r, .left).eql(Rect.init(10, 5, 15, 20)));
+    try std.testing.expect(zoneRect(r, .bottom).eql(Rect.init(10, 15, 30, 10)));
+    try std.testing.expect(zoneRect(r, .center).eql(Rect.init(20, 11, 10, 6)));
+    // A degenerate rect never divides by zero.
+    _ = zoneFor(Rect.empty, 0, 0);
 }

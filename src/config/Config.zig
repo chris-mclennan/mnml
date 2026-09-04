@@ -134,6 +134,8 @@ pub const Ui = struct {
     tree_preview_on_arrow: bool = true,
     syntax: bool = true,
     scrollbar: bool = true,
+    /// Lines per wheel notch.
+    wheel_lines: u8 = 3,
     highlight_trailing_ws: bool = false,
     clock: bool = true,
     stress_meter: bool = false,
@@ -465,6 +467,7 @@ test "defaults are the shipped values" {
     try std.testing.expect(!c.ui.relative_line_numbers);
     try std.testing.expect(c.ui.clock);
     try std.testing.expect(c.ui.scrollbar);
+    try std.testing.expectEqual(@as(u8, 3), c.ui.wheel_lines);
     try std.testing.expect(c.ui.markdown_opens_rendered);
     try std.testing.expectEqual(@as(u16, 12), c.ui.md_image_rows);
     try std.testing.expectEqual(ListSort.newest, c.ui.todos_sort);

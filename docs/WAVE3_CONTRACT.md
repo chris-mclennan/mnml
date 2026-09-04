@@ -108,6 +108,11 @@ pub const Doc = struct {
 };
 pub const ViewState = struct { scroll_line: u32 = 0, scroll_col: u32 = 0 };   // persistent per pane
 pub const Cursor = struct { x: u16, y: u16 };
+// changed: `Doc.scrollbar: bool = false` paints a one-cell vertical bar in the
+// pane's last column (`.scrollbar{ .pane, .v }`, `scrollbar_w = 1`) when the
+// text outgrows the rows; `ViewState.pin: ?usize` + `pinAt(cursor)` let the app
+// scroll the viewport away from the cursor (a wheel notch in standard mode) —
+// the view is not pulled back while the cursor stays at the pinned byte.
 /// Paints gutter + text, keeps the cursor visible (adjusting `view`),
 /// registers `.editor_cell` hits per visible row, and returns the
 /// cursor's screen position (null when off-screen).
@@ -135,15 +140,24 @@ pub const Info = struct {
 /// Left: mode chip, file (+ `●` when dirty). Right: `" Ln {line}/{total} Col {col} "`
 /// (exact format; the gate asserts "Ln 3"), then `right` segments.
 pub fn draw(ui: Ui, area: Rect, info: Info) void;
+// changed: the mode chip, the file name and the position chip register
+// `.statusline_seg` hits — `seg_mode = 0`, `seg_file = 1`, `seg_position = 2`
+// — so a click on the mode chip toggles the keymap (`mouse_statusline_mode`).
 ```
 
 ## `src/ui/bufferline.zig` (ui)
 
 ```zig
 pub const Tab = struct { id: PaneId, title: []const u8, dirty: bool, active: bool };
-/// One row of tabs; registers `.tab{leaf=0, idx}` hits. Active tab uses
+/// One row of tabs; registers `.tab{leaf, idx}` hits. Active tab uses
 /// `theme.tab_active`; dirty tabs get a trailing `●`.
-pub fn draw(ui: Ui, area: Rect, tabs: []const Tab) void;
+// changed: the strip is per leaf (a tab drags between leaves), so `draw`
+// takes `Opts{ leaf: u32 = 0, new_tab: ?u32 = null }` — the leaf the hits
+// carry, and the `.button` id of a ` + ` painted after the last tab.
+// `slots(ui, area, tabs, out)` reports each painted tab's `x`/`w` without
+// painting, for the drop router.
+pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) void;
+pub fn slots(ui: Ui, area: Rect, tabs: []const Tab, out: []Slot) []Slot;
 ```
 
 ## `src/ui/list_panel.zig` (ui) — per DESIGN D6
@@ -277,8 +291,10 @@ that the oldest slot reads `+K more…`.
 
 - Layout per frame (row 0 palette/bufferline as in the Rust `breadcrumb=false` layout: **row 0 bufferline, rows 1..H-2 panes, row H-1 statusline** — the `.test` mouse coordinates assume this). `App.render()` builds `Ui` on the frame arena, resets `HitMap`, draws panes → overlays → toasts, sets the terminal cursor from `editor_view.draw`'s return.
   - changed (app): the body is **tree (30 cols) | divider (1) | panes**, as Rust's default layout (`tree_width = 30`); `wrap.test` measures the editor width against it. The tree is `src/app/tree.zig` (state + its own draw glue, `.tree_node` hits); `view.toggle_tree` hides it and the panes take the whole body.
+  - changed (app): the frame is Rust mnml's, which the `.test` mouse coordinates assume: **row 0 palette bar (screens ≥ 80 wide), a tab strip on the first row of every leaf, statusline on row H-2, the `:` line on row H-1** (`render.frameRects`). The palette bar registers `.button` ids from `render.Button`; each strip's ` + ` is `Button.newTab(leaf)`.
+  - changed (app): `Pane` gained `.cheatsheet` (`src/app/cheatsheet.zig`) and `.list` (`ListPane`: the `q:` history and the quickfix); their rows register `.script_hit{ pane, id }`.
   - changed (app): `Pane.editor` holds an `EditorPane` (`Buffer` + `ViewState` + find state + wrap override + syntax cache + block anchor), not a bare `Buffer` — the per-pane view state the contract lists as "persistent per pane" has to live somewhere.
-- Mouse: `switch (app.hits.at(x, y))` is the one routing point.
+- Mouse: `switch (app.hits.at(x, y))` is the one routing point (`dispatch.mouse`). A press may open a gesture in `App.drag` (divider resize, tab reorder / drag-to-split, tree-file drag, text selection by click count, scrollbar thumb) that the drag events feed and the release completes. Wheel events are folded per tick by `src/app/scroll.zig` (`App.wheel`) and scroll the pane under the pointer. A mouse event re-renders a dirty frame before it routes, so the previous frame's rects never take a click after a layout change.
 - Implements the `e2e.Driver` vtable (`src/e2e/driver.zig`) and sets `main.app_factory`.
 - Fills `ipc.Status` (`src/ipc/screen.zig`).
 - Chrome strings the gate asserts and the app supplies: toast `"mark 'a set"`, `"→ 'a 3:1"`, `"no mark 'z"`; the find bar's `Info`; `"Go to line"` prompt title; `"Unsaved changes"` confirm title with choices Save/Discard/Cancel; which-key entries from the keymap prefix.
@@ -332,3 +348,26 @@ that the oldest slot reads `+K more…`.
   its own; the highlight idle gate is 120 ms from the frame that first sees a
   dirty pane (a throttle while typing), with the cached spans shifted every
   frame so nothing drifts in between.
+
+---
+
+## Merge notes — mouse ⨯ (config-wire + lang) (2026-09-04)
+
+- `// changed (app):` `Config` is the ZON `config.Config`; mouse's stand-in
+  struct is gone. Its two frame fields live in `[ui]`: `scrollbar` (already
+  there) and `wheel_lines: u8 = 3` (lines per wheel notch, `App.wheel`).
+  The input style the app runs is `App.input_style`; `cfg.editor.input_style`
+  is the config's enum and `setInputStyle` keeps the two level.
+- `// changed (app):` `App.openPath` notes the file in the recent list and
+  then routes (markdown → preview per `markdown_opens_rendered`);
+  `App.openEditor` is the raw path. Every caller that opens "the file" uses
+  `openPath`; only the preview machinery reaches for `openEditor`.
+- `// changed (app):` the settings overlay is `app/settings.zig` +
+  `ui/settings.zig` (the ZON-writing one); the `ui.wrap` row is labelled
+  `Soft wrap` as in Rust (`overlays.test` asserts it). A press on it routes
+  to the row (`.overlay_item`), a press anywhere else keeps the writes and
+  closes; a press outside a picker cancels it (a themes picker restores its
+  preview) before the press goes on.
+- `// changed (app):` the markdown chip rides the active leaf's tab strip
+  (`render.drawMdChip`), and the outline / preview panes take the wheel
+  through `wheelOnPane` like every other pane.

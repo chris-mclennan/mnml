@@ -1,6 +1,7 @@
 //! `Pane` — the open-thing union — and `PaneStore`, the arena that hands
-//! out stable `PaneId`s. Editor, the symbol outline and the rendered
-//! markdown preview today; Pty / Request / Diff / Ai are additive
+//! out stable `PaneId`s. Editor, the symbol outline, the rendered
+//! markdown preview, the cheatsheet and the list panes (cmdline
+//! history, quickfix) today; Pty / Request / Diff / Ai are additive
 //! variants later.
 //!
 //! // changed: WAVE3 said `editor: Buffer`; the editor pane also owns
@@ -16,6 +17,7 @@ const find = @import("find.zig");
 const syntax = @import("syntax.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
+const cheatsheet = @import("cheatsheet.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -47,18 +49,57 @@ pub const EditorPane = struct {
 pub const OutlinePane = outline.OutlinePane;
 pub const MdPreviewPane = md_preview.MdPreviewPane;
 
+/// A read-only list with a cursor: the `:` history (`q:`) and the
+/// quickfix list (`:cexpr`). Enter acts on the row by `kind`.
+pub const ListPane = struct {
+    pub const Kind = enum { cmdline_history, quickfix };
+    pub const Entry = struct {
+        /// Owned display text.
+        text: []u8,
+        /// Quickfix: where Enter goes. Workspace-relative, owned.
+        path: ?[]u8 = null,
+        line: u32 = 0,
+        col: u32 = 0,
+    };
+
+    gpa: Allocator,
+    kind: Kind,
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    cursor: usize = 0,
+    scroll: usize = 0,
+
+    pub fn deinit(self: *ListPane) void {
+        for (self.entries.items) |e| {
+            self.gpa.free(e.text);
+            if (e.path) |p| self.gpa.free(p);
+        }
+        self.entries.deinit(self.gpa);
+    }
+
+    pub fn title(self: *const ListPane) []const u8 {
+        return switch (self.kind) {
+            .cmdline_history => "cmdline history",
+            .quickfix => "Quickfix",
+        };
+    }
+};
+
 pub const Pane = union(enum) {
     editor: EditorPane,
     /// The symbol list beside a source file.
     outline: OutlinePane,
     /// A rendered markdown file; typing on it swaps in the editor.
     md_preview: MdPreviewPane,
+    cheatsheet: cheatsheet.State,
+    list: ListPane,
 
     pub fn deinit(self: *Pane) void {
         switch (self.*) {
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
+            .cheatsheet => |*c| c.deinit(),
+            .list => |*l| l.deinit(),
         }
     }
 
@@ -69,13 +110,15 @@ pub const Pane = union(enum) {
             .editor => |*e| return if (e.buf.path) |p| std.fs.path.basename(p) else "[scratch]",
             .outline => |*o| return o.title,
             .md_preview => |*m| return std.fs.path.basename(m.path),
+            .cheatsheet => return "Cheatsheet",
+            .list => |*l| return l.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview => false,
+            .outline, .md_preview, .cheatsheet, .list => false,
         };
     }
 
@@ -189,6 +232,14 @@ pub const PaneStore = struct {
                 .outline => |*o| if (o.source == source) return @intCast(i),
                 else => {},
             };
+        }
+        return null;
+    }
+
+    /// The one pane of `tag` (a singleton pane like the cheatsheet), if open.
+    pub fn findKind(self: *PaneStore, tag: std.meta.Tag(Pane)) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| if (std.meta.activeTag(p.*) == tag) return @intCast(i);
         }
         return null;
     }

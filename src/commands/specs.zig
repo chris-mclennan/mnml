@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 Rust ids plus 3 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 797 Rust ids plus 8 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -455,6 +455,14 @@ pub const specs = [_]Spec{
     .{ .id = "todos.open", .title = "TODOs: open the selected marker at its line", .group = "todos" },
     .{ .id = "todos.copy_path", .title = "TODOs: copy the selected marker's path:line", .group = "todos" },
     .{ .id = "todos.ignore_file", .title = "TODOs: hide the selected marker's file this session", .group = "todos" },
+    // Zig-only: the context-menu rows on a tab, a tree row and the
+    // editor body name commands, so these act on "the row / tab the
+    // menu was opened on" (the tree cursor; the active pane).
+    .{ .id = "file.copy_path", .title = "Copy the path of the tree row (tree focused) or the active file", .group = "file" },
+    .{ .id = "buffer.close_others", .title = "Close the other tabs of this split", .group = "buffer" },
+    .{ .id = "buffer.close_right", .title = "Close the tabs to the right of this one", .group = "buffer" },
+    .{ .id = "tree.open_in_split", .title = "Open the selected tree file in a new split", .group = "view" },
+    .{ .id = "tree.open_selected", .title = "Open the selected tree row (Enter)", .group = "view" },
     .{ .id = "notes.sort", .title = "Notes: cycle sort order", .group = "notes" },
     .{ .id = "findings.sort", .title = "Findings: cycle sort order", .group = "findings" },
     .{ .id = "sessions.sort_auto", .title = "Sessions: sort by state (approval → running → rest)", .group = "sessions" },
@@ -845,8 +853,8 @@ pub const specs = [_]Spec{
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
 };
 
-test "800 specs, unique ids" {
-    // 797 Rust ids + the three Zig-only `todos.*` menu commands.
-    try std.testing.expectEqual(@as(usize, 800), specs.len);
+test "805 specs, unique ids" {
+    // 797 Rust ids + the eight Zig-only menu commands.
+    try std.testing.expectEqual(@as(usize, 805), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

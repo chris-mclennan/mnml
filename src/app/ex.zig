@@ -114,8 +114,9 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         app.toast("{s}", .{args});
         return;
     }
-    if (eqAny(verb, &.{ "sp", "split" })) return command.run(app, .{ .static = .@"view.split_down" });
-    if (eqAny(verb, &.{ "vs", "vsplit" })) return command.run(app, .{ .static = .@"view.split_right" });
+    if (eqAny(verb, &.{ "sp", "split" })) return splitOpen(app, .vertical, args);
+    if (eqAny(verb, &.{ "vs", "vsplit" })) return splitOpen(app, .horizontal, args);
+    if (eqAny(verb, &.{ "cex", "cexpr", "cgetexpr" })) return cexpr(app, args);
     if (eqAny(verb, &.{ "on", "only" })) return command.run(app, .{ .static = .@"view.close_others" });
     if (eqAny(verb, &.{ "tabnew", "tabe", "tabedit" })) return command.run(app, .{ .static = .@"tab.new" });
     if (eqAny(verb, &.{ "tabn", "tabnext" })) return command.run(app, .{ .static = .@"tab.next" });
@@ -129,6 +130,52 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // A registered command by id.
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);
     return app.diag.fail(arena, ":{s} — unknown command", .{verb});
+}
+
+/// `:sp [path]` / `:vs [path]`: a split showing `path` (opened if
+/// need be), or a duplicate of the active pane.
+fn splitOpen(app: *App, dir: @import("layout.zig").SplitDir, args: []const u8) CommandError!void {
+    const cmd_view = @import("cmd_view.zig");
+    const path = std.mem.trim(u8, args, " \t");
+    if (path.len == 0) return cmd_view.splitWith(app, dir, null);
+    const cur = app.active orelse return error.NoActivePane;
+    const abs = try app.absPath(path);
+    const id = app.openPath(abs) catch |err| return app.diag.fail(app.frame.allocator(), "{s}: {s}", .{ path, @errorName(err) });
+    if (id == cur) return app.diag.fail(app.frame.allocator(), "{s} is the active pane", .{path});
+    app.setActive(cur);
+    return cmd_view.splitWith(app, dir, id);
+}
+
+/// `:cexpr path:line:col:text` (one entry per line of the argument):
+/// fills the quickfix pane.
+fn cexpr(app: *App, args: []const u8) CommandError!void {
+    const cmd_view = @import("cmd_view.zig");
+    var entries: std.ArrayListUnmanaged(app_mod.ListPane.Entry) = .empty;
+    const gpa = app.gpa;
+    errdefer {
+        for (entries.items) |e| {
+            gpa.free(e.text);
+            if (e.path) |p| gpa.free(p);
+        }
+        entries.deinit(gpa);
+    }
+    var lines = std.mem.splitScalar(u8, args, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var parts = std.mem.splitScalar(u8, line, ':');
+        const path = parts.next() orelse continue;
+        const ln = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
+        const col = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
+        const text = parts.rest();
+        try entries.append(gpa, .{
+            .text = try gpa.dupe(u8, if (text.len > 0) text else line),
+            .path = try gpa.dupe(u8, path),
+            .line = ln,
+            .col = col,
+        });
+    }
+    try cmd_view.openListPane(app, .quickfix, try entries.toOwnedSlice(gpa));
 }
 
 fn eqAny(s: []const u8, list: []const []const u8) bool {

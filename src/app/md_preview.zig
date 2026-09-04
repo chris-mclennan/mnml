@@ -127,7 +127,7 @@ fn previewCmd(app: *App) CommandError!void {
             if (!isMarkdownPath(path)) return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
             _ = try open(app, path, .here, active);
         },
-        .outline => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
+        .outline, .cheatsheet, .list => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
     }
 }
 
@@ -137,7 +137,7 @@ fn editRawCmd(app: *App) CommandError!void {
     switch (pane.*) {
         .md_preview => _ = try swapToEditor(app, active),
         .editor => {},
-        .outline => return error.NotAnEditor,
+        .outline, .cheatsheet, .list => return error.NotAnEditor,
     }
 }
 

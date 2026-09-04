@@ -95,7 +95,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.line_numbers", .label = "Line numbers", .section = .ui, .scope = .workspace },
     .{ .path = "ui.relative_line_numbers", .label = "Relative line numbers", .section = .ui, .scope = .workspace },
     .{ .path = "ui.cursor_line", .label = "Highlight cursor line", .section = .ui, .scope = .workspace },
-    .{ .path = "ui.wrap", .label = "Wrap long lines", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.wrap", .label = "Soft wrap", .section = .ui, .scope = .workspace },
     .{ .path = "ui.scrollbar", .label = "Scrollbar", .section = .ui, .scope = .workspace },
     .{ .path = "ui.show_whitespace", .label = "Show whitespace", .section = .ui, .scope = .workspace },
     .{ .path = "ui.highlight_trailing_ws", .label = "Highlight trailing whitespace", .section = .ui, .scope = .workspace },

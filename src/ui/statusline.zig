@@ -8,6 +8,10 @@
 //! too narrow; the position chip goes last. The left side is clipped
 //! rather than dropped: the mode and the file name are what the eye
 //! looks for.
+//!
+//! // changed: the mode chip, the file name and the position chip
+//! register `.statusline_seg` hits (`seg_mode` / `seg_file` /
+//! `seg_position`) — a click on the mode chip toggles the keymap.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -18,6 +22,10 @@ const Theme = @import("theme.zig");
 const Style = vaxis.Style;
 
 pub const ModeKind = enum { none, normal, insert, visual, replace, edit };
+
+pub const seg_mode: u32 = 0;
+pub const seg_file: u32 = 1;
+pub const seg_position: u32 = 2;
 
 pub const Info = struct {
     /// "NORMAL" / "INSERT" / "REPLACE" / "VISUAL" / "V-LINE" / "V-BLOCK",
@@ -69,11 +77,15 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     var x = area.x;
     if (info.mode_label) |label| {
         const chip = ui.fmt(" {s} ", .{label});
-        x += ui.putStr(x, y, right_edge - x, chip, modeStyle(t, info.mode_kind));
+        const w = ui.putStr(x, y, right_edge - x, chip, modeStyle(t, info.mode_kind));
+        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_mode });
+        x += w;
     }
     if (info.file) |file| {
         const name = if (info.dirty) ui.fmt(" {s} ● ", .{file}) else ui.fmt(" {s} ", .{file});
-        x += ui.putStr(x, y, right_edge - x, name, t.statusline);
+        const w = ui.putStr(x, y, right_edge - x, name, t.statusline);
+        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_file });
+        x += w;
     }
     if (info.macro_recording) |reg| {
         const chip = ui.fmt(" ● rec @{c} ", .{reg});
@@ -113,8 +125,10 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     }
     avail = right_edge - used;
     var rx = avail;
-    for (segs.items[0..keep]) |s| {
-        rx += ui.putStr(rx, y, right_edge - rx, s.text, s.style);
+    for (segs.items[0..keep], 0..) |s, i| {
+        const w = ui.putStr(rx, y, right_edge - rx, s.text, s.style);
+        if (i == 0) ui.hit(Rect.init(rx, y, w, 1), .{ .statusline_seg = seg_position });
+        rx += w;
     }
 }
 
@@ -142,6 +156,10 @@ test "the position chip is exact and the mode chip carries its color" {
     draw(f.ui(), f.full(), sample());
     try f.expectRow(0, " NORMAL  notes.txt                       Ln 3/12 Col 7  vim");
     try f.expectContains(" Ln 3/12 Col 7 ");
+    try testing.expectEqual(seg_mode, f.hits.at(3, 0).?.statusline_seg);
+    try testing.expectEqual(seg_file, f.hits.at(12, 0).?.statusline_seg);
+    try testing.expectEqual(seg_position, f.hits.at(45, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(25, 0) == null);
     try testing.expect(f.bgEql(1, 0, f.theme.mode_normal));
     try testing.expect(f.bgEql(9, 0, f.theme.statusline));
     var i = sample();

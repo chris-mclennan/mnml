@@ -82,6 +82,7 @@ fn show(app: *App) CommandError!void {
         .editor => active,
         .outline => |*o| o.source,
         .md_preview => return app.diag.fail(app.frame.allocator(), "outline: not for a preview", .{}),
+        .cheatsheet, .list => return error.NotAnEditor,
     } else return error.NoActivePane;
     if (app.panes.findOutline(source)) |id| {
         try refresh(app, id);
