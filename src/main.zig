@@ -26,6 +26,7 @@ test {
     _ = @import("core/keymap.zig");
     _ = @import("core/command.zig");
     _ = @import("core/panel.zig");
+    _ = @import("core/hooks.zig");
     _ = @import("app.zig");
 }
 
