@@ -22,6 +22,7 @@ test {
     _ = @import("core/alloc.zig");
     _ = @import("core/key.zig");
     _ = @import("core/event.zig");
+    _ = @import("commands/specs.zig");
 }
 
 test "version string is set" {
