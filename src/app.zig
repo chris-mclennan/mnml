@@ -1252,6 +1252,7 @@ test {
     _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
+    _ = @import("rpc/jsonrpc.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");
     _ = @import("ui/confirm.zig");

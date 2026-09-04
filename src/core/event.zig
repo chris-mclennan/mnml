@@ -11,6 +11,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const key = @import("key.zig");
 const todos = @import("../todos.zig");
+const jsonrpc = @import("../rpc/jsonrpc.zig");
 
 pub const PtyId = u32;
 
@@ -21,8 +22,35 @@ pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, 
 // Payloads for subsystems that do not exist yet. Each is an opaque
 // placeholder so the union has its final shape today; the subsystem
 // replaces the placeholder with its real type when it lands.
-pub const LspEvent = struct { _todo: u8 = 0 }; // TODO(lsp)
-pub const DapEvent = struct { _todo: u8 = 0 }; // TODO(dap)
+/// What a language server's reader task posts. `message` is a parsed
+/// frame the handler adopts or destroys; `closed` says the stream ended
+/// (the server exited or broke) — `app/lsp.zig` retires the server.
+pub const LspEvent = union(enum) {
+    message: *jsonrpc.Incoming,
+    closed,
+
+    pub fn destroy(self: *LspEvent, gpa: Allocator) void {
+        switch (self.*) {
+            .message => |m| m.destroy(gpa),
+            .closed => {},
+        }
+        gpa.destroy(self);
+    }
+};
+
+/// The same shape for a debug adapter's session.
+pub const DapEvent = union(enum) {
+    message: *jsonrpc.Incoming,
+    closed,
+
+    pub fn destroy(self: *DapEvent, gpa: Allocator) void {
+        switch (self.*) {
+            .message => |m| m.destroy(gpa),
+            .closed => {},
+        }
+        gpa.destroy(self);
+    }
+};
 pub const CdpEvent = struct { _todo: u8 = 0 }; // TODO(cdp)
 pub const GitResult = struct { _todo: u8 = 0 }; // TODO(git)
 pub const HttpJobResult = struct { _todo: u8 = 0 }; // TODO(http)
@@ -78,8 +106,8 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .paste => |p| gpa.free(p),
         .err => |e| gpa.free(e.msg),
         .todos => |r| r.destroy(gpa),
-        .lsp => |l| gpa.destroy(l.msg),
-        .dap => |d| gpa.destroy(d.msg),
+        .lsp => |l| l.msg.destroy(gpa),
+        .dap => |d| d.msg.destroy(gpa),
         .git => |p| gpa.destroy(p),
         .http => |p| gpa.destroy(p),
         .now_playing => |p| gpa.destroy(p),
