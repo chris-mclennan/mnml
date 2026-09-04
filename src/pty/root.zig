@@ -10,6 +10,8 @@ pub const ring = @import("ring.zig");
 pub const Ring = ring.Ring;
 pub const session = @import("session.zig");
 pub const Session = session.Session;
+pub const grid = @import("grid.zig");
+pub const Grid = grid.Grid;
 
 test "ghostty-vt module is importable and prints" {
     var t: vt.Terminal = try .init(std.testing.io, std.testing.allocator, .{ .cols = 20, .rows = 2 });
