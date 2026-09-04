@@ -24,6 +24,8 @@ pub const editor_view = @import("editor_view.zig");
 pub const statusline = @import("statusline.zig");
 pub const bufferline = @import("bufferline.zig");
 
+pub const chip = @import("chip.zig");
+
 test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("test_fixture.zig");
