@@ -49,6 +49,7 @@ const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
+const first_launch = @import("app/first_launch.zig");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -123,10 +124,12 @@ pub const Overlay = union(enum) {
     menu: MenuState,
     /// The settings overlay (`view.settings`).
     settings: settings_app.State,
+    /// The first-launch wizard (`first_launch.show`).
+    wizard: first_launch.State,
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
-            .none, .which_key => {},
+            .none, .which_key, .wizard => {},
             .settings => |*s| s.deinit(gpa),
             .menu => |*m| gpa.free(m.items),
             .prompt => |*p| {
@@ -394,6 +397,14 @@ pub const App = struct {
     fn toastConfigDiagnostics(self: *App) Allocator.Error!void {
         const l = self.loaded orelse return;
         for (l.diagnostics.items.items) |d| try self.toastLevel(.warn, "config: {f}", .{d});
+    }
+
+    /// `$HOME` as the loader saw it; null without a loaded config or a
+    /// home (the `.test` runner's apps have neither).
+    pub fn homeDir(self: *const App) ?[]const u8 {
+        const l = self.loaded orelse return null;
+        const v = l.opts.env.vars.get("HOME") orelse return null;
+        return if (v.len == 0) null else v;
     }
 
     /// The input layer's scalar config, read off `cfg.editor`.
@@ -887,6 +898,7 @@ pub const App = struct {
 test {
     _ = @import("app/trust.zig");
     _ = @import("app/settings.zig");
+    _ = @import("app/first_launch.zig");
     _ = @import("app/pane.zig");
     _ = @import("app/layout.zig");
     _ = @import("app/find.zig");

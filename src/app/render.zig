@@ -34,6 +34,8 @@ const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
+const first_launch = @import("first_launch.zig");
+const wizard_ui = @import("../ui/wizard.zig");
 
 /// The right panel's width; the divider takes one more column.
 pub const right_panel_width: u16 = 40;
@@ -281,6 +283,10 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             // stay: the box never covers row 0 or the last row.
             const full = ui.canvas.full();
             settings_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &s.ui, items, sub);
+        },
+        .wizard => |*w| {
+            const full = ui.canvas.full();
+            wizard_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &w.ui, first_launch.model(app));
         },
     }
 }

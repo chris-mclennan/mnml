@@ -1,0 +1,324 @@
+//! First-launch wizard — one box, seven sections walked top to bottom:
+//! Nerd Font · Keyboard · Input style · Claude Code + Codex · AI billing
+//! preference · AI ghost-text · VSCode `code` shim. The focused section
+//! carries the `▸`; ↑↓ move between sections, 1–7 jump, ←→ (h l) change
+//! the focused section's answer, y / n answer a yes-no outright, Enter
+//! finishes, Esc is "ask me later".
+//!
+//! The component paints from a `Model` (every answer as a value) and
+//! hands what a key *means* back as an `Outcome`; the app owns the
+//! answers and what Enter writes. The Keyboard section is a live
+//! checklist rather than a question: the chords it lists tick as they
+//! arrive, which is a fact about the terminal, not an answer.
+
+const std = @import("std");
+const vaxis = @import("vaxis");
+const Rect = @import("rect.zig");
+const Ui = @import("context.zig");
+const Theme = @import("theme.zig");
+const overlay = @import("overlay.zig");
+const key_mod = @import("../core/key.zig");
+
+const Style = vaxis.Style;
+
+pub const Key = key_mod.Key;
+
+pub const Section = enum(u8) {
+    nerd_font,
+    keyboard,
+    input_style,
+    claude_codex,
+    ai_routing,
+    ai_ghost_text,
+    vscode_shim,
+
+    pub const count = @typeInfo(Section).@"enum".fields.len;
+
+    pub fn title(s: Section) []const u8 {
+        return switch (s) {
+            .nerd_font => "Nerd Font",
+            .keyboard => "Keyboard",
+            .input_style => "Input style",
+            .claude_codex => "Claude Code + Codex",
+            .ai_routing => "AI billing preference",
+            .ai_ghost_text => "AI ghost-text",
+            .vscode_shim => "VSCode `code` shim",
+        };
+    }
+};
+
+/// The chords the Keyboard section listens for, in checklist order.
+pub const Probe = struct { label: []const u8, purpose: []const u8, key: Key };
+pub const probes = [_]Probe{
+    .{ .label = "Ctrl+→", .purpose = "word right", .key = .{ .code = .right, .mods = .{ .ctrl = true } } },
+    .{ .label = "Ctrl+←", .purpose = "word left", .key = .{ .code = .left, .mods = .{ .ctrl = true } } },
+    .{ .label = "Option/Alt+→", .purpose = "word right (macOS Option)", .key = .{ .code = .right, .mods = .{ .alt = true } } },
+    .{ .label = "Option/Alt+←", .purpose = "word left (macOS Option)", .key = .{ .code = .left, .mods = .{ .alt = true } } },
+};
+
+pub const Route = enum { auto, sub, api, off };
+pub const route_labels = [_][]const u8{ "Auto", "Sub", "API", "Off" };
+
+/// Everything the box paints, as values.
+pub const Model = struct {
+    /// null = not answered yet.
+    nerd_font_icons: ?bool = null,
+    keys_seen: [probes.len]bool = .{false} ** probes.len,
+    vim: bool = false,
+    claude_installed: bool = false,
+    codex_installed: bool = false,
+    route_claude: Route = .auto,
+    route_codex: Route = .auto,
+    /// Which product row ←→ changes inside AI billing.
+    ai_row: u1 = 0,
+    ghost_text: bool = true,
+};
+
+pub const State = struct {
+    section: Section = .nerd_font,
+    scroll: usize = 0,
+};
+
+pub const Outcome = union(enum) {
+    consumed,
+    /// Esc: ask me later — nothing persists.
+    cancel,
+    /// Enter: finish and persist the touched answers.
+    finish,
+    /// ←/→ (h/l) on the focused section.
+    adjust: i8,
+    /// y / n on a yes-no section.
+    answer: bool,
+    /// A listed chord arrived while Keyboard is focused.
+    probe: usize,
+    /// Tab inside AI billing: the other product row.
+    other_row,
+};
+
+/// Hit ids: a section header is its index; an answer chip is
+/// `chip_base + section * 16 + choice`.
+pub const chip_base: u32 = 1 << 12;
+
+pub fn chipHit(s: Section, choice: usize) u32 {
+    return chip_base + @as(u32, @intFromEnum(s)) * 16 + @as(u32, @intCast(choice));
+}
+
+pub const Hit = union(enum) { section: Section, chip: struct { section: Section, choice: usize } };
+
+pub fn decodeHit(h: u32) ?Hit {
+    if (h < chip_base) return if (h < Section.count) .{ .section = @enumFromInt(h) } else null;
+    const rel = h - chip_base;
+    if (rel / 16 >= Section.count) return null;
+    return .{ .chip = .{ .section = @enumFromInt(rel / 16), .choice = rel % 16 } };
+}
+
+pub fn handleKey(s: *State, key: Key) Outcome {
+    // The keyboard probes come first: a chord in the list is a fact,
+    // whatever section is focused it ticks the row.
+    for (probes, 0..) |p, i| if (key.code.eql(p.key.code) and key.mods.eql(p.key.mods)) return .{ .probe = i };
+    const last = Section.count - 1;
+    switch (key.code) {
+        .esc => return .cancel,
+        .enter => return .finish,
+        .up => s.section = @enumFromInt(@intFromEnum(s.section) -| 1),
+        .down => s.section = @enumFromInt(@min(@intFromEnum(s.section) + 1, last)),
+        .left => return .{ .adjust = -1 },
+        .right => return .{ .adjust = 1 },
+        .tab => return .other_row,
+        .char => |c| {
+            if (key.mods.ctrl or key.mods.alt) return .consumed;
+            switch (c) {
+                'k' => s.section = @enumFromInt(@intFromEnum(s.section) -| 1),
+                'j' => s.section = @enumFromInt(@min(@intFromEnum(s.section) + 1, last)),
+                'h' => return .{ .adjust = -1 },
+                'l' => return .{ .adjust = 1 },
+                ' ' => return .{ .adjust = 1 },
+                'y' => return .{ .answer = true },
+                'n' => return .{ .answer = false },
+                '1'...'9' => {
+                    const idx: usize = @intCast(c - '1');
+                    if (idx < Section.count) s.section = @enumFromInt(idx);
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+    return .consumed;
+}
+
+pub const title = "First-launch setup";
+pub const hint_text = "[↑↓] section · [←→] choose · [1-7] jump · [Enter] Finish · [Esc] Ask me later";
+pub const hint_text_ascii = "[up/down] section - [left/right] choose - [1-7] jump - [Enter] Finish - [Esc] Ask me later";
+pub const max_width: u16 = 92;
+
+const Line = struct {
+    text: []const u8,
+    style: Style,
+    hit: ?u32 = null,
+};
+
+fn radio(ui: Ui, on: bool, label: []const u8) []const u8 {
+    return ui.fmt("  {s} {s}", .{ if (on) (if (ui.ascii) "(*)" else "(•)") else "( )", label });
+}
+
+/// Paint the box, scrolled so the focused section shows. Registers a
+/// hit per section header and per answer chip.
+pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
+    const t = ui.theme;
+    const bg = t.overlay_bg.bg;
+    const body = Theme.onBg(t.fg, bg);
+    const muted = Theme.onBg(t.muted, bg);
+    const good = Theme.withFg(t.overlay_bg, t.mode_insert.bg);
+
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
+    var section_start: [Section.count]usize = undefined;
+    inline for (comptime std.enums.values(Section)) |sec| {
+        const focused = s.section == sec;
+        section_start[@intFromEnum(sec)] = lines.items.len;
+        const head_style = if (focused) Theme.onBg(t.accent, bg) else muted;
+        const rule = if (ui.ascii) "--" else "──";
+        const marker = if (focused) (if (ui.ascii) "> " else "▸ ") else "  ";
+        lines.append(ui.arena, .{ .text = ui.fmt("{s}{s} {d} · {s} {s}", .{ marker, rule, @intFromEnum(sec) + 1, sec.title(), rule }), .style = head_style, .hit = @intFromEnum(sec) }) catch return;
+        switch (sec) {
+            .nerd_font => {
+                lines.append(ui.arena, .{ .text = if (ui.ascii) "  Sample glyphs:   >   [f]   [x]   *" else "  Sample glyphs:   ▸   󰈙   󰅖   ●", .style = body }) catch return;
+                lines.append(ui.arena, .{ .text = radio(ui, m.nerd_font_icons == true, "Render as icons — Nerd Font detected"), .style = body, .hit = chipHit(sec, 1) }) catch return;
+                lines.append(ui.arena, .{ .text = radio(ui, m.nerd_font_icons == false, "Render as boxes — no Nerd Font"), .style = body, .hit = chipHit(sec, 0) }) catch return;
+            },
+            .keyboard => {
+                for (probes, 0..) |p, i| {
+                    const seen = m.keys_seen[i];
+                    const mark = if (seen) (if (ui.ascii) "+" else "✓") else "·";
+                    lines.append(ui.arena, .{ .text = ui.fmt("  {s}  {s:<14}  {s}", .{ mark, p.label, p.purpose }), .style = if (seen) good else muted }) catch return;
+                }
+                lines.append(ui.arena, .{ .text = "  Press each chord; a tick means it reached mnml.", .style = muted }) catch return;
+            },
+            .input_style => {
+                lines.append(ui.arena, .{ .text = radio(ui, !m.vim, "standard — VS Code keys, modeless"), .style = body, .hit = chipHit(sec, 0) }) catch return;
+                lines.append(ui.arena, .{ .text = radio(ui, m.vim, "vim — Neovim + NvChad chords"), .style = body, .hit = chipHit(sec, 1) }) catch return;
+            },
+            .claude_codex => {
+                lines.append(ui.arena, .{ .text = ui.fmt("  Claude Code   {s}", .{if (m.claude_installed) "installed" else "not found — https://claude.ai/code"}), .style = if (m.claude_installed) good else body }) catch return;
+                lines.append(ui.arena, .{ .text = ui.fmt("  Codex         {s}", .{if (m.codex_installed) "installed" else "not found — https://github.com/openai/codex"}), .style = if (m.codex_installed) good else body }) catch return;
+            },
+            .ai_routing => {
+                lines.append(ui.arena, .{ .text = routeRow(ui, "Claude Code:", m.route_claude, focused and m.ai_row == 0), .style = body, .hit = chipHit(sec, 0) }) catch return;
+                lines.append(ui.arena, .{ .text = routeRow(ui, "Codex:", m.route_codex, focused and m.ai_row == 1), .style = body, .hit = chipHit(sec, 1) }) catch return;
+                lines.append(ui.arena, .{ .text = "  Auto follows your login · Sub: the subscription · API: the key · Tab switches rows", .style = muted }) catch return;
+            },
+            .ai_ghost_text => {
+                lines.append(ui.arena, .{ .text = radio(ui, m.ghost_text, "On — inline suggestions as you type"), .style = body, .hit = chipHit(sec, 1) }) catch return;
+                lines.append(ui.arena, .{ .text = radio(ui, !m.ghost_text, "Off"), .style = body, .hit = chipHit(sec, 0) }) catch return;
+            },
+            .vscode_shim => {
+                lines.append(ui.arena, .{ .text = "  Not in this build — the `code` shim lands with the CLI phase.", .style = muted }) catch return;
+            },
+        }
+        lines.append(ui.arena, .{ .text = "", .style = body }) catch return;
+    }
+
+    var widest: u16 = ui.width(hint_text) + 2;
+    for (lines.items) |l| widest = @max(widest, ui.width(l.text) + 2);
+    const w = @min(@min(max_width, widest + 2), area.w -| 2);
+    const want_h: u16 = @intCast(@min(@as(usize, area.h), lines.items.len + 3));
+    const inner = overlay.box(ui, area, w, want_h, title, .center);
+    if (inner.isEmpty() or inner.h < 3) return;
+
+    // Scroll so the focused section's header and body are visible.
+    const list_h: usize = inner.h - 1;
+    const start = section_start[@intFromEnum(s.section)];
+    const end: usize = if (@intFromEnum(s.section) + 1 < Section.count) section_start[@intFromEnum(s.section) + 1] else lines.items.len;
+    if (start < s.scroll) s.scroll = start;
+    if (end > s.scroll + list_h) s.scroll = end -| list_h;
+    if (start < s.scroll) s.scroll = start;
+
+    var y: u16 = inner.y;
+    var idx = s.scroll;
+    while (idx < lines.items.len and y < inner.y + @as(u16, @intCast(list_h))) : ({
+        idx += 1;
+        y += 1;
+    }) {
+        const l = lines.items[idx];
+        const r = Rect.init(inner.x, y, inner.w, 1);
+        _ = ui.putStr(r.x, y, r.w, ui.clipStr(l.text, r.w), l.style);
+        if (l.hit) |h| ui.hit(r, .{ .overlay_item = h });
+    }
+    const foot = inner.row(inner.h - 1);
+    var hint_style = muted;
+    hint_style.dim = false;
+    const hint = if (ui.ascii) hint_text_ascii else hint_text;
+    _ = ui.putStr(foot.x + 1, foot.y, foot.w -| 2, ui.clipStr(hint, foot.w -| 2), hint_style);
+}
+
+/// `  ▸ Claude Code:   [Sub]  API   Off   Auto` — the chosen route
+/// bracketed, the focused row marked.
+fn routeRow(ui: Ui, label: []const u8, route: Route, focused: bool) []const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    out.appendSlice(ui.arena, if (focused) (if (ui.ascii) "  > " else "  ▸ ") else "    ") catch return label;
+    out.appendSlice(ui.arena, label) catch return label;
+    var pad: usize = 14 -| label.len;
+    while (pad > 0) : (pad -= 1) out.append(ui.arena, ' ') catch return label;
+    for (route_labels, 0..) |rl, i| {
+        const on = i == @intFromEnum(route);
+        out.print(ui.arena, "{s}{s}{s}  ", .{ if (on) "[" else " ", rl, if (on) "]" else " " }) catch return label;
+    }
+    return out.items;
+}
+
+// ── tests ──
+
+const testing = std.testing;
+const Fixture = @import("test_fixture.zig");
+
+test "the seven sections paint in order with their answers; the focused one carries the marker" {
+    var f = try Fixture.init(100, 40);
+    defer f.deinit();
+    var s: State = .{};
+    var m: Model = .{ .nerd_font_icons = true, .vim = true, .route_claude = .sub };
+    m.keys_seen[0] = true;
+    draw(f.ui(), f.full(), &s, m);
+    const text = try f.text();
+    try testing.expect(std.mem.indexOf(u8, text, " First-launch setup ") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "▸ ── 1 · Nerd Font ──") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Sample glyphs") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "(•) Render as icons") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "( ) Render as boxes") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "✓  Ctrl+→") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "·  Option/Alt+→") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "(•) vim") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Claude Code   not found") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "AI billing preference") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Claude Code:   Auto   [Sub]   API    Off") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Ask me later") != null);
+    // section headers and chips are click targets
+    var saw_section = false;
+    var saw_chip = false;
+    for (f.hits.items.items) |h| if (decodeHit(h.target.overlay_item)) |hit| switch (hit) {
+        .section => |sec| saw_section = saw_section or sec == .keyboard,
+        .chip => |c| saw_chip = saw_chip or (c.section == .input_style and c.choice == 1),
+    };
+    try testing.expect(saw_section and saw_chip);
+}
+
+test "keys: sections walk with ↓/j and 1-7; answers, probes, finish and cancel come back as outcomes" {
+    var s: State = .{};
+    try testing.expect(handleKey(&s, Key.named(.down)) == .consumed);
+    try testing.expect(s.section == .keyboard);
+    try testing.expectEqual(@as(usize, 2), handleKey(&s, .{ .code = .right, .mods = .{ .alt = true } }).probe);
+    _ = handleKey(&s, Key.char('j'));
+    try testing.expect(s.section == .input_style);
+    try testing.expectEqual(@as(i8, 1), handleKey(&s, Key.named(.right)).adjust);
+    try testing.expect(handleKey(&s, Key.char('y')).answer);
+    _ = handleKey(&s, Key.char('7'));
+    try testing.expect(s.section == .vscode_shim);
+    _ = handleKey(&s, Key.named(.down));
+    try testing.expect(s.section == .vscode_shim);
+    _ = handleKey(&s, Key.char('1'));
+    try testing.expect(s.section == .nerd_font);
+    _ = handleKey(&s, Key.named(.up));
+    try testing.expect(s.section == .nerd_font);
+    try testing.expect(handleKey(&s, Key.named(.tab)) == .other_row);
+    try testing.expect(handleKey(&s, Key.named(.enter)) == .finish);
+    try testing.expect(handleKey(&s, Key.named(.esc)) == .cancel);
+}

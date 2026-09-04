@@ -47,6 +47,7 @@ pub const picker = @import("picker.zig");
 pub const Picker = picker;
 pub const toast = @import("toast.zig");
 pub const settings = @import("settings.zig");
+pub const wizard = @import("wizard.zig");
 pub const Toast = toast.Toast;
 
 test {

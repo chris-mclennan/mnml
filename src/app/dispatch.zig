@@ -28,6 +28,7 @@ const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const settings_app = @import("settings.zig");
+const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
 const Confirm = app_mod.Confirm;
 const Picker = app_mod.Picker;
@@ -371,6 +372,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .accept => |i| try cmd_picker.accept(app, i),
         },
         .settings => try settings_app.key(app, k),
+        .wizard => try first_launch.key(app, k),
         .menu => |*m| {
             const last = m.items.len -| 1;
             switch (k.code) {
@@ -601,6 +603,7 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
                     try overlayKey(app, Key.char(kids[i].key));
                 },
                 .settings => try settings_app.click(app, i),
+                .wizard => first_launch.click(app, i),
                 else => {},
             }
         },

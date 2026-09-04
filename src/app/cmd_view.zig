@@ -48,6 +48,7 @@ pub const table = .{
     .@"tab.only" = &tabOnly,
     .@"tab.list" = &tabList,
     .@"view.settings" = &openSettings,
+    .@"first_launch.show" = &showFirstLaunch,
     .@"theme.pick" = &pickTheme,
     .@"theme.toggle" = &toggleTheme,
     .@"theme.reset" = &resetTheme,
@@ -373,6 +374,10 @@ fn tabList(app: *App) CommandError!void {
 
 fn openSettings(app: *App) CommandError!void {
     return settings.open(app);
+}
+
+fn showFirstLaunch(app: *App) CommandError!void {
+    return @import("first_launch.zig").show(app);
 }
 
 // ─── themes ─────────────────────────────────────────────────────────────

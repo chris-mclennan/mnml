@@ -65,6 +65,8 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ f, @errorName(err) });
     }
     app.hooks.emit(&app, .startup);
+    // Once, until Enter says the setup is done (after the trust dialog).
+    try @import("../app/first_launch.zig").showIfPending(&app);
 
     var bridge: Io.Group = .init;
     try bridge.concurrent(io, bridgeTask, .{ term, &app });
