@@ -28,6 +28,7 @@ test {
     _ = @import("core/panel.zig");
     _ = @import("core/hooks.zig");
     _ = @import("app.zig");
+    _ = @import("ipc/root.zig");
 }
 
 test "version string is set" {
