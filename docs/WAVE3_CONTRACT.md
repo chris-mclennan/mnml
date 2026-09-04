@@ -146,12 +146,27 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab) void;
 
 ## `src/ui/list_panel.zig` (ui) — per DESIGN D6
 
-`ListPanel(Row)` with `State{scroll, cursor, filter: ArrayListUnmanaged(u8), filter_focused}`,
-`Props{panel, label, subtitle, sort_chip: ?[]const u8, sort_widest, rows, paintRow, has_kebab, empty: EmptyState}`,
-`draw(st: *State, ui: Ui, area: Rect, p: Props) void`, plus `header.zig`,
+`ListPanel(Row)` with `State{scroll, cursor, filter: ArrayListUnmanaged(u8), filter_caret, filter_focused, visible, total}`
+(`deinit(gpa)`, `filterText()`),
+`Props{panel, label, subtitle, sort_chip: ?[]const u8, sort_widest, rows, paintRow, has_kebab, empty: EmptyState, show_filter = true, show_refresh = true}`,
+`draw(st: *State, ui: Ui, area: Rect, p: Props) ?Caret`, plus `header.zig`,
 `chip.zig` (the width ladder from the Rust `panel_chrome.rs:196-315`:
 full label → icon-only → dropped), `scrollbar.zig`, `filter_input.zig`,
-`empty_state.zig`.
+`empty_state.zig`, and `text_field.zig` (the editing core every input shares;
+`Caret = struct { x: u16, y: u16 }`).
+
+// changed: `draw` returns `?Caret` — the filter's caret cell when it has
+// focus, so the app can place the terminal cursor (Rust kept this in
+// `rects.*_caret`). Every text-bearing overlay below does the same.
+// changed: `paintRow: *const fn (ui: Ui, r: Rect, row: Row, selected: bool) void`
+// receives a `Ui` clipped to the row (`Ui.withClip`).
+// added: `handleKey(st: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome`
+// with `Outcome = union(enum) { ignored, consumed, filter_changed, activate: usize }`
+// — `/` focuses the filter, j/k ↑↓ g/G home/end page ctrl+d/u move, enter
+// activates, esc clears a stale filter. `visible`/`total` are set by `draw`
+// (paging needs them), so `handleKey` takes no geometry.
+// `sort_chip` is the sort's LABEL (`ListSort.label()`); the panel composes
+// ` sort: <label> ` itself, padded to `sort_widest` (`ListSort.widest_label`).
 
 ## Overlays (ui) — components with `State`, `draw`, `handleKey`
 
