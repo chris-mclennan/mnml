@@ -1,6 +1,7 @@
 //! `Pane` — the open-thing union — and `PaneStore`, the arena that hands
-//! out stable `PaneId`s. Editor today; Pty / Request / Diff / Ai are
-//! additive variants later.
+//! out stable `PaneId`s. Editor, the symbol outline and the rendered
+//! markdown preview today; Pty / Request / Diff / Ai are additive
+//! variants later.
 //!
 //! // changed: WAVE3 said `editor: Buffer`; the editor pane also owns
 //! its view state, find state, wrap override and syntax cache, so the
@@ -13,6 +14,8 @@ const buffer_mod = @import("../editor/buffer.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const find = @import("find.zig");
 const syntax = @import("syntax.zig");
+const outline = @import("outline.zig");
+const md_preview = @import("md_preview.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -25,8 +28,10 @@ pub const EditorPane = struct {
     wrap: ?bool = null,
     syntax: syntax.Syntax,
     /// Set by every path that mutates the text; the syntax cache
-    /// re-parses on the next render.
+    /// re-parses once `syntax.idle_ms` have passed since the frame that
+    /// first saw it (`hl_since_ms`), so a burst of typing costs one parse.
     hl_dirty: bool = true,
+    hl_since_ms: ?i64 = null,
     /// Where the visual block started (byte). The app records it when
     /// the handler enters V-BLOCK so `I` / `A` / `c` / `r` know their
     /// rectangle; the editor's own block ops are a later slice.
@@ -39,31 +44,59 @@ pub const EditorPane = struct {
     }
 };
 
+pub const OutlinePane = outline.OutlinePane;
+pub const MdPreviewPane = md_preview.MdPreviewPane;
+
 pub const Pane = union(enum) {
     editor: EditorPane,
+    /// The symbol list beside a source file.
+    outline: OutlinePane,
+    /// A rendered markdown file; typing on it swaps in the editor.
+    md_preview: MdPreviewPane,
 
     pub fn deinit(self: *Pane) void {
         switch (self.*) {
             .editor => |*e| e.deinit(),
+            .outline => |*o| o.deinit(),
+            .md_preview => |*m| m.deinit(),
         }
     }
 
-    /// The tab label: the file's basename, or `[scratch]`.
+    /// The tab label: the file's basename, or `[scratch]`. A preview's
+    /// tab is the bare filename too — it stands in for the file.
     pub fn title(self: *const Pane) []const u8 {
         switch (self.*) {
             .editor => |*e| return if (e.buf.path) |p| std.fs.path.basename(p) else "[scratch]",
+            .outline => |*o| return o.title,
+            .md_preview => |*m| return std.fs.path.basename(m.path),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
+            .outline, .md_preview => false,
         };
     }
 
     pub fn asEditor(self: *Pane) ?*EditorPane {
         return switch (self.*) {
             .editor => |*e| e,
+            else => null,
+        };
+    }
+
+    pub fn asOutline(self: *Pane) ?*OutlinePane {
+        return switch (self.*) {
+            .outline => |*o| o,
+            else => null,
+        };
+    }
+
+    pub fn asMdPreview(self: *Pane) ?*MdPreviewPane {
+        return switch (self.*) {
+            .md_preview => |*m| m,
+            else => null,
         };
     }
 };
@@ -132,6 +165,29 @@ pub const PaneStore = struct {
                 .editor => |*e| if (e.buf.path) |bp| {
                     if (std.mem.eql(u8, bp, path)) return @intCast(i);
                 },
+                else => {},
+            };
+        }
+        return null;
+    }
+
+    /// The markdown preview of `path`, if one is open.
+    pub fn findPreview(self: *PaneStore, path: []const u8) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| switch (p.*) {
+                .md_preview => |*m| if (std.mem.eql(u8, m.path, path)) return @intCast(i),
+                else => {},
+            };
+        }
+        return null;
+    }
+
+    /// The outline pane watching `source`, if one is open.
+    pub fn findOutline(self: *PaneStore, source: PaneId) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| switch (p.*) {
+                .outline => |*o| if (o.source == source) return @intCast(i),
+                else => {},
             };
         }
         return null;

@@ -123,6 +123,25 @@ fn drawBufferline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = app.active == id });
     }
     bufferline.draw(ui, area, tabs.items);
+    drawMdChip(app, ui, area);
+}
+
+/// The markdown chip at the right end of the strip: `✏ Edit` on a
+/// preview, ` Preview` on a markdown editor. A click is the command.
+fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
+    const active = app.active orelse return;
+    const pane = app.panes.get(active) orelse return;
+    const label: []const u8, const button: u32 = switch (pane.*) {
+        .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
+        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
+        .outline => return,
+    };
+    const w = ui.width(label);
+    if (area.w < w + 2) return;
+    const r = Rect.init(area.right() - w, area.y, w, 1);
+    ui.fill(r, app.theme.chip);
+    _ = ui.putStr(r.x, r.y, w, label, app.theme.chip);
+    ui.hit(r, .{ .button = button });
 }
 
 fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
@@ -150,6 +169,11 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
         switch (pane.*) {
             .editor => |*e| try drawEditor(app, ui, pr.pane, e, pr.rect),
+            .outline => |*o| {
+                if (app.active == pr.pane) app.pane_rows = @max(pr.rect.h, 1);
+                try outline.draw(app, ui, pr.pane, o, pr.rect);
+            },
+            .md_preview => |*m| try md_preview.draw(app, ui, pr.pane, m, pr.rect),
         }
     }
 }

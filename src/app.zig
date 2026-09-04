@@ -472,9 +472,26 @@ pub const App = struct {
         return self.panes.editor(id) orelse error.NotAnEditor;
     }
 
+    /// Open `path` (absolute): a markdown file goes to its rendered
+    /// preview (`markdown_opens_rendered`) unless it is already open in
+    /// an editor; anything else to an editor pane. With `auto_md_preview`
+    /// a markdown file gets the editor AND a preview split beside it.
+    pub fn openPath(self: *App, path: []const u8) !PaneId {
+        const is_md = md_preview.isMarkdownPath(path);
+        if (is_md and self.cfg.markdown_opens_rendered and !self.cfg.auto_md_preview and self.panes.findPath(path) == null) {
+            return md_preview.open(self, path, .here, null);
+        }
+        const id = try self.openEditor(path);
+        if (is_md and self.cfg.auto_md_preview and self.panes.findPreview(path) == null) {
+            _ = try md_preview.open(self, path, .beside, id);
+            self.setActive(id);
+        }
+        return id;
+    }
+
     /// Open `path` (absolute) in an editor pane and focus it. An already
     /// open file is revealed instead. A missing file is a new buffer.
-    pub fn openPath(self: *App, path: []const u8) !PaneId {
+    pub fn openEditor(self: *App, path: []const u8) !PaneId {
         if (self.panes.findPath(path)) |id| {
             self.showPane(id);
             return id;

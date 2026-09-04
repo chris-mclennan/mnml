@@ -259,6 +259,7 @@ fn saveAll(app: *App) CommandError!void {
             e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
             n += 1;
         },
+        else => {},
     };
     app.toast("saved {d} file(s)", .{n});
 }
@@ -700,6 +701,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
             app.cfg.tab_width = @max(n, 1);
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .editor => |*e| e.buf.editor.tab_width = @max(n, 1),
+                else => {},
             };
             app.toast(":set {s}={d}", .{ name, n });
         } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "ai", "autoindent", "et", "expandtab", "rnu", "relativenumber", "list", "cul", "cursorline" })) {
