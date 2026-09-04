@@ -50,6 +50,14 @@ pub fn fill(ui: Ui, r: Rect, style: Style) void {
     ui.canvas.fill(r, style);
 }
 
+/// The same context with the canvas clipped to `r` — hand this to a
+/// callback that paints one row so it cannot reach past its cell.
+pub fn withClip(ui: Ui, r: Rect) Ui {
+    var out = ui;
+    out.canvas = ui.canvas.sub(r);
+    return out;
+}
+
 /// True when the pointer is inside `r`.
 pub fn hovered(ui: Ui, r: Rect) bool {
     const h = ui.hover orelse return false;
@@ -146,6 +154,18 @@ test "clipStr uses the ascii ellipsis under --ascii and hit swallows nothing els
     ui.hit(Rect.init(0, 0, 2, 1), .{ .button = 9 });
     try testing.expectEqual(@as(u32, 9), f.hits.at(1, 0).?.button);
     try testing.expectEqualStrings("(3)", ui.fmt("({d})", .{3}));
+}
+
+test "withClip narrows the canvas and nothing else" {
+    var f = try Fixture.init(8, 1);
+    defer f.deinit();
+    const ui = f.ui();
+    const inner = ui.withClip(Rect.init(2, 0, 3, 1));
+    _ = inner.putStr(0, 0, 8, "abcdefgh", .{});
+    try f.expectRow(0, "  cde");
+    try testing.expect(inner.hits == ui.hits);
+    inner.hit(Rect.init(0, 0, 8, 1), .{ .button = 1 });
+    try testing.expect(f.hits.at(7, 0) != null);
 }
 
 test "hovered reads the pointer" {
