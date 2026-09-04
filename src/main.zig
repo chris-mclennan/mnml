@@ -339,6 +339,7 @@ test {
     _ = @import("app/driver.zig");
     _ = @import("app/smoke_test.zig");
     _ = @import("tui/loop.zig");
+    _ = @import("ui/ui.zig");
 }
 
 test "version string is set" {

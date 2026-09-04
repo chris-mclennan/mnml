@@ -1,253 +1,848 @@
-//! STUB — replaced by the ui branch at merge; keep signatures identical to docs/WAVE3_CONTRACT.md
-//! A plain-text editor view: gutter, folds as one row, char-break wrap,
-//! selection / match backgrounds, and the cursor kept visible.
+//! Editor view — paints a `Doc` (a plain data view the app fills from its
+//! buffer each frame) into a pane: gutter, text, selection, cursors, find
+//! matches, syntax spans, the cursor-line band, and folds.
+//!
+//! The view is a pure function of `Doc` + `ViewState`: it never reaches
+//! into the editor. It owns the two scroll offsets in `ViewState` because
+//! keeping the cursor visible is a rendering fact — how many rows a line
+//! takes under wrap, how many cells a tab or a CJK glyph takes — and only
+//! the painter knows those. Everything else about the cursor is the
+//! app's.
+//!
+//! Every visible grapheme registers an `.editor_cell` hit whose `col` is
+//! its byte offset in the line, so a click lands on the right byte even
+//! through tabs and wide glyphs; the space past a line's end maps to the
+//! line's length. A collapsed fold paints as ONE row: the first line's
+//! text and then ` ⋯ folded · N lines hidden` (ascii: ` ... folded - N
+//! lines hidden`) — the gate asserts both words.
 
 const std = @import("std");
+const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
-const Canvas = @import("canvas.zig");
-const context = @import("context.zig");
-const color = @import("color.zig");
+const Ui = @import("context.zig");
+const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
-pub const Ui = context.Ui;
-pub const Style = color.Style;
 
-/// Byte range.
+const Allocator = std.mem.Allocator;
+const Style = vaxis.Style;
+
+pub const PaneId = ids.PaneId;
+
+/// A styled byte range (syntax highlighting). `style.fg` and the SGR
+/// flags apply; the background is layered by the view.
 pub const Span = struct { start: usize, end: usize, style: Style };
 pub const Range = struct { start: usize, end: usize };
-/// 0-based, inclusive, collapsed.
+/// A collapsed fold: `first_line` stays visible, `first_line+1..=last_line`
+/// are hidden. 0-based, inclusive.
 pub const Fold = struct { first_line: u32, last_line: u32 };
+
+pub const CursorShape = enum { block, bar, underline };
 
 pub const Doc = struct {
     text: []const u8,
+    /// Byte offset.
     cursor: usize,
+    /// Selection tail; `null` = no selection.
     anchor: ?usize,
     extra_cursors: []const usize = &.{},
     folds: []const Fold = &.{},
+    /// Sorted by `start`, non-overlapping.
     spans: []const Span = &.{},
+    /// Sorted by `start`.
     matches: []const Range = &.{},
+    /// Index into `matches`.
     current_match: ?usize = null,
     wrap: bool,
     tab_width: u8,
     line_numbers: bool = true,
-    cursor_shape: enum { block, bar, underline } = .block,
+    cursor_shape: CursorShape = .block,
     focused: bool,
+    /// Paint a rectangle from anchor→cursor instead of a byte range.
     visual_block: bool = false,
 };
 
+/// Persistent per pane; `draw` adjusts it to keep the cursor visible.
 pub const ViewState = struct { scroll_line: u32 = 0, scroll_col: u32 = 0 };
+
 pub const Cursor = struct { x: u16, y: u16 };
 
-const Line = struct { start: usize, end: usize };
+pub const fold_marker = " ⋯ folded · ";
+pub const fold_marker_ascii = " ... folded - ";
+pub const fold_tail = " lines hidden";
 
-fn lineAt(text: []const u8, idx: usize) Line {
-    var start: usize = 0;
-    var n: usize = 0;
-    while (n < idx) : (n += 1) {
-        const nl = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse return .{ .start = text.len, .end = text.len };
-        start = nl + 1;
+// ── the line index ──
+
+/// Byte ranges of every line, excluding the newline. Built on the frame
+/// arena; a document always has at least one line.
+pub const Lines = struct {
+    starts: []const u32,
+    text_len: u32,
+
+    pub fn build(arena: Allocator, text: []const u8) Allocator.Error!Lines {
+        var n: usize = 1;
+        for (text) |c| if (c == '\n') {
+            n += 1;
+        };
+        const starts = try arena.alloc(u32, n);
+        starts[0] = 0;
+        var i: usize = 1;
+        for (text, 0..) |c, off| if (c == '\n') {
+            starts[i] = @intCast(off + 1);
+            i += 1;
+        };
+        return .{ .starts = starts, .text_len = @intCast(text.len) };
     }
-    const end = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse text.len;
-    return .{ .start = start, .end = end };
-}
 
-fn lineCount(text: []const u8) usize {
-    return std.mem.count(u8, text, "\n") + 1;
-}
+    pub fn count(l: Lines) u32 {
+        return @intCast(l.starts.len);
+    }
 
-fn lineOfByte(text: []const u8, b: usize) usize {
-    return std.mem.count(u8, text[0..@min(b, text.len)], "\n");
-}
+    pub fn start(l: Lines, line: u32) u32 {
+        return l.starts[line];
+    }
 
-fn foldAt(folds: []const Fold, line: usize) ?Fold {
-    for (folds) |f| if (f.first_line == line) return f;
+    /// One past the last byte of the line's text (the newline's offset,
+    /// or the text length on the last line).
+    pub fn end(l: Lines, line: u32) u32 {
+        if (line + 1 < l.starts.len) return l.starts[line + 1] - 1;
+        return l.text_len;
+    }
+
+    pub fn slice(l: Lines, text: []const u8, line: u32) []const u8 {
+        return text[l.start(line)..l.end(line)];
+    }
+
+    /// The line containing byte `off` (offsets past the end land on the
+    /// last line).
+    pub fn lineOf(l: Lines, off: usize) u32 {
+        var lo: usize = 0;
+        var hi: usize = l.starts.len;
+        while (hi - lo > 1) {
+            const mid = lo + (hi - lo) / 2;
+            if (l.starts[mid] <= off) lo = mid else hi = mid;
+        }
+        return @intCast(lo);
+    }
+};
+
+// ── folds ──
+
+fn foldStartingAt(folds: []const Fold, line: u32) ?Fold {
+    for (folds) |f| if (f.first_line == line and f.last_line > f.first_line) return f;
     return null;
 }
 
-fn insideFold(folds: []const Fold, line: usize) bool {
-    for (folds) |f| if (line > f.first_line and line <= f.last_line) return true;
-    return false;
+/// The fold hiding `line`, if any.
+fn foldHiding(folds: []const Fold, line: u32) ?Fold {
+    for (folds) |f| if (line > f.first_line and line <= f.last_line) return f;
+    return null;
 }
 
-fn styleFor(doc: Doc, ui: Ui, byte: usize, base: Style) Style {
-    var s = base;
-    for (doc.spans) |sp| if (byte >= sp.start and byte < sp.end) {
-        s = sp.style;
-        s.bg = base.bg;
-        break;
-    };
-    for (doc.matches, 0..) |m, i| if (byte >= m.start and byte < m.end) {
-        s.bg = if (doc.current_match == i) ui.theme.current_match.bg else ui.theme.match.bg;
-    };
-    if (doc.anchor) |a| {
-        const lo = @min(a, doc.cursor);
-        const hi = @max(a, doc.cursor);
-        if (byte >= lo and byte < hi) s.bg = ui.theme.selection.bg;
+/// The next line painted after `line`.
+fn nextVisible(folds: []const Fold, line: u32) u32 {
+    if (foldStartingAt(folds, line)) |f| return f.last_line + 1;
+    return line + 1;
+}
+
+/// `line` itself when visible, else the start of the fold hiding it.
+fn visibleOwner(folds: []const Fold, line: u32) u32 {
+    return if (foldHiding(folds, line)) |f| f.first_line else line;
+}
+
+// ── cell layout ──
+
+/// One painted cell of a line: the grapheme, its byte offset within the
+/// line, and its width. A tab expands to several one-cell spaces that
+/// all carry the tab's offset.
+pub const CellInfo = struct {
+    bytes: []const u8,
+    off: u32,
+    w: u8,
+    ws: bool,
+};
+
+pub fn layoutLine(ui: Ui, line: []const u8, tab_width: u8) Allocator.Error![]CellInfo {
+    var out: std.ArrayListUnmanaged(CellInfo) = .empty;
+    const tw: u32 = if (tab_width == 0) 1 else tab_width;
+    var x: u32 = 0;
+    var it = vaxis.unicode.graphemeIterator(line);
+    while (it.next()) |g| {
+        const bytes = g.bytes(line);
+        const off: u32 = @intCast(g.start);
+        if (bytes.len == 1 and bytes[0] == '\t') {
+            const n = tw - (x % tw);
+            for (0..n) |_| {
+                try out.append(ui.arena, .{ .bytes = " ", .off = off, .w = 1, .ws = true });
+                x += 1;
+            }
+            continue;
+        }
+        const w = ui.canvas.cellWidth(bytes);
+        if (w == 0) continue;
+        try out.append(ui.arena, .{ .bytes = bytes, .off = off, .w = @intCast(@min(w, 2)), .ws = bytes.len == 1 and bytes[0] == ' ' });
+        x += w;
     }
-    return s;
+    return out.items;
+}
+
+pub const RowSpan = struct { start: u32, end: u32 };
+
+/// Splits `cells` into rows no wider than `width`, breaking after the
+/// last space when the row has one, else between graphemes. Always at
+/// least one row.
+pub fn wrapRows(arena: Allocator, cells: []const CellInfo, width: u16) Allocator.Error![]RowSpan {
+    var rows: std.ArrayListUnmanaged(RowSpan) = .empty;
+    if (width == 0) {
+        try rows.append(arena, .{ .start = 0, .end = @intCast(cells.len) });
+        return rows.items;
+    }
+    var start: u32 = 0;
+    var x: u32 = 0;
+    var last_ws: ?u32 = null;
+    var i: u32 = 0;
+    while (i < cells.len) {
+        const c = cells[i];
+        // A space that overflows hangs off the row end (the paint clips
+        // it) so the next row starts on a word, like ratatui's wrapper.
+        if (x > 0 and x + c.w > width and !c.ws) {
+            const brk: u32 = if (last_ws) |ws| ws + 1 else i;
+            try rows.append(arena, .{ .start = start, .end = brk });
+            start = brk;
+            i = brk;
+            x = 0;
+            last_ws = null;
+            continue;
+        }
+        x += c.w;
+        if (c.ws) last_ws = i;
+        i += 1;
+    }
+    try rows.append(arena, .{ .start = start, .end = @intCast(cells.len) });
+    return rows.items;
+}
+
+/// Display column of the cell holding byte `off` (the total width when
+/// `off` is at or past the end).
+fn cellX(cells: []const CellInfo, off: u32) u32 {
+    var x: u32 = 0;
+    for (cells) |c| {
+        if (c.off >= off) return x;
+        x += c.w;
+    }
+    return x;
+}
+
+/// Index of the cell holding byte `off`, or `cells.len` at the end.
+fn cellIndex(cells: []const CellInfo, off: u32) u32 {
+    for (cells, 0..) |c, i| if (c.off >= off) return @intCast(i);
+    return @intCast(cells.len);
+}
+
+fn rowOfCell(rows: []const RowSpan, idx: u32) u32 {
+    for (rows, 0..) |r, i| if (idx < r.end or i == rows.len - 1) return @intCast(i);
+    return 0;
+}
+
+// ── layering ──
+
+const Selection = struct {
+    lo: usize,
+    hi: usize,
+    /// Rectangle in (line, display col), inclusive.
+    block: ?struct { l0: u32, l1: u32, c0: u32, c1: u32 } = null,
+};
+
+fn firstIndexEndingAfter(comptime T: type, items: []const T, off: usize) usize {
+    var lo: usize = 0;
+    var hi: usize = items.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (items[mid].end <= off) lo = mid + 1 else hi = mid;
+    }
+    return lo;
+}
+
+/// Sorted-range walker: the span/match covering a byte, advanced
+/// monotonically along a line.
+fn RangeCursor(comptime T: type) type {
+    return struct {
+        items: []const T,
+        i: usize,
+
+        const Self = @This();
+
+        fn init(items: []const T, from: usize) Self {
+            return .{ .items = items, .i = firstIndexEndingAfter(T, items, from) };
+        }
+
+        fn at(self: *Self, off: usize) ?usize {
+            while (self.i < self.items.len and self.items[self.i].end <= off) self.i += 1;
+            if (self.i < self.items.len and self.items[self.i].start <= off) return self.i;
+            return null;
+        }
+    };
+}
+
+fn gutterWidth(doc: Doc, total: u32) u16 {
+    if (!doc.line_numbers) return 0;
+    var digits: u16 = 1;
+    var n = total;
+    while (n >= 10) : (n /= 10) digits += 1;
+    return @max(digits, 3) + 2;
+}
+
+/// Rows `line` takes at `text_w` (1 when not wrapping or folded).
+fn lineRows(ui: Ui, doc: Doc, lines: Lines, line: u32, text_w: u16) Allocator.Error!u32 {
+    if (!doc.wrap or foldStartingAt(doc.folds, line) != null) return 1;
+    const cells = try layoutLine(ui, lines.slice(doc.text, line), doc.tab_width);
+    return @intCast((try wrapRows(ui.arena, cells, text_w)).len);
+}
+
+/// Adjusts `view` so the cursor's row is inside `text_h` rows.
+fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u16, text_h: u16) Allocator.Error!void {
+    const total = lines.count();
+    if (view.scroll_line >= total) view.scroll_line = total - 1;
+    view.scroll_line = visibleOwner(doc.folds, view.scroll_line);
+
+    const cur_line = visibleOwner(doc.folds, lines.lineOf(doc.cursor));
+    const cur_cells = try layoutLine(ui, lines.slice(doc.text, cur_line), doc.tab_width);
+    const cur_off: u32 = if (lines.lineOf(doc.cursor) == cur_line) @intCast(doc.cursor - lines.start(cur_line)) else 0;
+
+    if (cur_line < view.scroll_line) {
+        view.scroll_line = cur_line;
+    } else if (text_h > 0) {
+        // Rows above the cursor's own row, from scroll_line.
+        var heights: std.ArrayListUnmanaged(u32) = .empty;
+        var starts: std.ArrayListUnmanaged(u32) = .empty;
+        var sum: u32 = 0;
+        var line = view.scroll_line;
+        while (line < cur_line) : (line = nextVisible(doc.folds, line)) {
+            const h = try lineRows(ui, doc, lines, line, text_w);
+            try heights.append(ui.arena, h);
+            try starts.append(ui.arena, line);
+            sum += h;
+        }
+        var subrow: u32 = 0;
+        if (doc.wrap and foldStartingAt(doc.folds, cur_line) == null) {
+            const rows = try wrapRows(ui.arena, cur_cells, text_w);
+            subrow = rowOfCell(rows, cellIndex(cur_cells, cur_off));
+        }
+        var front: usize = 0;
+        while (sum + subrow >= text_h and front < heights.items.len) {
+            sum -= heights.items[front];
+            front += 1;
+            view.scroll_line = if (front < starts.items.len) starts.items[front] else cur_line;
+        }
+        if (sum + subrow >= text_h) view.scroll_line = cur_line;
+    }
+
+    // Tail clamp: never leave rows blank below the last line when an
+    // earlier scroll would fill them.
+    while (view.scroll_line > 0) {
+        var rows: u32 = 0;
+        var line = view.scroll_line;
+        while (line < total and rows < text_h) : (line = nextVisible(doc.folds, line)) {
+            rows += try lineRows(ui, doc, lines, line, text_w);
+        }
+        if (rows >= text_h) break;
+        // Step back one visible line.
+        var prev = view.scroll_line - 1;
+        prev = visibleOwner(doc.folds, prev);
+        const prev_rows = try lineRows(ui, doc, lines, prev, text_w);
+        if (rows + prev_rows > text_h) break;
+        view.scroll_line = prev;
+    }
+
+    if (doc.wrap) {
+        view.scroll_col = 0;
+    } else if (text_w > 0) {
+        const cx = cellX(cur_cells, cur_off);
+        if (cx < view.scroll_col) {
+            view.scroll_col = cx;
+        } else if (cx >= view.scroll_col + text_w) {
+            view.scroll_col = cx - text_w + 1;
+        }
+    }
+}
+
+fn selectionOf(ui: Ui, doc: Doc, lines: Lines) Allocator.Error!?Selection {
+    const anchor = doc.anchor orelse return null;
+    var sel: Selection = .{ .lo = @min(anchor, doc.cursor), .hi = @max(anchor, doc.cursor) };
+    if (doc.visual_block) {
+        const la = lines.lineOf(anchor);
+        const lc = lines.lineOf(doc.cursor);
+        const ca = cellX(try layoutLine(ui, lines.slice(doc.text, la), doc.tab_width), @intCast(anchor - lines.start(la)));
+        const cc = cellX(try layoutLine(ui, lines.slice(doc.text, lc), doc.tab_width), @intCast(doc.cursor - lines.start(lc)));
+        sel.block = .{ .l0 = @min(la, lc), .l1 = @max(la, lc), .c0 = @min(ca, cc), .c1 = @max(ca, cc) };
+    }
+    return sel;
 }
 
 /// Paints gutter + text, keeps the cursor visible (adjusting `view`),
-/// registers `.editor_cell` hits per visible row, and returns the
+/// registers `.editor_cell` hits per visible cell, and returns the
 /// cursor's screen position (null when off-screen).
-pub fn draw(ui: Ui, pane: ids.PaneId, area: Rect, view: *ViewState, doc: Doc) ?Cursor {
+pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) ?Cursor {
+    return drawInner(ui, pane, area, view, doc) catch null;
+}
+
+fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Allocator.Error!?Cursor {
+    const t = ui.theme;
+    ui.fill(area, t.bg);
     if (area.isEmpty()) return null;
-    ui.canvas.fill(area, ui.theme.bg);
-    const total = lineCount(doc.text);
-    var digits: u16 = 1;
-    var t = total;
-    while (t >= 10) : (t /= 10) digits += 1;
-    const gutter_w: u16 = if (doc.line_numbers) @min(digits + 2, area.w) else 0;
-    const text_w: u16 = area.w - gutter_w;
-    if (text_w == 0) return null;
-    const tab_w: usize = @max(doc.tab_width, 1);
 
-    // Visual rows per logical line under wrap (a folded line is one row).
-    const cursor_line = lineOfByte(doc.text, doc.cursor);
-    // Keep the cursor's line visible: scroll_line counts logical lines
-    // that are not hidden inside a fold.
-    if (cursor_line < view.scroll_line) view.scroll_line = @intCast(cursor_line);
-    while (true) {
-        var rows: usize = 0;
-        var l: usize = view.scroll_line;
-        var reached = false;
-        while (l < total and rows < area.h) : (l += 1) {
-            if (insideFold(doc.folds, l)) continue;
-            if (l == cursor_line) reached = true;
-            rows += rowsFor(doc, l, text_w, tab_w);
-            if (l == cursor_line and rows <= area.h) break;
-        }
-        if (reached and rows <= area.h) break;
-        if (view.scroll_line + 1 >= total) break;
-        view.scroll_line += 1;
-    }
-    // Horizontal scroll (no wrap): keep the cursor column visible.
-    const cl = lineAt(doc.text, cursor_line);
-    const cursor_col = displayCol(doc.text[cl.start..@min(doc.cursor, cl.end)], tab_w);
-    if (!doc.wrap) {
-        if (cursor_col < view.scroll_col) view.scroll_col = @intCast(cursor_col);
-        if (cursor_col >= view.scroll_col + text_w) view.scroll_col = @intCast(cursor_col + 1 - text_w);
-    } else view.scroll_col = 0;
+    const lines = try Lines.build(ui.arena, doc.text);
+    const total = lines.count();
+    const gutter_w = @min(gutterWidth(doc, total), area.w);
+    const num_w: u16 = gutter_w -| 2;
+    const text_w = area.w - gutter_w;
+    const text_x = area.x + gutter_w;
+    const text_h = area.h;
 
-    var out: ?Cursor = null;
-    var y: u16 = 0;
-    var line: usize = view.scroll_line;
-    while (line < total and y < area.h) : (line += 1) {
-        if (insideFold(doc.folds, line)) continue;
-        const ln = lineAt(doc.text, line);
-        const fold = foldAt(doc.folds, line);
-        // Gutter.
-        if (gutter_w > 0) {
-            const num = std.fmt.allocPrint(ui.arena, "{d}", .{line + 1}) catch return out;
-            // The number right-aligned, then a one-cell pad before the text.
-            const gr = Rect.init(area.x, area.y + y, gutter_w, 1);
-            ui.canvas.fill(gr, ui.theme.gutter);
-            _ = ui.canvas.text(Rect.init(gr.x, gr.y, gr.w - 1, 1), &.{.{ .text = num, .style = ui.theme.gutter }}, .{ .alignment = .right });
-        }
-        const row_rect = Rect.init(area.x + gutter_w, area.y + y, text_w, 1);
-        ui.hits.add(ui.arena, row_rect, .{ .editor_cell = .{ .pane = pane, .line = @intCast(line), .col = view.scroll_col } }) catch {};
-        // Text.
-        var col: usize = 0; // display column within the logical line
-        var x: u16 = 0;
-        var b: usize = ln.start;
-        const base = if (line == cursor_line and doc.focused) ui.theme.cursor_line else ui.theme.bg;
-        if (line == cursor_line) ui.canvas.fill(row_rect, base);
-        while (b <= ln.end) {
-            const at_end = b == ln.end;
-            const cp_len: usize = if (at_end) 1 else std.unicode.utf8ByteSequenceLength(doc.text[b]) catch 1;
-            const glyph: []const u8 = if (at_end) " " else doc.text[b..@min(b + cp_len, ln.end)];
-            const is_tab = !at_end and glyph[0] == '\t';
-            const w: usize = if (is_tab) tab_w - (col % tab_w) else if (at_end) 1 else @max(Canvas.measureWidth(glyph, ui.canvas.widthMethod()), 1);
-            // Wrap to the next visual row when the glyph would overflow.
-            if (doc.wrap and x + w > text_w and x > 0) {
-                y += 1;
-                x = 0;
-                if (y >= area.h) break;
-                const rr = Rect.init(area.x + gutter_w, area.y + y, text_w, 1);
-                ui.hits.add(ui.arena, rr, .{ .editor_cell = .{ .pane = pane, .line = @intCast(line), .col = @intCast(col) } }) catch {};
+    try keepCursorVisible(ui, doc, lines, view, text_w, text_h);
+
+    const sel = try selectionOf(ui, doc, lines);
+    const cursor_line_real = lines.lineOf(doc.cursor);
+    const cursor_line = visibleOwner(doc.folds, cursor_line_real);
+    const cursor_off: u32 = if (cursor_line_real == cursor_line) @intCast(doc.cursor - lines.start(cursor_line)) else 0;
+    var found: ?Cursor = null;
+
+    const fold_word = if (ui.ascii) fold_marker_ascii else fold_marker;
+
+    var y: u16 = area.y;
+    var line = view.scroll_line;
+    while (y < area.bottom() and line < total) : (line = nextVisible(doc.folds, line)) {
+        const fold = foldStartingAt(doc.folds, line);
+        const line_start = lines.start(line);
+        const line_end = lines.end(line);
+        const line_text = doc.text[line_start..line_end];
+        const cells = try layoutLine(ui, line_text, doc.tab_width);
+        const rows: []const RowSpan = if (doc.wrap and fold == null)
+            try wrapRows(ui.arena, cells, text_w)
+        else
+            &.{.{ .start = 0, .end = @intCast(cells.len) }};
+
+        const is_cursor_line = line == cursor_line;
+        const row_style: Style = if (is_cursor_line) t.cursor_line else t.bg;
+        var spans = RangeCursor(Span).init(doc.spans, line_start);
+        var matches = RangeCursor(Range).init(doc.matches, line_start);
+
+        for (rows, 0..) |row, ri| {
+            if (y >= area.bottom()) break;
+            const row_rect = Rect.init(area.x, y, area.w, 1);
+            ui.fill(row_rect, row_style);
+
+            // Gutter: the number on the line's first row, blank after.
+            if (gutter_w > 0) {
+                const gr = Rect.init(area.x, y, gutter_w, 1);
+                const gstyle = if (is_cursor_line) Theme.onBg(Theme.withFg(t.gutter, t.fg.fg), row_style.bg) else t.gutter;
+                if (ri == 0 and num_w > 0) {
+                    const num = ui.fmt("{d}", .{line + 1});
+                    _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
+                }
+                ui.hit(gr, .{ .editor_cell = .{ .pane = pane, .line = line, .col = 0 } });
             }
-            if (b == doc.cursor and out == null and (!doc.wrap or x < text_w)) {
-                const cx = if (doc.wrap) x else @as(i64, @intCast(col)) - @as(i64, @intCast(view.scroll_col));
-                if (cx >= 0 and cx < text_w) out = .{ .x = area.x + gutter_w + @as(u16, @intCast(cx)), .y = area.y + y };
-            }
-            if (!at_end) {
-                const style = styleFor(doc, ui, b, base);
-                var k: usize = 0;
-                while (k < w) : (k += 1) {
-                    const vis_col: i64 = if (doc.wrap) @as(i64, @intCast(x + k)) else @as(i64, @intCast(col + k)) - @as(i64, @intCast(view.scroll_col));
-                    if (vis_col < 0 or vis_col >= text_w) continue;
-                    const px: u16 = area.x + gutter_w + @as(u16, @intCast(vis_col));
-                    if (is_tab or k > 0) {
-                        if (!(k > 0 and !is_tab)) ui.canvas.put(px, area.y + y, Canvas.blank(style));
-                    } else {
-                        ui.canvas.put(px, area.y + y, .{ .char = .{ .grapheme = glyph, .width = @intCast(w) }, .style = style });
+
+            // Cells. `abs_x` is the display column within the line (what
+            // a block selection is measured in); `rel_x` the column within
+            // this row, which is what lands on screen.
+            var abs_x: u32 = 0;
+            for (cells[0..row.start]) |p| abs_x += p.w;
+            var rel_x: u32 = 0;
+            var painted_x: u16 = text_x;
+            const skip: u32 = if (ri == 0) view.scroll_col else 0;
+            var i = row.start;
+            while (i < row.end) : (i += 1) {
+                const c = cells[i];
+                const x = abs_x;
+                const rx = rel_x;
+                abs_x += c.w;
+                rel_x += c.w;
+                if (rx + c.w <= skip) continue;
+                if (rx < skip) continue; // a wide glyph straddling the scroll edge
+                const cx: u32 = rx - skip;
+                if (cx + c.w > text_w) break;
+                const sx: u16 = text_x + @as(u16, @intCast(cx));
+                const off: usize = line_start + c.off;
+
+                var style: Style = row_style;
+                if (spans.at(off)) |si| {
+                    const s = doc.spans[si].style;
+                    style.fg = s.fg;
+                    style.bold = s.bold;
+                    style.italic = s.italic;
+                    style.dim = s.dim;
+                    style.ul_style = s.ul_style;
+                    style.strikethrough = s.strikethrough;
+                    if (s.bg != .default) style.bg = s.bg;
+                }
+                if (matches.at(off)) |mi| {
+                    const ms = if (doc.current_match == mi) t.current_match else t.match;
+                    style.bg = ms.bg;
+                    if (doc.current_match == mi) {
+                        style.fg = ms.fg;
+                        style.bold = ms.bold;
                     }
                 }
+                if (sel) |s| {
+                    const in_range = s.block == null and off >= s.lo and off < s.hi;
+                    const in_block = if (s.block) |b| line >= b.l0 and line <= b.l1 and x >= b.c0 and x <= b.c1 else false;
+                    if (in_range or in_block) {
+                        style.bg = t.selection.bg;
+                    }
+                }
+                for (doc.extra_cursors) |ec| if (ec == off) {
+                    style.bg = t.fg.fg;
+                    style.fg = t.bg.bg;
+                };
+
+                const cell_rect = Rect.init(sx, y, c.w, 1);
+                ui.canvas.put(sx, y, .{ .char = .{ .grapheme = c.bytes, .width = c.w }, .style = style });
+                ui.hit(cell_rect, .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
+                painted_x = sx + c.w;
+
+                if (is_cursor_line and found == null and c.off == cursor_off and cursor_line_real == cursor_line) {
+                    found = .{ .x = sx, .y = y };
+                }
             }
-            if (at_end) break;
-            col += w;
-            x += @intCast(w);
-            b += cp_len;
-        }
-        if (fold) |f| {
-            const hidden = f.last_line - f.first_line;
-            const chip = if (ui.ascii)
-                std.fmt.allocPrint(ui.arena, " ... folded - {d} lines hidden", .{hidden}) catch return out
-            else
-                std.fmt.allocPrint(ui.arena, " ⋯ folded · {d} lines hidden", .{hidden}) catch return out;
-            const cx: i64 = if (doc.wrap) @as(i64, @intCast(x)) else @as(i64, @intCast(col)) - @as(i64, @intCast(view.scroll_col));
-            if (cx >= 0 and cx < text_w) {
-                const r = Rect.init(area.x + gutter_w + @as(u16, @intCast(cx)), area.y + y, text_w - @as(u16, @intCast(cx)), 1);
-                _ = ui.canvas.text(r, &.{.{ .text = chip, .style = ui.theme.fold }}, .{});
+
+            // The EOL cell and the space after it.
+            const is_last_row = ri == rows.len - 1;
+            if (is_last_row and painted_x < text_x + text_w) {
+                const eol_x = painted_x;
+                const eol_off = line_end - line_start;
+                var eol_style = row_style;
+                var paint_eol = false;
+                if (sel) |s| {
+                    if (s.block) |b| {
+                        if (line >= b.l0 and line <= b.l1) {
+                            // Block cells past the end of the text.
+                            var bx: u32 = abs_x;
+                            while (bx <= b.c1 and bx -| skip < text_w) : (bx += 1) {
+                                if (bx >= b.c0 and bx >= skip) {
+                                    const px: u16 = text_x + @as(u16, @intCast(bx - skip));
+                                    ui.canvas.put(px, y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = Theme.onBg(row_style, t.selection.bg) });
+                                }
+                            }
+                        }
+                    } else if (s.hi > line_end and s.lo <= line_end) {
+                        eol_style.bg = t.selection.bg;
+                        paint_eol = true;
+                    }
+                }
+                for (doc.extra_cursors) |ec| if (ec == line_end) {
+                    eol_style.bg = t.fg.fg;
+                    paint_eol = true;
+                };
+                if (paint_eol) ui.canvas.put(eol_x, y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = eol_style });
+                if (is_cursor_line and found == null and cursor_line_real == cursor_line and cursor_off >= eol_off) {
+                    found = .{ .x = eol_x, .y = y };
+                }
+                if (fold) |f| {
+                    const hidden = f.last_line - f.first_line;
+                    const marker = ui.fmt("{s}{d}{s}", .{ fold_word, hidden, fold_tail });
+                    _ = ui.putStr(eol_x, y, text_x + text_w - eol_x, marker, Theme.onBg(t.fold, row_style.bg));
+                    if (is_cursor_line and cursor_line_real != cursor_line) found = .{ .x = eol_x, .y = y };
+                }
+                ui.hit(Rect.init(eol_x, y, text_x + text_w - eol_x, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = eol_off } });
+            } else if (!is_last_row and painted_x < text_x + text_w) {
+                // Space after a wrapped row maps to the next cell's byte.
+                const next_off = if (row.end < cells.len) cells[row.end].off else line_end - line_start;
+                ui.hit(Rect.init(painted_x, y, text_x + text_w - painted_x, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = next_off } });
             }
+            y += 1;
         }
-        y += 1;
     }
-    if (out) |c| {
-        ui.canvas.screen.cursor = .{ .row = c.y, .col = c.x };
-        ui.canvas.screen.cursor_vis = doc.focused;
-    }
-    return out;
+    return found;
 }
 
-fn rowsFor(doc: Doc, line: usize, text_w: u16, tab_w: usize) usize {
-    if (!doc.wrap) return 1;
-    const ln = lineAt(doc.text, line);
-    const cols = displayCol(doc.text[ln.start..ln.end], tab_w);
-    return @max(1, (cols + text_w - 1) / text_w);
+// ── tests ──
+
+const testing = std.testing;
+const Fixture = @import("test_fixture.zig");
+
+fn mkDoc(text: []const u8) Doc {
+    return .{ .text = text, .cursor = 0, .anchor = null, .wrap = false, .tab_width = 4, .focused = true };
 }
 
-fn displayCol(s: []const u8, tab_w: usize) usize {
-    var col: usize = 0;
-    var i: usize = 0;
-    while (i < s.len) {
-        const n = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
-        if (s[i] == '\t') col += tab_w - (col % tab_w) else col += 1;
-        i += n;
-    }
-    return col;
-}
-
-test "editor view: paints text, folds hide lines, wrap continues rows" {
-    const vaxis = @import("vaxis");
-    const hit = @import("hit.zig");
-    const theme = @import("theme.zig");
-    const gpa = std.testing.allocator;
-    var screen = try vaxis.Screen.init(gpa, .{ .cols = 40, .rows = 5, .x_pixel = 0, .y_pixel = 0 });
-    defer screen.deinit(gpa);
-    var arena = std.heap.ArenaAllocator.init(gpa);
+test "lines index" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    var hits: hit.HitMap = .{};
-    const ui: Ui = .{ .canvas = Canvas.init(&screen, .{}), .hits = &hits, .theme = &theme.Theme.default, .arena = arena.allocator(), .focus = .tree };
+    const l = try Lines.build(arena.allocator(), "ab\ncd\n\nlast");
+    try testing.expectEqual(@as(u32, 4), l.count());
+    try testing.expectEqualStrings("cd", l.slice("ab\ncd\n\nlast", 1));
+    try testing.expectEqualStrings("", l.slice("ab\ncd\n\nlast", 2));
+    try testing.expectEqualStrings("last", l.slice("ab\ncd\n\nlast", 3));
+    try testing.expectEqual(@as(u32, 0), l.lineOf(2));
+    try testing.expectEqual(@as(u32, 1), l.lineOf(3));
+    try testing.expectEqual(@as(u32, 3), l.lineOf(99));
+    const e = try Lines.build(arena.allocator(), "");
+    try testing.expectEqual(@as(u32, 1), e.count());
+    try testing.expectEqual(@as(u32, 0), e.end(0));
+}
+
+test "gutter width follows the line count with a 3-digit floor" {
+    var f = try Fixture.init(20, 3);
+    defer f.deinit();
     var view: ViewState = .{};
-    const doc: Doc = .{ .text = "fn main() {\n  one;\n  two;\n}\nend", .cursor = 0, .anchor = null, .folds = &.{.{ .first_line = 0, .last_line = 3 }}, .wrap = false, .tab_width = 4, .focused = true };
-    const cur = draw(ui, 0, Rect.init(0, 0, 40, 5), &view, doc);
-    try std.testing.expectEqual(@as(u16, 3), cur.?.x);
-    var buf: [64]u8 = undefined;
-    try std.testing.expect(std.mem.indexOf(u8, Canvas.rowText(&screen, 0, &buf), "folded") != null);
-    try std.testing.expect(std.mem.indexOf(u8, Canvas.rowText(&screen, 1, &buf), "end") != null);
-    // Wrap: a 31-char line on a 17-cell text area continues onto row 1.
-    var view2: ViewState = .{};
-    const long: Doc = .{ .text = "AAA BBB CCC DDD EEE FFF GGG ZZZ", .cursor = 0, .anchor = null, .wrap = true, .tab_width = 4, .focused = true };
-    _ = draw(ui, 0, Rect.init(0, 0, 20, 5), &view2, long);
-    try std.testing.expect(std.mem.indexOf(u8, Canvas.rowText(&screen, 1, &buf), "ZZZ") != null);
+    _ = draw(f.ui(), 0, f.full(), &view, mkDoc("a\nb\nc"));
+    try f.expectRows(&.{ "   1 a", "   2 b", "   3 c" });
+    // Line numbers off: no gutter at all.
+    var d = mkDoc("a\nb");
+    d.line_numbers = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "a", "b" });
+    try testing.expectEqual(@as(u16, 6), gutterWidth(mkDoc(""), 1234));
+    try testing.expectEqual(@as(u16, 5), gutterWidth(mkDoc(""), 999));
+}
+
+test "tabs expand to the next stop and hits carry the tab's byte offset" {
+    var f = try Fixture.init(20, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a\tb\tc");
+    d.line_numbers = false;
+    _ = draw(f.ui(), 7, f.full(), &view, d);
+    try f.expectRow(0, "a   b   c");
+    // Cells 1..3 are the tab at byte 1; cell 4 is `b` at byte 2.
+    try testing.expectEqual(@as(u32, 1), f.hits.at(2, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 2), f.hits.at(4, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 7), f.hits.at(4, 0).?.editor_cell.pane);
+    // Past the end: the line length.
+    try testing.expectEqual(@as(u32, 5), f.hits.at(15, 0).?.editor_cell.col);
+}
+
+test "wide glyphs take two cells and one hit each" {
+    var f = try Fixture.init(12, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("漢a字");
+    d.line_numbers = false;
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "漢a字");
+    try testing.expectEqual(@as(u32, 0), f.hits.at(0, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(1, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 3), f.hits.at(2, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 4), f.hits.at(3, 0).?.editor_cell.col);
+    try testing.expectEqual(Cursor{ .x = 0, .y = 0 }, cur.?);
+}
+
+test "selection paints a byte range, including the EOL cell across lines" {
+    var f = try Fixture.init(12, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abc\ndef\nghi");
+    d.line_numbers = false;
+    d.anchor = 1;
+    d.cursor = 6; // "bc\nde"
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    const sel = f.theme.selection;
+    try testing.expect(!f.bgEql(0, 0, sel));
+    try testing.expect(f.bgEql(1, 0, sel));
+    try testing.expect(f.bgEql(2, 0, sel));
+    try testing.expect(f.bgEql(3, 0, sel)); // the EOL cell of line 0
+    try testing.expect(f.bgEql(0, 1, sel));
+    try testing.expect(f.bgEql(1, 1, sel));
+    try testing.expect(!f.bgEql(2, 1, sel));
+    try testing.expect(!f.bgEql(0, 2, sel));
+}
+
+test "visual block paints a rectangle in display columns, over EOL too" {
+    var f = try Fixture.init(12, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abcdef\nab\nabcdef");
+    d.line_numbers = false;
+    d.anchor = 2; // line 0 col 2
+    d.cursor = 14; // line 2 col 4
+    d.visual_block = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    const sel = f.theme.selection;
+    for (0..3) |yy| {
+        const y: u16 = @intCast(yy);
+        try testing.expect(!f.bgEql(1, y, sel));
+        try testing.expect(f.bgEql(2, y, sel));
+        try testing.expect(f.bgEql(4, y, sel));
+        try testing.expect(!f.bgEql(5, y, sel));
+    }
+    try f.expectRow(1, "ab");
+}
+
+test "extra cursors are painted as inverted cells" {
+    var f = try Fixture.init(12, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abc\ndef");
+    d.line_numbers = false;
+    d.extra_cursors = &.{ 5, 3 }; // `e`, and the EOL of line 0
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(vaxis.Color.eql(f.style(1, 1).bg, f.theme.fg.fg));
+    try testing.expect(vaxis.Color.eql(f.style(3, 0).bg, f.theme.fg.fg));
+    try testing.expect(!vaxis.Color.eql(f.style(0, 1).bg, f.theme.fg.fg));
+}
+
+test "find matches use match / current_match and spans give the fg" {
+    var f = try Fixture.init(20, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("alpha beta alpha");
+    d.line_numbers = false;
+    d.matches = &.{ .{ .start = 0, .end = 5 }, .{ .start = 11, .end = 16 } };
+    d.current_match = 1;
+    const red: Style = .{ .fg = Theme.onedark.red, .bold = true };
+    d.spans = &.{.{ .start = 6, .end = 10, .style = red }};
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.bgEql(0, 0, f.theme.match));
+    try testing.expect(f.bgEql(4, 0, f.theme.match));
+    try testing.expect(!f.bgEql(5, 0, f.theme.match));
+    try testing.expect(f.bgEql(11, 0, f.theme.current_match));
+    try testing.expect(f.fgEql(11, 0, f.theme.current_match));
+    try testing.expect(vaxis.Color.eql(f.style(6, 0).fg, Theme.onedark.red));
+    try testing.expect(f.style(6, 0).bold);
+    try testing.expect(!f.style(5, 0).bold);
+}
+
+test "the cursor line gets its band across the whole row" {
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab\ncd");
+    d.cursor = 4;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.bgEql(0, 1, f.theme.cursor_line));
+    try testing.expect(f.bgEql(9, 1, f.theme.cursor_line));
+    try testing.expect(f.bgEql(9, 0, f.theme.bg));
+}
+
+test "a fold collapses to one row naming folded and hidden, in both glyph sets" {
+    var f = try Fixture.init(50, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn main() {\n    one;\n    two;\n    three;\n}\nlet end = 1;");
+    d.folds = &.{.{ .first_line = 0, .last_line = 4 }};
+    d.cursor = 21; // inside the fold body
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "   1 fn main() { ⋯ folded · 4 lines hidden");
+    try f.expectRow(1, "   6 let end = 1;");
+    try f.expectLacks("two;");
+    try f.expectContains("folded");
+    try f.expectContains("hidden");
+    try testing.expectEqual(Cursor{ .x = 16, .y = 0 }, cur.?);
+    try testing.expect(f.fgEql(18, 0, f.theme.fold));
+
+    f.ascii = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "   1 fn main() { ... folded - 4 lines hidden");
+}
+
+test "vertical scrolling keeps the cursor row on screen, both ways" {
+    var f = try Fixture.init(10, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a\nb\nc\nd\ne\nf");
+    d.line_numbers = false;
+    d.cursor = 8; // line 4 `e`
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "c", "d", "e" });
+    try testing.expectEqual(@as(u32, 2), view.scroll_line);
+    try testing.expectEqual(Cursor{ .x = 0, .y = 2 }, cur.?);
+    d.cursor = 0;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "a", "b", "c" });
+    try testing.expectEqual(@as(u32, 0), view.scroll_line);
+    // A scroll past the tail is pulled back so no rows sit blank.
+    view.scroll_line = 5;
+    d.cursor = 10;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "d", "e", "f" });
+}
+
+test "vertical scrolling counts folded lines as one row" {
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a\nb\nc\nd\ne");
+    d.line_numbers = false;
+    d.folds = &.{.{ .first_line = 1, .last_line = 3 }};
+    d.cursor = 8; // `e`, line 4
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expectEqual(@as(u32, 1), view.scroll_line);
+    try f.expectContains("folded");
+    try f.expectRow(1, "e");
+}
+
+test "horizontal scrolling follows the cursor when not wrapping" {
+    var f = try Fixture.init(5, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abcdefghij");
+    d.line_numbers = false;
+    d.cursor = 7;
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "defgh");
+    try testing.expectEqual(@as(u32, 3), view.scroll_col);
+    try testing.expectEqual(Cursor{ .x = 4, .y = 0 }, cur.?);
+    try testing.expectEqual(@as(u32, 5), f.hits.at(2, 0).?.editor_cell.col);
+    d.cursor = 1;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "bcdef");
+    try testing.expectEqual(@as(u32, 1), view.scroll_col);
+}
+
+test "wrap breaks after spaces, keeps the cursor row visible and clears scroll_col" {
+    var f = try Fixture.init(7, 2);
+    defer f.deinit();
+    var view: ViewState = .{ .scroll_col = 3 };
+    var d = mkDoc("AAA BBB CCC DDD");
+    d.line_numbers = false;
+    d.wrap = true;
+    d.cursor = 13; // on `DDD`, visual row 3
+    const cur = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expectEqual(@as(u32, 0), view.scroll_col);
+    try testing.expect(cur != null);
+    try f.expectContains("DDD");
+    // Scrolling is line-based; the long line still starts at its top.
+    try testing.expectEqual(@as(u32, 0), view.scroll_line);
+
+    var g = try Fixture.init(7, 4);
+    defer g.deinit();
+    var v2: ViewState = .{};
+    d.cursor = 0;
+    _ = draw(g.ui(), 0, g.full(), &v2, d);
+    try g.expectRows(&.{ "AAA BBB", "CCC DDD" });
+    try testing.expectEqual(@as(u32, 8), g.hits.at(0, 1).?.editor_cell.col);
+}
+
+test "the gate's wrap case: the tail is clipped without wrap and shown with it" {
+    var f = try Fixture.init(30, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("AAA BBB CCC DDD EEE FFF GGG HHH III JJJ KKK LLL MMM NNN OOO PPP QQQ RRR SSS TTT UUU VVV WWW XXX YYY ZZZ");
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectContains("AAA BBB");
+    try f.expectLacks("ZZZ");
+    d.wrap = true;
+    var g = try Fixture.init(30, 6);
+    defer g.deinit();
+    _ = draw(g.ui(), 0, g.full(), &view, d);
+    try g.expectContains("AAA BBB");
+    try g.expectContains("ZZZ");
+}
+
+test "an empty document paints one numbered row and puts the cursor at its start" {
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    const cur = draw(f.ui(), 0, f.full(), &view, mkDoc(""));
+    try f.expectRows(&.{ "   1", "" });
+    try testing.expectEqual(Cursor{ .x = 5, .y = 0 }, cur.?);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(7, 0).?.editor_cell.col);
+}
+
+test "a degenerate area never panics" {
+    var f = try Fixture.init(3, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    _ = draw(f.ui(), 0, Rect.init(0, 0, 3, 1), &view, mkDoc("abc\ndef"));
+    _ = draw(f.ui(), 0, Rect.empty, &view, mkDoc("abc"));
+    _ = draw(f.ui(), 0, Rect.init(0, 0, 1, 1), &view, mkDoc("漢"));
 }

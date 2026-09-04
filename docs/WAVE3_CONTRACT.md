@@ -148,12 +148,27 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab) void;
 
 ## `src/ui/list_panel.zig` (ui) — per DESIGN D6
 
-`ListPanel(Row)` with `State{scroll, cursor, filter: ArrayListUnmanaged(u8), filter_focused}`,
-`Props{panel, label, subtitle, sort_chip: ?[]const u8, sort_widest, rows, paintRow, has_kebab, empty: EmptyState}`,
-`draw(st: *State, ui: Ui, area: Rect, p: Props) void`, plus `header.zig`,
+`ListPanel(Row)` with `State{scroll, cursor, filter: ArrayListUnmanaged(u8), filter_caret, filter_focused, visible, total}`
+(`deinit(gpa)`, `filterText()`),
+`Props{panel, label, subtitle, sort_chip: ?[]const u8, sort_widest, rows, paintRow, has_kebab, empty: EmptyState, show_filter = true, show_refresh = true}`,
+`draw(st: *State, ui: Ui, area: Rect, p: Props) ?Caret`, plus `header.zig`,
 `chip.zig` (the width ladder from the Rust `panel_chrome.rs:196-315`:
 full label → icon-only → dropped), `scrollbar.zig`, `filter_input.zig`,
-`empty_state.zig`.
+`empty_state.zig`, and `text_field.zig` (the editing core every input shares;
+`Caret = struct { x: u16, y: u16 }`).
+
+// changed: `draw` returns `?Caret` — the filter's caret cell when it has
+// focus, so the app can place the terminal cursor (Rust kept this in
+// `rects.*_caret`). Every text-bearing overlay below does the same.
+// changed: `paintRow: *const fn (ui: Ui, r: Rect, row: Row, selected: bool) void`
+// receives a `Ui` clipped to the row (`Ui.withClip`).
+// added: `handleKey(st: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome`
+// with `Outcome = union(enum) { ignored, consumed, filter_changed, activate: usize }`
+// — `/` focuses the filter, j/k ↑↓ g/G home/end page ctrl+d/u move, enter
+// activates, esc clears a stale filter. `visible`/`total` are set by `draw`
+// (paging needs them), so `handleKey` takes no geometry.
+// `sort_chip` is the sort's LABEL (`ListSort.label()`); the panel composes
+// ` sort: <label> ` itself, padded to `sort_widest` (`ListSort.widest_label`).
 
 ## Overlays (ui) — components with `State`, `draw`, `handleKey`
 
@@ -172,8 +187,14 @@ pub const Prompt = struct {
     pub fn init(gpa: Allocator, title: []const u8) State;  pub fn deinit(s: *State, gpa: Allocator) void;
     pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome;   // esc→cancel, enter→submit
     pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void;
-    pub fn draw(ui: Ui, area: Rect, s: *const State) void;  // title row + input row; hit `.overlay_item(0)` on the input
+    pub fn draw(ui: Ui, area: Rect, s: *const State) ?Caret;  // title row + input row; hit `.overlay_item(0)` on the input
 };
+// changed: `draw` returns the caret cell (`text_field.Caret`) so the app can
+// place the terminal cursor; `area` is the screen (the box centers itself).
+// `Prompt` is the module (`ui.Prompt == ui.prompt`), so `Prompt.State` /
+// `Prompt.init` / `Prompt.draw` read as written. `State` also carries
+// `secret: bool = false` (bullets), `text()`, `setText(gpa, value)`,
+// `remember(gpa)`; enter remembers the line before returning `.submit`.
 // The goto-line prompt's title is exactly "Go to line" (the gate asserts it).
 
 // src/ui/confirm.zig — the unsaved-changes / yes-no box.
@@ -189,6 +210,9 @@ pub const Confirm = struct {
 // src/ui/which_key.zig — stateless hint popup.
 pub const Entry = struct { key: []const u8, label: []const u8, is_group: bool = false };
 pub fn draw(ui: Ui, area: Rect, title: []const u8, entries: []const Entry) void;   // e.g. title "Leader" / "Vim: g"
+// A group entry paints as `+label` — pass `label = "split"`, `is_group = true`
+// and the gate's "+split" appears. Entries are sorted by key inside `draw`.
+// `area` is the screen; the box docks just above its last row.
 
 // src/ui/find_bar.zig — the find/replace bar docked at the bottom of a pane.
 pub const FindBar = struct {
@@ -200,24 +224,52 @@ pub const FindBar = struct {
     pub const Info = struct { current: ?usize, total: usize };               // 0-based current
     /// Two rows max. Row 1: `"Find"` (or "Find (in selection)") label, the query, then
     /// `"match {current+1}/{total}"` or `"no matches"` — exact literals, the gate asserts them.
-    pub fn draw(ui: Ui, area: Rect, s: *const State, info: Info) void;
+    pub fn draw(ui: Ui, area: Rect, s: *const State, info: Info) ?Caret;
 };
+// changed: `draw` returns the focused field's caret; `area` is the bar's own
+// rect (1 row, or 2 when `show_replace`). Hits are `.overlay_item(n)` with
+// `hit_query = 0`, `hit_replace = 1`, `hit_regex = 2`, `hit_case = 3`.
+// ctrl+enter → replace_all (when `show_replace`), ↑/↓ and ctrl+p/n and F3 →
+// prev/next. `State` gains `deinit(gpa)`, `setQuery(gpa, text)`,
+// `queryText()`, `replaceText()`. `FindBar` is the module.
 
 // src/ui/picker.zig — fuzzy list overlay (buffers, files, commands).
 pub const Picker = struct {
     pub const Item = struct { label: []const u8, detail: ?[]const u8 = null, hint: ?[]const u8 = null };
     pub const State = struct { title: []const u8, query: ArrayListUnmanaged(u8), caret: usize, cursor: usize = 0, scroll: usize = 0 };
     pub const Outcome = union(enum) { consumed, cancel, changed, accept: usize };   // accept = index into the ITEMS SLICE PASSED TO DRAW (filtered order)
-    pub fn handleKey(s: *State, gpa: Allocator, key: Key, visible_count: usize) Allocator.Error!Outcome;  // ↑↓ / ctrl+p ctrl+n / ctrl+j ctrl+k move, enter accept, esc cancel
+    pub fn handleKey(s: *State, gpa: Allocator, key: Key, count: usize) Allocator.Error!Outcome;  // ↑↓ / ctrl+p ctrl+n / ctrl+j ctrl+k move, enter accept, esc cancel
     pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void;
-    pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) void;   // registers `.overlay_item(i)` per visible row
+    pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret;   // registers `.overlay_item(i)` per visible row
+    /// Indices into `items` that match `query`, best first; then the slice `draw` takes.
+    pub fn rank(arena: Allocator, query: []const u8, items: []const Item) Allocator.Error![]const usize;
+    pub fn gather(arena: Allocator, items: []const Item, order: []const usize) Allocator.Error![]const Item;
 };
+// changed: `draw` returns the query caret; `handleKey`'s last parameter is
+// the LENGTH OF THE SLICE last passed to `draw` (paging reads `State.rows`,
+// which `draw` sets). `State` gains `total: ?usize = null` (paints
+// ` N of M `), `rows`, `deinit(gpa)`, `queryText()`. The scrollbar registers
+// `.scrollbar{ .owner = .{ .pane = Picker.scrollbar_owner }, .axis = .v }`.
+// `Picker` is the module.
 // src/ui/fuzzy.zig — `pub fn score(query: []const u8, text: []const u8) ?u32` (higher is better; null = no match), case-insensitive, subsequence with bonuses for word starts/consecutive runs.
+// Also `match(arena, query, text) !?Match{score, positions}` for highlighting. An empty query scores `fuzzy.base`.
 ```
 
 ## Toasts (ui)
 `src/ui/toast.zig`: `pub fn draw(ui: Ui, area: Rect, toasts: []const Toast) void` with
 `Toast{ text: []const u8, level: enum{info,warn,err} }`, stacked bottom-right.
+`area` is the region ABOVE the statusline (the stack keeps one spacer row);
+`toasts[0]` is the newest and lands lowest. Toast `i` registers
+`.button(toast.button_base + i)` — click to dismiss. At most five paint; past
+that the oldest slot reads `+K more…`.
+
+## Also on the `ui` side
+- `src/ui/text_field.zig` — the editing core (`handleKey(buf, caret, gpa, key) !Edit`,
+  `insert` for paste, `draw`), and `Caret`. `ui.Caret` re-exports it.
+- `src/ui/overlay.zig` — `place` / `frame` / `box` / `hint`: the shared popup frame.
+- `Ui.withClip(r)` — the same context with the canvas clipped to `r`.
+- `list_panel.scrollWindow(&scroll, cursor, total, visible) Window{first, visible, needs_bar}` —
+  the Rust `list_scroll_window`, also used by the picker.
 
 ---
 

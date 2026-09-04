@@ -1,8 +1,10 @@
-//! src/ui — the render primitives (D6): Rect geometry and, on top of a
-//! tty-free `vaxis.Screen`, the Canvas that paints into it.
+//! src/ui — the render layer (D6): geometry and painting primitives on a
+//! tty-free `vaxis.Screen`, the frame hit map, the theme, and every
+//! component the app paints with. Components take a `Ui`, never `*App`.
 //!
-//! This barrel exists so `zig build test` reaches every ui module's tests
-//! without the main executable having to import them.
+//! This barrel is the ui test root: `main.zig`'s `test {}` imports it, so
+//! every module's tests run under `zig build test` on
+//! `std.testing.allocator` (leak = failure).
 
 pub const Rect = @import("rect.zig");
 pub const color = @import("color.zig");
@@ -11,6 +13,42 @@ pub const clip = @import("clip.zig");
 pub const text = @import("text.zig");
 pub const border = @import("border.zig");
 
+pub const Theme = @import("theme.zig");
+pub const hit = @import("hit.zig");
+pub const HitMap = hit.HitMap;
+pub const HitTarget = hit.HitTarget;
+pub const ChipKind = hit.ChipKind;
+pub const Ui = @import("context.zig");
+
+pub const editor_view = @import("editor_view.zig");
+pub const statusline = @import("statusline.zig");
+pub const bufferline = @import("bufferline.zig");
+
+pub const chip = @import("chip.zig");
+pub const text_field = @import("text_field.zig");
+pub const Caret = text_field.Caret;
+pub const scrollbar = @import("scrollbar.zig");
+pub const empty_state = @import("empty_state.zig");
+pub const header = @import("header.zig");
+pub const filter_input = @import("filter_input.zig");
+pub const list_panel = @import("list_panel.zig");
+pub const ListPanel = list_panel.ListPanel;
+
+pub const fuzzy = @import("fuzzy.zig");
+pub const overlay = @import("overlay.zig");
+pub const prompt = @import("prompt.zig");
+pub const Prompt = prompt;
+pub const confirm = @import("confirm.zig");
+pub const Confirm = confirm;
+pub const which_key = @import("which_key.zig");
+pub const find_bar = @import("find_bar.zig");
+pub const FindBar = find_bar;
+pub const picker = @import("picker.zig");
+pub const Picker = picker;
+pub const toast = @import("toast.zig");
+pub const Toast = toast.Toast;
+
 test {
     @import("std").testing.refAllDecls(@This());
+    _ = @import("test_fixture.zig");
 }

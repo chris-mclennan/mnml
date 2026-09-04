@@ -56,10 +56,10 @@ pub const Key = key_mod.Key;
 pub const Layout = layout_mod.Layout;
 pub const LayoutState = layout_mod.LayoutState;
 pub const AppEvent = event.AppEvent;
-pub const Prompt = prompt_mod.Prompt;
-pub const Confirm = confirm_mod.Confirm;
-pub const Picker = picker_mod.Picker;
-pub const FindBar = find_bar_mod.FindBar;
+pub const Prompt = prompt_mod;
+pub const Confirm = confirm_mod;
+pub const Picker = picker_mod;
+pub const FindBar = find_bar_mod;
 pub const FindState = find_mod.FindState;
 
 /// The scalar settings the spike reads. ZON-loaded config is Phase 1.
@@ -126,7 +126,7 @@ pub const Overlay = union(enum) {
             },
             .confirm => |*c| gpa.free(c.message),
             .picker => |*p| {
-                Picker.deinit(&p.state, gpa);
+                p.state.deinit(gpa);
                 for (p.labels) |l| gpa.free(l);
                 gpa.free(p.labels);
                 gpa.free(p.panes);
@@ -209,7 +209,7 @@ pub const App = struct {
     events: event.EventQueue,
     diag: command.Diag = .{},
     cfg: Config,
-    theme: theme_mod.Theme = theme_mod.Theme.default,
+    theme: theme_mod = theme_mod.default,
     /// Absolute. Owned.
     workspace: []u8,
     data_root: []u8,
@@ -301,7 +301,7 @@ pub const App = struct {
         const gpa = self.gpa;
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
-            FindBar.deinit(&fb.state, gpa);
+            fb.state.deinit(gpa);
             if (fb.snapshot) |*s| s.deinit();
         }
         for (self.toasts.items) |t| freeToast(gpa, t);
@@ -612,7 +612,7 @@ pub const App = struct {
             }
             if (fb.snapshot) |*s| s.deinit();
         }
-        FindBar.deinit(&fb.state, self.gpa);
+        fb.state.deinit(self.gpa);
         self.find_bar = null;
         if (self.focus == .overlay) self.focus = if (self.active) |a| .{ .pane = a } else .tree;
         self.needs_render = true;
@@ -695,7 +695,10 @@ pub const App = struct {
     /// The rendered-toast view for the toast component.
     pub fn visibleToasts(self: *App, arena: Allocator) Allocator.Error![]toast_mod.Toast {
         var out: std.ArrayListUnmanaged(toast_mod.Toast) = .empty;
-        for (self.toasts.items) |t| try out.append(arena, .{ .text = t.text, .level = switch (t.level) {
+        // toast.draw wants the newest first: index 0 lands nearest the
+        // statusline and the oldest is what folds into "+K more…".
+        var i = self.toasts.items.len;
+        while (i > 0) : (i -= 1) try out.append(arena, .{ .text = self.toasts.items[i - 1].text, .level = switch (self.toasts.items[i - 1].level) {
             .info => .info,
             .warn => .warn,
             .err => .err,

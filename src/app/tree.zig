@@ -17,7 +17,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const Rect = @import("../ui/rect.zig");
 const context = @import("../ui/context.zig");
-const Ui = context.Ui;
+const Ui = context;
 
 pub const table = .{
     .@"view.toggle_tree" = &toggle,

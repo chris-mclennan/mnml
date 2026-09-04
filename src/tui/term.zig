@@ -163,6 +163,7 @@ pub fn init(self: *Term, io: Io, gpa: std.mem.Allocator, env: *std.process.Envir
         self.vx.state.kitty_keyboard = false;
     }
     applyTerminalQuirks(&self.vx.caps, env);
+    if (legacySgr(env, self.vx.state.kitty_keyboard)) self.vx.sgr = .legacy;
 
     self.caps = .{
         .kitty_keyboard = self.vx.state.kitty_keyboard,
@@ -307,6 +308,20 @@ pub fn applyTerminalQuirks(caps: *vaxis.Vaxis.Capabilities, env: *const std.proc
     }
 }
 
+/// vaxis spells indexed and rgb colors with colon sub-parameters
+/// (`38:5:n`, `38:2:r:g:b`) — the kitty-era form. Terminal.app and the
+/// other terminals that never learned CSI u ignore the whole sequence,
+/// so every color vanishes (the gallery painted white-on-dark in
+/// Terminal.app). The semicolon form is understood everywhere, so it
+/// is the spelling for any terminal that did not answer the kitty
+/// keyboard query, and for Terminal.app regardless.
+pub fn legacySgr(env: *const std.process.Environ.Map, kitty_keyboard: bool) bool {
+    if (env.get("TERM_PROGRAM")) |prog| {
+        if (std.mem.eql(u8, prog, "Apple_Terminal")) return true;
+    }
+    return !kitty_keyboard;
+}
+
 // ── truecolor ──
 
 /// vaxis never sets `caps.rgb`, and no probe answers "24-bit". The
@@ -440,6 +455,16 @@ test "applyTerminalQuirks: Apple Terminal's false explicit-width claim is droppe
     applyTerminalQuirks(&caps, &ghostty);
     try testing.expect(caps.explicit_width);
     try testing.expectEqual(vaxis.gwidth.Method.unicode, caps.unicode);
+}
+
+test "legacySgr: Terminal.app always, otherwise whoever lacks the kitty keyboard" {
+    var apple = try envWith(&.{.{ "TERM_PROGRAM", "Apple_Terminal" }});
+    defer apple.deinit();
+    try testing.expect(legacySgr(&apple, true));
+    var ghostty = try envWith(&.{.{ "TERM_PROGRAM", "ghostty" }});
+    defer ghostty.deinit();
+    try testing.expect(!legacySgr(&ghostty, true));
+    try testing.expect(legacySgr(&ghostty, false));
 }
 
 test "Capabilities.write: one status-line summary" {

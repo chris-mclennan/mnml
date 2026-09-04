@@ -17,7 +17,7 @@ const PaneId = app_mod.PaneId;
 const Rect = @import("../ui/rect.zig");
 const Canvas = @import("../ui/canvas.zig");
 const context = @import("../ui/context.zig");
-const Ui = context.Ui;
+const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
 const bufferline = @import("../ui/bufferline.zig");
@@ -167,7 +167,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         if (focused) app.cursor_pos = cursor;
     }
     if (bar) |b| if (app.find_bar) |*fb| {
-        find_bar_mod.FindBar.draw(ui, b, &fb.state, .{ .current = e.find.current, .total = e.find.matches.items.len });
+        if (find_bar_mod.draw(ui, b, &fb.state, .{ .current = e.find.current, .total = e.find.matches.items.len })) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
     };
 }
 
@@ -211,12 +211,14 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
 fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     switch (app.overlay) {
         .none => {},
-        .prompt => |*p| prompt_mod.Prompt.draw(ui, body, &p.state),
-        .confirm => |*c| confirm_mod.Confirm.draw(ui, body, &c.state),
+        .prompt => |*p| if (prompt_mod.draw(ui, body, &p.state)) |c| {
+            app.cursor_pos = .{ .x = c.x, .y = c.y };
+        },
+        .confirm => |*c| confirm_mod.draw(ui, body, &c.state),
         .picker => |*p| {
-            const items = try ui.arena.alloc(picker_mod.Picker.Item, p.filtered.items.len);
+            const items = try ui.arena.alloc(picker_mod.Item, p.filtered.items.len);
             for (p.filtered.items, 0..) |idx, i| items[i] = .{ .label = p.labels[idx] };
-            picker_mod.Picker.draw(ui, body, &p.state, items);
+            if (picker_mod.draw(ui, body, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {
             const path = w.slice();
@@ -264,7 +266,8 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     try t.expect(std.mem.indexOf(u8, txt, "standard") != null);
     try t.expect(app.hits.at(5, 2).? == .editor_cell);
     try t.expect(app.hits.at(5, 0).? == .tab);
-    try t.expectEqual(@as(u16, 5), app.cursor_pos.?.x);
+    // gutter is max(digits, 3) + 2 = 5 cells; the cursor sits at col 2.
+    try t.expectEqual(@as(u16, 7), app.cursor_pos.?.x);
     try t.expectEqual(@as(u16, 2), app.cursor_pos.?.y);
     try t.expectEqual(@as(usize, 6), app.pane_rows);
 }
@@ -280,7 +283,8 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
     for ("alpha") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
     const with_bar = try screenText(&app);
     defer t.allocator.free(with_bar);
-    try t.expect(std.mem.indexOf(u8, with_bar, "Find: alpha") != null);
+    try t.expect(std.mem.indexOf(u8, with_bar, " Find ") != null);
+    try t.expect(std.mem.indexOf(u8, with_bar, "alpha") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "match 1/2") != null);
     try t.expectEqual(@as(usize, 9), app.pane_rows);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
