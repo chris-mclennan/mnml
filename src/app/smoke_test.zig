@@ -79,7 +79,7 @@ test "smoke: open, type under the standard keymap, ctrl+s writes the file" {
     try t.expect(!s.app.activeEditor().?.buf.dirty);
     const back = try s.file("notes.txt");
     defer t.allocator.free(back);
-    try t.expectEqualStrings("TYPED first line", back);
+    try t.expectEqualStrings("TYPED first line\n", back); // save adds the terminating newline
 }
 
 test "smoke: editor.use_vim makes dd delete a line and u undo it" {

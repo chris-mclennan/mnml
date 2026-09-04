@@ -60,6 +60,11 @@ pub const Buffer = struct {
     /// `@tagName` of the last op the editor refused with `Unsupported`,
     /// for the app to toast. Static string.
     last_unsupported: ?[]const u8 = null,
+    /// Rust mnml's `[editor] ensure_trailing_newline`: a file gets its
+    /// terminating newline on save. It goes through `apply` so undo can
+    /// take it back — and, like any `replace_range`, leaves the cursor
+    /// after the inserted text.
+    ensure_trailing_newline: bool = true,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -150,8 +155,22 @@ pub const Buffer = struct {
 
     pub fn save(self: *Buffer, io: Io) SaveError!void {
         const path = self.path orelse return error.NoPath;
+        if (self.ensure_trailing_newline) try self.fixTrailingNewline();
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = self.editor.bytes() });
         try self.markSaved();
+    }
+
+    fn fixTrailingNewline(self: *Buffer) Allocator.Error!void {
+        const n = self.editor.len();
+        if (n == 0 or self.editor.bytes()[n - 1] == '\n') return;
+        var clip = Clipboard.init(self.gpa);
+        defer clip.deinit();
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        _ = self.editor.apply(.{ .replace_range = .{ .start = n, .end = n, .text = "\n" } }, 0, &clip, arena.allocator()) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unsupported => return,
+        };
     }
 
     /// Record the current text as the on-disk text.
@@ -1029,6 +1048,49 @@ test "buffer: unsupported ops are skipped and named; folds shift with edits" {
     try testing.expectEqual(@as(usize, 4), h.buf.folds.values()[0]);
     try h.feed("dd");
     try testing.expectEqual(@as(usize, 2), h.buf.folds.keys()[0]);
+}
+
+test "buffer: save adds the trailing newline and parks the cursor after it (Rust parity: R then A<esc>R! appends)" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(path);
+    const file = try std.fs.path.join(gpa, &.{ path, "data.txt" });
+    defer gpa.free(file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = "abcdef" });
+    var buf = try Buffer.load(gpa, io, file, .vim, .{});
+    defer buf.deinit();
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const feed = struct {
+        fn run(b: *Buffer, c: *Clipboard, a: Allocator, spec: []const u8) !void {
+            const keys = try parseKeys(testing.allocator, spec);
+            defer testing.allocator.free(keys);
+            for (keys) |k| _ = try b.feedKey(k, c, 10, null, a);
+        }
+    }.run;
+    try feed(&buf, &clip, arena.allocator(), "RXYZ<esc>");
+    try buf.save(io);
+    try testing.expectEqualStrings("XYZdef\n", buf.editor.bytes());
+    try testing.expectEqual(buf.editor.len(), buf.editor.cursor);
+    try testing.expect(!buf.dirty);
+    try feed(&buf, &clip, arena.allocator(), "A<esc>R!<esc>");
+    try buf.save(io);
+    const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
+    defer gpa.free(back);
+    try testing.expectEqualStrings("XYZdef!\n", back);
+    // Off, the buffer is written verbatim.
+    buf.ensure_trailing_newline = false;
+    try feed(&buf, &clip, arena.allocator(), "GA<del><esc>");
+    try buf.save(io);
+    try testing.expectEqualStrings("XYZdef!", buf.editor.bytes());
+    const verbatim = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
+    defer gpa.free(verbatim);
+    try testing.expectEqualStrings("XYZdef!", verbatim);
 }
 
 test "buffer: load and save round-trip through the file system" {
