@@ -20,6 +20,8 @@ pub fn main() !void {
 
 test {
     _ = @import("core/alloc.zig");
+    _ = @import("core/key.zig");
+    _ = @import("core/event.zig");
 }
 
 test "version string is set" {
