@@ -850,11 +850,20 @@ pub const specs = [_]Spec{
     .{ .id = "editor.input_mode_menu", .title = "Open mode menu (vim / standard)", .group = "editor" },
     .{ .id = "view.workspace_menu", .title = "Open workspace menu", .group = "view" },
     .{ .id = "git.branch_menu", .title = "Open branch menu", .group = "git" },
+    // Zig-only: the rail / status-pane row menu names these (D5: a menu
+    // row is an enum, so the ids must exist).
+    .{ .id = "git.refresh", .title = "Git: refresh status now", .group = "git" },
+    .{ .id = "git.stage", .title = "Git: stage the selected file (or the active buffer)", .group = "git" },
+    .{ .id = "git.unstage", .title = "Git: unstage the selected file (or the active buffer)", .group = "git" },
+    .{ .id = "git.stage_all", .title = "Git: stage everything (add -A)", .group = "git" },
+    .{ .id = "git.unstage_all", .title = "Git: unstage everything", .group = "git" },
+    .{ .id = "git.discard", .title = "Git: discard changes to the selected file (confirm)", .group = "git" },
+    .{ .id = "git.open_file", .title = "Git: open the selected file in an editor", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
 };
 
-test "805 specs, unique ids" {
-    // 797 Rust ids + the eight Zig-only menu commands.
-    try std.testing.expectEqual(@as(usize, 805), specs.len);
+test "812 specs, unique ids" {
+    // 797 Rust ids + the eight Zig-only menu commands + seven git row commands.
+    try std.testing.expectEqual(@as(usize, 812), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

@@ -270,6 +270,17 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 else => {},
             };
         },
+        .git => {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            const detail = try app.frame.allocator().dupe(u8, if (i < p.details.len) p.details[i] else "");
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            @import("git.zig").acceptPick(app, label, detail) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => {},
+                else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("git: {s}", .{@errorName(err)}),
+            };
+        },
         .go_run_cmd, .tools, .tasks => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);

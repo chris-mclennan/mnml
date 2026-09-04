@@ -52,6 +52,7 @@ const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
+const git_app = @import("git.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -169,6 +170,14 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) void {
     if (bar.w > w0 + rw + 4) {
         const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
         ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
+        // The git badge: changed files in the active repo, Rust's
+        // `set_activity_badge("git", n)`.
+        const badge = app.git.badge();
+        if (badge > 0) {
+            const label = ui.fmt("{d}", .{badge});
+            const bw = ui.width(label);
+            if (rx > w0 + bw + 2) _ = ui.putStrRight(rx, y, bw, label, Theme.onBg(th.warn_fg, bg.bg));
+        }
     }
     const label: []const u8 = if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ";
     const lw = @min(ui.width(label), bar.w -| (w0 + rw + 2));
@@ -199,6 +208,7 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocator.Error!void {
     switch (which) {
         .todos => try todos.draw(app, ui, area),
+        .git => try git_app.draw(app, ui, area),
         .notes, .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
             const caps = ui.fmt(" {s}", .{@tagName(which)});
@@ -230,7 +240,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -285,6 +295,9 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
             .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
             .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
+            .git_status => |*s| try git_app.drawStatusPane(app, ui, pr.pane, s, rect),
+            .diff => |*d| git_app.drawDiffPane(app, ui, pr.pane, d, rect),
+            .git_graph => |*g| git_app.drawGraphPane(app, ui, pr.pane, g, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -395,6 +408,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .focused = focused,
         .visual_block = mode == .visual_block,
         .scrollbar = app.cfg.ui.scrollbar,
+        .gutter_marks = if (e.buf.path) |p| try git_app.viewMarks(app, p, arena) else &.{},
+        .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     const headers = try sticky.headerLines(app, e, arena);
@@ -494,6 +509,13 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.total_lines = p.rows;
     };
+    // The branch segment: `main ↑2 ↓1 ●3`, before the input style.
+    if (try git_app.statusSegment(app, ui.arena)) |seg| {
+        const segs = try ui.arena.alloc([]const u8, info.right.len + 1);
+        @memcpy(segs[0..info.right.len], info.right);
+        segs[info.right.len] = seg;
+        info.right = segs;
+    }
     statusline.draw(ui, area, info);
 }
 

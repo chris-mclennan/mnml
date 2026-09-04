@@ -188,7 +188,7 @@ fn activityHttp(app: *App) CommandError!void {
 }
 
 fn activityGit(app: *App) CommandError!void {
-    return notInBuild(app, "Git");
+    showRightPanel(app, .git);
 }
 
 // ─── splits ─────────────────────────────────────────────────────────────

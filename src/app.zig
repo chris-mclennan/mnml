@@ -61,6 +61,7 @@ const pty_pane = @import("app/pty_pane.zig");
 const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
+const git_app = @import("app/git.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -112,6 +113,8 @@ pub const PromptPurpose = union(enum) {
     replace,
     filter_shell,
     new_todo,
+    /// A git prompt; `git.State.prompt` says which.
+    git,
     /// Runners: the npm script / the `go run` path typed into the prompt.
     npm_run_script,
     go_run_path,
@@ -136,6 +139,8 @@ pub const ConfirmPurpose = union(enum) {
     trust_workspace,
     /// Install the missing tool (`runners.zig`); the payload indexes the installer table.
     install_tool: u16,
+    /// A git yes/no; `git.State.confirm` holds the payload.
+    git,
     /// Delete the workspace-relative path (owned).
     delete_path: []u8,
     /// Move `from` into directory `into` (both workspace-relative, owned).
@@ -152,7 +157,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -358,6 +363,7 @@ pub const App = struct {
     /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
     right_panel: ?PanelId = null,
     todos: todos.State,
+    git: git_app.State,
     snippets: snippets.State,
     focus: FocusId = .tree,
     active: ?PaneId = null,
@@ -463,6 +469,7 @@ pub const App = struct {
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa),
+            .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
@@ -476,6 +483,8 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
+        try app.hooks.subscribe(.save_post, .{ .zig = &git_app.onSavePost });
+        try app.hooks.subscribe(.open, .{ .zig = &git_app.onOpen });
         app.now_ms = nowMs(io);
         app.tree.width = app.cfg.ui.tree_width;
         try app.toastConfigDiagnostics();
@@ -569,6 +578,7 @@ pub const App = struct {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
         self.todos.deinit(gpa, self.io);
+        self.git.deinit(gpa, self.io);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
@@ -1084,10 +1094,15 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .git => |result| try git_app.handle(self, result),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
                 if (e.source == .todos) self.todos.scanning = false;
+                if (e.source == .git) {
+                    self.git.status_pending = false;
+                    if (self.git.busy > 0) self.git.busy -= 1;
+                }
                 try self.toastLevel(.err, "{s}: {s}", .{ @tagName(e.source), e.msg });
             },
             .timer => {},
@@ -1151,6 +1166,7 @@ pub const App = struct {
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
         try watch.tick(self, now);
+        try git_app.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1166,7 +1182,9 @@ pub const App = struct {
             else => {},
         };
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.git.busy > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        // The status TTL: a frame is due when the snapshot goes stale.
+        if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -1252,6 +1270,13 @@ test {
     _ = @import("app/watch.zig");
     _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
+    _ = @import("app/git.zig");
+    _ = @import("app/cmd_git.zig");
+    _ = @import("git/parse.zig");
+    _ = @import("git/client.zig");
+    _ = @import("ui/git_status_view.zig");
+    _ = @import("ui/diff_view.zig");
+    _ = @import("ui/git_graph_view.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");
     _ = @import("ui/confirm.zig");
