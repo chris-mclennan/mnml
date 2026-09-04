@@ -1,6 +1,6 @@
 # mnml → Zig port plan
 
-> Status: APPROVED 2026-09-04 — Phase 0 (viability spike) in progress. Sections: Context → Execution (Phase 0 spike, Phases 1–8, dependencies, side-by-side, cutover) → Verification → Design (trunk D1–D10, externals E1–E8) → Research appendix (raw findings; where the appendix and the decisions disagree — TOML, bridge — the decisions win).
+> Status: **Phase 0 VERDICT: CONTINUE** (2026-09-04, evidence in `docs/SPIKE_RESULTS.md`) — gate 41/47, all five targets cross-compile, 332 unit tests, 88 commits. Next: the six editor slices, todos.zig, Phase 1. Sections: Context → Execution (Phase 0 spike, Phases 1–8, dependencies, side-by-side, cutover) → Verification → Design (trunk D1–D10, externals E1–E8) → Research appendix (raw findings; where the appendix and the decisions disagree — TOML, bridge — the decisions win).
 
 ## Context
 
