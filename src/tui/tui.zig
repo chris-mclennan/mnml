@@ -5,6 +5,7 @@
 //! Barrel for `zig build test`; the executables import the modules directly.
 
 pub const Input = @import("input.zig");
+pub const Term = @import("term.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
