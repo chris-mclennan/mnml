@@ -17,6 +17,7 @@ const keymap = @import("../core/keymap.zig");
 const cmd_tab = @import("cmd_tab.zig");
 const runners = @import("runners.zig");
 const tasks = @import("tasks.zig");
+const dap = @import("dap.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -269,6 +270,13 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {},
             };
+        },
+        .dap_remove_watch, .dap_exceptions, .dap_threads => |kind| {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            const detail = try app.frame.allocator().dupe(u8, if (i < p.details.len) p.details[i] else "");
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try dap.pickerAccept(app, kind, label, detail);
         },
         .go_run_cmd, .tools, .tasks => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);

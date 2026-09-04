@@ -19,6 +19,7 @@ const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_pane = @import("pty_pane.zig");
+const dap = @import("dap.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -102,6 +103,10 @@ pub const Pane = union(enum) {
     list: ListPane,
     /// A shell or a command, painted from the ghostty-vt grid.
     pty: PtyPane,
+    /// The debugger: call stack, variables + watches, output.
+    debug: dap.DebugPane,
+    /// The debugger's REPL.
+    dap_repl: dap.DapReplPane,
 
     pub fn deinit(self: *Pane, gpa: Allocator) void {
         switch (self.*) {
@@ -111,6 +116,8 @@ pub const Pane = union(enum) {
             .cheatsheet => |*c| c.deinit(),
             .list => |*l| l.deinit(),
             .pty => |*p| p.deinit(gpa),
+            .debug => {},
+            .dap_repl => |*r| r.deinit(),
         }
     }
 
@@ -125,13 +132,15 @@ pub const Pane = union(enum) {
             .cheatsheet => return "Cheatsheet",
             .list => |*l| return l.title(),
             .pty => |*p| return p.label,
+            .debug => return "Debug",
+            .dap_repl => return "DAP REPL",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .debug, .dap_repl => false,
         };
     }
 

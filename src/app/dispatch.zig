@@ -52,6 +52,7 @@ const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const runners = @import("runners.zig");
+const dap = @import("dap.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -98,6 +99,16 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .list => |*l| {
             if (try listPaneKey(app, id, l, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .debug => |*d| {
+            if (try dap.debugKey(app, id, d, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .dap_repl => |*r| {
+            if (try dap.replKey(app, id, r, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -547,6 +558,10 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
         .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
+        .dap_add_watch => try dap.acceptWatch(app, text),
+        .dap_bp_condition => |b| try dap.acceptCondition(app, b.path, b.line, text),
+        .dap_hit_count => |b| try dap.acceptHitCount(app, b.path, b.line, text),
+        .dap_set_variable => |sv| try dap.acceptSetVariable(app, sv.parent_ref, sv.name, text),
     }
 }
 
@@ -839,6 +854,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
                     }
                 },
+                .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
                 .editor, .outline, .md_preview, .pty => {},
             }
         },
@@ -1069,6 +1085,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
     }
 }
 

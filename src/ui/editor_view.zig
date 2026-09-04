@@ -45,6 +45,13 @@ pub const Fold = struct { first_line: u32, last_line: u32 };
 
 pub const CursorShape = enum { block, bar, underline };
 
+/// A one-cell sign in the gutter's first column on `line` (0-based):
+/// a breakpoint, the debugger's ▶, a diagnostic's severity dot.
+pub const GutterMark = struct { line: u32, glyph: []const u8, style: Style };
+/// A byte range underlined over the syntax style — a diagnostic. The
+/// style's `fg` colours the line; `ul_style` picks its shape.
+pub const Underline = struct { start: usize, end: usize, style: Style };
+
 pub const Doc = struct {
     text: []const u8,
     /// Byte offset.
@@ -69,6 +76,10 @@ pub const Doc = struct {
     /// A vertical scrollbar in the last column when the text outgrows
     /// the pane.
     scrollbar: bool = false,
+    /// Sorted by `line`; one glyph per line (the app resolves priority).
+    marks: []const GutterMark = &.{},
+    /// Sorted by `start`, non-overlapping.
+    underlines: []const Underline = &.{},
 };
 
 /// Persistent per pane; `draw` adjusts it to keep the cursor visible —
@@ -463,6 +474,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         const row_style: Style = if (is_cursor_line) t.cursor_line else t.bg;
         var spans = RangeCursor(Span).init(doc.spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
+        var underlines = RangeCursor(Underline).init(doc.underlines, line_start);
 
         for (rows, 0..) |row, ri| {
             if (y >= area.bottom()) break;
@@ -477,6 +489,10 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     const num = ui.fmt("{d}", .{line + 1});
                     _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
                 }
+                if (ri == 0) for (doc.marks) |m| if (m.line == line) {
+                    _ = ui.putStr(area.x, y, 1, m.glyph, Theme.onBg(m.style, row_style.bg));
+                    break;
+                };
                 ui.hit(gr, .{ .editor_cell = .{ .pane = pane, .line = line, .col = 0 } });
             }
 
@@ -512,6 +528,11 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     style.ul_style = s.ul_style;
                     style.strikethrough = s.strikethrough;
                     if (s.bg != .default) style.bg = s.bg;
+                }
+                if (underlines.at(off)) |ui_idx| {
+                    const u = doc.underlines[ui_idx].style;
+                    style.ul = u.fg;
+                    style.ul_style = if (u.ul_style == .off) .curly else u.ul_style;
                 }
                 if (matches.at(off)) |mi| {
                     const ms = if (doc.current_match == mi) t.current_match else t.match;

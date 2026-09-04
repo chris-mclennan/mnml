@@ -52,6 +52,7 @@ const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
+const dap = @import("dap.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -230,7 +231,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty => return,
+        .outline, .cheatsheet, .list, .pty, .debug, .dap_repl => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -285,6 +286,8 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
             .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
             .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
+            .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
+            .dap_repl => |*r| try dap.drawRepl(app, ui, pr.pane, r, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -395,6 +398,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .focused = focused,
         .visual_block = mode == .visual_block,
         .scrollbar = app.cfg.ui.scrollbar,
+        .marks = try dap.marksFor(app, arena, e.buf.path, &app.theme, ui.ascii),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     const headers = try sticky.headerLines(app, e, arena);

@@ -61,6 +61,7 @@ const pty_pane = @import("app/pty_pane.zig");
 const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
+const dap = @import("app/dap.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -121,10 +122,21 @@ pub const PromptPurpose = union(enum) {
     new_folder: []u8,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
+    /// DAP: a watch expression.
+    dap_add_watch,
+    /// DAP: a condition / hit-count for the breakpoint on `line` of `path` (owned).
+    dap_bp_condition: BpTarget,
+    dap_hit_count: BpTarget,
+    /// DAP: a new value for `name` under `parent_ref` (owned name).
+    dap_set_variable: struct { parent_ref: i64, name: []u8 },
+
+    pub const BpTarget = struct { path: []u8, line: u32 };
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
             .new_file, .new_folder, .rename => |s| gpa.free(s),
+            .dap_bp_condition, .dap_hit_count => |b| gpa.free(b.path),
+            .dap_set_variable => |sv| gpa.free(sv.name),
             else => {},
         }
     }
@@ -152,7 +164,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, dap_remove_watch, dap_exceptions, dap_threads };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -359,6 +371,7 @@ pub const App = struct {
     right_panel: ?PanelId = null,
     todos: todos.State,
     snippets: snippets.State,
+    dap: dap.State = .{},
     focus: FocusId = .tree,
     active: ?PaneId = null,
     /// The editor pane most recently active — a runner pane taking
@@ -569,6 +582,7 @@ pub const App = struct {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
         self.todos.deinit(gpa, self.io);
+        self.dap.deinit(gpa);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
@@ -1084,6 +1098,7 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .dap => |d| try dap.handle(self, d.session, d.msg),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1253,6 +1268,12 @@ test {
     _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
     _ = @import("rpc/jsonrpc.zig");
+    _ = @import("dap/types.zig");
+    _ = @import("dap/client.zig");
+    _ = @import("app/dap.zig");
+    _ = @import("app/cmd_dap.zig");
+    _ = @import("ui/dap_view.zig");
+    _ = @import("ui/dap_repl_view.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");
     _ = @import("ui/confirm.zig");
