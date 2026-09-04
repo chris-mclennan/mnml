@@ -107,19 +107,11 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = exe.root_module });
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
-    // src/ui is reached through its barrel so every primitive's tests run
-    // under `zig build test` on std.testing.allocator (leak = failure).
-    const ui_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/ui/ui.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "vaxis", .module = vaxis_mod },
-            },
-        }),
-    });
-    test_step.dependOn(&b.addRunArtifact(ui_tests).step);
+    // src/ui is reached through its barrel (`src/ui/ui.zig`) from main.zig's
+    // `test {}` block, so every component's tests run under `zig build test`
+    // on std.testing.allocator (leak = failure). It is not its own test
+    // module: the components import `src/core/{ids,panel,key}.zig`, which
+    // a module rooted at `src/ui/` cannot reach.
 
     // ── tui tests ──
     // src/tui through its barrel: the input worker's key naming and parser
@@ -167,7 +159,6 @@ pub fn build(b: *std.Build) void {
     for ([_]GateBin{
         .{ .compile = exe, .name = "mnml-zig" },
         .{ .compile = tests, .name = "test-main" },
-        .{ .compile = ui_tests, .name = "test-ui" },
         .{ .compile = pty_tests, .name = "test-pty" },
         .{ .compile = ts_tests, .name = "test-tree-sitter" },
         .{ .compile = highlight_tests, .name = "test-highlight" },

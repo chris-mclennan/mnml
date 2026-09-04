@@ -1,0 +1,159 @@
+//! Ui — what a draw function receives instead of `*App` (D6).
+//!
+//! The canvas to paint on, the hit map to register into, the theme, the
+//! frame arena for anything the draw allocates, who has focus, where the
+//! pointer is, and the two terminal facts that change glyph choices
+//! (`ascii`, `nerd_font`). A component paints inside the rect it is
+//! handed and never reaches past this struct.
+//!
+//! The small helpers here are the strokes every component makes: paint a
+//! string cell by cell, measure it, clip it with the right ellipsis,
+//! register a hit without an error path (a frame that cannot afford a
+//! hit entry loses that click until the next frame — never the paint).
+
+const std = @import("std");
+const vaxis = @import("vaxis");
+const Rect = @import("rect.zig");
+const Canvas = @import("canvas.zig");
+const Theme = @import("theme.zig");
+const hit_mod = @import("hit.zig");
+const clip = @import("clip.zig");
+const ids = @import("../core/ids.zig");
+
+const Allocator = std.mem.Allocator;
+
+pub const Style = vaxis.Style;
+pub const Cell = vaxis.Cell;
+pub const HitMap = hit_mod.HitMap;
+pub const HitTarget = hit_mod.HitTarget;
+pub const FocusId = ids.FocusId;
+
+const Ui = @This();
+
+canvas: Canvas,
+hits: *HitMap,
+theme: *const Theme,
+/// Frame arena — everything a draw allocates.
+arena: Allocator,
+focus: FocusId,
+hover: ?struct { x: u16, y: u16 } = null,
+ascii: bool = false,
+nerd_font: bool = true,
+
+/// Registers `t` for `r`. OOM drops the entry: the paint already
+/// happened and the next frame re-registers it.
+pub fn hit(ui: Ui, r: Rect, t: HitTarget) void {
+    ui.hits.add(ui.arena, r, t) catch {};
+}
+
+pub fn fill(ui: Ui, r: Rect, style: Style) void {
+    ui.canvas.fill(r, style);
+}
+
+/// True when the pointer is inside `r`.
+pub fn hovered(ui: Ui, r: Rect) bool {
+    const h = ui.hover orelse return false;
+    return r.contains(h.x, h.y);
+}
+
+/// Paints `s` from `(x, y)` leftwards-to-rightwards within `max_w`
+/// cells, one grapheme per cell (two for wide ones). Returns the cells
+/// used. A glyph that would cross `max_w` is not painted.
+pub fn putStr(ui: Ui, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
+    var used: u16 = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| {
+        const bytes = g.bytes(s);
+        const w = ui.canvas.cellWidth(bytes);
+        if (w == 0) continue;
+        if (used + w > max_w) break;
+        ui.canvas.put(x + used, y, .{ .char = .{ .grapheme = bytes, .width = @intCast(w) }, .style = style });
+        used += w;
+    }
+    return used;
+}
+
+/// Paints `s` so that it ends at `right_x` (exclusive), within `max_w`.
+/// Returns the x it started at.
+pub fn putStrRight(ui: Ui, right_x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
+    const w = @min(ui.width(s), max_w);
+    const x = right_x -| w;
+    _ = ui.putStr(x, y, w, s, style);
+    return x;
+}
+
+/// Cell width of `s` under the screen's width method.
+pub fn width(ui: Ui, s: []const u8) u16 {
+    var total: u16 = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| total +|= ui.canvas.cellWidth(g.bytes(s));
+    return total;
+}
+
+pub fn ellipsis(ui: Ui) clip.Ellipsis {
+    return if (ui.ascii) .ascii else .unicode;
+}
+
+/// `s` cut to `max` cells with the terminal's ellipsis, on the frame
+/// arena. OOM returns `s` uncut; the paint will clip it instead.
+pub fn clipStr(ui: Ui, s: []const u8, max: u16) []const u8 {
+    if (ui.width(s) <= max) return s;
+    return ui.canvas.clipCells(ui.arena, s, max, ui.ellipsis()) catch s;
+}
+
+/// `std.fmt` onto the frame arena; OOM yields an empty string.
+pub fn fmt(ui: Ui, comptime f: []const u8, args: anytype) []const u8 {
+    return std.fmt.allocPrint(ui.arena, f, args) catch "";
+}
+
+pub fn isFocused(ui: Ui, f: FocusId) bool {
+    return std.meta.eql(ui.focus, f);
+}
+
+// ── tests ──
+
+const testing = std.testing;
+const Fixture = @import("test_fixture.zig");
+
+test "putStr paints cell-wise, respects max_w and wide glyphs" {
+    var f = try Fixture.init(8, 1);
+    defer f.deinit();
+    const ui = f.ui();
+    try testing.expectEqual(@as(u16, 5), ui.putStr(1, 0, 5, "abcdefg", .{}));
+    try f.expectRow(0, " abcde");
+    try testing.expectEqual(@as(u16, 2), ui.putStr(0, 0, 3, "漢字", .{}));
+    try f.expectRow(0, "漢bcde"); // rowText skips the wide tail
+    try testing.expectEqual(@as(u16, 4), ui.width("a漢b"));
+}
+
+test "putStrRight anchors the end" {
+    var f = try Fixture.init(8, 1);
+    defer f.deinit();
+    const ui = f.ui();
+    try testing.expectEqual(@as(u16, 5), ui.putStrRight(8, 0, 8, "abc", .{}));
+    try f.expectRow(0, "     abc");
+    try testing.expectEqual(@as(u16, 6), ui.putStrRight(8, 0, 2, "abc", .{}));
+}
+
+test "clipStr uses the ascii ellipsis under --ascii and hit swallows nothing else" {
+    var f = try Fixture.init(8, 1);
+    defer f.deinit();
+    var ui = f.ui();
+    try testing.expectEqualStrings("abcd…", ui.clipStr("abcdefgh", 5));
+    ui.ascii = true;
+    try testing.expectEqualStrings("ab...", ui.clipStr("abcdefgh", 5));
+    try testing.expectEqualStrings("abc", ui.clipStr("abc", 5));
+    ui.hit(Rect.init(0, 0, 2, 1), .{ .button = 9 });
+    try testing.expectEqual(@as(u32, 9), f.hits.at(1, 0).?.button);
+    try testing.expectEqualStrings("(3)", ui.fmt("({d})", .{3}));
+}
+
+test "hovered reads the pointer" {
+    var f = try Fixture.init(8, 2);
+    defer f.deinit();
+    var ui = f.ui();
+    try testing.expect(!ui.hovered(Rect.init(0, 0, 8, 2)));
+    ui.hover = .{ .x = 3, .y = 1 };
+    try testing.expect(ui.hovered(Rect.init(0, 1, 8, 1)));
+    try testing.expect(!ui.hovered(Rect.init(0, 0, 8, 1)));
+}

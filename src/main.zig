@@ -248,6 +248,7 @@ test {
     _ = @import("input/mod.zig");
     _ = @import("input/standard.zig");
     _ = @import("input/vim.zig");
+    _ = @import("ui/ui.zig");
 }
 
 test "version string is set" {
