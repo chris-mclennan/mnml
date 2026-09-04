@@ -104,6 +104,15 @@ const grammars = [_]Grammar{
     .{ .name = "sql", .dep = "ts_sequel", .scanner = true },
     .{ .name = "kotlin", .dep = "ts_kotlin_sg", .scanner = true },
     .{ .name = "regex", .dep = "ts_regex" },
+    .{ .name = "containerfile", .dep = "ts_containerfile", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    // hcl ships no queries; proto ships one we replace; vue's live under queries/vue/ and
+    // its build script never exposed them. All three come from src/highlight/queries/.
+    .{ .name = "hcl", .dep = "ts_hcl", .scanner = true, .query_dir = null },
+    .{ .name = "proto", .dep = "ts_proto", .query_dir = null },
+    .{ .name = "diff", .dep = "ts_diff" },
+    .{ .name = "vue", .dep = "ts_vue_next", .scanner = true, .query_dir = null },
+    .{ .name = "svelte", .dep = "ts_svelte_ng", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    .{ .name = "astro", .dep = "ts_astro_next", .scanner = true, .queries = &.{ "highlights", "injections" } },
 };
 
 /// Queries mnml ships itself (`src/highlight/queries/`), for grammars whose crate has
@@ -116,7 +125,12 @@ const LocalQuery = struct {
     src: []const u8,
 };
 
-const local_queries = [_]LocalQuery{};
+const local_queries = [_]LocalQuery{
+    .{ .out = "hcl/highlights.scm", .src = "src/highlight/queries/hcl.scm" },
+    .{ .out = "proto/highlights.scm", .src = "src/highlight/queries/proto.scm" },
+    .{ .out = "vue/highlights.scm", .src = "src/highlight/queries/vue.scm" },
+    .{ .out = "vue/injections.scm", .src = "src/highlight/queries/vue.injections.scm" },
+};
 
 const c_flags = [_][]const u8{"-std=c11"};
 
