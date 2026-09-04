@@ -12,6 +12,7 @@ const Allocator = std.mem.Allocator;
 const input = @import("../core/key.zig");
 const ipc = @import("../ipc/root.zig");
 const screen_mod = @import("../ipc/screen.zig");
+const config = @import("../config/root.zig");
 
 pub const Screen = screen_mod.Screen;
 
@@ -33,6 +34,21 @@ pub const Config = struct {
     data_root: []const u8,
     cols: u16,
     rows: u16,
+    /// The merged config the App starts on. The runner never loads a
+    /// file: every `.test` runs on `e2e_defaults`.
+    cfg: config.Config = e2e_defaults,
+    /// The loader's result when `cfg` came from files (the headless
+    /// loop). Ownership passes to `Factory.create`, success or failure.
+    loaded: ?config.Loaded = null,
+};
+
+/// What a `.test` file runs on: the shipped defaults with the breadcrumb
+/// off, so row 0 is the bufferline in every expectation — the contract
+/// mnml 0.2's runner set and the corpus was written against.
+pub const e2e_defaults: config.Config = blk: {
+    var c: config.Config = .{};
+    c.editor.breadcrumb = false;
+    break :blk c;
 };
 
 pub const Driver = struct {
@@ -439,8 +455,10 @@ pub const StubFactory = struct {
         return .{ .ptr = self, .create = create };
     }
 
-    fn create(p: *anyopaque, gpa: Allocator, io: Io, cfg: Config) anyerror!Driver {
+    fn create(p: *anyopaque, gpa: Allocator, io: Io, cfg_in: Config) anyerror!Driver {
         _ = io;
+        var cfg = cfg_in;
+        if (cfg.loaded) |*l| l.deinit(); // the stub reads no config
         const self: *StubFactory = @ptrCast(@alignCast(p));
         const s = try gpa.create(Stub);
         errdefer gpa.destroy(s);

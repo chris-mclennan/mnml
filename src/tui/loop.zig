@@ -15,9 +15,14 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const event = @import("../core/event.zig");
 const key_mod = @import("../core/key.zig");
+const config = @import("../config/root.zig");
+const ipc = @import("../ipc/root.zig");
+const screen_mod = @import("../ipc/screen.zig");
+const build_options = @import("build_options");
 
 pub const Options = struct {
-    cfg: app_mod.Config = .{},
+    /// The merged config; the App takes ownership.
+    loaded: config.Loaded,
     /// Absolute.
     workspace: []const u8,
     data_root: []const u8 = "",
@@ -35,8 +40,26 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     defer term.deinit();
 
     const size = term.screen();
-    var app = try App.initWith(gpa, io, .{ .cfg = opts.cfg, .workspace = opts.workspace, .data_root = opts.data_root, .cols = size.width, .rows = size.height });
+    var app = try App.initWith(gpa, io, .{
+        .cfg = opts.loaded.config,
+        .loaded = opts.loaded,
+        .workspace = opts.workspace,
+        .data_root = opts.data_root,
+        .cols = size.width,
+        .rows = size.height,
+    });
     defer app.deinit();
+    // `ipc.write_screen`: mirror every frame into `<ws>/.mnml/<ipc>/screen.txt`,
+    // the file the headless loop writes, so a script can watch the real
+    // terminal session too.
+    var screen_dump: ?ipc.Channel = null;
+    if (app.cfg.ipc.write_screen) {
+        screen_dump = ipc.Channel.init(gpa, io, opts.workspace, .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = build_options.ipc_subdir }) catch |err| blk: {
+            app.toast("ipc.write_screen: cannot open the channel: {s}", .{@errorName(err)});
+            break :blk null;
+        };
+    }
+    defer if (screen_dump) |*c| c.deinit();
     for (opts.files) |f| {
         const abs = try app.absPath(f);
         _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ f, @errorName(err) });
@@ -70,6 +93,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         if (app.needs_render) {
             try app.renderInto(term.screen());
             term.render() catch {};
+            if (screen_dump) |*c| c.writeScreen(try screen_mod.toScreenTxt(app.frame.allocator(), term.screen()));
         }
     }
     app.hooks.emit(&app, .exit);

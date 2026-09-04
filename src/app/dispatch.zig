@@ -96,7 +96,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const mark_key: ?u8 = if (k.typed()) |c| (if (c < 128 and std.ascii.isAlphabetic(@intCast(c))) @as(u8, @intCast(c)) else null) else null;
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
-    const wrap_width: ?usize = if (e.wrap orelse app.cfg.wrap) app.pane_cols else null;
+    const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
     cmd_find.seedCtxMatches(e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
@@ -192,12 +192,12 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
         },
         .pending_with_fallback => |t| {
             try setFallback(app, t);
-            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
             return true;
         },
         .pending => {
             try setFallback(app, null);
-            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+            app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
             return true;
         },
         .none => {
@@ -226,11 +226,11 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
                 },
                 .pending_with_fallback => |t| {
                     try setFallback(app, t);
-                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
                     return true;
                 },
                 .pending => {
-                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.chord_timeout_ms));
+                    app.chord.deadline_ms = app.now_ms + @as(i64, @intCast(app.cfg.editor.chord_timeout_ms));
                     return true;
                 },
                 .none => {

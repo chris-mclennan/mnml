@@ -46,19 +46,19 @@ pub const table = .{
 
 fn toggleWrap(app: *App) CommandError!void {
     if (app.activeEditor()) |e| {
-        const on = !(e.wrap orelse app.cfg.wrap);
+        const on = !(e.wrap orelse app.cfg.ui.wrap);
         e.wrap = on;
         app.toast("wrap {s}", .{if (on) "on" else "off"});
     } else {
-        app.cfg.wrap = !app.cfg.wrap;
-        app.toast("wrap {s}", .{if (app.cfg.wrap) "on" else "off"});
+        app.cfg.ui.wrap = !app.cfg.ui.wrap;
+        app.toast("wrap {s}", .{if (app.cfg.ui.wrap) "on" else "off"});
     }
     app.needs_render = true;
 }
 
 fn toggleLineNumbers(app: *App) CommandError!void {
-    app.cfg.line_numbers = !app.cfg.line_numbers;
-    app.toast("line numbers {s}", .{if (app.cfg.line_numbers) "on" else "off"});
+    app.cfg.ui.line_numbers = !app.cfg.ui.line_numbers;
+    app.toast("line numbers {s}", .{if (app.cfg.ui.line_numbers) "on" else "off"});
     app.needs_render = true;
 }
 
@@ -108,7 +108,7 @@ fn split(app: *App, dir: layout_mod.SplitDir) CommandError!void {
     const layout = app.layouts.current();
     if (layout.leafOf(cur) == null) return error.NoActivePane;
     const gpa = app.gpa;
-    var buf = app_mod.Buffer.init(gpa, "", app.cfg.input_style, app.cfg.editorConfig()) catch return error.OutOfMemory;
+    var buf = app_mod.Buffer.init(gpa, "", app.input_style, app.editorConfig()) catch return error.OutOfMemory;
     errdefer buf.deinit();
     const id = try app.panes.add(.{ .editor = .{ .buf = buf, .find = app_mod.FindState.init(gpa), .syntax = @import("syntax.zig").Syntax.init(gpa) } });
     _ = try layout.split(cur, dir, id);

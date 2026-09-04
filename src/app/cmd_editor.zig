@@ -108,7 +108,7 @@ fn toggleLineComment(app: *App) CommandError!void {
     return one(app, .toggle_line_comment);
 }
 fn reflowParagraph(app: *App) CommandError!void {
-    return one(app, .{ .reflow_paragraph = .{ .width = app.cfg.text_width } });
+    return one(app, .{ .reflow_paragraph = .{ .width = app.cfg.editor.text_width } });
 }
 
 // ─── `]]` `[[` `][` `[]` `]m` `[m` `]t` `[t` ──────────────────────────

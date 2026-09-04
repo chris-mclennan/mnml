@@ -24,16 +24,27 @@ pub const AppDriver = struct {
     gpa: Allocator,
     app: App,
 
-    pub fn create(gpa: Allocator, io: Io, cfg: e2e.Config, style: input.Style) !*AppDriver {
-        const self = try gpa.create(AppDriver);
+    /// `style` is the `--input` flag: set, it overrides the config's
+    /// `editor.input_style`; null lets the config decide. `cfg.loaded`
+    /// is owned from here on, whatever happens.
+    pub fn create(gpa: Allocator, io: Io, cfg: e2e.Config, style: ?input.Style) !*AppDriver {
+        var loaded = cfg.loaded;
+        const self = gpa.create(AppDriver) catch |err| {
+            if (loaded) |*l| l.deinit();
+            return err;
+        };
         errdefer gpa.destroy(self);
+        var c = cfg.cfg;
+        if (style) |s| c.editor.input_style = App.configStyleOf(s);
         self.* = .{ .gpa = gpa, .app = try App.initWith(gpa, io, .{
-            .cfg = .{ .input_style = style },
+            .cfg = c,
+            .loaded = loaded,
             .workspace = cfg.workspace,
             .data_root = cfg.data_root,
             .cols = cfg.cols,
             .rows = cfg.rows,
         }) };
+        loaded = null;
         return self;
     }
 
@@ -254,10 +265,11 @@ pub const AppDriver = struct {
 };
 
 /// What `main.app_factory` points at. `input_style` is the `--input`
-/// flag for the terminal / headless paths; `.test` files start standard
-/// and switch with `editor.use_vim` themselves.
+/// flag for the terminal / headless paths (null = the config's choice);
+/// `.test` files start on the runner's defaults and switch with
+/// `editor.use_vim` themselves.
 pub const AppFactory = struct {
-    input_style: input.Style = .standard,
+    input_style: ?input.Style = null,
 
     pub fn factory(self: *AppFactory) e2e.Factory {
         return .{ .ptr = self, .create = create };

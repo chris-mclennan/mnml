@@ -672,9 +672,9 @@ fn set(app: *App, args: []const u8) CommandError!void {
         if (eqAny(name, &.{ "wrap", "wrap!" })) {
             const toggle = std.mem.endsWith(u8, name, "!");
             if (app.activeEditor()) |e| {
-                const cur = e.wrap orelse app.cfg.wrap;
+                const cur = e.wrap orelse app.cfg.ui.wrap;
                 e.wrap = if (toggle) !cur else !off;
-            } else app.cfg.wrap = !off;
+            } else app.cfg.ui.wrap = !off;
             app.toast(":set {s}", .{opt});
         } else if (eqAny(name, &.{ "ic", "ignorecase" })) {
             app.search_case = off;
@@ -683,7 +683,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
             app.search_case = null;
             app.toast(":set {s}", .{opt});
         } else if (eqAny(name, &.{ "nu", "number" })) {
-            app.cfg.line_numbers = !off;
+            app.cfg.ui.line_numbers = !off;
             app.toast(":set {s}", .{opt});
         } else if (eqAny(name, &.{ "input", "keymap" })) {
             const v = value orelse return app.diag.fail(arena, ":set input=vim|standard", .{});
@@ -693,7 +693,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
         } else if (eqAny(name, &.{ "ts", "tabstop", "sw", "shiftwidth" })) {
             const v = value orelse return app.diag.fail(arena, ":set {s}=N", .{name});
             const n = std.fmt.parseInt(u8, v, 10) catch return app.diag.fail(arena, ":set {s} — not a number: {s}", .{ name, v });
-            app.cfg.tab_width = @max(n, 1);
+            app.cfg.editor.tab_width = @max(n, 1);
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .editor => |*e| e.buf.editor.tab_width = @max(n, 1),
             };
@@ -799,7 +799,7 @@ test "ex: write, abbreviations, set, registers, unknown verbs" {
     try f.ex("set ic");
     try testing.expectEqual(false, f.app.search_case.?);
     try f.ex("set input=vim");
-    try testing.expectEqual(input.Style.vim, f.app.cfg.input_style);
+    try testing.expectEqual(input.Style.vim, f.app.input_style);
     try testing.expectError(error.Failed, f.ex("set bogus"));
     try testing.expectError(error.Failed, f.ex("frobnicate"));
     try testing.expectEqualStrings(":frobnicate — unknown command", f.app.diag.msg.?);
