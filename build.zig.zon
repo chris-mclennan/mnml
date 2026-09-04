@@ -36,6 +36,10 @@
             .url = "https://deps.files.ghostty.org/vaxis-1dbbe575dff4586fe51e3217aa5c3fecdcbb6089.tar.gz",
             .hash = "vaxis-0.6.0-BWNV_CrbCQCscGpzsAlR402rYQ_tV3aAl081c2iRRkka",
         },
+        .ghostty = .{
+            .url = "https://github.com/ghostty-org/ghostty/archive/c81f0b26871c7fbbe2fc35549fdad1f64ed29094.tar.gz",
+            .hash = "ghostty-1.3.2-dev-5UdBC7QjZAUz72p-tK7Ak2dmtOqH2SB-S_0pyFPqM5sR",
+        },
     },
     .paths = .{
         "build.zig",
