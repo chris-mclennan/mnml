@@ -43,6 +43,7 @@ pub fn saveAll(app: *App) CommandError!void {
             e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
             n += 1;
         },
+        else => {},
     };
     app.toast("saved {d} file(s)", .{n});
 }
@@ -60,7 +61,10 @@ fn reload(app: *App) CommandError!void {
     app.toast("reloaded {s}", .{app.relPath(path)});
 }
 
+/// A scratch buffer — or, with the tree focused, a prompt for a path
+/// beside the selected row (the tree's `New file…`).
 fn new(app: *App) CommandError!void {
+    if (app.focus == .tree and app.tree.visible) return @import("tree.zig").promptNewFile(app);
     _ = app.openScratch() catch return error.OutOfMemory;
 }
 

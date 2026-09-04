@@ -1,5 +1,6 @@
 //! `Pane` — the open-thing union — and `PaneStore`, the arena that hands
-//! out stable `PaneId`s. Editor today; Pty / Request / Diff / Ai are
+//! out stable `PaneId`s. Editor, the cheatsheet and the list panes
+//! (cmdline history, quickfix) today; Pty / Request / Diff / Ai are
 //! additive variants later.
 //!
 //! // changed: WAVE3 said `editor: Buffer`; the editor pane also owns
@@ -13,6 +14,7 @@ const buffer_mod = @import("../editor/buffer.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const find = @import("find.zig");
 const syntax = @import("syntax.zig");
+const cheatsheet = @import("cheatsheet.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -39,12 +41,51 @@ pub const EditorPane = struct {
     }
 };
 
+/// A read-only list with a cursor: the `:` history (`q:`) and the
+/// quickfix list (`:cexpr`). Enter acts on the row by `kind`.
+pub const ListPane = struct {
+    pub const Kind = enum { cmdline_history, quickfix };
+    pub const Entry = struct {
+        /// Owned display text.
+        text: []u8,
+        /// Quickfix: where Enter goes. Workspace-relative, owned.
+        path: ?[]u8 = null,
+        line: u32 = 0,
+        col: u32 = 0,
+    };
+
+    gpa: Allocator,
+    kind: Kind,
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    cursor: usize = 0,
+    scroll: usize = 0,
+
+    pub fn deinit(self: *ListPane) void {
+        for (self.entries.items) |e| {
+            self.gpa.free(e.text);
+            if (e.path) |p| self.gpa.free(p);
+        }
+        self.entries.deinit(self.gpa);
+    }
+
+    pub fn title(self: *const ListPane) []const u8 {
+        return switch (self.kind) {
+            .cmdline_history => "cmdline history",
+            .quickfix => "Quickfix",
+        };
+    }
+};
+
 pub const Pane = union(enum) {
     editor: EditorPane,
+    cheatsheet: cheatsheet.State,
+    list: ListPane,
 
     pub fn deinit(self: *Pane) void {
         switch (self.*) {
             .editor => |*e| e.deinit(),
+            .cheatsheet => |*c| c.deinit(),
+            .list => |*l| l.deinit(),
         }
     }
 
@@ -52,18 +93,22 @@ pub const Pane = union(enum) {
     pub fn title(self: *const Pane) []const u8 {
         switch (self.*) {
             .editor => |*e| return if (e.buf.path) |p| std.fs.path.basename(p) else "[scratch]",
+            .cheatsheet => return "Cheatsheet",
+            .list => |*l| return l.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
+            .cheatsheet, .list => false,
         };
     }
 
     pub fn asEditor(self: *Pane) ?*EditorPane {
         return switch (self.*) {
             .editor => |*e| e,
+            else => null,
         };
     }
 };
@@ -132,7 +177,16 @@ pub const PaneStore = struct {
                 .editor => |*e| if (e.buf.path) |bp| {
                     if (std.mem.eql(u8, bp, path)) return @intCast(i);
                 },
+                else => {},
             };
+        }
+        return null;
+    }
+
+    /// The one pane of `tag` (a singleton pane like the cheatsheet), if open.
+    pub fn findKind(self: *PaneStore, tag: std.meta.Tag(Pane)) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| if (std.meta.activeTag(p.*) == tag) return @intCast(i);
         }
         return null;
     }

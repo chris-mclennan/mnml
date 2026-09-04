@@ -791,7 +791,7 @@ fn drawEditor(uictx: Ui, area: Rect, g: *Gallery, matches: ?[]const ui.editor_vi
         .{ .id = 1, .title = "README.md", .dirty = false, .active = g.active_tab == 1 },
         .{ .id = 2, .title = "build.zig", .dirty = false, .active = g.active_tab == 2 },
     };
-    ui.bufferline.draw(uictx, tabs.top, &tab_list);
+    ui.bufferline.draw(uictx, tabs.top, &tab_list, .{});
 
     const status = tabs.rest.splitBottom(1);
     var pane = status.top;

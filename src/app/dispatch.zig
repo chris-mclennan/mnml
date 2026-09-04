@@ -33,6 +33,18 @@ const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
+const cmd_view = @import("cmd_view.zig");
+const context_menus = @import("context_menus.zig");
+const cheatsheet = @import("cheatsheet.zig");
+const render = @import("render.zig");
+const layout_mod = @import("layout.zig");
+const select = @import("../editor/select.zig");
+const scrollbar = @import("../ui/scrollbar.zig");
+const statusline = @import("../ui/statusline.zig");
+const bufferline = @import("../ui/bufferline.zig");
+const toast_mod = @import("../ui/toast.zig");
+const tree_mod = @import("tree.zig");
+const Rect = @import("../ui/rect.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -59,6 +71,19 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     }
 
     const pane_id = app.active;
+    if (pane_id) |id| if (app.panes.get(id)) |p| switch (p.*) {
+        .cheatsheet => |*c| {
+            if (try cheatsheet.handleKey(app, c, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .list => |*l| {
+            if (try listPaneKey(app, id, l, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .editor => {},
+    };
     const ed: ?*EditorPane = if (pane_id) |id| app.panes.editor(id) else null;
     const mode: input.EditingMode = if (ed) |e| e.buf.input.mode() else .none;
     const cmdline_open = if (ed) |e| e.buf.input.isCmdlineOpen() else false;
@@ -85,6 +110,30 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     const e = ed orelse return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);
+}
+
+/// The list panes: j/k move, enter acts, esc closes the pane.
+fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Error!bool {
+    const n = l.entries.items.len;
+    switch (k.code) {
+        .down => l.cursor = @min(l.cursor + 1, n -| 1),
+        .up => l.cursor -|= 1,
+        .home => l.cursor = 0,
+        .end => l.cursor = n -| 1,
+        .enter => try listPaneEnter(app, id, l),
+        .esc => try app.forceClosePane(id),
+        .char => |c| switch (c) {
+            'j' => l.cursor = @min(l.cursor + 1, n -| 1),
+            'k' => l.cursor -|= 1,
+            'g' => l.cursor = 0,
+            'G' => l.cursor = n -| 1,
+            'q' => try app.forceClosePane(id),
+            else => return false,
+        },
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
 }
 
 /// Feed one key to the editor and act on what it reports. Returns
@@ -326,7 +375,9 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .submit => {
                 const text = try app.frame.allocator().dupe(u8, p.state.buf.items);
                 const purpose = p.purpose;
+                p.purpose = .goto_line; // ownership moved here
                 closeOverlay(app);
+                defer purpose.deinit(app.gpa);
                 try acceptPrompt(app, purpose, text);
             },
         },
@@ -335,7 +386,9 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .cancel => closeOverlay(app),
             .choose => |i| {
                 const purpose = c.purpose;
+                c.purpose = .quit; // ownership moved here
                 closeOverlay(app);
+                defer purpose.deinit(app.gpa);
                 try acceptConfirm(app, purpose, i);
             },
         },
@@ -363,6 +416,8 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             .changed => try refilterPicker(app),
             .accept => |i| try cmd_picker.accept(app, i),
         },
+        .info => closeOverlay(app),
+        .settings => |*st| _ = try cmd_view.settingsKey(app, st, k),
         .menu => |*m| {
             const last = m.items.len -| 1;
             switch (k.code) {
@@ -392,7 +447,13 @@ pub fn refilterPicker(app: *App) Allocator.Error!void {
     var scored: std.ArrayListUnmanaged(Scored) = .empty;
     defer scored.deinit(app.gpa);
     for (p.labels, 0..) |label, i| {
-        if (fuzzy.score(q, label)) |s| try scored.append(app.gpa, .{ .idx = @intCast(i), .score = s });
+        // The detail (a command id, a path) is a weaker signal than the label.
+        var best = fuzzy.score(q, label);
+        if (i < p.details.len) if (fuzzy.score(q, p.details[i])) |sd| {
+            const weak = sd -| 50;
+            best = if (best) |b| @max(b, weak) else weak;
+        };
+        if (best) |s| try scored.append(app.gpa, .{ .idx = @intCast(i), .score = s });
     }
     if (q.len > 0) std.mem.sort(Scored, scored.items, {}, struct {
         fn lt(_: void, a: Scored, b: Scored) bool {
@@ -425,6 +486,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             error.Canceled => {},
             else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("todo: {s}", .{@errorName(err)}),
         },
+        .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
+        .new_folder => |dir| try tree_mod.acceptNewFolder(app, dir, text),
+        .rename => |from| try tree_mod.acceptRename(app, from, text),
     }
 }
 
@@ -457,6 +521,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             1 => app.quit = true,
             else => {},
         },
+        .delete_path => |rel| if (choice == 0) try tree_mod.acceptDelete(app, rel),
+        .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
     }
 }
 
@@ -497,17 +563,44 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
 }
 
 // ─── mouse ──────────────────────────────────────────────────────────────
+// One `switch` on the hit under the pointer (D6). A press may start a
+// gesture (`app.drag`) that the following drag events feed and the
+// release completes; the hit under the release decides where a tab or
+// a tree file lands. `count` is the wheel batch (`scroll.zig`).
 
-pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
+pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
+    if (m.kind == .drag or m.kind == .release) {
+        if (app.drag != null) return continueDrag(app, m);
+    }
+    if (m.kind == .motion) return;
     const target = app.hits.at(m.x, m.y) orelse {
-        if (m.kind == .press and app.overlay == .menu) closeOverlay(app);
+        if (m.kind == .press) try pressOutside(app);
         return;
     };
     // A press anywhere but on the menu dismisses it; the press then
-    // goes on to whatever it landed on.
-    if (m.kind == .press and app.overlay == .menu and target != .menu_item) closeOverlay(app);
+    // goes on to whatever it landed on. The read-only overlays close
+    // on any press and swallow it; the settings overlay saves.
+    if (m.kind == .press) {
+        switch (app.overlay) {
+            .menu => if (target != .menu_item) closeOverlay(app),
+            .info => {
+                closeOverlay(app);
+                return;
+            },
+            .settings => |*st| {
+                if (target == .overlay_item) {
+                    if (target.overlay_item != cmd_view.panel_item) cmd_view.settingsClick(app, st, target.overlay_item);
+                    return;
+                }
+                try cmd_view.settingsSave(app);
+                return;
+            },
+            else => {},
+        }
+    }
+    const wheel = m.kind == .scroll_up or m.kind == .scroll_down;
     switch (target) {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
@@ -531,7 +624,12 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
                 .notes, .findings, .sessions => {},
             },
-            .pane => {},
+            .pane => |id| {
+                if (wheel) return wheelOnPane(app, id, m, count);
+                if (m.kind != .press or m.button != .left) return;
+                const track = hitRect(app, m.x, m.y) orelse return;
+                try beginScrollbarDrag(app, id, track, m.y);
+            },
         },
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
@@ -540,15 +638,8 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
             try runMenuAction(app, items[mi.idx].action);
         },
         .editor_cell => |cell| {
-            if (m.kind == .scroll_up or m.kind == .scroll_down) {
-                const e = app.panes.editor(cell.pane) orelse return;
-                const delta: i32 = if (m.kind == .scroll_up) -3 else 3;
-                const cur: i64 = e.view.scroll_line;
-                const max: i64 = @intCast(e.buf.editor.lineCount() -| 1);
-                e.view.scroll_line = @intCast(std.math.clamp(cur + delta, 0, max));
-                return;
-            }
-            if (m.kind != .press and m.kind != .drag) return;
+            if (wheel) return wheelOnPane(app, cell.pane, m, count);
+            if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
             if (app.active != cell.pane) app.showPane(cell.pane);
             const e = app.panes.editor(cell.pane) orelse return;
@@ -557,31 +648,56 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
             // The column under the pointer: the hit's first column plus the offset.
             const hit_rect = hitRect(app, m.x, m.y) orelse return;
             const col = cell.col + (m.x - hit_rect.x);
-            if (m.kind == .drag) {
-                if (ed.anchor == null) ed.anchor = ed.cursor;
-                ed.placeCursor(line, col);
-            } else {
-                ed.anchor = null;
-                ed.placeCursor(line, col);
+            const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+            switch (m.button) {
+                .right => {
+                    // Right-click inside a selection keeps it; elsewhere it moves the cursor.
+                    if (ed.selection()) |sel| {
+                        if (byte < sel[0] or byte > sel[1]) {
+                            ed.anchor = null;
+                            ed.setCursor(byte);
+                        }
+                    } else ed.setCursor(byte);
+                    try context_menus.openEditorMenu(app, m.x, m.y);
+                },
+                .middle => {
+                    ed.anchor = null;
+                    ed.setCursor(byte);
+                    const text = app.clipboard.text();
+                    if (text.len > 0) {
+                        const copy = try app.frame.allocator().dupe(u8, text);
+                        _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
+                    }
+                },
+                else => try editorPress(app, cell.pane, e, byte, m),
             }
         },
-        .tab => |t| {
-            if (m.kind != .press) return;
+        .tab => |tb| {
+            if (wheel) return;
             const layout = app.layouts.current();
-            const leaves = layout.leaves(app.frame.allocator()) catch return;
-            if (t.leaf >= leaves.len) return;
-            const leaf = layout.leaf(leaves[t.leaf]) orelse return;
-            if (t.idx >= leaf.tabs.items.len) return;
-            const pane = leaf.tabs.items[t.idx];
-            if (m.button == .middle) return app.closePane(pane, false);
-            app.showPane(pane);
+            const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
+            const leaf = layout.leaf(lid) orelse return;
+            if (tb.idx >= leaf.tabs.items.len) return;
+            const pane = leaf.tabs.items[tb.idx];
+            if (m.kind != .press) return;
+            if (app.overlay != .none) closeOverlay(app);
+            switch (m.button) {
+                .middle => try app.closePane(pane, false),
+                .right => try context_menus.openTabMenu(app, pane, m.x, m.y),
+                else => {
+                    app.showPane(pane);
+                    app.drag = .{ .tab = .{ .pane = pane, .x = m.x, .y = m.y } };
+                },
+            }
         },
         .overlay_item => |i| {
             if (m.kind != .press) return;
             switch (app.overlay) {
                 .confirm => |*c| {
                     const purpose = c.purpose;
+                    c.purpose = .quit; // ownership moved to `acceptConfirm`
                     closeOverlay(app);
+                    defer purpose.deinit(app.gpa);
                     try acceptConfirm(app, purpose, i);
                 },
                 .picker => try cmd_picker.accept(app, i),
@@ -593,31 +709,504 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
                 else => {},
             }
         },
-        .pane => |id| if (m.kind == .press) {
+        .pane => |id| {
+            if (wheel) return wheelOnPane(app, id, m, count);
+            if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
-            app.showPane(id);
+            if (app.active != id) app.showPane(id) else app.focus = .{ .pane = id };
+            if (m.button == .right) {
+                if (app.panes.editor(id) != null) try context_menus.openEditorMenu(app, m.x, m.y);
+            }
+        },
+        .script_hit => |sh| {
+            if (wheel) return wheelOnPane(app, sh.pane, m, count);
+            if (m.kind != .press or m.button != .left) return;
+            if (app.overlay != .none) closeOverlay(app);
+            if (app.active != sh.pane) app.showPane(sh.pane);
+            const pane = app.panes.get(sh.pane) orelse return;
+            switch (pane.*) {
+                .cheatsheet => |*c| try cheatsheet.click(app, c, sh.id),
+                .list => |*l| {
+                    if (sh.id < l.entries.items.len) {
+                        if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
+                    }
+                },
+                .editor => {},
+            }
         },
         .tree_node => |idx| switch (m.kind) {
             .press => {
                 if (app.overlay != .none) closeOverlay(app);
-                if (m.button == .left) try app.tree.activate(app, idx) else app.tree.cursor = idx;
+                if (idx >= app.tree.rows.items.len) return;
+                switch (m.button) {
+                    .right => try context_menus.openTreeMenu(app, idx, m.x, m.y),
+                    .left => {
+                        app.tree.cursor = idx;
+                        if (app.activeBuffer()) |b| b.input.onBlur();
+                        app.focus = .tree;
+                        const row = app.tree.rows.items[idx];
+                        if (row.is_dir) {
+                            // The chevron (and the name): toggle now.
+                            try app.tree.activate(app, idx);
+                        } else {
+                            // A file opens on release, so a hold becomes a drag.
+                            app.drag = .{ .tree = .{ .idx = idx } };
+                        }
+                    },
+                    else => app.tree.cursor = idx,
+                }
             },
-            .scroll_up => app.tree.cursor -|= 3,
-            .scroll_down => app.tree.cursor = @min(app.tree.cursor + 3, app.tree.rows.items.len -| 1),
+            .scroll_up => app.tree.cursor -|= app.cfg.wheel_lines * count,
+            .scroll_down => app.tree.cursor = @min(app.tree.cursor + app.cfg.wheel_lines * count, app.tree.rows.items.len -| 1),
             else => {},
         },
+        .divider => |id| {
+            if (m.kind != .press or m.button != .left) return;
+            if (app.overlay != .none) closeOverlay(app);
+            try beginDividerDrag(app, id);
+        },
+        .statusline_seg => |seg| {
+            if (m.kind != .press) return;
+            if (app.overlay != .none) closeOverlay(app);
+            switch (seg) {
+                statusline.seg_mode => if (m.button == .right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
+                statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
+                statusline.seg_file => if (m.button == .right) try runCmd(app, .@"file.copy_path"),
+                else => {},
+            }
+        },
+        .button => |id| {
+            if (m.kind != .press) return;
+            if (id >= toast_mod.button_base) {
+                // Toasts: newest first as painted; index i is the i-th from the end.
+                const i = id - toast_mod.button_base;
+                if (i < app.toasts.items.len) {
+                    const at = app.toasts.items.len - 1 - i;
+                    app.dismissToastAt(at);
+                }
+                return;
+            }
+            if (app.overlay != .none) closeOverlay(app);
+            if (render.Button.newTabLeaf(id)) |leaf_idx| {
+                if (m.button == .right) return context_menus.openNewTabMenu(app, m.x, m.y);
+                const layout = app.layouts.current();
+                if (try layout.leafAt(app.frame.allocator(), leaf_idx)) |lid| {
+                    if (layout.leaf(lid)) |leaf| app.setActive(leaf.active);
+                }
+                _ = app.openScratch() catch return error.OutOfMemory;
+                return;
+            }
+            switch (@as(render.Button, @enumFromInt(id))) {
+                .palette => try runCmd(app, .palette),
+                .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
+                .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
+                else => {},
+            }
+        },
+        .link => {},
+    }
+}
+
+fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
+    command.run(app, .{ .static = id }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
+/// A press on nothing: menus and the read-only overlays close, the
+/// settings overlay saves.
+fn pressOutside(app: *App) Allocator.Error!void {
+    switch (app.overlay) {
+        .menu, .info => closeOverlay(app),
+        .settings => try cmd_view.settingsSave(app),
         else => {},
     }
 }
 
-fn hitRect(app: *App, x: u16, y: u16) ?@import("../ui/rect.zig") {
-    var i = app.hits.items.items.len;
-    while (i > 0) {
-        i -= 1;
-        const e = app.hits.items.items[i];
-        if (e.rect.contains(x, y)) return e.rect;
+// ── the editor: click, drag-select, double / triple ──
+
+/// A left press in the text: shift extends the selection; a second
+/// press within the double-click window selects the word, a third the
+/// line; and the press anchors a drag-select at its granularity.
+fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) Allocator.Error!void {
+    const ed = &e.buf.editor;
+    const now = app.now_ms;
+    var count: u8 = 1;
+    if (app.last_click) |lc| {
+        if (lc.x == m.x and lc.y == m.y and now - lc.at_ms <= app_mod.double_click_ms) count = @min(lc.count + 1, 3);
     }
+    app.last_click = .{ .at_ms = now, .x = m.x, .y = m.y, .count = count };
+    if (m.mods.shift) {
+        if (ed.anchor == null) ed.anchor = ed.cursor;
+        ed.setCursor(byte);
+        app.drag = .{ .select = .{ .pane = pane, .unit = .char, .anchor = ed.anchor.? } };
+        return;
+    }
+    const unit: app_mod.SelectUnit = switch (count) {
+        1 => .char,
+        2 => .word,
+        else => .line,
+    };
+    ed.anchor = null;
+    ed.setCursor(byte);
+    switch (unit) {
+        .char => {},
+        .word => {
+            const b = select.wordBoundsAt(ed, byte);
+            if (b[1] > b[0]) ed.setSelection(b[0], b[1]);
+        },
+        .line => {
+            const line = ed.lineOfByte(byte);
+            ed.setSelection(ed.lineStart(line), @min(ed.lineEnd(line) + 1, ed.len()));
+        },
+    }
+    if (ed.anchor != null) e.buf.input.requestVisualMode();
+    app.drag = .{ .select = .{ .pane = pane, .unit = unit, .anchor = byte } };
+}
+
+/// The byte under a pointer cell of an editor, if the cell is one.
+fn byteUnder(app: *App, pane: PaneId, x: u16, y: u16) ?usize {
+    const e = app.panes.editor(pane) orelse return null;
+    const ed = &e.buf.editor;
+    const entry = app.hits.entryAt(x, y) orelse return null;
+    const cell = switch (entry.target) {
+        .editor_cell => |c| c,
+        else => return null,
+    };
+    if (cell.pane != pane) return null;
+    const line = @min(cell.line, ed.lineCount() - 1);
+    const col = cell.col + (x - entry.rect.x);
+    return @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+}
+
+fn extendSelection(app: *App, sel: anytype, x: u16, y: u16) void {
+    const e = app.panes.editor(sel.pane) orelse return;
+    const ed = &e.buf.editor;
+    // Off the text (the strip, the gutter row above / below): clamp to
+    // the nearest line's edge so a drag past the pane still selects.
+    const to = byteUnder(app, sel.pane, x, y) orelse blk: {
+        const r = app.panes_area;
+        if (y < r.y + 1) break :blk @as(usize, 0);
+        if (y >= r.bottom()) break :blk ed.len();
+        break :blk ed.cursor;
+    };
+    switch (sel.unit) {
+        .char => {
+            ed.anchor = sel.anchor;
+            ed.setCursor(to);
+        },
+        .word => {
+            const a = select.wordBoundsAt(ed, sel.anchor);
+            const b = select.wordBoundsAt(ed, to);
+            if (to >= sel.anchor) ed.setSelection(a[0], @max(b[1], a[1])) else ed.setSelection(a[1], @min(b[0], a[0]));
+        },
+        .line => {
+            const la = ed.lineOfByte(sel.anchor);
+            const lb = ed.lineOfByte(to);
+            const lo = @min(la, lb);
+            const hi = @max(la, lb);
+            if (to >= sel.anchor) ed.setSelection(ed.lineStart(lo), @min(ed.lineEnd(hi) + 1, ed.len())) else ed.setSelection(@min(ed.lineEnd(hi) + 1, ed.len()), ed.lineStart(lo));
+        },
+    }
+    if (ed.anchor != null and ed.anchor.? != ed.cursor) e.buf.input.requestVisualMode();
+}
+
+// ── wheel ──
+
+/// The wheel scrolls the pane under the pointer, `wheel_lines` per
+/// notch: vim moves the cursor (the view follows), standard moves the
+/// viewport and pins it there until the cursor moves. Shift scrolls
+/// sideways.
+fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void {
+    const pane = app.panes.get(id) orelse return;
+    const n: usize = @as(usize, app.cfg.wheel_lines) * @max(count, 1);
+    const down = m.kind == .scroll_down;
+    switch (pane.*) {
+        .editor => |*e| {
+            const ed = &e.buf.editor;
+            if (m.mods.shift) {
+                const cur: usize = e.view.scroll_col;
+                e.view.scroll_col = @intCast(if (down) cur + n else cur -| n);
+                e.view.pinAt(ed.cursor);
+                return;
+            }
+            if (e.buf.input.mode() != .none) {
+                var i: usize = 0;
+                while (i < n) : (i += 1) _ = try app.applyOps(e, &.{if (down) .move_down else .move_up});
+                return;
+            }
+            const max: i64 = @intCast(ed.lineCount() -| 1);
+            const cur: i64 = e.view.scroll_line;
+            const delta: i64 = @intCast(n);
+            e.view.scroll_line = @intCast(std.math.clamp(if (down) cur + delta else cur - delta, 0, max));
+            e.view.pinAt(ed.cursor);
+        },
+        .cheatsheet => |*c| {
+            c.selected = if (down) c.selected + n else c.selected -| n;
+        },
+        .list => |*l| {
+            l.cursor = if (down) @min(l.cursor + n, l.entries.items.len -| 1) else l.cursor -| n;
+        },
+    }
+}
+
+// ── gestures ──
+
+fn beginDividerDrag(app: *App, id: u32) Allocator.Error!void {
+    if (id == render.tree_divider_id) {
+        app.drag = .tree_divider;
+        return;
+    }
+    if (id == render.right_divider_id) {
+        app.drag = .right_divider;
+        return;
+    }
+    const rects = try app.layouts.current().computeRects(app.panes_area, app.frame.allocator());
+    if (id >= rects.dividers.len) return;
+    const d = rects.dividers[id];
+    app.drag = .{ .divider = .{ .split = d.split, .dir = d.dir } };
+}
+
+fn beginScrollbarDrag(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Error!void {
+    const e = app.panes.editor(id) orelse return;
+    const total = e.buf.editor.lineCount();
+    const th = scrollbar.thumb(track.h, total, app.pane_rows, e.view.scroll_line);
+    const rel = y -| track.y;
+    const grab: u16 = if (th) |tt| (if (rel >= tt.start and rel < tt.start + tt.len) rel - tt.start else tt.len / 2) else 0;
+    app.drag = .{ .scrollbar = .{ .pane = id, .grab = grab } };
+    if (app.active != id) app.showPane(id);
+    dragScrollbar(app, id, grab, y);
+}
+
+/// The thumb follows the pointer; the cursor stays where it is.
+fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) void {
+    const e = app.panes.editor(id) orelse return;
+    const track = scrollbarTrack(app, id) orelse return;
+    const total = e.buf.editor.lineCount();
+    const viewport = @max(app.pane_rows, 1);
+    if (total <= viewport) return;
+    const th = scrollbar.thumb(track.h, total, viewport, e.view.scroll_line) orelse return;
+    const max_start = track.h - th.len;
+    const start: u16 = @min((y -| track.y) -| grab, max_start);
+    const max_scroll = total - viewport;
+    e.view.scroll_line = @intCast(if (max_start == 0) 0 else (@as(usize, start) * max_scroll) / max_start);
+    e.view.pinAt(e.buf.editor.cursor);
+}
+
+fn scrollbarTrack(app: *App, id: PaneId) ?Rect {
+    for (app.hits.items.items) |h| switch (h.target) {
+        .scrollbar => |sb| switch (sb.owner) {
+            .pane => |p| if (p == id and sb.axis == .v) return h.rect,
+            .panel => {},
+        },
+        else => {},
+    };
     return null;
+}
+
+/// A drag or a release while a gesture is in flight.
+fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
+    const d = &(app.drag orelse return);
+    switch (d.*) {
+        .divider => |dv| if (m.kind == .drag) {
+            const rects = try app.layouts.current().computeRects(app.panes_area, app.frame.allocator());
+            for (rects.dividers) |dr| if (dr.split == dv.split) {
+                const ratio = switch (dv.dir) {
+                    .horizontal => layout_mod.ratioAt(dr.area.w, m.x -| dr.area.x),
+                    .vertical => layout_mod.ratioAt(dr.area.h, m.y -| dr.area.y),
+                };
+                app.layouts.current().setRatio(dv.split, ratio);
+            };
+        },
+        .tree_divider => if (m.kind == .drag) {
+            const upper_w = app.screen.width;
+            app.tree.width = std.math.clamp(m.x, 8, upper_w -| 22);
+        },
+        .right_divider => if (m.kind == .drag) {
+            app.right_panel_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
+        },
+        .select => |sel| extendSelection(app, sel, m.x, m.y),
+        .scrollbar => |sb| dragScrollbar(app, sb.pane, sb.grab, m.y),
+        .tab => |*tb| {
+            if (m.kind == .drag) {
+                if (tb.x != m.x or tb.y != m.y) tb.moved = true;
+                return;
+            }
+            const pane = tb.pane;
+            const moved = tb.moved;
+            app.drag = null;
+            if (moved) try dropTab(app, pane, m.x, m.y);
+            return;
+        },
+        .tree => |*tr| {
+            if (m.kind == .drag) {
+                if (app.hits.at(m.x, m.y)) |h| switch (h) {
+                    .tree_node => |i| if (i != tr.idx) {
+                        tr.moved = true;
+                    },
+                    else => tr.moved = true,
+                };
+                return;
+            }
+            const idx = tr.idx;
+            const moved = tr.moved;
+            app.drag = null;
+            if (!moved) return app.tree.activate(app, idx);
+            return dropTreeFile(app, idx, m.x, m.y);
+        },
+    }
+    if (m.kind == .release) app.drag = null;
+}
+
+/// A tab released: on a strip → reorder into that leaf at the pointer;
+/// on a pane body → split it (edge) or move in (centre). Anywhere else
+/// is a no-op — the pane stays where it was.
+fn dropTab(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
+    const layout = app.layouts.current();
+    const arena = app.frame.allocator();
+    const rects = try layout.computeRects(app.panes_area, arena);
+    for (rects.panes, 0..) |pr, li| {
+        if (!pr.rect.contains(x, y)) continue;
+        if (pr.rect.h >= 2 and y == pr.rect.y) {
+            // The strip: the slot before the first tab whose centre is right of x.
+            const src_leaf = layout.leafOf(pane) orelse return;
+            const strip = pr.rect.row(0);
+            const tabs = try stripTabs(app, layout, pr.leaf);
+            var slot_buf: [64]bufferline.Slot = undefined;
+            const ui = app.frameUi();
+            const slots = bufferline.slots(ui, strip, tabs, &slot_buf);
+            var insert: usize = tabs.len;
+            for (slots) |sl| if (x < sl.x + sl.w / 2 + sl.w % 2) {
+                insert = sl.idx;
+                break;
+            };
+            if (src_leaf == pr.leaf) {
+                const cur = std.mem.indexOfScalar(PaneId, layout.leaf(pr.leaf).?.tabs.items, pane) orelse return;
+                if (insert > cur) insert -= 1;
+                layout.reorderTab(pane, insert);
+            } else {
+                if (layout.leaf(pr.leaf).?.tabs.items.len == 0) return;
+                _ = layout.removePane(pane);
+                const leaf = layout.leaf(pr.leaf) orelse return app.showPane(pane);
+                const at = @min(insert, leaf.tabs.items.len);
+                try leaf.tabs.insert(app.gpa, at, pane);
+                leaf.active = pane;
+            }
+            app.setActive(pane);
+            _ = li;
+            return;
+        }
+        const body = if (pr.rect.h >= 2) pr.rect.splitTop(1).rest else pr.rect;
+        const zone = layout_mod.zoneFor(body, x, y);
+        return dropIntoLeaf(app, pane, pr.leaf, zone);
+    }
+}
+
+/// `pane` lands beside leaf `target` (an edge zone splits it) or in
+/// it (the centre: a tab). Dropping a leaf's only tab onto that leaf
+/// is a no-op — the pane stays where it is.
+fn dropIntoLeaf(app: *App, pane: PaneId, target: layout_mod.NodeId, zone: layout_mod.DropZone) Allocator.Error!void {
+    const layout = app.layouts.current();
+    const src_leaf = layout.leafOf(pane);
+    const same = src_leaf != null and src_leaf.? == target;
+    if (zone == .center) {
+        if (same) return;
+        _ = layout.removePane(pane);
+        const leaf = layout.leaf(target) orelse return app.showPane(pane);
+        try leaf.tabs.append(app.gpa, pane);
+        leaf.active = pane;
+        app.setActive(pane);
+        return;
+    }
+    // The dragged pane leaves its leaf; the target splits; the new leaf
+    // takes the pane, swapped to the near side for left / top.
+    if (same and layout.leaf(target).?.tabs.items.len == 1) return;
+    _ = layout.removePane(pane);
+    const leaf = layout.leaf(target) orelse return app.showPane(pane);
+    const dir: layout_mod.SplitDir = switch (zone) {
+        .left, .right => .horizontal,
+        .top, .bottom => .vertical,
+        .center => unreachable,
+    };
+    const new_leaf = (try layout.split(leaf.active, dir, pane)) orelse return app.showPane(pane);
+    if (zone == .left or zone == .top) {
+        // The split put the new leaf second; swap the halves.
+        const parent = layout.parentOf(new_leaf) orelse return app.setActive(pane);
+        const sp = &layout.node(parent).split;
+        std.mem.swap(layout_mod.NodeId, &sp.first, &sp.second);
+    }
+    app.setActive(pane);
+}
+
+fn stripTabs(app: *App, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
+    var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
+    const leaf = layout.leaf(lid) orelse return tabs.items;
+    for (leaf.tabs.items) |id| {
+        const p = app.panes.get(id) orelse continue;
+        try tabs.append(app.frame.allocator(), .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id });
+    }
+    return tabs.items;
+}
+
+/// A tree file released: on a folder row → confirm a move; on a pane →
+/// open it there (a zone splits); elsewhere → open it.
+fn dropTreeFile(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
+    if (idx >= app.tree.rows.items.len) return;
+    if (app.hits.at(x, y)) |h| switch (h) {
+        .tree_node => |into| {
+            if (into < app.tree.rows.items.len and app.tree.rows.items[into].is_dir) return tree_mod.confirmMove(app, idx, into);
+            return;
+        },
+        else => {},
+    };
+    const row = app.tree.rows.items[idx];
+    const rel = try app.frame.allocator().dupe(u8, row.rel);
+    const abs = try app.absPath(rel);
+    const layout = app.layouts.current();
+    const rects = try layout.computeRects(app.panes_area, app.frame.allocator());
+    for (rects.panes) |pr| {
+        if (!pr.rect.contains(x, y)) continue;
+        const body = if (pr.rect.h >= 2) pr.rect.splitTop(1).rest else pr.rect;
+        const zone = layout_mod.zoneFor(body, x, y);
+        app.setActive(pr.pane);
+        const id = app.openPath(abs) catch |err| {
+            app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+            return;
+        };
+        if (zone != .center and id != pr.pane) try dropIntoLeaf(app, id, pr.leaf, zone);
+        return;
+    }
+    _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+}
+
+fn hitRect(app: *App, x: u16, y: u16) ?Rect {
+    return if (app.hits.entryAt(x, y)) |e| e.rect else null;
+}
+
+/// Enter on a list pane row: the cmdline history re-runs the line, the
+/// quickfix opens the file at its row.
+pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Error!void {
+    if (l.cursor >= l.entries.items.len) return;
+    const e = l.entries.items[l.cursor];
+    switch (l.kind) {
+        .cmdline_history => {
+            const line = try app.frame.allocator().dupe(u8, e.text);
+            try app.forceClosePane(pane);
+            try runExLine(app, line);
+        },
+        .quickfix => {
+            const rel = try app.frame.allocator().dupe(u8, e.path orelse return);
+            const abs = try app.absPath(rel);
+            const line = e.line;
+            const col = e.col;
+            const id = app.openPath(abs) catch |err| {
+                app.toast("open {s}: {s}", .{ rel, @errorName(err) });
+                return;
+            };
+            if (app.panes.editor(id)) |ed| ed.buf.editor.placeCursor(line -| 1, col -| 1);
+        },
+    }
 }
 
 // ─── AppCommand ─────────────────────────────────────────────────────────
@@ -659,6 +1248,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
 
 /// Run an ex line; a failure toasts the reason (or the error name).
 pub fn runExLine(app: *App, line: []const u8) Allocator.Error!void {
+    try app.noteCmdLine(line);
     app.diag.clear();
     ex.run(app, line) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,

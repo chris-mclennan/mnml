@@ -1,8 +1,15 @@
-//! One frame. Row 0 is the bufferline, the last row the statusline,
-//! everything between is the split tree (each editor pane through
-//! `editor_view.draw` with a `Doc` built from its buffer), then the find
-//! bar, the overlay, and the toasts — in that order, so the hit map's
-//! back-to-front scan gives the overlay the mouse.
+//! One frame. Row 0 is the palette bar (on a screen at least 80 wide),
+//! the last two rows are the statusline and the `:` line, and between
+//! them sit the tree rail, the split tree and the right panel. Every
+//! leaf of the split tree carries its own tab strip on its first row —
+//! a tab is dragged between leaves, so the strip belongs to the leaf,
+//! not to the frame. Then the overlay and the toasts, in that order, so
+//! the hit map's back-to-front scan gives the overlay the mouse.
+//!
+//! // changed: DESIGN said "row 0 is the bufferline, the last row the
+//! statusline". The `.test` corpus clicks against Rust mnml's frame —
+//! palette bar row 0, tab strip row 1, statusline on the second-last
+//! row — so that is the frame painted here.
 //!
 //! The frame arena is reset here (see `app.zig`'s header): every slice
 //! built for a draw lives until the next frame, the hit map included.
@@ -32,13 +39,61 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
+const layout_mod = @import("layout.zig");
+const cmd_view = @import("cmd_view.zig");
+const cheatsheet = @import("cheatsheet.zig");
 
-/// The right panel's width; the divider takes one more column.
-pub const right_panel_width: u16 = 40;
-/// The divider hit ids the body does not use (`.divider` is otherwise
-/// an index into the split tree's dividers).
+/// Below this width the palette bar row is not painted (Rust parity).
+pub const palette_bar_min_width: u16 = 80;
+/// The divider hit ids the split tree does not use (`.divider` is
+/// otherwise an index into the split tree's dividers).
 pub const tree_divider_id: u32 = std.math.maxInt(u32);
 pub const right_divider_id: u32 = std.math.maxInt(u32) - 1;
+
+/// `.button` ids the frame registers. `new_tab_base + leaf` is the `+`
+/// on that leaf's strip; toasts own `toast.button_base` and up.
+pub const Button = enum(u32) {
+    palette = 1,
+    toggle_tree = 2,
+    toggle_right_panel = 3,
+    new_tab_base = 0x100,
+    _,
+
+    pub fn newTab(leaf: usize) u32 {
+        return @intFromEnum(Button.new_tab_base) + @as(u32, @intCast(leaf));
+    }
+
+    /// The leaf a `new_tab_base + leaf` id names, if it is one.
+    pub fn newTabLeaf(id: u32) ?usize {
+        const base = @intFromEnum(Button.new_tab_base);
+        if (id < base or id >= toast_mod.button_base) return null;
+        return id - base;
+    }
+};
+
+/// The rows of the frame for a screen.
+pub const FrameRects = struct { bar: Rect, upper: Rect, status: Rect, cmdline: Rect };
+
+/// Palette bar on top when wide enough; the statusline and the `:`
+/// line at the bottom; the rest in between. A tiny screen gives up the
+/// `:` line, then the bar, before it gives up the statusline.
+pub fn frameRects(full: Rect) FrameRects {
+    var r = full;
+    var bar = Rect.empty;
+    if (full.w >= palette_bar_min_width and full.h >= 5) {
+        const s = r.splitTop(1);
+        bar = s.top;
+        r = s.rest;
+    }
+    var cmdline = Rect.empty;
+    if (r.h >= 4) {
+        const s = r.splitBottom(1);
+        cmdline = s.rest;
+        r = s.top;
+    }
+    const s = r.splitBottom(1);
+    return .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline };
+}
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
@@ -58,39 +113,74 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     screen.cursor_vis = false;
     app.cursor_pos = null;
 
-    // Row 0: bufferline. Last row: statusline. Between: the panes.
-    const top = full.splitTop(1);
-    const bottom = top.rest.splitBottom(1);
-    const body = bottom.top;
+    const fr = frameRects(full);
+    drawPaletteBar(app, ui, fr.bar);
     // The tree takes its width plus a one-cell divider (Rust `ui/mod.rs`).
-    var panes_area = body;
-    if (app.tree.visible and body.w > 12) {
-        const w: u16 = @max(@min(app.tree.width, body.w -| 21), 8);
-        const cols = body.splitLeft(w);
+    var panes_area = fr.upper;
+    if (app.tree.visible and panes_area.w > 12) {
+        const w: u16 = @max(@min(app.tree.width, panes_area.w -| 21), 8);
+        const cols = panes_area.splitLeft(w);
         const div = cols.rest.splitLeft(1);
         try app.tree.draw(app, ui, cols.left);
         drawDivider(app, ui, div.left, tree_divider_id);
         panes_area = div.rest;
     }
     // The right panel takes its width plus a divider off the far side.
-    if (app.right_panel) |which| if (panes_area.w > right_panel_width + 21) {
-        const cols = panes_area.splitRight(right_panel_width);
+    if (app.right_panel) |which| if (panes_area.w > 21 + 8) {
+        const w: u16 = @max(@min(app.right_panel_width, panes_area.w -| 21), 8);
+        const cols = panes_area.splitRight(w);
         const div = cols.left.splitRight(1);
         panes_area = div.left;
         drawDivider(app, ui, div.rest, right_divider_id);
         try drawRightPanel(app, ui, cols.rest, which);
     };
-    try drawBufferline(app, ui, .{ .x = panes_area.x, .y = top.top.y, .w = panes_area.w, .h = 1 });
+    app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
-    try drawStatusline(app, ui, bottom.rest);
+    try drawStatusline(app, ui, fr.status);
+    drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
     toast_mod.draw(ui, panes_area, try app.visibleToasts(arena));
 }
 
+/// `[≡]` toggles the tree, the centred chip opens the palette, `[▤]`
+/// toggles the right panel — VS Code's title row, one line tall.
+fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) void {
+    if (bar.isEmpty()) return;
+    const th = ui.theme;
+    const bg = th.bufferline;
+    ui.fill(bar, bg);
+    const y = bar.y;
+    const btn = Theme.onBg(th.muted, bg.bg);
+    const tree_glyph: []const u8 = if (ui.ascii) " = " else " ≡ ";
+    const w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
+    ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
+    const right_glyph: []const u8 = if (ui.ascii) " # " else " ▤ ";
+    const rw = ui.width(right_glyph);
+    if (bar.w > w0 + rw + 4) {
+        const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
+        ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
+    }
+    const label: []const u8 = if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ";
+    const lw = @min(ui.width(label), bar.w -| (w0 + rw + 2));
+    if (lw >= 8) {
+        const x = bar.x + (bar.w - lw) / 2;
+        const chip = Rect.init(x, y, lw, 1);
+        ui.fill(chip, th.chip);
+        _ = ui.putStr(x, y, lw, ui.clipStr(label, lw), Theme.onBg(th.muted, th.chip.bg));
+        ui.hit(chip, .{ .button = @intFromEnum(Button.palette) });
+    }
+}
+
 fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
-    ui.canvas.fill(r, app.theme.border);
+    const dragging = if (app.drag) |d| switch (d) {
+        .tree_divider => id == tree_divider_id,
+        .right_divider => id == right_divider_id,
+        else => false,
+    } else false;
+    const style = if (dragging or ui.hovered(r)) app.theme.accent else app.theme.border;
+    ui.canvas.fill(r, style);
     var y: u16 = r.y;
-    while (y < r.bottom()) : (y += 1) ui.canvas.put(r.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = app.theme.border });
+    while (y < r.bottom()) : (y += 1) ui.canvas.put(r.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = style });
     ui.hit(r, .{ .divider = id });
 }
 
@@ -101,29 +191,32 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
         .todos => try todos.draw(app, ui, area),
         .notes, .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
-            const msg = ui.fmt(" {s}: not in this build yet", .{@tagName(which)});
-            _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(msg, area.w), Theme.onBg(app.theme.muted, app.theme.panel_bg.bg));
+            const caps = ui.fmt(" {s}", .{@tagName(which)});
+            const up = try ui.arena.dupe(u8, caps);
+            for (up) |*c| c.* = std.ascii.toUpper(c.*);
+            _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(up, area.w), Theme.onBg(app.theme.accent, app.theme.panel_bg.bg));
+            if (area.h > 1) _ = ui.putStr(area.x, area.y + 1, area.w, ui.clipStr(" not in this build yet", area.w), Theme.onBg(app.theme.muted, app.theme.panel_bg.bg));
         },
     }
 }
 
-fn drawBufferline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
-    const layout = app.layouts.current();
+/// The tabs of leaf `lid` for the strip.
+fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
     var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
-    const ids: []const PaneId = blk: {
-        if (app.active) |a| if (layout.leafOf(a)) |leaf| break :blk layout.leaf(leaf).?.tabs.items;
-        break :blk try layout.allPanes(ui.arena);
-    };
-    for (ids) |id| {
+    const leaf = layout.leaf(lid) orelse return tabs.items;
+    for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
-        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = app.active == id });
+        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id });
     }
-    bufferline.draw(ui, area, tabs.items);
+    return tabs.items;
 }
 
 fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     const layout = app.layouts.current();
     if (layout.isEmpty()) {
+        // An empty frame keeps the strip row so the `+` is where the
+        // first tab will land.
+        if (body.h >= 2) bufferline.draw(ui, body.row(0), &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0) });
         const msg = "mnml-zig — ctrl+p opens a file, ctrl+q quits";
         const w: u16 = @intCast(@min(std.unicode.utf8CountCodepoints(msg) catch msg.len, body.w));
         const r = Rect.init(body.x + (body.w -| w) / 2, body.y + body.h / 2, w, 1);
@@ -132,22 +225,58 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     }
     const rects = try layout.computeRects(body, ui.arena);
     for (rects.dividers, 0..) |d, i| {
-        ui.canvas.fill(d, app.theme.border);
-        const glyph: []const u8 = if (d.w == 1) (if (ui.ascii) "|" else "│") else (if (ui.ascii) "-" else "─");
-        var y: u16 = d.y;
-        while (y < d.bottom()) : (y += 1) {
-            var x: u16 = d.x;
-            while (x < d.right()) : (x += 1) ui.canvas.put(x, y, .{ .char = .{ .grapheme = glyph, .width = 1 }, .style = app.theme.border });
+        const dragging = if (app.drag) |dr| dr == .divider and dr.divider.split == d.split else false;
+        const style = if (dragging or ui.hovered(d.rect)) app.theme.accent else app.theme.border;
+        ui.canvas.fill(d.rect, style);
+        const glyph: []const u8 = if (d.dir == .horizontal) (if (ui.ascii) "|" else "│") else (if (ui.ascii) "-" else "─");
+        var y: u16 = d.rect.y;
+        while (y < d.rect.bottom()) : (y += 1) {
+            var x: u16 = d.rect.x;
+            while (x < d.rect.right()) : (x += 1) ui.canvas.put(x, y, .{ .char = .{ .grapheme = glyph, .width = 1 }, .style = style });
         }
-        try ui.hits.add(ui.arena, d, .{ .divider = @intCast(i) });
+        try ui.hits.add(ui.arena, d.rect, .{ .divider = @intCast(i) });
     }
-    for (rects.panes) |pr| {
+    for (rects.panes, 0..) |pr, li| {
         const pane = app.panes.get(pr.pane) orelse continue;
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
+        var rect = pr.rect;
+        if (rect.h >= 2) {
+            const s = rect.splitTop(1);
+            bufferline.draw(ui, s.top, try tabsOf(app, ui, layout, pr.leaf), .{ .leaf = @intCast(li), .new_tab = Button.newTab(li) });
+            rect = s.rest;
+        }
         switch (pane.*) {
-            .editor => |*e| try drawEditor(app, ui, pr.pane, e, pr.rect),
+            .editor => |*e| try drawEditor(app, ui, pr.pane, e, rect),
+            .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
+            .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
+        }
+        drawDropHint(app, ui, pr.pane, rect);
+    }
+}
+
+/// While a tab or a tree file is being dragged over a pane, the zone
+/// it would land in is tinted.
+fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
+    const d = app.drag orelse return;
+    switch (d) {
+        .tab => |tb| if (!tb.moved) return,
+        .tree => {},
+        else => return,
+    }
+    const h = app.hover orelse return;
+    if (!body.contains(h.x, h.y)) return;
+    const zone = layout_mod.zoneFor(body, h.x, h.y);
+    const zr = layout_mod.zoneRect(body, zone);
+    var y: u16 = zr.y;
+    while (y < zr.bottom()) : (y += 1) {
+        var x: u16 = zr.x;
+        while (x < zr.right()) : (x += 1) {
+            var cell = ui.canvas.screen.readCell(x, y) orelse continue;
+            cell.style.bg = app.theme.selection.bg;
+            ui.canvas.put(x, y, cell);
         }
     }
+    _ = pane;
 }
 
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
@@ -190,6 +319,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         },
         .focused = focused,
         .visual_block = mode == .visual_block,
+        .scrollbar = app.cfg.scrollbar,
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     if (app.active == id) {
@@ -207,6 +337,42 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     };
 }
 
+/// The cmdline-history / quickfix list: a header, then one row per
+/// entry with the cursor row banded. Rows register `.script_hit`.
+fn drawListPane(app: *App, l: *app_mod.ListPane, ui: Ui, pane: PaneId, area: Rect) void {
+    const th = ui.theme;
+    ui.fill(area, th.bg);
+    if (area.isEmpty()) return;
+    const header = switch (l.kind) {
+        .cmdline_history => ui.fmt(" cmdline history · {d} entr{s} · enter re-runs · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "y" else "ies" }),
+        .quickfix => ui.fmt(" {d} match{s}   ·   quickfix: enter opens · esc closes ", .{ l.entries.items.len, if (l.entries.items.len == 1) "" else "es" }),
+    };
+    _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(header, area.w), Theme.onBg(th.accent, th.bg.bg));
+    if (area.h < 2) return;
+    const list = area.splitTop(1).rest;
+    const rows: usize = list.h;
+    if (l.cursor < l.scroll) l.scroll = l.cursor;
+    if (l.cursor >= l.scroll + rows) l.scroll = l.cursor + 1 - rows;
+    var y: u16 = 0;
+    var i = l.scroll;
+    while (i < l.entries.items.len and y < list.h) : ({
+        i += 1;
+        y += 1;
+    }) {
+        const r = list.row(y);
+        const e = l.entries.items[i];
+        const sel = i == l.cursor and app.active == pane;
+        if (sel) ui.fill(r, th.cursor_line);
+        const bg = if (sel) th.cursor_line.bg else th.bg.bg;
+        var x = r.x + 2;
+        if (e.path) |p| {
+            x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s}:{d}:{d} ", .{ p, e.line, e.col }), Theme.onBg(th.muted, bg));
+        }
+        _ = ui.putStr(x, r.y, r.right() -| x, ui.clipStr(e.text, r.right() -| x), Theme.onBg(th.fg, bg));
+        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(i) } });
+    }
+}
+
 fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     var info: statusline.Info = .{
         .mode_label = null,
@@ -221,9 +387,9 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     if (app.activeEditor()) |e| {
         const ed = &e.buf.editor;
         const mode = e.buf.input.mode();
-        info.mode_label = mode.label();
+        info.mode_label = mode.label() orelse "EDIT";
         info.mode_kind = switch (mode) {
-            .none => .none,
+            .none => .edit,
             .normal => .normal,
             .insert => .insert,
             .replace => .replace,
@@ -244,6 +410,19 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     statusline.draw(ui, area, info);
 }
 
+/// The `:` line while it is open; blank otherwise (vim's cmdline row).
+fn drawCmdline(app: *App, ui: Ui, area: Rect) void {
+    if (area.isEmpty()) return;
+    ui.fill(area, app.theme.bg);
+    const e = app.activeEditor() orelse return;
+    const line = e.buf.input.cmdlineGet() orelse return;
+    const caret = e.buf.input.cmdlineCaret() orelse line.len;
+    const shown = ui.fmt(":{s}", .{line});
+    _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(shown, area.w), app.theme.fg);
+    const cx: u16 = area.x + 1 + @as(u16, @intCast(@min(ui.width(line[0..@min(caret, line.len)]), area.w -| 1)));
+    app.cursor_pos = .{ .x = cx, .y = area.y };
+}
+
 fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     switch (app.overlay) {
         .none => {},
@@ -253,7 +432,12 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         .confirm => |*c| confirm_mod.draw(ui, body, &c.state),
         .picker => |*p| {
             const items = try ui.arena.alloc(picker_mod.Item, p.filtered.items.len);
-            for (p.filtered.items, 0..) |idx, i| items[i] = .{ .label = p.labels[idx] };
+            for (p.filtered.items, 0..) |idx, i| items[i] = .{
+                .label = p.labels[idx],
+                .detail = if (p.details.len > idx) p.details[idx] else null,
+                .hint = if (p.hints.len > idx and p.hints[idx].len > 0) p.hints[idx] else null,
+            };
+            p.state.total = p.labels.len;
             if (picker_mod.draw(ui, body, &p.state, items)) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
         .which_key => |*w| {
@@ -272,6 +456,8 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         // A menu is anchored where the click was, which may be in the
         // tree or the right panel: it clamps against the whole screen.
         .menu => |*m| drawMenu(ui, ui.canvas.full(), m),
+        .info => |kind| cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
+        .settings => |*s| cmd_view.drawSettings(app, ui, ui.canvas.full(), s),
     }
 }
 
@@ -325,13 +511,35 @@ fn screenText(app: *App) ![]u8 {
     return screen_mod.toTestText(t.allocator, &app.screen);
 }
 
+test "frameRects: the bar needs 80 columns, the cmdline row needs 4 rows, the statusline is last to go" {
+    const wide = frameRects(Rect.init(0, 0, 120, 40));
+    try t.expect(wide.bar.eql(Rect.init(0, 0, 120, 1)));
+    try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 37)));
+    try t.expect(wide.status.eql(Rect.init(0, 38, 120, 1)));
+    try t.expect(wide.cmdline.eql(Rect.init(0, 39, 120, 1)));
+    const narrow = frameRects(Rect.init(0, 0, 40, 8));
+    try t.expect(narrow.bar.isEmpty());
+    try t.expect(narrow.upper.eql(Rect.init(0, 0, 40, 6)));
+    try t.expect(narrow.status.eql(Rect.init(0, 6, 40, 1)));
+    try t.expect(narrow.cmdline.eql(Rect.init(0, 7, 40, 1)));
+    const tiny = frameRects(Rect.init(0, 0, 100, 3));
+    try t.expect(tiny.bar.isEmpty());
+    try t.expect(tiny.cmdline.isEmpty());
+    try t.expect(tiny.upper.eql(Rect.init(0, 0, 100, 2)));
+    try t.expect(tiny.status.eql(Rect.init(0, 2, 100, 1)));
+    const one = frameRects(Rect.init(0, 0, 100, 1));
+    try t.expect(one.upper.isEmpty());
+    try t.expect(one.status.eql(Rect.init(0, 0, 100, 1)));
+}
+
 test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane hit under the text" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 40, .rows = 8 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 48, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     const empty = try screenText(&app);
     defer t.allocator.free(empty);
     try t.expect(std.mem.indexOf(u8, empty, "mnml-zig") != null);
+    try t.expectEqual(Button.newTab(0), app.hits.at(1, 0).?.button);
     _ = try app.openScratch();
     const e = app.activeEditor().?;
     try e.buf.editor.setText("hello\nworld");
@@ -345,10 +553,36 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     try t.expect(std.mem.indexOf(u8, txt, "standard") != null);
     try t.expect(app.hits.at(5, 2).? == .editor_cell);
     try t.expect(app.hits.at(5, 0).? == .tab);
+    try t.expectEqual(@as(u32, 0), app.hits.at(5, 0).?.tab.leaf);
+    // The `+` after the last tab, the mode chip on the statusline.
+    try t.expectEqual(Button.newTab(0), app.hits.at(12, 0).?.button);
+    try t.expectEqual(@as(u32, 0), app.hits.at(2, 6).?.statusline_seg);
     // gutter is max(digits, 3) + 2 = 5 cells; the cursor sits at col 2.
     try t.expectEqual(@as(u16, 7), app.cursor_pos.?.x);
     try t.expectEqual(@as(u16, 2), app.cursor_pos.?.y);
-    try t.expectEqual(@as(usize, 6), app.pane_rows);
+    // 8 rows: strip, 5 text rows, statusline, cmdline.
+    try t.expectEqual(@as(usize, 5), app.pane_rows);
+    try t.expect(app.panes_area.eql(Rect.init(0, 0, 48, 6)));
+}
+
+test "a wide frame has the palette bar on row 0 and the strip on row 1; each leaf carries its own strip" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const command = @import("../core/command.zig");
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    try app.render();
+    try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(60, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.toggle_tree), app.hits.at(1, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.toggle_right_panel), app.hits.at(118, 0).?.button);
+    try t.expectEqual(@as(u32, 0), app.hits.at(3, 1).?.tab.leaf);
+    try t.expectEqual(@as(u32, 1), app.hits.at(64, 1).?.tab.leaf);
+    try t.expect(app.hits.at(60, 10).? == .divider);
+    try t.expect(app.hits.at(3, 2).? == .editor_cell);
+    try t.expectEqual(@as(u32, 0), app.hits.at(3, 2).?.editor_cell.line);
+    try t.expectEqual(statusline.seg_mode, app.hits.at(2, 38).?.statusline_seg);
+    try t.expect(app.hits.at(60, 38) == null);
 }
 
 test "overlays paint over the panes and win the hit test; the find bar docks at the pane bottom" {
@@ -365,7 +599,7 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
     try t.expect(std.mem.indexOf(u8, with_bar, " Find ") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "alpha") != null);
     try t.expect(std.mem.indexOf(u8, with_bar, "match 1/2") != null);
-    try t.expectEqual(@as(usize, 9), app.pane_rows);
+    try t.expectEqual(@as(usize, 8), app.pane_rows);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try command.run(&app, .{ .static = .@"editor.goto_line" });
     const with_prompt = try screenText(&app);

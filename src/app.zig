@@ -46,6 +46,10 @@ const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
+const scroll_mod = @import("app/scroll.zig");
+const Rect = @import("ui/rect.zig");
+const Ui = @import("ui/context.zig");
+const Canvas = @import("ui/canvas.zig");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -53,6 +57,7 @@ pub const FocusId = ids.FocusId;
 pub const Pane = pane_mod.Pane;
 pub const EditorPane = pane_mod.EditorPane;
 pub const PaneStore = pane_mod.PaneStore;
+pub const ListPane = pane_mod.ListPane;
 pub const Buffer = buffer_mod.Buffer;
 pub const Clipboard = buffer_mod.Clipboard;
 pub const Key = key_mod.Key;
@@ -77,6 +82,10 @@ pub const Config = struct {
     chord_timeout_ms: u64 = 500,
     ascii: bool = false,
     toast_ttl_ms: i64 = 4000,
+    /// The editor's right-edge scrollbar.
+    scrollbar: bool = true,
+    /// Lines per wheel notch.
+    wheel_lines: u8 = 3,
 
     pub fn editorConfig(c: Config) input.Config {
         return .{ .tab_width = c.tab_width, .text_width = c.text_width };
@@ -93,9 +102,57 @@ pub const InitOptions = struct {
     rows: u16 = 40,
 };
 
-pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo };
-pub const ConfirmPurpose = union(enum) { close_pane: PaneId, quit };
-pub const PickerKind = enum { buffers, files };
+pub const PromptPurpose = union(enum) {
+    goto_line,
+    replace,
+    filter_shell,
+    new_todo,
+    /// A workspace-relative path typed into the prompt; the payload is
+    /// the directory it is created in (owned).
+    new_file: []u8,
+    new_folder: []u8,
+    /// The workspace-relative path being renamed (owned).
+    rename: []u8,
+
+    pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
+        switch (p) {
+            .new_file, .new_folder, .rename => |s| gpa.free(s),
+            else => {},
+        }
+    }
+};
+pub const ConfirmPurpose = union(enum) {
+    close_pane: PaneId,
+    quit,
+    /// Delete the workspace-relative path (owned).
+    delete_path: []u8,
+    /// Move `from` into directory `into` (both workspace-relative, owned).
+    move_path: struct { from: []u8, into: []u8 },
+
+    pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
+        switch (c) {
+            .delete_path => |s| gpa.free(s),
+            .move_path => |m| {
+                gpa.free(m.from);
+                gpa.free(m.into);
+            },
+            else => {},
+        }
+    }
+};
+pub const PickerKind = enum { buffers, files, recent, commands, tabs };
+
+/// The on-demand read-only overlays: `view.welcome` / `view.about` /
+/// `view.discovery`. A click anywhere dismisses them.
+pub const InfoKind = enum { welcome, about, discovery };
+
+/// The settings overlay: which row has focus, and the config as it was
+/// when the overlay opened (Esc puts it back).
+pub const SettingsState = struct {
+    cursor: usize = 0,
+    scroll: usize = 0,
+    opened: Config,
+};
 
 pub const Overlay = union(enum) {
     none,
@@ -107,6 +164,8 @@ pub const Overlay = union(enum) {
         title_owned: ?[]u8 = null,
     },
     confirm: struct { state: Confirm.State, purpose: ConfirmPurpose, message: []u8 },
+    info: InfoKind,
+    settings: SettingsState,
     which_key: whichkey.State,
     picker: struct {
         state: Picker.State,
@@ -116,6 +175,12 @@ pub const Overlay = union(enum) {
         labels: [][]u8,
         /// Parallel to `labels` for the buffers picker; empty otherwise.
         panes: []PaneId,
+        /// Parallel to `labels`: the muted right-hand text (a command
+        /// id, a path); empty when the picker has none.
+        details: [][]u8 = &.{},
+        /// Parallel to `labels`: the chord hint after the label; an
+        /// empty string paints nothing.
+        hints: [][]u8 = &.{},
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
     },
@@ -124,18 +189,26 @@ pub const Overlay = union(enum) {
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
-            .none, .which_key => {},
+            .none, .which_key, .info, .settings => {},
             .menu => |*m| gpa.free(m.items),
             .prompt => |*p| {
                 Prompt.deinit(&p.state, gpa);
                 if (p.title_owned) |t| gpa.free(t);
+                p.purpose.deinit(gpa);
             },
-            .confirm => |*c| gpa.free(c.message),
+            .confirm => |*c| {
+                gpa.free(c.message);
+                c.purpose.deinit(gpa);
+            },
             .picker => |*p| {
                 p.state.deinit(gpa);
                 for (p.labels) |l| gpa.free(l);
                 gpa.free(p.labels);
                 gpa.free(p.panes);
+                for (p.details) |d| gpa.free(d);
+                gpa.free(p.details);
+                for (p.hints) |h| gpa.free(h);
+                gpa.free(p.hints);
                 p.filtered.deinit(gpa);
             },
         }
@@ -176,6 +249,31 @@ pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize
 pub const RepeatInsert = struct { pane: PaneId, count: u32, above: bool, start_byte: usize, len_before: usize };
 
 pub const ClosedBuffer = struct { path: []u8, cursor: usize };
+
+/// A mouse gesture in flight: what the press landed on, until release.
+pub const Drag = union(enum) {
+    /// A split's divider, by the split node it belongs to.
+    divider: struct { split: layout_mod.NodeId, dir: layout_mod.SplitDir },
+    tree_divider,
+    right_divider,
+    /// A tab off a leaf's strip. `moved` once the pointer has left
+    /// the cell it pressed on — a press-and-release is a click.
+    tab: struct { pane: PaneId, x: u16, y: u16, moved: bool = false },
+    /// A tree row: a file opens in the pane it is released over, or
+    /// moves into the folder it is released on.
+    tree: struct { idx: usize, moved: bool = false },
+    /// A text selection: char / word / line granularity from the click
+    /// count, anchored where the press landed.
+    select: struct { pane: PaneId, unit: SelectUnit, anchor: usize },
+    /// The editor scrollbar thumb; `grab` is the row inside the thumb
+    /// the pointer took hold of.
+    scrollbar: struct { pane: PaneId, grab: u16 },
+};
+pub const SelectUnit = enum { char, word, line };
+
+/// The last left press, for double / triple clicks.
+pub const LastClick = struct { at_ms: i64, x: u16, y: u16, count: u8 };
+pub const double_click_ms: i64 = 450;
 
 /// Where `g;` / `g,` stand in the change list; `len` detects a list that
 /// grew since (a fresh edit restarts from the newest entry).
@@ -248,6 +346,19 @@ pub const App = struct {
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
     hover: ?struct { x: u16, y: u16 } = null,
+    /// The mouse gesture in flight, press to release.
+    drag: ?Drag = null,
+    last_click: ?LastClick = null,
+    /// Wheel events folded until the next tick (`scroll.zig`).
+    wheel: scroll_mod.Coalescer = .{},
+    /// The split tree's area at the last render — what a divider drag
+    /// and the focus motions measure against.
+    panes_area: Rect = .{},
+    right_panel_width: u16 = 40,
+    /// Files opened, newest last (`picker.recent`). Owned paths.
+    recent: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The `:` lines run, oldest first (`q:`). Owned.
+    cmd_history: std.ArrayListUnmanaged([]u8) = .empty,
     screen: vaxis.Screen,
     /// Rows / text columns of the active pane at the last render; they
     /// size page motions and the wrap width.
@@ -282,6 +393,8 @@ pub const App = struct {
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
+    pub const max_recent = 50;
+    pub const max_cmd_history = 200;
 
     /// An App on the defaults: 120×40, the standard keymap, workspace `.`.
     pub fn init(gpa: Allocator, io: Io) !App {
@@ -349,6 +462,10 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
+        for (self.recent.items) |r| gpa.free(r);
+        self.recent.deinit(gpa);
+        for (self.cmd_history.items) |c| gpa.free(c);
+        self.cmd_history.deinit(gpa);
         self.chord.clear(gpa);
         self.hooks.deinit();
         self.dyn_commands.deinit();
@@ -419,6 +536,13 @@ pub const App = struct {
         }
     }
 
+    /// Drop the toast at `idx` (a click on its box).
+    pub fn dismissToastAt(self: *App, idx: usize) void {
+        if (idx >= self.toasts.items.len) return;
+        freeToast(self.gpa, self.toasts.orderedRemove(idx));
+        self.needs_render = true;
+    }
+
     pub fn lastToast(self: *const App) ?[]const u8 {
         return if (self.toasts.getLastOrNull()) |t| t.text else null;
     }
@@ -464,6 +588,7 @@ pub const App = struct {
     /// Open `path` (absolute) in an editor pane and focus it. An already
     /// open file is revealed instead. A missing file is a new buffer.
     pub fn openPath(self: *App, path: []const u8) !PaneId {
+        try self.noteRecent(path);
         if (self.panes.findPath(path)) |id| {
             self.showPane(id);
             return id;
@@ -502,6 +627,50 @@ pub const App = struct {
         return id;
     }
 
+    /// `path` becomes the newest entry of the recent list.
+    pub fn noteRecent(self: *App, path: []const u8) Allocator.Error!void {
+        var i: usize = 0;
+        while (i < self.recent.items.len) {
+            if (std.mem.eql(u8, self.recent.items[i], path)) {
+                self.gpa.free(self.recent.orderedRemove(i));
+            } else i += 1;
+        }
+        const copy = try self.gpa.dupe(u8, path);
+        errdefer self.gpa.free(copy);
+        if (self.recent.items.len >= max_recent) self.gpa.free(self.recent.orderedRemove(0));
+        try self.recent.append(self.gpa, copy);
+    }
+
+    /// A `:` line goes on the history `q:` lists (blanks and repeats skipped).
+    pub fn noteCmdLine(self: *App, line: []const u8) Allocator.Error!void {
+        const t = std.mem.trim(u8, line, " \t");
+        if (t.len == 0) return;
+        if (self.cmd_history.getLastOrNull()) |last| if (std.mem.eql(u8, last, t)) return;
+        const copy = try self.gpa.dupe(u8, t);
+        errdefer self.gpa.free(copy);
+        if (self.cmd_history.items.len >= max_cmd_history) self.gpa.free(self.cmd_history.orderedRemove(0));
+        try self.cmd_history.append(self.gpa, copy);
+    }
+
+    /// A second editor on the same file (a split's starting point):
+    /// same text, same cursor, its own undo from here.
+    pub fn duplicatePane(self: *App, id: PaneId) !PaneId {
+        const src = self.panes.editor(id) orelse return error.NotAnEditor;
+        const gpa = self.gpa;
+        var buf = try Buffer.init(gpa, src.buf.editor.bytes(), self.cfg.input_style, self.cfg.editorConfig());
+        errdefer buf.deinit();
+        if (src.buf.path) |p| try buf.setPath(p);
+        try buf.markSaved();
+        buf.dirty = src.buf.dirty;
+        buf.editor.setCursor(src.buf.editor.cursor);
+        var syn = syntax.Syntax.init(gpa);
+        errdefer syn.deinit();
+        if (src.buf.path) |p| syn.setLanguage(p);
+        const wrap = src.wrap;
+        const new_id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn, .wrap = wrap } });
+        return new_id;
+    }
+
     /// A fresh unnamed buffer, shown and focused.
     pub fn openScratch(self: *App) !PaneId {
         const gpa = self.gpa;
@@ -512,11 +681,24 @@ pub const App = struct {
         return id;
     }
 
-    /// Reveal `id` in the focused leaf (or a new one) and focus it.
+    /// Reveal `id` and focus it: where it already is when it has a
+    /// leaf, else as a new tab of the focused leaf (or a new leaf).
     pub fn showPane(self: *App, id: PaneId) void {
         const layout = self.layouts.current();
-        const where: ?layout_mod.NodeId = if (self.active) |a| layout.leafOf(a) else null;
-        _ = layout.showIn(where, id) catch {};
+        if (layout.leafOf(id)) |lid| {
+            layout.leaf(lid).?.active = id;
+        } else {
+            const where: ?layout_mod.NodeId = if (self.active) |a| layout.leafOf(a) else null;
+            _ = layout.showIn(where, id) catch {};
+        }
+        self.setActive(id);
+    }
+
+    /// Move `id` into leaf `lid` as its active tab and focus it.
+    pub fn showPaneIn(self: *App, lid: layout_mod.NodeId, id: PaneId) void {
+        const layout = self.layouts.current();
+        if (layout.leaf(lid) == null) return self.showPane(id);
+        _ = layout.showIn(lid, id) catch {};
         self.setActive(id);
     }
 
@@ -589,6 +771,7 @@ pub const App = struct {
         self.chord.clear(self.gpa);
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.buf.setInputStyle(style, self.cfg.editorConfig()),
+            else => {},
         };
         self.needs_render = true;
     }
@@ -671,9 +854,13 @@ pub const App = struct {
     // ─── the loop's three entry points ───
 
     pub fn handle(self: *App, ev: AppEvent) Allocator.Error!void {
+        // A wheel burst folds into one motion; anything else flushes
+        // what is pending first so order is kept (`scroll.zig`).
+        if (ev == .mouse and self.wheel.offer(ev.mouse)) return;
+        try self.flushWheel();
         switch (ev) {
             .key => |k| try dispatch.key(self, k),
-            .mouse => |m| try dispatch.mouse(self, m),
+            .mouse => |m| try self.routeMouse(m, 1),
             .winsize => |ws| try self.resize(ws.cols, ws.rows),
             .paste => |text| {
                 defer self.gpa.free(text);
@@ -691,6 +878,20 @@ pub const App = struct {
             else => event.freeEvent(self.gpa, ev),
         }
         self.needs_render = true;
+    }
+
+    /// The pending wheel batch, if any, lands as one scroll.
+    pub fn flushWheel(self: *App) Allocator.Error!void {
+        const batch = self.wheel.take() orelse return;
+        try self.routeMouse(batch.mouse, batch.count);
+    }
+
+    /// A mouse event against a fresh hit map: a frame that changed
+    /// since the last render is re-rendered first, so the rects the
+    /// previous frame registered cannot route a click on this one.
+    fn routeMouse(self: *App, m: key_mod.Mouse, count: u16) Allocator.Error!void {
+        if (self.needs_render) try self.render();
+        try dispatch.mouse(self, m, count);
     }
 
     /// Drain the inbound queue without blocking. The terminal loop does
@@ -720,6 +921,7 @@ pub const App = struct {
     pub fn tick(self: *App, now: i64) Allocator.Error!void {
         self.now_ms = now;
         try self.pumpEvents();
+        try self.flushWheel();
         if (self.chord.deadline_ms) |d| if (now >= d) try dispatch.expireChords(self);
         var i: usize = 0;
         while (i < self.toasts.items.len) {
@@ -756,6 +958,20 @@ pub const App = struct {
         self.needs_render = false;
     }
 
+    /// A `Ui` over the app's own screen and hit map, for a dispatcher
+    /// that needs a component's measurements (where the strip's tabs
+    /// sit) outside a frame.
+    pub fn frameUi(self: *App) Ui {
+        return .{
+            .canvas = Canvas.init(&self.screen, .{}),
+            .hits = &self.hits,
+            .theme = &self.theme,
+            .arena = self.frame.allocator(),
+            .focus = self.focus,
+            .ascii = self.cfg.ascii,
+        };
+    }
+
     /// The rendered-toast view for the toast component.
     pub fn visibleToasts(self: *App, arena: Allocator) Allocator.Error![]toast_mod.Toast {
         var out: std.ArrayListUnmanaged(toast_mod.Toast) = .empty;
@@ -788,6 +1004,10 @@ test {
     _ = @import("app/cmd_view.zig");
     _ = @import("app/cmd_picker.zig");
     _ = @import("app/cmd_app.zig");
+    _ = @import("app/cmd_tab.zig");
+    _ = @import("app/scroll.zig");
+    _ = @import("app/context_menus.zig");
+    _ = @import("app/cheatsheet.zig");
     _ = @import("todos.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");

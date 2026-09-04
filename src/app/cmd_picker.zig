@@ -1,6 +1,8 @@
-//! `picker.*` runners: the buffer switcher and the workspace file picker.
-//! Both fill the one picker overlay; `dispatch.refilterPicker` scores
-//! the labels against the query and `accept` opens the pick.
+//! `picker.*` runners and the palette: the buffer switcher, the
+//! workspace file picker, the recent-files list, the tab-page switcher
+//! and the command palette. All fill the one picker overlay;
+//! `dispatch.refilterPicker` scores the labels against the query and
+//! `accept` acts on the pick by kind.
 
 const std = @import("std");
 const app_mod = @import("../app.zig");
@@ -10,10 +12,14 @@ const Picker = app_mod.Picker;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const dispatch = @import("dispatch.zig");
+const keymap = @import("../core/keymap.zig");
+const cmd_tab = @import("cmd_tab.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
     .@"picker.files" = &files,
+    .@"picker.recent" = &recent,
+    .palette = &palette,
 };
 
 /// Directories a workspace walk never enters.
@@ -50,6 +56,7 @@ fn pushBuffer(app: *App, labels: *std.ArrayListUnmanaged([]u8), panes: *std.Arra
     const p = app.panes.get(id) orelse return;
     const label = switch (p.*) {
         .editor => |*e| try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (e.buf.path) |path| app.relPath(path) else "[scratch]", if (e.buf.dirty) " ●" else "" }),
+        else => try gpa.dupe(u8, p.title()),
     };
     errdefer gpa.free(label);
     try labels.append(gpa, label);
@@ -102,12 +109,99 @@ fn walk(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
     return false;
 }
 
-fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId) CommandError!void {
+/// Takes ownership of `labels` and `panes` (gpa).
+pub fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId) CommandError!void {
+    return openPickerWith(app, title, kind, labels, panes, &.{}, &.{});
+}
+
+/// As `openPicker`, with the muted detail and the chord hint per row
+/// (both owned; empty slices when the picker has none).
+pub fn openPickerWith(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId, details: [][]u8, hints: [][]u8) CommandError!void {
     app.overlay.deinit(app.gpa);
-    app.overlay = .{ .picker = .{ .state = .{ .title = title }, .kind = kind, .labels = labels, .panes = panes, .filtered = .empty } };
+    app.overlay = .{ .picker = .{ .state = .{ .title = title }, .kind = kind, .labels = labels, .panes = panes, .details = details, .hints = hints, .filtered = .empty } };
     try dispatch.refilterPicker(app);
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// `Recent files` — newest first, the active file left out so the top
+/// row is the one to switch back to.
+fn recent(app: *App) CommandError!void {
+    const gpa = app.gpa;
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+    }
+    const active_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.path else null;
+    var i = app.recent.items.len;
+    while (i > 0) {
+        i -= 1;
+        const path = app.recent.items[i];
+        if (active_path != null and std.mem.eql(u8, active_path.?, path)) continue;
+        const label = try gpa.dupe(u8, app.relPath(path));
+        errdefer gpa.free(label);
+        try labels.append(gpa, label);
+    }
+    if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no recent files", .{});
+    try openPicker(app, "Recent files", .recent, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+}
+
+/// `Command palette` — every static command and every registered one,
+/// title first, id as the detail, its first chord as the hint. The
+/// pick's index maps back through `commandAt`.
+fn palette(app: *App) CommandError!void {
+    const gpa = app.gpa;
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
+    var hints: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
+        for (hints.items) |h| gpa.free(h);
+        hints.deinit(gpa);
+    }
+    var buf: [64]u8 = undefined;
+    var i: usize = 0;
+    while (i < command.count) : (i += 1) {
+        const id: command.CommandId = @enumFromInt(i);
+        try labels.append(gpa, try gpa.dupe(u8, command.title(id)));
+        try details.append(gpa, try gpa.dupe(u8, command.name(id)));
+        try hints.append(gpa, try gpa.dupe(u8, firstChord(app, command.spec(id).keys, &buf)));
+    }
+    for (app.dyn_commands.list.items, app.dyn_commands.live.items) |c, alive| {
+        if (!alive) continue;
+        try labels.append(gpa, try gpa.dupe(u8, c.title));
+        try details.append(gpa, try gpa.dupe(u8, c.id));
+        try hints.append(gpa, try gpa.dupe(u8, if (c.keys.len > 0) c.keys[0] else ""));
+    }
+    try openPickerWith(app, "Command palette", .commands, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), try hints.toOwnedSlice(gpa));
+}
+
+/// The first default chord of a spec under the active profile, in its
+/// canonical spelling.
+fn firstChord(app: *App, keys: command.Keys, buf: []u8) []const u8 {
+    const own = switch (App.profileOf(app.cfg.input_style)) {
+        .vim => keys.vim,
+        .standard => keys.standard,
+    };
+    const spec: []const u8 = if (keys.both.len > 0) keys.both[0] else if (own.len > 0) own[0] else return "";
+    return keymap.normalizeSpec(spec, buf) orelse spec;
+}
+
+/// The command a palette row (unfiltered index) names.
+fn commandAt(app: *App, i: usize) ?command.CommandRef {
+    if (i < command.count) return .{ .static = @enumFromInt(i) };
+    var slot: usize = 0;
+    var seen: usize = command.count;
+    while (slot < app.dyn_commands.list.items.len) : (slot += 1) {
+        if (!app.dyn_commands.live.items[slot]) continue;
+        if (seen == i) return .{ .dyn = @intCast(slot) };
+        seen += 1;
+    }
+    return null;
 }
 
 /// The pick at `idx` (an index into the filtered order) is chosen.
@@ -122,7 +216,7 @@ pub fn accept(app: *App, idx: usize) !void {
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
             if (app.panes.get(pane) != null) app.showPane(pane);
         },
-        .files => {
+        .files, .recent => {
             const rel = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
@@ -130,6 +224,20 @@ pub fn accept(app: *App, idx: usize) !void {
             _ = app.openPath(abs) catch |err| {
                 app.toast("open {s}: {s}", .{ rel, @errorName(err) });
                 return;
+            };
+        },
+        .tabs => {
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            cmd_tab.switchTab(app, i);
+        },
+        .commands => {
+            const ref = commandAt(app, i);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            if (ref) |r| command.run(app, r) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
             };
         },
     }
@@ -180,6 +288,26 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("main.zig", app.panes.get(app.active.?).?.title());
     try t.expectEqual(@as(usize, 4), app.panes.count());
+
+    // Recent: newest first, the active file (main.zig) left out.
+    try command.run(&app, .{ .static = .@"picker.recent" });
+    try t.expectEqualStrings("Recent files", app.overlay.picker.state.title);
+    try t.expectEqualStrings("c.txt", app.overlay.picker.labels[0]);
+    try t.expectEqual(@as(usize, 3), app.overlay.picker.labels.len);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("c.txt", app.panes.get(app.active.?).?.title());
+
+    // The palette lists every command with its id and chord; a pick runs it.
+    try command.run(&app, .{ .static = .palette });
+    try t.expectEqualStrings("Command palette", app.overlay.picker.state.title);
+    try t.expectEqual(command.count, app.overlay.picker.labels.len);
+    try t.expectEqualStrings("app.quit", app.overlay.picker.details[0]);
+    try t.expectEqualStrings("ctrl+q", app.overlay.picker.hints[0]);
+    for ("view.toggle_wrap") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqualStrings("view.toggle_wrap", app.overlay.picker.details[app.overlay.picker.filtered.items[0]]);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(true, app.activeEditor().?.wrap.?);
 }
 
 /// The tmp dir's absolute path, gpa-owned without a sentinel.
