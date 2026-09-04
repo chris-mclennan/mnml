@@ -237,7 +237,7 @@ fn write(app: *App, path_arg: []const u8, then_close: bool) CommandError!void {
     if (path_arg.len > 0) {
         const abs = try app.absPath(path_arg);
         e.buf.setPath(abs) catch return error.OutOfMemory;
-        e.syntax.setLanguage(abs);
+        e.syntax.setLanguage(abs, e.buf.editor.bytes());
         e.hl_dirty = true;
     }
     const path = e.buf.path orelse return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});

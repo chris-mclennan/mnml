@@ -27,10 +27,13 @@ const hooks = @import("core/hooks.zig");
 const input = @import("input/mod.zig");
 const buffer_mod = @import("editor/buffer.zig");
 const edit_op = @import("editor/edit_op.zig");
+const edit_op_editor = @import("editor/editor.zig");
 const pane_mod = @import("app/pane.zig");
 const layout_mod = @import("app/layout.zig");
 const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
+const snippets = @import("app/snippets.zig");
+const md_preview = @import("app/md_preview.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
 const ex = @import("app/ex.zig");
@@ -494,7 +497,7 @@ pub const App = struct {
         }
         var syn = syntax.Syntax.init(gpa);
         errdefer syn.deinit();
-        syn.setLanguage(path);
+        syn.setLanguage(path, buf.editor.bytes());
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn } });
         // Moved into the store: the errdefers above must not run from here.
         self.showPane(id);
@@ -589,8 +592,26 @@ pub const App = struct {
         self.chord.clear(self.gpa);
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.buf.setInputStyle(style, self.cfg.editorConfig()),
+            else => {},
         };
         self.needs_render = true;
+    }
+
+    /// The tree-sitter text-object provider every editor pane gets: the
+    /// pane whose editor asked answers from its own syntax state.
+    fn objectLookup(ctx: *anyopaque, ed: *const edit_op_editor.Editor, kind: edit_op_editor.ObjectKind, byte: usize, around: bool) ?[2]usize {
+        const self: *App = @ptrCast(@alignCast(ctx));
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (&e.buf.editor == ed) return e.syntax.objectRange(ed, kind, byte, around),
+            else => {},
+        };
+        return null;
+    }
+
+    /// Install the app's seams on an editor pane (idempotent; called on
+    /// the way into every key and op).
+    pub fn attachSeams(self: *App, e: *EditorPane) void {
+        e.buf.editor.objects = .{ .ctx = self, .lookup = &objectLookup };
     }
 
     /// Workspace-relative when inside it, else the path itself.
@@ -620,8 +641,18 @@ pub const App = struct {
         if (changed) {
             pane.hl_dirty = true;
             self.needs_render = true;
+            if (self.paneIdOf(pane)) |id| snippets.afterEdit(self, id, pane);
         }
         return changed;
+    }
+
+    /// The id of an editor pane, by address.
+    pub fn paneIdOf(self: *App, e: *const EditorPane) ?PaneId {
+        for (self.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
+            .editor => |*ep| if (ep == e) return @intCast(i),
+            else => {},
+        };
+        return null;
     }
 
     /// Replace `[start, end)` with `text` as one undo step, cursor after it.
@@ -735,6 +766,14 @@ pub const App = struct {
     /// The next moment `tick` has something to do, or null when idle.
     pub fn nextDeadlineMs(self: *const App) ?i64 {
         var next: ?i64 = self.chord.deadline_ms;
+        // A pane waiting out the highlight idle gate wants a frame then.
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| if (e.hl_dirty) {
+                const due = (e.hl_since_ms orelse self.now_ms) + syntax.idle_ms;
+                next = @min(next orelse std.math.maxInt(i64), due);
+            },
+            else => {},
+        };
         // A spinner is animating: keep frames coming.
         if (self.todos.scanning) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         for (self.toasts.items) |t| {

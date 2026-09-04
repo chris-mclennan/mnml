@@ -32,6 +32,10 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
+const syntax = @import("syntax.zig");
+const sticky = @import("sticky.zig");
+const outline = @import("outline.zig");
+const md_preview = @import("md_preview.zig");
 
 /// The right panel's width; the divider takes one more column.
 pub const right_panel_width: u16 = 40;
@@ -162,10 +166,28 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         bar = s.rest;
     };
     const focused = app.active == id and app.focus == .pane;
-    if (e.hl_dirty) {
-        try e.syntax.refresh(e.buf.editor.bytes());
+    const ed = &e.buf.editor;
+    // Highlighting: every frame folds the edits since the last one into
+    // the tree and slides the cached spans along, so what is painted
+    // lines up with the text; the reparse itself waits for the idle
+    // gate — or runs at once for a first parse or a lost log.
+    if (e.hl_dirty and e.hl_since_ms == null) e.hl_since_ms = app.now_ms;
+    const lost = e.syntax.absorb(ed);
+    const due = e.hl_dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.hl_since_ms.? >= syntax.idle_ms);
+    if (due) {
+        try e.syntax.refresh(ed);
         e.hl_dirty = false;
+        e.hl_since_ms = null;
     }
+    ed.edits.trim(e.syntax.seen_seq);
+    // Spans for a window around the viewport and the cursor — the view
+    // may scroll to the cursor inside `draw`, so both are covered.
+    const line_count = ed.lineCount();
+    const rows: usize = @max(rect.h, 1);
+    const cur_line = ed.currentLine();
+    const lo_line = @min(@min(e.view.scroll_line -| rows, cur_line -| rows), line_count - 1);
+    const hi_line = @min(@max(e.view.scroll_line + 2 * rows, cur_line + rows), line_count - 1);
+    const spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
     const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());
     for (e.buf.folds.keys(), e.buf.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
@@ -177,7 +199,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .anchor = e.buf.editor.anchor,
         .extra_cursors = e.buf.editor.extra_cursors.items,
         .folds = folds,
-        .spans = e.syntax.spans.items,
+        .spans = spans,
         .matches = matches,
         .current_match = e.find.current,
         .wrap = e.wrap orelse app.cfg.wrap,

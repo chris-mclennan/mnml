@@ -98,6 +98,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const wrap_width: ?usize = if (e.wrap orelse app.cfg.wrap) app.pane_cols else null;
     cmd_find.seedCtxMatches(e);
+    app.attachSeams(e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
     if (e.buf.last_unsupported) |name| {
