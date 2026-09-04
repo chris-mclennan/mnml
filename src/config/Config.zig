@@ -333,11 +333,10 @@ pub const Ai = struct {
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,
     /// Every key not named above, kept verbatim for the AI subsystems
-    /// and integrations that read their own settings out of `.ai`.
+    /// and integrations that read their own settings out of `.ai`. (A
+    /// field named `extra` of type `Dynamic` is the decoder's convention
+    /// for "collect unknown keys here".)
     extra: Dynamic = .empty_object,
-
-    /// Tells the decoder where unknown fields go.
-    pub const zon_extra_field = "extra";
 };
 
 // ─── http / ws / sonos / git_graph ───────────────────────────────────────
