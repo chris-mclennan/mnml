@@ -23,6 +23,10 @@ test {
     _ = @import("core/key.zig");
     _ = @import("core/event.zig");
     _ = @import("commands/specs.zig");
+    _ = @import("core/keymap.zig");
+    _ = @import("core/command.zig");
+    _ = @import("core/panel.zig");
+    _ = @import("app.zig");
 }
 
 test "version string is set" {

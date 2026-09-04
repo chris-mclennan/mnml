@@ -39,3 +39,7 @@ pub const ScanResult = struct {
         gpa.destroy(self);
     }
 };
+
+/// Runners, merged into `command.runners` at comptime. Filled in with the
+/// module proper.
+pub const table = .{};
