@@ -685,6 +685,10 @@ fn set(app: *App, args: []const u8) CommandError!void {
         } else if (eqAny(name, &.{ "nu", "number" })) {
             app.cfg.line_numbers = !off;
             app.toast(":set {s}", .{opt});
+        } else if (eqAny(name, &.{ "stickycontext", "sticky", "stickycontext!", "invstickycontext" })) {
+            const toggle = std.mem.endsWith(u8, name, "!") or std.mem.startsWith(u8, name, "inv");
+            app.cfg.sticky_context = if (toggle) !app.cfg.sticky_context else !off;
+            app.toast("sticky context: {s}", .{if (app.cfg.sticky_context) "on" else "off"});
         } else if (eqAny(name, &.{ "input", "keymap" })) {
             const v = value orelse return app.diag.fail(arena, ":set input=vim|standard", .{});
             const style: input.Style = if (std.mem.eql(u8, v, "vim")) .vim else if (std.mem.eql(u8, v, "standard")) .standard else return app.diag.fail(arena, ":set input — unknown style \"{s}\"", .{v});

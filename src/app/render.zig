@@ -214,6 +214,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .visual_block = mode == .visual_block,
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
+    const headers = try sticky.headerLines(app, e, arena);
+    if (headers.len > 0) sticky.draw(ui, id, e, rect, headers, app.cfg.line_numbers);
     if (app.active == id) {
         app.pane_rows = @max(rect.h, 1);
         // Text columns: the gutter takes the digits plus two.

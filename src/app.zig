@@ -80,6 +80,14 @@ pub const Config = struct {
     chord_timeout_ms: u64 = 500,
     ascii: bool = false,
     toast_ttl_ms: i64 = 4000,
+    /// `[ui] auto_md_preview`: opening a `.md` file splits a rendered
+    /// preview beside the editor.
+    auto_md_preview: bool = false,
+    /// `[ui] markdown_opens_rendered`: a `.md` file opens as its preview
+    /// (typing on it swaps the editor in).
+    markdown_opens_rendered: bool = true,
+    /// `[ui] sticky_context`: pin the enclosing scope's header row.
+    sticky_context: bool = false,
 
     pub fn editorConfig(c: Config) input.Config {
         return .{ .tab_width = c.tab_width, .text_width = c.text_width };
