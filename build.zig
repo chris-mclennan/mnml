@@ -91,6 +91,19 @@ const grammars = [_]Grammar{
     .{ .name = "scala", .dep = "ts_scala", .scanner = true },
     .{ .name = "elixir", .dep = "ts_elixir", .scanner = true, .queries = &.{ "highlights", "injections" } },
     .{ .name = "haskell", .dep = "ts_haskell", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    // php/ is the HTML-embedding grammar mnml uses; the crate's php_only/ is not built.
+    .{ .name = "php", .dep = "ts_php", .src = "php/src", .scanner = true, .include_src = true, .queries = &.{ "highlights", "injections" } },
+    .{ .name = "make", .dep = "ts_make" },
+    .{ .name = "swift", .dep = "ts_swift", .scanner = true, .queries = &.{ "highlights", "injections" } },
+    .{ .name = "zig", .dep = "ts_zig", .queries = &.{ "highlights", "injections" } },
+    .{ .name = "nix", .dep = "ts_nix", .scanner = true, .include_src = true, .queries = &.{ "highlights", "injections" } },
+    // ocaml and its .mli interface grammar share one highlights.scm at the crate root.
+    .{ .name = "ocaml", .dep = "ts_ocaml", .src = "grammars/ocaml/src", .scanner = true, .include_src = true },
+    .{ .name = "ocaml_interface", .dep = "ts_ocaml", .src = "grammars/interface/src", .scanner = true, .include_src = true, .query_dir = null },
+    .{ .name = "dart", .dep = "ts_dart", .scanner = true },
+    .{ .name = "sql", .dep = "ts_sequel", .scanner = true },
+    .{ .name = "kotlin", .dep = "ts_kotlin_sg", .scanner = true },
+    .{ .name = "regex", .dep = "ts_regex" },
 };
 
 /// Queries mnml ships itself (`src/highlight/queries/`), for grammars whose crate has
