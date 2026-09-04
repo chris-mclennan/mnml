@@ -116,13 +116,17 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
     }
+    // An app command may have opened or closed panes (`:e b.txt` grows
+    // the store and moves every pane): `e` is stale from here. Look the
+    // pane up again, and stop if it is gone.
+    const still = app.panes.editor(pane_id) orelse return true;
     // Marks toast from here: the buffer handles them silently.
     if (mark != null and mark_key != null and ev != .unhandled) {
         const c = mark_key.?;
         switch (mark.?) {
             .set => app.toast("mark '{c} set", .{c}),
             .jump => if (!had_mark) app.toast("no mark '{c}", .{c}) else {
-                const p = e.buf.editor.rowCol();
+                const p = still.buf.editor.rowCol();
                 app.toast("→ '{c} {d}:{d}", .{ c, p.row + 1, p.col + 1 });
             },
         }
@@ -130,9 +134,9 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // The pane mirrors the editor's block anchor for the `I` / `A` / `c`
     // / `r` app commands, which arrive after the handler has already
     // left V-BLOCK.
-    const after_mode = e.buf.input.mode();
-    if (after_mode == .visual_block and before_mode != .visual_block) e.block_anchor = e.buf.editor.cursor;
-    if (after_mode != .visual_block) e.block_anchor = null;
+    const after_mode = still.buf.input.mode();
+    if (after_mode == .visual_block and before_mode != .visual_block) still.block_anchor = still.buf.editor.cursor;
+    if (after_mode != .visual_block) still.block_anchor = null;
     try finishDeferredInserts(app);
     return true;
 }
