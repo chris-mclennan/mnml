@@ -149,9 +149,23 @@ fn apply_fetch_error(
     // Anthropic's hint wins when it gives one; otherwise exponential
     // backoff on consecutive failures, capped so an account that has been
     // failing all day still checks hourly and can recover on its own.
+    //
+    // 2026-09-03 — the hint only counts when it IS one. Anthropic
+    // returns `retry-after: 0` alongside its 429s (verified live
+    // against `/api/oauth/usage` on two different accounts). The
+    // previous shape accepted that verbatim, so `retry_after_at =
+    // now + 0 = now`: the account became eligible again on the very
+    // next tick and retried on the normal cadence forever, which is
+    // exactly the pressure that keeps the limit tripped. The account
+    // could never climb out, and the panel stayed down for days.
+    //
+    // A 429 that says "retry after 0 seconds" is not permission to
+    // retry immediately — it is a server declining to give a useful
+    // number. Treat it as absent and fall through to the backoff,
+    // which is what the `None` arm was already for.
     let backoff = match e.retry_after_secs {
-        Some(secs) => secs,
-        None => {
+        Some(secs) if secs > 0 => secs,
+        _ => {
             const BASE: u64 = 10 * 60;
             const CAP: u64 = 60 * 60;
             let shift = usage.consecutive_failures.saturating_sub(1).min(3);
@@ -796,6 +810,71 @@ mod fetch_error_tests {
             retry_after_secs: None,
             needs_reauth,
         }
+    }
+
+    /// A `Retry-After: 0` must NOT be honoured as a zero cooldown.
+    ///
+    /// Anthropic returns exactly that alongside its 429s on
+    /// `/api/oauth/usage` — verified live on two accounts, 2026-09-03.
+    /// The previous shape took the hint literally, so
+    /// `retry_after_at = now + 0 = now`: the account was eligible again
+    /// on the very next tick and retried on the normal cadence forever.
+    /// That is the retry pressure that keeps the limit tripped, so the
+    /// panel stayed down for days and could not recover on its own.
+    #[test]
+    fn a_zero_retry_after_falls_back_to_backoff() {
+        let mut usage = ClaudeUsage::default();
+        let now = 1_000_000u64;
+        let mut e = err("HTTP 429 rate_limit_error", false);
+        e.retry_after_secs = Some(0);
+        apply_fetch_error(&mut usage, e, now);
+        assert!(
+            usage.retry_after_at > now,
+            "a Retry-After of 0 produced no cooldown at all — the account \
+             retries on the next tick and the limit never clears"
+        );
+        assert!(
+            usage.retry_after_at >= now + 10 * 60,
+            "expected at least the 10-minute base, got {}s",
+            usage.retry_after_at - now
+        );
+    }
+
+    /// A real hint is still honoured — the fix must not discard genuine
+    /// server guidance along with the useless zero.
+    #[test]
+    fn a_positive_retry_after_is_still_honoured() {
+        let mut usage = ClaudeUsage::default();
+        let now = 1_000_000u64;
+        let mut e = err("HTTP 429", false);
+        e.retry_after_secs = Some(45);
+        apply_fetch_error(&mut usage, e, now);
+        assert_eq!(
+            usage.retry_after_at,
+            now + 45,
+            "Anthropic's own number was discarded"
+        );
+    }
+
+    /// Repeated zero-hint failures must back off FURTHER, or a
+    /// persistently limited account keeps the same pressure on forever.
+    #[test]
+    fn repeated_zero_hints_escalate() {
+        let mut usage = ClaudeUsage::default();
+        let now = 1_000_000u64;
+        let mut prev = 0u64;
+        for i in 0..4 {
+            let mut e = err("HTTP 429", false);
+            e.retry_after_secs = Some(0);
+            apply_fetch_error(&mut usage, e, now);
+            let wait = usage.retry_after_at - now;
+            assert!(
+                wait >= prev,
+                "attempt {i}: backoff shrank ({prev}s -> {wait}s)"
+            );
+            prev = wait;
+        }
+        assert!(prev > 10 * 60, "backoff never escalated past the base");
     }
 
     /// The regression this exists for: a later error of a DIFFERENT
