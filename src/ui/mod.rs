@@ -36,6 +36,7 @@ pub mod refresh_glyph;
 pub mod search_glyph;
 pub mod session_color;
 pub mod spend_report_view;
+pub mod spinner;
 pub mod tree_connectors;
 pub mod usage_time;
 

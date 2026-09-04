@@ -101,9 +101,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         let sub = format!("  runId  {} · last activity {when}", short_id(&p.run_id));
         // Right side of sub-header: [auto: …] [↻ Refresh].
         let auto_label = format!(" auto: {} ", fmt_secs(p.auto_refresh_secs));
-        let refresh = " ↻ Refresh ";
+        // 2026-09-04 — was a hand-rolled `" ↻ Refresh "` literal.
+        // Now the shared `Button`, which owns the icon/label spacing
+        // (the literal had none between glyph and word — user report)
+        // and can show the action is in flight.
+        //
+        // `logs_loading` is the honest signal: it is true exactly
+        // while the fetch this button starts is running.
+        let refresh_btn = crate::ui::action_button::Button {
+            state: if p.logs_loading {
+                crate::ui::action_button::ButtonState::Busy
+            } else {
+                crate::ui::action_button::ButtonState::Normal
+            },
+            fill: t.cyan,
+            text: t.bg_dark,
+            accent: Some(t.bg_dark),
+            bold: true,
+            ..crate::ui::action_button::Button::refresh(
+                &t,
+                app.config.ui.ascii_icons,
+                Some("Refresh"),
+            )
+        };
         let auto_w = auto_label.chars().count() as u16;
-        let refresh_w = refresh.chars().count() as u16;
+        let refresh_w = refresh_btn.width();
         let sub_w = sub.chars().count() as u16;
         let pad = area
             .width
@@ -119,25 +141,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             t.bg_dark
         };
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(sub, Style::default().fg(t.comment).bg(bg)),
-                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-                Span::styled(
-                    auto_label.clone(),
-                    Style::default()
-                        .fg(auto_fg)
-                        .bg(auto_bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    refresh.to_string(),
-                    Style::default()
-                        .fg(t.bg_dark)
-                        .bg(t.cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])),
+            Paragraph::new(Line::from(
+                vec![
+                    Span::styled(sub, Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                    Span::styled(
+                        auto_label.clone(),
+                        Style::default()
+                            .fg(auto_fg)
+                            .bg(auto_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default().bg(bg)),
+                ]
+                .into_iter()
+                .chain(refresh_btn.spans(&t))
+                .collect::<Vec<_>>(),
+            )),
             Rect {
                 x: area.x,
                 y,

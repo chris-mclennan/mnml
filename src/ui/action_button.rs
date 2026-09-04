@@ -111,6 +111,19 @@ pub enum ButtonState {
     Disabled,
     /// Currently-active / toggled-on (a pressed tab, an enabled mode).
     Active,
+    /// The button's action is in flight — its ICON is replaced by a
+    /// spinner frame while the work runs.
+    ///
+    /// 2026-09-04, user ask: "when i click refresh can i see the arrow
+    /// spin or something to indicate its doing what i asked for?" A
+    /// refresh that returns in 300ms and one that has silently failed
+    /// look identical without this, so the user clicks again.
+    ///
+    /// It replaces the icon rather than appending a spinner, so the
+    /// button does not change width mid-flight and shove its
+    /// neighbours sideways — and every spinner frame is one cell for
+    /// the same reason (see `ui::spinner`).
+    Busy,
 }
 
 /// One button, described declaratively.
@@ -276,6 +289,10 @@ impl<'a> Button<'a> {
             // drop it back so it never reads as actionable.
             ButtonState::Disabled => (self.fill, t.comment, true),
             ButtonState::Active => (t.blue, CHIP_LABEL_FG, false),
+            // Keep the resting colours: a busy button is still the
+            // same button, and recolouring it would read as a state
+            // change rather than as work in progress.
+            ButtonState::Busy => (self.fill, self.text, false),
         };
         let mut base = Style::default().fg(text).bg(fill);
         if self.bold {
@@ -291,7 +308,14 @@ impl<'a> Button<'a> {
                 ButtonState::Disabled => base,
                 _ => base.fg(self.accent.unwrap_or(text)),
             };
-            out.push(Span::styled(icon.to_string(), icon_style));
+            // Busy swaps the icon for a spinner frame — same cell
+            // count, so the button cannot resize as it turns.
+            let glyph = if self.state == ButtonState::Busy {
+                crate::ui::spinner::frame().to_string()
+            } else {
+                icon.to_string()
+            };
+            out.push(Span::styled(glyph, icon_style));
             out.push(Span::styled(" ".to_string(), base));
         }
         out.push(Span::styled(self.label.to_string(), base));
@@ -332,6 +356,7 @@ mod button_tests {
     /// is the whole reason it is a constructor here rather than each
     /// caller assembling its own chip: the family had drifted to three
     /// different refresh icons.
+
     #[test]
     fn both_refresh_modes_use_one_glyph() {
         let t = crate::ui::theme::cur();
@@ -451,5 +476,69 @@ mod button_tests {
         assert_eq!(normal.width(), off.width());
         let accent_used = off.spans(&t).iter().any(|s| s.style.fg == Some(t.yellow));
         assert!(!accent_used, "disabled button still painted its accent");
+    }
+
+    /// A busy button must not change width as it spins, or the row
+    /// reflows under the pointer every 150ms and neighbours jump.
+    #[test]
+    fn a_busy_button_keeps_its_width() {
+        let th = crate::ui::theme::cur();
+        let idle = Button::refresh(&th, false, Some("Refresh"));
+        let busy = Button {
+            state: ButtonState::Busy,
+            ..Button::refresh(&th, false, Some("Refresh"))
+        };
+        assert_eq!(idle.width(), busy.width(), "the button resized while busy");
+        let cells =
+            |b: &Button| -> usize { b.spans(&th).iter().map(|s| s.content.chars().count()).sum() };
+        assert_eq!(
+            cells(&idle),
+            cells(&busy),
+            "painted cell count changed while busy"
+        );
+    }
+
+    /// Busy must REPLACE the icon, not sit beside it — otherwise the
+    /// refresh arrow and a spinner both show and the button widens.
+    #[test]
+    fn busy_replaces_the_icon_rather_than_adding_one() {
+        let th = crate::ui::theme::cur();
+        let busy = Button {
+            state: ButtonState::Busy,
+            ..Button::refresh(&th, false, Some("Refresh"))
+        };
+        let painted: String = busy
+            .spans(&th)
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(
+            !painted.contains(crate::ui::refresh_glyph::NERD),
+            "the refresh glyph is still painted alongside the spinner: {painted:?}"
+        );
+        assert!(
+            crate::ui::spinner::FRAMES
+                .iter()
+                .any(|f| painted.contains(f)),
+            "no spinner frame painted: {painted:?}"
+        );
+    }
+
+    /// The icon and the label must not touch — the user reported
+    /// exactly this on a hand-rolled button (`glyph` + `Refresh` with
+    /// nothing between them).
+    #[test]
+    fn the_icon_is_separated_from_the_label() {
+        let th = crate::ui::theme::cur();
+        let b = Button::refresh(&th, false, Some("Refresh"));
+        let painted: String = b.spans(&th).iter().map(|s| s.content.to_string()).collect();
+        let after: String = painted
+            .split(crate::ui::refresh_glyph::NERD)
+            .nth(1)
+            .unwrap_or_default()
+            .chars()
+            .take(1)
+            .collect();
+        assert_eq!(after, " ", "icon runs straight into the label: {painted:?}");
     }
 }
