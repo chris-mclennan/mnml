@@ -1,6 +1,6 @@
 # mnml → Zig port plan
 
-> Status: **Phase 0 CLOSED — CONTINUE** (2026-09-04; `docs/SPIKE_RESULTS.md`): gate 47/47, sweep 141/141, corpus 107/225, 351 unit tests, all five targets. **Phase 1 in progress** (layout/mouse/chrome, config wiring + themes as ZON, plus Phase 2 language layer and Phase 3 runners in parallel).
+> Status: **Phase 0 closed (CONTINUE). Phases 1–3 merged 2026-09-04**: config as ZON + themes + settings + first launch + trust; frame/mouse/splits/tabs/menus/palette; highlighting engine + outline + md preview + snippets + sticky; pty pane + runners + tasks + watcher. Gate 47/47, sweep 141/141, **corpus 171/226**, ~470 unit tests in Debug + ReleaseSafe, all five targets. Remaining corpus failures are git / LSP / DAP / HTTP / AI-agents / browser (Phases 4–7).
 
 ## Context
 
