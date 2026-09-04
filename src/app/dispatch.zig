@@ -27,6 +27,7 @@ const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const settings_app = @import("settings.zig");
 const Prompt = app_mod.Prompt;
 const Confirm = app_mod.Confirm;
 const Picker = app_mod.Picker;
@@ -369,6 +370,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             },
             .accept => |i| try cmd_picker.accept(app, i),
         },
+        .settings => try settings_app.key(app, k),
         .menu => |*m| {
             const last = m.items.len -| 1;
             switch (k.code) {
@@ -509,12 +511,13 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
     const target = app.hits.at(m.x, m.y) orelse {
-        if (m.kind == .press and app.overlay == .menu) closeOverlay(app);
+        if (m.kind == .press) dismissOverlay(app);
         return;
     };
-    // A press anywhere but on the menu dismisses it; the press then
-    // goes on to whatever it landed on.
-    if (m.kind == .press and app.overlay == .menu and target != .menu_item) closeOverlay(app);
+    // A press anywhere but on the overlay itself dismisses it — a menu,
+    // a picker (its preview restored), the settings box (its writes
+    // kept); the press then goes on to whatever it landed on.
+    if (m.kind == .press and target != .menu_item and target != .overlay_item and target != .scrollbar) dismissOverlay(app);
     switch (target) {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
@@ -597,6 +600,7 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
                     if (i >= kids.len) return;
                     try overlayKey(app, Key.char(kids[i].key));
                 },
+                .settings => try settings_app.click(app, i),
                 else => {},
             }
         },
@@ -615,6 +619,15 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
         },
         else => {},
     }
+}
+
+/// Click-outside: close whatever overlay is up. A themes picker puts
+/// its preview back first; everything else closes as Enter would not —
+/// a confirm unanswered, a settings box kept.
+fn dismissOverlay(app: *App) void {
+    if (app.overlay == .none) return;
+    cmd_picker.cancel(app);
+    closeOverlay(app);
 }
 
 fn hitRect(app: *App, x: u16, y: u16) ?@import("../ui/rect.zig") {

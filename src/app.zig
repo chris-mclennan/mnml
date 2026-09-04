@@ -48,6 +48,7 @@ const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
+const settings_app = @import("app/settings.zig");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -120,10 +121,13 @@ pub const Overlay = union(enum) {
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
+    /// The settings overlay (`view.settings`).
+    settings: settings_app.State,
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
             .none, .which_key => {},
+            .settings => |*s| s.deinit(gpa),
             .menu => |*m| gpa.free(m.items),
             .prompt => |*p| {
                 Prompt.deinit(&p.state, gpa);

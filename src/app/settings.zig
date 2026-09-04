@@ -1,17 +1,34 @@
-//! Settings, app side: where a value is written back, and the one
-//! `persist` every settings surface (the overlay, the theme picker, the
-//! first-launch wizard) goes through.
+//! Settings, app side: the rows the overlay shows, what a change does,
+//! and where it is written.
 //!
-//! Two files can take a write. The home config is the user's own
-//! preferences; the workspace config is the per-project file checked in
-//! beside the code. A row says which it belongs to (`Scope`), and the
-//! write is `persistScalar`'s AST splice — comments and order survive.
+//! Every row is a discrete choice over one `Config` field, named by its
+//! dotted path (`ui.line_numbers`) — the same path `persistScalar` takes,
+//! split on the dots. A bool offers `off / on`, an enum its tags, and
+//! `ui.theme` the bundled themes. Number and text rows are v2.
+//!
+//! **The file follows the row.** Adjusting a row applies to the live
+//! config at once and writes the value to the row's file (`Scope`: the
+//! home config for a preference, the workspace's `.mnml/config.zon` for
+//! a per-project view setting) — so what you see is what is on disk.
+//! Enter keeps that and closes. Esc puts back the config, the input
+//! style, the theme, and the exact bytes of every file that was written
+//! since the overlay opened, including "the file did not exist".
+//!
+//! `persist` is also the one write every other settings surface (the
+//! theme picker, the first-launch wizard) goes through.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
+const Key = app_mod.Key;
 const config = @import("../config/root.zig");
+const Config = config.Config;
+const input = @import("../input/mod.zig");
+const Theme = @import("../ui/theme.zig");
+const ui_settings = @import("../ui/settings.zig");
+const Item = ui_settings.Item;
 
 pub const Scope = enum { home, workspace };
 
@@ -42,5 +59,540 @@ pub fn persist(app: *App, scope: Scope, key_path: []const []const u8, value: any
         app.toast("could not write {s}: {s}", .{ path, @errorName(err) });
         return false;
     };
+    if (app.overlay == .settings) app.overlay.settings.markTouched(scope);
     return outcome == .written;
+}
+
+// ─── the rows ────────────────────────────────────────────────────────────
+
+pub const Section = enum {
+    ui,
+    editor,
+    integrations,
+
+    fn label(s: Section) []const u8 {
+        return switch (s) {
+            .ui => "UI",
+            .editor => "Editor",
+            .integrations => "Integrations",
+        };
+    }
+};
+
+const RowSpec = struct {
+    /// Dotted `Config` path; also the persist key path.
+    path: []const u8,
+    label: []const u8,
+    section: Section,
+    scope: Scope,
+};
+
+/// v1: discrete-choice rows only. Order within a section is display
+/// order; `ui.line_numbers` is the first row on purpose (the corpus
+/// opens the overlay and adjusts "the first focusable").
+pub const rows = [_]RowSpec{
+    // ── UI (per-project view settings, written to the workspace) ──
+    .{ .path = "ui.line_numbers", .label = "Line numbers", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.relative_line_numbers", .label = "Relative line numbers", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.cursor_line", .label = "Highlight cursor line", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.wrap", .label = "Wrap long lines", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.scrollbar", .label = "Scrollbar", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.show_whitespace", .label = "Show whitespace", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.highlight_trailing_ws", .label = "Highlight trailing whitespace", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.bracket_rainbow", .label = "Rainbow brackets", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.syntax", .label = "Syntax highlighting", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.tree_preview_on_arrow", .label = "Tree previews on arrow", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.todos_sort", .label = "TODOS sort", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.theme", .label = "Theme", .section = .ui, .scope = .home },
+    .{ .path = "ui.ascii_icons", .label = "ASCII icons", .section = .ui, .scope = .home },
+    .{ .path = "ui.clock", .label = "Clock in statusline", .section = .ui, .scope = .home },
+    .{ .path = "ui.menu_bar", .label = "Menu bar", .section = .ui, .scope = .home },
+    .{ .path = "ui.bufferline_diag_style", .label = "Diag chip on tabs", .section = .ui, .scope = .home },
+    .{ .path = "ui.expand_indicator", .label = "Expand indicator", .section = .ui, .scope = .home },
+    .{ .path = "ui.picker_position", .label = "Picker position", .section = .ui, .scope = .home },
+    .{ .path = "ui.show_workspace_dots", .label = "Workspace dots", .section = .ui, .scope = .home },
+    .{ .path = "ui.hover_help", .label = "Hover help", .section = .ui, .scope = .home },
+    // ── Editor ──
+    .{ .path = "editor.input_style", .label = "Input style", .section = .editor, .scope = .home },
+    .{ .path = "editor.auto_pair", .label = "Auto-pair brackets", .section = .editor, .scope = .workspace },
+    .{ .path = "editor.auto_indent", .label = "Auto-indent", .section = .editor, .scope = .workspace },
+    .{ .path = "editor.format_on_save", .label = "Format on save", .section = .editor, .scope = .workspace },
+    .{ .path = "editor.trim_trailing_ws_on_save", .label = "Trim trailing whitespace on save", .section = .editor, .scope = .workspace },
+    .{ .path = "editor.ensure_trailing_newline", .label = "Ensure trailing newline", .section = .editor, .scope = .workspace },
+    .{ .path = "editor.breadcrumb", .label = "Breadcrumb", .section = .editor, .scope = .home },
+    .{ .path = "editor.cursor_blink", .label = "Cursor blink", .section = .editor, .scope = .home },
+    .{ .path = "editor.wheel_moves_cursor", .label = "Mouse wheel moves cursor", .section = .editor, .scope = .home },
+    .{ .path = "editor.scroll_accel", .label = "Scroll acceleration", .section = .editor, .scope = .home },
+    // ── Integrations ──
+    .{ .path = "ai.inline_suggestions", .label = "AI ghost text", .section = .integrations, .scope = .home },
+    .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .integrations, .scope = .home },
+    .{ .path = "sonos.enabled", .label = "Sonos", .section = .integrations, .scope = .home },
+    .{ .path = "sonos.chip_label", .label = "Sonos chip label", .section = .integrations, .scope = .home },
+    .{ .path = "browser.headless", .label = "Browser: headless", .section = .integrations, .scope = .home },
+    .{ .path = "browser.profile_mode", .label = "Browser profile", .section = .integrations, .scope = .home },
+    .{ .path = "http.collection_root", .label = "HTTP collection root", .section = .integrations, .scope = .home },
+    .{ .path = "marketplace.enabled", .label = "Marketplace", .section = .integrations, .scope = .home },
+    .{ .path = "session.restore", .label = "Restore session on open", .section = .integrations, .scope = .home },
+};
+
+pub const reset_label = "Reset all to defaults";
+/// The action row's hit id, past every row.
+pub const reset_id: u32 = rows.len;
+
+const bool_options = [_][]const u8{ "off", "on" };
+
+/// `"ui.line_numbers"` → `&.{ "ui", "line_numbers" }`, at comptime.
+fn keyPath(comptime path: []const u8) []const []const u8 {
+    comptime {
+        @setEvalBranchQuota(20_000);
+        var parts: []const []const u8 = &.{};
+        var it = std.mem.splitScalar(u8, path, '.');
+        while (it.next()) |p| parts = parts ++ &[_][]const u8{p};
+        return parts;
+    }
+}
+
+/// The field type behind a dotted path.
+fn FieldType(comptime path: []const u8) type {
+    comptime {
+        @setEvalBranchQuota(20_000);
+        var T: type = Config;
+        for (keyPath(path)) |p| T = @FieldType(T, p);
+        return T;
+    }
+}
+
+/// A pointer to the field behind a dotted path.
+fn fieldPtr(cfg: *Config, comptime path: []const u8) *FieldType(path) {
+    @setEvalBranchQuota(20_000);
+    comptime var T: type = Config;
+    var ptr: *anyopaque = @ptrCast(cfg);
+    inline for (comptime keyPath(path)) |p| {
+        const typed: *T = @ptrCast(@alignCast(ptr));
+        ptr = @ptrCast(&@field(typed, p));
+        T = @FieldType(T, p);
+    }
+    return @ptrCast(@alignCast(ptr));
+}
+
+/// The bundled theme names, in table order — `ui.theme`'s options.
+pub const theme_names: [Theme.all.len][]const u8 = blk: {
+    var out: [Theme.all.len][]const u8 = undefined;
+    for (&Theme.all, 0..) |*th, i| out[i] = th.name;
+    break :blk out;
+};
+
+fn isTheme(comptime path: []const u8) bool {
+    return std.mem.eql(u8, path, "ui.theme");
+}
+
+/// The choices for a row.
+pub fn options(comptime path: []const u8) []const []const u8 {
+    @setEvalBranchQuota(200_000);
+    if (comptime isTheme(path)) return &theme_names;
+    const T = FieldType(path);
+    return switch (@typeInfo(T)) {
+        .bool => &bool_options,
+        .@"enum" => comptime std.meta.fieldNames(T),
+        else => @compileError("settings: no discrete options for " ++ path ++ " (" ++ @typeName(T) ++ ")"),
+    };
+}
+
+/// Which option a config holds for a row.
+pub fn currentIndex(cfg: *Config, comptime path: []const u8) usize {
+    @setEvalBranchQuota(200_000);
+    if (comptime isTheme(path)) {
+        const name = cfg.ui.theme;
+        for (theme_names, 0..) |n, i| if (std.ascii.eqlIgnoreCase(n, name)) return i;
+        return 0;
+    }
+    const v = fieldPtr(cfg, path).*;
+    return switch (@typeInfo(FieldType(path))) {
+        .bool => @intFromBool(v),
+        .@"enum" => @intFromEnum(v),
+        else => unreachable,
+    };
+}
+
+/// Set a row to its `idx`th option (wrapping).
+pub fn setIndex(cfg: *Config, comptime path: []const u8, idx: usize) void {
+    @setEvalBranchQuota(200_000);
+    const opts = options(path);
+    const i = idx % opts.len;
+    if (comptime isTheme(path)) {
+        cfg.ui.theme = theme_names[i];
+        return;
+    }
+    const T = FieldType(path);
+    fieldPtr(cfg, path).* = switch (@typeInfo(T)) {
+        .bool => i == 1,
+        .@"enum" => @enumFromInt(i),
+        else => unreachable,
+    };
+}
+
+fn defaultIndex(comptime path: []const u8) usize {
+    var d: Config = .{};
+    return currentIndex(&d, path);
+}
+
+// ─── the overlay's state ─────────────────────────────────────────────────
+
+/// One file the overlay may write: its bytes when the overlay opened
+/// (null = did not exist), and whether a write has happened since.
+const FileSnapshot = struct {
+    path: ?[]u8 = null,
+    text: ?[]u8 = null,
+    touched: bool = false,
+
+    fn deinit(f: *FileSnapshot, gpa: Allocator) void {
+        if (f.path) |p| gpa.free(p);
+        if (f.text) |text| gpa.free(text);
+        f.* = .{};
+    }
+};
+
+pub const State = struct {
+    ui: ui_settings.State = .{},
+    /// The config as it was when the overlay opened; Esc restores it.
+    before: Config,
+    files: std.EnumArray(Scope, FileSnapshot) = .initFill(.{}),
+
+    pub fn deinit(s: *State, gpa: Allocator) void {
+        for (&s.files.values) |*f| f.deinit(gpa);
+    }
+
+    pub fn markTouched(s: *State, scope: Scope) void {
+        s.files.getPtr(scope).touched = true;
+    }
+};
+
+/// `view.settings`: snapshot, then open.
+pub fn open(app: *App) Allocator.Error!void {
+    const gpa = app.gpa;
+    var st: State = .{ .before = app.cfg };
+    errdefer st.deinit(gpa);
+    inline for (comptime std.enums.values(Scope)) |scope| {
+        const snap = st.files.getPtr(scope);
+        if (try configPath(app, scope)) |p| {
+            snap.path = try gpa.dupe(u8, p);
+            snap.text = Io.Dir.cwd().readFileAlloc(app.io, p, gpa, .limited(config.load.max_file_bytes)) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => null,
+            };
+        }
+    }
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .settings = st };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The list as it stands, on the frame arena.
+pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
+    @setEvalBranchQuota(200_000);
+    var out: std.ArrayListUnmanaged(Item) = .empty;
+    inline for (comptime std.enums.values(Section)) |section| {
+        try out.append(arena, .{ .section = section.label() });
+        inline for (rows, 0..) |r, i| if (r.section == section) {
+            try out.append(arena, .{ .row = .{
+                .label = r.label,
+                .options = options(r.path),
+                .current = currentIndex(&app.cfg, r.path),
+                .modified = currentIndex(&app.cfg, r.path) != comptime defaultIndex(r.path),
+                .id = i,
+            } });
+        };
+    }
+    try out.append(arena, .{ .section = "Reset" });
+    try out.append(arena, .{ .action = .{ .label = reset_label, .id = reset_id } });
+    return out.items;
+}
+
+/// The subtitle: where the focused row is written.
+pub fn footer(app: *App, arena: Allocator, list: []const Item) Allocator.Error!?[]const u8 {
+    const st = &app.overlay.settings;
+    st.ui.settle(list);
+    if (st.ui.cursor >= list.len) return null;
+    const row = switch (list[st.ui.cursor]) {
+        .row => |r| r,
+        else => return null,
+    };
+    const scope = rows[row.id].scope;
+    const path = (try configPath(app, scope)) orelse return "no config file to write";
+    return try std.fmt.allocPrint(arena, "→ {s}", .{if (scope == .workspace) app.relPath(path) else path});
+}
+
+pub fn key(app: *App, k: Key) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const list = try items(app, arena);
+    const st = &app.overlay.settings;
+    switch (ui_settings.handleKey(&st.ui, k, list)) {
+        .consumed => {},
+        .cancel => try cancel(app),
+        .save => close(app),
+        .adjust => |a| try adjust(app, list[a.item].row.id, a.delta),
+        .reset_row => |i| try resetRow(app, list[i].row.id),
+        .reset_all => try resetAll(app),
+        .activate => |i| if (list[i].action.id == reset_id) try resetAll(app),
+    }
+    app.needs_render = true;
+}
+
+/// A click on `hit` (an `.overlay_item` id): focus the row, or jump the
+/// row to the option under the pointer.
+pub fn click(app: *App, hit: u32) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const list = try items(app, arena);
+    const st = &app.overlay.settings;
+    switch (ui_settings.decodeHit(hit)) {
+        .surface => {},
+        .row => |id| {
+            if (id == reset_id) return resetAll(app);
+            st.ui.cursor = itemIndexOf(list, id) orelse return;
+        },
+        .option => |o| {
+            st.ui.cursor = itemIndexOf(list, o.id) orelse return;
+            try setRow(app, o.id, o.index);
+        },
+    }
+    app.needs_render = true;
+}
+
+fn itemIndexOf(list: []const Item, id: u32) ?usize {
+    for (list, 0..) |it, i| if (it == .row and it.row.id == id) return i;
+    return null;
+}
+
+/// Move row `id` by `delta` choices, wrapping.
+pub fn adjust(app: *App, id: u32, delta: i8) Allocator.Error!void {
+    @setEvalBranchQuota(200_000);
+    inline for (rows, 0..) |r, i| if (i == id) {
+        const n = options(r.path).len;
+        const cur = currentIndex(&app.cfg, r.path);
+        const next = if (delta < 0) (cur + n - 1) % n else (cur + 1) % n;
+        return setRow(app, id, next);
+    };
+}
+
+/// Set row `id` to its `idx`th option: the live config, the derived
+/// state, and the row's file.
+pub fn setRow(app: *App, id: u32, idx: usize) Allocator.Error!void {
+    @setEvalBranchQuota(200_000);
+    inline for (rows, 0..) |r, i| if (i == id) {
+        setIndex(&app.cfg, r.path, idx);
+        try applyDerived(app, r.path);
+        _ = try persist(app, r.scope, comptime keyPath(r.path), fieldPtr(&app.cfg, r.path).*);
+        app.needs_render = true;
+        return;
+    };
+}
+
+fn resetRow(app: *App, id: u32) Allocator.Error!void {
+    @setEvalBranchQuota(200_000);
+    inline for (rows, 0..) |r, i| if (i == id) return setRow(app, id, comptime defaultIndex(r.path));
+}
+
+fn resetAll(app: *App) Allocator.Error!void {
+    @setEvalBranchQuota(200_000);
+    inline for (rows, 0..) |r, i| {
+        if (currentIndex(&app.cfg, r.path) != comptime defaultIndex(r.path)) try setRow(app, i, comptime defaultIndex(r.path));
+    }
+    app.toast("settings reset to defaults", .{});
+}
+
+/// What a field change means beyond the value: the keymap and the
+/// buffers follow the input style, the frame follows the theme.
+fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
+    if (comptime std.mem.eql(u8, path, "editor.input_style")) {
+        const style = App.styleOf(app.cfg.editor.input_style);
+        if (style != app.input_style) try app.setInputStyle(style);
+    } else if (comptime isTheme(path)) {
+        try app.applyTheme();
+    }
+}
+
+/// Enter / click outside: what is written stays.
+pub fn close(app: *App) void {
+    app.overlay.deinit(app.gpa);
+    app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+    app.needs_render = true;
+}
+
+/// Esc: the config, the derived state, and every touched file go back
+/// to how they were when the overlay opened.
+pub fn cancel(app: *App) Allocator.Error!void {
+    const st = &app.overlay.settings;
+    app.cfg = st.before;
+    for (&st.files.values) |*f| {
+        if (!f.touched) continue;
+        const path = f.path orelse continue;
+        if (f.text) |text| {
+            Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = text }) catch |err| app.toast("could not restore {s}: {s}", .{ path, @errorName(err) });
+        } else {
+            Io.Dir.cwd().deleteFile(app.io, path) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => app.toast("could not remove {s}: {s}", .{ path, @errorName(err) }),
+            };
+        }
+    }
+    const style = App.styleOf(app.cfg.editor.input_style);
+    if (style != app.input_style) try app.setInputStyle(style);
+    try app.applyTheme();
+    close(app);
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const t = std.testing;
+
+fn readOrNull(dir: std.testing.TmpDir, rel: []const u8) !?[]u8 {
+    return dir.dir.readFileAlloc(t.io, rel, t.allocator, .unlimited) catch |e| switch (e) {
+        error.FileNotFound => null,
+        else => e,
+    };
+}
+
+test "rows: every path is a bool, an enum or the theme; defaults index the shipped values" {
+    inline for (rows) |r| {
+        try t.expect(options(r.path).len >= 2);
+        var d: Config = .{};
+        try t.expect(currentIndex(&d, r.path) < options(r.path).len);
+    }
+    var c: Config = .{};
+    try t.expectEqual(@as(usize, 1), currentIndex(&c, "ui.line_numbers"));
+    try t.expectEqual(@as(usize, 1), currentIndex(&c, "editor.input_style")); // standard
+    setIndex(&c, "editor.input_style", 0);
+    try t.expectEqual(Config.InputStyle.vim, c.editor.input_style);
+    setIndex(&c, "ui.line_numbers", 0);
+    try t.expect(!c.ui.line_numbers);
+    setIndex(&c, "ui.theme", 3);
+    try t.expectEqualStrings(theme_names[3], c.ui.theme);
+    try t.expectEqual(@as(usize, 3), currentIndex(&c, "ui.theme"));
+    try t.expectEqualStrings("line_numbers", (comptime keyPath("ui.line_numbers"))[1]);
+}
+
+test "adjust writes the row's file live; Esc restores bytes (and absence); Enter keeps; r and R reset" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const seed = ".{\n    .ui = .{\n        .tree_width = 40,\n    },\n}\n";
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/.mnml/config.zon", .data = seed });
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    const command = @import("../core/command.zig");
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expect(app.overlay == .settings);
+    try t.expect(app.focus == .overlay);
+
+    // → on the first row (ui.line_numbers, workspace-scoped): live in cfg
+    // and on disk, beside the seed.
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expect(!app.cfg.ui.line_numbers);
+    {
+        const text = (try readOrNull(tmp, "ws/.mnml/config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, ".line_numbers = false") != null);
+        try t.expect(std.mem.indexOf(u8, text, ".tree_width = 40") != null);
+    }
+    // a home-scoped row: theme, via the option chips' click path
+    try app.handle(.{ .key = Key.named(.esc) });
+    {
+        const text = (try readOrNull(tmp, "ws/.mnml/config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expectEqualStrings(seed, text);
+    }
+    try t.expect(app.cfg.ui.line_numbers);
+    try t.expect(app.overlay == .none);
+    try t.expect(app.focus == .pane);
+
+    // Enter keeps: adjust, save, and the file still says so.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try app.handle(.{ .key = Key.named(.right) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.cfg.ui.line_numbers);
+    {
+        const text = (try readOrNull(tmp, "ws/.mnml/config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, ".line_numbers = false") != null);
+    }
+
+    // The home file did not exist; a home row creates it and Esc removes it.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    const list = try items(&app, app.frame.allocator());
+    var theme_item: usize = 0;
+    for (list, 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Theme")) {
+        theme_item = i;
+    };
+    app.overlay.settings.ui.cursor = theme_item;
+    try app.handle(.{ .key = Key.char('l') });
+    try t.expect(!std.mem.eql(u8, app.cfg.ui.theme, "onedark"));
+    try t.expectEqualStrings(app.cfg.ui.theme, app.theme.name);
+    {
+        const created = (try readOrNull(tmp, "home/config.zon")).?;
+        defer t.allocator.free(created);
+        try t.expect(std.mem.indexOf(u8, created, ".theme = ") != null);
+    }
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqualStrings("onedark", app.theme.name);
+    try t.expect((try readOrNull(tmp, "home/config.zon")) == null);
+
+    // r resets the row; the `*` marker follows; R resets everything.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    {
+        const l = try items(&app, app.frame.allocator());
+        try t.expect(l[1].row.modified); // line_numbers is off, default on
+    }
+    try app.handle(.{ .key = Key.char('r') });
+    try t.expect(app.cfg.ui.line_numbers);
+    {
+        const l = try items(&app, app.frame.allocator());
+        try t.expect(!l[1].row.modified);
+    }
+    try app.handle(.{ .key = Key.named(.right) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expect(!app.cfg.ui.line_numbers and app.cfg.ui.relative_line_numbers);
+    try app.handle(.{ .key = Key.char('R') });
+    try t.expect(app.cfg.ui.line_numbers and !app.cfg.ui.relative_line_numbers);
+    try app.handle(.{ .key = Key.named(.enter) });
+
+    // input style through the overlay switches the keymap too
+    try command.run(&app, .{ .static = .@"view.settings" });
+    const l2 = try items(&app, app.frame.allocator());
+    for (l2, 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Input style")) {
+        app.overlay.settings.ui.cursor = i;
+    };
+    try app.handle(.{ .key = Key.named(.left) });
+    try t.expectEqual(input.Style.vim, app.input_style);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqual(input.Style.standard, app.input_style);
+}
+
+test "the overlay renders the sections and the footer names the target file" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try open(&app);
+    try app.render();
+    const text = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, " Settings ") != null);
+    try t.expect(std.mem.indexOf(u8, text, "── UI ──") != null);
+    try t.expect(std.mem.indexOf(u8, text, "── Editor ──") != null);
+    try t.expect(std.mem.indexOf(u8, text, "▸ Line numbers:") != null);
+    try t.expect(std.mem.indexOf(u8, text, " Settings · → .mnml/config.zon ") != null);
+    // click outside closes and keeps
+    try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
+    try t.expect(app.overlay == .none);
 }

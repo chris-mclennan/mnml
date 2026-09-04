@@ -47,6 +47,7 @@ pub const table = .{
     .@"tab.close" = &tabClose,
     .@"tab.only" = &tabOnly,
     .@"tab.list" = &tabList,
+    .@"view.settings" = &openSettings,
     .@"theme.pick" = &pickTheme,
     .@"theme.toggle" = &toggleTheme,
     .@"theme.reset" = &resetTheme,
@@ -368,6 +369,10 @@ fn tabList(app: *App) CommandError!void {
         try parts.print(arena, "{s}{s}{d}:{s}", .{ if (i > 0) "  " else "", if (i == ls.active) "▸" else "", i + 1, title });
     }
     app.toast(":tabs · {s}", .{parts.items});
+}
+
+fn openSettings(app: *App) CommandError!void {
+    return settings.open(app);
 }
 
 // ─── themes ─────────────────────────────────────────────────────────────
