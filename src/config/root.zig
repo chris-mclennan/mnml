@@ -13,6 +13,7 @@ pub const Loaded = load.Loaded;
 pub const Trust = load.Trust;
 pub const trust = @import("trust.zig");
 pub const data_root = @import("data_root.zig");
+pub const persist = @import("persist.zig");
 
 test {
     _ = @import("Config.zig");
@@ -24,4 +25,5 @@ test {
     _ = @import("load.zig");
     _ = @import("trust.zig");
     _ = @import("data_root.zig");
+    _ = @import("persist.zig");
 }
