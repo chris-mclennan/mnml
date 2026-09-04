@@ -17,11 +17,13 @@ const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const color = @import("color.zig");
 const clip_mod = @import("clip.zig");
+const text_mod = @import("text.zig");
 
 pub const Cell = vaxis.Cell;
 pub const Style = vaxis.Style;
 pub const Segment = vaxis.Segment;
 pub const Screen = vaxis.Screen;
+pub const TextOptions = text_mod.Options;
 
 const Canvas = @This();
 
@@ -73,6 +75,18 @@ pub fn measureWidth(grapheme: []const u8, method: vaxis.gwidth.Method) u16 {
 /// ellipsis. Always allocates — hand it the frame arena.
 pub fn clipCells(c: Canvas, alloc: std.mem.Allocator, s: []const u8, max_cells: u16, ellipsis: clip_mod.Ellipsis) std.mem.Allocator.Error![]u8 {
     return clip_mod.clipCells(alloc, s, max_cells, .{ .method = c.screen.width_method, .ellipsis = ellipsis });
+}
+
+/// ratatui `Paragraph`: wraps `segs` into `r` per `opts` (none / word /
+/// grapheme, alignment, scroll), painting through the clip. Returns the
+/// rows used.
+pub fn text(c: Canvas, r: Rect, segs: []const Segment, opts: TextOptions) u16 {
+    return text_mod.draw(c, r, segs, opts);
+}
+
+/// Rows `segs` would need at `width` under `opts` — size before you paint.
+pub fn measure(c: Canvas, segs: []const Segment, width: u16, opts: TextOptions) u16 {
+    return text_mod.measure(segs, width, opts, c.screen.width_method);
 }
 
 pub fn blank(style: Style) Cell {

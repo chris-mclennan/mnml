@@ -8,6 +8,7 @@ pub const Rect = @import("rect.zig");
 pub const color = @import("color.zig");
 pub const Canvas = @import("canvas.zig");
 pub const clip = @import("clip.zig");
+pub const text = @import("text.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
