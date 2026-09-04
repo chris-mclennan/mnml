@@ -36,6 +36,46 @@
             .url = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.8.tar.gz",
             .hash = "tree_sitter-0.26.8-Tw2sR5G8CwBXz-azPqB8yigELAr2sj0SmNtoiK6-CP0B",
         },
+        .ts_rust = .{
+            .url = "https://static.crates.io/crates/tree-sitter-rust/tree-sitter-rust-0.24.2.crate",
+            .hash = "N-V-__8AABOeaQDQKjFea_XSNb-Pkzh_aO_DLxvetrqRumKj",
+        },
+        .ts_javascript = .{
+            .url = "https://static.crates.io/crates/tree-sitter-javascript/tree-sitter-javascript-0.25.0.crate",
+            .hash = "N-V-__8AAM1_MADdZ5PBrHKtTtQQj_lPiRCBfBkSH3qYnc-I",
+        },
+        .ts_typescript = .{
+            .url = "https://static.crates.io/crates/tree-sitter-typescript/tree-sitter-typescript-0.23.2.crate",
+            .hash = "N-V-__8AABSuGAFA8vCv2xYnjeCQE6yi8Bv-wYkzDVHh2k2P",
+        },
+        .ts_python = .{
+            .url = "https://static.crates.io/crates/tree-sitter-python/tree-sitter-python-0.25.0.crate",
+            .hash = "N-V-__8AAJ7cOAAok_a6e-4S6nZwUDVdPMY2gZOZU_zZ5R93",
+        },
+        .ts_json = .{
+            .url = "https://static.crates.io/crates/tree-sitter-json/tree-sitter-json-0.24.8.crate",
+            .hash = "N-V-__8AADISAQC2H92h3dfi29zwV3XLR-MrNbm7G0JWVtuh",
+        },
+        .ts_go = .{
+            .url = "https://static.crates.io/crates/tree-sitter-go/tree-sitter-go-0.25.0.crate",
+            .hash = "N-V-__8AAMW0HADWTO3ABe9ADQDJhari3SehaOETaB5fdbVr",
+        },
+        .ts_toml_ng = .{
+            .url = "https://static.crates.io/crates/tree-sitter-toml-ng/tree-sitter-toml-ng-0.7.0.crate",
+            .hash = "N-V-__8AAJTuAgAjblMPkbuVCRoBso3TyvpQCRr6AtC67Lh8",
+        },
+        .ts_md = .{
+            .url = "https://static.crates.io/crates/tree-sitter-md/tree-sitter-md-0.5.3.crate",
+            .hash = "N-V-__8AAHBvTQBhOfIonTzHAVGCIs7GE7GB855rWj_pPW0W",
+        },
+        .ts_c = .{
+            .url = "https://static.crates.io/crates/tree-sitter-c/tree-sitter-c-0.24.2.crate",
+            .hash = "N-V-__8AAAojQQAC-fqBYa4Zcy5x51U3F-Fx-XC3k-VRIXrm",
+        },
+        .ts_bash = .{
+            .url = "https://static.crates.io/crates/tree-sitter-bash/tree-sitter-bash-0.25.1.crate",
+            .hash = "N-V-__8AACBvnADjge6jKqq5l_RnZM49LrucFO1VIe0-yz0O",
+        },
     },
     .paths = .{
         "build.zig",
