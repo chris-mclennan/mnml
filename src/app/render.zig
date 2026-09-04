@@ -32,6 +32,8 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
+const pty_view = @import("../ui/pty_view.zig");
+const pty_pane = @import("pty_pane.zig");
 
 /// The right panel's width; the divider takes one more column.
 pub const right_panel_width: u16 = 40;
@@ -146,7 +148,29 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
         switch (pane.*) {
             .editor => |*e| try drawEditor(app, ui, pr.pane, e, pr.rect),
+            .pty => |*p| try drawPty(app, ui, pr.pane, p, pr.rect),
         }
+    }
+}
+
+/// A pty pane: the layout's rect is what the child sees (resize is a
+/// no-op when unchanged), then the grid is refreshed and painted.
+fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allocator.Error!void {
+    if (!pty_pane.supported) return;
+    const focused = app.active == id and app.focus == .pane;
+    p.fit(rect.w, rect.h);
+    try p.grid.update(app.gpa, p.session.terminal());
+    const exit_label: ?[]const u8 = if (p.exit) |e| switch (e) {
+        .code => |c| ui.fmt("[exited {d}] — any key closes", .{c}),
+        .signal => |sg| ui.fmt("[killed by signal {d}] — any key closes", .{sg}),
+    } else null;
+    const cursor = pty_view.draw(ui, rect, &p.grid, .{ .focused = focused, .exit_label = exit_label });
+    if (app.active == id) {
+        app.pane_rows = @max(rect.h, 1);
+        app.pane_cols = @max(rect.w, 1);
+        if (focused) if (cursor) |c| {
+            app.cursor_pos = .{ .x = c.x, .y = c.y };
+        };
     }
 }
 
@@ -240,7 +264,16 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.pending = try e.buf.input.pendingDisplay(ui.arena);
         if (e.buf.recording) |r| info.macro_recording = r.reg;
-    }
+    } else if (app.active) |id| if (app.panes.pty(id)) |p| {
+        info.mode_label = if (p.exit == null) "TERM" else "EXITED";
+        info.mode_kind = .edit;
+        info.file = p.childTitle() orelse p.label;
+        if (app.cursor_pos) |c| {
+            info.line = c.y + 1;
+            info.col = c.x + 1;
+        }
+        info.total_lines = p.rows;
+    };
     statusline.draw(ui, area, info);
 }
 

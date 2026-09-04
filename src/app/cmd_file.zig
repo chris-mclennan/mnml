@@ -43,6 +43,7 @@ pub fn saveAll(app: *App) CommandError!void {
             e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
             n += 1;
         },
+        .pty => {},
     };
     app.toast("saved {d} file(s)", .{n});
 }

@@ -99,6 +99,7 @@ const runner_tables = .{
     @import("../app/cmd_picker.zig"),
     @import("../app/cmd_app.zig"),
     @import("../app/tree.zig"),
+    @import("../app/cmd_term.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {

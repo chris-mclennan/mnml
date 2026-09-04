@@ -46,6 +46,8 @@ const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const panel_mod = @import("core/panel.zig");
+const pty_pane = @import("app/pty_pane.zig");
+const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -91,6 +93,9 @@ pub const InitOptions = struct {
     data_root: []const u8 = "",
     cols: u16 = 120,
     rows: u16 = 40,
+    /// The environment children inherit (a pty's shell). The process's
+    /// own when null.
+    env: ?*const std.process.Environ.Map = null,
 };
 
 pub const PromptPurpose = enum { goto_line, replace, filter_shell, new_todo };
@@ -232,6 +237,8 @@ pub const App = struct {
     /// Absolute. Owned.
     workspace: []u8,
     data_root: []u8,
+    /// What a spawned child inherits. Owned.
+    env: std.process.Environ.Map,
     quit: bool = false,
     restart: bool = false,
 
@@ -293,6 +300,8 @@ pub const App = struct {
         errdefer gpa.free(ws);
         const dr = try gpa.dupe(u8, opts.data_root);
         errdefer gpa.free(dr);
+        var env = if (opts.env) |e| try e.clone(gpa) else try processEnv(gpa);
+        errdefer env.deinit();
         var events = try event.EventQueue.init(gpa, 256);
         errdefer events.deinit(io);
         var km = try keymap.Keymap.build(gpa, profileOf(opts.cfg.input_style), .{});
@@ -310,6 +319,7 @@ pub const App = struct {
             .cfg = opts.cfg,
             .workspace = ws,
             .data_root = dr,
+            .env = env,
             .panes = PaneStore.init(gpa),
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
@@ -360,8 +370,21 @@ pub const App = struct {
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
+        self.env.deinit();
         gpa.free(self.data_root);
         gpa.free(self.workspace);
+    }
+
+    /// The process environment as a map. Empty where libc's `environ`
+    /// is not available (Windows: no pty there yet anyway).
+    fn processEnv(gpa: Allocator) Allocator.Error!std.process.Environ.Map {
+        if (builtin.os.tag == .windows) return .init(gpa);
+        const raw: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
+        const environ: std.process.Environ = .{ .block = .{ .slice = std.mem.span(raw) } };
+        return std.process.Environ.createMap(environ, gpa) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return .init(gpa),
+        };
     }
 
     pub fn profileOf(style: input.Style) keymap.Profile {
@@ -589,6 +612,7 @@ pub const App = struct {
         self.chord.clear(self.gpa);
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.buf.setInputStyle(style, self.cfg.editorConfig()),
+            .pty => {},
         };
         self.needs_render = true;
     }
@@ -682,6 +706,7 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
                 if (e.source == .todos) self.todos.scanning = false;
@@ -730,6 +755,7 @@ pub const App = struct {
             } else i += 1;
         }
         try dispatch.finishDeferredInserts(self);
+        pty_pane.tickAll(self);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -788,6 +814,9 @@ test {
     _ = @import("app/cmd_view.zig");
     _ = @import("app/cmd_picker.zig");
     _ = @import("app/cmd_app.zig");
+    _ = @import("app/cmd_term.zig");
+    _ = @import("app/pty_pane.zig");
+    _ = @import("ui/pty_view.zig");
     _ = @import("todos.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");

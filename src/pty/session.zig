@@ -338,7 +338,8 @@ pub const Session = struct {
         if (cols == 0 or rows == 0) return error.InvalidValue;
         if (cols == self.cols and rows == self.rows) return;
         const ws: posix.winsize = .{ .row = rows, .col = cols, .xpixel = 0, .ypixel = 0 };
-        if (c.ioctl(self.master, T.IOCSWINSZ, @intFromPtr(&ws)) < 0)
+        // After EOF the reader has closed the master; only the grid is left to size.
+        if (!self.eof() and c.ioctl(self.master, T.IOCSWINSZ, @intFromPtr(&ws)) < 0)
             log.warn("TIOCSWINSZ failed: {t}", .{c.errno(-1)});
         try self.stream.handler.resize(.{ .cols = cols, .rows = rows });
         self.cols = cols;

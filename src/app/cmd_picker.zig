@@ -50,6 +50,7 @@ fn pushBuffer(app: *App, labels: *std.ArrayListUnmanaged([]u8), panes: *std.Arra
     const p = app.panes.get(id) orelse return;
     const label = switch (p.*) {
         .editor => |*e| try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (e.buf.path) |path| app.relPath(path) else "[scratch]", if (e.buf.dirty) " ●" else "" }),
+        .pty => |*term| try std.fmt.allocPrint(gpa, "{s} [term]", .{term.label}),
     };
     errdefer gpa.free(label);
     try labels.append(gpa, label);

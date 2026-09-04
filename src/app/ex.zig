@@ -120,6 +120,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "tabc", "tabclose" })) return command.run(app, .{ .static = .@"tab.close" });
     if (eqAny(verb, &.{ "tabo", "tabonly" })) return command.run(app, .{ .static = .@"tab.only" });
     if (eqAny(verb, &.{"tabs"})) return command.run(app, .{ .static = .@"tab.list" });
+    if (eqAny(verb, &.{ "term", "terminal" })) return @import("cmd_term.zig").termEx(app, args);
 
     // A registered command by id.
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);
@@ -259,6 +260,7 @@ fn saveAll(app: *App) CommandError!void {
             e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
             n += 1;
         },
+        .pty => {},
     };
     app.toast("saved {d} file(s)", .{n});
 }
@@ -696,6 +698,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
             app.cfg.tab_width = @max(n, 1);
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .editor => |*e| e.buf.editor.tab_width = @max(n, 1),
+                .pty => {},
             };
             app.toast(":set {s}={d}", .{ name, n });
         } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "ai", "autoindent", "et", "expandtab", "rnu", "relativenumber", "list", "cul", "cursorline" })) {

@@ -33,6 +33,7 @@ const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
+const pty_pane = @import("pty_pane.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     }
 
     const pane_id = app.active;
+    if (pane_id) |id| if (app.panes.pty(id)) |p| return ptyKey(app, id, p, k);
     const ed: ?*EditorPane = if (pane_id) |id| app.panes.editor(id) else null;
     const mode: input.EditingMode = if (ed) |e| e.buf.input.mode() else .none;
     const cmdline_open = if (ed) |e| e.buf.input.isCmdlineOpen() else false;
@@ -85,6 +87,29 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     const e = ed orelse return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);
+}
+
+/// A focused pty pane takes every plain key (Esc included — terminal
+/// programs need it; the app's chords are the way out). A modified
+/// chord goes to the chord chain first when the keymap binds it, except
+/// the ones a terminal owns outright (`pty_pane.childOwned`). An exited
+/// pane closes on any plain key.
+fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!void {
+    if (app.chord.len > 0) {
+        _ = try chordChain(app, k);
+        return;
+    }
+    const modified = k.mods.ctrl or k.mods.alt or k.mods.super;
+    if (p.exit != null) {
+        if (modified and try chordChain(app, k)) return;
+        try app.forceClosePane(id);
+        return;
+    }
+    if (modified and !pty_pane.childOwned(k)) {
+        const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;
+        if (bound and try chordChain(app, k)) return;
+    }
+    pty_pane.feedKey(app, p, k);
 }
 
 /// Feed one key to the editor and act on what it reports. Returns
@@ -491,6 +516,9 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
         else => {},
     }
     if (app.find_bar) |*fb| return FindBar.paste(&fb.state, app.gpa, text);
+    if (app.active) |id| if (app.panes.pty(id)) |p| {
+        if (app.focus == .pane) return pty_pane.paste(app, p, text);
+    };
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
     _ = try app.applyOps(e, &.{.{ .insert_str = copy }});
@@ -593,9 +621,20 @@ pub fn mouse(app: *App, m: Mouse) Allocator.Error!void {
                 else => {},
             }
         },
-        .pane => |id| if (m.kind == .press) {
-            if (app.overlay != .none) closeOverlay(app);
-            app.showPane(id);
+        .pane => |id| {
+            if (app.panes.pty(id)) |p| {
+                if (m.kind == .press) {
+                    if (app.overlay != .none) closeOverlay(app);
+                    if (app.active != id or app.focus != .pane) app.showPane(id);
+                }
+                const r = hitRect(app, m.x, m.y) orelse return;
+                pty_pane.mouse(app, p, m, .{ .x = r.x, .y = r.y });
+                return;
+            }
+            if (m.kind == .press) {
+                if (app.overlay != .none) closeOverlay(app);
+                app.showPane(id);
+            }
         },
         .tree_node => |idx| switch (m.kind) {
             .press => {
