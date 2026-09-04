@@ -73,6 +73,13 @@ const grammars = [_]Grammar{
     .{ .name = "tsx", .dep = "ts_typescript", .src = "tsx/src", .scanner = true, .include_src = true, .query_dir = null },
     .{ .name = "python", .dep = "ts_python", .scanner = true },
     .{ .name = "json", .dep = "ts_json" },
+    .{ .name = "go", .dep = "ts_go" },
+    .{ .name = "toml", .dep = "ts_toml_ng", .scanner = true },
+    // Markdown is two grammars: block structure, and the inline grammar injected into it.
+    .{ .name = "markdown", .dep = "ts_md", .src = "tree-sitter-markdown/src", .scanner = true, .query_dir = "tree-sitter-markdown/queries", .queries = &.{ "highlights", "injections" } },
+    .{ .name = "markdown_inline", .dep = "ts_md", .src = "tree-sitter-markdown-inline/src", .scanner = true, .query_dir = "tree-sitter-markdown-inline/queries", .queries = &.{ "highlights", "injections" } },
+    .{ .name = "c", .dep = "ts_c" },
+    .{ .name = "bash", .dep = "ts_bash", .scanner = true },
 };
 
 /// Queries mnml ships itself (`src/highlight/queries/`), for grammars whose crate has
