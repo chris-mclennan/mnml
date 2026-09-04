@@ -11,6 +11,8 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const key = @import("key.zig");
 const todos = @import("../todos.zig");
+const agents = @import("../app/agents.zig");
+const spend = @import("../app/spend.zig");
 
 pub const PtyId = u32;
 
@@ -28,7 +30,31 @@ pub const GitResult = struct { _todo: u8 = 0 }; // TODO(git)
 pub const HttpJobResult = struct { _todo: u8 = 0 }; // TODO(http)
 pub const SseChunk = struct { _todo: u8 = 0 }; // TODO(http)
 pub const WsFrame = struct { _todo: u8 = 0 }; // TODO(http)
-pub const AiMsg = struct { _todo: u8 = 0 }; // TODO(ai)
+/// What an AI worker posts (`src/app/ai.zig`). `job` on the event is
+/// the `Job` id; 0 for the ghost text, which has no job. Every slice is
+/// gpa-owned by the event.
+pub const AiMsg = union(enum) {
+    /// An inline suggestion for `pane`; dropped unless `generation` is
+    /// still the one the debounce wants.
+    suggestion: struct { pane: u32, generation: u32, text: []u8 },
+    /// Answer text for the job's pane (a whole turn, or a chunk).
+    text: []u8,
+    /// The job finished; nothing more will arrive.
+    done,
+    /// The job failed; the reason.
+    failed: []u8,
+    /// The worker wants a yes / no before a write (`detail`); it is
+    /// parked on the job's `confirm` queue until the UI answers.
+    confirm: []u8,
+};
+
+pub fn freeAiMsg(gpa: Allocator, msg: AiMsg) void {
+    switch (msg) {
+        .suggestion => |s| gpa.free(s.text),
+        .text, .failed, .confirm => |s| gpa.free(s),
+        .done => {},
+    }
+}
 pub const SonosUpdate = struct { _todo: u8 = 0 }; // TODO(sonos)
 pub const NowPlaying = struct { _todo: u8 = 0 }; // TODO(now_playing)
 pub const StatuslineSegment = struct { _todo: u8 = 0 }; // TODO(statusline)
@@ -60,6 +86,10 @@ pub const AppEvent = union(enum) {
 
     /// A finished TODO scan. Owned; `todos.handle` adopts the arena.
     todos: *todos.ScanResult,
+    /// A finished Claude / Codex session scan. Owned; the agents pane adopts it.
+    agents: *agents.ScanResult,
+    /// A finished spend computation. Owned; the spend pane (or the meter) adopts it.
+    spend: *spend.Result,
 
     /// A worker failed. `msg` is gpa-owned and freed by the handler.
     err: struct { source: Source, msg: []u8 },
@@ -78,13 +108,16 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .paste => |p| gpa.free(p),
         .err => |e| gpa.free(e.msg),
         .todos => |r| r.destroy(gpa),
+        .agents => |r| r.destroy(gpa),
+        .spend => |r| r.destroy(gpa),
+        .ai => |a| freeAiMsg(gpa, a.msg),
         .lsp => |l| gpa.destroy(l.msg),
         .dap => |d| gpa.destroy(d.msg),
         .git => |p| gpa.destroy(p),
         .http => |p| gpa.destroy(p),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| gpa.destroy(p),
-        .key, .mouse, .winsize, .focus, .cdp, .sse, .ws, .ai, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
+        .key, .mouse, .winsize, .focus, .cdp, .sse, .ws, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
 }
 
