@@ -69,7 +69,19 @@ pub const Options = struct {
     /// what makes a leak fixable, so it stays on outside the harness's own
     /// tests (whose runner treats any logged error as a failure).
     quiet_leak_report: bool = false,
+    /// Only files whose name (without `.test`) contains this run
+    /// (`-Dtest-filter` reaches here as `--filter`). Others are silent.
+    name_filter: ?[]const u8 = null,
+    /// File names (without `.test`) to skip, announced as such
+    /// (`--skip`): what `zig build check` cuts by design.
+    skip: []const []const u8 = &.{},
 };
+
+/// The file's name without its `.test`.
+pub fn stemOf(path: []const u8) []const u8 {
+    const base = std.fs.path.basename(path);
+    return if (std.mem.endsWith(u8, base, ".test")) base[0 .. base.len - ".test".len] else base;
+}
 
 pub const Outcome = struct {
     name: []u8,
@@ -570,6 +582,15 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         outcomes.deinit(gpa);
     }
     for (files) |path| {
+        const stem = stemOf(path);
+        if (opts.name_filter) |f| if (std.mem.indexOf(u8, stem, f) == null) continue;
+        var skipped = false;
+        for (opts.skip) |s| skipped = skipped or std.mem.eql(u8, s, stem);
+        if (skipped) {
+            try out.print("⊘ e2e SKIP (--skip): {s}\n", .{path});
+            try out.flush();
+            continue;
+        }
         const header = readHeader(gpa, io, path);
         if (header.requires_network and !opts.network) {
             try out.print("⊘ e2e SKIP (network opt-in): {s}\n", .{path});
@@ -988,6 +1009,33 @@ test "runPath: skips, sizes, names, and the ok/FAIL/N-M report" {
     const s2 = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out2.writer);
     try t.expectEqual(@as(usize, 4), s2.total);
     try t.expect(std.mem.indexOf(u8, out2.written(), "  FAIL c_net.test — ") != null);
+}
+
+test "runPath: --filter keeps the matching names silently, --skip announces the cut" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "suite");
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/alpha_one.test", .data = "expect screen contains ok\n" });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/alpha_two.test", .data = "expect screen contains nope\n" });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "suite/beta.test", .data = "expect screen contains ok\n" });
+    const root = try std.fs.path.join(t.allocator, &.{ env.root, "suite" });
+    defer t.allocator.free(root);
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    var opts = env.opts();
+    opts.name_filter = "alpha";
+    opts.skip = &.{"alpha_two"};
+    const s = try runPath(t.allocator, t.io, sf.factory(), root, opts, &out.writer);
+    try t.expectEqual(@as(usize, 1), s.total);
+    try t.expectEqual(@as(usize, 0), s.failed);
+    const skip_line = try std.fmt.allocPrint(t.allocator, "\u{2298} e2e SKIP (--skip): {s}/alpha_two.test\n", .{root});
+    defer t.allocator.free(skip_line);
+    const expected = try std.mem.concat(t.allocator, u8, &.{ "\u{25b6} e2e: alpha_one.test\n", skip_line, "  ok   alpha_one.test\n" });
+    defer t.allocator.free(expected);
+    try t.expectEqualStrings(expected, out.written());
+    try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
+    try t.expectEqualStrings("notes", stemOf("notes"));
 }
 
 test "runPath on a single file and on an empty directory" {

@@ -135,6 +135,35 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters });
     const tests_run = b.addRunArtifact(tests);
     test_step.dependOn(&tests_run.step);
+    // ── e2e: the .test corpus under `zig build` ──
+    // `zig build e2e [-- ARGS]` runs the whole corpus (tests/e2e +
+    // tests/e2e-zig) through the runner with `shell` steps allowed;
+    // `zig build test` also runs the Phase-0 gate subset, and
+    // `-Dtest-filter` narrows the .test files by name as it narrows
+    // the unit tests (`--filter`). `check` runs the full corpus, minus
+    // the one file that asserts TOML by design (E1 / E2:
+    // `settings_persist_to_workspace.test`; its Zig twin passes).
+    const e2eRun = struct {
+        fn make(bld: *std.Build, artifact: *std.Build.Step.Compile, name: []const u8, args: []const []const u8, filter: ?[]const u8) *std.Build.Step.Run {
+            const r = bld.addRunArtifact(artifact);
+            r.setName(name);
+            r.addArg("test");
+            r.addArgs(args);
+            if (filter) |f| r.addArgs(&.{ "--filter", f });
+            r.setEnvironmentVariable("MNML_E2E_ALLOW_SHELL", "1");
+            r.setCwd(bld.path("."));
+            r.has_side_effects = true;
+            return r;
+        }
+    }.make;
+    const e2e_step = b.step("e2e", "Run the .test corpus (tests/e2e + tests/e2e-zig) through the runner; `-- ARGS` reach `mnml-zig test`");
+    const e2e_run = e2eRun(b, exe, "mnml-zig test (the corpus)", &.{}, test_filter);
+    if (b.args) |args| e2e_run.addArgs(args);
+    e2e_step.dependOn(&e2e_run.step);
+    const gate_in_test = e2eRun(b, exe, "mnml-zig test --gate", &.{"--gate"}, test_filter);
+    gate_in_test.step.dependOn(&tests_run.step);
+    test_step.dependOn(&gate_in_test.step);
+    // ── end e2e ──
 
     // src/ui is reached through its barrel (`src/ui/ui.zig`) from main.zig's
     // `test {}` block, so every component's tests run under `zig build test`
@@ -226,6 +255,11 @@ pub fn build(b: *std.Build) void {
     defaults_run.has_side_effects = true;
     defaults_run.step.dependOn(&sweep_run.step);
     check_step.dependOn(&defaults_run.step);
+    // ── e2e: the full corpus under `check` ──
+    const corpus_run = e2eRun(b, exe, "mnml-zig test --skip settings_persist_to_workspace (the full corpus)", &.{ "--skip", "settings_persist_to_workspace" }, null);
+    corpus_run.step.dependOn(&defaults_run.step);
+    check_step.dependOn(&corpus_run.step);
+    // ── end e2e ──
     // ── end docs + check ────────────────────────────────────────────────
 
     // ── e2e: gate-build ──

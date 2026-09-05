@@ -214,17 +214,23 @@ fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: [
 
 // ─── mnml-zig test ──────────────────────────────────────────────────────
 
-/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--parse] [--stub]`
+/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--parse] [--stub]`
 ///
 /// Runs `.test` scripts (default `tests/e2e` + `tests/e2e-zig`). `--gate` runs the Phase-0
-/// gate list from `tools/gate.txt`. `--parse` only parses. `--stub`
-/// drives the recording stub instead of the App — exercises the harness,
-/// proves nothing about the editor. Exit 1 on any failure.
+/// gate list from `tools/gate.txt`. `--filter` keeps the files whose
+/// name contains it (what `zig build test -Dtest-filter=…` passes);
+/// `--skip` (repeatable) leaves a file out and says so. `--parse` only
+/// parses. `--stub` drives the recording stub instead of the App —
+/// exercises the harness, proves nothing about the editor. Exit 1 on
+/// any failure.
 fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
     var sizes: std.ArrayList(e2e.Size) = .empty;
     defer sizes.deinit(gpa);
+    var skips: std.ArrayList([]const u8) = .empty;
+    defer skips.deinit(gpa);
+    var name_filter: ?[]const u8 = null;
     var gate = false;
     var parse_only = false;
     var use_stub = false;
@@ -233,6 +239,18 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         const a = argv[i];
         if (std.mem.eql(u8, a, "--gate")) {
             gate = true;
+        } else if (std.mem.eql(u8, a, "--filter")) {
+            i += 1;
+            if (i >= argv.len) return usage(w, "--filter needs a name");
+            name_filter = argv[i];
+        } else if (std.mem.startsWith(u8, a, "--filter=")) {
+            name_filter = a["--filter=".len..];
+        } else if (std.mem.eql(u8, a, "--skip")) {
+            i += 1;
+            if (i >= argv.len) return usage(w, "--skip needs a name");
+            try skips.append(gpa, argv[i]);
+        } else if (std.mem.startsWith(u8, a, "--skip=")) {
+            try skips.append(gpa, a["--skip=".len..]);
         } else if (std.mem.eql(u8, a, "--parse")) {
             parse_only = true;
         } else if (std.mem.eql(u8, a, "--stub")) {
@@ -298,6 +316,8 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         .shell = env.get("SHELL") orelse "/bin/sh",
         .tmp_root = tmp_root,
         .data_root = data_root,
+        .name_filter = name_filter,
+        .skip = skips.items,
     };
 
     var stub_factory: e2e.driver.StubFactory = .{};
