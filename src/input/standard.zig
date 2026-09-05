@@ -69,9 +69,12 @@ pub const Standard = struct {
                 const c = std.ascii.toLower(@intCast(@min(raw, 0x7F)));
                 return switch (c) {
                     'a' => ops(arena, &.{.select_all}),
-                    'c' => ops(arena, &.{if (ctx.has_selection) .yank_selection else .yank_line}),
-                    'x' => if (ctx.has_selection) ops(arena, &.{.cut_selection}) else ops(arena, &.{ .yank_line, .delete_line }),
-                    'v' => ops(arena, &.{.paste}),
+                    // changed: Ctrl+C / Ctrl+X / Ctrl+V are the OS clipboard, so
+                    // each op list opens with the `"+` hint — the same register
+                    // mechanism vim's `"+y` uses, nothing for the editor to branch on.
+                    'c' => ops(arena, &.{ os_reg, if (ctx.has_selection) .yank_selection else .yank_line }),
+                    'x' => if (ctx.has_selection) ops(arena, &.{ os_reg, .cut_selection }) else ops(arena, &.{ os_reg, .yank_line, .delete_line }),
+                    'v' => ops(arena, &.{ os_reg, .paste }),
                     'z' => ops(arena, &.{if (shift) .redo else .undo}),
                     'y' => ops(arena, &.{.redo}),
                     '/' => ops(arena, &.{.toggle_line_comment}),
@@ -149,6 +152,9 @@ fn spaces(arena: Allocator, n: usize) Allocator.Error![]const u8 {
 
 const testing = std.testing;
 
+/// The `"+` hint that opens every Ctrl+C / Ctrl+X / Ctrl+V op list.
+const os_reg: EditOp = .{ .set_register_hint = '+' };
+
 fn feed(h: *Standard, arena: Allocator, key: Key, ctx: EditCtx) ![]const EditOp {
     const r = try h.handleKey(key, ctx, arena);
     return switch (r) {
@@ -202,11 +208,12 @@ test "standard: ctrl chords, save, ctrl+l, alt+shift duplicate, esc" {
     const a = arena_state.allocator();
     var h = Standard.init(.{});
     try testing.expectEqual(EditOp.select_all, (try feed(&h, a, Key.ctrl('a'), .{}))[0]);
-    try testing.expectEqual(EditOp.yank_line, (try feed(&h, a, Key.ctrl('c'), .{}))[0]);
-    try testing.expectEqual(EditOp.yank_selection, (try feed(&h, a, Key.ctrl('c'), .{ .has_selection = true }))[0]);
-    try testing.expectEqualSlices(EditOp, &.{ .yank_line, .delete_line }, try feed(&h, a, Key.ctrl('x'), .{}));
-    try testing.expectEqual(EditOp.cut_selection, (try feed(&h, a, Key.ctrl('x'), .{ .has_selection = true }))[0]);
-    try testing.expectEqual(EditOp.paste, (try feed(&h, a, Key.ctrl('v'), .{}))[0]);
+    // The clipboard chords open with the `"+` hint: they are the OS clipboard.
+    try testing.expectEqualSlices(EditOp, &.{ os_reg, .yank_line }, try feed(&h, a, Key.ctrl('c'), .{}));
+    try testing.expectEqualSlices(EditOp, &.{ os_reg, .yank_selection }, try feed(&h, a, Key.ctrl('c'), .{ .has_selection = true }));
+    try testing.expectEqualSlices(EditOp, &.{ os_reg, .yank_line, .delete_line }, try feed(&h, a, Key.ctrl('x'), .{}));
+    try testing.expectEqualSlices(EditOp, &.{ os_reg, .cut_selection }, try feed(&h, a, Key.ctrl('x'), .{ .has_selection = true }));
+    try testing.expectEqualSlices(EditOp, &.{ os_reg, .paste }, try feed(&h, a, Key.ctrl('v'), .{}));
     try testing.expectEqual(EditOp.undo, (try feed(&h, a, Key.ctrl('z'), .{}))[0]);
     try testing.expectEqual(EditOp.redo, (try feed(&h, a, .{ .code = .{ .char = 'Z' }, .mods = .{ .ctrl = true, .shift = true } }, .{}))[0]);
     try testing.expectEqual(EditOp.redo, (try feed(&h, a, Key.ctrl('y'), .{}))[0]);

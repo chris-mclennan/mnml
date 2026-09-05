@@ -639,7 +639,7 @@ pub const Vim = struct {
                     '.' => return runCmd(.@"editor.insert_last_inserted"),
                     else => {},
                 }
-                const valid = (c >= 'a' and c <= 'z') or c == '0' or c == '+' or c == '_' or c == '"';
+                const valid = (c >= 'a' and c <= 'z') or c == '0' or c == '+' or c == '*' or c == '_' or c == '"';
                 if (valid) return ops(arena, &.{ .{ .set_register_hint = c }, .paste });
             }
             return .consumed;
@@ -966,7 +966,7 @@ pub const Vim = struct {
             .register => {
                 self.prefix = .none;
                 if (ch) |c| {
-                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '_';
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_';
                     if (valid) self.pending_register = c;
                 }
                 return .consumed;
@@ -2088,4 +2088,26 @@ test "pending display shows register, count, operator and prefix" {
     try testing.expect(v.operatorMenuHint() == null);
     _ = try v.handleKey(Key.char('g'), .{}, a);
     try testing.expectEqualStrings("g", v.operatorMenuHint().?.prefix);
+}
+
+test "\"* and \"+ route the next yank / put through the OS registers" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char('"'), .{}, a);
+    _ = try v.handleKey(Key.char('*'), .{}, a);
+    _ = try v.handleKey(Key.char('y'), .{}, a);
+    const yank = try v.handleKey(Key.char('y'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{ .{ .set_register_hint = '*' }, .{ .yank_lines_count = 1 } }, yank.ops);
+    _ = try v.handleKey(Key.char('"'), .{}, a);
+    _ = try v.handleKey(Key.char('+'), .{}, a);
+    const put = try v.handleKey(Key.char('p'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{ .{ .set_register_hint = '+' }, .paste_after }, put.ops);
+    // An unknown register name is dropped; the op runs unhinted.
+    _ = try v.handleKey(Key.char('"'), .{}, a);
+    _ = try v.handleKey(Key.char('!'), .{}, a);
+    const plain = try v.handleKey(Key.char('p'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{.paste_after}, plain.ops);
 }

@@ -996,6 +996,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .middle => {
                     ed.anchor = null;
                     ed.setCursor(byte);
+                    // X11's middle click pastes the primary selection: `"*`.
+                    // Falls back to the unnamed register where the sink cannot read.
+                    app.clipboard.setPendingRegister('*');
                     const text = app.clipboard.text();
                     if (text.len > 0) {
                         const copy = try app.frame.allocator().dupe(u8, text);
