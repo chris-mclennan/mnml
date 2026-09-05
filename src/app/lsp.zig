@@ -611,7 +611,9 @@ fn handleMessage(app: *App, s: *Server, msg: *jsonrpc.Incoming) Allocator.Error!
             if (r.err) |err| {
                 const text = jsonrpc.getStr(err, "message") orelse "error";
                 switch (kind) {
-                    .completion, .completion_resolve, .document_symbol, .document_highlight, .signature_help, .hover => {},
+                    .completion, .completion_resolve, .document_highlight, .signature_help, .hover => {},
+                    // The outline's refresh is silent; `lsp.symbols` asked.
+                    .document_symbol => if (ctx.extra == symbols_pick) app.toast("LSP symbols: {s}", .{text}),
                     .definition, .declaration, .type_definition, .implementation => app.lsp.pending_peek = false,
                     else => app.toast("LSP {s}: {s}", .{ @tagName(kind), text }),
                 }
