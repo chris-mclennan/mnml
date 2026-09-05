@@ -126,7 +126,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         }
     }
     app.hooks.emit(&app, .exit);
-    return if (app.restart) 75 else 0;
+    return if (app.restart) 75 else app.exit_code;
 }
 
 /// `Term` events → `AppEvent`s, until the group is cancelled.

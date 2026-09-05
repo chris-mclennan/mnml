@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `o` / `O` / Enter never auto-indent, although `editor.auto_indent` defaults to `true` and `:set autoindent?` reports `on`
 
@@ -37,3 +37,7 @@ All three new lines start at column 1.
 **Actual**: no indent, ever. Reproduced twice from fresh launches.
 
 **Source pointer**: `src/editor/editor.zig:159` `auto_indent: bool = false` on the Editor struct; `insert.zig` reads `ed.auto_indent`, but nothing in `src/app/` copies `cfg.editor.auto_indent` into the editor (grep: the only assignments `ed.auto_indent = true` are in `insert.zig` tests at lines 244/262). The config field and the `:set` toast are therefore decorative.
+
+## Fix
+
+`0828358` on branch `vim-edit` — editor: auto_indent reaches the buffers, with smartindent's braces. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

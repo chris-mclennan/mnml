@@ -505,6 +505,7 @@ fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: A
                 L.raiseErrorStr("mnml.buf.apply: `%s` needs an integer `value`", .{tag.ptr});
             return std.math.cast(T, v) orelse L.raiseErrorStr("mnml.buf.apply: `%s`: value out of range", .{tag.ptr});
         },
+        .bool => return boolField(L, at, "value") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs a boolean `value`", .{tag.ptr}),
         .optional => |o| {
             if (o.child == u21) return charField(L, at, "ch");
             @compileError("unhandled optional payload for " ++ tag);

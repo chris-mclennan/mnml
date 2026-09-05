@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `x` does not write the unnamed register — `xp` (swap two chars) is broken
 
@@ -25,3 +25,7 @@ status: open
 **Actual**: `x` deletes without touching any register. `dd`, `dw`, `yy` do populate registers correctly (verified via `:reg`), so it is specific to `x`. Reproduced from two fresh launches.
 
 **Source pointer**: `src/input/vim.zig` — the `x` / `X` branch emits a delete without the yank-to-register step that the operator path (`src/editor/clipboard.zig`) uses.
+
+## Fix
+
+`1f132b3` on branch `vim-edit` — vim: x and X are real deletes — the char lands in "" and "-. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

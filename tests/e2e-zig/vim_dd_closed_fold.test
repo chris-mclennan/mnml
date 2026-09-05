@@ -1,0 +1,31 @@
+# zig-only
+# A closed fold is one line to the line operators (`:help fold-behavior`):
+# `dd` deletes the whole fold, `yy` yanks all of it, and the fold does
+# not re-attach to whatever line follows.
+write long.zig "pub fn one() void {\n    a();\n    b();\n}\n\npub fn two() void {\n    c();\n    d();\n}\n"
+open long.zig
+command editor.use_vim
+
+key z
+key c
+expect screen contains "lines hidden"
+key d
+key d
+expect screen lacks "fn one"
+expect screen lacks "lines hidden"
+expect screen lacks "a();"
+command file.save
+expect file long.zig contains "\npub fn two() void {\n    c();\n"
+expect file long.zig lacks "a();"
+
+# `yy` on a closed fold yanks every line of it; `p` puts them all.
+key j
+key z
+key c
+expect screen contains "lines hidden"
+key y
+key y
+key G
+key p
+command file.save
+expect file long.zig contains "}\npub fn two() void {\n    c();\n    d();\n}\n"

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # One insert session is several undo steps (`u` after `i…<Esc>` undoes only the last line)
 
@@ -27,3 +27,7 @@ In an earlier session a `fresh file\nline two` insert took four `u` presses to r
 **Expected**: everything typed between `i`/`o`/`O` and `Esc` is one undo step (Vim `:help undo-blocks`); a single `u` removes both lines.
 
 **Actual**: the insert is chunked (at least per newline); `u` peels it back piecemeal. Reproduced twice. Reads as "not quite vim" rather than dangerous, hence SEV-3.
+
+## Fix
+
+`2376e20` on branch `vim-edit` — vim: one Insert session is one undo step. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

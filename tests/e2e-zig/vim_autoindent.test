@@ -1,0 +1,41 @@
+# zig-only
+# `editor.auto_indent` (on by default, NvChad's `autoindent` +
+# `smartindent`): `o` / `O` / Enter copy the line's indent, a line that
+# ends in `{` opens one level deeper, and a `}` typed first on a line
+# steps back out.
+write b.zig "pub fn main() void {\n    const x = add(1, 2);\n    if (x > 2) {\n        big();\n    }\n}\n"
+open b.zig
+command editor.use_vim
+
+type ":2"
+key enter
+key o
+type X
+key esc
+key O
+type Y
+key esc
+key k
+key A
+type "\nZ"
+key esc
+command file.save
+expect file b.zig contains "    const x = add(1, 2);\n    Z\n    Y\n    X\n"
+
+# After `{` the new line is one level in; `}` steps back out.
+type ":6"
+key enter
+key o
+type "deep();\n}"
+key esc
+command file.save
+expect file b.zig contains "    if (x > 2) {\n        deep();\n    }\n"
+
+# `:set noai` switches it off for the open buffer.
+type ":set noai"
+key enter
+key o
+type flat
+key esc
+command file.save
+expect file b.zig contains "\nflat\n"

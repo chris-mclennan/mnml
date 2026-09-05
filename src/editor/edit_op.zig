@@ -1,5 +1,5 @@
 //! `EditOp` — every text-editing intent an input handler can express
-//! (D4). 131 tags. The editor applies them through one exhaustive
+//! (D4). 137 tags. The editor applies them through one exhaustive
 //! switch in `apply.zig`; nothing else mutates buffer text.
 //!
 //! Payload slices (`insert_str`, `replace_selection`, `replace_range.text`)
@@ -21,7 +21,17 @@ pub const EditOp = union(enum) {
     move_word_left,
     move_word_right,
     move_word_right_no_cross_line,
+    /// `l` / `h` as operator targets (`x` = `dl`): stop at the line's
+    /// ends instead of crossing the `\n`.
+    move_right_no_cross_line,
+    move_left_no_cross_line,
     move_word_end,
+    /// `cw` / `cW` for `n` words (`:help cw`): the end of the current
+    /// word — staying when already there — then `e` for the rest; on a
+    /// blank, a `w`. Lands one char short so the caller's inclusive
+    /// `move_right` covers the target.
+    move_word_end_cw: u32,
+    move_big_word_end_cw: u32,
     move_word_end_back,
     move_big_word_right,
     move_big_word_right_no_cross_line,
@@ -104,6 +114,9 @@ pub const EditOp = union(enum) {
     add_cursor_at_next_word,
     block_select_start,
     block_select_clear,
+    /// `$` in V-BLOCK: the rectangle runs to every line's end (`:help
+    /// v_$`); false again after a horizontal motion.
+    block_eol: bool,
     yank_block,
     delete_block,
 
@@ -134,6 +147,9 @@ pub const EditOp = union(enum) {
     // ── line ops ──
     indent,
     outdent,
+    /// `=`: the selected lines (or the cursor's) re-indented by the
+    /// buffer's brace rules.
+    reindent,
     toggle_line_comment,
     move_line_up,
     move_line_down,
@@ -165,7 +181,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 131);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 137);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -176,10 +192,10 @@ pub const EditOp = union(enum) {
                 if (o.isMutation()) break true;
             } else false,
             // motions
-            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_word_end, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
+            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
             .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .make_selection_inclusive, .continue_insert_run, .find_char_on_line => false,
-            .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .block_select_start, .block_select_clear, .yank_block => false,
+            .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .block_select_start, .block_select_clear, .block_eol, .yank_block => false,
             .set_register_hint, .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .undo, .redo, .replace_session_begin => false,
             else => true,
         };
@@ -216,6 +232,16 @@ pub const EditOp = union(enum) {
                 if (o.touchesClipboard()) break true;
             } else false,
             else => false,
+        };
+    }
+
+    /// The count a `{count}.` replaces: a `repeat`'s, or a counted
+    /// motion's own. Null for an op with no count to speak of.
+    pub fn countPtr(op: *EditOp) ?*u32 {
+        return switch (op.*) {
+            .repeat => |*r| &r.count,
+            .move_word_end_cw, .move_big_word_end_cw => |*n| n,
+            else => null,
         };
     }
 

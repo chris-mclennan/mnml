@@ -1,0 +1,37 @@
+# zig-only
+# `{count}.` replaces the count of the last change (`:help .`): after
+# `cwPAPA<Esc>`, `3.` is `3cwPAPA<Esc>` — three words become PAPA — not
+# the change replayed three times from a moving cursor.
+write a.txt "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel india juliet\n"
+open a.txt
+command editor.use_vim
+
+key c
+key w
+type PAPA
+key esc
+key j
+key 0
+key 3
+key .
+expect screen contains "PAPA bravo charlie"
+expect screen lacks "PAPPAP"
+command file.save
+expect file a.txt contains "PAPA bravo charlie\nPAPA\ngolf"
+
+# The new count sticks for a bare `.` afterwards (vim keeps the last
+# count used).
+key j
+key 0
+key .
+expect file a.txt lacks "PAPA juliet"
+command file.save
+expect file a.txt contains "PAPA\nPAPA juliet\n"
+
+# A count on a repeated `x` deletes that many chars.
+key 0
+key x
+key 3
+key .
+command file.save
+expect file a.txt contains "\n juliet\n"

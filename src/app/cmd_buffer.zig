@@ -1,4 +1,6 @@
-//! `buffer.*` runners: cycle the focused leaf's tabs, close, reopen.
+//! `buffer.*` runners: cycle the focused leaf's tabs, close, reopen —
+//! and `:b`, which reaches a buffer by the number `:ls` shows or by
+//! (a unique part of) its name.
 
 const std = @import("std");
 const app_mod = @import("../app.zig");
@@ -12,6 +14,7 @@ pub const table = .{
     .@"buffer.prev" = &prev,
     .@"buffer.close" = &close,
     .@"buffer.reopen" = &reopen,
+    .@"buffer.last" = &alternate,
 };
 
 /// The tabs of the leaf showing the active pane, in tab order.
@@ -48,6 +51,25 @@ fn next(app: *App) CommandError!void {
     return cycle(app, 1, true);
 }
 
+/// `:b#` / `Ctrl-^`: the pane that was active before this one.
+fn alternate(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = app.prev_active orelse return app.diag.fail(arena, "E23: no alternate buffer", .{});
+    if (app.panes.get(id) == null) return app.diag.fail(arena, "E23: no alternate buffer", .{});
+    app.showPane(id);
+}
+
+/// `:bfirst` / `:blast`: the ends of the leaf's tab strip.
+pub fn firstTab(app: *App) CommandError!void {
+    const tabs = tabsOfActive(app) orelse return error.NoActivePane;
+    if (tabs.len > 0) app.showPane(tabs[0]);
+}
+
+pub fn lastTab(app: *App) CommandError!void {
+    const tabs = tabsOfActive(app) orelse return error.NoActivePane;
+    if (tabs.len > 0) app.showPane(tabs[tabs.len - 1]);
+}
+
 fn prev(app: *App) CommandError!void {
     return cycle(app, -1, true);
 }
@@ -55,6 +77,58 @@ fn prev(app: *App) CommandError!void {
 /// `:bn!` / `:bp!`: every tab, terminals included.
 pub fn cycleAny(app: *App, delta: i32) CommandError!void {
     return cycle(app, delta, false);
+}
+
+/// The buffers in `:ls` order — tab order across every leaf of the
+/// current layout, then anything open in the background. `:b N`
+/// counts from 1 along this list. Frame arena.
+pub fn listOrder(app: *App, arena: std.mem.Allocator) std.mem.Allocator.Error![]const PaneId {
+    var out: std.ArrayListUnmanaged(PaneId) = .empty;
+    const ordered = try app.layouts.current().allPanes(arena);
+    for (ordered) |id| if (app.panes.get(id) != null) try out.append(arena, id);
+    for (app.panes.slots.items, 0..) |*slot, i| {
+        if (slot.* == null) continue;
+        const id: PaneId = @intCast(i);
+        if (std.mem.indexOfScalar(PaneId, out.items, id) != null) continue;
+        try out.append(arena, id);
+    }
+    return out.items;
+}
+
+/// `:b N` / `:b name` / `:b#` (`:help :buffer`): the N-th buffer of
+/// `:ls`, the one whose title (or path) the name matches — exactly,
+/// else as a unique substring — or the alternate.
+pub fn switchTo(app: *App, args_in: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const args = std.mem.trim(u8, args_in, " \t");
+    if (args.len == 0) return;
+    if (std.mem.eql(u8, args, "#")) return command.run(app, .{ .static = .@"buffer.last" });
+    const order = try listOrder(app, arena);
+    if (std.fmt.parseInt(usize, args, 10)) |n| {
+        if (n == 0 or n > order.len) return app.diag.fail(arena, ":b — no buffer {d} (:ls shows {d})", .{ n, order.len });
+        app.showPane(order[n - 1]);
+        return;
+    } else |_| {}
+    for (order) |id| if (std.mem.eql(u8, app.panes.get(id).?.title(), args)) {
+        app.showPane(id);
+        return;
+    };
+    var found: ?PaneId = null;
+    var hits: usize = 0;
+    for (order) |id| {
+        const title = app.panes.get(id).?.title();
+        var hit = std.mem.indexOf(u8, title, args) != null;
+        if (!hit) if (app.panes.editor(id)) |e| if (e.buf.path) |p| {
+            hit = std.mem.indexOf(u8, app.relPath(p), args) != null;
+        };
+        if (hit) {
+            hits += 1;
+            found = id;
+        }
+    }
+    if (hits == 0) return app.diag.fail(arena, ":b — no matching buffer for \"{s}\"", .{args});
+    if (hits > 1) return app.diag.fail(arena, ":b — E93: more than one buffer matches \"{s}\"", .{args});
+    app.showPane(found.?);
 }
 
 fn close(app: *App) CommandError!void {
@@ -106,6 +180,41 @@ test "buffer.next/prev cycle the leaf's tabs; close + reopen round-trip through 
     try t.expectEqualStrings("a.txt", title.of(&app));
     try t.expectEqual(@as(usize, 0), app.closed.items.len);
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"buffer.reopen" }));
+}
+
+test ":b reaches a buffer by :ls number, by name, by a unique part of it, and by #" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    for ([_][]const u8{ "alpha.txt", "bravo.txt", "brew.md" }) |name| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = name });
+        const path = try std.fs.path.join(t.allocator, &.{ root, name });
+        defer t.allocator.free(path);
+        _ = try app.openPath(path);
+    }
+    const title = struct {
+        fn of(a: *App) []const u8 {
+            return a.panes.get(a.active.?).?.title();
+        }
+    };
+    try app.runEx("b 1");
+    try t.expectEqualStrings("alpha.txt", title.of(&app));
+    try app.runEx("buffer brew");
+    try t.expectEqualStrings("brew.md", title.of(&app));
+    try app.runEx("b#");
+    try t.expectEqualStrings("alpha.txt", title.of(&app));
+    try app.runEx("b bravo.txt");
+    try t.expectEqualStrings("bravo.txt", title.of(&app));
+    // Ambiguous, missing, out of range: an error each, the pane unchanged.
+    try t.expectError(error.Failed, app.runEx("b br"));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "E93") != null);
+    try t.expectError(error.Failed, app.runEx("b zzz"));
+    try t.expectError(error.Failed, app.runEx("b 9"));
+    try t.expectEqualStrings("bravo.txt", title.of(&app));
 }
 
 /// The tmp dir's absolute path, gpa-owned without a sentinel.

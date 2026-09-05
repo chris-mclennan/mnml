@@ -1,0 +1,43 @@
+# zig-only
+# Macros are registers (`:help q`): `qa…q` writes `"a`, `:reg a` shows
+# the keys, `"ap` pastes them, and a register yanked back with `"ay$`
+# replays as a macro.
+write a.txt "alpha\nbravo\ncharlie\n"
+open a.txt
+command editor.use_vim
+
+key q
+key a
+key I
+type "- "
+key esc
+key q
+expect screen contains "- alpha"
+type ":reg a"
+key enter
+expect screen contains "\"a  I- <esc>"
+
+# Paste the macro text on a line of its own, edit it, yank it back,
+# replay the edited version.
+key j
+key o
+key esc
+key "
+key a
+key p
+expect screen contains "I- <esc>"
+key 0
+key l
+key r
+key +
+key 0
+key "
+key a
+key y
+key $
+key d
+key d
+key @
+key a
+command file.save
+expect file a.txt contains "- alpha\nbravo\n+ charlie\n"

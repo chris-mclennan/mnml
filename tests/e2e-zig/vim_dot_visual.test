@@ -1,0 +1,26 @@
+# zig-only
+# `.` after an operator on a visual selection re-applies it to the same
+# amount of text from the cursor (`:help visual-repeat`): `Vjd` then `.`
+# deletes two more lines; `vlld` then `.` deletes three more chars.
+write a.txt "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\n"
+open a.txt
+command editor.use_vim
+
+key V
+key j
+key d
+expect screen lacks "alpha"
+key .
+expect screen lacks "charlie"
+expect screen lacks "delta"
+expect screen contains "echo"
+
+# Charwise: three chars, then the same three again.
+key v
+key l
+key l
+key d
+key .
+command file.save
+expect file a.txt contains "foxtrot"
+expect file a.txt lacks "echo"

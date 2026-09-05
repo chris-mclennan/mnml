@@ -57,6 +57,9 @@ pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Error!void {
     }
     var buf: [4]u8 = undefined;
     const s = encode(c, &buf);
+    // smartindent: a `}` typed first on its line takes the indent of the
+    // line that opened the block.
+    if (ed.auto_indent and c == '}' and !mc.hasExtras(ed)) try dedentClosingBrace(ed);
     if (mc.hasExtras(ed)) {
         // Every cursor types; auto-pair is skipped across N cursors.
         try mc.insertStrAll(ed, s);
@@ -102,7 +105,72 @@ pub fn insertStr(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!
     out.buffer_changed = true;
 }
 
-/// Enter. With `auto_indent`, carries the indent that precedes the cursor.
+/// The indent a line opened after `line` (cut at `limit`) gets under
+/// `auto_indent`: the line's own leading blanks, one level deeper when
+/// its last non-blank char is `{` (vim's `smartindent`). Copied into
+/// `buf` — the source points into `text`, which is about to move.
+fn newLineIndent(ed: *const Editor, line: usize, limit: ?usize, buf: *[256]u8) []const u8 {
+    if (!ed.auto_indent) return "";
+    const src = ed.leadingIndent(line, limit);
+    var n: usize = @min(src.len, buf.len);
+    @memcpy(buf[0..n], src[0..n]);
+    if (lastNonBlank(ed, line, limit) == '{') {
+        const unit: []const u8 = if (ed.use_tabs) "\t" else "        "[0..@min(ed.tab_width, 8)];
+        const room = @min(unit.len, buf.len - n);
+        @memcpy(buf[n .. n + room], unit[0..room]);
+        n += room;
+    }
+    return buf[0..n];
+}
+
+/// The last non-blank byte of `line` before `limit` (its end by default).
+fn lastNonBlank(ed: *const Editor, line: usize, limit: ?usize) ?u8 {
+    const start = ed.lineStart(line);
+    var end = ed.lineEnd(line);
+    if (limit) |l| end = @min(end, l);
+    while (end > start) {
+        end -= 1;
+        const b = ed.text.items[end];
+        if (b != ' ' and b != '\t') return b;
+    }
+    return null;
+}
+
+/// smartindent's `}`: when the cursor's line holds only blanks so far,
+/// re-indent it to the line of the `{` it closes.
+fn dedentClosingBrace(ed: *Editor) Allocator.Error!void {
+    const line = ed.currentLine();
+    const bol = ed.lineStart(line);
+    if (lastNonBlank(ed, line, ed.cursor) != null) return;
+    // The unmatched `{` before the line.
+    var depth: usize = 0;
+    var i = bol;
+    var open: ?usize = null;
+    while (i > 0) {
+        i -= 1;
+        switch (ed.text.items[i]) {
+            '}' => depth += 1,
+            '{' => if (depth == 0) {
+                open = i;
+                break;
+            } else {
+                depth -= 1;
+            },
+            else => {},
+        }
+    }
+    const o = open orelse return;
+    const want_src = ed.leadingIndent(ed.lineOfByte(o), null);
+    var buf: [256]u8 = undefined;
+    const want = buf[0..@min(want_src.len, buf.len)];
+    @memcpy(want, want_src[0..want.len]);
+    if (std.mem.eql(u8, want, ed.text.items[bol..ed.cursor])) return;
+    try ed.splice(bol, ed.cursor, want);
+    ed.cursor = bol + want.len;
+}
+
+/// Enter. With `auto_indent`, carries the indent that precedes the
+/// cursor, one level deeper after a `{`.
 pub fn insertNewline(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try delete.deleteSelectionIfAny(ed, out)) {
         ed.history.clearRedo();
@@ -115,11 +183,8 @@ pub fn insertNewline(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
         out.buffer_changed = true;
         return;
     }
-    const indent_src = if (ed.auto_indent) ed.leadingIndent(ed.currentLine(), ed.cursor) else "";
-    // The indent slice points into `text`; copy before splicing.
     var ibuf: [256]u8 = undefined;
-    const indent = ibuf[0..@min(indent_src.len, ibuf.len)];
-    @memcpy(indent, indent_src[0..indent.len]);
+    const indent = newLineIndent(ed, ed.currentLine(), ed.cursor, &ibuf);
     try ed.splice(ed.cursor, ed.cursor, "\n");
     ed.cursor += 1;
     if (indent.len > 0) {
@@ -135,10 +200,8 @@ pub fn insertNewlineBelow(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     try ed.checkpoint();
     const line = ed.currentLine();
     const eol = ed.lineEnd(line);
-    const indent_src = if (ed.auto_indent) ed.leadingIndent(line, null) else "";
     var ibuf: [256]u8 = undefined;
-    const indent = ibuf[0..@min(indent_src.len, ibuf.len)];
-    @memcpy(indent, indent_src[0..indent.len]);
+    const indent = newLineIndent(ed, line, null, &ibuf);
     try ed.splice(eol, eol, "\n");
     ed.cursor = eol + 1;
     if (indent.len > 0) {
@@ -254,6 +317,31 @@ test "insert char/str/newline with auto-indent, coalesced undo run" {
     try insertStr(&ed, "zz", &out);
     try std.testing.expectEqualStrings("  abcé\n  zz", ed.text.items);
     try std.testing.expect(out.buffer_changed);
+}
+
+test "smartindent: a `{` opens one level deeper on Enter and `o`; a `}` typed first steps back" {
+    var ed = try Editor.init(std.testing.allocator, "fn f() {\n    if (x) {\n}");
+    defer ed.deinit();
+    ed.auto_indent = true;
+    var out: EditOutcome = .{};
+    ed.cursor = ed.lineEnd(1);
+    try insertNewline(&ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    if (x) {\n        \n}", ed.text.items);
+    try insertChar(&ed, '}', &out);
+    try std.testing.expectEqualStrings("fn f() {\n    if (x) {\n    }\n}", ed.text.items);
+    try std.testing.expectEqual(ed.lineEnd(2), ed.cursor);
+    // `o` on the `fn` line: one level in; Enter mid-line only looks left.
+    ed.cursor = 0;
+    try insertNewlineBelow(&ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    \n    if (x) {\n    }\n}", ed.text.items);
+    ed.cursor = 3; // `fn |f() {`
+    try insertNewline(&ed, &out);
+    try std.testing.expectEqualStrings("fn \nf() {\n    \n    if (x) {\n    }\n}", ed.text.items);
+    // Off: nothing of the sort.
+    ed.auto_indent = false;
+    ed.cursor = ed.lineEnd(1);
+    try insertNewline(&ed, &out);
+    try std.testing.expectEqualStrings("fn \nf() {\n\n    \n    if (x) {\n    }\n}", ed.text.items);
 }
 
 test "o and O open lines with the line's indent" {

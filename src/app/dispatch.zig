@@ -1913,6 +1913,8 @@ fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1
 /// remember the rectangle so the typed run is replayed on Esc.
 fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, change: bool) Allocator.Error!void {
     const ed = &e.buf.editor;
+    const eol = ed.block_eol;
+    ed.block_eol = false;
     const rect = blockRect(e) orelse {
         ed.block_anchor = null;
         e.buf.input.requestInsertMode();
@@ -1928,22 +1930,26 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
         while (row > rect.r0) {
             row -= 1;
             const s = ed.byteAtCol(row, rect.c0);
-            const en = @min(ed.byteAtCol(row, rect.c1 + 1), ed.lineEnd(row));
+            const en = if (eol) ed.lineEnd(row) else @min(ed.byteAtCol(row, rect.c1 + 1), ed.lineEnd(row));
             if (en > s) try ed.splice(s, en, "");
         }
         col = rect.c0;
         e.hl_dirty = true;
     }
-    const start = @min(ed.byteAtCol(rect.r0, col), ed.lineEnd(rect.r0));
+    // `$A`: append at every row's own end.
+    const ragged = eol and append and !change;
+    const start = if (ragged) ed.lineEnd(rect.r0) else @min(ed.byteAtCol(rect.r0, col), ed.lineEnd(rect.r0));
     ed.setCursor(start);
     ed.anchor = null;
     e.buf.input.requestInsertMode();
-    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len() };
+    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged };
 }
 
 /// `r<ch>` on a visual block: every cell in the rectangle becomes `ch`.
 fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     const ed = &e.buf.editor;
+    const eol = ed.block_eol;
+    ed.block_eol = false;
     const rect = blockRect(e) orelse return;
     e.block_anchor = null;
     ed.block_anchor = null;
@@ -1954,7 +1960,9 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
     var row = rect.r1 + 1;
     while (row > rect.r0) {
         row -= 1;
-        var c = rect.c1 + 1;
+        // A ragged block replaces to each row's last char.
+        var c = if (eol) ed.colAtByte(ed.lineEnd(row)) else rect.c1 + 1;
+        if (eol and c <= rect.c0) continue;
         while (c > rect.c0) {
             c -= 1;
             const s = ed.byteAtCol(row, c);
@@ -1997,7 +2005,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         while (row > b.first_row + 1) {
             row -= 1;
             if (row >= ed.lineCount()) continue;
-            const at = @min(ed.byteAtCol(row, b.col), ed.lineEnd(row));
+            const at = if (b.eol) ed.lineEnd(row) else @min(ed.byteAtCol(row, b.col), ed.lineEnd(row));
             try ed.splice(at, at, typed);
         }
         ed.setCursor(b.start_byte);

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `==` / `gg=G` do nothing and say nothing
 
@@ -20,3 +20,7 @@ status: open
 **Expected**: `=` re-indents (vim's built-in indent even without an LSP), or at minimum a toast like the one `K` gives (`no language server for this file (hover)`), so the user knows the chord was heard.
 
 **Actual**: silent no-op. Reproduced twice.
+
+## Fix
+
+`a4be20a` on branch `vim-edit` — vim: = re-indents by the buffer's brace rules. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

@@ -1,7 +1,7 @@
 //! Visual block (`ctrl+v`). The rectangle is `block_anchor` → `cursor`
 //! in (row, char col); `anchor` mirrors it so the view paints the
 //! rectangle. Rows shorter than the left edge contribute an empty range,
-//! as vim does.
+//! as vim does. With `block_eol` (`$`) every row runs to its own end.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -19,13 +19,15 @@ pub fn rect(ed: *const Editor) ?Rect {
     return .{ .r0 = @min(a.row, c.row), .c0 = @min(a.col, c.col), .r1 = @max(a.row, c.row), .c1 = @max(a.col, c.col) };
 }
 
-/// One `[start, end)` per row, top to bottom; clamped to each line.
+/// One `[start, end)` per row, top to bottom; clamped to each line —
+/// to each line's end under `block_eol`.
 pub fn ranges(ed: *const Editor, r: Rect, gpa: Allocator) Allocator.Error![][2]usize {
     const last = @min(r.r1, ed.lineCount() - 1);
     const out = try gpa.alloc([2]usize, last + 1 - r.r0);
     for (out, r.r0..) |*o, row| {
         const s = ed.byteAtCol(row, r.c0);
-        o.* = .{ s, @max(ed.byteAtCol(row, r.c1 + 1), s) };
+        const e = if (ed.block_eol) ed.lineEnd(row) else ed.byteAtCol(row, r.c1 + 1);
+        o.* = .{ s, @max(e, s) };
     }
     return out;
 }
@@ -33,11 +35,13 @@ pub fn ranges(ed: *const Editor, r: Rect, gpa: Allocator) Allocator.Error![][2]u
 pub fn selectStart(ed: *Editor) void {
     ed.block_anchor = ed.cursor;
     ed.anchor = ed.cursor;
+    ed.block_eol = false;
 }
 
 pub fn selectClear(ed: *Editor) void {
     ed.block_anchor = null;
     ed.anchor = null;
+    ed.block_eol = false;
 }
 
 fn joined(ed: *const Editor, rs: []const [2]usize) Allocator.Error![]u8 {
@@ -88,6 +92,27 @@ pub fn deleteBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.E
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+
+test "block_eol runs every row to its end; a new block drops it" {
+    var clip = Clipboard.init(testing.allocator);
+    defer clip.deinit();
+    var ed = try Editor.init(testing.allocator, "abcdef\ngh\nmnop");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    ed.cursor = 1;
+    selectStart(&ed);
+    ed.placeCursor(2, 1);
+    ed.block_eol = true;
+    try yankBlock(&ed, &clip, &out);
+    try testing.expectEqualStrings("bcdef\nh\nnop", out.clipboard_set.?);
+    try testing.expect(!ed.block_eol);
+    selectStart(&ed);
+    ed.placeCursor(1, 1);
+    ed.block_eol = true;
+    try deleteBlock(&ed, &clip, &out);
+    try testing.expectEqualStrings("a\ng\nmnop", ed.text.items);
+    try testing.expect(!ed.block_eol);
+}
 
 test "block yank joins the rows; delete cuts them; short rows contribute nothing" {
     var clip = Clipboard.init(testing.allocator);

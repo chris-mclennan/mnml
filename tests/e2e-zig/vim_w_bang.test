@@ -1,0 +1,23 @@
+# zig-only
+# `:w !cmd` pipes the buffer to `cmd` and shows its output (`:help :w_c`)
+# — it never writes a file, and never one named `!cmd`.
+write b.zig "one\ntwo\nthree\n"
+open b.zig
+command editor.use_vim
+
+type ":w !wc -l"
+key enter
+wait 200
+expect screen contains "3"
+expect screen contains ":w !wc -l"
+shell test ! -e '!wc -l'
+shell test ! -e '!wc'
+
+# A range pipes just those lines.
+type ":e b.zig"
+key enter
+type ":1,2w !wc -l"
+key enter
+wait 200
+expect screen contains "2"
+shell test ! -e '!wc -l'

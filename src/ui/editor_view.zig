@@ -98,6 +98,8 @@ pub const Doc = struct {
     focused: bool,
     /// Paint a rectangle from anchor→cursor instead of a byte range.
     visual_block: bool = false,
+    /// The rectangle runs to every line's end (`$` in V-BLOCK).
+    block_eol: bool = false,
     /// A vertical scrollbar in the last column when the text outgrows
     /// the pane.
     scrollbar: bool = false,
@@ -199,6 +201,9 @@ pub const fold_tail = " lines hidden";
 pub const Lines = struct {
     starts: []const u32,
     text_len: u32,
+    /// Lines painted: `starts.len`, less the phantom line a trailing
+    /// `\n` would open — see `hidePhantom`.
+    shown: u32,
 
     pub fn build(arena: Allocator, text: []const u8) Allocator.Error!Lines {
         var n: usize = 1;
@@ -212,11 +217,24 @@ pub const Lines = struct {
             starts[i] = @intCast(off + 1);
             i += 1;
         };
-        return .{ .starts = starts, .text_len = @intCast(text.len) };
+        return .{ .starts = starts, .text_len = @intCast(text.len), .shown = @intCast(n) };
+    }
+
+    /// A trailing `\n` terminates the last line rather than opening an
+    /// empty line N+1 (the editor counts it that way; `G` cannot reach
+    /// it) — unless the cursor, the anchor or an extra cursor sits at
+    /// EOF, in which case the row stays so they have somewhere to paint.
+    pub fn hidePhantom(l: *Lines, doc: Doc) void {
+        if (l.starts.len < 2 or l.text_len == 0 or doc.text[l.text_len - 1] != '\n') return;
+        const phantom: u32 = @intCast(l.starts.len - 1);
+        if (l.lineOf(doc.cursor) == phantom) return;
+        if (doc.anchor) |a| if (l.lineOf(a) == phantom) return;
+        for (doc.extra_cursors) |c| if (l.lineOf(c) == phantom) return;
+        l.shown = phantom;
     }
 
     pub fn count(l: Lines) u32 {
-        return @intCast(l.starts.len);
+        return l.shown;
     }
 
     pub fn start(l: Lines, line: u32) u32 {
@@ -373,7 +391,7 @@ const Selection = struct {
     lo: usize,
     hi: usize,
     /// Rectangle in (line, display col), inclusive.
-    block: ?struct { l0: u32, l1: u32, c0: u32, c1: u32 } = null,
+    block: ?struct { l0: u32, l1: u32, c0: u32, c1: u32, eol: bool = false } = null,
 };
 
 fn firstIndexEndingAfter(comptime T: type, items: []const T, off: usize) usize {
@@ -564,7 +582,7 @@ fn selectionOf(ui: Ui, doc: Doc, lines: Lines) Allocator.Error!?Selection {
         const lc = lines.lineOf(doc.cursor);
         const ca = cellX(try layoutLine(ui, lines.slice(doc.text, la), doc.tab_width), @intCast(anchor - lines.start(la)));
         const cc = cellX(try layoutLine(ui, lines.slice(doc.text, lc), doc.tab_width), @intCast(doc.cursor - lines.start(lc)));
-        sel.block = .{ .l0 = @min(la, lc), .l1 = @max(la, lc), .c0 = @min(ca, cc), .c1 = @max(ca, cc) };
+        sel.block = .{ .l0 = @min(la, lc), .l1 = @max(la, lc), .c0 = @min(ca, cc), .c1 = @max(ca, cc), .eol = doc.block_eol };
     }
     return sel;
 }
@@ -581,7 +599,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     ui.fill(area, t.bg);
     if (area.isEmpty()) return null;
 
-    const lines = try Lines.build(ui.arena, doc.text);
+    var lines = try Lines.build(ui.arena, doc.text);
+    lines.hidePhantom(doc);
     const total = lines.count();
     const gutter_w = @min(gutterWidth(doc, total), area.w);
     const num_w: u16 = gutter_w -| 2;
@@ -760,7 +779,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 }
                 if (sel) |s| {
                     const in_range = s.block == null and off >= s.lo and off < s.hi;
-                    const in_block = if (s.block) |b| line >= b.l0 and line <= b.l1 and x >= b.c0 and x <= b.c1 else false;
+                    const in_block = if (s.block) |b| line >= b.l0 and line <= b.l1 and x >= b.c0 and (b.eol or x <= b.c1) else false;
                     if (in_range or in_block) {
                         style.bg = t.selection.bg;
                     }
@@ -833,7 +852,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 var paint_eol = false;
                 if (sel) |s| {
                     if (s.block) |b| {
-                        if (line >= b.l0 and line <= b.l1) {
+                        // A ragged-right block ends with each line's text.
+                        if (line >= b.l0 and line <= b.l1 and !b.eol) {
                             // Block cells past the end of the text.
                             var bx: u32 = abs_x;
                             while (bx <= b.c1 and bx -| skip < text_w) : (bx += 1) {
@@ -1251,6 +1271,27 @@ test "selection paints a byte range, including the EOL cell across lines" {
     try testing.expect(!f.bgEql(0, 2, sel));
 }
 
+test "a trailing newline opens no phantom line; a cursor at EOF keeps it" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab\ncd\n");
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "   1 ab");
+    try f.expectRow(1, "   2 cd");
+    try f.expectRow(2, "");
+    // A cursor parked at EOF (modeless Ctrl+End) needs its row.
+    d.cursor = 6;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(2, "   3");
+    // No trailing newline: the last line is a real one.
+    d = mkDoc("ab\ncd");
+    d.cursor = 5;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(1, "   2 cd");
+    try f.expectRow(2, "");
+}
+
 test "visual block paints a rectangle in display columns, over EOL too" {
     var f = try Fixture.init(12, 3);
     defer f.deinit();
@@ -1270,6 +1311,27 @@ test "visual block paints a rectangle in display columns, over EOL too" {
         try testing.expect(!f.bgEql(5, y, sel));
     }
     try f.expectRow(1, "ab");
+}
+
+test "a ragged-right block ($) paints to each line's end and no further" {
+    var f = try Fixture.init(12, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abcdef\nab\nabcd");
+    d.line_numbers = false;
+    d.anchor = 2; // line 0 col 2
+    d.cursor = 13; // line 2 col 3 (its last char)
+    d.visual_block = true;
+    d.block_eol = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    const sel = f.theme.selection;
+    try testing.expect(!f.bgEql(1, 0, sel));
+    try testing.expect(f.bgEql(2, 0, sel));
+    try testing.expect(f.bgEql(5, 0, sel));
+    try testing.expect(!f.bgEql(6, 0, sel));
+    try testing.expect(!f.bgEql(2, 1, sel)); // the short row has no cell there
+    try testing.expect(f.bgEql(3, 2, sel));
+    try testing.expect(!f.bgEql(4, 2, sel));
 }
 
 test "extra cursors are painted as inverted cells" {

@@ -66,6 +66,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             try mc.moveExtras(ed, motion.wordRight);
         },
         .move_word_right_no_cross_line => motion.wordRightNoCrossLine(ed),
+        .move_right_no_cross_line => motion.rightNoCrossLine(ed),
+        .move_left_no_cross_line => motion.leftNoCrossLine(ed),
         .move_word_left => {
             motion.wordLeft(ed);
             try mc.moveExtras(ed, motion.wordLeft);
@@ -74,6 +76,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             motion.wordEnd(ed);
             try mc.moveExtras(ed, motion.wordEnd);
         },
+        .move_word_end_cw => |n| motion.wordEndCw(ed, n, false),
+        .move_big_word_end_cw => |n| motion.wordEndCw(ed, n, true),
         .move_word_end_back => motion.wordEndBack(ed),
         .move_big_word_right => motion.bigWordRight(ed),
         .move_big_word_right_no_cross_line => motion.bigWordRightNoCrossLine(ed),
@@ -153,6 +157,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .add_cursor_at_next_word => try mc.addCursorAtNextWord(ed),
         .block_select_start => block.selectStart(ed),
         .block_select_clear => block.selectClear(ed),
+        .block_eol => |v| ed.block_eol = v,
         .yank_block => try block.yankBlock(ed, clip, out),
         .delete_block => try block.deleteBlock(ed, clip, out),
 
@@ -183,6 +188,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         // ── line ops ──
         .indent => try line.indent(ed, out),
         .outdent => try line.outdent(ed, out),
+        .reindent => try line.reindent(ed, out),
         .toggle_line_comment => try line.toggleLineComment(ed, out),
         .move_line_up => try line.moveLine(ed, -1, out),
         .move_line_down => try line.moveLine(ed, 1, out),

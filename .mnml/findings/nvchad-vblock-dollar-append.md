@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `$` in V-BLOCK does not extend to end-of-line — `Ctrl-V … $ A` appends at the shortest line's column
 
@@ -31,3 +31,7 @@ status: open
 **Actual**: the block is clipped to the cursor column of the line where `$` was pressed and `;` lands mid-word on the longer lines. `Ctrl-V … I` (insert at block start) works. Reproduced twice.
 
 **Source pointer**: `src/editor/select.zig` block selection has no "to EOL" flag; `src/input/vim.zig` `$` in V-BLOCK just moves the cursor.
+
+## Fix
+
+`e6911f4` on branch `vim-edit` — vim: $ in V-BLOCK runs the block to every line's end. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

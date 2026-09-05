@@ -1,7 +1,7 @@
 //! The `:` line. A range, a verb, its arguments — the vim subset mnml
-//! answers today: files (`:w :q :wq :x :e :bd :bn :bp :A`), text
-//! (`:s :sort :retab :d :<n>`), settings (`:set :ab :una :noh`), and the
-//! read-outs (`:reg :marks`). The verbs that reach past one line —
+//! answers today: files (`:w :q :wq :x :e :bd :bn :bp :b :A :update
+//! :saveas :cq`), text (`:s :sort :retab :d :t :m :<n>`), settings
+//! (`:set :ab :una :noh`), and the read-outs (`:reg :marks`). The verbs that reach past one line —
 //! `:g` / `:v`, `:norm`, `:command`, `:!`, `:r`, `:<` / `:>`, `:&` and
 //! `:s///c` — live in `ex_verbs.zig`. A verb nobody here knows is tried
 //! as a user command, then as a registered command id (`:tab.close`),
@@ -65,6 +65,15 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     var i: usize = 0;
     while (i < rest.len and (std.ascii.isAlphanumeric(rest[i]) or rest[i] == '.' or rest[i] == '_')) i += 1;
     var verb = rest[0..i];
+    // A command id may carry dots and digits (`tab.close`); the copy /
+    // move verbs take an address right after their letters (`:t.`,
+    // `:m0`, `:co5`), so those split at the first non-letter.
+    var letters: usize = 0;
+    while (letters < verb.len and std.ascii.isAlphabetic(verb[letters])) letters += 1;
+    if (letters < verb.len and eqAny(verb[0..letters], &.{ "t", "co", "copy", "m", "mo", "move" })) {
+        i = letters;
+        verb = rest[0..i];
+    }
     var bang = false;
     if (i < rest.len and rest[i] == '!') {
         bang = true;
@@ -89,9 +98,9 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // A bare `:s [flags]` repeats the last substitute.
     if (eqAny(verb, &.{ "s", "su", "substitute" })) return ex_verbs.ampersand(app, range, args, p.saw_percent);
 
-    if (eqAny(verb, &.{ "w", "write" })) return write(app, args, false);
+    if (eqAny(verb, &.{ "w", "write" })) return write(app, range, args, false);
     if (eqAny(verb, &.{ "wa", "wall" })) return saveAll(app);
-    if (eqAny(verb, &.{ "wq", "x", "xit", "exit" })) return write(app, args, true);
+    if (eqAny(verb, &.{ "wq", "x", "xit", "exit" })) return write(app, range, args, true);
     if (eqAny(verb, &.{ "wqa", "wqall", "xa", "xall" })) {
         try saveAll(app);
         app.quit = true;
@@ -120,6 +129,29 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // `:bn` / `:bp` step over terminal tabs; the bang form takes them too.
     if (eqAny(verb, &.{ "bn", "bnext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, 1) else command.run(app, .{ .static = .@"buffer.next" });
     if (eqAny(verb, &.{ "bp", "bprev", "bprevious", "bN", "bNext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, -1) else command.run(app, .{ .static = .@"buffer.prev" });
+    if (eqAny(verb, &.{ "b", "bu", "buf", "buffer" })) return @import("cmd_buffer.zig").switchTo(app, args);
+    if (eqAny(verb, &.{ "bf", "bfirst", "br", "brewind" })) return @import("cmd_buffer.zig").firstTab(app);
+    if (eqAny(verb, &.{ "bl", "blast" })) return @import("cmd_buffer.zig").lastTab(app);
+    if (eqAny(verb, &.{ "t", "co", "copy" })) return copyMove(app, range, args, false);
+    if (eqAny(verb, &.{ "m", "mo", "move" })) return copyMove(app, range, args, true);
+    if (eqAny(verb, &.{ "up", "update" })) {
+        const e = try editor(app, ":update");
+        if (!e.buf.dirty) return;
+        return write(app, null, "", false);
+    }
+    if (eqAny(verb, &.{ "sav", "saveas" })) {
+        if (args.len == 0) return app.diag.fail(arena, ":saveas — file name required", .{});
+        return write(app, null, args, false);
+    }
+    if (eqAny(verb, &.{ "cq", "cquit" })) {
+        // Quit with a failing exit code — a `git commit` or `crontab -e`
+        // that spawned mnml then treats the edit as abandoned.
+        app.exit_code = 1;
+        app.quit = true;
+        return;
+    }
+    if (eqAny(verb, &.{"new"})) return newSplit(app, .vertical);
+    if (eqAny(verb, &.{ "vne", "vnew" })) return newSplit(app, .horizontal);
     if (eqAny(verb, &.{"rename"})) return @import("cmd_term.zig").renameEx(app, args);
     if (eqAny(verb, &.{ "ls", "buffers", "files" })) return command.run(app, .{ .static = .@"picker.buffers" });
     if (eqAny(verb, &.{"A"})) return alternate(app);
@@ -176,6 +208,87 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (try ex_verbs.runUserCommand(app, range, verb, bang, args)) return;
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);
     return app.diag.fail(arena, ":{s} — unknown command", .{verb});
+}
+
+/// `:new` / `:vnew`: a split holding a fresh scratch buffer.
+fn newSplit(app: *App, dir: @import("layout.zig").SplitDir) CommandError!void {
+    const cur = app.active orelse return error.NoActivePane;
+    const id = app.openScratch() catch return error.OutOfMemory;
+    // openScratch showed it in the current leaf; move it out into the split.
+    app.setActive(cur);
+    return @import("cmd_view.zig").splitWith(app, dir, id);
+}
+
+/// `:[range]t {address}` / `:[range]m {address}`: copy or move the lines
+/// (the cursor's by default) to below `address`; `0` puts them at the
+/// top. A move into its own range is E134; onto its own edge, nothing.
+/// One undo step; the cursor lands on the last line that arrived.
+fn copyMove(app: *App, range: ?Range, args: []const u8, move: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    const label: []const u8 = if (move) ":m" else ":t";
+    const e = try editor(app, label);
+    const ed = &e.buf.editor;
+    const count = ed.lineCount();
+    const src = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
+    const first = @min(src.first, count - 1);
+    const last = @min(src.last, count - 1);
+    const a = std.mem.trim(u8, args, " \t");
+    if (a.len == 0) return app.diag.fail(arena, "{s} — E14: Invalid address", .{label});
+    // Null = address 0: above the first line.
+    var dest: ?usize = null;
+    if (!std.mem.eql(u8, a, "0")) {
+        var p = Parser{ .s = a };
+        dest = (try p.parseAddr(app)) orelse return app.diag.fail(arena, "{s} — E14: Invalid address", .{label});
+    }
+    const n_lines = last + 1 - first;
+    const body = ed.bytes()[ed.lineStart(first)..ed.lineEnd(last)];
+    if (!move) {
+        var land: usize = 0;
+        if (dest) |d| {
+            const at = ed.lineEnd(d);
+            try app.splice(e, at, at, try std.mem.concat(arena, u8, &.{ "\n", body }));
+            land = d + 1;
+        } else {
+            try app.splice(e, 0, 0, try std.mem.concat(arena, u8, &.{ body, "\n" }));
+        }
+        ed.setCursor(ed.firstNonWs(land + n_lines - 1));
+        ed.goal_col = null;
+        return;
+    }
+    if (dest) |d| {
+        if (d >= first and d < last) return app.diag.fail(arena, ":m — E134: Cannot move a range of lines into itself", .{});
+        if (d == last or d + 1 == first) return;
+    } else if (first == 0) return;
+    // Rebuild the span the move disturbs, lines in their new order.
+    const up = if (dest) |d| d < first else true;
+    const lo = if (up) (if (dest) |d| d + 1 else 0) else first;
+    const hi = if (up) last else dest.?;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    const line_of = struct {
+        fn f(editor_: *const Editor, line: usize) []const u8 {
+            return editor_.bytes()[editor_.lineStart(line)..editor_.lineEnd(line)];
+        }
+    }.f;
+    var lines_out: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (up) {
+        var l = first;
+        while (l <= last) : (l += 1) try lines_out.append(arena, line_of(ed, l));
+        l = lo;
+        while (l < first) : (l += 1) try lines_out.append(arena, line_of(ed, l));
+    } else {
+        var l = last + 1;
+        while (l <= hi) : (l += 1) try lines_out.append(arena, line_of(ed, l));
+        l = first;
+        while (l <= last) : (l += 1) try lines_out.append(arena, line_of(ed, l));
+    }
+    for (lines_out.items, 0..) |ln, k| {
+        if (k > 0) try out.append(arena, '\n');
+        try out.appendSlice(arena, ln);
+    }
+    try app.splice(e, ed.lineStart(lo), ed.lineEnd(hi), out.items);
+    const land = if (up) lo + n_lines - 1 else hi;
+    ed.setCursor(ed.firstNonWs(@min(land, ed.lineCount() - 1)));
+    ed.goal_col = null;
 }
 
 /// `:sp [path]` / `:vs [path]`: a split showing `path` (opened if
@@ -330,9 +443,13 @@ const Parser = struct {
 
 // ─── files ──────────────────────────────────────────────────────────────
 
-fn write(app: *App, path_arg: []const u8, then_close: bool) CommandError!void {
+fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":w");
+    // `:w !cmd` / `:[range]w !cmd` pipe the text to `cmd` and show its
+    // output (`:help :w_c`); nothing is written, least of all a file
+    // called `!cmd`.
+    if (path_arg.len > 0 and path_arg[0] == '!') return writeToCommand(app, e, range, path_arg[1..]);
     if (path_arg.len > 0) {
         const abs = try app.absPath(path_arg);
         e.buf.setPath(abs) catch return error.OutOfMemory;
@@ -349,6 +466,26 @@ fn write(app: *App, path_arg: []const u8, then_close: bool) CommandError!void {
         try app.forceClosePane(app.active.?);
         if (app.panes.count() == 0) app.quit = true;
     }
+}
+
+fn writeToCommand(app: *App, e: *EditorPane, range: ?Range, cmd_in: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const cmd = std.mem.trim(u8, cmd_in, " \t");
+    if (cmd.len == 0) return app.diag.fail(arena, ":w ! — command required", .{});
+    const ed = &e.buf.editor;
+    const text: []const u8 = if (range) |r| blk: {
+        const first = @min(r.first, ed.lineCount() - 1);
+        const last = @min(r.last, ed.lineCount() - 1);
+        break :blk try std.mem.concat(arena, u8, &.{ ed.bytes()[ed.lineStart(first)..ed.lineEnd(last)], "\n" });
+    } else ed.bytes();
+    const res = ex_verbs.runShell(app, arena, cmd, text, true) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Spawn => return app.diag.fail(arena, ":w !{s} — could not start the shell", .{cmd}),
+    };
+    try ex_verbs.showOutput(app, cmd, res.stdout);
+    if (res.code) |c| {
+        if (c == 0) app.toast(":w !{s} — done", .{cmd}) else app.toast(":w !{s} — exit {d}", .{ cmd, c });
+    } else app.toast(":w !{s} — killed", .{cmd});
 }
 
 fn saveAll(app: *App) CommandError!void {
@@ -741,14 +878,10 @@ fn registers(app: *App, filter: []const u8) CommandError!void {
     if (show_unnamed) if (app.clipboard.unnamed) |u| if (u.text.len > 0) {
         try parts.print(arena, "\"\"  {s}", .{try preview(arena, u.text, 40)});
     };
-    var names: std.ArrayListUnmanaged(u8) = .empty;
-    var it = app.clipboard.named.keyIterator();
-    while (it.next()) |k| try names.append(arena, k.*);
-    std.mem.sort(u8, names.items, {}, std.sort.asc(u8));
-    for (names.items) |c| {
+    // Macros are registers: `:reg a` shows what `qa…q` recorded.
+    for (try app.clipboard.listedNames(arena)) |c| {
         if (want.len > 0 and std.mem.indexOfScalar(u8, want, c) == null) continue;
         const entry = app.clipboard.named.get(c).?;
-        if (entry.text.len == 0) continue;
         if (parts.items.len > 0) try parts.appendSlice(arena, "  ");
         try parts.print(arena, "\"{c}  {s}", .{ c, try preview(arena, entry.text, 40) });
     }
@@ -827,9 +960,6 @@ fn set(app: *App, args: []const u8) CommandError!void {
         } else if (eqAny(name, &.{ "smartcase", "scs" })) {
             app.search_case = null;
             app.toast(":set {s}", .{opt});
-        } else if (eqAny(name, &.{ "nu", "number" })) {
-            app.cfg.ui.line_numbers = !off;
-            app.toast(":set {s}", .{opt});
         } else if (eqAny(name, &.{ "theme", "colorscheme" })) {
             const v = value orelse return app.diag.fail(arena, ":set theme=<name>", .{});
             try @import("cmd_view.zig").useTheme(app, v);
@@ -882,6 +1012,8 @@ const vim_aliases = [_]struct { name: []const u8, path: []const u8 }{
     .{ .name = "cursorline", .path = "ui.cursor_line" },
     .{ .name = "ai", .path = "editor.auto_indent" },
     .{ .name = "autoindent", .path = "editor.auto_indent" },
+    .{ .name = "nu", .path = "ui.line_numbers" },
+    .{ .name = "number", .path = "ui.line_numbers" },
 };
 
 /// Sections whose values are user-keyed maps or forwarded blobs — no
@@ -973,6 +1105,8 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
         } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
             app.clipboard.selectMode(app.cfg.editor.clipboard);
+        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent")) {
+            app.syncAutoIndent();
         }
         app.needs_render = true;
         app.toast("{s}={s}", .{ cp, opts[idx] });
@@ -1110,6 +1244,37 @@ test "ex: substitute is a vim pattern — groups, &, \\<\\>, \\v, a bad pattern"
     try testing.expectEqualStrings("| 1-foo 22-bar\n| [is] this\n| Value: KEY", f.text());
     try testing.expectError(error.Failed, f.ex("%s/\\(x/y/"));
     try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "invalid pattern") != null);
+}
+
+test "ex: :t and :m copy and move lines by address; :cq quits with exit 1" {
+    var f = try Fixture.init("alpha\nbravo\ncharlie");
+    defer f.deinit();
+    try f.ex("t.");
+    try testing.expectEqualStrings("alpha\nalpha\nbravo\ncharlie", f.text());
+    try testing.expectEqual(@as(usize, 1), f.app.activeEditor().?.buf.editor.currentLine());
+    try f.ex("3t0");
+    try testing.expectEqualStrings("bravo\nalpha\nalpha\nbravo\ncharlie", f.text());
+    try f.ex("1,2t$");
+    try testing.expectEqualStrings("bravo\nalpha\nalpha\nbravo\ncharlie\nbravo\nalpha", f.text());
+    try f.ex("$m0");
+    try testing.expectEqualStrings("alpha\nbravo\nalpha\nalpha\nbravo\ncharlie\nbravo", f.text());
+    try f.ex("1m$");
+    try testing.expectEqualStrings("bravo\nalpha\nalpha\nbravo\ncharlie\nbravo\nalpha", f.text());
+    try testing.expectEqual(@as(usize, 6), f.app.activeEditor().?.buf.editor.currentLine());
+    try f.ex("2,3m4");
+    try testing.expectEqualStrings("bravo\nbravo\nalpha\nalpha\ncharlie\nbravo\nalpha", f.text());
+    try testing.expectError(error.Failed, f.ex("1,3m2"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "E134") != null);
+    // Onto its own edge: nothing happens, no error.
+    try f.ex("2m2");
+    try testing.expectEqualStrings("bravo\nbravo\nalpha\nalpha\ncharlie\nbravo\nalpha", f.text());
+    // The undo step is one per command.
+    const e = f.app.activeEditor().?;
+    _ = try f.app.applyOps(e, &.{.undo});
+    try testing.expectEqualStrings("bravo\nalpha\nalpha\nbravo\ncharlie\nbravo\nalpha", f.text());
+    try f.ex("cq");
+    try testing.expect(f.app.quit);
+    try testing.expectEqual(@as(u8, 1), f.app.exit_code);
 }
 
 test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {

@@ -56,16 +56,8 @@ fn buffers(app: *App) CommandError!void {
         panes.deinit(gpa);
     }
     // Tab order first (every leaf of the current layout), then anything
-    // open in the background.
-    const layout = app.layouts.current();
-    const ordered = try layout.allPanes(app.frame.allocator());
-    for (ordered) |id| try pushBuffer(app, &labels, &panes, id);
-    for (app.panes.slots.items, 0..) |*slot, i| {
-        if (slot.* == null) continue;
-        const id: PaneId = @intCast(i);
-        if (std.mem.indexOfScalar(PaneId, panes.items, id) != null) continue;
-        try pushBuffer(app, &labels, &panes, id);
-    }
+    // open in the background — the order `:b N` counts along.
+    for (try @import("cmd_buffer.zig").listOrder(app, app.frame.allocator())) |id| try pushBuffer(app, &labels, &panes, id);
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no open buffers", .{});
     try openPicker(app, "Buffers", .buffers, try labels.toOwnedSlice(gpa), try panes.toOwnedSlice(gpa));
 }

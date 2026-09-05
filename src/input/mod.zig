@@ -61,7 +61,7 @@ pub const AppCommand = union(enum) {
     ex_command: []const u8,
     /// Bridge into the command registry (vim `gd` → `lsp.goto_definition`).
     run_command: CommandId,
-    /// `.` with its count.
+    /// `.`; the count replaces the recorded change's count, 0 = none given.
     dot_repeat: u32,
     set_mark: u8,
     jump_to_mark_line: u8,

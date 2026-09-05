@@ -163,6 +163,8 @@ pub const Editor = struct {
     last_selection: ?[2]usize = null,
     /// Visual-block anchor. Independent of `anchor`.
     block_anchor: ?usize = null,
+    /// The block runs to each line's end (`$` in V-BLOCK).
+    block_eol: bool = false,
     /// Multi-cursor extras, sorted, distinct from `cursor`.
     extra_cursors: std.ArrayList(usize) = .empty,
     /// Parallel to `extra_cursors`.

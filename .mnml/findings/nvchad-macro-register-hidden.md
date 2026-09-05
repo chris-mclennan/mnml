@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # A recorded macro is not visible in `:reg` / `:reg a` and cannot be pasted with `"ap`
 
@@ -22,3 +22,7 @@ status: open
 **Expected**: registers and macros are the same store in vim — `:reg a` shows `I- ^[`, `"ap` pastes it (the standard way to edit a macro), `"ayy` after editing re-records it.
 
 **Actual**: macros live in a separate store (`src/editor/buffer.zig` `macroToggle`) invisible to `:reg` and `"ap`. PARITY marks macros `partial` only for persistence, not for this.
+
+## Fix
+
+`139dde4` on branch `vim-edit` — vim: a macro is its register — :reg shows it, "ap pastes it, "ay$ re-records. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

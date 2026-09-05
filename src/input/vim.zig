@@ -28,6 +28,7 @@ pub const PendingOp = enum {
     yank,
     indent,
     outdent,
+    reindent,
     reflow,
     lower,
     upper,
@@ -44,6 +45,7 @@ pub const PendingOp = enum {
             .yank => "y",
             .indent => ">",
             .outdent => "<",
+            .reindent => "=",
             .reflow => "gq",
             .lower => "gu",
             .upper => "gU",
@@ -653,7 +655,7 @@ pub const Vim = struct {
                     '.' => return runCmd(.@"editor.insert_last_inserted"),
                     else => {},
                 }
-                const valid = (c >= 'a' and c <= 'z') or c == '0' or c == '+' or c == '*' or c == '_' or c == '"';
+                const valid = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '"';
                 if (valid) return ops(arena, &.{ .{ .set_register_hint = c }, .paste });
             }
             return .consumed;
@@ -765,6 +767,10 @@ pub const Vim = struct {
             },
             .outdent => {
                 try b.push(.outdent);
+                try b.push(.select_clear);
+            },
+            .reindent => {
+                try b.push(.reindent);
                 try b.push(.select_clear);
             },
             .reflow => {
@@ -980,7 +986,7 @@ pub const Vim = struct {
             .register => {
                 self.prefix = .none;
                 if (ch) |c| {
-                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_';
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-';
                     if (valid) self.pending_register = c;
                 }
                 return .consumed;
@@ -1205,13 +1211,20 @@ pub const Vim = struct {
                         self.enterInsert();
                         return ops(arena, &.{if (above) .insert_newline_above else .insert_newline_below});
                     },
-                    'x' => {
+                    'x', 'X' => {
+                        // `x` is `dl`, `X` is `dh`: a real delete, so the
+                        // text lands in the unnamed and `"-` registers
+                        // and `xp` swaps two chars. Nothing to take on an
+                        // empty line / at the line start.
                         self.resetPending();
-                        return repeated(arena, .delete_forward, n);
-                    },
-                    'X' => {
-                        self.resetPending();
-                        return repeated(arena, .backspace, n);
+                        if (c == 'x' and ctx.line_len == 0) return ops(arena, &.{});
+                        if (c == 'X' and ctx.at_line_start) return ops(arena, &.{});
+                        const step: EditOp = if (c == 'x') .move_right_no_cross_line else .move_left_no_cross_line;
+                        var b = Builder.init(arena);
+                        try b.push(.select_start);
+                        try b.pushRepeated(step, n);
+                        try b.push(.delete_selection);
+                        return b.finish();
                     },
                     'D' => {
                         self.resetPending();
@@ -1279,8 +1292,11 @@ pub const Vim = struct {
                         return repeated(arena, .toggle_case_char, n);
                     },
                     '.' => {
+                        // A count replaces the last change's count
+                        // (`:help .`); 0 = repeat as recorded.
+                        const explicit = self.count orelse 0;
                         self.resetPending();
-                        return .{ .app = .{ .dot_repeat = n } };
+                        return .{ .app = .{ .dot_repeat = explicit } };
                     },
                     '&' => {
                         self.resetPending();
@@ -1317,13 +1333,14 @@ pub const Vim = struct {
                         self.resetPending();
                         return repeated(arena, .undo, n);
                     },
-                    'd', 'c', 'y', '>', '<', '!' => {
+                    'd', 'c', 'y', '>', '<', '=', '!' => {
                         self.op = switch (c) {
                             'd' => .delete,
                             'c' => .change,
                             'y' => .yank,
                             '>' => .indent,
                             '<' => .outdent,
+                            '=' => .reindent,
                             else => .filter,
                         };
                         self.count = if (n > 1) n else null;
@@ -1442,14 +1459,21 @@ pub const Vim = struct {
         if (key.mods.ctrl and c == 'g') return runCmd(.@"editor.file_stats");
         switch (c) {
             'g' => {
+                const go: EditOp = if (count_explicit) .{ .move_to_line = n } else .move_buffer_start;
                 if (pending_op) |op| {
                     if (op == .delete or op == .yank) {
                         const target: ?u32 = if (count_explicit) n else 0;
                         return .{ .app = .{ .operator_linewise_to = .{ .op = if (op == .delete) 'd' else 'y', .target = target } } };
                     }
+                    // `=gg`, `>gg`, `cgg`: linewise back to the top — the
+                    // cursor's line counts whole.
+                    var b = Builder.init(arena);
+                    try b.push(.move_line_end);
+                    try b.push(.select_start);
+                    try b.push(go);
+                    return self.finishOperator(&b, op, ctx, false);
                 }
-                if (count_explicit) return ops(arena, &.{.{ .move_to_line = n }});
-                return ops(arena, &.{.move_buffer_start});
+                return ops(arena, &.{go});
             },
             'd' => return runCmd(.@"lsp.goto_definition"),
             'D' => return runCmd(.@"lsp.goto_declaration"),
@@ -1553,6 +1577,7 @@ pub const Vim = struct {
             .yank => c == 'y',
             .indent => c == '>',
             .outdent => c == '<',
+            .reindent => c == '=',
             .lower => c == 'u',
             .upper => c == 'U',
             .toggle_case => c == '~',
@@ -1581,12 +1606,16 @@ pub const Vim = struct {
                     try b.push(.continue_insert_run);
                     return b.finish();
                 },
-                .indent, .outdent => {
+                .indent, .outdent, .reindent => {
                     var b = Builder.init(arena);
                     try b.push(.select_start);
                     for (1..n) |_| try b.push(.move_down);
                     try b.push(.move_line_end);
-                    try b.push(if (op == .indent) .indent else .outdent);
+                    try b.push(switch (op) {
+                        .indent => .indent,
+                        .outdent => .outdent,
+                        else => .reindent,
+                    });
                     try b.push(.select_clear);
                     return b.finish();
                 },
@@ -1642,12 +1671,17 @@ pub const Vim = struct {
                 return .consumed;
             }
         }
-        // `cw` behaves like `ce`.
-        var code = key.code;
-        if (op == .change) {
-            if (ch == 'w') code = .{ .char = 'e' };
-            if (ch == 'W') code = .{ .char = 'E' };
+        // `cw` is `ce`-shaped (`:help cw`): the current word's end, even
+        // when the cursor is already on it, then `e` for the rest of a
+        // count — one op carrying the count so `{count}.` can replace it.
+        if (op == .change and (ch == 'w' or ch == 'W')) {
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            try b.push(if (ch == 'w') .{ .move_word_end_cw = n } else .{ .move_big_word_end_cw = n });
+            try b.push(.move_right);
+            return self.finishOperator(&b, op, ctx, false);
         }
+        const code = key.code;
         const vertical: ?i2 = switch (code) {
             .char => |c| switch (c) {
                 'j', '+' => 1,
@@ -1664,16 +1698,13 @@ pub const Vim = struct {
             // `>j` / `<k`: one line op over a selection spanning the lines
             // (a per-line op without a selection would hit the cursor
             // line every time).
-            if (op == .indent or op == .outdent or op == .@"align") {
+            if (op == .indent or op == .outdent or op == .reindent or op == .@"align") {
                 try b.push(.select_start);
                 for (0..n) |_| try b.push(if (dir < 0) .move_up else .move_down);
                 // Park at the last line's end so a selection ending on a
                 // line start does not exclude that line.
                 try b.push(.move_line_end);
-                if (op == .@"align") return self.finishOperator(&b, op, ctx, false);
-                try b.push(if (op == .indent) .indent else .outdent);
-                try b.push(.select_clear);
-                return b.finish();
+                return self.finishOperator(&b, op, ctx, false);
             }
             if (dir < 0) for (0..n) |_| try b.push(.move_up);
             switch (op) {
@@ -1712,12 +1743,11 @@ pub const Vim = struct {
             }
             var b = Builder.init(arena);
             try b.push(.select_start);
-            if (n > 1) {
-                const inner = try arena.create(EditOp);
-                inner.* = m;
-                try b.push(.{ .repeat = .{ .count = n, .inner = inner } });
-            } else try b.push(m);
+            // Always a `repeat`, so `3.` can replace the count of `dw`.
+            try b.pushRepeated(m, n);
             if (inclusive) try b.push(.move_right);
+            // `G` is linewise: the last line counts whole.
+            if (ch == 'G') try b.push(.move_line_end);
             return self.finishOperator(&b, op, ctx, false);
         }
         return .consumed;
@@ -1863,9 +1893,13 @@ pub const Vim = struct {
                 return ops(arena, &.{ widen, .yank_selection, .move_cursor_to_selection_start, .select_clear });
             },
             'o' => return ops(arena, &.{.swap_anchor_cursor}),
-            '>', '<' => {
+            '>', '<', '=' => {
                 self.enterNormal();
-                const op: EditOp = if (c == '>') .indent else .outdent;
+                const op: EditOp = switch (c) {
+                    '>' => .indent,
+                    '<' => .outdent,
+                    else => .reindent,
+                };
                 if (linewise) return ops(arena, &.{ .normalize_linewise_selection, op, .select_clear });
                 return ops(arena, &.{ op, .select_clear });
             },
@@ -1932,15 +1966,17 @@ pub const Vim = struct {
                 return .consumed;
             }
         }
-        if (modifiedMotion(key)) |m| {
+        if (modifiedMotion(key) orelse motion(key.code)) |m| {
             const n = self.count1();
             self.count = null;
-            return repeated(arena, m, n);
-        }
-        if (motion(key.code)) |m| {
-            const n = self.count1();
-            self.count = null;
-            return repeated(arena, m, n);
+            // `$` makes the block ragged-right (`:help v_$`); a vertical
+            // motion keeps that, any other horizontal one drops it.
+            if (m == .move_line_last_char) return ops(arena, &.{ m, .{ .block_eol = true } });
+            if (m.preservesGoalCol()) return repeated(arena, m, n);
+            var b = Builder.init(arena);
+            try b.pushRepeated(m, n);
+            try b.push(.{ .block_eol = false });
+            return b.finish();
         }
         self.count = null;
         if (key.code == .esc or isCtrlChar(key, 'v')) {
@@ -2001,6 +2037,14 @@ const Builder = struct {
 
     fn push(b: *Builder, op: EditOp) Allocator.Error!void {
         try b.list.append(b.arena, op);
+    }
+
+    /// `op` under a `repeat` — always, even for a count of 1, so a
+    /// `{count}.` later can find the count to replace.
+    fn pushRepeated(b: *Builder, op: EditOp, n: u32) Allocator.Error!void {
+        const inner = try b.arena.create(EditOp);
+        inner.* = op;
+        try b.push(.{ .repeat = .{ .count = n, .inner = inner } });
     }
 
     fn finish(b: *Builder) InputResult {

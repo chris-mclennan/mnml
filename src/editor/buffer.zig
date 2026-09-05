@@ -94,6 +94,13 @@ pub const Buffer = struct {
     dot_collecting: bool = false,
     replaying_dot: bool = false,
 
+    /// One Insert / Replace session is one undo step (`:help
+    /// undo-blocks`): `insert_undo_target` is the undo depth just past
+    /// the snapshot the session's first edit pushed; leaving the mode
+    /// truncates the stack back to it.
+    insert_session: bool = false,
+    insert_undo_target: ?usize = null,
+
     /// The macro being recorded; the finished keys go to the clipboard.
     recording: ?Recording = null,
     replay_depth: u8 = 0,
@@ -345,16 +352,51 @@ pub const Buffer = struct {
         if (self.read_only) return .{ .unhandled = key };
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
         const ctx = self.makeCtx(wrap_width);
+        // What a visual operator would act on, before the key resolves —
+        // the shape `.` re-applies (`:help visual-repeat`).
+        const visual: ?VisualShape = if (self.input.mode().isVisual()) self.visualShape() else null;
+        // A session the app ended without a key (a blur) closes before
+        // this key's own snapshot lands.
+        const undo_before = self.editor.history.undoLen();
+        self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
-        switch (result) {
-            .ops => |list| {
-                const changed = try self.applyOps(list, clip, viewport_rows, arena);
-                try self.trackDot(list);
-                return if (changed) .edited else .redraw;
+        const ev: BufferEvent = switch (result) {
+            .ops => |list| blk: {
+                // The record keeps the handler's list: `.` on another
+                // fold re-expands against that fold.
+                const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
+                try self.trackDot(list, visual, arena);
+                break :blk if (changed) .edited else .redraw;
             },
-            .consumed => return .redraw,
-            .ignored => return .{ .unhandled = key },
-            .app => |cmd| return self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
+            .consumed => .redraw,
+            .ignored => .{ .unhandled = key },
+            .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
+        };
+        self.syncInsertSession(undo_before);
+        return ev;
+    }
+
+    /// Open / anchor / close the Insert undo session against the mode
+    /// the handler is in now. `undo_before` is the undo depth before the
+    /// key: the first snapshot pushed past it is the session's — the
+    /// `cw` that entered Insert and the text typed after undo together.
+    fn syncInsertSession(self: *Buffer, undo_before: usize) void {
+        const ed = &self.editor;
+        const typing = switch (self.input.mode()) {
+            .insert, .replace => true,
+            else => false,
+        };
+        if (typing) {
+            if (!self.insert_session) {
+                self.insert_session = true;
+                self.insert_undo_target = null;
+            }
+            if (self.insert_undo_target == null and ed.history.undoLen() > undo_before) self.insert_undo_target = undo_before + 1;
+        } else if (self.insert_session) {
+            self.insert_session = false;
+            if (self.insert_undo_target) |t| ed.history.truncateUndo(t);
+            self.insert_undo_target = null;
+            ed.in_insert_run = false;
         }
     }
 
@@ -407,9 +449,179 @@ pub const Buffer = struct {
         try self.folds.reIndex(self.gpa);
     }
 
+    // ─── folds ───
+
+    /// The closed fold holding `row`, as `(start, end)`.
+    pub fn foldAt(self: *const Buffer, row: usize) ?[2]usize {
+        for (self.folds.keys(), self.folds.values()) |s, e| if (row >= s and row <= e and e > s) return .{ s, e };
+        return null;
+    }
+
+    /// The row on screen for `row`: itself, or the header of the fold
+    /// hiding it.
+    fn visibleRow(self: *const Buffer, row: usize) usize {
+        return if (self.foldAt(row)) |f| f[0] else row;
+    }
+
+    /// Closed folds are one line to `j` / `k` and to the line operators
+    /// (`:help fold-behavior`): `j` from a fold header lands on the first
+    /// line after the fold, `dd` deletes the whole fold and `yy` yanks
+    /// it. The handler's list is rewritten before it is applied; a list
+    /// no fold touches comes back as it was. Frame arena.
+    fn foldAwareOps(self: *Buffer, list: []const EditOp, arena: Allocator) Allocator.Error![]const EditOp {
+        if (self.folds.count() == 0 or list.len == 0) return list;
+        const ed = &self.editor;
+        const cur = ed.currentLine();
+        const count = ed.lineCount();
+        // A `"x` prefix stays in front.
+        const head: usize = if (list[0] == .set_register_hint) 1 else 0;
+        const body = list[head..];
+        if (body.len == 0) return list;
+
+        // `j` / `k` / `+` / `-` and their counts.
+        if (body.len == 1) {
+            var inner = body[0];
+            var n: usize = 1;
+            if (body[0] == .repeat) {
+                n = body[0].repeat.count;
+                inner = body[0].repeat.inner.*;
+            }
+            const vertical: ?bool = switch (inner) {
+                .move_down, .move_down_first_non_ws => true,
+                .move_up, .move_up_first_non_ws => false,
+                else => null,
+            };
+            if (vertical) |down| {
+                var line = self.visibleRow(cur);
+                for (0..n) |_| {
+                    if (down) {
+                        const next = (if (self.foldAt(line)) |f| f[1] else line) + 1;
+                        if (next >= count) break;
+                        line = next;
+                    } else {
+                        if (line == 0) break;
+                        line = self.visibleRow(line - 1);
+                    }
+                }
+                const steps = if (down) line -| cur else cur -| line;
+                if (steps == n) return list;
+                if (steps == 0) return list[0..head];
+                const ptr = try arena.create(EditOp);
+                ptr.* = inner;
+                const out = try arena.alloc(EditOp, head + 1);
+                @memcpy(out[0..head], list[0..head]);
+                out[head] = .{ .repeat = .{ .count = @intCast(steps), .inner = ptr } };
+                return out;
+            }
+        }
+
+        // `dd` / `<n>dd` / `dj` / `yy` / `<n>yy`.
+        const Kind = enum { delete, yank };
+        var kind: Kind = .delete;
+        var n: usize = 0;
+        if (body.len == 1 and body[0] == .repeat and body[0].repeat.inner.* == .delete_line) {
+            n = body[0].repeat.count;
+        } else if (body.len == 1 and body[0] == .yank_line) {
+            kind = .yank;
+            n = 1;
+        } else if (body.len == 1 and body[0] == .yank_lines_count) {
+            kind = .yank;
+            n = body[0].yank_lines_count;
+        } else {
+            for (body) |o| if (o != .delete_line) return list;
+            n = body.len;
+        }
+        if (n == 0) return list;
+        const first = self.visibleRow(cur);
+        var line = first;
+        var last = first;
+        for (0..n) |i| {
+            last = if (self.foldAt(line)) |f| f[1] else line;
+            if (i + 1 < n) {
+                if (last + 1 >= count) break;
+                line = last + 1;
+            }
+        }
+        if (first == cur and last + 1 - first == n) return list;
+        var out: std.ArrayList(EditOp) = .empty;
+        try out.appendSlice(arena, list[0..head]);
+        if (first != cur) try out.append(arena, .{ .move_to_line = first + 1 });
+        const covered: u32 = @intCast(last + 1 - first);
+        switch (kind) {
+            .delete => {
+                // The folds going with the lines go first; `applyOps`
+                // shifts the ones after.
+                var i: usize = 0;
+                while (i < self.folds.count()) {
+                    const start = self.folds.keys()[i];
+                    if (start >= first and start <= last) self.folds.orderedRemoveAt(i) else i += 1;
+                }
+                try self.folds.reIndex(self.gpa);
+                const ptr = try arena.create(EditOp);
+                ptr.* = .delete_line;
+                try out.append(arena, .{ .repeat = .{ .count = covered, .inner = ptr } });
+            },
+            .yank => try out.append(arena, .{ .yank_lines_count = covered }),
+        }
+        return out.items;
+    }
+
     // ─── dot-repeat ───
 
-    fn trackDot(self: *Buffer, list: []const EditOp) Allocator.Error!void {
+    /// A visual selection's extent, mode included, as of before a key —
+    /// in rows and columns, since the key may have removed the text by
+    /// the time the record is built.
+    const VisualShape = struct { mode: input.EditingMode, a: Pos, c: Pos };
+
+    fn visualShape(self: *const Buffer) ?VisualShape {
+        const a = self.editor.anchor orelse self.editor.block_anchor orelse return null;
+        return .{ .mode = self.input.mode(), .a = self.editor.rowColAt(a), .c = self.editor.rowCol() };
+    }
+
+    /// The ops that reselect `v`'s amount of text from the cursor: the
+    /// same lines for V-LINE, the same rectangle for V-BLOCK, the same
+    /// chars on one line or the same lines + end column across several
+    /// (`:help visual-repeat`). Frame arena.
+    fn reselectOps(self: *const Buffer, v: VisualShape, arena: Allocator) Allocator.Error![]const EditOp {
+        _ = self;
+        const a = v.a;
+        const c = v.c;
+        const rows: u32 = @intCast(@max(a.row, c.row) - @min(a.row, c.row));
+        var out: std.ArrayList(EditOp) = .empty;
+        const down = try arena.create(EditOp);
+        down.* = .move_down;
+        // Columns never cross a line: a charwise reselect clips at the
+        // line end, like the `l` that made the selection would have.
+        const right = try arena.create(EditOp);
+        right.* = .move_right_no_cross_line;
+        switch (v.mode) {
+            .visual_line => {
+                try out.append(arena, .select_line);
+                if (rows > 0) try out.append(arena, .{ .repeat = .{ .count = rows, .inner = down } });
+            },
+            .visual_block => {
+                const cols: u32 = @intCast(@max(a.col, c.col) - @min(a.col, c.col));
+                try out.append(arena, .block_select_start);
+                if (rows > 0) try out.append(arena, .{ .repeat = .{ .count = rows, .inner = down } });
+                if (cols > 0) try out.append(arena, .{ .repeat = .{ .count = cols, .inner = right } });
+            },
+            else => {
+                try out.append(arena, .select_start);
+                if (rows == 0) {
+                    const cols: u32 = @intCast(@max(a.col, c.col) - @min(a.col, c.col));
+                    if (cols > 0) try out.append(arena, .{ .repeat = .{ .count = cols, .inner = right } });
+                } else {
+                    const end_col: u32 = @intCast(if (a.row > c.row) a.col else c.col);
+                    try out.append(arena, .{ .repeat = .{ .count = rows, .inner = down } });
+                    try out.append(arena, .move_line_start);
+                    if (end_col > 0) try out.append(arena, .{ .repeat = .{ .count = end_col, .inner = right } });
+                }
+            },
+        }
+        return out.items;
+    }
+
+    fn trackDot(self: *Buffer, list: []const EditOp, visual: ?VisualShape, arena: Allocator) Allocator.Error!void {
         if (self.replaying_dot) return;
         const in_insert = switch (self.input.mode()) {
             .insert, .replace => true,
@@ -424,9 +636,13 @@ pub const Buffer = struct {
         for (list) |o| {
             if (o.isMutation() and !o.isUndoOrRedo()) mutates = true;
         }
-        if (!mutates) return;
+        // The key that entered Insert is part of the change even when it
+        // only moved (`A` is `move_line_end` + the typed text): vim's `.`
+        // after `A!<Esc>` appends, it does not insert at the cursor.
+        if (!mutates and !in_insert) return;
         for (self.dot_pending.items) |o| o.free(self.gpa);
         self.dot_pending.clearRetainingCapacity();
+        if (visual) |v| try self.appendDot(try self.reselectOps(v, arena));
         try self.appendDot(list);
         if (in_insert) {
             self.dot_collecting = true;
@@ -449,18 +665,37 @@ pub const Buffer = struct {
         self.dot = try self.dot_pending.toOwnedSlice(self.gpa);
     }
 
+    /// `.` (`count` = 0) or `{count}.`: a count replaces the count of
+    /// the recorded change — the first `repeat` in the record, where the
+    /// handler put the operator's motion — and sticks for the next bare
+    /// `.` (`:help .`). A record with no counted op (`A!<Esc>`, `oX<Esc>`)
+    /// is replayed `count` times, which is what `3A!` / `3oX` do anyway.
+    /// The replay is one undo step whatever it contains.
     fn dotRepeat(self: *Buffer, count: u32, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
         const d = self.dot orelse return .noop;
         self.replaying_dot = true;
         defer self.replaying_dot = false;
+        var times: u32 = 1;
+        if (count > 0) {
+            if (countedOp(d)) |n| n.* = count else times = count;
+        }
+        const tok = try self.editor.beginAtomic();
         var changed = false;
-        for (0..@max(count, 1)) |_| {
+        for (0..times) |_| {
             if (try self.applyOps(d, clip, viewport_rows, arena)) changed = true;
         }
+        self.editor.endAtomic(tok);
+        if (!changed) self.editor.popCheckpoint();
         // A replayed change that entered insert mode leaves the handler
         // there; the replay already typed the text, so drop back.
         if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
         return if (changed) .edited else .redraw;
+    }
+
+    /// The count in a recorded change: the first counted op's.
+    fn countedOp(list: []EditOp) ?*u32 {
+        for (list) |*o| if (o.countPtr()) |n| return n;
+        return null;
     }
 
     // ─── macros ───
@@ -469,9 +704,11 @@ pub const Buffer = struct {
         if (self.recording) |*r| {
             // The `q` that stopped us was recorded too — drop it.
             _ = r.keys.pop();
-            const keys = try r.keys.toOwnedSlice(self.gpa);
-            try clip.putMacro(r.reg, keys);
+            const spec = try keysToSpec(self.gpa, r.keys.items);
+            defer self.gpa.free(spec);
+            try clip.putMacro(r.reg, spec);
             clip.last_macro = r.reg;
+            r.keys.deinit(self.gpa);
             self.recording = null;
             return .redraw;
         }
@@ -481,16 +718,24 @@ pub const Buffer = struct {
         return .redraw;
     }
 
+    /// `@reg`: the register's text as keys. A register yanked back with
+    /// `yy` ends in a newline, which replays as Enter — vim executes it
+    /// the same way.
     fn macroReplay(self: *Buffer, reg_in: u8, count: u32, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         const reg = if (reg_in == '@') (clip.last_macro orelse return .noop) else reg_in;
-        const keys = clip.macro(reg) orelse return .noop;
+        const spec = clip.macro(reg) orelse return .noop;
         if (self.replay_depth >= max_replay_depth) return .noop;
         self.replay_depth += 1;
         defer self.replay_depth -= 1;
         clip.last_macro = reg;
+        // The register may be rewritten by what it replays (`"ay$`):
+        // take a copy first.
+        const keys = try parseKeys(self.gpa, spec);
+        defer self.gpa.free(keys);
         var edited = false;
         for (0..@max(count, 1)) |_| {
-            for (keys) |k| {
+            for (keys) |k_in| {
+                const k: Key = if (k_in.code == .char and k_in.code.char == '\n') Key.named(.enter) else k_in;
                 const ev = try self.feedKey(k, clip, viewport_rows, wrap_width, arena);
                 if (ev == .edited) edited = true;
             }
@@ -872,6 +1117,11 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("di[", "[|a]", "[|]");
     try vim("cwfoo<esc>", "|hello world", "fo|o world");
     try vim("cefoo<esc>", "|hello world", "fo|o world");
+    try vim("cwX<esc>", "hell|o world", "hell|X world"); // on the last char: just that char
+    try vim("2cwX<esc>", "|a b c", "|X c");
+    try vim("c2wX<esc>", "|a.b c", "|Xb c"); // `.` is its own word
+    try vim("cwX<esc>", "a| b", "a|Xb"); // on a blank: the blanks
+    try vim("cWX<esc>", "|a.b c", "|X c");
     try vim("ccx<esc>", "|abc\nd", "|x\nd");
     try vim("Sx<esc>", "ab|c\nd", "|x\nd");
     try vim("Cx<esc>", "a|bc\nd", "a|x\nd");
@@ -899,6 +1149,13 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2>>", "|a\nb\nc", "    a\n |   b\nc");
     try vim("<j", "    |a\n    b\nc", "a\nb|\nc");
     try vim("<k", "    a\n    |b\nc", "a|\nb\nc");
+    // `=` re-indents by the braces above: one line, a motion, the file, a selection.
+    try vim("==", "f() {\n|x;\n}", "f() {\n    |x;\n}");
+    try vim("gg=G", "f() {\nx;\n  if (a) {\n  y;\n}\n|}", "|f() {\n    x;\n    if (a) {\n        y;\n    }\n}");
+    try vim("=j", "f() {\n|x;\n  y;\n}", "f() {\n    |x;\n    y;\n}");
+    try vim("Vj=", "f() {\n|x;\n  y;\n}", "f() {\n    |x;\n    y;\n}");
+    try vim("G=gg", "|f() {\n  x;\n}\n", "|f() {\n    x;\n}\n");
+    try vim("==", "|f() {\nx;\n}", "|f() {\nx;\n}"); // nothing to change: no edit
 }
 
 test "vim registers, yank and put" {
@@ -931,6 +1188,13 @@ test "vim undo, redo, dot-repeat" {
     try vim("xx2u", "|abc", "|abc");
     try vim("ifoo<esc>u", "|abc", "|abc");
     try vim("ifoo<esc>lx u", "|abc", "foo|abc");
+    // One Insert session is one undo step, whatever was typed in it.
+    try vim("Oone<cr>two<esc>u", "|abc", "|abc");
+    try vim("ia<tab>b<cr>c<bs><esc>u", "|x", "|x");
+    try vim("cwfoo<esc>u", "|hello world", "|hello world");
+    try vim("Oone<cr>two<esc>u<c-r>", "|abc", "one\ntw|o\nabc");
+    try vim("ione<esc>itwo<esc>u", "|x", "on|ex");
+    try vim("Rab<esc>u", "|xyz", "|xyz");
     try vim("3ddu", "|a\nb\nc\nd", "|a\nb\nc\nd");
     try vim("dw.", "|a b c d", "|c d");
     try vim("x..", "|abcd", "|d");
@@ -941,7 +1205,57 @@ test "vim undo, redo, dot-repeat" {
     try vim("A!<esc>j.", "|a\nb", "a!\nb|!");
     try vim("x3.", "|abcdef", "|ef");
     try vim("x.u", "|abcd", "|bcd");
+    // A count replaces the change's count and sticks: `3.` after `cw` is `3cw`.
+    try vim("cwX<esc>j03.", "|a b\nc d e f", "X b\n|X f");
+    try vim("cwX<esc>j03.j0.", "|a b\nc d e f\ng h i j", "X b\nX f\n|X j");
+    try vim("dw2.", "|a b c d e", "|d e");
+    try vim("2dd3.", "|a\nb\nc\nd\ne\nf", "|f");
+    try vim("A!<esc>j2.", "|a\nb", "a!\nb!|!");
+    // `.` with an insert is one undo step.
+    try vim("cwX<esc>j0.u", "|a b\nc d", "X b\n|c d");
     try vim("p.", "|a", "|a"); // empty register: nothing to repeat
+    // A visual operator repeats over the same amount of text from the cursor.
+    try vim("Vjd.", "|a\nb\nc\nd\ne", "|e");
+    try vim("vlld.", "|abcdefg", "|g");
+    try vim("vjd.", "|ab\ncd\nef\ngh", "|f\ngh"); // one line down, same end column
+    try vim("Vjdj.", "|a\nb\nc\nd\ne\nf", "c\n|f");
+    try vim("Vjd.", "|alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\n", "|echo\nfoxtrot\n");
+    try vim("<c-v>jld.", "|abcd\nefgh\nijkl\nmnop", "|\n\nijkl\nmnop");
+}
+
+test "closed folds are one line to j / k and to dd / yy" {
+    const gpa = testing.allocator;
+    var h = try Harness.init(gpa, .vim, "|fn a() {\n  1\n  2\n}\nfn b() {\n  3\n}\nend");
+    defer h.deinit();
+    try h.buf.folds.put(gpa, 0, 3);
+    try h.buf.folds.put(gpa, 4, 6);
+    // `j` from a fold header lands after the fold; `k` from below lands on it.
+    try h.feed("j");
+    try testing.expectEqual(@as(usize, 4), h.buf.editor.currentLine());
+    try h.feed("j");
+    try testing.expectEqual(@as(usize, 7), h.buf.editor.currentLine());
+    try h.feed("k");
+    try testing.expectEqual(@as(usize, 4), h.buf.editor.currentLine());
+    try h.feed("2k");
+    try testing.expectEqual(@as(usize, 0), h.buf.editor.currentLine());
+    // A count walks visible lines; the last visible line stops.
+    try h.feed("2j");
+    try testing.expectEqual(@as(usize, 7), h.buf.editor.currentLine());
+    try h.feed("j");
+    try testing.expectEqual(@as(usize, 7), h.buf.editor.currentLine());
+    // `yy` on a fold yanks every line of it.
+    try h.feed("ggyy");
+    try testing.expectEqualStrings("fn a() {\n  1\n  2\n}\n", h.clip.text());
+    // `dd` on a fold removes the fold with its lines; the next fold shifts up.
+    try h.feed("dd");
+    try testing.expectEqualStrings("fn b() {\n  3\n}\nend", h.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 1), h.buf.folds.count());
+    try testing.expectEqual(@as(usize, 0), h.buf.folds.keys()[0]);
+    try testing.expectEqual(@as(usize, 2), h.buf.folds.values()[0]);
+    // `dj` from a fold takes the fold and the line after it.
+    try h.feed("dj");
+    try testing.expectEqualStrings("", h.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 0), h.buf.folds.count());
 }
 
 test "vim marks, macros and visual mode" {
@@ -955,6 +1269,11 @@ test "vim marks, macros and visual mode" {
     try vim("qaxq2@a", "|abcd", "|d");
     try vim("qaIX<esc>jqqbA!<esc>jq@a@b", "|a\nb\nc\nd", "Xa\nb!\nXc\nd!|");
     try vim("@z", "|a", "|a");
+    // A macro is its register: `"ap` pastes the keys, `"ay$` re-records, `:reg`-style read-back.
+    try vim("qaA!<esc>q\"ap", "|a", "a!A!<esc>|"); // charwise, like any recorded register
+    try vim("qaA!<esc>qj0\"ay$dd@a", "|a\nA?<esc>", "a!|?"); // an edited register replays
+    try vim("qaxqj\"ayygg@a", "|abc\nd\ne", "|e"); // `"ayy` holds `d<CR>`: the newline replays as Enter, so `@a` is `dj`
+    try vim("\"axjA!<esc>\"ap", "|ab\nc", "b\nc!a|"); // `"ax` fills a named register too
     try vim("vwd", "|hello world", "|orld");
     try vim("vwy$p", "|hello world", "hello worldhello w|");
     try vim("v$d", "a|bc\nd", "a|\nd");
@@ -1020,7 +1339,7 @@ test "macro registers are shared through the clipboard: `qa` in one buffer, `@a`
     try feed(&a, &clip, arena.allocator(), "qaA!<esc>jq");
     try testing.expectEqualStrings("one!\ntwo", a.editor.bytes());
     try testing.expect(!a.isRecording());
-    try testing.expectEqual(@as(usize, 4), clip.macro('a').?.len);
+    try testing.expectEqualStrings("A!<esc>j", clip.macro('a').?);
     try testing.expectEqual(@as(?u8, 'a'), clip.last_macro);
     // A different buffer, the same clipboard: the register replays.
     try feed(&b, &clip, arena.allocator(), "@a");

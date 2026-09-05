@@ -17,6 +17,19 @@ pub fn right(ed: *Editor) void {
     ed.cursor = ed.nextBoundary(ed.cursor);
 }
 
+/// `l` as an operator target: up to the line's end, never onto the
+/// next line — `dl` (`x`) on the last char takes just that char.
+pub fn rightNoCrossLine(ed: *Editor) void {
+    const eol = ed.lineEnd(ed.currentLine());
+    if (ed.cursor < eol) ed.cursor = ed.nextBoundary(ed.cursor);
+}
+
+/// `h` as an operator target: stops at the line's start.
+pub fn leftNoCrossLine(ed: *Editor) void {
+    const bol = ed.lineStart(ed.currentLine());
+    if (ed.cursor > bol) ed.cursor = ed.prevBoundary(ed.cursor);
+}
+
 /// One line up (`dir < 0`) or down, keeping the goal column. On the last
 /// line, down clamps to that line's end rather than a phantom line.
 pub fn vertical(ed: *Editor, dir: i2) void {
@@ -148,6 +161,45 @@ pub fn wordEndBack(ed: *Editor) void {
         i = ed.prevBoundary(i);
     }
     ed.cursor = i;
+}
+
+/// `cw` / `cW` over `n` words (`:help cw`): the cursor's own word ends
+/// the first count when the cursor is inside it (staying put when it is
+/// already on the last char), a blank under the cursor is crossed like
+/// `w`, and every further count is an `e`. The result is one char short
+/// of the exclusive end — the operator's inclusive `move_right` covers
+/// the last char.
+pub fn wordEndCw(ed: *Editor, n: u32, big: bool) void {
+    var i: u32 = 0;
+    while (i < @max(n, 1)) : (i += 1) {
+        const c = ed.charAt(ed.cursor) orelse return;
+        if (i == 0) {
+            if (c == '\n') return;
+            if (isSpace(c)) {
+                var target = ed.cursor;
+                if (big) {
+                    while (target < ed.len()) : (target = ed.nextBoundary(target)) {
+                        const d = ed.charAt(target) orelse break;
+                        if (!isSpace(d) or d == '\n') break;
+                    }
+                } else target = wordRightFrom(ed, ed.cursor);
+                const eol = ed.lineEnd(ed.currentLine());
+                ed.cursor = ed.prevBoundary(@min(@max(target, ed.nextBoundary(ed.cursor)), eol));
+                continue;
+            }
+            if (atWordEnd(ed, big)) continue;
+        }
+        if (big) bigWordEnd(ed) else wordEnd(ed);
+    }
+}
+
+/// The cursor is on the last char of a word (`e` would leave it).
+fn atWordEnd(ed: *const Editor, big: bool) bool {
+    const c = ed.charAt(ed.cursor) orelse return true;
+    if (isSpace(c)) return false;
+    const next = ed.charAt(ed.nextBoundary(ed.cursor)) orelse return true;
+    if (big) return isSpace(next);
+    return classOf(next) != classOf(c);
 }
 
 // ─── WORD (`W` `B` `E` `gE`) — whitespace is the only boundary ─────────
