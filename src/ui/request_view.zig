@@ -118,6 +118,39 @@ pub const Timing = struct { wait_ms: u64, receive_ms: u64, total_ms: u64 };
 /// A body still arriving: the live counter on the Response header.
 pub const StreamInfo = struct { bytes: usize, events: usize, is_sse: bool, elapsed_ms: u64 };
 
+/// A `{{VAR}}` token inside a field's text: painted in the variable
+/// role when the active env resolves it, the error role when it does
+/// not, and registered as `hit_var_base + id` so a click or a hover
+/// finds it.
+pub const VarSpan = struct { start: usize, end: usize, resolved: bool, id: u32 };
+
+/// The side-by-side edit view: the right half shows `tab`, `ratio` is
+/// the left half's share in percent, `scroll` its own row offset.
+pub const SplitModel = struct { tab: EditTab, ratio: u8, scroll: *usize };
+
+/// How the Request and Response blocks share the pane.
+pub const Orientation = enum {
+    auto,
+    vertical,
+    horizontal,
+
+    pub fn next(o: Orientation) Orientation {
+        return switch (o) {
+            .auto => .vertical,
+            .vertical => .horizontal,
+            .horizontal => .auto,
+        };
+    }
+
+    pub fn label(o: Orientation) []const u8 {
+        return switch (o) {
+            .auto => "auto",
+            .vertical => "vertical (stacked)",
+            .horizontal => "horizontal (side by side)",
+        };
+    }
+};
+
 pub const ResponseModel = struct {
     status: u16,
     status_text: []const u8,
@@ -171,6 +204,13 @@ pub const Model = struct {
     focused: bool,
     source_path: ?[]const u8,
     ai_hint: []const u8 = "ask Claude about this request — lands in Phase 7",
+    /// `{{VAR}}` tokens per text field; `id`s index one flat list the
+    /// app keeps beside the model.
+    url_vars: []const VarSpan = &.{},
+    body_vars: []const VarSpan = &.{},
+    headers_vars: []const VarSpan = &.{},
+    split: ?SplitModel = null,
+    orientation: Orientation = .auto,
 };
 
 // ── hit ids ──
@@ -180,6 +220,9 @@ pub const hit_url: u32 = 11;
 pub const hit_send: u32 = 12;
 pub const hit_env: u32 = 13;
 pub const hit_wrap: u32 = 14;
+pub const hit_split_toggle: u32 = 15;
+pub const hit_split_divider: u32 = 16;
+pub const hit_split_tab_base: u32 = 40; // + EditTab index (the right half's strip)
 pub const hit_resp_tab_base: u32 = 20; // + ResponseTab index
 pub const hit_resp_body: u32 = 30;
 pub const hit_param_row: u32 = 100; // + row
@@ -188,6 +231,11 @@ pub const hit_var_row: u32 = 300; // + row
 pub const hit_draft_key: u32 = 400;
 pub const hit_draft_value: u32 = 401;
 pub const hit_content: u32 = 402;
+/// The whole edit area under the tab strip — what a divider drag lands on.
+pub const hit_edit_area: u32 = 403;
+/// The right half's text content: a click there swaps the halves.
+pub const hit_split_content: u32 = 404;
+pub const hit_var_base: u32 = 1000; // + VarSpan.id
 
 pub const ai_rows: u16 = 2;
 pub const min_request_rows: u16 = 5;
@@ -216,6 +264,11 @@ pub fn zones(area: Rect, m: Model) Zones {
         const s = rest.splitBottom(ai_rows);
         ai = s.rest;
         rest = s.top;
+    }
+    if (m.orientation == .horizontal and rest.w >= 40) {
+        const req_w: u16 = @max(rest.w * 45 / 100, 20);
+        const s = rest.splitLeft(req_w);
+        return .{ .request = s.left, .response = s.rest, .ai = ai };
     }
     const content_rows: u16 = switch (m.edit_tab) {
         .body => @intCast(@min(std.mem.count(u8, m.body, "\n") + 2, 12)),
@@ -270,6 +323,7 @@ fn drawRequest(ui: Ui, pane: PaneId, r: Rect, m: Model) ?Caret {
     const url_style = if (url_focused) Theme.onBg(t.fg, t.cursor_line.bg) else t.fg;
     if (text_field.draw(ui, url_rect, m.url, m.url_caret, .{ .style = url_style, .placeholder = "https://… (press Ctrl+Enter to send)", .focused = url_focused })) |c| caret = c;
     ui.hit(url_rect, .{ .script_hit = .{ .pane = pane, .id = hit_url } });
+    paintVarsOnField(ui, pane, url_rect, m.url, if (url_focused) m.url_caret else 0, m.url_vars, url_style.bg);
     if (row0.w > sw + mw + 6) {
         const sx = row0.right() - sw - 1;
         const send_style = Theme.onBg(t.accent, t.chip.bg);
@@ -293,49 +347,192 @@ fn drawRequest(ui: Ui, pane: PaneId, r: Rect, m: Model) ?Caret {
         ui.hit(Rect.init(x, row1.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_tab_base + @as(u32, @intCast(i)) } });
         x += w + 1;
     }
+    var right_edge = row1.right();
     if (m.env_name) |env| {
         const chip = ui.fmt(" env: {s} ", .{env});
         const cw = ui.width(chip);
-        if (row1.right() > x + cw + 1) {
-            const cx = row1.right() - cw - 1;
+        if (right_edge > x + cw + 1) {
+            const cx = right_edge - cw - 1;
             _ = ui.putStr(cx, row1.y, cw, chip, t.chip);
             ui.hit(Rect.init(cx, row1.y, cw, 1), .{ .script_hit = .{ .pane = pane, .id = hit_env } });
+            right_edge = cx;
+        }
+    }
+    {
+        const chip: []const u8 = if (ui.ascii) " <> " else " ⇔ ";
+        const cw = ui.width(chip);
+        if (right_edge > x + cw + 1) {
+            const cx = right_edge - cw - 1;
+            _ = ui.putStr(cx, row1.y, cw, chip, if (m.split != null) Theme.onBg(t.accent, t.chip.bg) else t.chip);
+            ui.hit(Rect.init(cx, row1.y, cw, 1), .{ .script_hit = .{ .pane = pane, .id = hit_split_toggle } });
         }
     }
     if (r.h == 2) return caret;
 
-    // ── rows 2..: the tab's content ──
+    // ── rows 2..: the tab's content — one half, or two side by side ──
     const content = Rect.init(r.x, r.y + 2, r.w, r.h - 2);
+    ui.hit(content, .{ .script_hit = .{ .pane = pane, .id = hit_edit_area } });
     const content_focused = active_block and m.field == .content;
-    switch (m.edit_tab) {
-        .body => if (drawTextArea(ui, pane, content, m.body, m.body_caret, content_focused, m.edit_scroll, "(request body — type here, Ctrl+Enter sends)")) |c| {
-            caret = c;
-        },
-        .headers => if (drawTextArea(ui, pane, content, m.headers_text, m.headers_caret, content_focused, m.edit_scroll, "(Name: value per line)")) |c| {
-            caret = c;
-        },
-        .source => {
-            _ = ui.putStr(content.x + 1, content.y, content.w -| 2, ui.clipStr("Source — type / paste curl or .http here · :http.paste_source (Ctrl+Enter)", content.w -| 2), t.muted);
-            if (content.h > 1) {
-                const inner = Rect.init(content.x, content.y + 1, content.w, content.h - 1);
-                if (drawTextArea(ui, pane, inner, m.source, m.source_caret, content_focused, m.edit_scroll, "")) |c| caret = c;
-            }
-        },
-        .params => if (drawParams(ui, pane, content, m, content_focused)) |c| {
-            caret = c;
-        },
-        .auth => drawAuth(ui, pane, content, m, content_focused),
-        .vars => drawVars(ui, pane, content, m, content_focused),
+    // The URL caret from row 0 stands unless the content has one.
+    const split = m.split orelse {
+        return drawTabContent(ui, pane, content, m.edit_tab, m, content_focused, m.edit_scroll, false) orelse caret;
+    };
+    if (content.w < 16) return drawTabContent(ui, pane, content, m.edit_tab, m, content_focused, m.edit_scroll, false) orelse caret;
+    const left_w: u16 = @intCast(std.math.clamp(@as(u32, content.w) * split.ratio / 100, 6, content.w - 7));
+    const left = Rect.init(content.x, content.y, left_w, content.h);
+    const divider = Rect.init(content.x + left_w, content.y, 1, content.h);
+    const right = Rect.init(content.x + left_w + 1, content.y, content.w - left_w - 1, content.h);
+    if (drawTabContent(ui, pane, left, m.edit_tab, m, content_focused, m.edit_scroll, false)) |c| caret = c;
+    const dstyle = if (ui.hovered(divider)) t.accent else t.border;
+    var dy = divider.y;
+    while (dy < divider.bottom()) : (dy += 1) _ = ui.putStr(divider.x, dy, 1, if (ui.ascii) "|" else "│", dstyle);
+    ui.hit(divider, .{ .script_hit = .{ .pane = pane, .id = hit_split_divider } });
+    // The right half's own strip, then its content.
+    const strip = right.row(0);
+    var sx = strip.x + 1;
+    for (EditTab.all, 0..) |tab, i| {
+        const active = tab == split.tab;
+        const label = if (active) ui.fmt("[{s}]", .{tab.label()}) else ui.fmt(" {s} ", .{tab.label()});
+        const w = ui.width(label);
+        if (sx + w > strip.right()) break;
+        _ = ui.putStr(sx, strip.y, w, label, if (active) t.accent else t.muted);
+        ui.hit(Rect.init(sx, strip.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_split_tab_base + @as(u32, @intCast(i)) } });
+        sx += w + 1;
     }
+    if (right.h > 1) _ = drawTabContent(ui, pane, Rect.init(right.x, right.y + 1, right.w, right.h - 1), split.tab, m, false, split.scroll, true);
     return caret;
+}
+
+/// One edit tab's content into `r`. `secondary` is the split's right
+/// half: no caret, and its text area registers `hit_split_content` so
+/// a click there brings the tab to the left.
+fn drawTabContent(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool, scroll: *usize, secondary: bool) ?Caret {
+    const t = ui.theme;
+    const content_hit = if (secondary) hit_split_content else hit_content;
+    switch (tab) {
+        .body => return drawTextArea(ui, pane, r, m.body, m.body_caret, focused, scroll, "(request body — type here, Ctrl+Enter sends)", m.body_vars, content_hit),
+        .headers => return drawTextArea(ui, pane, r, m.headers_text, m.headers_caret, focused, scroll, "(Name: value per line)", m.headers_vars, content_hit),
+        .source => {
+            _ = ui.putStr(r.x + 1, r.y, r.w -| 2, ui.clipStr("Source — type / paste curl or .http here · :http.paste_source (Ctrl+Enter)", r.w -| 2), t.muted);
+            if (r.h > 1) {
+                const inner = Rect.init(r.x, r.y + 1, r.w, r.h - 1);
+                return drawTextArea(ui, pane, inner, m.source, m.source_caret, focused, scroll, "", &.{}, content_hit);
+            }
+            return null;
+        },
+        .params => return drawParams(ui, pane, r, m, focused),
+        .auth => {
+            drawAuth(ui, pane, r, m, focused);
+            return null;
+        },
+        .vars => {
+            drawVars(ui, pane, r, m, focused);
+            return null;
+        },
+    }
+}
+
+/// The style a `{{VAR}}` paints in: the variable role when the env has
+/// it, the error role when it does not.
+pub fn varStyle(t: *const Theme, resolved: bool, bg: Color) Style {
+    var st = Theme.onBg(if (resolved) t.syntax.variable else t.error_fg, bg);
+    st.bold = true;
+    return st;
+}
+
+/// Overpaint the `{{VAR}}` tokens of one painted line: `line` is the
+/// text as it was laid out from `x` after `drop` leading bytes were
+/// scrolled off, `line_off` its byte offset in the field.
+fn paintVarsOnLine(ui: Ui, pane: PaneId, x: u16, y: u16, max_w: u16, line: []const u8, drop: usize, line_off: usize, vars: []const VarSpan, bg: Color) void {
+    for (vars) |v| {
+        if (v.end <= line_off or v.start >= line_off + line.len) continue;
+        const s = @max(v.start, line_off) - line_off;
+        const e = @min(v.end, line_off + line.len) - line_off;
+        if (e <= drop) continue;
+        const from = @max(s, drop);
+        const col = ui.width(line[drop..from]);
+        if (col >= max_w) continue;
+        const w = @min(ui.width(line[from..e]), max_w - col);
+        if (w == 0) continue;
+        const rx = x + col;
+        _ = ui.putStr(rx, y, w, ui.clipStr(line[from..e], w), varStyle(ui.theme, v.resolved, bg));
+        ui.hit(Rect.init(rx, y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_var_base + v.id } });
+    }
+}
+
+/// How many cells `text_field.draw` scrolls a one-row field so the
+/// caret stays inside `w` — the same walk, so an overpaint lines up.
+pub fn fieldScroll(ui: Ui, text: []const u8, caret: usize, w: u16) u32 {
+    if (w == 0) return 0;
+    var caret_col: u32 = 0;
+    var it = vaxis.unicode.graphemeIterator(text);
+    var widths: std.ArrayListUnmanaged(u32) = .empty;
+    const c = @min(caret, text.len);
+    while (it.next()) |g| {
+        const cw: u32 = @min(ui.canvas.cellWidth(g.bytes(text)), 2);
+        if (cw == 0) continue;
+        widths.append(ui.arena, cw) catch return 0;
+        if (g.start < c) caret_col += cw;
+    }
+    var skipped: u32 = 0;
+    var first: usize = 0;
+    while (caret_col - skipped >= w and first < widths.items.len) : (first += 1) skipped += widths.items[first];
+    return skipped;
+}
+
+/// The `{{VAR}}` tokens over a one-row `text_field`.
+fn paintVarsOnField(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, vars: []const VarSpan, bg: Color) void {
+    if (r.isEmpty() or vars.len == 0) return;
+    const skipped = fieldScroll(ui, text, caret, r.w);
+    for (vars) |v| {
+        if (v.end > text.len or v.start >= v.end) continue;
+        const col: u32 = ui.width(text[0..v.start]);
+        const w_full: u32 = ui.width(text[v.start..v.end]);
+        if (col + w_full <= skipped) continue;
+        const vis_start = @max(col, skipped) - skipped;
+        if (vis_start >= r.w) continue;
+        // Bytes hidden at the token's left edge, when the scroll cut it.
+        var from = v.start;
+        var hidden: u32 = 0;
+        while (col + hidden < skipped and from < v.end) {
+            const step = text_field.nextCp(text, from) - from;
+            hidden += ui.width(text[from .. from + step]);
+            from += step;
+        }
+        const w: u16 = @intCast(@min(ui.width(text[from..v.end]), r.w - vis_start));
+        if (w == 0) continue;
+        const rx: u16 = r.x + @as(u16, @intCast(vis_start));
+        _ = ui.putStr(rx, r.y, w, ui.clipStr(text[from..v.end], w), varStyle(ui.theme, v.resolved, bg));
+        ui.hit(Rect.init(rx, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_var_base + v.id } });
+    }
+}
+
+/// A one-row tip for a hovered `{{VAR}}`: its value, or that the env
+/// lacks it. Painted just under `anchor` (above when there is no room),
+/// clipped to `screen`.
+pub fn drawVarTip(ui: Ui, screen: Rect, anchor: Rect, name: []const u8, value: ?[]const u8, env_name: ?[]const u8) void {
+    const t = ui.theme;
+    const text = if (value) |v|
+        ui.fmt(" {{{{{s}}}}} = {s} ", .{ name, std.mem.sliceTo(v, '\n') })
+    else
+        ui.fmt(" {{{{{s}}}}} — not defined in env {s} ", .{ name, env_name orelse "?" });
+    const w: u16 = @min(ui.width(text), screen.w);
+    if (w == 0) return;
+    var x = anchor.x;
+    if (x + w > screen.right()) x = screen.right() -| w;
+    if (x < screen.x) x = screen.x;
+    const y: u16 = if (anchor.bottom() < screen.bottom()) anchor.bottom() else anchor.y -| 1;
+    const style = Theme.onBg(if (value != null) t.fg else t.error_fg, t.chip.bg);
+    ui.fill(Rect.init(x, y, w, 1), style);
+    _ = ui.putStr(x, y, w, ui.clipStr(text, w), style);
 }
 
 /// A multi-line buffer: rows from `scroll`, the caret's row kept on
 /// screen. Returns the caret cell when focused.
-fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, placeholder: []const u8) ?Caret {
+fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, placeholder: []const u8, vars: []const VarSpan, content_hit: u32) ?Caret {
     const t = ui.theme;
     if (r.isEmpty()) return null;
-    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = hit_content } });
+    ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = content_hit } });
     if (text.len == 0) {
         _ = ui.putStr(r.x + 1, r.y, r.w -| 1, ui.clipStr(placeholder, r.w -| 1), t.muted);
         return if (focused) .{ .x = r.x + 1, .y = r.y } else null;
@@ -355,7 +552,11 @@ fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, f
     var it = std.mem.splitScalar(u8, text, '\n');
     var line_no: usize = 0;
     var y: u16 = 0;
-    while (it.next()) |line| : (line_no += 1) {
+    var line_off: usize = 0;
+    while (it.next()) |line| : ({
+        line_no += 1;
+        line_off += line.len + 1;
+    }) {
         if (line_no < scroll.*) continue;
         if (y >= r.h) break;
         const row = r.row(y);
@@ -381,9 +582,11 @@ fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, f
                 shown = line[drop..];
             }
             _ = ui.putStr(lx, row.y, lw, ui.clipStr(shown, lw), if (focused) Theme.onBg(t.fg, t.cursor_line.bg) else t.fg);
+            paintVarsOnLine(ui, pane, lx, row.y, lw, line, line.len - shown.len, line_off, vars, if (focused) t.cursor_line.bg else t.bg.bg);
             if (focused) out = .{ .x = lx + @min(cx, lw -| 1), .y = row.y };
         } else {
             _ = ui.putStr(lx, row.y, lw, ui.clipStr(line, lw), t.fg);
+            paintVarsOnLine(ui, pane, lx, row.y, lw, line, 0, line_off, vars, t.bg.bg);
         }
         y += 1;
     }
@@ -724,4 +927,79 @@ test "draw: method chip, tabs, status chip and the AI strip land; hits registere
         else => {},
     };
     try testing.expect(found_send and found_tab);
+}
+
+test "draw: the edit split paints both halves with their strips and the divider; {{VAR}} spans register hits; the tip lands" {
+    var fx = try fixture.init(100, 24);
+    defer fx.deinit();
+    var scroll: usize = 0;
+    var split_scroll: usize = 0;
+    var view = editor_view.ViewState{};
+    const m: Model = .{
+        .method = "GET",
+        .url = "https://{{HOST}}/a",
+        .url_caret = 0,
+        .block = .request,
+        .field = .content,
+        .edit_tab = .body,
+        .body = "{\"k\": \"{{V}}\"}",
+        .body_caret = 0,
+        .headers_text = "",
+        .headers_caret = 0,
+        .source = "",
+        .source_caret = 0,
+        .params = &.{},
+        .draft = .{ .key = "", .value = "", .key_caret = 0, .value_caret = 0, .on_value = false },
+        .row_cursor = 0,
+        .auth_current = null,
+        .vars = &.{},
+        .env_name = "dev",
+        .edit_scroll = &scroll,
+        .sending = false,
+        .failed = null,
+        .response = null,
+        .sent_line = null,
+        .response_tab = .body,
+        .resp_view = &view,
+        .body_wrap = false,
+        .focused = true,
+        .source_path = null,
+        .url_vars = &.{.{ .start = 8, .end = 16, .resolved = true, .id = 0 }},
+        .body_vars = &.{.{ .start = 7, .end = 12, .resolved = false, .id = 1 }},
+        .split = .{ .tab = .vars, .ratio = 50, .scroll = &split_scroll },
+    };
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    const txt = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, txt, "[Body]  Headers") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "[Vars]") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "│") != null);
+    var found_divider = false;
+    var found_split_tab = false;
+    var found_toggle = false;
+    var found_url_var = false;
+    var found_body_var = false;
+    var var_rect: ?Rect = null;
+    for (fx.hits.items.items) |h| switch (h.target) {
+        .script_hit => |s| {
+            if (s.id == hit_split_divider) found_divider = true;
+            if (s.id == hit_split_tab_base + 4) found_split_tab = true;
+            if (s.id == hit_split_toggle) found_toggle = true;
+            if (s.id == hit_var_base + 0) {
+                found_url_var = true;
+                var_rect = h.rect;
+            }
+            if (s.id == hit_var_base + 1) found_body_var = true;
+        },
+        else => {},
+    };
+    try testing.expect(found_divider and found_split_tab and found_toggle and found_url_var and found_body_var);
+    // The URL span covers exactly `{{HOST}}`: 8 cells, starting 8 past the URL's first cell.
+    try testing.expectEqual(@as(u16, 8), var_rect.?.w);
+    drawVarTip(ui, ui.canvas.full(), var_rect.?, "HOST", "https://dev", "dev");
+    const txt2 = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, txt2, "{{HOST}} = https://dev") != null);
+    drawVarTip(ui, ui.canvas.full(), var_rect.?, "NOPE", null, "dev");
+    const txt3 = try fx.text();
+    try testing.expect(std.mem.indexOf(u8, txt3, "{{NOPE}} — not defined in env dev") != null);
 }
