@@ -100,6 +100,7 @@ mnml ~/code/project        # open a specific workspace
 mnml --input vim           # start in vim mode (default is standard)
 mnml --ascii               # no Nerd Font? plain-text icons
 mnml --startup-picker      # show a workspace chooser on launch
+mnml export-config-zon     # convert config.toml → config.zon for mnml 0.3 (mnml-zig)
 ```
 
 Once it's open:
@@ -179,6 +180,12 @@ tooltip  = "Claude Code (right dock)"
 `[lsp.*]`, `[ai]`, `[dap.*]`, `[linters.*]`, `[formatters.*]`, `[tasks.*]`, and
 the SCM dashboard tables are all configurable too — see
 [FEATURES.md](FEATURES.md) for the full surface.
+
+**Moving to mnml 0.3 (the Zig rewrite)?** It reads `config.zon`, not TOML.
+`mnml export-config-zon` converts the home config (or `--workspace DIR` /
+`--in PATH`) and writes `config.zon` beside it, with a `//` doc comment per
+key and every key it could not place in a trailing `// unmigrated:` block.
+The TOML file is left untouched.
 
 ### Themed shell prompt (optional)
 

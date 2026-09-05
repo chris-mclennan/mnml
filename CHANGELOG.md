@@ -10,6 +10,15 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Added
+
+- *(config)* `mnml export-config-zon [--out PATH] [--workspace DIR] [--in PATH] [--force]`
+  converts a 0.2.x `config.toml` to the `config.zon` mnml 0.3 (mnml-zig) reads —
+  only the keys you set, a `//` doc comment per key, closed-set strings as enum
+  literals, `[[marketplace.source]]` as a tagged union, formatter/linter
+  string-or-list as a list, and anything it cannot place kept verbatim in a
+  trailing `// unmigrated:` block. The TOML file is left where it was.
+
 ## [0.2.21](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.20...mnml-rs-v0.2.21) - 2026-09-01
 
 ### Added

@@ -385,7 +385,12 @@ findings}_panel.rs`, `src/ui/list_sort.rs`).
   `:sse.parse_active_response` (parse Done body as SSE events + summarize).
 - **CLI mode** — `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`,
   `mnml sync [--workspace DIR]`, `mnml proxy --url URL [--seconds N]`
-  (headless Chrome CDP capture into `.rqst/captured/log.jsonl`).
+  (headless Chrome CDP capture into `.rqst/captured/log.jsonl`),
+  `mnml export-config-zon [--out PATH] [--workspace DIR] [--in PATH] [--force]`
+  (convert a 0.2.x `config.toml` to the `config.zon` mnml 0.3 / mnml-zig reads —
+  only the keys you set, a `//` doc per key, enums as `.literals`, string-or-list
+  and `custom:` forms normalised, unknown keys kept in a trailing
+  `// unmigrated:` block).
 
 ## Browser & CDP capture
 
