@@ -356,24 +356,18 @@ fn focusNextSplit(app: *App) CommandError!void {
     app.setActive(layout.leaf(next).?.active);
 }
 
-/// True when another open pane shows the same file — the pane is a
-/// split's duplicate and can go without losing anything.
+/// True when another open pane shows the same document — the pane is
+/// a split's window and can go without losing anything, edits included.
 fn hasTwin(app: *App, id: PaneId) bool {
-    const e = app.panes.editor(id) orelse return false;
-    const path = e.buf.doc.path orelse return false;
-    for (app.panes.slots.items, 0..) |*slot, i| {
-        if (i == id or slot.* == null) continue;
-        const other = slot.*.?.asEditor() orelse continue;
-        if (other.buf.doc.path) |p| if (std.mem.eql(u8, p, path)) return true;
-    }
-    return false;
+    return app.isSharedView(id);
 }
 
-/// Drop the active leaf. A clean duplicate of a file open elsewhere
-/// closes; every other tab stays open in the background. The last
-/// window has nothing to fall back to, so its buffer closes instead
-/// (a dirty one asks first) — a pty that is the only pane goes with
-/// its process, and the layout may be empty afterwards.
+/// Drop the active leaf. A window on a document open elsewhere closes
+/// (the document stays, with its edits); every other tab stays open in
+/// the background. The last window has nothing to fall back to, so its
+/// buffer closes instead (a dirty one asks first) — a pty that is the
+/// only pane goes with its process, and the layout may be empty
+/// afterwards.
 fn closeSplit(app: *App) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
@@ -382,8 +376,7 @@ fn closeSplit(app: *App) CommandError!void {
     const mine = layout.leafOf(cur) orelse return;
     const tabs = try app.frame.allocator().dupe(PaneId, layout.leaf(mine).?.tabs.items);
     for (tabs) |tab| {
-        const p = app.panes.get(tab) orelse continue;
-        if (!p.dirty() and hasTwin(app, tab)) {
+        if (hasTwin(app, tab)) {
             try app.forceClosePane(tab);
         } else _ = layout.removePane(tab);
     }
@@ -393,9 +386,10 @@ fn closeSplit(app: *App) CommandError!void {
 }
 
 /// `:only` / `Ctrl-W o`: every other leaf goes; this window stays with
-/// its tabs. Buffers are not closed — a clean duplicate of a file open
-/// elsewhere is dropped (the split made it), everything else becomes a
-/// background tab of this leaf so the bufferline still lists it.
+/// its tabs. Buffers are not closed — a window on a document open
+/// elsewhere is dropped (the split made it; the document stays),
+/// everything else becomes a background tab of this leaf so the
+/// bufferline still lists it.
 fn only(app: *App) CommandError!void {
     const keep = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
@@ -407,8 +401,7 @@ fn only(app: *App) CommandError!void {
         if (l == mine) continue;
         const tabs = try arena.dupe(PaneId, layout.leaf(l).?.tabs.items);
         for (tabs) |tab| {
-            const p = app.panes.get(tab) orelse continue;
-            if (!p.dirty() and hasTwin(app, tab)) {
+            if (hasTwin(app, tab)) {
                 try app.forceClosePane(tab);
             } else _ = try layout.showIn(mine, tab);
         }
@@ -850,8 +843,10 @@ test "wrap toggles per pane; splits add leaves; focus moves between them" {
     try t.expectEqual(c, app.active.?);
     try command.run(&app, .{ .static = .@"view.close_split" });
     try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
-    // Scratch duplicates have no path, so they stay open in the background.
-    try t.expectEqual(@as(usize, 3), app.panes.count());
+    // The split's window was a second view of the scratch document: it
+    // goes with its leaf, the document stays with `a`.
+    try t.expectEqual(@as(usize, 2), app.panes.count());
+    try t.expect(app.panes.get(a) != null);
 }
 
 test "the sidebar is the leftmost window: focus_left from the leftmost split enters it, focus_right leaves it, focus_next_split wraps into it" {
@@ -890,44 +885,50 @@ test "the sidebar is the leftmost window: focus_left from the leftmost split ent
     try t.expect(app.focus == .pane);
 }
 
-test "view.only keeps this window and its tabs; the other leaves' panes become background tabs here, a clean twin closes" {
+test "view.only keeps this window and its tabs; the other leaves' panes become background tabs here, a twin window closes" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     const a = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("dirty");
     app.activeEditor().?.buf.doc.dirty = true;
-    try command.run(&app, .{ .static = .@"view.split_right" });
-    const b = app.active.?;
+    const b = try app.openScratch();
+    app.setActive(a);
+    try splitWith(&app, .horizontal, b);
     try t.expect(b != a);
     const c = try app.openScratch();
-    try command.run(&app, .{ .static = .@"view.split_down" });
-    const d = app.active.?;
+    app.setActive(b);
+    try splitWith(&app, .vertical, c);
     try t.expectEqual(@as(usize, 3), (try app.layouts.current().leaves(app.frame.allocator())).len);
-    // `:only` from d: a, b, c all live on (no path, so no twin) as tabs of d's leaf.
+    // `:only` from c: a and b live on (their own documents) as tabs of c's leaf.
     try command.run(&app, .{ .static = .@"view.only" });
     const layout = app.layouts.current();
     try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
-    try t.expectEqual(d, app.active.?);
+    try t.expectEqual(c, app.active.?);
     try t.expect(app.focus == .pane);
-    const tabs = layout.leaf(layout.leafOf(d).?).?.tabs.items;
-    try t.expectEqual(@as(usize, 4), tabs.len);
-    try t.expect(app.panes.get(a) != null and app.panes.get(b) != null and app.panes.get(c) != null);
+    const tabs = layout.leaf(layout.leafOf(c).?).?.tabs.items;
+    try t.expectEqual(@as(usize, 3), tabs.len);
+    try t.expect(app.panes.get(a) != null and app.panes.get(b) != null);
     try t.expect(app.panes.get(a).?.dirty());
-    // A clean duplicate of a file this leaf shows is dropped, not re-homed.
+    // A second window on a document this leaf shows is dropped, not
+    // re-homed — dirty or not, the document stays with the window here.
     try app.activeEditor().?.buf.setPath("/tmp/mnml-zig-only.txt");
     try command.run(&app, .{ .static = .@"view.split_right" });
     const dup = app.active.?;
-    try t.expect(dup != d);
-    app.setActive(d);
+    try t.expect(dup != c);
+    try app.activeEditor().?.buf.editor.setText("edited in the split");
+    app.activeEditor().?.buf.doc.dirty = true;
+    app.setActive(c);
     try command.run(&app, .{ .static = .@"view.only" });
     try t.expect(app.panes.get(dup) == null);
-    try t.expectEqual(@as(usize, 4), layout.leaf(layout.leafOf(d).?).?.tabs.items.len);
+    try t.expectEqual(@as(usize, 3), layout.leaf(layout.leafOf(c).?).?.tabs.items.len);
+    try t.expectEqualStrings("edited in the split", app.panes.editor(c).?.buf.editor.bytes());
+    try t.expect(app.panes.get(c).?.dirty());
     // One leaf: a no-op.
     try command.run(&app, .{ .static = .@"view.only" });
-    try t.expectEqual(d, app.active.?);
+    try t.expectEqual(c, app.active.?);
 }
 
-test "a split duplicates the file; closing the split drops the clean duplicate" {
+test "a split opens a second window on the file; closing the split drops the window, not the document" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -944,9 +945,18 @@ test "a split duplicates the file; closing the split drops the clean duplicate" 
     try t.expectEqualStrings("alpha.txt", app.panes.get(dup).?.title());
     try t.expectEqualStrings("the alpha file", app.activeEditor().?.buf.editor.bytes());
     try t.expect(!app.activeEditor().?.buf.doc.dirty);
+    try t.expect(app.activeEditor().?.buf.doc == app.panes.editor(a).?.buf.doc);
+    // An edit in the split is the document's: the first window shows it
+    // and both report dirty; closing the split keeps it.
+    try app.splice(app.activeEditor().?, 0, 3, "THE");
+    try t.expectEqualStrings("THE alpha file", app.panes.editor(a).?.buf.editor.bytes());
+    try t.expect(app.panes.get(a).?.dirty());
     try command.run(&app, .{ .static = .@"view.close_split" });
     try t.expectEqual(a, app.active.?);
     try t.expectEqual(@as(usize, 1), app.panes.count());
+    try t.expectEqualStrings("THE alpha file", app.panes.editor(a).?.buf.editor.bytes());
+    try t.expect(app.panes.get(a).?.dirty());
+    try t.expectEqual(@as(usize, 1), app.docs.count());
     // Splitting with an explicit pane puts that pane in the new leaf.
     const s = try app.openScratch();
     try command.run(&app, .{ .static = .@"buffer.prev" });

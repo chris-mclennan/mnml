@@ -124,7 +124,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     }
     if (eqAny(verb, &.{ "bd", "bdelete", "bw", "bwipeout" })) {
         const id = app.active orelse return error.NoActivePane;
-        return app.closePane(id, bang);
+        return app.closeDocument(id, bang);
     }
     // `:bn` / `:bp` step over terminal tabs; the bang form takes them too.
     if (eqAny(verb, &.{ "bn", "bnext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, 1) else command.run(app, .{ .static = .@"buffer.next" });
@@ -500,13 +500,15 @@ fn saveAll(app: *App) CommandError!void {
     app.toast("saved {d} file(s)", .{n});
 }
 
+/// `:q` closes the window; the buffer stays when another window shows
+/// it, and closes with the last one (a dirty one refuses without `!`).
 fn quit(app: *App, bang: bool) CommandError!void {
     const id = app.active orelse {
         app.quit = true;
         return;
     };
     const pane = app.panes.get(id).?;
-    if (!bang and pane.dirty()) {
+    if (!bang and pane.dirty() and !app.isSharedView(id)) {
         return app.diag.fail(app.frame.allocator(), "unsaved changes in {s} — use :q! to discard", .{pane.title()});
     }
     try app.forceClosePane(id);

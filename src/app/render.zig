@@ -446,13 +446,27 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
     }
 }
 
-/// The tabs of leaf `lid` for the strip.
+/// The tabs of leaf `lid` for the strip. The strip lists documents,
+/// not windows: a second window on a file already in the strip folds
+/// into the first tab (which is active when either window is).
 fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
     var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
     const leaf = layout.leaf(lid) orelse return tabs.items;
     for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
-        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file, .pinned = p.pinned() });
+        const active = leaf.active == id;
+        if (p.asEditor()) |e| {
+            var folded = false;
+            for (tabs.items) |*tab| {
+                const other = app.panes.editor(tab.id) orelse continue;
+                if (other.buf.doc != e.buf.doc) continue;
+                tab.active = tab.active or active;
+                folded = true;
+                break;
+            }
+            if (folded) continue;
+        }
+        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = active, .kind = if (p.* == .pty) .pty else .file, .pinned = p.pinned() });
     }
     return tabs.items;
 }

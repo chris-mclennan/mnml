@@ -1551,6 +1551,27 @@ pub const App = struct {
         return e.buf.doc.hasOtherView(e.buf.editor);
     }
 
+    /// `:bd`: close the buffer — every window on `id`'s document goes,
+    /// the last one through `closePane` so a dirty document still gets
+    /// its Save / Discard / Cancel box (or `force`).
+    pub fn closeDocument(self: *App, id: PaneId, force: bool) Allocator.Error!void {
+        const e = self.panes.editor(id) orelse return self.closePane(id, force);
+        const doc = e.buf.doc;
+        var again = true;
+        while (again) {
+            again = false;
+            for (self.panes.slots.items, 0..) |*slot, i| {
+                const p = &(slot.* orelse continue);
+                const other = p.asEditor() orelse continue;
+                if (other.buf.doc != doc or i == id) continue;
+                try self.forceClosePane(@intCast(i));
+                again = true;
+                break;
+            }
+        }
+        try self.closePane(id, force);
+    }
+
     /// Close `id`. A dirty editor gets the Save / Discard / Cancel box
     /// instead; `force` skips it (discarding). A window on a document
     /// another pane still shows just goes — the text lives on there.
