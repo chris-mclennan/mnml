@@ -1892,7 +1892,7 @@ fn bigWordAt(text: []const u8, byte: usize) ?find_mod.Range {
     return .{ .start = s, .end = en };
 }
 
-fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Error!void {
+pub fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Error!void {
     const line = e.buf.input.cmdlineGet() orelse return;
     const caret = e.buf.input.cmdlineCaret() orelse line.len;
     var clean: std.ArrayListUnmanaged(u8) = .empty;

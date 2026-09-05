@@ -106,6 +106,14 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "delm", "delmarks" })) return delmarks(app, args, bang);
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
     if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
+    if (eqAny(verb, &.{ "mes", "messages", "Messages" })) {
+        if (bang) return @import("messages.zig").dump(app);
+        return command.run(app, .{ .static = .@"messages.show" });
+    }
+    if (eqAny(verb, &.{ "cn", "cnext" })) return command.run(app, .{ .static = .@"qf.next" });
+    if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return command.run(app, .{ .static = .@"qf.prev" });
+    if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return command.run(app, .{ .static = .@"qf.first" });
+    if (eqAny(verb, &.{ "cla", "clast" })) return command.run(app, .{ .static = .@"qf.last" });
     if (eqAny(verb, &.{ "theme", "colorscheme", "colo" })) {
         if (args.len == 0) return command.run(app, .{ .static = .@"theme.pick" });
         return @import("cmd_view.zig").useTheme(app, args);
@@ -1150,6 +1158,20 @@ test "ex: Tab on `:set ui.line_n` completes the option on the : line" {
     for ("set noui.line_numbers") |c| try f.app.handle(.{ .key = Key.char(c) });
     try f.app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(!f.app.cfg.ui.line_numbers);
+}
+
+test "ex: :messages opens the picker, :messages! dumps, :cn/:cp walk the quickfix list" {
+    var f = try Fixture.init("x");
+    defer f.deinit();
+    try testing.expectError(error.Failed, f.ex("messages")); // nothing yet
+    f.app.toast("hello there", .{});
+    try f.ex("messages");
+    try testing.expect(f.app.overlay == .picker);
+    f.app.overlay.deinit(f.app.gpa);
+    try f.ex("messages!");
+    try testing.expect(std.mem.indexOf(u8, f.app.activeEditor().?.buf.editor.bytes(), "hello there") != null);
+    try testing.expectError(error.Failed, f.ex("cn"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "no quickfix list") != null);
 }
 
 test "ex: q refuses a dirty buffer, q! discards, the last close quits" {
