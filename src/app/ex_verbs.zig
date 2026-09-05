@@ -129,6 +129,10 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     defer leave(app);
     app.in_global = true;
     defer app.in_global = false;
+    // One `:g` is one undo step (`:help :g`, `:help undo-blocks`):
+    // every sub-command's checkpoint collapses into this one.
+    const tok = try ed.beginAtomic();
+    const head_before = ed.doc.edits.head();
     var seen = ed.doc.edits.head();
     var ran: usize = 0;
     var failed: usize = 0;
@@ -165,6 +169,12 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
             },
         };
         ran += 1;
+    }
+    if (app.panes.editor(pane_id)) |pane| {
+        const cur = pane.buf.editor;
+        cur.endAtomic(tok);
+        // Nothing edited: no step to undo either.
+        if (cur.doc.edits.head() == head_before and !cur.doc.edits.lostSince(head_before)) cur.popCheckpoint();
     }
     app.diag.clear();
     if (failed > 0) {
