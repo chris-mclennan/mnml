@@ -1222,6 +1222,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .palette => try runCmd(app, .palette),
                 .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
                 .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
+                .ai_claude => try runCmd(app, .@"ai.claude_code"),
+                .ai_codex => try runCmd(app, .@"ai.codex"),
                 else => {},
             }
         },

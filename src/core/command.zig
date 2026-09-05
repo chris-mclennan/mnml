@@ -108,6 +108,7 @@ const runner_tables = .{
     @import("../app/md_preview.zig"),
     @import("../app/snippets.zig"),
     @import("../app/context_menus.zig"),
+    @import("../app/settings.zig"),
     @import("../app/cheatsheet.zig"),
     @import("../app/cmd_term.zig"),
     @import("../app/runners.zig"),

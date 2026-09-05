@@ -103,6 +103,9 @@ pub const Button = enum(u32) {
     palette = 1,
     toggle_tree = 2,
     toggle_right_panel = 3,
+    /// `ui.tab_bar_ai_icon`: the brand chips in the bar's right cluster.
+    ai_claude = 4,
+    ai_codex = 5,
     new_tab_base = 0x100,
     _,
 
@@ -218,9 +221,11 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
     const right_glyph: []const u8 = if (ui.ascii) " # " else " ▤ ";
     const rw = ui.width(right_glyph);
+    var cluster_left = bar.right();
     if (bar.w > w0 + rw + 4) {
         const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
         ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
+        cluster_left = rx;
         // The git badge: changed files in the active repo, Rust's
         // `set_activity_badge("git", n)` — a host's own `git` badge
         // replaces it. Then every other section's badge, summed, as
@@ -237,13 +242,26 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         if (others > 0) {
             const label = ui.fmt("{s}{d} ", .{ @as([]const u8, if (ui.ascii) "*" else "•"), others });
             const bw = ui.width(label);
-            if (bx > w0 + bw + 2) _ = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.accent, bg.bg));
+            if (bx > w0 + bw + 2) bx = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.accent, bg.bg));
         }
+        cluster_left = bx;
+        // `ui.tab_bar_ai_icon`: the brand chips, a click opens the session.
+        const ai = app.cfg.ui.tab_bar_ai_icon;
+        if (ai == .codex or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .codex);
+        if (ai == .claude_code or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .claude);
     }
-    const label: []const u8 = if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ";
-    const lw = @min(ui.width(label), bar.w -| (w0 + rw + 2));
-    var chip_right = bar.right() -| (rw + 1);
-    if (lw >= 8) {
+    // `ui.top_bar_cluster_mode`: the palette chip's label — the full
+    // hint, or the icon alone; `auto` keeps the hint on a wide bar.
+    const compact = switch (app.cfg.ui.top_bar_cluster_mode) {
+        .compact => true,
+        .expanded => false,
+        .auto => bar.w < 100,
+    };
+    const label: []const u8 = if (compact) (if (ui.ascii) " > " else " ⌘ ") else (if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ");
+    const lw = @min(ui.width(label), bar.w -| (w0 + (bar.right() - cluster_left) + 2));
+    var chip_right = cluster_left -| 1;
+    const min_chip: u16 = if (compact) 3 else 8;
+    if (lw >= min_chip) {
         const x = bar.x + (bar.w - lw) / 2;
         const chip = Rect.init(x, y, lw, 1);
         ui.fill(chip, th.chip);
@@ -256,6 +274,27 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         for (props, 0..) |*cp, i| cp.* = .{ .glyph = strip[i].glyph, .fallback = strip[i].fallback, .color = strip[i].color, .enabled = strip[i].enabled };
         chip_right = integrations_view.drawChips(ui, chip_right, y, x + lw + 1, bg, props);
     }
+}
+
+pub const AiBrand = enum { claude, codex };
+
+/// Claude's asterisk / Codex's prompt glyph (the `default_integration_icons`
+/// fallbacks under `--ascii`), lit when a session is running. Returns
+/// the x it started at.
+fn drawAiChip(app: *App, ui: Ui, right_x: u16, y: u16, brand: AiBrand) u16 {
+    const th = ui.theme;
+    const bg = th.bufferline;
+    const glyph: []const u8 = switch (brand) {
+        .claude => if (ui.ascii) " * " else " \u{2733} ",
+        .codex => if (ui.ascii) " > " else " \u{276F}_ ",
+    };
+    const live = ai_app.findSession(app, if (brand == .claude) .claude else .codex) != null;
+    const style = if (live) Theme.onBg(th.accent, bg.bg) else Theme.onBg(th.muted, bg.bg);
+    const w = ui.width(glyph);
+    if (right_x < w + 4) return right_x;
+    const x = ui.putStrRight(right_x, y, w, glyph, style);
+    ui.hit(Rect.init(x, y, w, 1), .{ .button = @intFromEnum(if (brand == .claude) Button.ai_claude else Button.ai_codex) });
+    return x;
 }
 
 fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
@@ -299,20 +338,59 @@ fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Al
 /// The markdown chip at the right end of the active leaf's strip:
 /// `✏ Edit` on a preview, ` Preview` on a markdown editor. A click is
 /// the command.
-fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
-    const active = app.active orelse return;
-    const pane = app.panes.get(active) orelse return;
+fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
+    const active = app.active orelse return 0;
+    const pane = app.panes.get(active) orelse return 0;
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
-        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return,
+        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
     };
     const w = ui.width(label);
-    if (area.w < w + 2) return;
+    if (area.w < w + 2) return 0;
     const r = Rect.init(area.right() - w, area.y, w, 1);
     ui.fill(r, app.theme.chip);
     _ = ui.putStr(r.x, r.y, w, label, app.theme.chip);
     ui.hit(r, .{ .button = button });
+    return w;
+}
+
+/// `editor.breadcrumb`: the file's path as `dir › dir › name`, right-
+/// aligned on the active leaf's strip after the tabs, before the
+/// markdown chip. Painted only when the whole crumb fits past the tabs
+/// — a clipped path reads as a different file.
+fn drawBreadcrumb(app: *App, ui: Ui, pane: *app_mod.Pane, strip: Rect, reserved: u16) void {
+    const path = switch (pane.*) {
+        .editor => |*e| e.buf.path orelse return,
+        .md_preview => |*m| m.path,
+        else => return,
+    };
+    const rel = app.relPath(path);
+    const sep: []const u8 = if (ui.ascii) " > " else " › ";
+    var crumb: std.ArrayListUnmanaged(u8) = .empty;
+    var it = std.mem.splitScalar(u8, rel, '/');
+    var first = true;
+    while (it.next()) |part| {
+        if (part.len == 0) continue;
+        if (!first) crumb.appendSlice(ui.arena, sep) catch return;
+        crumb.appendSlice(ui.arena, part) catch return;
+        first = false;
+    }
+    const text = ui.fmt(" {s} ", .{crumb.items});
+    const w = ui.width(text);
+    // The tabs' extent: the right edge of the last `.tab` / `+` hit on this row.
+    var tabs_end: u16 = strip.x;
+    for (app.hits.items.items) |h| {
+        if (h.rect.y != strip.y or h.rect.x < strip.x or h.rect.right() > strip.right()) continue;
+        if (h.target == .tab or (h.target == .button and render_button_is_new_tab(h.target.button))) tabs_end = @max(tabs_end, h.rect.right());
+    }
+    const right = strip.right() - reserved;
+    if (right < tabs_end + w + 1) return;
+    _ = ui.putStrRight(right, strip.y, w, text, Theme.onBg(app.theme.muted, app.theme.bufferline.bg));
+}
+
+fn render_button_is_new_tab(id: u32) bool {
+    return Button.newTabLeaf(id) != null;
 }
 
 fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
@@ -347,7 +425,10 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         if (rect.h >= 2 and !app.zen) {
             const s = rect.splitTop(1);
             bufferline.draw(ui, s.top, try tabsOf(app, ui, layout, pr.leaf), .{ .leaf = @intCast(li), .new_tab = Button.newTab(li) });
-            if (app.active == pr.pane) drawMdChip(app, ui, s.top);
+            if (app.active == pr.pane) {
+                const md_w = drawMdChip(app, ui, s.top);
+                if (app.cfg.editor.breadcrumb) drawBreadcrumb(app, ui, pane, s.top, md_w);
+            }
             rect = s.rest;
         }
         switch (pane.*) {
@@ -555,6 +636,26 @@ fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocat
     return std.mem.concat(arena, editor_view.GutterMark, &.{ d, l, g });
 }
 
+/// `ui.highlight_word_under_cursor`: every whole-word occurrence of the
+/// word at the cursor within `[from, to)`, sorted — the view underlines
+/// them. No word under the cursor = nothing.
+fn wordMatches(arena: Allocator, ed: *const @import("../editor/editor.zig").Editor, from: usize, to: usize) Allocator.Error![]const editor_view.Range {
+    const text = ed.bytes();
+    const w = @import("find.zig").wordAt(text, ed.cursor) orelse return &.{};
+    const word = text[w.start..w.end];
+    var out: std.ArrayListUnmanaged(editor_view.Range) = .empty;
+    var i = from;
+    const end = @min(to, text.len);
+    while (i + word.len <= end) {
+        const at = std.mem.indexOfPos(u8, text[0..end], i, word) orelse break;
+        const before_ok = at == 0 or !@import("find.zig").isWord(text[at - 1]);
+        const after_ok = at + word.len >= text.len or !@import("find.zig").isWord(text[at + word.len]);
+        if (before_ok and after_ok) try out.append(arena, .{ .start = at, .end = at + word.len });
+        i = at + 1;
+    }
+    return out.items;
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
@@ -637,6 +738,16 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .labels = labels,
         .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
         .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
+        // ── ui toggles ──
+        .relative_numbers = app.cfg.ui.relative_line_numbers,
+        .cursor_line_band = app.cfg.ui.cursor_line,
+        .show_whitespace = app.cfg.ui.show_whitespace,
+        .highlight_trailing_ws = app.cfg.ui.highlight_trailing_ws,
+        .bracket_rainbow = app.cfg.ui.bracket_rainbow,
+        .word_matches = if (app.cfg.ui.highlight_word_under_cursor) try wordMatches(arena, ed, ed.lineStart(lo_line), ed.lineEnd(hi_line)) else &.{},
+        .todo_keywords = app.cfg.ui.highlight_todo_keywords,
+        .color_column = app.cfg.ui.color_column,
+        .render_markdown = app.cfg.ui.render_markdown and e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);
@@ -1035,4 +1146,82 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
         found = true;
     };
     try t.expect(found);
+}
+
+// ── ui toggles: the frame-level ones, one cell each ──
+
+test "ui toggles: cluster mode shrinks the palette chip, the AI icon registers its button" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.cfg.ui.tab_bar_ai_icon = .none;
+    const wide = try screenText(&app);
+    defer t.allocator.free(wide);
+    try t.expect(std.mem.indexOf(u8, wide, "search files · run commands") != null);
+    app.cfg.ui.top_bar_cluster_mode = .compact;
+    const compact = try screenText(&app);
+    defer t.allocator.free(compact);
+    try t.expect(std.mem.indexOf(u8, compact, "search files") == null);
+    try t.expect(std.mem.indexOf(u8, compact, "⌘") != null);
+    // no AI chip while the icon is off
+    for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
+    app.cfg.ui.tab_bar_ai_icon = .both;
+    try app.render();
+    var claude: ?Rect = null;
+    var codex: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .button) {
+        if (h.target.button == @intFromEnum(Button.ai_claude)) claude = h.rect;
+        if (h.target.button == @intFromEnum(Button.ai_codex)) codex = h.rect;
+    };
+    try t.expect(claude != null and codex != null);
+    try t.expect(claude.?.y == 0 and claude.?.right() <= codex.?.x);
+    app.cfg.ui.tab_bar_ai_icon = .codex;
+    try app.render();
+    for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
+}
+
+test "ui toggles: the breadcrumb sits on the strip after the tabs and follows editor.breadcrumb" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .cols = 80, .rows = 10 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.setPath("/tmp/ws/src/app/render.zig");
+    app.cfg.editor.breadcrumb = true;
+    const on = try screenText(&app);
+    defer t.allocator.free(on);
+    try t.expect(std.mem.indexOf(u8, on, "src › app › render.zig") != null);
+    app.cfg.editor.breadcrumb = false;
+    const off = try screenText(&app);
+    defer t.allocator.free(off);
+    try t.expect(std.mem.indexOf(u8, off, "src › app › render.zig") == null);
+}
+
+test "ui toggles: expand_indicator and workspace dots change the tree rail" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.createDirPath(t.io, "sub");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/a.txt", .data = "x" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .cols = 60, .rows = 10 });
+    defer app.deinit();
+    app.cfg.ui.show_workspace_dots = true;
+    const chev = try screenText(&app);
+    defer t.allocator.free(chev);
+    try t.expect(std.mem.indexOf(u8, chev, "\u{f47c} sub") != null);
+    try t.expect(std.mem.indexOf(u8, chev, "●") != null);
+    app.cfg.ui.expand_indicator = .triangle;
+    app.cfg.ui.show_workspace_dots = false;
+    const tri = try screenText(&app);
+    defer t.allocator.free(tri);
+    try t.expect(std.mem.indexOf(u8, tri, "▾ sub") != null);
+    try t.expect(std.mem.indexOf(u8, tri, "●") == null);
+    // the toggle runners flip the fields
+    const command = @import("../core/command.zig");
+    try command.run(&app, .{ .static = .@"view.toggle_workspace_dots" });
+    try t.expect(app.cfg.ui.show_workspace_dots);
+    try command.run(&app, .{ .static = .@"view.toggle_relative_numbers" });
+    try t.expect(app.cfg.ui.relative_line_numbers);
+    try command.run(&app, .{ .static = .@"view.toggle_color_column" });
+    try t.expectEqual(@as(u16, 80), app.cfg.ui.color_column);
 }

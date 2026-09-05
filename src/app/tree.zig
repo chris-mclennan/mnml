@@ -312,7 +312,10 @@ pub const Tree = struct {
         const focused = app.focus == .tree;
         const header = area.row(0);
         const title = std.fs.path.basename(app.workspace);
-        const label = try std.fmt.allocPrint(ui.arena, " {s}", .{if (title.len == 0) "workspace" else title});
+        // changed (ui-polish): `ui.show_workspace_dots` marks the workspace
+        // row with a dot in the accent, as the Rust rail does for its roots.
+        const dot: []const u8 = if (app.cfg.ui.show_workspace_dots) (if (ui.ascii) " *" else " ●") else "";
+        const label = try std.fmt.allocPrint(ui.arena, "{s} {s}", .{ dot, if (title.len == 0) "workspace" else title });
         _ = ui.canvas.text(header, &.{.{ .text = label, .style = if (focused) app.theme.accent else app.theme.muted }}, .{});
         if (area.h < 2) return;
         const list = area.splitTop(1).rest;
@@ -327,7 +330,9 @@ pub const Tree = struct {
         }) {
             const row = self.rows.items[i];
             const r = list.row(y);
-            const glyph: []const u8 = if (row.is_dir) (if (self.isExpanded(row.rel)) (if (ui.ascii) "v" else "▾") else (if (ui.ascii) ">" else "▸")) else " ";
+            // changed (ui-polish): `ui.expand_indicator` picks the folder glyph —
+            // nf-oct chevrons (the default), or the small triangles.
+            const glyph: []const u8 = if (row.is_dir) expandGlyph(app.cfg.ui.expand_indicator, self.isExpanded(row.rel), ui.ascii) else " ";
             const line = try std.fmt.allocPrint(ui.arena, "{s}{s} {s}", .{ try indent(ui.arena, row.depth), glyph, row.name() });
             const style = if (i == self.cursor and focused) app.theme.chip_active else if (i == self.cursor) app.theme.cursor_line else if (row.is_dir) app.theme.accent else app.theme.panel_bg;
             ui.canvas.fill(r, style);
@@ -343,6 +348,15 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
     };
+}
+
+/// The folder glyph for `ui.expand_indicator`: chevrons are the Nerd
+/// Font `oct-chevron_down` / `_right` (`v` / `>` under `--ascii`), the
+/// triangles `▾` / `▸`.
+pub fn expandGlyph(kind: app_mod.Config.ExpandIndicator, expanded: bool, ascii: bool) []const u8 {
+    if (kind == .triangle and !ascii) return if (expanded) "▾" else "▸";
+    if (expanded) return if (ascii) "v" else "\u{f47c}";
+    return if (ascii) ">" else "\u{f460}";
 }
 
 fn isNoisy(name: []const u8) bool {

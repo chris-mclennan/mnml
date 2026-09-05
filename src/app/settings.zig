@@ -25,6 +25,7 @@ const App = app_mod.App;
 const Key = app_mod.Key;
 const config = @import("../config/root.zig");
 const Config = config.Config;
+const command = @import("../core/command.zig");
 const input = @import("../input/mod.zig");
 const Theme = @import("../ui/theme.zig");
 const ui_settings = @import("../ui/settings.zig");
@@ -32,6 +33,43 @@ const Item = ui_settings.Item;
 const integrations = @import("integrations.zig");
 
 pub const Scope = enum { home, workspace };
+
+/// The `view.toggle_*` runners for the fields the settings rows also
+/// name: flip in memory and say so, like `:set`. The overlay is where a
+/// value is written to disk.
+pub const table = .{
+    .@"view.toggle_relative_numbers" = toggleRunner("ui.relative_line_numbers", "relative numbers"),
+    .@"view.toggle_whitespace" = toggleRunner("ui.show_whitespace", "whitespace"),
+    .@"view.toggle_bracket_rainbow" = toggleRunner("ui.bracket_rainbow", "rainbow brackets"),
+    .@"view.toggle_highlight_trailing_ws" = toggleRunner("ui.highlight_trailing_ws", "trailing whitespace"),
+    .@"view.toggle_highlight_word" = toggleRunner("ui.highlight_word_under_cursor", "word highlight"),
+    .@"view.toggle_todo_highlight" = toggleRunner("ui.highlight_todo_keywords", "todo keywords"),
+    .@"view.toggle_render_markdown" = toggleRunner("ui.render_markdown", "inline markdown"),
+    .@"view.toggle_breadcrumb" = toggleRunner("editor.breadcrumb", "breadcrumb"),
+    .@"view.toggle_click_echo" = toggleRunner("ui.click_echo", "click echo"),
+    .@"view.toggle_hover_help" = toggleRunner("ui.hover_help", "hover help"),
+    .@"view.toggle_hover_tooltip" = toggleRunner("ui.hover_tooltip", "hover tooltips"),
+    .@"view.toggle_workspace_dots" = toggleRunner("ui.show_workspace_dots", "workspace dots"),
+    .@"view.toggle_color_column" = &toggleColorColumn,
+};
+
+fn toggleRunner(comptime path: []const u8, comptime label: []const u8) command.CommandFn {
+    return &struct {
+        fn run(app: *App) command.CommandError!void {
+            const p = fieldPtr(&app.cfg, path);
+            p.* = !p.*;
+            app.toast(label ++ " {s}", .{if (p.*) "on" else "off"});
+            app.needs_render = true;
+        }
+    }.run;
+}
+
+/// `view.toggle_color_column`: off ↔ the editor's `text_width`.
+fn toggleColorColumn(app: *App) command.CommandError!void {
+    app.cfg.ui.color_column = if (app.cfg.ui.color_column == 0) @max(app.cfg.editor.text_width, 1) else 0;
+    if (app.cfg.ui.color_column == 0) app.toast("colour column off", .{}) else app.toast("colour column at {d}", .{app.cfg.ui.color_column});
+    app.needs_render = true;
+}
 
 /// The file a scope writes to, or null when there is no home at all
 /// (no `$HOME`, no data root — nothing to write into).
@@ -113,6 +151,20 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.picker_position", .label = "Picker position", .section = .ui, .scope = .home },
     .{ .path = "ui.show_workspace_dots", .label = "Workspace dots", .section = .ui, .scope = .home },
     .{ .path = "ui.hover_help", .label = "Hover help", .section = .ui, .scope = .home },
+    .{ .path = "ui.hover_tooltip", .label = "Hover tooltips", .section = .ui, .scope = .home },
+    .{ .path = "ui.click_echo", .label = "Click echo in statusline", .section = .ui, .scope = .home },
+    .{ .path = "ui.highlight_word_under_cursor", .label = "Highlight word under cursor", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.highlight_todo_keywords", .label = "Highlight TODO keywords", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.render_markdown", .label = "Inline-rendered markdown", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.sticky_context", .label = "Sticky scope context", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.markdown_opens_rendered", .label = "Markdown opens rendered", .section = .ui, .scope = .home },
+    .{ .path = "ui.auto_md_preview", .label = "Auto markdown preview", .section = .ui, .scope = .home },
+    .{ .path = "ui.stress_meter", .label = "Stress meter", .section = .ui, .scope = .home },
+    .{ .path = "ui.top_bar_cluster_mode", .label = "Top bar cluster", .section = .ui, .scope = .home },
+    .{ .path = "ui.tab_bar_ai_icon", .label = "AI icon in the bar", .section = .ui, .scope = .home },
+    .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
+    .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
+    .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
     // ── Editor ──
     .{ .path = "editor.input_style", .label = "Input style", .section = .editor, .scope = .home },
     .{ .path = "editor.auto_pair", .label = "Auto-pair brackets", .section = .editor, .scope = .workspace },
@@ -537,7 +589,6 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     defer app.deinit();
     _ = try app.openScratch();
 
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"view.settings" });
     try t.expect(app.overlay == .settings);
     try t.expect(app.focus == .overlay);
@@ -628,7 +679,7 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
 }
 
 test "the overlay renders the sections and the footer names the target file" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 70 });
     defer app.deinit();
     try open(&app);
     try app.render();
