@@ -1692,3 +1692,35 @@ is the contract-level list of what moved.
   stress meter's bufferline copy, `menu.glyph_audit`, the encoding
   chip's prompt (utf-8 is the only encoding; a click says so), the Undo
   chip for file deletes (the tree is the panels track's).
+## Pty ownership (2026-09-05, branch `pty-race`) — `// changed:` notes
+
+- `// changed (pty):` `Session.deinit` no longer returns with the reader
+  still holding the shared block. The reader is still a detached
+  `std.Thread.spawn` (D3 — its lifetime is the child's), but `deinit`
+  pops its `poll` with a byte down a wake pipe (`Shared.wake`, polled
+  beside the master), waits for the reader's `fetchSub`
+  (`Shared.awaitReader` — a short spin, then 1 ms naps; nothing on the
+  reader's way out blocks), and drops the last reference itself. The
+  block is always freed by `deinit`, before it returns, so a
+  leak-checked caller can tear its allocator down right after — the
+  race the tier-2 golden had been dodging with `sleep 30` (restored to
+  `ls -la`; twenty ReleaseSafe runs green, where the previous session
+  crashed on the first). The reader copies the pid out before its
+  release and does its possibly-blocking `waitpid` after, on the copy;
+  `Shared.reaped` is a swap-claimed token so a pid is never waited for
+  twice, and the SIGHUP is decided from the session's own `exit`. The
+  master fd is closed with the block, not at the reader's EOF (a
+  `write` after the child is gone lands on EIO, never on a recycled
+  fd). `SpawnError` gains `PipeFailed`. `Options.poll_interval_ms` is
+  now only the reader's fallback cadence. `session_windows.zig` waits
+  for its reader and watcher the same way (`Shared.awaitThreads`);
+  compile-checked for `x86_64-windows-gnu`, untested on a box.
+- `// changed (tests):` `session_posix.zig` gains a 200-iteration stress
+  test — each session on its own `DebugAllocator`, torn down the
+  moment `deinit` returns; half close before the reader has polled,
+  half after EOF. Before the fix: 98 of 100 immediate closes released
+  late in ReleaseSafe (1 of 100 in Debug). The two existing close tests
+  drop the sleeps they used to wait out the reader. Still dodging with
+  `sleep 30`, outside this branch's touch list: `tests/e2e/pty_tabs.test`
+  and the unit tests in `src/app/cmd_term.zig` / `cmd_buffer.zig` —
+  harmless now, and free to shorten.

@@ -16,16 +16,20 @@
 //!
 //! Threads and ownership
 //! ---------------------
-//! Both threads are *detached*, like the POSIX reader. `ReadFile` on the
-//! output pipe only fails once conhost lets go of its end, and conhost
-//! only does that after `ClosePseudoConsole` — so `Session.deinit` never
-//! joins: it terminates the child, closes the pseudoconsole, marks the
-//! shared block `closing` and drops its reference. The reader keeps
-//! draining (into scratch once closing — `ClosePseudoConsole` is known to
-//! block until every pending byte has been read; a reader that stopped
-//! reading would wedge the UI thread on close), sees the broken pipe,
-//! and drops the last reference. Everything either thread touches lives
-//! in `Shared`; neither dereferences `Session`.
+//! Both threads are *detached*, like the POSIX reader, and as there,
+//! `Session.deinit` does not join them but does wait for both to let go
+//! of the shared block before it frees it — so the block never outlives
+//! the session and a leak-checked caller can tear down the allocator
+//! right after. `deinit` terminates the child, closes the pseudoconsole,
+//! marks the block `closing`, sets the stop event, and then waits for the
+//! two releases. Neither takes long: the watcher's wait returns on the
+//! stop event; the reader keeps draining (into scratch once closing —
+//! `ClosePseudoConsole` is known to block until every pending byte has
+//! been read; a reader that stopped reading would wedge the UI thread on
+//! close) until conhost lets go of its end of the pipe after the close,
+//! which breaks its `ReadFile`. Everything either thread touches lives in
+//! `Shared`; neither dereferences `Session`, and neither touches the
+//! block after its release.
 //!
 //! Exit
 //! ----
@@ -175,7 +179,11 @@ const Shared = struct {
     /// Set by the watcher once `exit_code` is valid.
     exited: std.atomic.Value(bool) = .init(false),
     exit_code: std.atomic.Value(u32) = .init(0),
-    refs: std.atomic.Value(u32) = .init(3), // the session + the reader + the watcher
+    /// The session + the reader + the watcher. `deinit` waits for the two
+    /// threads' releases before its own, so the block is always freed by
+    /// `deinit`, before it returns — each thread's last touch is its
+    /// `fetchSub`.
+    refs: std.atomic.Value(u32) = .init(3),
 
     fn release(self: *Shared, gpa: Allocator) void {
         if (self.refs.fetchSub(1, .acq_rel) != 1) return;
@@ -183,6 +191,17 @@ const Shared = struct {
         windows.CloseHandle(self.process);
         windows.CloseHandle(self.stop);
         gpa.destroy(self);
+    }
+
+    /// Session side: block until both threads have dropped their
+    /// references. Bounded by their wake-up latency once `deinit` has
+    /// set the stop event and closed the pseudoconsole — a short spin,
+    /// then 1 ms naps.
+    fn awaitThreads(self: *Shared) void {
+        var spins: u32 = 0;
+        while (self.refs.load(.acquire) > 1) : (spins += 1) {
+            if (spins < 256) std.atomic.spinLoopHint() else kernel32.Sleep(1);
+        }
     }
 
     fn callNotify(self: *Shared) void {
@@ -378,25 +397,29 @@ pub const Session = struct {
         return self;
     }
 
-    /// Terminate the child, close the pseudoconsole and let go. Returns
-    /// without waiting for either thread (see module doc).
+    /// Terminate the child, close the pseudoconsole and let go. Waits
+    /// only for the two threads to drop the shared block, never for the
+    /// child (see module doc). When this returns nothing of the session
+    /// is left allocated.
     pub fn deinit(self: *Session) void {
         const gpa = self.gpa;
-        self.shared.disarmNotify();
-        self.shared.closing.store(true, .release);
+        const shared = self.shared;
+        shared.disarmNotify();
+        shared.closing.store(true, .release);
         // The POSIX side hangs up on the whole process group; Win32 has no
         // group to signal, so the direct child is terminated. Grandchildren
         // it started are on their own (a job object would be the fix).
-        if (!self.shared.exited.load(.acquire)) _ = kernel32.TerminateProcess(self.shared.process, 1);
+        if (!shared.exited.load(.acquire)) _ = kernel32.TerminateProcess(shared.process, 1);
         // The reader discards from here on, so the drain this may wait
         // for needs nothing from us.
-        self.shared.closePty();
+        shared.closePty();
         windows.CloseHandle(self.in_write);
-        _ = kernel32.SetEvent(self.shared.stop);
+        _ = kernel32.SetEvent(shared.stop);
         self.stream.deinit();
         self.term.deinit(gpa);
         self.responses.deinit(gpa);
-        self.shared.release(gpa);
+        shared.awaitThreads();
+        shared.release(gpa);
         self.* = undefined;
         gpa.destroy(self);
     }
