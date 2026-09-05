@@ -1,0 +1,27 @@
+# zig-only
+# `# @assert` / `# @capture` lines after the body boundary are directives,
+# not body bytes. A GET carrying them used to abort the whole process at
+# std's `assert(r.method.requestHasBody())` (api-http-send-get-with-body-
+# crashes-process); a POST shipped them inside its JSON
+# (api-http-directives-leak-into-request-body). The Body tab is the
+# request's wire body, so it must show the JSON alone; the send to a
+# closed port fails soft instead of taking the runner down.
+write requests/get.http "### get-json\nGET http://127.0.0.1:1/get\nAccept: application/json\n\n# @assert status == 200\n# @capture origin = body.origin\n"
+write requests/post.http "POST http://127.0.0.1:1/post\nContent-Type: application/json\n\n{\n  \"hello\": \"world\"\n}\n\n# @assert status == 200\n# @capture origin = body.json.hello\n"
+open requests/get.http
+expect pane GET
+# The Body tab is empty: neither directive is body.
+expect screen lacks "@assert"
+expect screen lacks "@capture"
+command http.send
+wait 600
+# A closed port is a soft failure on the pane, not an abort.
+expect screen contains "connection failed"
+open requests/post.http
+expect pane POST
+expect screen contains "\"hello\": \"world\""
+expect screen lacks "@assert"
+expect screen lacks "@capture"
+command http.send
+wait 600
+expect screen contains "connection failed"

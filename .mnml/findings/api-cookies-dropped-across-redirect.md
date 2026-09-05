@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Set-Cookie` from a redirecting response (e.g. the canonical `/cookies/set` pattern) never reaches the cookie jar
 
@@ -70,3 +70,26 @@ nothing to extract from by the time mnml-zig's own code runs.
   correctly once a cookie is actually captured (verified separately —
   `cookies.persist` wrote `.mnml/cookies.json` correctly, `cookies.delete`
   opened a working picker over the one captured cookie).
+
+## Fix
+
+Fixed in `94beb18` — `http: follow redirects by hand; a body on GET
+never reaches std's assert` (branch `fix-http-parse`). `sendInner`
+sends with `.redirect_behavior = .unhandled` and runs the hops itself:
+each hop's `Set-Cookie` lands on the response as a `HopCookie` keyed by
+the hop's host (`Response.hop_cookies`, also on `HeadInfo` /
+`StreamChunk.head` for a streamed send), and `afterResponse` records
+them in the jar before the final response's own. `Location` resolves
+against the hop; 303, and 301 / 302 on POST, become GET without the
+body; 307 / 308 resend it; ten hops is the cap. A cookie a hop sets
+rides to the next hop on the same host; a hop to another host carries
+neither the jar's cookie nor `Authorization`.
+
+Tests: `client.zig` "send: redirects are followed by hand, so a 302's
+Set-Cookie reaches the jar …" (302 + two `Set-Cookie` then 200, the jar
+holds both, the second hop carried them), "send: 303 and a 301/302 on
+POST rewrite to GET …; ten hops is the cap", "send: a redirect to
+another host drops the jar's cookie and the Authorization header";
+`app/http.zig` "send: a GET with trailing directives sends no body, and
+a 302's Set-Cookie lands in the jar" (through `http.send`, the jar file
+written).
