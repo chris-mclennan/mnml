@@ -97,9 +97,12 @@ pub const AppCommand = union(enum) {
     /// `{count} Ctrl-W >` and friends: the active window's width
     /// (`width`) or height by `cells`, negative to shrink.
     split_resize: struct { width: bool, cells: i32 },
+    /// `zf{motion}` / `zF`: apply these ops (they select the range),
+    /// then fold the selection. Frame arena.
+    fold_after: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 25);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 26);
     }
 };
 

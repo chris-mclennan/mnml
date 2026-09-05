@@ -37,9 +37,12 @@ pub const PendingOp = enum {
     surround_add,
     @"align",
     filter,
+    /// `zf{motion}`: a manual fold over the range (`:help zf`).
+    fold,
 
     fn glyph(op: PendingOp) []const u8 {
         return switch (op) {
+            .fold => "zf",
             .delete => "d",
             .change => "c",
             .yank => "y",
@@ -849,6 +852,12 @@ pub const Vim = struct {
             .@"align" => {
                 self.prefix = .align_char_wait;
             },
+            // The range goes live first, as whole lines with the cursor on
+            // the last one's end; the app folds the selection.
+            .fold => {
+                try b.push(.normalize_linewise_selection_inner);
+                return .{ .app = .{ .fold_after = b.list.items } };
+            },
             .filter => return .consumed, // TODO(vim-slice: filter) `!{motion}`
         }
         return b.finish();
@@ -910,10 +919,24 @@ pub const Vim = struct {
                 return .{ .app = .{ .block_replace_with = .{ .ch = c } } };
             },
             .z_fold => {
+                const n = self.count1();
                 self.resetPending();
                 const c = ch orelse return .consumed;
                 return switch (c) {
-                    'a', 'A', 'f' => runCmd(.@"editor.toggle_fold"),
+                    // `zf{motion}` is an operator (`:help zf`); `zF` folds
+                    // `count` lines from the cursor's.
+                    'f' => blk: {
+                        self.op = .fold;
+                        break :blk .consumed;
+                    },
+                    'F' => blk: {
+                        var b = Builder.init(arena);
+                        try b.push(.select_start);
+                        if (n > 1) try b.pushRepeated(.move_down, n - 1);
+                        try b.push(.normalize_linewise_selection_inner);
+                        break :blk .{ .app = .{ .fold_after = b.list.items } };
+                    },
+                    'a', 'A' => runCmd(.@"editor.toggle_fold"),
                     'o', 'O' => runCmd(.@"editor.open_fold"),
                     'c', 'C' => runCmd(.@"editor.close_fold"),
                     'R', 'E' => runCmd(.@"editor.unfold_all"),
@@ -1666,7 +1689,7 @@ pub const Vim = struct {
             .surround_add => c == 's',
             .@"align" => c == 'A',
             .filter => c == '!',
-            .reflow, .comment => false,
+            .reflow, .comment, .fold => false,
         } else false;
         const n = self.count1();
         self.resetPending();
@@ -1718,6 +1741,7 @@ pub const Vim = struct {
                     return ops(arena, &.{ .move_line_first_non_ws, .select_start, .move_line_end });
                 },
                 .@"align" => return .consumed, // `gAA` has no meaning
+                .fold => return .consumed, // `zfzf` has no meaning either
             }
         }
         if (ch == 's' and (op == .delete or op == .change or op == .yank)) {
@@ -1886,7 +1910,9 @@ pub const Vim = struct {
                 const c = ch orelse return .consumed;
                 self.enterNormal();
                 return switch (c) {
-                    'f' => runCmd(.@"editor.fold_selection"),
+                    // Whole lines, the cursor on the last one's end, so the
+                    // fold reads its rows unambiguously.
+                    'f' => .{ .app = .{ .fold_after = &.{.normalize_linewise_selection_inner} } },
                     'a', 'A' => runCmd(.@"editor.toggle_fold"),
                     'o', 'O' => runCmd(.@"editor.open_fold"),
                     'c', 'C' => runCmd(.@"editor.close_fold"),

@@ -380,8 +380,11 @@ fn foldSelection(app: *App) CommandError!void {
     const e = try app.requireEditor();
     const ed = e.buf.editor;
     const sel = ed.selection() orelse return app.diag.fail(app.frame.allocator(), "fold: nothing selected", .{});
-    const start = ed.rowColAt(sel[0]).row;
-    const end_row = ed.rowColAt(if (sel[1] > sel[0]) sel[1] - 1 else sel[1]).row;
+    const start = ed.lineOfByte(sel[0]);
+    // A range that ends at a line's start names the line before it,
+    // unless that line is empty and the cursor simply sits on it.
+    var end_row = ed.lineOfByte(sel[1]);
+    if (sel[1] > sel[0] and end_row > start and sel[1] == ed.lineStart(end_row) and !(sel[1] < ed.len() and ed.bytes()[sel[1]] == '\n')) end_row -= 1;
     if (end_row <= start) return app.diag.fail(app.frame.allocator(), "fold: the selection is one line", .{});
     try e.buf.editor.folds.put(app.gpa, start, end_row);
     ed.setCursor(ed.firstNonWs(start));

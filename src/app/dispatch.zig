@@ -2001,6 +2001,13 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .fold_after => |list| {
+            _ = try app.applyOps(e, list);
+            command.run(app, .{ .static = .@"editor.fold_selection" }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+        },
     }
 }
 
