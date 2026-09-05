@@ -961,6 +961,7 @@ pub const App = struct {
     pub fn applyBufferPrefs(self: *App, buf: *Buffer) Allocator.Error!void {
         buf.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
         buf.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
+        buf.editor.auto_indent = self.cfg.editor.auto_indent;
         const path = buf.path orelse return;
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
@@ -1269,6 +1270,15 @@ pub const App = struct {
     /// preview (`markdown_opens_rendered`) unless it is already open in
     /// an editor; anything else to an editor pane. With `auto_md_preview`
     /// a markdown file gets the editor AND a preview split beside it.
+    /// `editor.auto_indent` changed (`:set ai`, the settings row): every
+    /// open buffer follows.
+    pub fn syncAutoIndent(self: *App) void {
+        for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| e.buf.editor.auto_indent = self.cfg.editor.auto_indent,
+            else => {},
+        };
+    }
+
     pub fn openPath(self: *App, path: []const u8) !PaneId {
         try self.noteRecent(path);
         // A request file opens as a request pane on its first block; a

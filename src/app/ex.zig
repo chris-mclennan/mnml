@@ -973,6 +973,8 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
         } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
             app.clipboard.selectMode(app.cfg.editor.clipboard);
+        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent")) {
+            app.syncAutoIndent();
         }
         app.needs_render = true;
         app.toast("{s}={s}", .{ cp, opts[idx] });
