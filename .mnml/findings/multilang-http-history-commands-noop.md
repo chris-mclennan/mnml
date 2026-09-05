@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: rejected
 ---
 
 # `http.history` and `http.history_global` silently do nothing, even with real history data present
@@ -80,3 +80,17 @@ Workspace: `/Users/chrismclennan/Projects/mnml-zig-worktrees/hunt-py`
 ## Command ids
 
 `http.history`, `http.history_global`
+
+## Fix
+
+Rejected: does not reproduce. Replayed on the hunt's build (`main` at
+`46c8b2a`, the same code) in the hunt's own workspace copy
+(`hunt-py`, its `.rqst/history.jsonl` as left on disk) and its own
+`MNML_DATA_ROOT` (`hunt-py-data/history-global.jsonl`, the two lines
+quoted above): `http.history` opens "HTTP history" with both rows,
+`http.history_global` opens "HTTP history · all workspaces" with the
+`hunt-py ·` prefix, and from an empty log each toasts "no history yet
+at .rqst/history.jsonl" — with no pane open, with an editor focused,
+and with a `.curl` pane focused. The toast is drawn at the bottom of
+the screen, below the excerpts the report quotes. `e7b003e` adds
+`tests/e2e-zig/http_history_picker.test` to keep it so.

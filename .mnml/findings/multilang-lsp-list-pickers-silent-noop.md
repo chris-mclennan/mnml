@@ -1,6 +1,6 @@
 ---
 severity: SEV-1
-status: open
+status: fixed
 ---
 
 # `lsp.references` and `lsp.symbols` silently do nothing for TypeScript (list-shaped LSP results never render)
@@ -108,3 +108,22 @@ not a general LSP-attach problem.
 ## Command ids
 
 `lsp.references`, `lsp.symbols`
+
+## Fix
+
+`22f8518` on branch `fix-lsp-lists` — lsp: a request that catches the
+server starting is kept and sent when it is quiet. The pickers were
+never broken: replayed on the same build, `lsp.references` and
+`lsp.symbols` open with every row once the server is up. The repro's
+`wait_ms 1500` is shorter than tsserver's node boot, so `requireServer`
+bounced the command with a "language server for typescript is still
+starting" toast (the ack is `ok:true` by design — a ran-and-failed
+command toasts and the script goes on; `messages.show` lists it). The
+command is now kept and sent when the server is ready **and** quiet —
+tsserver answers a `references` sent straight after `initialize` with
+one row where three exist, before its "Initializing JS/TS language
+features" `$/progress` ends. Also `a81fbae` (a `document_symbol` error
+reaches the user for the picker's request) and `6932729` (`initialized`
+goes out as `{}`, not `[]`). Regression: the scripted server answers
+`references` and both symbol shapes; two unit tests in
+`src/app/lsp.zig`, both break-checked.

@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 
 # `view.close_split` silently no-ops when a pty pane is the ONLY pane in the layout
@@ -83,3 +83,12 @@ no-op → ctrl+c works → npm.lint → close_split no-op again → enter works)
 ## Command id
 
 `view.close_split`
+
+## Fix
+
+`1e34c59` on branch `fix-lsp-lists` — view: close_split on the last
+window closes its buffer (`closePane`: a dirty one asks first, a pty
+goes with its process, the layout may be empty). The "only one split"
+toast was there; the refusal is gone. Regression:
+`tests/e2e-zig/close_split_sole_pane.test` (fails on the unfixed tree at
+line 9) and a unit test in `src/app/cmd_view.zig`, break-checked.

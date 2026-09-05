@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 
 # `git.worktree_add` path prompt has no filesystem-path autocomplete
@@ -57,3 +57,12 @@ autocomplete is missing.
 ## Command id
 
 `git.worktree_add`
+
+## Fix
+
+`6357972` on branch `fix-lsp-lists` — git: the worktree prompt's path
+completes on Tab through the add-workspace prompt's
+`promptPathComplete`, first word only so `[new-branch]` rides along;
+the placeholder says so. Regression:
+`tests/e2e-zig/git_worktree_add_tab.test` (fails on the unfixed tree at
+line 12) and a unit test in `src/app/git.zig`, break-checked.
