@@ -1762,6 +1762,8 @@ test {
     _ = @import("app/undo_store.zig");
     _ = @import("app/macros_store.zig");
     _ = @import("app/marks_store.zig");
+    _ = @import("app/ex_verbs.zig");
+    _ = @import("app/loclist.zig");
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");
     _ = @import("app/cmd_session.zig");
