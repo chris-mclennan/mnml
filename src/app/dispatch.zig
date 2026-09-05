@@ -1196,6 +1196,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             try app.closePane(leaf.tabs.items[tb.idx], false);
         },
         .overlay_item => |i| {
+            // The wheel over the Settings box scrolls its list.
+            if (wheel and app.overlay == .settings) {
+                const lines: isize = @intCast(app.cfg.ui.wheel_lines * count);
+                return settings_app.wheel(app, if (m.kind == .scroll_down) lines else -lines);
+            }
             if (m.kind != .press) return;
             switch (app.overlay) {
                 .confirm => |*c| {

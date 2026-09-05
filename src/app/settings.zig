@@ -437,6 +437,14 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// The wheel over the box: `lines` down (negative up), the cursor
+/// riding inside the window.
+pub fn wheel(app: *App, lines: isize) Allocator.Error!void {
+    const list = try items(app, app.frame.allocator());
+    app.overlay.settings.ui.wheel(list, lines);
+    app.needs_render = true;
+}
+
 /// A click on `hit` (an `.overlay_item` id): focus the row, or jump the
 /// row to the option under the pointer.
 pub fn click(app: *App, hit: u32) Allocator.Error!void {

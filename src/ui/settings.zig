@@ -125,6 +125,39 @@ pub const State = struct {
         var n: usize = @abs(delta);
         while (n > 0) : (n -= 1) s.move(items, if (delta < 0) -1 else 1);
     }
+
+    /// The wheel: the window slides `delta` lines and the cursor is
+    /// pulled along so it stays inside — `draw` scrolls to the cursor,
+    /// so a cursor left behind would drag the window straight back.
+    /// A no-op before the first draw (`rows` is unknown).
+    pub fn wheel(s: *State, items: []const Item, delta: isize) void {
+        if (s.rows == 0 or items.len == 0) return;
+        const max_scroll: isize = @intCast(items.len -| s.rows);
+        s.scroll = @intCast(std.math.clamp(@as(isize, @intCast(s.scroll)) + delta, 0, max_scroll));
+        if (s.cursor < s.scroll) {
+            s.cursor = s.scroll;
+            s.settle(items);
+        } else if (s.cursor >= s.scroll + s.rows) {
+            s.cursor = s.scroll + s.rows - 1;
+            s.settleBack(items);
+        }
+    }
+
+    /// `settle`, but looking up first: the last focusable at or before
+    /// the cursor, else the first after it.
+    fn settleBack(s: *State, items: []const Item) void {
+        if (items.len == 0) return;
+        if (s.cursor >= items.len) s.cursor = items.len - 1;
+        var i = s.cursor + 1;
+        while (i > 0) {
+            i -= 1;
+            if (items[i].focusable()) {
+                s.cursor = i;
+                return;
+            }
+        }
+        s.settle(items);
+    }
 };
 
 pub const Outcome = union(enum) {
@@ -409,6 +442,32 @@ test "a number row paints ‹ [value] › with a hit on each arrow" {
     };
     try testing.expect(down and up);
     try testing.expectEqual(@as(i8, 1), handleKey(&s, Key.named(.right), &items).adjust.delta);
+}
+
+test "the wheel slides the window and carries the cursor with it" {
+    var f = try Fixture.init(60, 7);
+    defer f.deinit();
+    var s: State = .{};
+    const items = sample();
+    // Nothing before a draw: the window height is unknown.
+    s.wheel(&items, 2);
+    try testing.expectEqual(@as(usize, 0), s.scroll);
+    draw(f.ui(), f.full(), &s, &items, null);
+    try testing.expect(s.rows > 0 and s.rows < items.len);
+    s.wheel(&items, 2);
+    try testing.expectEqual(@as(usize, 2), s.scroll);
+    try testing.expect(s.cursor >= s.scroll);
+    try testing.expect(items[s.cursor].focusable());
+    // The draw keeps the window where the wheel put it.
+    draw(f.ui(), f.full(), &s, &items, null);
+    try testing.expectEqual(@as(usize, 2), s.scroll);
+    // Back up past the top clamps; the cursor comes along (a header at 0
+    // is skipped for the first row).
+    s.cursor = items.len - 1;
+    s.wheel(&items, -10);
+    try testing.expectEqual(@as(usize, 0), s.scroll);
+    try testing.expect(s.cursor < s.rows);
+    try testing.expect(items[s.cursor].focusable());
 }
 
 test "keys: move skips headers, adjust/reset/save/cancel come back as outcomes" {
