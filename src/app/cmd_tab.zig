@@ -22,6 +22,7 @@ pub const table = .{
     .@"tab.first" = &tabFirst,
     .@"tab.last" = &tabLast,
     .@"tab.close" = &tabClose,
+    .@"tab.reopen" = &tabReopen,
     .@"tab.only" = &tabOnly,
     .@"tab.list" = &tabList,
     .@"tab.picker" = &tabPicker,
@@ -88,10 +89,67 @@ fn tabLast(app: *App) CommandError!void {
     switchTab(app, app.layouts.layouts.items.len - 1);
 }
 
+/// What `tab.reopen` needs of a page about to go: the files it showed,
+/// in tab order, and which one was active. A page of nothing but
+/// scratch buffers and terminals records nothing.
+fn rememberPage(app: *App, gone: *Layout) CommandError!void {
+    const arena = app.frame.allocator();
+    const panes = try gone.allPanes(arena);
+    const shown: ?PaneId = if (gone.firstLeaf()) |l| gone.leaf(l).?.active else null;
+    var paths: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (paths.items) |p| app.gpa.free(p);
+        paths.deinit(app.gpa);
+    }
+    var active: usize = 0;
+    for (panes) |id| {
+        const p = app.panes.get(id) orelse continue;
+        const path: []const u8 = switch (p.*) {
+            .editor => |*e| e.buf.path orelse continue,
+            .md_preview => |*m| m.path,
+            else => continue,
+        };
+        if (id == shown) active = paths.items.len;
+        try paths.append(app.gpa, try app.gpa.dupe(u8, path));
+    }
+    if (paths.items.len == 0) return;
+    if (app.closed_tabs.items.len >= App.max_closed_tabs) {
+        var oldest = app.closed_tabs.orderedRemove(0);
+        oldest.deinit(app.gpa);
+    }
+    try app.closed_tabs.append(app.gpa, .{ .paths = try paths.toOwnedSlice(app.gpa), .active = active });
+}
+
+/// `tab.reopen`: the last closed page comes back as a new page after
+/// this one, its files as tabs of one leaf, the one that was active
+/// focused. A file that went away is skipped.
+fn tabReopen(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    var closed = app.closed_tabs.pop() orelse return app.diag.fail(arena, "no closed tab page to reopen", .{});
+    defer closed.deinit(app.gpa);
+    const ls = &app.layouts;
+    try ls.layouts.insert(ls.gpa, ls.active + 1, Layout.init(ls.gpa));
+    app.setActive(null);
+    ls.active += 1;
+    var focus: ?PaneId = null;
+    var opened: usize = 0;
+    for (closed.paths, 0..) |path, i| {
+        const id = app.openPath(path) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => continue,
+        };
+        opened += 1;
+        if (i == closed.active or focus == null) focus = id;
+    }
+    if (focus) |id| app.showPane(id) else _ = app.openScratch() catch return error.OutOfMemory;
+    app.toastReplace(tab_toast, "tab reopened · {d}/{d} ({d} file{s})", .{ ls.active + 1, ls.layouts.items.len, opened, if (opened == 1) "" else "s" });
+}
+
 /// A page's panes when the page goes: clean ones close, dirty ones
 /// become background tabs of `home` (the page that stays).
 fn retirePage(app: *App, gone: *Layout, home: *Layout) CommandError!void {
     const arena = app.frame.allocator();
+    try rememberPage(app, gone);
     const panes = try gone.allPanes(arena);
     for (panes) |id| {
         const p = app.panes.get(id) orelse continue;
@@ -310,4 +368,37 @@ test "tab pages: new / goto / move / close re-homes a dirty pane and closes a cl
     try command.run(&app, .{ .static = .@"tab.picker" });
     try t.expect(app.overlay == .picker);
     try t.expectEqual(app_mod.PickerKind.tabs, app.overlay.picker.kind);
+}
+
+test "tab.reopen brings a closed page's files back as a new page after this one, the active one focused; nothing left toasts" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"tab.new" });
+    var ids: [2]PaneId = undefined;
+    for ([_][]const u8{ "a.txt", "b.txt" }, 0..) |name, i| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = name });
+        const path = try std.fs.path.join(t.allocator, &.{ root, name });
+        defer t.allocator.free(path);
+        ids[i] = try app.openPath(path);
+    }
+    app.showPane(ids[0]);
+    try t.expectEqual(@as(usize, 2), app.layouts.layouts.items.len);
+    try command.run(&app, .{ .static = .@"tab.close" });
+    try t.expectEqual(@as(usize, 1), app.layouts.layouts.items.len);
+    try t.expectEqual(@as(usize, 1), app.closed_tabs.items.len);
+    try t.expectEqual(@as(usize, 0), app.closed_tabs.items[0].active);
+    try command.run(&app, .{ .static = .@"tab.reopen" });
+    try t.expectEqual(@as(usize, 2), app.layouts.layouts.items.len);
+    try t.expectEqual(@as(usize, 1), app.layouts.active);
+    try t.expectEqualStrings("a.txt", app.panes.get(app.active.?).?.title());
+    const layout = app.layouts.current();
+    try t.expectEqual(@as(usize, 2), layout.leaf(layout.leafOf(app.active.?).?).?.tabs.items.len);
+    try t.expectEqual(@as(usize, 0), app.closed_tabs.items.len);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"tab.reopen" }));
 }

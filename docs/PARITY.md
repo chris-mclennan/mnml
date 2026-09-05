@@ -185,11 +185,11 @@ the tree. Nothing left is larger than M.
 | `Ctrl-W =` equalize | done | `'='` in the `.window` prong → `view.equalize_splits` | `ui.auto_equalize_splits` / `view.toggle_auto_equalize_splits` unread, no runner |
 | Mouse click-to-focus | done | `src/app/dispatch.zig`, `src/ui/hit.zig` | |
 | Mouse drag-to-resize dividers | done | `dispatch.zig` `.divider` drag | |
-| Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` has no runner |
+| Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e-zig/buffer_pin_reopen.test` |
 | Bufferline tab strip | done | `src/ui/bufferline.zig`, per-leaf strips in `render.zig` | |
 | Tab pages session-persisted | done | `src/app/session.zig` `tabs` / `active_tab` | |
 | Tabline of open buffers | done | `src/ui/bufferline.zig`, `view.focus_tab_1–8` / `focus_tab_last` in `cmd_view.zig` | |
-| MRU buffer switching | missing | `buffer.last` / `clear_mru` / `pin_toggle` have no runner | `buffer.next_dirty` / `prev_dirty` landed |
+| MRU buffer switching | done | `App.pane_mru` (`setActive` fronts, `forceClosePane` drops); `buffer.last` / `clear_mru` / `pin_toggle` in `src/app/cmd_buffer.zig` | `buffer.last` reads the MRU past a closed alternate; a pinned tab fronts its strip with the pin glyph (`bufferline.pin_glyph`, `^` ascii), survives `buffer.close_others` / `close_right` / `view.close_others`, rides in `session.zon`; the tab menu's *Pin tab* row; `buffer.next_dirty` / `prev_dirty` landed earlier |
 | Reopen closed buffer | done | `buffer.reopen` in `src/app/cmd_buffer.zig` | |
 | Recent-files picker | done | `picker.recent` in `src/app/cmd_picker.zig`, `file.open_recent_0–9` / `clear_recent` in `cmd_app.zig` | |
 | Alternate-file jump | done | `:A` in `ex.zig` | |

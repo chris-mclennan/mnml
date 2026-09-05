@@ -91,6 +91,7 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         .{ .label = "Close others", .action = .{ .command = .@"buffer.close_others" } },
         .{ .label = "Close to the right", .action = .{ .command = .@"buffer.close_right" } },
         .{ .label = "Close all", .action = .{ .command = .@"view.close_others" } },
+        .{ .label = if (p.pinned()) "Unpin tab" else "Pin tab", .action = .{ .command = .@"buffer.pin_toggle" }, .separator_before = true },
         .{ .label = "Split right", .action = .{ .command = .@"view.split_right" }, .separator_before = true },
         .{ .label = "Split down", .action = .{ .command = .@"view.split_down" } },
         .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = true },
@@ -446,6 +447,8 @@ fn closeTabs(app: *App, tabs: []const PaneId, keep: PaneId, after: ?usize) Comma
             skipped += 1;
             continue;
         }
+        // A pinned tab is immune to the bulk closes.
+        if (p.pinned()) continue;
         const is_file = if (p.asEditor()) |e| e.buf.path != null else p.* == .md_preview;
         if (is_file) {
             reopenable += 1;

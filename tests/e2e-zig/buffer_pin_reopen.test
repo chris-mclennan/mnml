@@ -1,0 +1,24 @@
+# zig-only
+# `buffer.pin_toggle` fronts the tab with a pin glyph and keeps it
+# through close-others; `tab.reopen` brings a closed tab page's files
+# back as a new page.
+write a.txt alpha
+write b.txt beta
+open a.txt
+open b.txt
+command buffer.pin_toggle
+expect screen contains "pinned b.txt"
+expect screen contains " b.txt "
+command buffer.prev
+command buffer.close_others
+expect screen contains "b.txt"
+expect screen contains "a.txt"
+command buffer.pin_toggle
+command tab.new
+open a.txt
+expect screen contains "tab 2/2"
+command tab.close
+expect screen contains "tab 1/1"
+command tab.reopen
+expect screen contains "tab reopened · 2/2 (1 file)"
+expect screen contains "a.txt"

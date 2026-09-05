@@ -499,6 +499,20 @@ pub const RepeatInsert = struct { pane: PaneId, count: u32, above: bool, start_b
 
 pub const ClosedBuffer = struct { path: []u8, cursor: usize };
 
+/// A closed tab page, for `tab.reopen`: the files it showed (absolute,
+/// owned) and which of them was active. The page's split tree is not
+/// kept — closing a page closes its clean panes, so the files come
+/// back as tabs of one leaf.
+pub const ClosedTab = struct {
+    paths: [][]u8,
+    active: usize,
+
+    pub fn deinit(self: *ClosedTab, gpa: Allocator) void {
+        for (self.paths) |p| gpa.free(p);
+        gpa.free(self.paths);
+    }
+};
+
 /// A mouse gesture in flight: what the press landed on, until release.
 pub const Drag = union(enum) {
     /// A split's divider, by the split node it belongs to.
@@ -619,6 +633,13 @@ pub const App = struct {
     exit_code: u8 = 0,
     /// The pane that was active before the current one (`buffer.last`).
     prev_active: ?PaneId = null,
+    /// Every pane in most-recently-focused order, the active one first
+    /// (`buffer.last` reads the second entry, `buffer.clear_mru` wipes
+    /// it). A closed pane leaves the list.
+    pane_mru: std.ArrayListUnmanaged(PaneId) = .empty,
+    /// The tab pages closed by `tab.close` / `tab.only`, oldest first;
+    /// `tab.reopen` pops the last. Capped at `max_closed_tabs`.
+    closed_tabs: std.ArrayListUnmanaged(ClosedTab) = .empty,
     restart: bool = false,
 
     panes: PaneStore,
@@ -778,6 +799,7 @@ pub const App = struct {
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
+    pub const max_closed_tabs = 8;
     pub const max_recent = 50;
     pub const max_cmd_history = 200;
 
@@ -1040,6 +1062,9 @@ pub const App = struct {
         self.jumplist.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
+        self.pane_mru.deinit(gpa);
+        for (self.closed_tabs.items) |*c| c.deinit(gpa);
+        self.closed_tabs.deinit(gpa);
         var it = self.abbrevs.iterator();
         while (it.next()) |e| {
             gpa.free(e.key_ptr.*);
@@ -1451,6 +1476,11 @@ pub const App = struct {
             if (self.active) |prev| self.prev_active = prev;
         }
         self.active = id;
+        // The MRU: the focused pane moves to the front.
+        if (id) |i| {
+            if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, i)) |at| _ = self.pane_mru.orderedRemove(at);
+            self.pane_mru.insert(self.gpa, 0, i) catch {};
+        }
         // The focused pane is its leaf's shown tab.
         if (id) |i| {
             const layout = self.layouts.current();
@@ -1517,6 +1547,8 @@ pub const App = struct {
         if (closed_path) |p| lsp.onClose(self, id, p);
         files_pane.onPaneClosed(self, id);
         if (self.last_editor == id) self.last_editor = null;
+        if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, id)) |at| _ = self.pane_mru.orderedRemove(at);
+        if (self.prev_active == id) self.prev_active = null;
         if (self.active == id) {
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
             self.active = null;

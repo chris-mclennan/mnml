@@ -74,6 +74,10 @@ pub const EditorPane = struct {
     /// the entry the last `:lnext` / `:lprev` landed on, null after a fill.
     loclist: std.ArrayListUnmanaged(ListPane.Entry) = .empty,
     loc_idx: ?usize = null,
+    /// `buffer.pin_toggle`: the tab sits at the front of its strip with
+    /// a pin glyph and survives close-others / close-right / close-all.
+    /// Saved with the session.
+    pinned: bool = false,
 
     pub fn deinit(self: *EditorPane) void {
         ListPane.freeEntries(self.buf.gpa, self.loclist.items);
@@ -254,6 +258,14 @@ pub const Pane = union(enum) {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
             .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
+        };
+    }
+
+    /// `buffer.pin_toggle` set it: a pinned editor tab.
+    pub fn pinned(self: *const Pane) bool {
+        return switch (self.*) {
+            .editor => |*e| e.pinned,
+            else => false,
         };
     }
 

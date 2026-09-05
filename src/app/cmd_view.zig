@@ -416,6 +416,7 @@ fn closeOthers(app: *App) CommandError!void {
             skipped += 1;
             continue;
         }
+        if (p.pinned()) continue;
         try app.forceClosePane(id);
     }
     if (skipped > 0) app.toast("kept {d} buffer(s) with unsaved changes", .{skipped});
