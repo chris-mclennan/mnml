@@ -86,9 +86,13 @@ pub const AppCommand = union(enum) {
     cmdline_insert_cursor_word: bool,
     cmdline_paste_from_clipboard,
     flash_start: struct { a: u21, b: u21 },
+    /// `{count}gt` (page `count`, past the end ⇒ the last page) and
+    /// `{count}gT` (`count` pages back). Without a count the handler
+    /// runs `tab.next` / `tab.prev` instead.
+    tab_page: struct { count: u32, back: bool },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 22);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 23);
     }
 };
 

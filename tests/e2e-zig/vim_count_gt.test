@@ -1,0 +1,33 @@
+# zig-only
+# `{count}gt` goes to tab page {count} (`:help gt`), past the last page it
+# lands on the last one; `{count}gT` goes {count} pages back. Each page
+# holds a different file so the active pane names the page.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+write c.txt "charlie\n"
+open a.txt
+command editor.use_vim
+ex tabnew
+open b.txt
+ex tabnew
+open c.txt
+expect pane c.txt
+key 2
+key g
+key t
+expect pane b.txt
+key 2
+key g
+key T
+expect pane c.txt
+key 1
+key g
+key t
+expect pane a.txt
+key 9
+key g
+key t
+expect pane c.txt
+key g
+key T
+expect pane b.txt

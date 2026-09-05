@@ -1506,8 +1506,14 @@ pub const Vim = struct {
                 self.last_search_backward = true;
                 return runCmd(.@"find.word_backward");
             },
-            't' => return runCmd(.@"tab.next"),
-            'T' => return runCmd(.@"tab.prev"),
+            't' => {
+                if (count_explicit) return .{ .app = .{ .tab_page = .{ .count = n, .back = false } } };
+                return runCmd(.@"tab.next");
+            },
+            'T' => {
+                if (count_explicit) return .{ .app = .{ .tab_page = .{ .count = n, .back = true } } };
+                return runCmd(.@"tab.prev");
+            },
             'n', 'N' => {
                 const forward = c == 'n';
                 const range = if (forward) ctx.next_find_match else ctx.prev_find_match;
@@ -2135,6 +2141,35 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their run
     // `T` has no runner yet: the prefix is consumed and nothing runs.
     try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
     try testing.expect((try v.handleKey(Key.char('T'), .{}, a)) == .consumed);
+}
+
+test "gt / gT run tab.next / tab.prev; with a count they name the page (3gt) or the distance back (2gT)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char('g'), .{}, a);
+    var r = try v.handleKey(Key.char('t'), .{}, a);
+    try testing.expectEqual(CommandId.@"tab.next", r.app.run_command);
+    _ = try v.handleKey(Key.char('g'), .{}, a);
+    r = try v.handleKey(Key.char('T'), .{}, a);
+    try testing.expectEqual(CommandId.@"tab.prev", r.app.run_command);
+    _ = try v.handleKey(Key.char('3'), .{}, a);
+    _ = try v.handleKey(Key.char('g'), .{}, a);
+    r = try v.handleKey(Key.char('t'), .{}, a);
+    try testing.expectEqual(@as(u32, 3), r.app.tab_page.count);
+    try testing.expect(!r.app.tab_page.back);
+    _ = try v.handleKey(Key.char('1'), .{}, a);
+    _ = try v.handleKey(Key.char('2'), .{}, a);
+    _ = try v.handleKey(Key.char('g'), .{}, a);
+    r = try v.handleKey(Key.char('T'), .{}, a);
+    try testing.expectEqual(@as(u32, 12), r.app.tab_page.count);
+    try testing.expect(r.app.tab_page.back);
+    // The count is spent: a plain `gt` follows.
+    _ = try v.handleKey(Key.char('g'), .{}, a);
+    r = try v.handleKey(Key.char('t'), .{}, a);
+    try testing.expectEqual(CommandId.@"tab.next", r.app.run_command);
 }
 
 test "pending display shows register, count, operator and prefix" {

@@ -26,6 +26,7 @@ const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
+const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
@@ -1880,6 +1881,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .cmdline_insert_cursor_word => |big| try cmdlineInsertWord(app, e, big),
         .cmdline_paste_from_clipboard => try cmdlineInsert(app, e, app.clipboard.text()),
         .flash_start => |f| try flash.start(app, pane_id, e, f.a, f.b),
+        .tab_page => |tp| cmd_tab.gotoPage(app, tp.count, tp.back),
     }
 }
 

@@ -56,6 +56,17 @@ pub fn switchTab(app: *App, idx: usize) void {
     app.toast("tab {d}/{d}", .{ idx + 1, ls.layouts.items.len });
 }
 
+/// `{count}gt`: page `count`, or the last page when there are fewer
+/// (`:help gt`); `{count}gT`: `count` pages back, wrapping.
+pub fn gotoPage(app: *App, count: u32, back: bool) void {
+    const n = app.layouts.layouts.items.len;
+    if (n == 0 or count == 0) return;
+    if (back) {
+        const steps: usize = @intCast(count % n);
+        switchTab(app, (app.layouts.active + n - steps) % n);
+    } else switchTab(app, @min(@as(usize, count), n) - 1);
+}
+
 fn tabNext(app: *App) CommandError!void {
     const n = app.layouts.layouts.items.len;
     switchTab(app, (app.layouts.active + 1) % n);
@@ -220,6 +231,29 @@ fn goto9(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "gotoPage: a count names the page, past the end is the last page; back counts pages with wrap" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const c = app.active.?;
+    gotoPage(&app, 2, false);
+    try t.expectEqual(b, app.active.?);
+    gotoPage(&app, 9, false);
+    try t.expectEqual(c, app.active.?);
+    gotoPage(&app, 1, false);
+    try t.expectEqual(a, app.active.?);
+    // 2gT from page 1 wraps to page 2; 3gT is a full turn.
+    gotoPage(&app, 2, true);
+    try t.expectEqual(b, app.active.?);
+    gotoPage(&app, 3, true);
+    try t.expectEqual(b, app.active.?);
+    gotoPage(&app, 1, true);
+    try t.expectEqual(a, app.active.?);
+}
 
 test "tab pages: new / goto / move / close re-homes a dirty pane and closes a clean one" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
