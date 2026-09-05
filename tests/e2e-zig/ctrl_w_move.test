@@ -1,0 +1,32 @@
+# zig-only
+# `Ctrl-W H` / `Ctrl-W J` in the vim keymap move the focused split to the
+# far edge of the whole window. Two files sit side by side, a.txt left and
+# b.txt right; after `Ctrl-W H` b.txt is the left edge, so focusing right
+# lands on a.txt (without the move, focus-right from the rightmost pane is
+# a no-op and the pane stays b.txt). `Ctrl-W J` then stacks it along the
+# bottom, so focusing up finds a.txt again.
+write a.txt "alpha file\n"
+write b.txt "bravo file\n"
+open a.txt
+open b.txt
+command view.split_right
+command view.focus_left
+command view.focus_tab_1
+expect pane a.txt
+command view.focus_right
+expect pane b.txt
+
+command editor.use_vim
+key ctrl+w
+key H
+expect pane b.txt
+command view.focus_right
+expect pane a.txt
+
+command view.focus_left
+expect pane b.txt
+key ctrl+w
+key J
+expect pane b.txt
+command view.focus_up
+expect pane a.txt

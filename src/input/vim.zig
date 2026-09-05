@@ -302,7 +302,9 @@ pub const Vim = struct {
             } },
             .window => .{ .prefix = "ctrl+w", .items = &.{
                 .{ .key = 's', .label = "split down" },  .{ .key = 'v', .label = "split right" }, .{ .key = 'w', .label = "next split" },
-                .{ .key = 'q', .label = "close split" }, .{ .key = 'o', .label = "only" },
+                .{ .key = 'q', .label = "close split" }, .{ .key = 'o', .label = "only" },        .{ .key = 'H', .label = "move far left" },
+                .{ .key = 'J', .label = "move bottom" }, .{ .key = 'K', .label = "move top" },    .{ .key = 'L', .label = "move far right" },
+                .{ .key = 'r', .label = "rotate" },      .{ .key = '=', .label = "equalize" },    .{ .key = 'n', .label = "new scratch" },
             } },
             else => null,
         };
@@ -1008,7 +1010,23 @@ pub const Vim = struct {
                     'j' => runCmd(.@"view.focus_down"),
                     'k' => runCmd(.@"view.focus_up"),
                     'l' => runCmd(.@"view.focus_right"),
-                    else => .consumed, // TODO(vim-slice: splits) the rest of ctrl+w
+                    'H' => runCmd(.@"view.move_split_left"),
+                    'J' => runCmd(.@"view.move_split_down"),
+                    'K' => runCmd(.@"view.move_split_up"),
+                    'L' => runCmd(.@"view.move_split_right"),
+                    '=' => runCmd(.@"view.equalize_splits"),
+                    'r' => runCmd(.@"view.rotate_splits"),
+                    '_' => runCmd(.@"view.maximize_height"),
+                    '|' => runCmd(.@"view.maximize_width"),
+                    '+' => runCmd(.@"view.split_grow_height"),
+                    '-' => runCmd(.@"view.split_shrink_height"),
+                    '>' => runCmd(.@"view.split_grow_width"),
+                    '<' => runCmd(.@"view.split_shrink_width"),
+                    'n' => runCmd(.@"view.split_new_scratch"),
+                    'd' => runCmd(.@"view.split_goto_definition"),
+                    'f' => runCmd(.@"view.split_open_file_under_cursor"),
+                    // TODO(vim-slice: splits) `T` (view.move_to_new_tab) once it has a runner
+                    else => .consumed,
                 };
             },
             .surround_delete => {
@@ -2066,6 +2084,42 @@ test "cmdline: typing, caret edits, history walk, enter emits ex_command" {
     try testing.expectEqual(@as(usize, ex_history_max), v.exHistory().len);
     try v.setExHistory(&.{ "a", "b" });
     try testing.expectEqualStrings("b", v.exHistory()[1]);
+}
+
+test "ctrl+w H/J/K/L move the split; = r _ | + - > < n d f reach their runners; T is still pending" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    const Case = struct { key: u21, id: CommandId };
+    const cases = [_]Case{
+        .{ .key = 'H', .id = .@"view.move_split_left" },
+        .{ .key = 'J', .id = .@"view.move_split_down" },
+        .{ .key = 'K', .id = .@"view.move_split_up" },
+        .{ .key = 'L', .id = .@"view.move_split_right" },
+        .{ .key = '=', .id = .@"view.equalize_splits" },
+        .{ .key = 'r', .id = .@"view.rotate_splits" },
+        .{ .key = '_', .id = .@"view.maximize_height" },
+        .{ .key = '|', .id = .@"view.maximize_width" },
+        .{ .key = '+', .id = .@"view.split_grow_height" },
+        .{ .key = '-', .id = .@"view.split_shrink_height" },
+        .{ .key = '>', .id = .@"view.split_grow_width" },
+        .{ .key = '<', .id = .@"view.split_shrink_width" },
+        .{ .key = 'n', .id = .@"view.split_new_scratch" },
+        .{ .key = 'd', .id = .@"view.split_goto_definition" },
+        .{ .key = 'f', .id = .@"view.split_open_file_under_cursor" },
+    };
+    for (cases) |c| {
+        try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
+        const r = try v.handleKey(Key.char(c.key), .{}, a);
+        try testing.expect(r == .app);
+        try testing.expectEqual(c.id, r.app.run_command);
+        try testing.expect(!v.isOpPending());
+    }
+    // `T` has no runner yet: the prefix is consumed and nothing runs.
+    try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
+    try testing.expect((try v.handleKey(Key.char('T'), .{}, a)) == .consumed);
 }
 
 test "pending display shows register, count, operator and prefix" {
