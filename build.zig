@@ -115,7 +115,11 @@ pub fn build(b: *std.Build) void {
 
     // ── tests ──
     const test_step = b.step("test", "Run unit tests");
-    const tests = b.addTest(.{ .root_module = exe.root_module });
+    // `-Dtest-filter=<substring>` runs the matching tests only — what
+    // `tools/break-check.sh` uses to run one test against a broken copy.
+    const test_filter = b.option([]const u8, "test-filter", "Run only the unit tests whose name contains this");
+    const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
+    const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters });
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
     // src/ui is reached through its barrel (`src/ui/ui.zig`) from main.zig's
@@ -135,6 +139,7 @@ pub fn build(b: *std.Build) void {
     // interactive loop at runtime.
     const pty_supported = target.result.os.tag != .windows;
     const tui_tests: ?*std.Build.Step.Compile = if (pty_supported) b.addTest(.{
+        .filters = test_filters,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tui/tui.zig"),
             .target = target,
@@ -146,7 +151,7 @@ pub fn build(b: *std.Build) void {
         }),
     }) else null;
     if (tui_tests) |t| test_step.dependOn(&b.addRunArtifact(t).step);
-    const pty_tests: ?*std.Build.Step.Compile = if (pty_supported) b.addTest(.{ .root_module = pty_mod }) else null;
+    const pty_tests: ?*std.Build.Step.Compile = if (pty_supported) b.addTest(.{ .root_module = pty_mod, .filters = test_filters }) else null;
     if (pty_tests) |t| {
         const pty_test_run = b.addRunArtifact(t);
         const pty_test_step = b.step("pty-test", "Run the pty module tests");
@@ -154,8 +159,8 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&pty_test_run.step);
     }
 
-    const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime });
-    const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight });
+    const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime, .filters = test_filters });
+    const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight, .filters = test_filters });
     test_step.dependOn(&b.addRunArtifact(ts_tests).step);
     test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
 
