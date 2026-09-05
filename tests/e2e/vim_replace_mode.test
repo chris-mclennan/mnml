@@ -14,16 +14,19 @@ key escape
 command file.save
 expect file data.txt contains "XYZdef"
 
-# Past EOL with `A`, Replace inserts. From "XYZdef", `A` puts cursor in
-# Insert mode past 'f' (vim convention); Esc steps back. Then `R` + `!`
-# at EOF appends past the end.
+# From "XYZdef", `A` puts the cursor past 'f'; Esc steps back ONTO 'f'
+# (vim: Esc moves left one column, never off the line). `R` + `!` then
+# overwrites the 'f' — vim 9 gives "XYZde!". The earlier expectation of
+# "XYZdef!" only came out when two bugs cancelled: a save parked the
+# cursor on a phantom line and Esc crossed back onto the newline.
 key A
 key escape
 key R
 type "!"
 key escape
 command file.save
-expect file data.txt contains "XYZdef!"
+expect file data.txt contains "XYZde!"
+expect file data.txt lacks "XYZdef!"
 
 # Backspace in Replace mode restores the original char (vim canonical).
 write back.txt "abcdef"
