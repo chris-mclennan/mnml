@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # Settings overlay: clicking a choice chip or a number row's `‹ ›` arrow only focuses the row — the value never changes
 
@@ -30,3 +30,7 @@ Same for a number row: `Lines per wheel notch: ‹ [4] ›` — clicking the `�
 **Actual**: every chip and arrow is painted, listed in `rects.json`, and dead — the click resolves to the row and only moves `▸`.
 
 **Source pointer**: `src/ui/settings.zig:305` registers the full-width row rect *after* the option hits at `:301` / `:288` / `:292`; `src/ui/hit.zig:123-129` `entryAt` walks the hit list from the end, so the row wins. `src/app/settings.zig:442-459` (`click`) never sees `.option`.
+
+## Fix
+
+`d6dd972` — settings: a choice chip takes the click, not the row under it. The row rect registers before its chips, so the hit map's back-to-front scan resolves a chip's cells to the chip (D6, last painted wins). Pinned by `tests/e2e-zig/settings_chip_click.test` and the chip-walk in `src/ui/settings.zig`'s draw test.

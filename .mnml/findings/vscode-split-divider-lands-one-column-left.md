@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Split divider drag lands one column left of the pointer, every time
 
@@ -22,3 +22,7 @@ status: open
 **Actual**: split dividers settle at `target − 1` — the ratio is recomputed from the pointer and floored, so the second drag must start from a different column than the user released on.
 
 **Source pointer**: `src/app/dispatch.zig` `beginDividerDrag` / `continueDrag` `.divider` ratio math for `Layout` splits (`src/app/layout.zig`) vs. the exact width math used for the tree/right-panel dividers.
+
+## Fix
+
+`63da25f` — layout: a dragged split divider lands on the pointer's column. `ratioAt` returns the percent whose `firstLen` lands on the cell (rounded up; past 100 cells the nearer candidate). Pinned by `tests/e2e-zig/split_divider_lands_on_pointer.test` and a `ratioAt` round-trip unit test.

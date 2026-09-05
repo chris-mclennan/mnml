@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # Toast right-click menu is painted underneath the toast and past the statusline — two of its three items are invisible
 
@@ -35,3 +35,7 @@ Col 2  ⚠ 2  │    Dismiss
 **Actual**: the menu anchors at the click row, runs off the bottom (`Dismiss` sits on the statusline), and the toast is painted after it, covering items 0 and 1. The user sees only `Dismiss`; the other two rows are clickable but invisible.
 
 **Source pointer**: `src/app/context_menus.zig:204` `openToastMenu` (anchor = click x,y with no flip); toast painting order vs. menu overlay in `src/app/render.zig`.
+
+## Fix
+
+`1f82161` — menus: a context menu paints last and flips above a pointer near the bottom. `render` paints the `.menu` overlay after the toasts, clamped to the rows above the statusline (`fr.upper`); `menuTop` flips the menu above the pointer when it does not fit below. Pinned by `tests/e2e-zig/toast_menu_fits.test` and two `render.zig` unit tests.

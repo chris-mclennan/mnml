@@ -60,10 +60,23 @@ pub fn firstLen(len: u16, ratio: u16, min: u16) u16 {
     return first;
 }
 
-/// The ratio that puts the divider at `pos` cells into `len`.
+/// The ratio that puts the divider at `pos` cells into `len`: the
+/// percent whose `firstLen` lands on that cell. `firstLen` floors, so
+/// the percent is rounded up, not down — `⌊len · ⌊100·pos/len⌋ / 100⌋`
+/// is one cell short whenever the division is inexact, and a dragged
+/// divider settled a column left of the pointer every time. Past 100
+/// cells a whole percent skips cells; the nearer of the two candidates
+/// wins there.
 pub fn ratioAt(len: u16, pos: u16) u16 {
     if (len == 0) return 50;
-    return @intCast(std.math.clamp(@as(u32, pos) * 100 / len, 1, 99));
+    const up: u16 = @intCast(std.math.clamp((@as(u32, pos) * 100 + len - 1) / len, 1, 99));
+    const down: u16 = @max(up -| 1, 1);
+    return if (distance(len, up, pos) <= distance(len, down, pos)) up else down;
+}
+
+fn distance(len: u16, ratio: u16, pos: u16) u32 {
+    const at = @as(u32, len) * ratio / 100;
+    return if (at > pos) at - pos else pos - at;
 }
 
 pub const Layout = struct {
@@ -503,6 +516,28 @@ test "layout: showing the last tab of one leaf in another keeps the target leaf'
     try std.testing.expect(l.leaf(l3) == null);
     const after = try l.computeRects(Rect.init(0, 1, 100, 20), arena.allocator());
     try std.testing.expectEqual(@as(usize, 2), after.panes.len);
+}
+
+test "ratioAt lands the divider on the pointer's cell at every width up to 100, and within one past it" {
+    var len: u16 = 2;
+    while (len <= 100) : (len += 1) {
+        var pos: u16 = 1;
+        while (pos < len) : (pos += 1) try std.testing.expectEqual(pos, firstLen(len, ratioAt(len, pos), 0));
+    }
+    // 89 cells (120 columns less the tree): the finding's drags.
+    try std.testing.expectEqual(@as(u16, 69), firstLen(89, ratioAt(89, 69), min_pane_w));
+    try std.testing.expectEqual(@as(u16, 29), firstLen(89, ratioAt(89, 29), min_pane_w));
+    try std.testing.expectEqual(@as(u16, 59), firstLen(89, ratioAt(89, 59), min_pane_w));
+    // Past 100 cells a percent is more than a cell; inside the 1 %–99 %
+    // range the divider lands within a cell of the pointer.
+    len = 101;
+    while (len <= 240) : (len += 1) {
+        var pos: u16 = len / 50 + 1;
+        while (pos + len / 50 + 1 < len) : (pos += 1) {
+            const at = firstLen(len, ratioAt(len, pos), 0);
+            try std.testing.expect(@max(at, pos) - @min(at, pos) <= 1);
+        }
+    }
 }
 
 test "layout: min sizes clamp a dragged ratio, equalize resets, tabs reorder, dividers name their split" {

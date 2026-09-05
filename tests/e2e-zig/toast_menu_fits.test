@@ -1,0 +1,12 @@
+# zig-only
+# The toast's right-click menu opens where the user can see it: above
+# the pointer when there is no room below, on top of the toast, and
+# never over the statusline. At 120x40 the toast sits at rows 34-36,
+# x=100..119; the menu is six rows tall.
+ex echo hello toast
+expect screen contains "hello toast"
+rightclick 108 35
+expect screen contains "Dismiss"
+expect screen contains "Copy text"
+expect screen contains "Dismiss all"
+expect screen contains "Ln 0/0 Col 0  standard"
