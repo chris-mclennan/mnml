@@ -801,3 +801,91 @@ that the oldest slot reads `+K more…`.
   0.16.0 compiler TODO (`writeToPackedMemory`) on this branch's base
   commit too (checked on a scratch worktree of 76ccf5b); the Windows
   gate builds. Not introduced here.
+
+## HTTP, more (Phase 6 follow-up) — `// changed:` notes (2026-09-05, branch `http-more`)
+
+- `// changed (core):` `PanelId` gains `http` — the seven-section HTTP
+  sidebar lives in the right slot like TODOS / GIT / DIAGNOSTICS.
+  `view.activity_http` shows it (it was an honest refusal); every
+  exhaustive switch on `PanelId` (`render.drawRightPanel`, the key /
+  row / kebab / chip / filter / scrollbar prongs in `dispatch`) names it.
+- `// changed (app):` `App.http_panel: http_panel.State`
+  (`app/http_panel.zig`): one `ListPanel(Row)` whose rows are section
+  headers (`▼ COLLECTIONS (n)`, `▸` folded) and their items —
+  COLLECTIONS (every `.http` / `.rest` / `.curl` under the workspace,
+  walk capped at 500, dot-dirs and the usual build dirs skipped), ENVS
+  (the active one marked), CHAINS (`.mnml/chains/*.chain.json`), MOCKS
+  (`*.mock.json`), COOKIES (the jar), RECENT (`.rqst/history.jsonl`,
+  newest first, 50), CAPTURED (`.rqst/captured/log.jsonl`, 50). The
+  snapshot is one arena `refresh` replaces; the scan is synchronous.
+  The `/` filter is a case-insensitive substring over label + detail
+  across every section; a header's count is what survived, and a
+  section the filter empties is dropped. Enter / double-click: header
+  folds, file or mock opens (`App.openPath`), env becomes the session
+  override, chain runs (`cmd_http.runChainNamed`, now `pub`), cookie
+  copies `name=value`, recent / captured re-open as a scratch request.
+  `←` / `h` folds, `→` / `l` opens, `r` rescans, `c` folds or unfolds
+  all, `n` starts a request. Row menus (right-click, kebab) carry
+  registered ids only; three Zig-only ids were added —
+  `http.panel_open`, `http.panel_toggle_section`, `http.panel_copy_path`
+  — and `http.toggle_collapse_all` / `http.refresh` now act on the
+  panel. The pin is 830.
+- `// changed (app):` the request pane's edit split is pane state:
+  `RequestPane.split / split_tab / split_ratio / split_scroll /
+  orientation`, `toggleSplit()` (the second tab defaults to Vars, or
+  Body when Vars is primary), `showTab()` swaps the halves when the
+  right tab is brought left so both stay visible. `http.toggle_edit_split`
+  and `http.toggle_split_orientation` (auto → vertical → horizontal)
+  are real runners. A press on the divider arms a drag; every drag inside
+  the edit area (`rp.edit_area`, measured at draw) re-derives the ratio,
+  clamped 10–90.
+- `// changed (ui):` `request_view.Model` gains `url_vars / body_vars /
+  headers_vars: []const VarSpan`, `split: ?SplitModel{ tab, ratio,
+  scroll }` and `orientation`. The view paints the right half with its
+  own tab strip and a `│` divider (`hit_split_divider`,
+  `hit_split_tab_base + i`, `hit_split_content`, `hit_split_toggle` — the
+  `⇔` chip on the strip row), degrades to one half under 16 cells, and
+  overpaints every `{{VAR}}` of a field in the theme's `syntax.variable`
+  role (resolved) or `error_fg` (not), registering `hit_var_base + id`.
+  `fieldScroll` mirrors `text_field.draw`'s one-row scroll so the
+  overpaint lines up. `drawVarTip` paints the hover tip under the
+  span (above when there is no room). `zones` splits Request / Response
+  side by side when `orientation == .horizontal` and the pane is ≥ 40 wide.
+- `// changed (ui):` `editor_view.Doc.var_spans: []const VarSpan` — the
+  one delimited `{{VAR}} hook` block: spans painted over the syntax
+  spans in the same two roles and registered as
+  `.script_hit{ pane, var_hit_base + id }` (`var_hit_base = 100_000`).
+  Nothing else in the view knows what a request is.
+- `// changed (app):` `http.varTokens` classifies every token of the
+  three fields against the active env (`VarToken{ name, shown, resolved,
+  dynamic }`; a `{{$uuid}}` is resolved and shows `(built-in)`); a
+  secret shows `••••••••`. `env.EnvSet.secrets` is filled by
+  `# @secret A B` lines; `isSecret` also matches credential-shaped names
+  (`looksSecret`: token / secret / password / passwd / api_key / apikey /
+  auth / private). `env.lineOfKey` finds the 0-based line of `KEY=`.
+  `http.jumpToVarDef` opens the active env file on that line, or at its
+  end with a toast when undefined (the `.mnml` file is created then);
+  `http.jump_to_env_var` uses it and `lsp.gotoDefinition` tries it first
+  (`http.jumpVarAtCursor`) so `gd` on a `{{VAR}}` in a request buffer
+  lands in the env file. Left-click a span → the jump; right-click → the
+  quick-fix menu (`http.quick_fix`: Define in env… / Jump to definition /
+  Pick env… / Inline value / Copy variable name; a built-in drops the
+  first two). `http.define_var` seeds the env-value prompt,
+  `http.inline_var` replaces the token in the pane's fields (or expands
+  the whole buffer in an editor), `http.copy_var_name` copies it.
+- `// changed (app):` `App.http.quick_fix_var` is the token a quick-fix
+  menu was opened on; `http.takeQuickFix` consumes it. `dispatch.closeOverlay`
+  calls `http.overlayClosing` so a menu dismissed by Esc drops it (the
+  next caret-based var command must not act on a stale token), and
+  `runMenuAction` carries it across the close to the row's command.
+  `currentVar` always returns a copy on the frame arena — `inline_var`
+  edits the field the caret's slice pointed into.
+- `// changed (app):` `dispatch.mouse`'s `.script_hit` arm routes an
+  editor pane's hits (only `var_hit_base` and above exist) to
+  `http.editorVarClick`; `render.drawEditor` passes `var_spans` and
+  paints the hover tip after the view.
+- Not done, by design: the Rust panel's FILES-stragglers section (files
+  are one flat COLLECTIONS list, folder dim like the GIT rail), its
+  drag-to-resize section headers, and the `+ New request` / `Paste
+  curl…` / `Import…` action rows (all reachable from the row menus and
+  the palette).
