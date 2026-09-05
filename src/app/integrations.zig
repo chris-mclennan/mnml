@@ -22,6 +22,7 @@ const Key = app_mod.Key;
 const key_mod = @import("../core/key.zig");
 const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
+const launch_profiles = @import("launch_profiles.zig");
 const CommandError = command.CommandError;
 const alloc = @import("../core/alloc.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
@@ -395,6 +396,9 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
     const chip = list[idx];
     if (m.button == .right) {
         if (chip.installed) |row| return openRowMenu(app, row, m.x, m.y);
+        // The AI chips: their launch profiles.
+        if (std.mem.eql(u8, chip.id, "claude_code")) return launch_profiles.openChipMenu(app, .claude, m.x, m.y);
+        if (std.mem.eql(u8, chip.id, "codex")) return launch_profiles.openChipMenu(app, .codex, m.x, m.y);
         return;
     }
     if (!chip.enabled) {

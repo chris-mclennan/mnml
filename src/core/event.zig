@@ -14,6 +14,7 @@ const todos = @import("../todos.zig");
 const git_client = @import("../git/client.zig");
 const agents = @import("../app/agents.zig");
 const spend = @import("../app/spend.zig");
+const tests_pane = @import("../app/tests_pane.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
 const http_client = @import("../http/client.zig");
 const ws_pane = @import("../app/ws_pane.zig");
@@ -128,6 +129,8 @@ pub const AppEvent = union(enum) {
     agents: *agents.ScanResult,
     /// A finished spend computation. Owned; the spend pane (or the meter) adopts it.
     spend: *spend.Result,
+    /// A finished Playwright run. Owned; `tests_pane.handle` adopts or destroys it.
+    tests: *tests_pane.Result,
 
     /// A worker failed. `msg` is gpa-owned and freed by the handler.
     err: struct { source: Source, msg: []u8 },
@@ -148,6 +151,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .todos => |r| r.destroy(gpa),
         .agents => |r| r.destroy(gpa),
         .spend => |r| r.destroy(gpa),
+        .tests => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),
         .lsp => |l| l.msg.destroy(gpa),
         .dap => |d| d.msg.destroy(gpa),

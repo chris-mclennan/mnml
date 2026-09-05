@@ -339,10 +339,39 @@ pub const AiRouting = struct {
     codex: AiRoute = .{},
 };
 
+pub const AiProduct = enum { claude, codex };
+pub const CwdMode = enum { workspace, home, file_dir };
+
+/// A named way to start a `claude` / `codex` session
+/// (`app/launch_profiles.zig`): the chip's right-click lists them.
+// changed: Rust's `[[launch_profile]]` lived in the integration
+// manifest; here it is config, the built-in `default` (the bare
+// binary) implicit.
+pub const LaunchProfile = struct {
+    name: []const u8 = "",
+    product: AiProduct = .claude,
+    /// An executable path or a name on PATH.
+    binary: []const u8 = "",
+    args: []const []const u8 = &.{},
+    /// `KEY=VALUE` lines, exported by the shim.
+    env: []const []const u8 = &.{},
+    cwd_mode: CwdMode = .workspace,
+};
+
+/// The persisted default per product; null (or a name that is not
+/// configured) is the built-in.
+pub const DefaultProfile = struct {
+    claude: ?[]const u8 = null,
+    codex: ?[]const u8 = null,
+};
+
 pub const Ai = struct {
     /// Legacy single-backend switch; `.routing.claude.backend` wins.
     backend: ?AiBackend = null,
     routing: AiRouting = .{},
+    // changed: launch profiles and their per-product default.
+    launch_profiles: []const LaunchProfile = &.{},
+    default_profile: DefaultProfile = .{},
     inline_suggestions: bool = true,
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,

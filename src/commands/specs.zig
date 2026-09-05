@@ -843,6 +843,14 @@ pub const specs = [_]Spec{
     .{ .id = "test.run_at_cursor", .title = "Tests: run the test at the cursor", .group = "test" },
     .{ .id = "test.rerun_failed", .title = "Tests: re-run last-failed (Playwright --last-failed)", .group = "test" },
     .{ .id = "test.heal", .title = "Tests: ask Claude to fix the highlighted failing test", .group = "test" },
+    // Zig-only: Rust's `test.run_*` are the Playwright runner; here they
+    // are the project-agnostic runners, so Playwright gets its own ids.
+    .{ .id = "test.run_playwright", .title = "Playwright: run the whole suite (results pane)", .group = "test" },
+    .{ .id = "test.run_playwright_file", .title = "Playwright: run this spec file (results pane)", .group = "test" },
+    .{ .id = "test.run_playwright_at_cursor", .title = "Playwright: run the test at the cursor (file:line)", .group = "test" },
+    .{ .id = "test.rerun_playwright_failed", .title = "Playwright: re-run last-failed (--last-failed)", .group = "test" },
+    .{ .id = "test.open_trace", .title = "Playwright: open the selected test's trace (show-trace)", .group = "test" },
+    .{ .id = "test.sort", .title = "Playwright: cycle the results sort (file:line / slowest)", .group = "test" },
     .{ .id = "task.run", .title = "Tasks: run a configured task in a terminal pane", .group = "term" },
     .{ .id = "whichkey.leader", .title = "Leader menu (which-key)", .group = "view", .keys = .{ .vim = &.{"space w K"}, .standard = &.{"ctrl+k"}, .both = &.{"space"} } },
     .{ .id = "view.split_right", .title = "Split editor right (side by side)", .group = "view", .keys = .{ .both = &.{"ctrl+\\"} } },
@@ -882,10 +890,10 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "830 specs, unique ids" {
+test "836 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
-    // commands + three HTTP panel commands.
-    try std.testing.expectEqual(@as(usize, 830), specs.len);
+    // commands + three HTTP panel commands + six Playwright commands.
+    try std.testing.expectEqual(@as(usize, 836), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

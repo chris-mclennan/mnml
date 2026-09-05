@@ -49,6 +49,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         .cols = size.width,
         .rows = size.height,
         .env = env,
+        .native_notify = true,
     });
     defer app.deinit();
     // `ipc.write_screen`: mirror every frame into `<ws>/.mnml/<ipc>/screen.txt`,

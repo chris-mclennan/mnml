@@ -1,0 +1,17 @@
+# zig-only
+# The flaky-test dashboard reads `.mnml/flaky.zon` — the last ten
+# Playwright outcomes per test — lists every test that went both ways,
+# most flips first, and Enter lands on the test's line in its spec.
+write .mnml/flaky.zon ".{ .version = 1, .tests = .{ .{ .key = \"tests/a.spec.ts\\tauth\\tlogs in\", .outcomes = \"PFPF\", .line = 3 }, .{ .key = \"tests/a.spec.ts\\tauth\\tstays\", .outcomes = \"PPPF\", .line = 2 }, .{ .key = \"tests/b.spec.ts\\t\\tsolid\", .outcomes = \"PPPP\" } } }\n"
+write tests/a.spec.ts "import { test } from '@playwright/test';\n\ntest('logs in', async () => {});\n"
+command view.toggle_tree
+command flaky.show
+expect pane flaky ≋
+expect screen contains "≋ 2 wobbly tests"
+expect screen contains "tests/a.spec.ts"
+expect screen contains "logs in:3  ×3 flips"
+expect screen contains "stays:2  ×1 flip"
+expect screen lacks "solid"
+key enter
+expect pane a.spec.ts
+expect screen contains "Ln 3/"

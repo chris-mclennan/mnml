@@ -48,6 +48,11 @@ const select = @import("../editor/select.zig");
 const scrollbar = @import("../ui/scrollbar.zig");
 const statusline = @import("../ui/statusline.zig");
 const bufferline = @import("../ui/bufferline.zig");
+const cmd_term = @import("cmd_term.zig");
+const ai_apply = @import("ai_apply.zig");
+const launch_profiles = @import("launch_profiles.zig");
+const tests_pane = @import("tests_pane.zig");
+const flaky = @import("flaky.zig");
 const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
@@ -61,6 +66,7 @@ const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
 const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
+const ipc = @import("../ipc/root.zig");
 const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
@@ -199,6 +205,21 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .integrations => |*ip| {
             if (try integrations.handleKey(app, id, ip, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .ai_apply => |*ap| {
+            if (try ai_apply.handleKey(app, id, ap, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .tests => |*tp| {
+            if (try tests_pane.handleKey(app, id, tp, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .flaky => |*fp| {
+            if (try flaky.handleKey(app, id, fp, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -530,6 +551,13 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .todos => try todos.setSort(app, s.sort),
             .notes, .findings, .sessions, .git, .diagnostics, .http => {},
         },
+        .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                if (app.diag.msg) |m| app.toast("{s}", .{m});
+                app.diag.clear();
+            },
+        },
         .none => {},
     }
 }
@@ -672,6 +700,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .ai_chat => try toastOnFail(app, ai_app.chatAccept(app, text)),
         .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
         .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
+        .term_rename => |id| try toastOnFail(app, cmd_term.renameAccept(app, id, text)),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),
@@ -942,6 +971,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
             }
         },
+        .tab_close => |tb| {
+            if (wheel or m.kind != .press or m.button != .left) return;
+            const layout = app.layouts.current();
+            const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
+            const leaf = layout.leaf(lid) orelse return;
+            if (tb.idx >= leaf.tabs.items.len) return;
+            if (app.overlay != .none) closeOverlay(app);
+            try app.closePane(leaf.tabs.items[tb.idx], false);
+        },
         .overlay_item => |i| {
             if (m.kind != .press) return;
             switch (app.overlay) {
@@ -1028,6 +1066,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 .editor => |*e| try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
+                .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
+                .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
+                .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1069,7 +1110,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 statusline.seg_mode => if (m.button == .right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
                 statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
                 statusline.seg_file => if (m.button == .right) try runCmd(app, .@"file.copy_path"),
-                else => {},
+                // A host's segment: its `click_command`, on a left click.
+                else => if (seg >= statusline.seg_dyn_base and m.button == .left) try ipc.effects.clickSegment(app, seg - statusline.seg_dyn_base),
             }
         },
         .button => |id| {
@@ -1278,6 +1320,9 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .mount => {},
         .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .marketplace => |*mk| marketplace.scrollBy(app, mk, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 
@@ -1480,7 +1525,7 @@ fn stripTabs(app: *App, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocat
     const leaf = layout.leaf(lid) orelse return tabs.items;
     for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
-        try tabs.append(app.frame.allocator(), .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id });
+        try tabs.append(app.frame.allocator(), .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file });
     }
     return tabs.items;
 }

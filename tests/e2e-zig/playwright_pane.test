@@ -1,0 +1,17 @@
+# zig-only
+# `test.run_playwright` needs a package.json at or above the active
+# file; without one it says so and opens nothing. With one, the results
+# pane opens running (the worker's outcome depends on npx, which the
+# unit tests cover with a fixture instead).
+write a.txt "hello\n"
+open a.txt
+command view.toggle_tree
+command test.run_playwright
+expect screen contains "no package.json found"
+expect pane a.txt
+write package.json "{}\n"
+command test.run_playwright
+expect pane tests
+expect screen contains "npx playwright test --reporter=json"
+key esc
+expect pane a.txt

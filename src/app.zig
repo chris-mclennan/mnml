@@ -65,6 +65,9 @@ const git_app = @import("app/git.zig");
 const ai_app = @import("app/ai.zig");
 const agents = @import("app/agents.zig");
 const spend = @import("app/spend.zig");
+const tests_pane = @import("app/tests_pane.zig");
+const flaky = @import("app/flaky.zig");
+const ipc = @import("ipc/root.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const http_app = @import("app/http.zig");
@@ -130,6 +133,10 @@ pub const InitOptions = struct {
     /// from `loaded` (the trust store); the `.test` runner sets it for
     /// the temp workspace it made itself.
     workspace_trusted: ?bool = null,
+    /// Whether an IPC `notify` may also reach the OS (`osascript` /
+    /// `notify-send` / PowerShell). The terminal loop says yes; headless
+    /// and the tests never spawn a notifier.
+    native_notify: bool = false,
 };
 
 /// How long an ordinary toast stays.
@@ -191,6 +198,8 @@ pub const PromptPurpose = union(enum) {
     browser_add_storage,
     /// `mount.open`: the binary and args to host.
     mount_open,
+    /// `term.rename`: the new tab label for this pty pane.
+    term_rename: PaneId,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -503,11 +512,19 @@ pub const App = struct {
     /// focus must not lose the file's directory (monorepo detection).
     last_editor: ?PaneId = null,
     runners: runners.State = .{},
+    /// The workspace's one scratch terminal (`term.scratch_toggle`),
+    /// alive while hidden; null until the first toggle or once closed.
+    scratch_pty: ?PaneId = null,
     tasks: tasks_mod.State = .{},
     http: http_app.State,
     http_panel: http_panel.State,
     integrations: integrations.State,
     marketplace: marketplace.State = .{},
+    /// A host's statusline segments and activity badges (`ipc/effects.zig`).
+    ipc_fx: ipc.effects.State = .{},
+    /// The workspace's Playwright outcome history (`app/flaky.zig`).
+    flaky: flaky.State = .{},
+    native_notify: bool = false,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -634,6 +651,7 @@ pub const App = struct {
         errdefer app.hooks.deinit();
         opts.loaded = null; // owned by `app` from here
         app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
+        app.native_notify = opts.native_notify;
         app.lua = try scripting.Lua.create(gpa, io, &app);
         errdefer app.lua.?.destroy();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
@@ -775,6 +793,8 @@ pub const App = struct {
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
         self.marketplace.deinit(gpa, self.io);
+        self.ipc_fx.deinit(gpa);
+        self.flaky.deinit(gpa);
         self.dap.deinit(gpa);
         // Panes go before the manifests their mount runners borrow.
         self.panes.deinit();
@@ -1317,6 +1337,7 @@ pub const App = struct {
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
+            .tests => |result| try tests_pane.handle(self, result),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -1556,6 +1577,13 @@ test {
     _ = @import("ui/ai_view.zig");
     _ = @import("ui/agents_view.zig");
     _ = @import("ui/spend_view.zig");
+    _ = @import("app/ai_apply.zig");
+    _ = @import("app/launch_profiles.zig");
+    _ = @import("app/tests_pane.zig");
+    _ = @import("app/flaky.zig");
+    _ = @import("ui/tests_view.zig");
+    _ = @import("ui/flaky_view.zig");
+    _ = @import("ui/ai_apply_view.zig");
     _ = @import("todos.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");

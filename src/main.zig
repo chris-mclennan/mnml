@@ -44,7 +44,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] | test [PATH…] [--gate] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] | test [PATH…] [--gate] [--filter NAME] [--skip NAME] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -121,6 +121,17 @@ fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: 
     return .{ .loaded = loaded, .data_root = data_root };
 }
 
+/// `--startup-picker` is the flag spelling of `MNML_STARTUP_PICKER=1`:
+/// the picker reads the environment (`startup_picker.wanted`), so the
+/// flag sets the variable for this process. True when it was on the line.
+fn applyStartupPickerFlag(env: *std.process.Environ.Map, argv: []const []const u8) Allocator.Error!bool {
+    for (argv) |a| if (std.mem.eql(u8, a, "--startup-picker")) {
+        try env.put("MNML_STARTUP_PICKER", "1");
+        return true;
+    };
+    return false;
+}
+
 /// The terminal: the first non-flag argument that is a directory is the
 /// workspace (default: cwd); every other non-flag argument is opened.
 fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
@@ -151,6 +162,11 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
     const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, "workspace is not a directory");
     const ws_abs = cwd_buf[0..ws_len];
+    {
+        const plain = try arena.alloc([]const u8, argv.len);
+        for (argv, 0..) |a, k| plain[k] = a;
+        _ = try applyStartupPickerFlag(env, plain);
+    }
     const startup = try loadConfig(gpa, io, env, ws_abs, argv, ascii);
     defer gpa.free(startup.data_root);
     const cfg: loop.Options = .{
@@ -198,17 +214,23 @@ fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: [
 
 // ─── mnml-zig test ──────────────────────────────────────────────────────
 
-/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--parse] [--stub]`
+/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--parse] [--stub]`
 ///
 /// Runs `.test` scripts (default `tests/e2e` + `tests/e2e-zig`). `--gate` runs the Phase-0
-/// gate list from `tools/gate.txt`. `--parse` only parses. `--stub`
-/// drives the recording stub instead of the App — exercises the harness,
-/// proves nothing about the editor. Exit 1 on any failure.
+/// gate list from `tools/gate.txt`. `--filter` keeps the files whose
+/// name contains it (what `zig build test -Dtest-filter=…` passes);
+/// `--skip` (repeatable) leaves a file out and says so. `--parse` only
+/// parses. `--stub` drives the recording stub instead of the App —
+/// exercises the harness, proves nothing about the editor. Exit 1 on
+/// any failure.
 fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
     var sizes: std.ArrayList(e2e.Size) = .empty;
     defer sizes.deinit(gpa);
+    var skips: std.ArrayList([]const u8) = .empty;
+    defer skips.deinit(gpa);
+    var name_filter: ?[]const u8 = null;
     var gate = false;
     var parse_only = false;
     var use_stub = false;
@@ -217,6 +239,18 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         const a = argv[i];
         if (std.mem.eql(u8, a, "--gate")) {
             gate = true;
+        } else if (std.mem.eql(u8, a, "--filter")) {
+            i += 1;
+            if (i >= argv.len) return usage(w, "--filter needs a name");
+            name_filter = argv[i];
+        } else if (std.mem.startsWith(u8, a, "--filter=")) {
+            name_filter = a["--filter=".len..];
+        } else if (std.mem.eql(u8, a, "--skip")) {
+            i += 1;
+            if (i >= argv.len) return usage(w, "--skip needs a name");
+            try skips.append(gpa, argv[i]);
+        } else if (std.mem.startsWith(u8, a, "--skip=")) {
+            try skips.append(gpa, a["--skip=".len..]);
         } else if (std.mem.eql(u8, a, "--parse")) {
             parse_only = true;
         } else if (std.mem.eql(u8, a, "--stub")) {
@@ -282,6 +316,8 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         .shell = env.get("SHELL") orelse "/bin/sh",
         .tmp_root = tmp_root,
         .data_root = data_root,
+        .name_filter = name_filter,
+        .skip = skips.items,
     };
 
     var stub_factory: e2e.driver.StubFactory = .{};
@@ -443,4 +479,13 @@ test "size flags parse WxH and reject anything under 10" {
     try std.testing.expectEqual(@as(?e2e.Size, null), parseSize("80"));
     try std.testing.expectEqual(@as(?e2e.Size, null), parseSize("8x24"));
     try std.testing.expectEqual(@as(?e2e.Size, null), parseSize("axb"));
+}
+
+test "--startup-picker is MNML_STARTUP_PICKER=1 for this process" {
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    try std.testing.expect(!try applyStartupPickerFlag(&env, &.{ "ws", "--ascii" }));
+    try std.testing.expect(env.get("MNML_STARTUP_PICKER") == null);
+    try std.testing.expect(try applyStartupPickerFlag(&env, &.{ "--startup-picker", "ws" }));
+    try std.testing.expectEqualStrings("1", env.get("MNML_STARTUP_PICKER").?);
 }

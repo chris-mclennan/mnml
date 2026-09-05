@@ -112,6 +112,8 @@ const runner_tables = .{
     @import("../app/ai.zig"),
     @import("../app/agents.zig"),
     @import("../app/spend.zig"),
+    @import("../app/tests_pane.zig"),
+    @import("../app/flaky.zig"),
     @import("../app/cmd_dap.zig"),
     @import("../app/cmd_lsp.zig"),
     @import("../app/http.zig"),
@@ -515,10 +517,15 @@ fn runDyn(app: *App, slot: u32) CommandError!void {
 
 /// What a context-menu row does. A static command is an enum — a menu
 /// cannot name an id that does not exist.
+/// A row of the AI chip's profile menu (`app/launch_profiles.zig`):
+/// `index` 0 is the built-in profile, else the product's `index - 1`th.
+pub const AiProfileAction = struct { product: @import("../config/Config.zig").AiProduct, index: u16, set_default: bool };
+
 pub const MenuAction = union(enum) {
     command: CommandId,
     dyn: u32,
     set_panel_sort: struct { panel: panel.PanelId, sort: panel.ListSort },
+    ai_profile: AiProfileAction,
     none,
 };
 
@@ -535,7 +542,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 830), count);
+    try std.testing.expectEqual(@as(usize, 836), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

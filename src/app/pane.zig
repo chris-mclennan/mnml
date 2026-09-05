@@ -31,6 +31,9 @@ const script_pane = @import("script_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
 const marketplace = @import("marketplace.zig");
+const ai_apply = @import("ai_apply.zig");
+const tests_pane = @import("tests_pane.zig");
+const flaky = @import("flaky.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -148,6 +151,12 @@ pub const Pane = union(enum) {
     integrations: integrations.IntegrationsPane,
     /// What can be installed (one at a time).
     marketplace: marketplace.MarketplacePane,
+    /// An AI proposal reviewed hunk by hunk before it reaches the editor.
+    ai_apply: ai_apply.AiApplyPane,
+    /// A Playwright run's results (one at a time).
+    tests: tests_pane.TestsPane,
+    /// The flaky-test dashboard (one at a time).
+    flaky: flaky.FlakyPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -158,6 +167,9 @@ pub const Pane = union(enum) {
             .script => |*s| s.deinit(gpa),
             .mount => |*m| m.deinit(gpa),
             .integrations, .marketplace => {},
+            .ai_apply => |*a| a.deinit(),
+            .tests => |*tp| tp.deinit(gpa, io),
+            .flaky => |*fp| fp.deinit(),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -201,13 +213,16 @@ pub const Pane = union(enum) {
             .mount => |*m| return m.title(),
             .integrations => return "Integrations",
             .marketplace => return "Marketplace",
+            .ai_apply => return "ai.apply",
+            .tests => |*tp| return tp.title(),
+            .flaky => |*fp| return fp.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky => false,
         };
     }
 
