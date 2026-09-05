@@ -1,0 +1,21 @@
+# zig-only
+# An image file opens as `Pane.image` from the tree / a path: a header
+# with the name, size, pixels and format, and — headless has no
+# transport — the text fallback that names the protocols.
+shell printf '\211PNG\r\n\032\n\000\000\000\015IHDR\000\000\000\050\000\000\000\024\010\006\000\000\000\000\000\000\000' > shot.png
+open shot.png
+expect pane "shot.png [PNG]"
+expect screen contains "shot.png"
+expect screen contains "40×20"
+expect screen contains "PNG"
+expect screen contains "no image protocol in this terminal"
+# `i` hides the header; `r` re-reads the file.
+key i
+expect screen lacks "40×20"
+key r
+expect screen contains "reloaded shot.png"
+# The next image replaces the preview tab in place.
+shell printf 'GIF89a' > other.gif
+open other.gif
+expect pane "other.gif [GIF]"
+expect screen lacks "shot.png [PNG]"

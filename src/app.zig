@@ -36,6 +36,8 @@ const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
 const snippets = @import("app/snippets.zig");
 const md_preview = @import("app/md_preview.zig");
+const image = @import("image/root.zig");
+const image_pane = @import("app/image_pane.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
 const ex = @import("app/ex.zig");
@@ -159,6 +161,8 @@ pub const PromptPurpose = union(enum) {
     goto_line,
     /// The statusline indent chip: a new `editor.tab_width`.
     tab_width,
+    /// `view.image_open`: a path to open as `Pane.image`.
+    image_open,
     replace,
     filter_shell,
     new_todo,
@@ -680,6 +684,12 @@ pub const App = struct {
     plus_hidden: std.ArrayListUnmanaged([]u8) = .empty,
     /// The command a curation submenu was opened on (`menu.pin_row`…).
     menu_ctx: ?command.CommandId = null,
+    /// How images reach the terminal (`image.detect`, set by the loop;
+    /// `.none` headless — the text fallback paints instead).
+    image_transport: image.Transport = .none,
+    /// What this frame wants drawn over its cells (frame arena; reset
+    /// at the top of `render`).
+    image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
     find_bar: ?FindBarState = null,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
@@ -1237,6 +1247,8 @@ pub const App = struct {
                 else => {},
             }
         }
+        // An image opens in the viewer, replacing the last glanced-at one.
+        if (image.isImagePath(path)) return image_pane.open(self, path);
         const is_md = md_preview.isMarkdownPath(path);
         if (is_md and self.cfg.ui.markdown_opens_rendered and !self.cfg.ui.auto_md_preview and self.panes.findPath(path) == null) {
             return md_preview.open(self, path, .here, null);
@@ -1777,6 +1789,16 @@ test {
     _ = @import("app/pane.zig");
     _ = @import("app/outline.zig");
     _ = @import("app/md_preview.zig");
+    _ = @import("app/image_pane.zig");
+    _ = @import("app/discovery.zig");
+    _ = @import("app/workspace_trust.zig");
+    _ = @import("image/root.zig");
+    _ = @import("image/kitty.zig");
+    _ = @import("image/iterm2.zig");
+    _ = @import("image/sixel.zig");
+    _ = @import("image/painter.zig");
+    _ = @import("ui/tooltip.zig");
+    _ = @import("ui/menu_glyph.zig");
     _ = @import("app/snippets.zig");
     _ = @import("app/sticky.zig");
     _ = @import("ui/outline_view.zig");

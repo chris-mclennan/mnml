@@ -24,6 +24,7 @@ const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const md_view = @import("../ui/md_view.zig");
 const dispatch = @import("dispatch.zig");
+const image = @import("../image/root.zig");
 
 pub const table = .{
     .@"markdown.preview" = &previewCmd,
@@ -45,10 +46,39 @@ pub const MdPreviewPane = struct {
     scroll: usize = 0,
     /// Rows the content took at the last frame (for paging).
     total_rows: usize = 0,
+    /// The images the preview embeds, by resolved path — loaded on
+    /// first sight, kept while the pane lives (`ui/md_view.zig`
+    /// places them, `Term.paintImages` draws them).
+    images: std.ArrayListUnmanaged(CachedImage) = .empty,
+
+    pub const CachedImage = struct {
+        /// Owned, absolute.
+        path: []u8,
+        /// Null when the file could not be read.
+        data: ?image.Loaded,
+    };
 
     pub fn deinit(self: *MdPreviewPane) void {
+        for (self.images.items) |*c| {
+            if (c.data) |*d| d.deinit(self.gpa);
+            self.gpa.free(c.path);
+        }
+        self.images.deinit(self.gpa);
         self.gpa.free(self.path);
         self.gpa.free(self.text);
+    }
+
+    /// The cache entry for `abs`, loading it the first time.
+    pub fn imageFor(self: *MdPreviewPane, io: Io, abs: []const u8) Allocator.Error!*CachedImage {
+        for (self.images.items) |*c| if (std.mem.eql(u8, c.path, abs)) return c;
+        const owned = try self.gpa.dupe(u8, abs);
+        errdefer self.gpa.free(owned);
+        const data: ?image.Loaded = image.load(self.gpa, io, abs) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => null,
+        };
+        try self.images.append(self.gpa, .{ .path = owned, .data = data });
+        return &self.images.items[self.images.items.len - 1];
     }
 };
 
@@ -127,7 +157,7 @@ fn previewCmd(app: *App) CommandError!void {
             if (!isMarkdownPath(path)) return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
             _ = try open(app, path, .here, active);
         },
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
     }
 }
 
@@ -137,7 +167,7 @@ fn editRawCmd(app: *App) CommandError!void {
     switch (pane.*) {
         .md_preview => _ = try swapToEditor(app, active),
         .editor => {},
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
     }
 }
 
@@ -185,11 +215,25 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
 }
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, m: *MdPreviewPane, area: Rect) Allocator.Error!void {
-    const lines = try md_view.render(ui.arena, ui.theme, sourceText(app, m), ui.ascii);
+    // Inline images take `ui.md_image_rows` rows each when the terminal
+    // can draw them; otherwise the caption stands alone.
+    const image_rows: u16 = if (app.image_transport != .none) app.cfg.ui.md_image_rows else 0;
+    const lines = try md_view.renderWith(ui.arena, ui.theme, sourceText(app, m), ui.ascii, image_rows);
     const total = md_view.totalRows(ui.canvas, lines, area.w -| 2);
     if (m.scroll > total -| area.h) m.scroll = total -| area.h;
-    m.total_rows = md_view.draw(ui, id, area, lines, m.scroll);
+    var placements: std.ArrayListUnmanaged(md_view.Placement) = .empty;
+    m.total_rows = md_view.drawWith(ui, id, area, lines, m.scroll, &placements);
     if (app.active == id) app.pane_rows = @max(area.h, 1);
+    // Resolve each `src` against the file's directory, load once, and
+    // leave the paint for the terminal.
+    const dir = std.fs.path.dirname(m.path) orelse "/";
+    for (placements.items) |p| {
+        const abs = if (std.fs.path.isAbsolute(p.src)) p.src else try std.fs.path.resolve(ui.arena, &.{ dir, p.src });
+        const cached = try m.imageFor(app.io, abs);
+        const d = &(cached.data orelse continue);
+        const png = d.ensurePng(app.gpa) orelse continue;
+        try app.image_paints.append(app.frame.allocator(), .{ .rect = p.rect, .png = png, .key = d.key(abs) });
+    }
 }
 
 // ── tests ──
@@ -258,4 +302,64 @@ test "auto_md_preview splits the preview beside the editor and keeps the focus" 
     try testing.expect(app.panes.get(eid).?.* == .editor);
     try testing.expectEqual(@as(usize, 2), app.panes.count());
     try testing.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
+}
+
+test "inline images: the preview reserves md_image_rows per image on a transport, loads it once, and leaves a paint" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    const root = try testing.allocator.dupe(u8, buf[0..n]);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, "img");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "img/cat.png", .data = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x28\x00\x00\x00\x14\x08\x06\x00\x00\x00\x00\x00\x00\x00" });
+    // Enough text after the image that the preview can scroll.
+    var doc: std.ArrayListUnmanaged(u8) = .empty;
+    defer doc.deinit(testing.allocator);
+    try doc.appendSlice(testing.allocator, "# Cats\n\n![a cat](img/cat.png)\n\nafter\n");
+    for (0..40) |i| try doc.print(testing.allocator, "line {d}\n", .{i});
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "notes.md", .data = doc.items });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 60, .rows = 20, .cfg = .{ .ui = .{ .md_image_rows = 5 } } });
+    defer app.deinit();
+    app.tree.visible = false;
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "notes.md" });
+    defer testing.allocator.free(path);
+    const pid = try app.openPath(path);
+    // Headless: the caption alone, no paint.
+    const plain = try screenText(&app);
+    defer testing.allocator.free(plain);
+    try testing.expect(std.mem.indexOf(u8, plain, "[image: a cat]") != null);
+    try testing.expectEqual(@as(usize, 0), app.image_paints.items.len);
+    try testing.expectEqual(@as(usize, 0), app.panes.get(pid).?.md_preview.images.items.len);
+    // kitty: four filler rows under the caption become the paint box.
+    app.image_transport = .kitty;
+    const painted = try screenText(&app);
+    defer testing.allocator.free(painted);
+    try testing.expect(std.mem.indexOf(u8, painted, "[image: a cat]") != null);
+    try testing.expectEqual(@as(usize, 1), app.image_paints.items.len);
+    const req = app.image_paints.items[0];
+    try testing.expectEqual(@as(u16, 4), req.rect.h);
+    try testing.expect(std.mem.startsWith(u8, req.png, "\x89PNG"));
+    const cache = &app.panes.get(pid).?.md_preview.images;
+    try testing.expectEqual(@as(usize, 1), cache.items.len);
+    try testing.expect(std.mem.endsWith(u8, cache.items[0].path, "img/cat.png"));
+    // A second frame reuses the cache and the same key.
+    const key = req.key;
+    try app.render();
+    try testing.expectEqual(@as(usize, 1), cache.items.len);
+    try testing.expectEqual(key, app.image_paints.items[0].key);
+    // Scrolling the caption and the first filler off keeps the three
+    // visible fillers, now at the top of the pane.
+    const first_y = req.rect.y;
+    scrollBy(&app, &app.panes.get(pid).?.md_preview, 4);
+    try app.render();
+    try testing.expectEqual(@as(usize, 1), app.image_paints.items.len);
+    try testing.expectEqual(@as(u16, 3), app.image_paints.items[0].rect.h);
+    try testing.expectEqual(first_y - 3, app.image_paints.items[0].rect.y);
+    // A missing file is a cache entry with no data and no paint.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "notes.md", .data = "![gone](img/none.png)\n" });
+    _ = try swapToEditor(&app, pid);
+    try command.run(&app, .{ .static = .@"markdown.preview" });
+    try app.render();
+    try testing.expectEqual(@as(usize, 0), app.image_paints.items.len);
 }

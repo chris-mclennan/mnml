@@ -43,6 +43,7 @@ const Theme = @import("../ui/theme.zig");
 const Style = vaxis.Style;
 const menu_glyph = @import("../ui/menu_glyph.zig");
 const discovery = @import("discovery.zig");
+const image_pane = @import("image_pane.zig");
 const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
@@ -185,6 +186,9 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         break :blk if (tip) |tp| .{ .title = try app.frame.allocator().dupe(u8, tp.title), .detail = if (tp.detail) |d| try app.frame.allocator().dupe(u8, d) else null } else null;
     } else null;
     app.hits.reset();
+    // The image paints are the frame's too (`Term.paintImages` reads
+    // them after the cells are out).
+    app.image_paints = .empty;
     const arena = app.frame.allocator();
     const ui: Ui = .{
         .canvas = Canvas.init(screen, .{}),
@@ -389,7 +393,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return 0;
@@ -511,6 +515,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 flaky_view.draw(ui, pr.pane, rect, fp, app.active == pr.pane and app.focus == .pane);
             },
             .files => |*f| try files_pane.draw(app, ui, pr.pane, f, rect),
+            .image => |*im| try image_pane.draw(app, ui, pr.pane, im, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }

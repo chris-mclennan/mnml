@@ -17,6 +17,7 @@ const find = @import("find.zig");
 const syntax = @import("syntax.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
+const image_pane = @import("image_pane.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
@@ -134,6 +135,8 @@ pub const Pane = union(enum) {
     outline: OutlinePane,
     /// A rendered markdown file; typing on it swaps in the editor.
     md_preview: MdPreviewPane,
+    /// An image file, drawn by the terminal over a placeholder.
+    image: image_pane.ImagePane,
     cheatsheet: cheatsheet.State,
     list: ListPane,
     /// A shell or a command, painted from the ghostty-vt grid.
@@ -193,6 +196,7 @@ pub const Pane = union(enum) {
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
+            .image => |*im| im.deinit(),
             .cheatsheet => |*c| c.deinit(),
             .list => |*l| l.deinit(),
             .pty => |*p| p.deinit(gpa),
@@ -215,6 +219,7 @@ pub const Pane = union(enum) {
             .editor => |*e| return if (e.buf.path) |p| std.fs.path.basename(p) else "[scratch]",
             .outline => |*o| return o.title,
             .md_preview => |*m| return std.fs.path.basename(m.path),
+            .image => |*im| return im.tab_title,
             .cheatsheet => return "Cheatsheet",
             .list => |*l| return l.title(),
             .pty => |*p| return p.label,
@@ -243,7 +248,7 @@ pub const Pane = union(enum) {
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 
@@ -402,6 +407,17 @@ pub const PaneStore = struct {
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {
                 .md_preview => |*m| if (std.mem.eql(u8, m.path, path)) return @intCast(i),
+                else => {},
+            };
+        }
+        return null;
+    }
+
+    /// The image preview tab, if one is open — the next image replaces it.
+    pub fn findImagePreview(self: *PaneStore) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| switch (p.*) {
+                .image => |*im| if (im.is_preview) return @intCast(i),
                 else => {},
             };
         }

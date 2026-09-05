@@ -61,6 +61,7 @@ const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const toast_mod = @import("../ui/toast.zig");
 const discovery = @import("discovery.zig");
+const image_pane = @import("image_pane.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
@@ -249,6 +250,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .files => |*f| {
             if (try files_pane.handleKey(app, id, f, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .image => |*im| {
+            if (try image_pane.handleKey(app, id, im, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -785,6 +791,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             e.buf.editor.placeCursor(@min(n -| 1, e.buf.editor.lineCount() - 1), col);
         },
         .tab_width => try context_menus.acceptTabWidth(app, text),
+        .image_open => try image_pane.acceptOpen(app, text),
         .replace => try cmd_find.replaceAll(app, text),
         .filter_shell => try filterThroughShell(app, text),
         .git => try toastOnFail(app, git_app.acceptPrompt(app, text)),
@@ -1243,7 +1250,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .files => |*f| try files_pane.click(app, sh.pane, f, sh.id, m),
-                .outline, .md_preview, .pty, .ai => {},
+                .outline, .md_preview, .image, .pty, .ai => {},
             }
         },
         .tree_node => |idx| switch (m.kind) {
@@ -1524,6 +1531,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .files => |*f| files_pane.scrollBy(f, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .image => {},
     }
 }
 
