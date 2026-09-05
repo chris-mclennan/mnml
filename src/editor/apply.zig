@@ -26,6 +26,10 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
     switch (op) {
         // ── grouping ──
         .repeat => |r| {
+            // `[count]p` is one put of the text `count` times over, not
+            // `count` puts (`:help p`); the op stays a `repeat` so
+            // `{count}.` can still replace the count.
+            if (register.isPut(r.inner.*)) return register.putRepeated(ed, r.inner.*, r.count, clip, out);
             // `{count}dd` past the end takes what is there (`:help dd`),
             // never a line above the one it started on.
             const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;

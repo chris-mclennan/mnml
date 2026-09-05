@@ -1,0 +1,16 @@
+# zig-only
+# `[count]p` puts the register `count` times in a row (`:help p`): after
+# `2yy3p` the six lines alternate, the cursor on the first put line;
+# `yiw3p` puts the word three times back to back.
+write a.txt "alpha\ndelta\ngolf\n"
+open a.txt
+command editor.use_vim
+
+type 2yy3p
+expect screen contains "Ln 2/9"
+command file.save
+expect file a.txt contains "alpha\nalpha\ndelta\nalpha\ndelta\nalpha\ndelta\ndelta\ngolf\n"
+type u
+type yiw3p
+command file.save
+expect file a.txt contains "aalphaalphaalphalpha\n"

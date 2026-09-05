@@ -7,7 +7,9 @@ const Allocator = std.mem.Allocator;
 const editor = @import("editor.zig");
 const Editor = editor.Editor;
 const Clipboard = editor.Clipboard;
-const EditOutcome = @import("edit_op.zig").EditOutcome;
+const edit_op = @import("edit_op.zig");
+const EditOp = edit_op.EditOp;
+const EditOutcome = edit_op.EditOutcome;
 const delete = @import("delete.zig");
 const mc = @import("multicursor.zig");
 
@@ -81,8 +83,23 @@ const Where = enum { after, before };
 const Land = enum { start, end };
 
 fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcome) Allocator.Error!void {
-    const s = clip.text();
-    if (s.len == 0) return;
+    return putTimes(ed, clip, where, land, 1, out);
+}
+
+/// `[count]p`: the register `times` times in a row, as ONE put (`:help
+/// p`) — a put per iteration would re-anchor after every copy and
+/// interleave (`2yy3p` grouping the copies per line, `yiw3p` sprinkling
+/// the word between the next chars).
+pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
+    const one = clip.text();
+    if (one.len == 0 or times == 0) return;
+    const repeated: ?[]u8 = if (times > 1) blk: {
+        const buf = try ed.gpa.alloc(u8, one.len * times);
+        for (0..times) |i| @memcpy(buf[i * one.len ..][0..one.len], one);
+        break :blk buf;
+    } else null;
+    defer if (repeated) |r| ed.gpa.free(r);
+    const s: []const u8 = repeated orelse one;
     try ed.checkpoint();
     if (mc.hasExtras(ed)) {
         try putAll(ed, s, where == .after);
@@ -141,6 +158,24 @@ fn putAll(ed: *Editor, s: []const u8, after: bool) Allocator.Error!void {
     }
     ed.anchor = null;
     mc.clearExtraAnchors(ed);
+}
+
+/// The put a `repeat` wraps, run once with its count — see `putTimes`.
+pub fn putRepeated(ed: *Editor, op: EditOp, times: u32, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    return switch (op) {
+        .paste_after => putTimes(ed, clip, .after, .start, times, out),
+        .paste_before => putTimes(ed, clip, .before, .start, times, out),
+        .paste_after_end => putTimes(ed, clip, .after, .end, times, out),
+        .paste_before_end => putTimes(ed, clip, .before, .end, times, out),
+        else => unreachable,
+    };
+}
+
+pub fn isPut(op: EditOp) bool {
+    return switch (op) {
+        .paste_after, .paste_before, .paste_after_end, .paste_before_end => true,
+        else => false,
+    };
 }
 
 /// `p`.
