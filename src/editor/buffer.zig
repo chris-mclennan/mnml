@@ -1284,6 +1284,27 @@ test "closed folds are one line to j / k and to dd / yy" {
     try testing.expectEqual(@as(usize, 0), h.buf.editor.folds.count());
 }
 
+test "round two: count p, ci\" forward, dd at EOF, Visual Ctrl-A, gv linewise, d'a, marks follow edits" {
+    // `[count]p` puts the text count times in a row (`:help p`).
+    try vim("yy3p", "|a\nb", "a\n|a\na\na\nb");
+    try vim("yiw3p", "|ab", "aababab|b"); // the put leaves the cursor after the text
+    // `ci"` before the first quote takes the first quoted string after it.
+    try vim("0ci\"X<esc>", "|x = \"y\"", "x = \"|X\"");
+    // `dd` on the last line lands on the new last line, never past it.
+    try vim("Gdd", "|a\nb\n", "|a\n");
+    try vim("j3dd", "|a\nb\nc\nd\n", "|a\n");
+    try vim("G3dd", "a\n|b\nc\nd\n", "a\nb\n|c\n"); // the count takes what is there
+    // `v_CTRL-A` bumps every selected line's first number; `g` makes a progression.
+    try vim("Vj<c-a>", "|x 1\ny 1", "|x 2\ny 2");
+    try vim("Vjg<c-a>", "|x 1\ny 1", "|x 2\ny 3");
+    // `gv` comes back in the mode the selection was made in.
+    try vim("Vjygvd", "|a\nb\nc", "|c");
+    // A mark is a motion: `d'a` is linewise to the mark.
+    try vim("majjd'a", "|a\nb\nc\nd", "|d");
+    // Marks move with the text: a line opened above shifts `'a` down.
+    try vim("jjmaggOn<esc>'ax", "|a\nb\nc", "n\na\nb\n|");
+}
+
 test "vim marks, macros and visual mode" {
     try vim("majj'a", "|a\nb\nc", "|a\nb\nc");
     try vim("lmajj`a", "|ab\nb\nc", "a|b\nb\nc");
