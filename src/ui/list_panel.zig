@@ -79,6 +79,41 @@ pub fn rowStyle(t: *const Theme, selected: bool) Style {
     return if (selected) Theme.onBg(t.panel_bg, t.cursor_line.bg) else t.panel_bg;
 }
 
+/// How long ago `then_s` was, in one short token: `now`, `5m`, `3h`,
+/// `2d`, `6w`, `4mo`, `2y`. On the frame arena; a future stamp is `now`.
+pub fn ageText(ui: Ui, now_s: i64, then_s: i64) []const u8 {
+    const d = now_s - then_s;
+    if (d < 60) return "now";
+    if (d < 3600) return ui.fmt("{d}m", .{@divFloor(d, 60)});
+    if (d < 86_400) return ui.fmt("{d}h", .{@divFloor(d, 3600)});
+    if (d < 7 * 86_400) return ui.fmt("{d}d", .{@divFloor(d, 86_400)});
+    if (d < 30 * 86_400) return ui.fmt("{d}w", .{@divFloor(d, 7 * 86_400)});
+    if (d < 365 * 86_400) return ui.fmt("{d}mo", .{@divFloor(d, 30 * 86_400)});
+    return ui.fmt("{d}y", .{@divFloor(d, 365 * 86_400)});
+}
+
+const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
+
+/// While a scan runs the refresh chip shows a spinner. The chip's
+/// cells are the header's last three when it fits (`header.zig`'s
+/// ladder); they are overpainted and the hit registered under them
+/// stays. `label` is the caps title, which decides whether the chip
+/// fit at all.
+/// // changed: `Props` has no `busy` flag — a `ui`-side addition would
+/// let the header paint this itself. Shared by every list panel.
+pub fn paintSpinner(ui: Ui, area: Rect, label: []const u8, now_ms: i64) void {
+    const label_w = ui.width(label);
+    if (area.w < label_w + 3 + 3 or area.h == 0) return;
+    const frames: []const []const u8 = if (ui.ascii) &spinner_ascii else &spinner_frames;
+    const idx: usize = @intCast(@mod(@divFloor(now_ms, 80), @as(i64, @intCast(frames.len))));
+    const style = chip.refreshStyle(ui.theme, ui.theme.panel_bg.bg);
+    const x = area.right() - 3;
+    _ = ui.putStr(x, area.y, 1, " ", style);
+    _ = ui.putStr(x + 1, area.y, 1, frames[idx], style);
+    _ = ui.putStr(x + 2, area.y, 1, " ", style);
+}
+
 pub fn ListPanel(comptime Row: type) type {
     return struct {
         const Self = @This();

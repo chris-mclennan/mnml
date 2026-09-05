@@ -41,6 +41,7 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
+const notes = @import("../notes.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -245,10 +246,11 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocator.Error!void {
     switch (which) {
         .todos => try todos.draw(app, ui, area),
+        .notes => try notes.draw(app, ui, area),
         .git => try git_app.draw(app, ui, area),
         .diagnostics => try lsp.drawPanel(app, ui, area),
         .http => try http_panel.draw(app, ui, area),
-        .notes, .findings, .sessions => {
+        .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
             const caps = ui.fmt(" {s}", .{@tagName(which)});
             const up = try ui.arena.dupe(u8, caps);

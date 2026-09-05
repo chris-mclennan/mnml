@@ -49,6 +49,7 @@ const find_bar_mod = @import("ui/find_bar.zig");
 const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
+const notes = @import("notes.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -149,6 +150,10 @@ pub const PromptPurpose = union(enum) {
     /// the directory it is created in (owned).
     new_file: []u8,
     new_folder: []u8,
+    /// A note / finding name typed into the seeded prompt; the payload
+    /// is the panel's directory, workspace-relative (owned).
+    new_note: []u8,
+    new_finding: []u8,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
     /// AI: a bare question; a question with the file + selection;
@@ -196,7 +201,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .rename, .http_env_edit_value => |s| gpa.free(s),
             .dap_bp_condition, .dap_hit_count => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             else => {},
@@ -492,6 +497,7 @@ pub const App = struct {
     /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
     right_panel: ?PanelId = null,
     todos: todos.State,
+    notes: notes.State,
     git: git_app.State,
     snippets: snippets.State,
     ai: ai_app.State = .{},
@@ -620,6 +626,7 @@ pub const App = struct {
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
+            .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
@@ -638,6 +645,8 @@ pub const App = struct {
         errdefer app.lua.?.destroy();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
+        try app.hooks.subscribe(.open, .{ .zig = &notes.onPathTouched });
+        try app.hooks.subscribe(.save_post, .{ .zig = &notes.onPathTouched });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         try app.hooks.subscribe(.save_post, .{ .zig = &git_app.onSavePost });
@@ -771,6 +780,7 @@ pub const App = struct {
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
+        self.notes.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
@@ -1314,6 +1324,7 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .notes => |result| try notes.handle(self, result),
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
@@ -1330,6 +1341,7 @@ pub const App = struct {
             .err => |e| {
                 defer self.gpa.free(e.msg);
                 if (e.source == .todos) self.todos.scanning = false;
+                if (e.source == .notes) self.notes.scanning = false;
                 if (e.source == .git) {
                     self.git.status_pending = false;
                     if (self.git.busy > 0) self.git.busy -= 1;
@@ -1421,7 +1433,7 @@ pub const App = struct {
         // The TODOS panel's debounced rescan.
         if (self.todos.rescan_at_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.notes.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -1560,6 +1572,7 @@ test {
     _ = @import("ui/agents_view.zig");
     _ = @import("ui/spend_view.zig");
     _ = @import("todos.zig");
+    _ = @import("notes.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");

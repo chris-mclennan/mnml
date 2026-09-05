@@ -1,0 +1,29 @@
+# zig-only
+# The NOTES panel (src/notes.zig): `<ws>/.mnml/notes/*.md`, one row per
+# note as `<name>  <title>  <age>`, the shared `sort:` chip, and `n`
+# seeding the next free `note-N.md`.
+write .mnml/notes/note-1.md "# Ship it\n\nbody\n"
+write .mnml/notes/ideas.md "loose thought\n"
+command view.activity_notes
+wait 400
+expect screen contains NOTES
+expect screen contains "sort: Newest first"
+expect screen contains "note-1  Ship it"
+expect screen contains "ideas  loose thought"
+# The filter narrows by name and title.
+key /
+type ship
+expect screen contains "(1 of 2)"
+expect screen lacks "loose thought"
+key esc
+key esc
+expect screen contains "loose thought"
+# The sort chip cycles.
+command notes.sort
+expect screen contains "sort: Oldest first"
+# `n` seeds the next free name; enter creates and opens it.
+key n
+expect screen contains "note-2.md"
+key enter
+expect pane note-2.md
+expect file .mnml/notes/note-2.md lacks "zzz"

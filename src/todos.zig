@@ -897,9 +897,6 @@ fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 
 // ─── draw (D6) ──────────────────────────────────────────────────────────
 
-const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
-const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
-
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const st = &app.todos;
     // The first time the panel is shown it scans (Rust parity).
@@ -930,24 +927,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .empty = empty,
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
-    if (st.scanning) paintSpinner(app, ui, area);
-}
-
-/// While a scan runs the refresh chip shows a spinner. The chip's cells
-/// are the header's last three when it fits (`header.zig`'s ladder);
-/// they are overpainted here and the hit registered under them stays.
-/// // changed: `ListPanel.Props` has no `busy` flag yet — a `ui`-side
-/// addition would let the header paint this itself.
-fn paintSpinner(app: *App, ui: Ui, area: Rect) void {
-    const label_w: u16 = 5; // "TODOS"
-    if (area.w < label_w + 3 + 3 or area.h == 0) return;
-    const frames: []const []const u8 = if (ui.ascii) &spinner_ascii else &spinner_frames;
-    const idx: usize = @intCast(@mod(@divFloor(app.now_ms, 80), @as(i64, @intCast(frames.len))));
-    const style = chip.refreshStyle(ui.theme, ui.theme.panel_bg.bg);
-    const x = area.right() - 3;
-    _ = ui.putStr(x, area.y, 1, " ", style);
-    _ = ui.putStr(x + 1, area.y, 1, frames[idx], style);
-    _ = ui.putStr(x + 2, area.y, 1, " ", style);
+    if (st.scanning) list_panel.paintSpinner(ui, area, "TODOS", app.now_ms);
 }
 
 fn tagStyle(t: *const Theme, tag: Tag, base: vaxis.Style) vaxis.Style {

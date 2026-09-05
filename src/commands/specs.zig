@@ -459,6 +459,9 @@ pub const specs = [_]Spec{
     .{ .id = "todos.fix_with_agent", .title = "TODOs: hand the selected marker to Claude Code (.claude/ or PATH) or Codex", .group = "todos" },
     .{ .id = "todos.open_claude", .title = "TODOs: open the selected marker in a Claude Code session", .group = "todos" },
     .{ .id = "todos.open_codex", .title = "TODOs: open the selected marker in a Codex session", .group = "todos" },
+    .{ .id = "notes.open", .title = "Notes: open the selected note", .group = "notes" },
+    .{ .id = "notes.copy_path", .title = "Notes: copy the selected note's path", .group = "notes" },
+    .{ .id = "notes.delete", .title = "Notes: delete the selected note (confirm)", .group = "notes" },
     // Zig-only: the context-menu rows on a tab, a tree row and the
     // editor body name commands, so these act on "the row / tab the
     // menu was opened on" (the tree cursor; the active pane).
@@ -886,10 +889,11 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "834 specs, unique ids" {
+test "837 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
-    // commands + three HTTP panel commands + four TODOS row commands.
-    try std.testing.expectEqual(@as(usize, 834), specs.len);
+    // commands + three HTTP panel commands + four TODOS row commands
+    // + three NOTES row commands.
+    try std.testing.expectEqual(@as(usize, 837), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

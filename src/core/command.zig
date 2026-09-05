@@ -91,6 +91,7 @@ pub fn name(id: CommandId) [:0]const u8 {
 /// line here; its `pub const table = .{ .@"ns.verb" = &fn, … }` is merged.
 const runner_tables = .{
     @import("../todos.zig"),
+    @import("../notes.zig"),
     @import("../app/cmd_file.zig"),
     @import("../app/cmd_buffer.zig"),
     @import("../app/cmd_editor.zig"),
@@ -535,7 +536,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 834), count);
+    try std.testing.expectEqual(@as(usize, 837), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 
