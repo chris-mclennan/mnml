@@ -1525,6 +1525,7 @@ test {
     _ = @import("http/cookies.zig");
     _ = @import("http/jwt.zig");
     _ = @import("http/sse.zig");
+    _ = @import("http/script.zig");
     _ = @import("http/schema.zig");
     _ = @import("http/import.zig");
     _ = @import("http/captured.zig");
