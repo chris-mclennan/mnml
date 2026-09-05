@@ -23,24 +23,24 @@ line), not by hand.
 | section | done | partial | cut | missing | rows |
 |---|---|---|---|---|---|
 | Editing & input | 49 | 0 | 0 | 0 | 49 |
-| Panes, splits & tab pages | 19 | 0 | 0 | 1 | 20 |
+| Panes, splits & tab pages | 20 | 0 | 0 | 0 | 20 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
-| Navigation & search | 25 | 2 | 0 | 3 | 30 |
+| Navigation & search | 30 | 0 | 0 | 0 | 30 |
 | Language intelligence (LSP) | 33 | 0 | 0 | 0 | 33 |
 | Git | 37 | 0 | 2 | 0 | 39 |
-| TODOs, notes & findings | 20 | 2 | 0 | 0 | 22 |
-| AI | 18 | 1 | 1 | 1 | 21 |
+| TODOs, notes & findings | 22 | 0 | 0 | 0 | 22 |
+| AI | 20 | 0 | 1 | 0 | 21 |
 | Terminal & process panes | 15 | 0 | 0 | 0 | 15 |
 | Dock widgets | 13 | 0 | 0 | 0 | 13 |
-| HTTP request client | 40 | 1 | 1 | 1 | 43 |
+| HTTP request client | 42 | 0 | 1 | 0 | 43 |
 | Browser & CDP capture | 17 | 0 | 0 | 0 | 17 |
 | Debugging (DAP) | 13 | 0 | 0 | 0 | 13 |
 | Testing & quality | 9 | 0 | 0 | 0 | 9 |
-| UI & theming | 58 | 7 | 4 | 6 | 75 |
-| Workspace trust | 9 | 0 | 0 | 1 | 10 |
-| Headless, IPC & extensibility | 32 | 5 | 2 | 2 | 41 |
+| UI & theming | 71 | 0 | 4 | 0 | 75 |
+| Workspace trust | 10 | 0 | 0 | 0 | 10 |
+| Headless, IPC & extensibility | 36 | 1 | 2 | 2 | 41 |
 | Languages | 5 | 0 | 0 | 0 | 5 |
-| **total** | **434** | **18** | **10** | **15** | **477** |
+| **total** | **464** | **1** | **10** | **2** | **477** |
 
 The first ledger (at `de423c5`) printed 278 / 36 / 10 / 149 of 473; the
 same script over that file counts 279 / 36 / 10 / 149 of 474 — the old
@@ -48,9 +48,7 @@ table was tallied by hand and off by one. Three rows were added since:
 the `ui.*` toggles (a Remaining item before, a row now), Lua scripting
 and bridge v2 — the last two beyond the Rust list.
 
-Ids: 901 in `src/commands/specs.zig`; 812 have runners (42 of them the
-deliberate `cutRunner` / `notInBuild` stubs), 89 have none. `zig build
--Dpartial=false` names each one.
+Ids: 913 in `src/commands/specs.zig`; 845 have runners (33 of them the deliberate `cutRunner` / `notInBuild` stubs), 68 have none. `zig build -Dpartial=false` names each one.
 
 ## Landed since the first ledger
 
@@ -84,24 +82,18 @@ the tree. Nothing left is larger than M.
 
 | item | size | section |
 |---|---|---|
-| MRU buffer switching (`buffer.last` / `clear_mru` / `pin_toggle`) and `tab.reopen` — the ids have no runner | S | Panes |
-| `picker.workspace_symbol`, `snippet.pick` / `pick_all`, `editor.fold_all_brackets` — ids without a runner | S | Navigation, Editing |
-| Which-key: the `h T L P i I H` groups and `1`–`9`, the root leaves `? B m p o`, `<leader>tr`, the `t` group's hidden-files / keymap / theme leaves, `<leader>iE` | S | Navigation & search |
-| Find history (the find bar keeps no ring) | S | Navigation & search |
-| Symbol picker as one picker (`lsp.symbols` and `workspace_symbols` are two) | S | Navigation & search |
-| `⟳` chip right-click menu and `ui.auto_refresh_off` (the chip is a left-click rescan on every list panel) | S | TODOs, notes & findings |
-| Row context menus on the SEARCH and AGENTS panes | S | TODOs, notes & findings |
-| Settings → AI section (backend / model rows; today two rows under Integrations); the overlay's 60 % × 70 % centering | S | AI, Headless |
-| Legacy "Set launcher script…" (launch profiles cover the use) | S | AI |
-| The green `+` chip in the INTEGRATIONS rail (the HTTP panel's row menu and `http.new_request` cover it); a per-field title on the request menu | S | HTTP |
-| `Alt`-drag copies in the tree; `file.move_to` autocomplete / `~` unverified | S | UI & theming |
-| Palette bar: a dedicated `+` add-integration chip (today the `+` menu's Integrations submenu), and the narrow bar hides below 80 columns instead of dropping TABS | S | UI & theming |
-| The right-panel palette-bar codicon (`▤` today); the stress meter's bufferline copy; a clock beside the bell (`ui.clock`, `clock.*`) | S | UI & theming |
-| Markdown preview replace-on-next-glance; typing promotes a preview only for request panes | S | UI & theming |
-| `ui.external_browser` — trust-gated and never launched; `ui.click_echo`, `coverage_chip_mode`, `menu_bar`, `auto_equalize_splits` (+ `view.toggle_auto_equalize_splits`) unread | S each | UI & theming |
 | Integration-icon rail in the tree (`IntegrationIcon` has `in_palette_bar` only); `integrations.icon_picker`; the In-Development tab (`integrations.show_in_dev` toasts) | M | Headless, IPC & extensibility |
-| Glyph audit / bake as commands (`integrations.audit_glyphs`, `bake_*_glyphs`, `menu.glyph_audit` have no runner; `zig build glyph-audit` is the tool) | S | Headless, IPC & extensibility |
-| `.mnml/integrations/*` manifests as a trust sink (`init.lua` is one; workspace manifests are not) | S | Workspace trust |
+
+Everything else the first Remaining list named landed on the `remaining`
+branch (2026-09-05): MRU buffers, pins and `tab.reopen`; the symbol,
+snippet and fold commands; the NvChad which-key groups; find history;
+the `⟳` chip menu with auto-refresh and the SEARCH / AGENTS row menus;
+Settings → AI and the 60 % × 70 % box; the legacy launcher-script row;
+the HTTP `+` chip and the per-field request menu; `Alt`-drag copies and
+move-to completion; the palette bar's codicons, `+` chip, narrow rule,
+stress copy and the clock; markdown glance tabs; the five unread `ui.*`
+fields; the glyph audit / bake commands; workspace manifests as a
+trust sink. Each row names its file and its test.
 
 ## Cuts — and where the user learns it
 
@@ -234,7 +226,7 @@ the tree. Nothing left is larger than M.
 | Marks picker | done | `picker.marks` in `src/app/cmd_app.zig` | lists the global marks too |
 | Clipboard / register picker | done | `picker.clipboard` in `cmd_app.zig` | Enter inserts |
 | Recent-commands picker | done | `picker.recent_commands` in `cmd_app.zig` (+ `view.cmdline_history`) | |
-| Which-key leader popup | partial | `src/app/whichkey.zig`, `src/ui/which_key.zig` | see the group rows |
+| Which-key leader popup | done | `src/app/whichkey.zig`, `src/ui/which_key.zig` | every group row below is done |
 | Which-key `f` find | done | `whichkey.zig` | `f g` → `find.grep` |
 | Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` has the NvChad leaves — explorer, right panel (+ next / prev / close tab), keymap, theme, hidden files (focused / all) — plus wrap / numbers; `g` and `a` carry the Rust leaves (`a M` mixr is cut) |
 | Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e-zig/whichkey_groups.test` | `P` (+pr) is dropped — `pr.*` are cut with the Rust integration binaries; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
@@ -608,7 +600,7 @@ the tree. Nothing left is larger than M.
 | Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e-zig/palette_bar_clock.test` |
 | Settings overlay | done | `src/app/settings.zig`, `src/ui/settings.zig` | 39 discrete rows + 9 number rows (`‹ [32] ›`) |
 | `:set` for every discrete field | done | `src/app/ex.zig` | Zig-only |
-| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`), `click_echo` (a 120 ms double underline under a left press — `App.click_echo`, `Doc.echo`), `coverage_chip_mode` (`coverage.zig`: the `F` / `C` chip from the two `trends.json` files, four modes), `menu_bar` (`menu_bar.zig`: File / Edit / View / Go / Help on the bar row — always / auto / hidden, `view.menu_bar_cycle` / `menu_bar_open`), `auto_equalize_splits` (`App.afterSplitChange`); each has a test that changes a cell |
+| The `ui.*` toggles | done | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`), `click_echo` (a 120 ms double underline under a left press — `App.click_echo`, `Doc.echo`), `coverage_chip_mode` (`coverage.zig`: the `F` / `C` chip from the two `trends.json` files, four modes), `menu_bar` (`menu_bar.zig`: File / Edit / View / Go / Help on the bar row — always / auto / hidden, `view.menu_bar_cycle` / `menu_bar_open`), `auto_equalize_splits` (`App.afterSplitChange`); each has a test that changes a cell |
 | Update check | done | `src/app/update.zig` | GitHub releases JSON on a worker; `ui.check_updates`, `MNML_NO_UPDATE_CHECK` |
 | Startup picker | done | `src/app/startup_picker.zig` | |
 
