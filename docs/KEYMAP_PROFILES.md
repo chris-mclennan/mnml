@@ -73,7 +73,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `term.shell_right` | `space v` | (new) | vim | NvChad <leader>v vertical term |
 | `buffer.next` | `tab` | (new) | vim | NvChad <Tab> bufferline |
 | `buffer.prev` | `shift+tab` | (new) | vim | NvChad <S-Tab> bufferline |
-| `view.focus_left` | `ctrl+h` | (new) | vim | NvChad <C-h> |
+| `view.focus_left` | `ctrl+h` | (new) | vim | NvChad <C-h> — from the leftmost split it enters the sidebar (nvim-tree is a window); `ctrl+l` from the sidebar returns; `Ctrl-W w` past the last split lands there too |
 | `view.focus_down` | `ctrl+j` | (new) | vim | NvChad <C-j> |
 | `view.focus_up` | `ctrl+k` | (new) | vim | NvChad <C-k> |
 | `view.focus_right` | `ctrl+l` | (new) | vim | NvChad <C-l> |

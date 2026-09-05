@@ -253,9 +253,18 @@ fn splitDown(app: *App) CommandError!void {
 const Dir = enum { left, right, up, down };
 
 /// The leaf whose rect is the nearest neighbour of the active one in
-/// `dir`, by the rects the last frame gave the split tree.
+/// `dir`, by the rects the last frame gave the split tree. The sidebar
+/// counts as the leftmost window (NvChad's nvim-tree is one): left from
+/// the leftmost split enters it, right from it returns to the split.
 fn focusDir(app: *App, dir: Dir) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
+    if (app.focus == .tree) {
+        if (dir == .right) {
+            app.focus = .{ .pane = cur };
+            app.needs_render = true;
+        }
+        return;
+    }
     const layout = app.layouts.current();
     const arena = app.frame.allocator();
     const body = if (app.panes_area.isEmpty()) Rect.init(0, 1, app.screen.width, app.screen.height -| 2) else app.panes_area;
@@ -288,7 +297,13 @@ fn focusDir(app: *App, dir: Dir) CommandError!void {
             best = pr;
         }
     }
-    const target = best orelse return;
+    const target = best orelse {
+        if (dir == .left and app.tree.visible) {
+            app.focus = .tree;
+            app.needs_render = true;
+        }
+        return;
+    };
     app.setActive(target.pane);
 }
 
@@ -309,13 +324,20 @@ fn focusDown(app: *App) CommandError!void {
     return focusDir(app, .down);
 }
 
+/// `Ctrl-W w`: the next leaf, and past the last one the sidebar when it
+/// is open (vim cycles every window, nvim-tree included).
 fn focusNextSplit(app: *App) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     const leaves = try layout.leaves(app.frame.allocator());
-    if (leaves.len < 2) return;
     const mine = layout.leafOf(cur) orelse return;
     const idx = std.mem.indexOfScalar(layout_mod.NodeId, leaves, mine) orelse return;
+    if (idx + 1 == leaves.len and app.tree.visible) {
+        app.focus = .tree;
+        app.needs_render = true;
+        return;
+    }
+    if (leaves.len < 2) return;
     const next = leaves[(idx + 1) % leaves.len];
     app.setActive(layout.leaf(next).?.active);
 }
@@ -773,8 +795,12 @@ test "wrap toggles per pane; splits add leaves; focus moves between them" {
     try t.expectEqual(a, app.active.?);
     try command.run(&app, .{ .static = .@"view.focus_right" });
     try t.expectEqual(b, app.active.?);
+    // Past the last leaf the cycle enters the sidebar when it is open
+    // (the next test); with it hidden it wraps to the first leaf.
+    app.tree.visible = false;
     try command.run(&app, .{ .static = .@"view.focus_next_split" });
     try t.expectEqual(a, app.active.?);
+    app.tree.visible = true;
     try command.run(&app, .{ .static = .@"view.split_down" });
     const c = app.active.?;
     try command.run(&app, .{ .static = .@"view.focus_up" });
@@ -785,6 +811,42 @@ test "wrap toggles per pane; splits add leaves; focus moves between them" {
     try t.expectEqual(@as(usize, 2), (try app.layouts.current().leaves(app.frame.allocator())).len);
     // Scratch duplicates have no path, so they stay open in the background.
     try t.expectEqual(@as(usize, 3), app.panes.count());
+}
+
+test "the sidebar is the leftmost window: focus_left from the leftmost split enters it, focus_right leaves it, focus_next_split wraps into it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    app.tree.visible = true;
+    try t.expect(app.focus == .pane);
+    try command.run(&app, .{ .static = .@"view.focus_left" });
+    try t.expect(app.focus == .tree);
+    // Left again stays; right returns to the split it came from.
+    try command.run(&app, .{ .static = .@"view.focus_left" });
+    try t.expect(app.focus == .tree);
+    try command.run(&app, .{ .static = .@"view.focus_right" });
+    try t.expect(app.focus == .pane and app.focus.pane == a);
+    // With two splits, left from the right one is a split move, not the tree.
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try t.expect(b != a);
+    try command.run(&app, .{ .static = .@"view.focus_left" });
+    try t.expect(app.focus == .pane and app.active.? == a);
+    try command.run(&app, .{ .static = .@"view.focus_left" });
+    try t.expect(app.focus == .tree);
+    // Ctrl-W w cycles a → b → tree.
+    app.focus = .{ .pane = a };
+    app.setActive(a);
+    try command.run(&app, .{ .static = .@"view.focus_next_split" });
+    try t.expectEqual(b, app.active.?);
+    try command.run(&app, .{ .static = .@"view.focus_next_split" });
+    try t.expect(app.focus == .tree);
+    // A hidden sidebar is never a target.
+    app.focus = .{ .pane = a };
+    app.setActive(a);
+    app.tree.visible = false;
+    try command.run(&app, .{ .static = .@"view.focus_left" });
+    try t.expect(app.focus == .pane);
 }
 
 test "a split duplicates the file; closing the split drops the clean duplicate" {
