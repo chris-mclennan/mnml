@@ -44,7 +44,7 @@ pub const specs = [_]Spec{
     .{ .id = "app.restart", .title = "Restart mnml (rebuild + relaunch via run.sh)", .group = "app" },
     .{ .id = "app.reset_to_defaults", .title = "Reset mnml to factory defaults (backup + relaunch)", .group = "app" },
     .{ .id = "app.choose_data_layout", .title = "Choose data layout — Portable (mnml-data/) or Normal (~/.config/mnml/)", .group = "app" },
-    .{ .id = "view.toggle_tree", .title = "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)", .group = "view", .keys = .{ .vim = &.{ "ctrl+n", "space e" }, .both = &.{"ctrl+b"} } },
+    .{ .id = "view.toggle_tree", .title = "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)", .group = "view", .keys = .{ .vim = &.{ "ctrl+n", "space e" }, .standard = &.{"ctrl+b"} } },
     .{ .id = "view.reset_tree_width", .title = "Reset file tree width to the config default", .group = "view" },
     .{ .id = "view.discovery", .title = "Click-discovery overlay (highlight what's clickable)", .group = "view", .keys = .{ .both = &.{"f1"} } },
     .{ .id = "view.welcome", .title = "Welcome overlay (shortcuts cheatsheet)", .group = "view" },
