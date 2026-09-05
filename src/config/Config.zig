@@ -166,6 +166,11 @@ pub const Ui = struct {
     color_column: u16 = 0,
     wrap: bool = false,
     highlight_todo_keywords: bool = false,
+    // changed: the Rust scanner's marker list was a constant. The TODOS
+    // panel reads this one (a marker must follow a comment opener, or
+    // be a markdown list item); the `.fixme(` / `.fail(` / `.skip(`
+    // test-marker scan is always on and not listed here.
+    todo_keywords: []const []const u8 = &default_todo_keywords,
     render_markdown: bool = false,
     markdown_opens_rendered: bool = true,
     always_show_fold_arrows: bool = false,
@@ -231,6 +236,9 @@ pub const IntegrationIcon = struct {
     version: ?[]const u8 = null,
     commands: []const IntegrationIconCommand = &.{},
 };
+
+/// The markers the TODOS panel scans for when `ui.todo_keywords` is unset.
+pub const default_todo_keywords = [_][]const u8{ "TODO", "FIXME", "XXX", "HACK", "REVIEW" };
 
 pub const default_integration_icons = [_]IntegrationIcon{
     .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
@@ -512,6 +520,8 @@ test "defaults are the shipped values" {
     try std.testing.expect(c.ui.markdown_opens_rendered);
     try std.testing.expectEqual(@as(u16, 12), c.ui.md_image_rows);
     try std.testing.expectEqual(ListSort.newest, c.ui.todos_sort);
+    try std.testing.expectEqual(@as(usize, 5), c.ui.todo_keywords.len);
+    try std.testing.expectEqualStrings("REVIEW", c.ui.todo_keywords[4]);
     try std.testing.expectEqual(SessionsSort.auto, c.ui.sessions_sort);
     try std.testing.expectEqual(PickerPosition.center, c.ui.picker_position);
     try std.testing.expectEqual(NowPlayingSource.mixr, c.ui.now_playing_source);

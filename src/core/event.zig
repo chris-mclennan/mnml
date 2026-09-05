@@ -11,6 +11,10 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const key = @import("key.zig");
 const todos = @import("../todos.zig");
+const notes = @import("../notes.zig");
+const findings = @import("../findings.zig");
+const sessions = @import("../sessions.zig");
+const dock = @import("../app/dock.zig");
 const git_client = @import("../git/client.zig");
 const agents = @import("../app/agents.zig");
 const spend = @import("../app/spend.zig");
@@ -27,7 +31,7 @@ pub const PtyId = u32;
 
 /// Who produced an `.err`. Workers never toast; they post this and the
 /// UI thread decides how to surface it.
-pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer };
+pub const Source = enum { todos, notes, findings, sessions, dock, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer };
 
 // Payloads for subsystems that do not exist yet. Each is an opaque
 // placeholder so the union has its final shape today; the subsystem
@@ -126,6 +130,14 @@ pub const AppEvent = union(enum) {
 
     /// A finished TODO scan. Owned; `todos.handle` adopts the arena.
     todos: *todos.ScanResult,
+    /// A finished notes listing. Owned; `notes.handle` adopts the arena.
+    notes: *notes.ScanResult,
+    /// A finished findings listing. Owned; `findings.handle` adopts the arena.
+    findings: *findings.ScanResult,
+    /// A finished session listing. Owned; `sessions.handle` adopts the arena.
+    sessions: *sessions.ScanResult,
+    /// A finished dock tail read. Owned; `dock.handle` adopts the lines.
+    dock: *dock.TailResult,
     /// A finished Claude / Codex session scan. Owned; the agents pane adopts it.
     agents: *agents.ScanResult,
     /// A finished spend computation. Owned; the spend pane (or the meter) adopts it.
@@ -152,6 +164,10 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .paste => |p| gpa.free(p),
         .err => |e| gpa.free(e.msg),
         .todos => |r| r.destroy(gpa),
+        .notes => |r| r.destroy(gpa),
+        .findings => |r| r.destroy(gpa),
+        .sessions => |r| r.destroy(gpa),
+        .dock => |r| r.destroy(gpa),
         .agents => |r| r.destroy(gpa),
         .spend => |r| r.destroy(gpa),
         .tests => |r| r.destroy(gpa),

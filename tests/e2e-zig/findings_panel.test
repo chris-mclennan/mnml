@@ -1,0 +1,36 @@
+# zig-only
+# The FINDINGS panel (src/findings.zig): `<ws>/.mnml/findings/*.md` with
+# `severity:` / `status:` frontmatter, one row per report as
+# `<SEV> <name>  <title>  <age>`, the shared `sort:` chip, `d` marking
+# the selected report resolved in place, and `n` seeding `finding-N.md`.
+write .mnml/findings/finding-1.md "---\nseverity: high\nstatus: open\n---\n# Picker panics below 30 cols\n"
+write .mnml/findings/r2.md "# Plain report\n\n**Severity:** low\n"
+command view.activity_findings
+wait 400
+expect screen contains FINDINGS
+expect screen contains "(2 open of 2)"
+expect screen contains "HIGH finding-1  Picker panics"
+expect screen contains "LOW  r2  Plain report"
+# The filter matches the severity word.
+key /
+type high
+expect screen contains "(1 of 2)"
+expect screen lacks "Plain report"
+key esc
+key esc
+# Resolve the selected (newest) report: the frontmatter changes on disk,
+# the row stays and the open count drops.
+key g
+key d
+wait 400
+expect screen contains "(1 open of 2)"
+# The sort chip cycles through the palette command; at the shipped panel
+# width the chip is icon-only beside the count, so the toast says which.
+command findings.sort
+expect screen contains "findings: Oldest first"
+# `n` seeds the next free name; enter writes the template and opens it.
+key n
+expect screen contains "finding-2.md"
+key enter
+expect pane finding-2.md
+expect file .mnml/findings/finding-2.md contains "status: open"

@@ -35,6 +35,10 @@ const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
 const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
+const notes = @import("../notes.zig");
+const findings = @import("../findings.zig");
+const sessions = @import("../sessions.zig");
+const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
@@ -106,10 +110,12 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
     if (app.focus == .panel and app.right_panel != null) {
         const took = switch (app.focus.panel) {
             .todos => try todos.handleKey(app, k),
+            .notes => try notes.handleKey(app, k),
+            .findings => try findings.handleKey(app, k),
             .git => try git_app.handleKey(app, k),
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
-            .notes, .findings, .sessions => false,
+            .sessions => try sessions.handleKey(app, k),
         };
         if (took) return;
         _ = try chordChain(app, k);
@@ -556,7 +562,9 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
-            .notes, .findings, .sessions, .git, .diagnostics, .http => {},
+            .notes => try notes.setSort(app, s.sort),
+            .findings => try findings.setSort(app, s.sort),
+            .sessions, .git, .diagnostics, .http => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -565,6 +573,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
                 app.diag.clear();
             },
         },
+        .dock_set => |s| dock.setSetting(app, s.id, s.setting),
         .none => {},
     }
 }
@@ -699,6 +708,13 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("todo: {s}", .{@errorName(err)}),
         },
         .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
+        .new_note => |dir| try notes.acceptNew(app, dir, text),
+        .new_finding => |dir| try findings.acceptNew(app, dir, text),
+        .sessions_rename => |id| try sessions.acceptRename(app, id, text),
+        .dock_new_text => |c| try dock.acceptNewText(app, c, text),
+        .dock_new_log => |c| try dock.acceptNewLog(app, c, text),
+        .dock_edit => |id| try dock.acceptEdit(app, id, text),
+        .dock_rename => |id| try dock.acceptRename(app, id, text),
         .new_folder => |dir| try tree_mod.acceptNewFolder(app, dir, text),
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .move_paths => |ps| try files_pane.acceptMoveTo(app, @ptrCast(ps), text),
@@ -763,9 +779,21 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             1 => app.quit = true,
             else => {},
         },
-        .delete_paths => |d| try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice),
+        .delete_paths => |d| {
+            try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice);
+            if (choice == 0) for (d.paths) |p| {
+                notes.onPathRemoved(app, p);
+                findings.onPathRemoved(app, p);
+            };
+        },
         .empty_trash => try trash.acceptEmpty(app, choice),
+        .delete_path => |rel| if (choice == 0) {
+            try tree_mod.acceptDelete(app, rel);
+            notes.onPathRemoved(app, rel);
+            findings.onPathRemoved(app, rel);
+        },
         .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
+        .delete_session => |path| if (choice == 0) try sessions.acceptDelete(app, path),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
         .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
@@ -864,38 +892,49 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
             .todos => try todos.rowMouse(app, pr.idx, m),
+            .notes => try notes.rowMouse(app, pr.idx, m),
+            .findings => try findings.rowMouse(app, pr.idx, m),
+            .sessions => try sessions.rowMouse(app, pr.idx, m),
             .git => try git_app.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
-            .notes, .findings, .sessions => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
+            .notes => try notes.kebabMouse(app, pr.idx, m),
+            .findings => try findings.kebabMouse(app, pr.idx, m),
+            .sessions => try sessions.kebabMouse(app, pr.idx, m),
             .git => try git_app.kebabMouse(app, pr.idx, m),
             .http => try http_panel.kebabMouse(app, pr.idx, m),
-            .notes, .findings, .sessions, .diagnostics => {},
+            .diagnostics => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
+            .notes => try notes.chipMouse(app, c.kind, m),
+            .findings => try findings.chipMouse(app, c.kind, m),
+            .sessions => try sessions.chipMouse(app, c.kind, m),
             .git => try git_app.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
-            .notes, .findings, .sessions => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
+            .notes => notes.filterMouse(app, m),
+            .findings => findings.filterMouse(app, m),
+            .sessions => sessions.filterMouse(app, m),
             .git => git_app.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
-            .notes, .findings, .sessions => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
             .panel => |p| switch (p) {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
+                .notes => if (hitRect(app, m.x, m.y)) |r| notes.scrollbarMouse(app, r, m),
+                .findings => if (hitRect(app, m.x, m.y)) |r| findings.scrollbarMouse(app, r, m),
+                .sessions => if (hitRect(app, m.x, m.y)) |r| sessions.scrollbarMouse(app, r, m),
                 .git => if (hitRect(app, m.x, m.y)) |r| git_app.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
-                .notes, .findings, .sessions => {},
             },
             .pane => |id| {
                 if (wheel) return wheelOnPane(app, id, m, count);
@@ -1124,6 +1163,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => if (seg >= statusline.seg_dyn_base and m.button == .left) try ipc.effects.clickSegment(app, seg - statusline.seg_dyn_base),
             }
         },
+        .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .button => |id| {
             if (m.kind != .press) return;
             // The strip's markdown chip (`render.drawMdChip`).
@@ -1420,6 +1460,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             };
         },
         .scrollbar => |sb| dragScrollbar(app, sb.pane, sb.grab, m.y),
+        .dock => |*dd| return dock.continueDrag(app, dd, m),
         .tab => |*tb| {
             if (m.kind == .drag) {
                 if (tb.x != m.x or tb.y != m.y) tb.moved = true;

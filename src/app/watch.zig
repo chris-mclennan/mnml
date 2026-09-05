@@ -16,6 +16,7 @@ const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
 const pane_mod = @import("pane.zig");
 const hooks = @import("../core/hooks.zig");
+const todos = @import("../todos.zig");
 
 pub const interval_ms: i64 = 2000;
 
@@ -56,6 +57,9 @@ pub fn check(app: *App) Allocator.Error!void {
         const known = e.disk orelse continue;
         const now_on_disk = stamp(app.io, path) orelse continue;
         if (now_on_disk.mtime_ns == known.mtime_ns and now_on_disk.size == known.size) continue;
+        // The change event: the TODOS panel queues a debounced rescan
+        // whether the buffer reloads or is left dirty — the disk moved.
+        todos.noteFileChanged(app);
         const rel = app.relPath(path);
         if (e.buf.dirty) {
             app.toast("{s} changed on disk — :e! to discard / save to overwrite", .{rel});
@@ -179,4 +183,16 @@ test "a save restamps the file so the writer's own change is not reported" {
     f.app.dismissToasts();
     try tick(&f.app, 10 * interval_ms);
     try t.expect(f.app.lastToast() == null);
+}
+
+test "a change on disk queues the TODOS rescan (a used panel only)" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "x\n" });
+    _ = try f.open("a.txt");
+    f.app.todos.scanned_once = true;
+    f.app.now_ms = 10 * interval_ms;
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "x and more\n" });
+    try tick(&f.app, 10 * interval_ms);
+    try t.expectEqual(@as(?i64, 10 * interval_ms + todos.rescan_debounce_ms), f.app.todos.rescan_at_ms);
 }

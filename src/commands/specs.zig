@@ -455,6 +455,27 @@ pub const specs = [_]Spec{
     .{ .id = "todos.open", .title = "TODOs: open the selected marker at its line", .group = "todos" },
     .{ .id = "todos.copy_path", .title = "TODOs: copy the selected marker's path:line", .group = "todos" },
     .{ .id = "todos.ignore_file", .title = "TODOs: hide the selected marker's file this session", .group = "todos" },
+    .{ .id = "todos.mark_done", .title = "TODOs: retire the selected marker (DONE / un-quarantine the test)", .group = "todos" },
+    .{ .id = "todos.fix_with_agent", .title = "TODOs: hand the selected marker to Claude Code (.claude/ or PATH) or Codex", .group = "todos" },
+    .{ .id = "todos.open_claude", .title = "TODOs: open the selected marker in a Claude Code session", .group = "todos" },
+    .{ .id = "todos.open_codex", .title = "TODOs: open the selected marker in a Codex session", .group = "todos" },
+    .{ .id = "notes.open", .title = "Notes: open the selected note", .group = "notes" },
+    .{ .id = "notes.copy_path", .title = "Notes: copy the selected note's path", .group = "notes" },
+    .{ .id = "notes.delete", .title = "Notes: delete the selected note (confirm)", .group = "notes" },
+    .{ .id = "findings.open", .title = "Findings: open the selected finding", .group = "findings" },
+    .{ .id = "findings.copy_path", .title = "Findings: copy the selected finding's path", .group = "findings" },
+    .{ .id = "findings.resolve", .title = "Findings: mark the selected finding resolved (status: resolved)", .group = "findings" },
+    .{ .id = "findings.delete", .title = "Findings: delete the selected finding (confirm)", .group = "findings" },
+    .{ .id = "sessions.sort", .title = "Sessions: toggle the sort axis (State / Manual)", .group = "sessions" },
+    .{ .id = "sessions.cycle_state", .title = "Sessions: cycle the state filter (every / live / tool / idle / ended)", .group = "sessions" },
+    .{ .id = "sessions.open", .title = "Sessions: resume the selected session in a terminal", .group = "sessions" },
+    .{ .id = "sessions.open_transcript", .title = "Sessions: open the selected session's transcript", .group = "sessions" },
+    .{ .id = "sessions.rename", .title = "Sessions: rename the selected session (empty = reset)", .group = "sessions" },
+    .{ .id = "sessions.copy_id", .title = "Sessions: copy the selected session id", .group = "sessions" },
+    .{ .id = "sessions.delete", .title = "Sessions: delete the selected session's transcript (confirm)", .group = "sessions" },
+    .{ .id = "sessions.move_up", .title = "Sessions: move the selected session up (manual order)", .group = "sessions" },
+    .{ .id = "sessions.move_down", .title = "Sessions: move the selected session down (manual order)", .group = "sessions" },
+    .{ .id = "sessions.all_workspaces", .title = "Sessions: toggle every workspace's sessions / this one's", .group = "sessions" },
     // Zig-only: the context-menu rows on a tab, a tree row and the
     // editor body name commands, so these act on "the row / tab the
     // menu was opened on" (the tree cursor; the active pane).
@@ -722,6 +743,12 @@ pub const specs = [_]Spec{
     .{ .id = "dock.new_log_tail", .title = "Dock: tail a file (bottom-left)", .group = "dock" },
     .{ .id = "dock.close_all", .title = "Dock: close all widgets", .group = "dock" },
     .{ .id = "dock.move_corner_next", .title = "Dock: move focused widget to next corner", .group = "dock" },
+    .{ .id = "dock.toggle", .title = "Dock: hide / show every widget", .group = "dock" },
+    .{ .id = "dock.add", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
+    .{ .id = "dock.add_preset", .title = "Dock: add a preset widget (clock, git branch, log tail, note)", .group = "dock" },
+    .{ .id = "dock.remove", .title = "Dock: close the focused widget", .group = "dock" },
+    .{ .id = "dock.edit", .title = "Dock: edit the focused widget's text or file", .group = "dock" },
+    .{ .id = "dock.rename", .title = "Dock: rename the focused widget", .group = "dock" },
     .{ .id = "term.scratch_toggle", .title = "Terminal: quick scratch strip at the bottom (Ctrl+`)", .group = "term", .keys = .{ .both = &.{"ctrl+`"} } },
     .{ .id = "term.paste", .title = "Terminal: paste clipboard into the active Pty pane", .group = "terminal" },
     .{ .id = "term.clear", .title = "Terminal: clear screen (`Ctrl+L` in the child)", .group = "terminal" },
@@ -909,11 +936,13 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "854 specs, unique ids" {
+test "881 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
-    // + eighteen file-manager commands.
-    try std.testing.expectEqual(@as(usize, 854), specs.len);
+    // + eighteen file-manager commands + four TODOS row commands
+    // + three NOTES row commands + four FINDINGS row commands + ten
+    // SESSIONS commands + six dock commands.
+    try std.testing.expectEqual(@as(usize, 881), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

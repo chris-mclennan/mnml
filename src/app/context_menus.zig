@@ -144,6 +144,7 @@ pub fn openNewTabMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Open file…", .action = .{ .command = .@"picker.files" } },
         .{ .label = "Recent files…", .action = .{ .command = .@"picker.recent" } },
         .{ .label = "New tab page", .action = .{ .command = .@"tab.new" }, .separator_before = true },
+        .{ .label = "New dock note", .action = .{ .command = .@"dock.new_text" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("New tab", rows, x, y);

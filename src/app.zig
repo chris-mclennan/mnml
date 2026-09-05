@@ -49,6 +49,10 @@ const find_bar_mod = @import("ui/find_bar.zig");
 const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
+const notes = @import("notes.zig");
+const findings = @import("findings.zig");
+const sessions = @import("sessions.zig");
+const dock = @import("app/dock.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -160,6 +164,18 @@ pub const PromptPurpose = union(enum) {
     /// the directory it is created in (owned).
     new_file: []u8,
     new_folder: []u8,
+    /// A note / finding name typed into the seeded prompt; the payload
+    /// is the panel's directory, workspace-relative (owned).
+    new_note: []u8,
+    new_finding: []u8,
+    /// SESSIONS: the alias for this session id (owned).
+    sessions_rename: []u8,
+    /// Dock: a new note / tail lands in this corner; an edit / rename
+    /// names the widget.
+    dock_new_text: dock.Corner,
+    dock_new_log: dock.Corner,
+    dock_edit: u32,
+    dock_rename: u32,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
     /// `file.move_to` from a Files pane: the absolute paths to move
@@ -212,7 +228,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .rename, .http_env_edit_value => |s| gpa.free(s),
             .move_paths => |ps| {
                 for (ps) |q| gpa.free(q);
                 gpa.free(ps);
@@ -232,6 +248,9 @@ pub const ConfirmPurpose = union(enum) {
     install_tool: u16,
     /// A git yes/no; `git.State.confirm` holds the payload.
     git,
+    /// Delete one workspace-relative path directly (owned) — the
+    /// NOTES / FINDINGS row delete (`tree.acceptDelete`).
+    delete_path: []u8,
     /// Delete these absolute paths (owned); `permanent_only` when they
     /// are already in the trash (`trash.confirmDelete`).
     delete_paths: DeletePaths,
@@ -245,12 +264,14 @@ pub const ConfirmPurpose = union(enum) {
     kill_pids: []u32,
     /// `integrations.remove`: the manifest id to delete (owned).
     remove_integration: []u8,
+    /// SESSIONS: the absolute transcript path to delete (owned).
+    delete_session: []u8,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .remove_integration => |s| gpa.free(s),
+            .delete_path, .remove_integration, .delete_session => |s| gpa.free(s),
             .delete_paths => |d| {
                 for (d.paths) |p| gpa.free(p);
                 gpa.free(d.paths);
@@ -442,7 +463,10 @@ pub const Drag = union(enum) {
     /// The editor scrollbar thumb; `grab` is the row inside the thumb
     /// the pointer took hold of.
     scrollbar: struct { pane: PaneId, grab: u16 },
+    /// A dock widget's title bar; `moved` once the pointer left the cell.
+    dock: DockDrag,
 };
+pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };
 
 /// The last left press, for double / triple clicks.
@@ -521,6 +545,12 @@ pub const App = struct {
     /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
     right_panel: ?PanelId = null,
     todos: todos.State,
+    notes: notes.State,
+    findings: findings.State,
+    sessions: sessions.State,
+    dock: dock.State = .{},
+    /// The editor body before the dock's inline strips came off it.
+    dock_area: Rect = .{},
     git: git_app.State,
     snippets: snippets.State,
     ai: ai_app.State = .{},
@@ -663,7 +693,10 @@ pub const App = struct {
             .panes = PaneStore.init(gpa, io),
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
-            .todos = todos.State.init(gpa),
+            .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
+            .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
+            .findings = findings.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.findings_sort)),
+            .sessions = sessions.State.init(gpa, opts.cfg.ui.sessions_sort),
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
@@ -683,6 +716,10 @@ pub const App = struct {
         errdefer app.lua.?.destroy();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
+        try app.hooks.subscribe(.open, .{ .zig = &notes.onPathTouched });
+        try app.hooks.subscribe(.save_post, .{ .zig = &notes.onPathTouched });
+        try app.hooks.subscribe(.open, .{ .zig = &findings.onPathTouched });
+        try app.hooks.subscribe(.save_post, .{ .zig = &findings.onPathTouched });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         try app.hooks.subscribe(.save_post, .{ .zig = &git_app.onSavePost });
@@ -817,6 +854,10 @@ pub const App = struct {
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
+        self.notes.deinit(gpa, self.io);
+        self.findings.deinit(gpa, self.io);
+        self.sessions.deinit(gpa, self.io);
+        self.dock.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
@@ -1369,6 +1410,10 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .notes => |result| try notes.handle(self, result),
+            .findings => |result| try findings.handle(self, result),
+            .sessions => |result| try sessions.handle(self, result),
+            .dock => |result| try dock.handle(self, result),
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
@@ -1387,6 +1432,9 @@ pub const App = struct {
             .err => |e| {
                 defer self.gpa.free(e.msg);
                 if (e.source == .todos) self.todos.scanning = false;
+                if (e.source == .notes) self.notes.scanning = false;
+                if (e.source == .findings) self.findings.scanning = false;
+                if (e.source == .sessions) self.sessions.scanning = false;
                 if (e.source == .git) {
                     self.git.status_pending = false;
                     if (self.git.busy > 0) self.git.busy -= 1;
@@ -1455,6 +1503,9 @@ pub const App = struct {
         pty_pane.tickAll(self);
         ws_pane.tickAll(self);
         try watch.tick(self, now);
+        todos.tick(self, now);
+        sessions.tick(self, now);
+        dock.tick(self, now);
         try git_app.tick(self, now);
         try ai_app.tick(self);
         try self.script().tick(now);
@@ -1475,12 +1526,16 @@ pub const App = struct {
             },
             else => {},
         };
+        // The TODOS panel's debounced rescan.
+        if (self.todos.rescan_at_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.notes.scanning or self.findings.scanning or self.sessions.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -1623,6 +1678,12 @@ test {
     _ = @import("ui/flaky_view.zig");
     _ = @import("ui/ai_apply_view.zig");
     _ = @import("todos.zig");
+    _ = @import("notes.zig");
+    _ = @import("findings.zig");
+    _ = @import("sessions.zig");
+    _ = @import("app/dock.zig");
+    _ = @import("ui/dock_view.zig");
+    _ = @import("core/dock.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");
@@ -1677,10 +1738,17 @@ test {
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
     defer app.deinit();
-    // `dock.close_all` has a spec and no runner until the dock lands
-    // (`ai.ask`, `git.commit` and `http.send` all grew runners).
-    try std.testing.expectError(error.Failed, command.run(&app, .{ .static = .@"dock.close_all" }));
-    try std.testing.expectEqualStrings("dock.close_all: not implemented yet", app.lastToast().?);
+    // A spec without a runner (found by scanning — every id this test
+    // once named, `dock.close_all` last, has grown one) toasts and fails.
+    var missing: ?command.CommandId = null;
+    for (std.enums.values(command.CommandId)) |id| if (command.runners.get(id) == null) {
+        missing = id;
+        break;
+    };
+    if (missing) |id| {
+        try std.testing.expectError(error.Failed, command.run(&app, .{ .static = id }));
+        try std.testing.expect(std.mem.endsWith(u8, app.lastToast().?, ": not implemented yet"));
+    }
     try std.testing.expectError(error.Failed, command.runNamed(&app, "nope.nope"));
     try std.testing.expectEqualStrings("no such command: nope.nope", app.lastToast().?);
     // A dyn command with an ex runner reaches the interpreter.

@@ -38,32 +38,58 @@ const Theme = @import("ui/theme.zig");
 const hit = @import("ui/hit.zig");
 const list_panel = @import("ui/list_panel.zig");
 const chip = @import("ui/chip.zig");
+const cli = @import("ai/cli.zig");
+const pty_pane = @import("app/pty_pane.zig");
+const runners = @import("app/runners.zig");
+const settings = @import("app/settings.zig");
 
+/// What kind of marker a row is: the five classic words colour by
+/// kind, a keyword the user added in `ui.todo_keywords` is `custom`
+/// (the word itself is `Item.marker`), and the three Playwright / Jest
+/// quarantine calls are `test_*`.
 pub const Tag = enum {
     todo,
     fixme,
     xxx,
     hack,
     review,
+    custom,
+    test_fixme,
+    test_fail,
+    test_skip,
 
-    pub const all = [_]Tag{ .todo, .fixme, .xxx, .hack, .review };
+    /// The tag a configured keyword maps to (`TODO` → `.todo`, anything
+    /// unknown → `.custom`). Case-sensitive, like the scan.
+    pub fn forWord(word: []const u8) Tag {
+        const known = [_]struct { []const u8, Tag }{ .{ "TODO", .todo }, .{ "FIXME", .fixme }, .{ "XXX", .xxx }, .{ "HACK", .hack }, .{ "REVIEW", .review } };
+        for (known) |k| if (std.mem.eql(u8, word, k[0])) return k[1];
+        return .custom;
+    }
 
-    /// The marker as written in a comment. Case-sensitive on purpose.
-    pub fn label(t: Tag) []const u8 {
+    pub fn isTestMarker(t: Tag) bool {
         return switch (t) {
-            .todo => "TODO",
-            .fixme => "FIXME",
-            .xxx => "XXX",
-            .hack => "HACK",
-            .review => "REVIEW",
+            .test_fixme, .test_fail, .test_skip => true,
+            else => false,
         };
     }
+};
+
+/// `.fixme(` / `.fail(` / `.skip(` — the call sites that quarantine a
+/// test. Scanned in every code file regardless of `ui.todo_keywords`;
+/// the row shows the call and the test's name.
+pub const test_markers = [_]struct { call: []const u8, tag: Tag, label: []const u8 }{
+    .{ .call = ".fixme(", .tag = .test_fixme, .label = "fixme" },
+    .{ .call = ".fail(", .tag = .test_fail, .label = "fail" },
+    .{ .call = ".skip(", .tag = .test_skip, .label = "skip" },
 };
 
 /// One marker hit. Slices borrow from `ScanResult.arena` while the
 /// result is in flight, and from `State.snapshot` once adopted.
 pub const Item = struct {
     tag: Tag,
+    /// The marker as written: the keyword, or `fixme` / `fail` / `skip`
+    /// for a test call. What the row paints and the filter matches.
+    marker: []const u8,
     /// Workspace-relative path.
     path: []const u8,
     /// 1-based.
@@ -108,6 +134,10 @@ pub const table = .{
     .@"todos.open" = &openCmd,
     .@"todos.copy_path" = &copyPathCmd,
     .@"todos.ignore_file" = &ignoreFileCmd,
+    .@"todos.mark_done" = &markDoneCmd,
+    .@"todos.fix_with_agent" = &fixWithAgentCmd,
+    .@"todos.open_claude" = &openClaudeCmd,
+    .@"todos.open_codex" = &openCodexCmd,
 };
 
 /// The walk stops here; the header says `+` when it did.
@@ -122,6 +152,9 @@ const skip_dirs = [_][]const u8{ "node_modules", "target", "zig-out", "zig-cache
 const scan_exts = [_][]const u8{ "zig", "zon", "rs", "ts", "tsx", "js", "jsx", "mjs", "py", "go", "java", "kt", "swift", "cs", "cpp", "cc", "c", "h", "hpp", "rb", "sh", "lua", "yml", "yaml", "toml", "md", "markdown", "txt", "html", "css", "scss", "sql", "vue", "svelte", "test" };
 /// A second click on the selected row within this window opens it.
 const double_click_ms: i64 = 500;
+/// A file the watcher saw change queues a rescan this long after the
+/// last change — a save burst (formatter, then the editor) is one scan.
+pub const rescan_debounce_ms: i64 = 500;
 
 pub const State = struct {
     /// D3: every scan worker runs in this group; `refresh` cancels it.
@@ -147,9 +180,14 @@ pub const State = struct {
     ignored: std.StringHashMapUnmanaged(void) = .empty,
     /// The last left press on a row, for double-click detection.
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
+    /// When the watcher's change event has a rescan due; null = none
+    /// pending. Every further change pushes it back (`noteFileChanged`).
+    rescan_at_ms: ?i64 = null,
 
-    pub fn init(gpa: Allocator) State {
-        return .{ .snapshot = alloc.SnapshotArena.init(gpa) };
+    /// `sort` starts as `ui.todos_sort` — the chip persists it, so the
+    /// panel opens in the order it was left in.
+    pub fn init(gpa: Allocator, sort: ListSort) State {
+        return .{ .snapshot = alloc.SnapshotArena.init(gpa), .sort = sort };
     }
 
     /// Cancels the scan in flight and waits for it — the worker borrows
@@ -179,6 +217,24 @@ pub fn onSavePost(app: *App, _: hooks.HookArgs) void {
     refresh(app) catch {};
 }
 
+/// The watcher saw a file change on disk (`watch.check`). A used panel
+/// rescans `rescan_debounce_ms` after the LAST change, so a burst of
+/// writes costs one scan; an unused panel stays quiet.
+pub fn noteFileChanged(app: *App) void {
+    const st = &app.todos;
+    if (!st.scanned_once) return;
+    st.rescan_at_ms = app.now_ms + rescan_debounce_ms;
+}
+
+/// Every tick: fire the debounced rescan once it is due.
+pub fn tick(app: *App, now: i64) void {
+    const st = &app.todos;
+    const due = st.rescan_at_ms orelse return;
+    if (now < due) return;
+    st.rescan_at_ms = null;
+    refresh(app) catch {};
+}
+
 // ─── the scan worker (D1 + D3) ──────────────────────────────────────────
 
 /// Cancel any scan in flight, bump the generation, start a new one.
@@ -191,7 +247,7 @@ pub fn refresh(app: *App) CommandError!void {
     st.scanning = true;
     st.scanned_once = true;
     app.needs_render = true;
-    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, app.workspace, st.generation }) catch |err| {
+    st.group.concurrent(app.io, scanWorker, .{ &app.events, app.io, app.gpa, app.workspace, app.cfg.ui.todo_keywords, st.generation }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "todos: could not start the scan: {s}", .{@errorName(err)});
     };
@@ -201,13 +257,13 @@ pub fn refresh(app: *App) CommandError!void {
 /// `errdefer` frees it on cancel or OOM, `post` hands it to the event
 /// (and frees it itself if the queue is already closed). D3: returning
 /// `error.Canceled` is how a cancelled task ends; the group swallows it.
-fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, workspace: []const u8, generation: u32) Io.Cancelable!void {
+fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, workspace: []const u8, keywords: []const []const u8, generation: u32) Io.Cancelable!void {
     const result = ScanResult.create(gpa, generation) catch {
         postErr(events, io, gpa, "out of memory starting the scan");
         return;
     };
     errdefer result.destroy(gpa);
-    scanInto(io, gpa, workspace, result) catch |err| switch (err) {
+    scanInto(io, gpa, workspace, keywords, result) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => {
             postErr(events, io, gpa, "out of memory during the scan");
@@ -230,8 +286,10 @@ fn isCanceled(err: anyerror) bool {
 }
 
 /// Walk `workspace` and fill `r.items` on `r.arena`. Directory order is
-/// whatever the file system gives; `handle` sorts.
-pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, r: *ScanResult) ScanError!void {
+/// whatever the file system gives; `handle` sorts. `keywords` is the
+/// marker list (`ui.todo_keywords`); it borrows the config for the
+/// scan's lifetime, as `workspace` does.
+pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, keywords: []const []const u8, r: *ScanResult) ScanError!void {
     const arena = r.arena.allocator();
     var items: std.ArrayListUnmanaged(Item) = .empty;
     var root = Io.Dir.cwd().openDir(io, workspace, .{ .iterate = true }) catch |err| {
@@ -259,7 +317,7 @@ pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, r: *ScanResult) S
             },
             .file => if (wantsFile(entry.basename)) {
                 try io.checkCancel();
-                try scanFile(io, gpa, arena, entry.dir, entry.basename, entry.path, &items);
+                try scanFile(io, gpa, arena, entry.dir, entry.basename, entry.path, keywords, &items);
             },
             else => {},
         }
@@ -283,7 +341,7 @@ fn wantsFile(name: []const u8) bool {
 /// Read one file and append its markers. `rel` is the workspace-relative
 /// path the walker hands out (invalid after the next step — duped once
 /// onto the arena when the file has a hit).
-fn scanFile(io: Io, gpa: Allocator, arena: Allocator, dir: Io.Dir, basename: []const u8, rel: []const u8, items: *std.ArrayListUnmanaged(Item)) ScanError!void {
+fn scanFile(io: Io, gpa: Allocator, arena: Allocator, dir: Io.Dir, basename: []const u8, rel: []const u8, keywords: []const []const u8, items: *std.ArrayListUnmanaged(Item)) ScanError!void {
     const st = dir.statFile(io, basename, .{}) catch |err| {
         if (isCanceled(err)) return error.Canceled;
         return;
@@ -302,10 +360,11 @@ fn scanFile(io: Io, gpa: Allocator, arena: Allocator, dir: Io.Dir, basename: []c
     while (lines.next()) |raw| {
         line_no += 1;
         const line = std.mem.trimEnd(u8, raw, "\r");
-        const found = matchLine(line, isMarkdown(basename)) orelse continue;
+        const found = matchLine(line, isMarkdown(basename), keywords) orelse continue;
         if (path == null) path = try arena.dupe(u8, rel);
         try items.append(arena, .{
             .tag = found.tag,
+            .marker = try arena.dupe(u8, found.marker),
             .path = path.?,
             .line = line_no,
             .title = try arena.dupe(u8, found.title),
@@ -325,15 +384,18 @@ fn isMarkdown(name: []const u8) bool {
     return std.ascii.endsWithIgnoreCase(name, ".md") or std.ascii.endsWithIgnoreCase(name, ".markdown");
 }
 
-pub const LineHit = struct { tag: Tag, title: []const u8 };
+pub const LineHit = struct { tag: Tag, marker: []const u8, title: []const u8 };
 
 /// The Rust scanner's rule, kept: the marker must follow a comment
 /// opener (`//`, `#`, `/*`, `--`, `<!--`) on its line — or, in
 /// markdown, only list / heading / quote punctuation — and must end at
 /// a word boundary so `TODOLIST` is not a TODO. One marker per line.
-pub fn matchLine(line: []const u8, markdown: bool) ?LineHit {
-    for (Tag.all) |tag| {
-        const word = tag.label();
+/// A test-marker call (`.fixme(`…) is matched anywhere in a code line
+/// (it is code, not a comment) and titled by its first string argument.
+pub fn matchLine(line: []const u8, markdown: bool, keywords: []const []const u8) ?LineHit {
+    for (keywords) |word| {
+        if (word.len == 0) continue;
+        const tag = Tag.forWord(word);
         const pos = std.mem.indexOf(u8, line, word) orelse continue;
         const prefix = line[0..pos];
         const commented = std.mem.indexOf(u8, prefix, "//") != null or
@@ -345,15 +407,38 @@ pub fn matchLine(line: []const u8, markdown: bool) ?LineHit {
         if (!commented and !md_item) continue;
         const after = line[pos + word.len ..];
         if (after.len > 0 and (std.ascii.isAlphanumeric(after[0]) or after[0] == '_')) continue;
-        var title = std.mem.trim(u8, std.mem.trimStart(u8, after, ":() "), " \t");
-        if (title.len > 120) {
-            var cut: usize = 120;
-            while (cut > 0 and (title[cut] & 0xC0) == 0x80) cut -= 1;
-            title = title[0..cut];
-        }
-        return .{ .tag = tag, .title = title };
+        return .{ .tag = tag, .marker = word, .title = clipTitle(std.mem.trim(u8, std.mem.trimStart(u8, after, ":() "), " \t")) };
+    }
+    if (markdown) return null;
+    for (test_markers) |tm| {
+        const pos = std.mem.indexOf(u8, line, tm.call) orelse continue;
+        // `test.fixme(` / `it.skip(` / `describe.fail(`: the call must
+        // hang off a name, so `.skip(` in a string or a regex is out.
+        if (pos == 0 or !(std.ascii.isAlphanumeric(line[pos - 1]) or line[pos - 1] == '_')) continue;
+        const args = line[pos + tm.call.len ..];
+        return .{ .tag = tm.tag, .marker = tm.label, .title = clipTitle(firstStringArg(args) orelse std.mem.trim(u8, args, " \t")) };
     }
     return null;
+}
+
+/// The first quoted argument of a call, without its quotes.
+fn firstStringArg(args: []const u8) ?[]const u8 {
+    const s = std.mem.trimStart(u8, args, " \t");
+    if (s.len == 0) return null;
+    const q = s[0];
+    if (q != '\'' and q != '"' and q != '`') return null;
+    const end = std.mem.indexOfScalarPos(u8, s, 1, q) orelse return null;
+    return s[1..end];
+}
+
+fn clipTitle(title_in: []const u8) []const u8 {
+    var title = title_in;
+    if (title.len > 120) {
+        var cut: usize = 120;
+        while (cut > 0 and (title[cut] & 0xC0) == 0x80) cut -= 1;
+        title = title[0..cut];
+    }
+    return title;
 }
 
 // ─── the event handler (D1) ─────────────────────────────────────────────
@@ -381,7 +466,7 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
         const path = if (it.path.ptr == prev_src.ptr and it.path.len == prev_src.len) prev_dst else try arena.dupe(u8, it.path);
         prev_src = it.path;
         prev_dst = path;
-        items[i] = .{ .tag = it.tag, .path = path, .line = it.line, .title = try arena.dupe(u8, it.title), .mtime = it.mtime };
+        items[i] = .{ .tag = it.tag, .marker = try arena.dupe(u8, it.marker), .path = path, .line = it.line, .title = try arena.dupe(u8, it.title), .mtime = it.mtime };
     }
     st.items = items;
     sortItems(st);
@@ -423,10 +508,10 @@ pub fn refilter(app: *App) Allocator.Error!void {
 }
 
 fn matches(it: Item, q: []const u8) bool {
-    return containsIgnoreCase(it.tag.label(), q) or containsIgnoreCase(it.title, q) or containsIgnoreCase(it.path, q);
+    return containsIgnoreCase(it.marker, q) or containsIgnoreCase(it.title, q) or containsIgnoreCase(it.path, q);
 }
 
-fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
+pub fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (needle.len > hay.len) return false;
     var i: usize = 0;
@@ -450,8 +535,12 @@ fn refreshCmd(app: *App) CommandError!void {
     return refresh(app);
 }
 
+/// The chip's click: the next mode, persisted as `ui.todos_sort` so it
+/// is the order the panel opens with next time.
 fn sortCmd(app: *App) CommandError!void {
     try setSort(app, app.todos.sort.next());
+    app.cfg.ui.todos_sort = app.todos.sort.toConfig();
+    _ = try settings.persist(app, .workspace, &.{ "ui", "todos_sort" }, app.cfg.ui.todos_sort);
     app.toast("sort: {s}", .{app.todos.sort.label()});
 }
 
@@ -539,6 +628,101 @@ fn copyPathCmd(app: *App) CommandError!void {
     app.toast("copied {s}", .{text});
 }
 
+/// `Mark done`: the marker word on its line becomes `DONE` (a test
+/// call loses its `.fixme` / `.fail` / `.skip`), so the scan drops the
+/// row and the comment keeps its history. The file is rewritten in
+/// place; a clean buffer showing it takes the new text.
+fn markDoneCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const it = app.todos.selected() orelse return app.diag.fail(arena, "todos: nothing selected", .{});
+    const rel = try arena.dupe(u8, it.path);
+    const abs = try app.absPath(rel);
+    const content = Io.Dir.cwd().readFileAlloc(app.io, abs, arena, .limited(max_file_bytes)) catch |err| {
+        return app.diag.fail(arena, "todos: read {s}: {s}", .{ rel, @errorName(err) });
+    };
+    const out = (try markDoneInText(arena, content, it.line, it.tag, it.marker)) orelse return app.diag.fail(arena, "todos: {s}:{d} no longer carries {s}", .{ rel, it.line, it.marker });
+    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = abs, .data = out }) catch |err| {
+        return app.diag.fail(arena, "todos: write {s}: {s}", .{ rel, @errorName(err) });
+    };
+    if (app.panes.findPath(abs)) |id| if (app.panes.editor(id)) |e| if (!e.buf.dirty) {
+        e.buf.editor.setText(out) catch return error.OutOfMemory;
+        e.buf.markSaved() catch return error.OutOfMemory;
+        e.hl_dirty = true;
+    };
+    app.toast("marked done: {s}:{d}", .{ rel, it.line });
+    try refresh(app);
+}
+
+/// `text` with the marker on 1-based `line` retired: the keyword
+/// becomes `DONE`, a `.fixme(` / `.fail(` / `.skip(` call becomes the
+/// plain call. Null when the line has no such marker any more.
+pub fn markDoneInText(arena: Allocator, text: []const u8, line: u32, tag: Tag, marker: []const u8) Allocator.Error!?[]u8 {
+    var start: usize = 0;
+    var n: u32 = 1;
+    while (n < line) : (n += 1) {
+        const nl = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse return null;
+        start = nl + 1;
+    }
+    const end = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse text.len;
+    const row = text[start..end];
+    const needle: []const u8, const replacement: []const u8 = if (tag.isTestMarker()) blk: {
+        for (test_markers) |tm| if (tm.tag == tag) break :blk .{ tm.call, "(" };
+        unreachable;
+    } else .{ marker, "DONE" };
+    const at = std.mem.indexOf(u8, row, needle) orelse return null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(arena, text[0 .. start + at]);
+    try out.appendSlice(arena, replacement);
+    try out.appendSlice(arena, text[start + at + needle.len ..]);
+    return try out.toOwnedSlice(arena);
+}
+
+/// Hand the marker to an agent: `Fix with agent` picks Claude Code
+/// when the workspace has a `.claude/` directory (its agents, commands
+/// and skills apply), else whichever CLI is on PATH, and toasts when
+/// neither is. The explicit rows name their product.
+fn fixWithAgentCmd(app: *App) CommandError!void {
+    const product = pickAgent(app) orelse return app.diag.fail(app.frame.allocator(), "todos: no Claude Code or Codex on PATH", .{});
+    return openInAgent(app, product);
+}
+
+fn openClaudeCmd(app: *App) CommandError!void {
+    return openInAgent(app, .claude);
+}
+
+fn openCodexCmd(app: *App) CommandError!void {
+    return openInAgent(app, .codex);
+}
+
+pub const Agent = enum { claude, codex };
+
+/// The `.claude/` rule, then PATH.
+pub fn pickAgent(app: *App) ?Agent {
+    if (hasClaudeDir(app)) return .claude;
+    if (runners.onPath(app, cli.claude_binary)) return .claude;
+    if (runners.onPath(app, cli.codex_binary)) return .codex;
+    return null;
+}
+
+pub fn hasClaudeDir(app: *App) bool {
+    const path = std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".claude" }) catch return false;
+    const st = Io.Dir.cwd().statFile(app.io, path, .{}) catch return false;
+    return st.kind == .directory;
+}
+
+/// The prompt the agent starts with: the marker, its location and its
+/// text. Launched as a pty pane to the right, the workspace as cwd.
+pub fn openInAgent(app: *App, product: Agent) CommandError!void {
+    const arena = app.frame.allocator();
+    const it = app.todos.selected() orelse return app.diag.fail(arena, "todos: nothing selected", .{});
+    const prompt = try std.fmt.allocPrint(arena, "Fix the {s} at {s}:{d}: {s}", .{ it.marker, it.path, it.line, it.title });
+    const argv = switch (product) {
+        .claude => try cli.claudeArgv(arena, prompt, null, null),
+        .codex => try cli.codexArgv(arena, prompt),
+    };
+    _ = try pty_pane.open(app, .{ .argv = argv, .label = @tagName(product), .placement = .right, .kind = .command });
+}
+
 /// Hide every marker in the selected item's file for this session.
 /// (Persisting the list is Phase 1 — the ZON config.)
 fn ignoreFileCmd(app: *App) CommandError!void {
@@ -585,6 +769,8 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
                 'r' => runToast(app, refresh(app)),
                 's' => runToast(app, sortCmd(app)),
                 'n' => runToast(app, newCmd(app)),
+                'f' => runToast(app, fixWithAgentCmd(app)),
+                'd' => runToast(app, markDoneCmd(app)),
                 else => return false,
             }
             return true;
@@ -677,11 +863,22 @@ pub fn focusPanel(app: *App) void {
     app.needs_render = true;
 }
 
+/// The row's action menu. The agent row says what `Fix with agent`
+/// will do — `.claude/` found, or the CLI on PATH — so the fallback is
+/// visible before it runs; the product rows are always listed.
 fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const agent_label: []const u8 = if (hasClaudeDir(app)) "Fix with agent (.claude/ → Claude Code)" else if (pickAgent(app)) |p| switch (p) {
+        .claude => "Fix with agent (Claude Code on PATH)",
+        .codex => "Fix with agent (Codex on PATH)",
+    } else "Fix with agent (none on PATH)";
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Open", .action = .{ .command = .@"todos.open" } },
-        .{ .label = "Copy path", .action = .{ .command = .@"todos.copy_path" } },
-        .{ .label = "Ignore file", .action = .{ .command = .@"todos.ignore_file" }, .separator_before = true },
+        .{ .label = agent_label, .action = .{ .command = .@"todos.fix_with_agent" }, .separator_before = true },
+        .{ .label = "Open in Claude Code", .action = .{ .command = .@"todos.open_claude" } },
+        .{ .label = "Open in Codex", .action = .{ .command = .@"todos.open_codex" } },
+        .{ .label = "Copy path", .action = .{ .command = .@"todos.copy_path" }, .separator_before = true },
+        .{ .label = "Mark done", .action = .{ .command = .@"todos.mark_done" } },
+        .{ .label = "Ignore file", .action = .{ .command = .@"todos.ignore_file" } },
     });
     errdefer app.gpa.free(items);
     try app.openMenu("TODO", items, x, y);
@@ -700,9 +897,6 @@ fn openSortMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 
 // ─── draw (D6) ──────────────────────────────────────────────────────────
 
-const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
-const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
-
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const st = &app.todos;
     // The first time the panel is shown it scans (Rust parity).
@@ -718,7 +912,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const empty: list_panel.EmptyState = if (st.scanning and st.items.len == 0)
         .{ .message = "Scanning the workspace…", .hint = "Markers appear as they are found." }
     else if (st.items.len == 0)
-        .{ .message = ui.fmt("No markers found — click{s}in the header to rescan.", .{refresh_glyph}), .hint = "Scans for TODO / FIXME / XXX / HACK / REVIEW." }
+        .{ .message = ui.fmt("No markers found — click{s}in the header to rescan.", .{refresh_glyph}), .hint = "Scans ui.todo_keywords and .fixme( / .fail( / .skip( calls." }
     else
         .{ .message = "No matches — Esc clears" };
     const caret = Panel.draw(&st.list, ui, area, .{
@@ -733,31 +927,14 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .empty = empty,
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
-    if (st.scanning) paintSpinner(app, ui, area);
-}
-
-/// While a scan runs the refresh chip shows a spinner. The chip's cells
-/// are the header's last three when it fits (`header.zig`'s ladder);
-/// they are overpainted here and the hit registered under them stays.
-/// // changed: `ListPanel.Props` has no `busy` flag yet — a `ui`-side
-/// addition would let the header paint this itself.
-fn paintSpinner(app: *App, ui: Ui, area: Rect) void {
-    const label_w: u16 = 5; // "TODOS"
-    if (area.w < label_w + 3 + 3 or area.h == 0) return;
-    const frames: []const []const u8 = if (ui.ascii) &spinner_ascii else &spinner_frames;
-    const idx: usize = @intCast(@mod(@divFloor(app.now_ms, 80), @as(i64, @intCast(frames.len))));
-    const style = chip.refreshStyle(ui.theme, ui.theme.panel_bg.bg);
-    const x = area.right() - 3;
-    _ = ui.putStr(x, area.y, 1, " ", style);
-    _ = ui.putStr(x + 1, area.y, 1, frames[idx], style);
-    _ = ui.putStr(x + 2, area.y, 1, " ", style);
+    if (st.scanning) list_panel.paintSpinner(ui, area, "TODOS", app.now_ms);
 }
 
 fn tagStyle(t: *const Theme, tag: Tag, base: vaxis.Style) vaxis.Style {
     var s = Theme.withFg(base, switch (tag) {
-        .todo => t.info_fg.fg,
-        .fixme => t.warn_fg.fg,
-        .xxx, .hack => t.error_fg.fg,
+        .todo, .custom => t.info_fg.fg,
+        .fixme, .test_fixme, .test_skip => t.warn_fg.fg,
+        .xxx, .hack, .test_fail => t.error_fg.fg,
         .review => t.accent.fg,
     });
     s.bold = true;
@@ -774,7 +951,7 @@ fn paintRow(ui: Ui, r: Rect, row: Item, selected: bool) void {
     const base = list_panel.rowStyle(t, selected);
     var x = r.x;
     const end = r.right();
-    x += ui.putStr(x, r.y, end -| x, row.tag.label(), tagStyle(t, row.tag, base));
+    x += ui.putStr(x, r.y, end -| x, row.marker, tagStyle(t, row.tag, base));
     x += ui.putStr(x, r.y, end -| x, " ", base);
     const loc = ui.fmt("{s}:{d}", .{ row.path, row.line });
     const min_loc: u16 = 10;
@@ -812,18 +989,66 @@ fn clipLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
 
 const testing = std.testing;
 
+const kw: []const []const u8 = &@import("config/Config.zig").default_todo_keywords;
+
 test "matchLine: comment openers, markdown items, word boundaries, one marker per line" {
-    try testing.expectEqualStrings("wire it up", matchLine("    // TODO: wire it up", false).?.title);
-    try testing.expectEqual(Tag.fixme, matchLine("x = 1  # FIXME(leaks) on error", false).?.tag);
-    try testing.expectEqualStrings("leaks) on error", matchLine("x = 1  # FIXME(leaks) on error", false).?.title);
-    try testing.expect(matchLine("let todolist = TODOLIST;", false) == null);
-    try testing.expect(matchLine("const x = \"TODO\";", false) == null);
-    try testing.expect(matchLine("- TODO: buy milk", true) != null);
-    try testing.expect(matchLine("Later we TODO this", true) == null);
-    try testing.expect(matchLine("- TODO: buy milk", false) == null);
-    try testing.expectEqual(Tag.xxx, matchLine("/* XXX HACK */", false).?.tag);
-    try testing.expectEqual(Tag.review, matchLine("<!-- REVIEW before merge -->", false).?.tag);
-    try testing.expectEqualStrings("", matchLine("// TODO", false).?.title);
+    try testing.expectEqualStrings("wire it up", matchLine("    // TODO: wire it up", false, kw).?.title);
+    try testing.expectEqual(Tag.fixme, matchLine("x = 1  # FIXME(leaks) on error", false, kw).?.tag);
+    try testing.expectEqualStrings("leaks) on error", matchLine("x = 1  # FIXME(leaks) on error", false, kw).?.title);
+    try testing.expect(matchLine("let todolist = TODOLIST;", false, kw) == null);
+    try testing.expect(matchLine("const x = \"TODO\";", false, kw) == null);
+    try testing.expect(matchLine("- TODO: buy milk", true, kw) != null);
+    try testing.expect(matchLine("Later we TODO this", true, kw) == null);
+    try testing.expect(matchLine("- TODO: buy milk", false, kw) == null);
+    try testing.expectEqual(Tag.xxx, matchLine("/* XXX HACK */", false, kw).?.tag);
+    try testing.expectEqual(Tag.review, matchLine("<!-- REVIEW before merge -->", false, kw).?.tag);
+    try testing.expectEqualStrings("", matchLine("// TODO", false, kw).?.title);
+    try testing.expectEqualStrings("TODO", matchLine("// TODO", false, kw).?.marker);
+}
+
+test "matchLine: configured keywords are the list, a custom word is .custom, an empty word is skipped" {
+    const mine: []const []const u8 = &.{ "", "NOTE", "TODO" };
+    const h = matchLine("// NOTE: keep", false, mine).?;
+    try testing.expectEqual(Tag.custom, h.tag);
+    try testing.expectEqualStrings("NOTE", h.marker);
+    try testing.expectEqualStrings("keep", h.title);
+    // FIXME is not in this list any more.
+    try testing.expect(matchLine("// FIXME: gone", false, mine) == null);
+    try testing.expectEqual(Tag.todo, matchLine("// TODO x", false, mine).?.tag);
+}
+
+test "matchLine: .fixme( / .fail( / .skip( call sites, titled by the first string argument; never in markdown or a string" {
+    const a = matchLine("test.fixme('login flakes on CI', async ({ page }) => {", false, kw).?;
+    try testing.expectEqual(Tag.test_fixme, a.tag);
+    try testing.expectEqualStrings("fixme", a.marker);
+    try testing.expectEqualStrings("login flakes on CI", a.title);
+    const b = matchLine("  it.skip(\"pending\", () => {});", false, kw).?;
+    try testing.expectEqual(Tag.test_skip, b.tag);
+    try testing.expectEqualStrings("pending", b.title);
+    const c = matchLine("describe.fail(`wip ${x}`, fn)", false, kw).?;
+    try testing.expectEqual(Tag.test_fail, c.tag);
+    try testing.expectEqualStrings("wip ${x}", c.title);
+    // No name before the dot: a regex or a string, not a call.
+    try testing.expect(matchLine("const re = /\\.skip(/;", false, kw) == null);
+    try testing.expect(matchLine("- test.skip('x')", true, kw) == null);
+    // No string argument: the rest of the line.
+    try testing.expectEqualStrings("cond)", matchLine("test.skip(cond)", false, kw).?.title);
+    // A comment keyword on the same line wins (one marker per line).
+    try testing.expectEqual(Tag.todo, matchLine("test.skip('x') // TODO unskip", false, kw).?.tag);
+}
+
+test "markDoneInText retires the keyword or the test call on its line only" {
+    const arena = testing.allocator;
+    const text = "a\n// TODO: one\n// TODO: two\ntest.fixme('x', fn)\n";
+    const one = (try markDoneInText(arena, text, 2, .todo, "TODO")).?;
+    defer arena.free(one);
+    try testing.expectEqualStrings("a\n// DONE: one\n// TODO: two\ntest.fixme('x', fn)\n", one);
+    const call = (try markDoneInText(arena, text, 4, .test_fixme, "fixme")).?;
+    defer arena.free(call);
+    try testing.expectEqualStrings("a\n// TODO: one\n// TODO: two\ntest('x', fn)\n", call);
+    // The line moved on: nothing to retire.
+    try testing.expect((try markDoneInText(arena, text, 1, .todo, "TODO")) == null);
+    try testing.expect((try markDoneInText(arena, text, 9, .todo, "TODO")) == null);
 }
 
 test "wantsFile and skipDir follow the fixed lists" {
@@ -889,7 +1114,7 @@ test "scanInto finds markers across files, skips noisy dirs and binaries, record
     try f.write("image.png", "// TODO: wrong extension\n");
     const r = try ScanResult.create(testing.allocator, 1);
     defer r.destroy(testing.allocator);
-    try scanInto(testing.io, testing.allocator, f.root, r);
+    try scanInto(testing.io, testing.allocator, f.root, kw, r);
     try testing.expectEqual(@as(usize, 3), r.items.len);
     var seen_a: usize = 0;
     for (r.items) |it| {
@@ -912,8 +1137,8 @@ test "handle adopts a matching generation, drops a stale one, and frees both" {
     st.generation = 3;
     const fresh = try ScanResult.create(testing.allocator, 3);
     const items = try fresh.arena.allocator().alloc(Item, 2);
-    items[0] = .{ .tag = .todo, .path = "b.zig", .line = 4, .title = "second", .mtime = 10 };
-    items[1] = .{ .tag = .fixme, .path = "a.zig", .line = 9, .title = "first", .mtime = 20 };
+    items[0] = .{ .tag = .todo, .marker = "TODO", .path = "b.zig", .line = 4, .title = "second", .mtime = 10 };
+    items[1] = .{ .tag = .fixme, .marker = "FIXME", .path = "a.zig", .line = 9, .title = "first", .mtime = 20 };
     fresh.items = items;
     try handle(&f.app, fresh);
     try testing.expectEqual(@as(usize, 2), st.items.len);
@@ -923,7 +1148,7 @@ test "handle adopts a matching generation, drops a stale one, and frees both" {
     // A stale result (an older generation) is dropped whole.
     const stale = try ScanResult.create(testing.allocator, 2);
     const stale_items = try stale.arena.allocator().alloc(Item, 1);
-    stale_items[0] = .{ .tag = .hack, .path = "z.zig", .line = 1, .title = "stale", .mtime = 99 };
+    stale_items[0] = .{ .tag = .hack, .marker = "HACK", .path = "z.zig", .line = 1, .title = "stale", .mtime = 99 };
     stale.items = stale_items;
     try handle(&f.app, stale);
     try testing.expectEqual(@as(usize, 2), st.items.len);
@@ -936,10 +1161,10 @@ test "sort modes order files and keep a file's lines ascending; the filter is ca
     const st = &f.app.todos;
     const r = try ScanResult.create(testing.allocator, 1);
     const items = try r.arena.allocator().alloc(Item, 4);
-    items[0] = .{ .tag = .todo, .path = "src/b.zig", .line = 30, .title = "Beta", .mtime = 5 };
-    items[1] = .{ .tag = .todo, .path = "src/b.zig", .line = 2, .title = "alpha", .mtime = 5 };
-    items[2] = .{ .tag = .fixme, .path = "src/a.zig", .line = 7, .title = "Gamma", .mtime = 9 };
-    items[3] = .{ .tag = .review, .path = "docs/c.md", .line = 1, .title = "delta", .mtime = 1 };
+    items[0] = .{ .tag = .todo, .marker = "TODO", .path = "src/b.zig", .line = 30, .title = "Beta", .mtime = 5 };
+    items[1] = .{ .tag = .todo, .marker = "TODO", .path = "src/b.zig", .line = 2, .title = "alpha", .mtime = 5 };
+    items[2] = .{ .tag = .fixme, .marker = "FIXME", .path = "src/a.zig", .line = 7, .title = "Gamma", .mtime = 9 };
+    items[3] = .{ .tag = .review, .marker = "REVIEW", .path = "docs/c.md", .line = 1, .title = "delta", .mtime = 1 };
     r.items = items;
     st.generation = 1;
     try handle(&f.app, r);
@@ -1100,7 +1325,7 @@ test "mouse: a click selects, a second opens; the sort chip cycles and its right
     try f.app.render();
     try click.at(&f.app, row1.?, .right);
     try testing.expect(f.app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 3), f.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 7), f.app.overlay.menu.items.len);
     try f.app.handle(.{ .key = Key.named(.esc) });
     try testing.expect(f.app.overlay == .none);
     try command.run(&f.app, .{ .static = .@"todos.ignore_file" });
@@ -1133,4 +1358,73 @@ test "todos.new appends under ## Inbox and rescans; the save hook rescans a used
     try testing.expect(f.app.todos.generation > gen);
     try f.settle(2000);
     try testing.expectEqual(@as(usize, 2), f.app.todos.items.len);
+}
+
+test "the watcher's change event rescans once, debounced, and only a used panel" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    const st = &f.app.todos;
+    f.app.now_ms = 1000;
+    // Unused panel: nothing is queued.
+    noteFileChanged(&f.app);
+    try testing.expect(st.rescan_at_ms == null);
+    st.scanned_once = true;
+    const gen = st.generation;
+    noteFileChanged(&f.app);
+    f.app.now_ms = 1300;
+    noteFileChanged(&f.app); // a second change pushes the deadline back
+    tick(&f.app, 1600); // 600 ms after the first, 300 after the last: not yet
+    try testing.expectEqual(gen, st.generation);
+    tick(&f.app, 1800);
+    try testing.expectEqual(gen + 1, st.generation);
+    try testing.expect(st.rescan_at_ms == null);
+    tick(&f.app, 5000); // nothing pending: no second scan
+    try testing.expectEqual(gen + 1, st.generation);
+    try f.settle(2000);
+}
+
+test "mark done rewrites the file and the row disappears on the rescan; the row menu names the agent fallback" {
+    var f = try Fixture.init(100, 20);
+    defer f.deinit();
+    try f.write("src/a.zig", "// TODO: first\n// FIXME: second\n");
+    try f.write("e2e/login.spec.ts", "test.fixme('login flakes', async () => {});\n");
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"view.activity_todos" });
+    try command.run(&f.app, .{ .static = .@"todos.refresh" });
+    try f.settle(2000);
+    try testing.expectEqual(@as(usize, 3), f.app.todos.items.len);
+    try command.run(&f.app, .{ .static = .@"todos.sort" }); // → oldest
+    try setSort(&f.app, .name);
+    // name: e2e/login.spec.ts first, then src/a.zig:1, :2
+    try testing.expectEqualStrings("fixme", f.app.todos.selected().?.marker);
+    try command.run(&f.app, .{ .static = .@"todos.mark_done" });
+    const spec = try f.tmp.dir.readFileAlloc(testing.io, "e2e/login.spec.ts", testing.allocator, .limited(4096));
+    defer testing.allocator.free(spec);
+    try testing.expectEqualStrings("test('login flakes', async () => {});\n", spec);
+    try f.settle(2000);
+    try testing.expectEqual(@as(usize, 2), f.app.todos.items.len);
+    try command.run(&f.app, .{ .static = .@"todos.mark_done" });
+    const a = try f.tmp.dir.readFileAlloc(testing.io, "src/a.zig", testing.allocator, .limited(4096));
+    defer testing.allocator.free(a);
+    try testing.expectEqualStrings("// DONE: first\n// FIXME: second\n", a);
+    try f.settle(2000);
+    try testing.expectEqual(@as(usize, 1), f.app.todos.items.len);
+    // The sort survived into the config in memory (and the workspace file).
+    try testing.expectEqual(ListSort.oldest, ListSort.fromConfig(f.app.cfg.ui.todos_sort));
+    // The row menu: seven rows, the agent row explaining its pick.
+    try f.app.render();
+    var row0: ?Rect = null;
+    for (f.app.hits.items.items) |h| if (h.target == .row and h.target.row.idx == 0) {
+        row0 = h.rect;
+    };
+    try f.app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
+    try testing.expect(f.app.overlay == .menu);
+    try testing.expectEqual(@as(usize, 7), f.app.overlay.menu.items.len);
+    try testing.expect(std.mem.startsWith(u8, f.app.overlay.menu.items[1].label, "Fix with agent"));
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    // `.claude/` in the workspace decides for Claude Code regardless of PATH.
+    try testing.expect(!hasClaudeDir(&f.app));
+    try f.tmp.dir.createDirPath(testing.io, ".claude");
+    try testing.expect(hasClaudeDir(&f.app));
+    try testing.expectEqual(Agent.claude, pickAgent(&f.app).?);
 }

@@ -41,6 +41,10 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
+const notes = @import("../notes.zig");
+const findings = @import("../findings.zig");
+const sessions = @import("../sessions.zig");
+const dock = @import("dock.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -183,8 +187,13 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         drawDivider(app, ui, div.rest, right_divider_id);
         try drawRightPanel(app, ui, cols.rest, which);
     };
+    // The dock's inline strips come off the body; its widgets paint
+    // over whatever the panes drew.
+    const dock_area = panes_area;
+    if (!app.zen) panes_area = dock.bodyAfterStrips(dock_area, dock.strips(dock_area, app.dock.widgets.items, app.dock.hidden));
     app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
+    if (!app.zen) try dock.draw(app, ui, dock_area);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
@@ -264,17 +273,12 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocator.Error!void {
     switch (which) {
         .todos => try todos.draw(app, ui, area),
+        .notes => try notes.draw(app, ui, area),
+        .findings => try findings.draw(app, ui, area),
         .git => try git_app.draw(app, ui, area),
         .diagnostics => try lsp.drawPanel(app, ui, area),
         .http => try http_panel.draw(app, ui, area),
-        .notes, .findings, .sessions => {
-            ui.fill(area, app.theme.panel_bg);
-            const caps = ui.fmt(" {s}", .{@tagName(which)});
-            const up = try ui.arena.dupe(u8, caps);
-            for (up) |*c| c.* = std.ascii.toUpper(c.*);
-            _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(up, area.w), Theme.onBg(app.theme.accent, app.theme.panel_bg.bg));
-            if (area.h > 1) _ = ui.putStr(area.x, area.y + 1, area.w, ui.clipStr(" not in this build yet", area.w), Theme.onBg(app.theme.muted, app.theme.panel_bg.bg));
-        },
+        .sessions => try sessions.draw(app, ui, area),
     }
 }
 
