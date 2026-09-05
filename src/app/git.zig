@@ -3050,3 +3050,29 @@ test "the branch rail: toggling it lists the branches with their tracking counts
     try testing.expect(std.mem.indexOf(u8, txt, "Branches (") == null);
     testing.allocator.free(txt);
 }
+
+test "git.worktree_add: Tab completes the path — the first word — and leaves the branch after it alone" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q" });
+    try f.tmp.dir.createDirPath(testing.io, "projects/alpha");
+    try f.tmp.dir.createDirPath(testing.io, "projects/alps");
+    try f.write("projects/alpha.txt", "x");
+    try discover(&f.app);
+    try command.run(&f.app, .{ .static = .@"git.worktree_add" });
+    try testing.expect(f.app.overlay == .prompt);
+    try testing.expectEqual(PromptKind.worktree_add, f.app.git.prompt);
+    for ("projects/al feat") |c| try f.app.handle(.{ .key = Key.char(c) });
+    try f.app.handle(.{ .key = Key.named(.tab) });
+    try testing.expectEqualStrings("projects/alpha/ feat", f.app.overlay.prompt.state.buf.items);
+    try f.app.handle(.{ .key = Key.named(.tab) });
+    try testing.expectEqualStrings("projects/alps/ feat", f.app.overlay.prompt.state.buf.items);
+    try f.app.handle(.{ .key = Key.named(.tab) });
+    try testing.expectEqualStrings("projects/alpha/ feat", f.app.overlay.prompt.state.buf.items);
+    // Any other key ends the cycle; the next Tab starts from the new text.
+    try f.app.handle(.{ .key = Key.named(.backspace) });
+    try f.app.handle(.{ .key = Key.named(.tab) });
+    try testing.expectEqualStrings("projects/alpha/ fea", f.app.overlay.prompt.state.buf.items);
+    try f.app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(f.app.overlay == .none);
+}

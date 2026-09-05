@@ -158,6 +158,18 @@ pub const Peek = struct {
 
 /// Locations behind a picker (references, many definitions, hierarchies).
 const LocSet = struct { arena: alloc.SnapshotArena, items: []types.Location };
+
+/// A command held for a starting server. `initialize` stamps the two
+/// times: the request goes out at `not_before_ms` unless a `$/progress`
+/// is open by then (tsserver loads the project after the first
+/// `didOpen`; an answer given during that load covers one file), in
+/// which case it goes out when the last progress ends — or at
+/// `deadline_ms`, whichever is first.
+const Deferred = struct { server: u32, cmd: command.CommandId, not_before_ms: i64 = 0, deadline_ms: i64 = 0 };
+/// How long after `initialize` a server gets to announce it is loading.
+const deferred_grace_ms: i64 = 500;
+/// The most a held command waits on a loading server before it goes anyway.
+const deferred_max_wait_ms: i64 = 15_000;
 /// Code actions behind a picker; `raw` borrows the reply.
 const ActionSet = struct { arena: alloc.SnapshotArena, incoming: *jsonrpc.Incoming, items: []types.CodeAction, server: *Server, pane: PaneId };
 const SymbolPick = struct { arena: alloc.SnapshotArena, items: []types.Symbol, pane: PaneId };
@@ -220,6 +232,10 @@ pub const State = struct {
     synced: std.AutoHashMapUnmanaged(PaneId, u64) = .empty,
     /// The completion request in flight; a newer one cancels it.
     completion_req: ?struct { server: *Server, id: i64 } = null,
+    /// A command that asked a server still answering `initialize`. It
+    /// runs once the server is ready and quiet (see `tick`). One per
+    /// session — the latest.
+    deferred: ?Deferred = null,
     /// Inlay hints, code lenses, colours, links — by absolute path (owned keys).
     decor: std.StringHashMapUnmanaged(*decor.FileDecor) = .empty,
     /// When each pane last asked for its decorations.
@@ -454,6 +470,9 @@ pub fn retireServer(app: *App, s: *Server) void {
     if (app.lsp.completion_req) |r| if (r.server == s) {
         app.lsp.completion_req = null;
     };
+    if (app.lsp.deferred) |d| if (d.server == s.id) {
+        app.lsp.deferred = null;
+    };
     s.deinit();
 }
 
@@ -592,7 +611,9 @@ fn handleMessage(app: *App, s: *Server, msg: *jsonrpc.Incoming) Allocator.Error!
             if (r.err) |err| {
                 const text = jsonrpc.getStr(err, "message") orelse "error";
                 switch (kind) {
-                    .completion, .completion_resolve, .document_symbol, .document_highlight, .signature_help, .hover => {},
+                    .completion, .completion_resolve, .document_highlight, .signature_help, .hover => {},
+                    // The outline's refresh is silent; `lsp.symbols` asked.
+                    .document_symbol => if (ctx.extra == symbols_pick) app.toast("LSP symbols: {s}", .{text}),
                     .definition, .declaration, .type_definition, .implementation => app.lsp.pending_peek = false,
                     else => app.toast("LSP {s}: {s}", .{ @tagName(kind), text }),
                 }
@@ -624,8 +645,45 @@ fn handleNotification(app: *App, s: *Server, method: []const u8, params: ?Value)
         const text = jsonrpc.getStr(p, "message") orelse return;
         const level = jsonrpc.getInt(p, "type") orelse 3;
         if (level <= 2) try app.toastLevel(if (level == 1) .err else .warn, "{s}: {s}", .{ s.name, text });
+    } else if (std.mem.eql(u8, method, "$/progress")) {
+        // Loading / indexing: a held command waits for the last end.
+        const p = params orelse return;
+        const value = jsonrpc.getObj(p, "value") orelse return;
+        const kind = jsonrpc.getStr(value, "kind") orelse return;
+        if (std.mem.eql(u8, kind, "begin")) {
+            s.progress_open += 1;
+        } else if (std.mem.eql(u8, kind, "end")) {
+            s.progress_open -|= 1;
+            if (s.progress_open == 0 and s.ready) try runDeferred(app, s);
+        }
     }
-    // `window/logMessage`, `$/progress`: nothing to paint yet.
+    // `window/logMessage`: nothing to paint yet.
+}
+
+/// The command held for `s`, if any, runs now: it toasts its own
+/// failure the way it would have from the keymap.
+fn runDeferred(app: *App, s: *Server) Allocator.Error!void {
+    const d = app.lsp.deferred orelse return;
+    if (d.server != s.id) return;
+    app.lsp.deferred = null;
+    command.run(app, .{ .static = d.cmd }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
+/// Per tick: a held command goes out once its server is ready and quiet
+/// past the grace, or at its deadline regardless.
+pub fn tick(app: *App, now: i64) Allocator.Error!void {
+    const d = app.lsp.deferred orelse return;
+    if (d.not_before_ms == 0) return; // `initialize` has not answered
+    for (app.lsp.servers.items) |s| if (s.id == d.server) {
+        if (!s.ready) return;
+        if (now >= d.deadline_ms or (now >= d.not_before_ms and s.progress_open == 0)) try runDeferred(app, s);
+        return;
+    };
+    // Its server retired without the retire path seeing it.
+    app.lsp.deferred = null;
 }
 
 /// The few requests a server makes of its client.
@@ -664,6 +722,12 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .editor => |*e| if (e.buf.path) |path| if (s.isOpen(path)) requestSymbols(app, s, path),
                 else => {},
+            };
+            // The request that arrived while this server was starting
+            // waits for it to be quiet; `tick` sends it.
+            if (app.lsp.deferred) |*d| if (d.server == s.id) {
+                d.not_before_ms = app.now_ms + deferred_grace_ms;
+                d.deadline_ms = app.now_ms + deferred_max_wait_ms;
             };
         },
         .shutdown => {},
@@ -1037,7 +1101,16 @@ pub fn requireServer(app: *App, what: []const u8) CommandError!Target {
     const e = app.panes.editor(pane) orelse return app.diag.fail(arena, "no active editor", .{});
     const path = e.buf.path orelse return app.diag.fail(arena, "LSP needs a saved file", .{});
     const s = serverFor(app, path) orelse return app.diag.fail(arena, "no language server for this file ({s})", .{what});
-    if (!s.ready) return app.diag.fail(arena, "language server for {s} is still starting", .{s.name});
+    if (!s.ready) {
+        // A server answers `initialize` a second or two after its spawn
+        // (tsserver boots node first). A `gr` in that window is kept and
+        // run when the answer lands, not bounced back to be typed again.
+        if (app.running_cmd) |ref| if (ref == .static) {
+            app.lsp.deferred = .{ .server = s.id, .cmd = ref.static };
+            return app.diag.fail(arena, "language server for {s} is starting — {s} runs when it is ready", .{ s.name, what });
+        };
+        return app.diag.fail(arena, "language server for {s} is still starting", .{s.name});
+    }
     syncPane(app, pane, e);
     return .{ .server = s, .pane = pane, .e = e, .path = path };
 }
@@ -2374,6 +2447,10 @@ fn lspReply(io: Io, gpa: Allocator, out: Io.File, id: i64, result: []const u8) v
 fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Cancelable!void {
     var buf: [16384]u8 = undefined;
     var fr = in.readerStreaming(io, &buf);
+    // tsserver's shape: `initialized` begins a "loading" progress that
+    // the first `didOpen` ends; references asked before the end see
+    // one file's worth.
+    var loaded = false;
     while (true) {
         const body = jsonrpc.readFrame(gpa, &fr.interface) catch return;
         defer gpa.free(body);
@@ -2383,7 +2460,7 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
             .request => |rq| {
                 const m = rq.method;
                 if (std.mem.eql(u8, m, "initialize")) {
-                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":{\"change\":2,\"willSaveWaitUntil\":true},\"hoverProvider\":true,\"definitionProvider\":true,\"renameProvider\":true,\"documentSymbolProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"inlayHintProvider\":true,\"codeLensProvider\":{\"resolveProvider\":true},\"colorProvider\":true,\"documentLinkProvider\":{},\"documentRangeFormattingProvider\":true,\"documentOnTypeFormattingProvider\":{\"firstTriggerCharacter\":\";\"},\"executeCommandProvider\":{\"commands\":[\"refs\"]},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"variable\",\"function\"],\"tokenModifiers\":[\"declaration\"]},\"full\":{\"delta\":true}}}}");
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":{\"change\":2,\"willSaveWaitUntil\":true},\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":true,\"documentSymbolProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"inlayHintProvider\":true,\"codeLensProvider\":{\"resolveProvider\":true},\"colorProvider\":true,\"documentLinkProvider\":{},\"documentRangeFormattingProvider\":true,\"documentOnTypeFormattingProvider\":{\"firstTriggerCharacter\":\";\"},\"executeCommandProvider\":{\"commands\":[\"refs\"]},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"variable\",\"function\"],\"tokenModifiers\":[\"declaration\"]},\"full\":{\"delta\":true}}}}");
                 } else if (std.mem.eql(u8, m, "textDocument/completion")) {
                     lspReply(io, gpa, out, rq.id, "{\"isIncomplete\":false,\"items\":[{\"label\":\"alphaOne\",\"kind\":3,\"detail\":\"fn\"},{\"label\":\"alphaTwo\",\"kind\":2,\"insertText\":\"alphaTwo($1)\",\"insertTextFormat\":2}]}");
                 } else if (std.mem.eql(u8, m, "textDocument/hover")) {
@@ -2404,8 +2481,26 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
                         std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name }) catch return;
                     defer gpa.free(r);
                     lspReply(io, gpa, out, rq.id, r);
+                } else if (std.mem.eql(u8, m, "textDocument/references")) {
+                    // `foo`'s declaration on line 1 and, once loaded, its use on line 2.
+                    const uri = jsonrpc.getStr(jsonrpc.getObj(rq.params.?, "textDocument").?, "uri").?;
+                    const r = if (loaded)
+                        std.fmt.allocPrint(gpa, "[{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}}}},{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":2,\"character\":0}},\"end\":{{\"line\":2,\"character\":3}}}}}}]", .{ uri, uri }) catch return
+                    else
+                        std.fmt.allocPrint(gpa, "[{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}}}}]", .{uri}) catch return;
+                    defer gpa.free(r);
+                    lspReply(io, gpa, out, rq.id, r);
                 } else if (std.mem.eql(u8, m, "textDocument/documentSymbol")) {
-                    lspReply(io, gpa, out, rq.id, "[{\"name\":\"foo\",\"kind\":12,\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":12}},\"selectionRange\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":9}}}]");
+                    // The main file answers in `DocumentSymbol[]` — `foo` with
+                    // a child — the other file in flat `SymbolInformation[]`.
+                    const uri = jsonrpc.getStr(jsonrpc.getObj(rq.params.?, "textDocument").?, "uri").?;
+                    if (std.mem.endsWith(u8, uri, "-other.ts")) {
+                        const r = std.fmt.allocPrint(gpa, "[{{\"name\":\"a\",\"kind\":13,\"location\":{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":0,\"character\":6}},\"end\":{{\"line\":0,\"character\":7}}}}}}}},{{\"name\":\"b\",\"kind\":13,\"location\":{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":7}}}}}}}}]", .{ uri, uri }) catch return;
+                        defer gpa.free(r);
+                        lspReply(io, gpa, out, rq.id, r);
+                    } else {
+                        lspReply(io, gpa, out, rq.id, "[{\"name\":\"foo\",\"kind\":12,\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":2,\"character\":4}},\"selectionRange\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":9}},\"children\":[{\"name\":\"bar\",\"kind\":13,\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":4}},\"selectionRange\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":3}}}]}]");
+                    }
                 } else if (std.mem.eql(u8, m, "textDocument/inlayHint")) {
                     // A type hint after `x` on line 0, its label in parts.
                     lspReply(io, gpa, out, rq.id, "[{\"position\":{\"line\":0,\"character\":5},\"label\":[{\"value\":\": \"},{\"value\":\"number\"}],\"kind\":1}]");
@@ -2458,11 +2553,18 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
             },
             .notification => |n| {
                 if (std.mem.eql(u8, n.method, "exit")) return;
+                if (std.mem.eql(u8, n.method, "initialized")) {
+                    jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":\"load\",\"value\":{\"kind\":\"begin\",\"title\":\"Loading\"}}}") catch return;
+                }
                 if (std.mem.eql(u8, n.method, "textDocument/didOpen")) {
                     const uri = jsonrpc.getStr(jsonrpc.getObj(n.params.?, "textDocument").?, "uri").?;
                     const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{{\"uri\":\"{s}\",\"diagnostics\":[{{\"range\":{{\"start\":{{\"line\":0,\"character\":4}},\"end\":{{\"line\":0,\"character\":5}}}},\"severity\":1,\"message\":\"x is never read\"}}]}}}}", .{uri}) catch return;
                     defer gpa.free(note);
                     jsonrpc.writeFrame(io, out, note) catch return;
+                    if (!loaded) {
+                        loaded = true;
+                        jsonrpc.writeFrame(io, out, "{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"token\":\"load\",\"value\":{\"kind\":\"end\"}}}") catch return;
+                    }
                 }
             },
             else => {},
@@ -2673,4 +2775,125 @@ test "a scripted server through the app: attach + diagnostics, completion (a sni
     try group.await(io);
     (F{ .handle = c2s[0], .flags = flags }).close(io);
     (F{ .handle = s2c[1], .flags = flags }).close(io);
+}
+
+test "a scripted server: references and symbols asked for while the server starts run when it is ready; the pickers list every row, in both symbol shapes" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    const e = try TestRig.openFile(&app, TestRig.file, TestRig.text);
+    // `initialize` is on the wire and its answer waits for a tick: the
+    // server is what tsserver is for its first second — not ready.
+    try testing.expect(!rig.server.ready);
+    e.buf.editor.setCursor(std.mem.indexOf(u8, TestRig.text, "foo").?);
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"lsp.references" }));
+    try testing.expect(app.lsp.deferred != null);
+    try testing.expectEqual(command.CommandId.@"lsp.references", app.lsp.deferred.?.cmd);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "references runs when it is ready") != null);
+    const Cond = struct {
+        fn picker(a: *App) bool {
+            return a.overlay == .picker;
+        }
+    };
+    // The answer lands, the request goes out, the picker opens on its own.
+    try pumpUntil(&app, &app, Cond.picker, 5000);
+    try testing.expect(rig.server.ready);
+    try testing.expectEqual(@as(u32, 0), rig.server.progress_open);
+    try testing.expect(app.lsp.deferred == null);
+    try testing.expectEqualStrings("References", app.overlay.picker.state.title);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("mnml-zig-fake-lsp.ts:2:7", app.overlay.picker.labels[0]);
+    try testing.expectEqualStrings("mnml-zig-fake-lsp.ts:3:1", app.overlay.picker.labels[1]);
+    try testing.expectEqualStrings("const foo = 2;", app.overlay.picker.details[0]);
+    try testing.expectEqual(@as(usize, 2), app.lsp.picker_locs.?.items.len);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.overlay == .none);
+
+    // `DocumentSymbol[]`, nested: the child follows its parent one level in.
+    try command.run(&app, .{ .static = .@"lsp.symbols" });
+    try pumpUntil(&app, &app, Cond.picker, 5000);
+    try testing.expectEqualStrings("Symbols", app.overlay.picker.state.title);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("fn foo", app.overlay.picker.labels[0]);
+    try testing.expectEqualStrings("var bar", app.overlay.picker.labels[1]);
+    try testing.expectEqualStrings(":3", app.overlay.picker.details[1]);
+    try testing.expectEqual(@as(u8, 1), app.lsp.picker_symbols.?.items[1].depth);
+    try app.handle(.{ .key = Key.named(.esc) });
+
+    // `SymbolInformation[]`, flat: the other file's answer, the same picker.
+    _ = try TestRig.openFile(&app, TestRig.other, "const a = 1;\nconst b = 2;\n");
+    try command.run(&app, .{ .static = .@"lsp.symbols" });
+    try pumpUntil(&app, &app, Cond.picker, 5000);
+    try testing.expectEqualStrings("Symbols", app.overlay.picker.state.title);
+    try testing.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("var a", app.overlay.picker.labels[0]);
+    try testing.expectEqualStrings("var b", app.overlay.picker.labels[1]);
+    try testing.expectEqual(@as(u8, 0), app.lsp.picker_symbols.?.items[1].depth);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try rig.stop(&app);
+}
+
+test "a held command waits out the server's $/progress: sent at the last end, at the grace when nothing is loading, at the deadline regardless" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    var rig: TestRig = .{};
+    try rig.start(&app);
+    const e = try TestRig.openFile(&app, TestRig.file, TestRig.text);
+    const Cond = struct {
+        fn ready(a: *App) bool {
+            return a.lsp.servers.items[0].ready and a.lsp.servers.items[0].progress_open == 0 and a.lsp.symbols.contains(TestRig.file);
+        }
+    };
+    try pumpUntil(&app, &app, Cond.ready, 5000);
+    const s = rig.server;
+    e.buf.editor.setCursor(std.mem.indexOf(u8, TestRig.text, "foo").?);
+    var begin = try std.json.parseFromSlice(Value, gpa, "{\"token\":\"load\",\"value\":{\"kind\":\"begin\",\"title\":\"Loading\"}}", .{});
+    defer begin.deinit();
+    var end = try std.json.parseFromSlice(Value, gpa, "{\"token\":\"load\",\"value\":{\"kind\":\"end\"}}", .{});
+    defer end.deinit();
+    const held: Deferred = .{ .server = s.id, .cmd = .@"lsp.references", .not_before_ms = app.now_ms + deferred_grace_ms, .deadline_ms = app.now_ms + deferred_max_wait_ms };
+
+    // Loading past the grace: held; the end sends it.
+    app.lsp.deferred = held;
+    try handleNotification(&app, s, "$/progress", begin.value);
+    try testing.expectEqual(@as(u32, 1), s.progress_open);
+    try tick(&app, held.not_before_ms + 100);
+    try testing.expect(app.lsp.deferred != null);
+    try handleNotification(&app, s, "$/progress", end.value);
+    try testing.expectEqual(@as(u32, 0), s.progress_open);
+    try testing.expect(app.lsp.deferred == null);
+
+    // Nothing loading: held through the grace, sent at it.
+    app.lsp.deferred = held;
+    try tick(&app, held.not_before_ms - 1);
+    try testing.expect(app.lsp.deferred != null);
+    try tick(&app, held.not_before_ms);
+    try testing.expect(app.lsp.deferred == null);
+
+    // A load that never ends: the deadline sends it anyway.
+    app.lsp.deferred = held;
+    try handleNotification(&app, s, "$/progress", begin.value);
+    try tick(&app, held.deadline_ms - 1);
+    try testing.expect(app.lsp.deferred != null);
+    try tick(&app, held.deadline_ms);
+    try testing.expect(app.lsp.deferred == null);
+    try handleNotification(&app, s, "$/progress", end.value);
+
+    // Every send reached the server: three References pickers came back.
+    const Sent = struct {
+        fn three(a: *App) bool {
+            return a.overlay == .picker and a.lsp.picker_locs != null and a.lsp.servers.items[0].transport.pendingCount() == 0;
+        }
+    };
+    try pumpUntil(&app, &app, Sent.three, 5000);
+    try testing.expectEqualStrings("References", app.overlay.picker.state.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try rig.stop(&app);
 }

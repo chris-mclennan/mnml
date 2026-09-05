@@ -657,6 +657,7 @@ fn refreshRepos(app: *App) CommandError!void {
 fn worktreeAdd(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     git.openPrompt(app, .worktree_add, "Worktree: <path> [new-branch]");
+    app.overlay.prompt.state.placeholder = "path [new-branch] — tab completes the path";
 }
 
 fn worktreeList(app: *App) CommandError!void {

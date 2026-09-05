@@ -221,6 +221,9 @@ pub const Server = struct {
     root: []u8,
     /// `initialize` replied and `initialized` went out.
     ready: bool = false,
+    /// `$/progress` begins without their end — the server is loading
+    /// or indexing, and answers it gives meanwhile are partial.
+    progress_open: u32 = 0,
     encoding: Encoding = .utf16,
     caps: Caps = .{},
     /// Open documents by absolute path (owned keys).
@@ -446,7 +449,9 @@ pub const Server = struct {
     pub fn onInitialized(self: *Server, result: ?Value) Allocator.Error!void {
         if (result) |r| if (jsonrpc.getObj(r, "capabilities")) |c| try self.readCaps(c);
         self.ready = true;
-        self.notify("initialized", .{}) catch {};
+        // An empty object: a tuple would go out positional (`[]`), which
+        // tsserver logs as a malformed notification.
+        self.notify("initialized", struct {}{}) catch {};
         if (!std.mem.eql(u8, std.mem.trim(u8, self.settings, " \t\n"), "{}")) {
             const body = std.fmt.allocPrint(self.gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeConfiguration\",\"params\":{{\"settings\":{s}}}}}", .{self.settings}) catch return error.OutOfMemory;
             defer self.gpa.free(body);

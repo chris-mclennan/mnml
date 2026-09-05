@@ -594,6 +594,9 @@ pub const App = struct {
     frame: alloc.FrameArena,
     events: event.EventQueue,
     diag: command.Diag = .{},
+    /// The command `command.run` is inside, for a runner that has to
+    /// come back to it later (an LSP request that waited for its server).
+    running_cmd: ?command.CommandRef = null,
     cfg: Config,
     /// Owns the arena `cfg` borrows from; null when `cfg` is `Config{}`.
     loaded: ?config.Loaded = null,
@@ -1749,6 +1752,7 @@ pub const App = struct {
         sessions.tick(self, now);
         dock.tick(self, now);
         try git_app.tick(self, now);
+        try lsp.tick(self, now);
         try ai_app.tick(self);
         try self.script().tick(now);
         try update.tick(self);
@@ -1771,7 +1775,7 @@ pub const App = struct {
         // The TODOS panel's debounced rescan.
         if (self.todos.rescan_at_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.notes.scanning or self.findings.scanning or self.sessions.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.notes.scanning or self.findings.scanning or self.sessions.scanning or self.git.busy > 0 or self.http.sending > 0 or self.lsp.deferred != null or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);

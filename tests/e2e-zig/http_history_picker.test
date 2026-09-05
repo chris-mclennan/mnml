@@ -1,0 +1,15 @@
+# zig-only
+# `http.history` opens the picker over `.rqst/history.jsonl`, newest
+# first; `http.history_global` reads the data root's mirror. With no
+# history the command says so.
+command http.history
+expect screen contains "no history yet"
+write .rqst/history.jsonl "{\"ts\":1,\"method\":\"GET\",\"url\":\"https://api.example.com/users/1\",\"status\":null,\"duration_ms\":26,\"error\":\"dns: UnknownHostName\"}\n{\"ts\":2,\"method\":\"POST\",\"url\":\"https://httpbin.org/post\",\"status\":200,\"duration_ms\":141,\"body_bytes\":305}\n"
+command http.history
+expect screen contains "HTTP history"
+expect screen contains "POST httpbin.org/post"
+expect screen contains "200 · 141ms"
+expect screen contains "GET api.example.com/users/1"
+expect screen contains "FAILED · 26ms"
+key esc
+expect screen lacks "HTTP history"

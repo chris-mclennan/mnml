@@ -2044,3 +2044,54 @@ failing on the unfixed tree first.
   read `app.overlay.menu` under `.none`) — `tools/break-check.sh` counts
   a crash as a fail through the build summary's `(1 failed)`, so a
   break has to be re-read for *why* it failed before it counts.
+## Multilang hunt — five findings (2026-09-05, branch `fix-lsp-lists`) — `// changed:` notes
+
+- `// changed (lsp):` D5 has no notion of "the command running now".
+  `App.running_cmd` is that — set and restored around `command.run` —
+  so `requireServer` can keep a command that finds its server still
+  answering `initialize` (`lsp.State.deferred`, one per session, the
+  latest) instead of bouncing it. The kept command goes out when the
+  server is ready *and quiet*: `Server.progress_open` counts `$/progress`
+  begins without their end, `lsp.tick` sends after `deferred_grace_ms`
+  when nothing is loading, on the last end when something is, and at
+  `deferred_max_wait_ms` regardless. Why quiet: tsserver answered a
+  `references` sent straight after `initialize` with one row where
+  three exist — its "Initializing JS/TS language features" progress had
+  not ended. The hunt's SEV-1 ("list pickers never render") was this
+  window plus a missed toast; the pickers and both symbol-shape decoders
+  were sound. `initialized` goes out as `{}` (a tuple stringified as
+  `[]`, which tsserver logged); a `document_symbol` error reaches the
+  user when `lsp.symbols` asked (the outline's own refresh stays quiet).
+- `// changed (view):` `view.close_split` on the last window closes its
+  buffer through `closePane` (the Rust build's `close_active_pane`
+  semantics: a dirty buffer asks, a pty takes its process, the layout may
+  be empty). It used to toast "only one split" and keep a sole pty pane
+  that only Ctrl-C could end.
+- `// changed (commands):` `project.todos` had a spec and no runner
+  ("not implemented yet"); it runs `view.activity_todos`'s runner — one
+  panel, two palette names.
+- `// changed (git):` the worktree prompt (`<path> [new-branch]`) is a
+  path prompt: `promptPathComplete` took a `first_word` flag so the
+  add-workspace prompt (whole line) and the worktree prompt (first word,
+  the branch rides along) share it; `dispatch.overlayKey` routes the
+  `.git` purpose there when `app.git.prompt == .worktree_add`.
+- `// changed (findings):` `http.history` / `http.history_global` were
+  reported silent with a populated log; replayed on the hunt's build in
+  its own workspace and data root both pickers open — rejected, and
+  `tests/e2e-zig/http_history_picker.test` pins it.
+- `// changed (tests):` `tests/e2e-zig/{close_split_sole_pane,
+  project_todos,git_worktree_add_tab}.test`, each watched failing on the
+  unfixed binary first; unit tests in `src/app/lsp.zig` (two, on the
+  scripted server — which now answers `references` and both symbol
+  shapes, and brackets its load in `$/progress`), `src/app/cmd_view.zig`
+  and `src/app/git.zig`. No `.test` reaches a language server (the corpus
+  has only the no-server toasts), so the LSP coverage is unit-level.
+  Break-checks run, all four failing with the break in place:
+  `tools/break-check.sh "asked for while the server starts" src/app/lsp.zig
+  's/app\.lsp\.deferred = \.{ \.server = s\.id, \.cmd = ref\.static };/app.lsp.deferred = null;/'`,
+  `tools/break-check.sh "held command waits out" src/app/lsp.zig
+  's/(now >= d\.not_before_ms and s\.progress_open == 0)/(now >= d.not_before_ms)/'`,
+  `tools/break-check.sh "close_split on the last window" src/app/cmd_view.zig
+  's/if (leaves\.len < 2) return app\.closePane(cur, false);/if (leaves.len < 2) return;/'`,
+  `tools/break-check.sh "worktree_add: Tab completes" src/app/dispatch.zig
+  's/else if (p\.purpose == \.git and app\.git\.prompt == \.worktree_add) true else null/else null/'`.

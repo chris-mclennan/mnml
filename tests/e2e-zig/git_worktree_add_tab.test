@@ -1,0 +1,15 @@
+# zig-only
+# The worktree prompt's path completes on Tab like the add-workspace
+# prompt's: `projects/al` → `projects/alpha/`; the branch word after it
+# is left alone.
+shell git init -q .
+write projects/alpha/.keep ""
+write projects/alps/.keep ""
+command git.worktree_add
+expect screen contains "Worktree: <path> [new-branch]"
+type projects/al feat
+key tab
+expect screen contains "projects/alpha/ feat"
+key tab
+expect screen contains "projects/alps/ feat"
+key esc

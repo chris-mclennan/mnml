@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 
 # `project.todos` command is a dead stub ("not implemented yet") — real feature lives at `view.activity_todos`
@@ -66,3 +66,10 @@ marker's reason string as the row title.
 ## Command id
 
 `project.todos` (dead); working equivalent is `view.activity_todos`
+
+## Fix
+
+`bf1eff7` on branch `fix-lsp-lists` — project.todos opens the TODOS
+panel: the id runs `view.activity_todos`'s runner. Regression:
+`tests/e2e-zig/project_todos.test` (fails on the unfixed tree at line 6)
+and a unit test in `src/app/cmd_view.zig`.
