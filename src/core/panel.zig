@@ -4,6 +4,8 @@
 
 const std = @import("std");
 
+const ConfigSort = @import("../config/Config.zig").ListSort;
+
 /// // changed (git): `git` — the status rows in the rail.
 /// // changed (lsp): `diagnostics` — the LSP problems list lives in the
 /// right slot like the other list panels.
@@ -44,6 +46,19 @@ pub const ListSort = enum {
         return .newest;
     }
 
+    /// The config schema spells the same four choices as its own enum
+    /// (`Config.ListSort`, so the loader and the settings overlay need
+    /// no core import). The two are kept in step by name.
+    /// // changed (panels): the bridge lives here so every list panel
+    /// reads and persists `ui.<panel>_sort` the same way.
+    pub fn toConfig(s: ListSort) ConfigSort {
+        return std.meta.stringToEnum(ConfigSort, @tagName(s)) orelse .newest;
+    }
+
+    pub fn fromConfig(c: ConfigSort) ListSort {
+        return fromToken(@tagName(c));
+    }
+
     pub fn next(s: ListSort) ListSort {
         return switch (s) {
             .newest => .oldest,
@@ -64,6 +79,7 @@ pub const ListSort = enum {
 
 test "sort tokens round-trip and unknown falls back" {
     for (ListSort.all) |m| try std.testing.expectEqual(m, ListSort.fromToken(m.token()));
+    for (ListSort.all) |m| try std.testing.expectEqual(m, ListSort.fromConfig(m.toConfig()));
     try std.testing.expectEqual(ListSort.newest, ListSort.fromToken("bogus"));
     try std.testing.expectEqual(ListSort.name_desc, ListSort.fromToken(" NAME_DESC "));
     var m: ListSort = .newest;

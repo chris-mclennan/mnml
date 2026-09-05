@@ -619,7 +619,7 @@ pub const App = struct {
             .panes = PaneStore.init(gpa, io),
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
-            .todos = todos.State.init(gpa),
+            .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
@@ -1398,6 +1398,7 @@ pub const App = struct {
         pty_pane.tickAll(self);
         ws_pane.tickAll(self);
         try watch.tick(self, now);
+        todos.tick(self, now);
         try git_app.tick(self, now);
         try ai_app.tick(self);
         try self.script().tick(now);
@@ -1417,6 +1418,8 @@ pub const App = struct {
             },
             else => {},
         };
+        // The TODOS panel's debounced rescan.
+        if (self.todos.rescan_at_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
         if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
