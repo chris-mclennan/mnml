@@ -84,6 +84,7 @@ pub const table = .{
     .@"view.focus_right_panel" = &focusRightPanel,
     .@"view.right_panel_close_tab" = &closeRightPanel,
     .@"view.activity_todos" = &activityTodos,
+    .@"project.todos" = &activityTodos,
     .@"view.toggle_sticky_context" = &toggleStickyContext,
     .@"view.toggle_auto_md_preview" = &toggleAutoMdPreview,
     .@"view.activity_notes" = &activityNotes,
@@ -1298,4 +1299,13 @@ test "view.close_split on the last window closes its buffer: the layout goes emp
     try t.expect(app.overlay == .confirm);
     try t.expectEqual(@as(usize, 1), app.panes.count());
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
+}
+
+test "project.todos opens the TODOS panel — the palette's name for view.activity_todos, not a stub" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try t.expect(app.right_panel == null);
+    try command.run(&app, .{ .static = .@"project.todos" });
+    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    try t.expect(app.lastToast() == null or std.mem.indexOf(u8, app.lastToast().?, "not implemented") == null);
 }
