@@ -7,11 +7,19 @@
 //! Every stored string is gpa-owned by the clipboard. `text()` and
 //! `lastWritten()` hand out borrowed slices valid until the next write.
 //!
-//! The OS clipboard (`+`) is a later phase; `"+` reads fall back to the
-//! unnamed register so a paste is never silently empty. TODO(clipboard-os)
+//! `"+` and `"*` are the OS clipboard (`src/core/clipboard_os.zig`). A
+//! write to either goes to the sink AND to the unnamed register, so the
+//! yank is never lost when the push fails. A read asks the sink first —
+//! a tool pair (pbpaste, wl-paste, …) answers; OSC 52 cannot, so the
+//! read falls back to the unnamed register and a paste is never silently
+//! empty. Text that came from the OS is linewise when it ends in `\n`,
+//! vim's rule for the system selection. Until `attach` installs a sink
+//! the clipboard is in-process only, which is what every test, the
+//! headless loop and a `.test` run get.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const clipboard_os = @import("../core/clipboard_os.zig");
 
 pub const Entry = struct {
     text: []u8,
@@ -29,6 +37,16 @@ pub const Clipboard = struct {
     /// The text of the last write, whichever register took it. Null after
     /// a blackhole write.
     last_written: ?[]const u8 = null,
+    /// Where `"+` / `"*` go. `.none` until `attach` — in-process only.
+    os: clipboard_os.Sink = .none,
+    io: ?std.Io = null,
+    /// What `attach` was given; `selectMode` re-runs the chain over them
+    /// when `editor.clipboard` changes at runtime.
+    live: ?*std.Io.Writer = null,
+    tool: ?clipboard_os.Tool = null,
+    /// The last text read back from the OS, gpa-owned — what `text()`
+    /// handed out for a `"+` / `"*` read. Freed on the next such read.
+    os_text: ?[]u8 = null,
 
     pub fn init(gpa: Allocator) Clipboard {
         return .{ .gpa = gpa };
@@ -39,10 +57,35 @@ pub const Clipboard = struct {
         var it = self.named.valueIterator();
         while (it.next()) |e| self.gpa.free(e.text);
         self.named.deinit(self.gpa);
+        if (self.os_text) |t| self.gpa.free(t);
+    }
+
+    /// Install what the session has — the terminal's buffered writer and
+    /// the probed tool — then pick the sink for `mode`.
+    pub fn attach(self: *Clipboard, io: std.Io, live: ?*std.Io.Writer, tool: ?clipboard_os.Tool, mode: clipboard_os.Mode) void {
+        self.io = io;
+        self.live = live;
+        self.tool = tool;
+        self.selectMode(mode);
+    }
+
+    /// Re-run the chain (`:set clipboard=…`, the settings row).
+    pub fn selectMode(self: *Clipboard, mode: clipboard_os.Mode) void {
+        self.os = clipboard_os.select(mode, self.live, self.tool);
     }
 
     pub fn setPendingRegister(self: *Clipboard, reg: ?u21) void {
         self.pending_register = reg;
+    }
+
+    /// `"+` and `"*` — vim's clipboard and primary-selection registers.
+    /// One sink serves both: no terminal exposes two.
+    pub fn isOsRegister(reg: u21) bool {
+        return reg == '+' or reg == '*';
+    }
+
+    fn goesToUnnamed(reg: ?u21) bool {
+        return reg == null or isOsRegister(reg.?);
     }
 
     /// A delete: writes the target register AND (for the unnamed target)
@@ -50,7 +93,7 @@ pub const Clipboard = struct {
     pub fn pushDelete(self: *Clipboard, s: []const u8, linewise: bool) Allocator.Error!void {
         const reg = self.pending_register;
         try self.set(s, linewise);
-        if (reg == null or reg == '+') {
+        if (goesToUnnamed(reg)) {
             var i: u8 = 8;
             while (i >= 1) : (i -= 1) {
                 if (self.named.fetchRemove('0' + i)) |kv| {
@@ -66,12 +109,13 @@ pub const Clipboard = struct {
     pub fn setYank(self: *Clipboard, s: []const u8, linewise: bool) Allocator.Error!void {
         const reg = self.pending_register;
         try self.set(s, linewise);
-        if (reg == null or reg == '+') {
+        if (goesToUnnamed(reg)) {
             try self.putNamed('0', .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise });
         }
     }
 
     /// Write `text` to the pending register (consumed) or the unnamed one.
+    /// `"+` / `"*` write the unnamed register and push to the OS sink.
     pub fn set(self: *Clipboard, s: []const u8, linewise: bool) Allocator.Error!void {
         const reg = self.pending_register;
         self.pending_register = null;
@@ -108,6 +152,25 @@ pub const Clipboard = struct {
         if (self.unnamed) |old| self.gpa.free(old.text);
         self.unnamed = e;
         self.last_written = e.text;
+        // The register is written first: a failing push (no tool, a
+        // closed pipe) must not lose the yank.
+        if (reg != null and isOsRegister(reg.?)) self.pushToOs(s);
+    }
+
+    fn pushToOs(self: *Clipboard, s: []const u8) void {
+        const io = self.io orelse return;
+        clipboard_os.write(self.os, io, s) catch {};
+    }
+
+    /// The OS text for a `"+` / `"*` read, or null when the sink cannot
+    /// read (OSC 52, `.none`) — the caller then uses the unnamed register.
+    fn readFromOs(self: *Clipboard) ?[]const u8 {
+        const io = self.io orelse return null;
+        const t = clipboard_os.read(self.os, io, self.gpa) orelse return null;
+        if (self.os_text) |old| self.gpa.free(old);
+        self.os_text = t;
+        self.effective_linewise = t.len > 0 and t[t.len - 1] == '\n';
+        return t;
     }
 
     /// Read the pending register (consumed) or the unnamed one. Borrowed;
@@ -129,7 +192,11 @@ pub const Clipboard = struct {
                 self.effective_linewise = false;
                 return "";
             }
-            // `+` and anything else fall through to the unnamed register.
+            if (isOsRegister(r)) {
+                if (self.readFromOs()) |t| return t;
+            }
+            // An unreadable sink and anything else fall through to the
+            // unnamed register.
         }
         if (self.unnamed) |e| {
             self.effective_linewise = e.linewise;
@@ -195,4 +262,70 @@ test "named registers: set, append, blackhole, missing" {
     c.setPendingRegister('z');
     try std.testing.expectEqualStrings("", c.text());
     try std.testing.expect(c.pending_register == null);
+}
+
+test "\"+ and \"* write the sink and the unnamed register; an OSC 52 read falls back" {
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    var c = Clipboard.init(std.testing.allocator);
+    defer c.deinit();
+    c.attach(std.testing.io, &aw.writer, null, .auto);
+    try std.testing.expect(c.os == .osc52);
+    c.setPendingRegister('+');
+    try c.setYank("line\n", true);
+    try std.testing.expectEqualStrings("\x1b]52;c;bGluZQo=\x07", aw.written());
+    // The unnamed register and `"0` took it too, linewise intact.
+    try std.testing.expectEqualStrings("line\n", c.unnamed.?.text);
+    try std.testing.expectEqualStrings("line\n", c.named_entry('0').?.text);
+    // OSC 52 cannot read: `"+p` pastes what was yanked, still linewise.
+    c.setPendingRegister('+');
+    try std.testing.expectEqualStrings("line\n", c.text());
+    try std.testing.expect(c.isLinewise());
+    // `"*` is the same sink; a delete through it shifts the history too.
+    aw.clearRetainingCapacity();
+    c.setPendingRegister('*');
+    try c.pushDelete("gone", false);
+    try std.testing.expectEqualStrings("\x1b]52;c;Z29uZQ==\x07", aw.written());
+    try std.testing.expectEqualStrings("gone", c.named_entry('1').?.text);
+    c.setPendingRegister('*');
+    try std.testing.expectEqualStrings("gone", c.text());
+    // A named register never reaches the sink.
+    aw.clearRetainingCapacity();
+    c.setPendingRegister('a');
+    try c.setYank("private", false);
+    try std.testing.expectEqualStrings("", aw.written());
+    // `.internal` detaches the sink; the registers keep working.
+    c.selectMode(.internal);
+    try std.testing.expect(c.os == .none);
+    c.setPendingRegister('+');
+    try c.setYank("quiet", false);
+    try std.testing.expectEqualStrings("", aw.written());
+    try std.testing.expectEqualStrings("quiet", c.text());
+}
+
+test "a tool sink answers a \"+ read; the OS text is linewise when it ends in a newline" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var c = Clipboard.init(std.testing.allocator);
+    defer c.deinit();
+    const tool: clipboard_os.Tool = .{
+        .name = "fake",
+        .copy = &.{ "/bin/sh", "-c", "cat > /dev/null" },
+        .paste = &.{ "/bin/sh", "-c", "printf 'from the os\\n'" },
+    };
+    c.attach(std.testing.io, null, tool, .os);
+    try std.testing.expect(c.os == .tool);
+    try c.setYank("mine", false);
+    c.setPendingRegister('+');
+    try std.testing.expectEqualStrings("from the os\n", c.text());
+    try std.testing.expect(c.isLinewise());
+    // The unnamed register was not touched by the read.
+    try std.testing.expectEqualStrings("mine", c.text());
+    try std.testing.expect(!c.isLinewise());
+    // A second read frees the first; a write through `"*` still lands
+    // in the unnamed register even though the copy half discards it.
+    c.setPendingRegister('*');
+    try std.testing.expectEqualStrings("from the os\n", c.text());
+    c.setPendingRegister('*');
+    try c.setYank("pushed", false);
+    try std.testing.expectEqualStrings("pushed", c.unnamed.?.text);
 }
