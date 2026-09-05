@@ -345,11 +345,14 @@ pub const Buffer = struct {
         if (self.read_only) return .{ .unhandled = key };
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
         const ctx = self.makeCtx(wrap_width);
+        // What a visual operator would act on, before the key resolves —
+        // the shape `.` re-applies (`:help visual-repeat`).
+        const visual: ?VisualShape = if (self.input.mode().isVisual()) self.visualShape() else null;
         const result = try self.input.handleKey(key, ctx, arena);
         switch (result) {
             .ops => |list| {
                 const changed = try self.applyOps(list, clip, viewport_rows, arena);
-                try self.trackDot(list);
+                try self.trackDot(list, visual, arena);
                 return if (changed) .edited else .redraw;
             },
             .consumed => return .redraw,
@@ -409,7 +412,60 @@ pub const Buffer = struct {
 
     // ─── dot-repeat ───
 
-    fn trackDot(self: *Buffer, list: []const EditOp) Allocator.Error!void {
+    /// A visual selection's extent, mode included, as of before a key —
+    /// in rows and columns, since the key may have removed the text by
+    /// the time the record is built.
+    const VisualShape = struct { mode: input.EditingMode, a: Pos, c: Pos };
+
+    fn visualShape(self: *const Buffer) ?VisualShape {
+        const a = self.editor.anchor orelse self.editor.block_anchor orelse return null;
+        return .{ .mode = self.input.mode(), .a = self.editor.rowColAt(a), .c = self.editor.rowCol() };
+    }
+
+    /// The ops that reselect `v`'s amount of text from the cursor: the
+    /// same lines for V-LINE, the same rectangle for V-BLOCK, the same
+    /// chars on one line or the same lines + end column across several
+    /// (`:help visual-repeat`). Frame arena.
+    fn reselectOps(self: *const Buffer, v: VisualShape, arena: Allocator) Allocator.Error![]const EditOp {
+        _ = self;
+        const a = v.a;
+        const c = v.c;
+        const rows: u32 = @intCast(@max(a.row, c.row) - @min(a.row, c.row));
+        var out: std.ArrayList(EditOp) = .empty;
+        const down = try arena.create(EditOp);
+        down.* = .move_down;
+        // Columns never cross a line: a charwise reselect clips at the
+        // line end, like the `l` that made the selection would have.
+        const right = try arena.create(EditOp);
+        right.* = .move_right_no_cross_line;
+        switch (v.mode) {
+            .visual_line => {
+                try out.append(arena, .select_line);
+                if (rows > 0) try out.append(arena, .{ .repeat = .{ .count = rows, .inner = down } });
+            },
+            .visual_block => {
+                const cols: u32 = @intCast(@max(a.col, c.col) - @min(a.col, c.col));
+                try out.append(arena, .block_select_start);
+                if (rows > 0) try out.append(arena, .{ .repeat = .{ .count = rows, .inner = down } });
+                if (cols > 0) try out.append(arena, .{ .repeat = .{ .count = cols, .inner = right } });
+            },
+            else => {
+                try out.append(arena, .select_start);
+                if (rows == 0) {
+                    const cols: u32 = @intCast(@max(a.col, c.col) - @min(a.col, c.col));
+                    if (cols > 0) try out.append(arena, .{ .repeat = .{ .count = cols, .inner = right } });
+                } else {
+                    const end_col: u32 = @intCast(if (a.row > c.row) a.col else c.col);
+                    try out.append(arena, .{ .repeat = .{ .count = rows, .inner = down } });
+                    try out.append(arena, .move_line_start);
+                    if (end_col > 0) try out.append(arena, .{ .repeat = .{ .count = end_col, .inner = right } });
+                }
+            },
+        }
+        return out.items;
+    }
+
+    fn trackDot(self: *Buffer, list: []const EditOp, visual: ?VisualShape, arena: Allocator) Allocator.Error!void {
         if (self.replaying_dot) return;
         const in_insert = switch (self.input.mode()) {
             .insert, .replace => true,
@@ -430,6 +486,7 @@ pub const Buffer = struct {
         if (!mutates and !in_insert) return;
         for (self.dot_pending.items) |o| o.free(self.gpa);
         self.dot_pending.clearRetainingCapacity();
+        if (visual) |v| try self.appendDot(try self.reselectOps(v, arena));
         try self.appendDot(list);
         if (in_insert) {
             self.dot_collecting = true;
@@ -977,6 +1034,13 @@ test "vim undo, redo, dot-repeat" {
     // `.` with an insert is one undo step.
     try vim("cwX<esc>j0.u", "|a b\nc d", "X b\n|c d");
     try vim("p.", "|a", "|a"); // empty register: nothing to repeat
+    // A visual operator repeats over the same amount of text from the cursor.
+    try vim("Vjd.", "|a\nb\nc\nd\ne", "|e");
+    try vim("vlld.", "|abcdefg", "|g");
+    try vim("vjd.", "|ab\ncd\nef\ngh", "|f\ngh"); // one line down, same end column
+    try vim("Vjdj.", "|a\nb\nc\nd\ne\nf", "c\n|f");
+    try vim("Vjd.", "|alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\n", "|echo\nfoxtrot\n");
+    try vim("<c-v>jld.", "|abcd\nefgh\nijkl\nmnop", "|\n\nijkl\nmnop");
 }
 
 test "vim marks, macros and visual mode" {
