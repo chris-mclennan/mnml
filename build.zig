@@ -262,6 +262,35 @@ pub fn build(b: *std.Build) void {
     // ── end e2e ──
     // ── end docs + check ────────────────────────────────────────────────
 
+    // ── glyph audit ─────────────────────────────────────────────────────
+    // `zig build glyph-audit`: bake `data/nerd-glyphnames.json` into a
+    // compact codepoint/name table, then list every Nerd Font glyph
+    // literal in src/ with its ASCII twin (`tools/glyph_audit.zig`);
+    // `--strict` fails on a site without one. The tool's own tests walk
+    // src/ under `zig build test` and assert the same.
+    const glyph_opts = b.addOptions();
+    glyph_opts.addOptionPath("src_root", b.path("src"));
+    glyph_opts.addOptionPath("glyph_json", b.path("data/nerd-glyphnames.json"));
+    const glyph_mod = b.createModule(.{ .root_source_file = b.path("tools/glyph_audit.zig"), .target = target, .optimize = optimize });
+    glyph_mod.addOptions("build_options", glyph_opts);
+    const glyph_exe = b.addExecutable(.{ .name = "glyph-audit", .root_module = glyph_mod });
+    const glyph_bake = b.addRunArtifact(glyph_exe);
+    glyph_bake.addArg("bake");
+    glyph_bake.addFileArg(b.path("data/nerd-glyphnames.json"));
+    const glyph_table = glyph_bake.addOutputFileArg("nerd-glyphs.tsv");
+    const glyph_audit = b.addRunArtifact(glyph_exe);
+    glyph_audit.addArg("audit");
+    glyph_audit.addFileArg(glyph_table);
+    glyph_audit.addDirectoryArg(b.path("src"));
+    glyph_audit.addArg("--strict");
+    glyph_audit.has_side_effects = true;
+    glyph_audit.stdio = .inherit;
+    const glyph_step = b.step("glyph-audit", "Every Nerd Font glyph literal in src/ against data/nerd-glyphnames.json, with its --ascii twin");
+    glyph_step.dependOn(&glyph_audit.step);
+    const glyph_tests = b.addTest(.{ .root_module = glyph_mod, .filters = test_filters });
+    test_step.dependOn(&b.addRunArtifact(glyph_tests).step);
+    // ── end glyph audit ─────────────────────────────────────────────────
+
     // ── e2e: gate-build ──
     // Compile the exe and every test binary for the selected target without
     // running them, installed under zig-out/gate/. The exe alone is not a
