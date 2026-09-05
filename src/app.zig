@@ -77,6 +77,7 @@ const spend = @import("app/spend.zig");
 const tests_pane = @import("app/tests_pane.zig");
 const flaky = @import("app/flaky.zig");
 const ipc = @import("ipc/root.zig");
+const grep = @import("app/grep.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const http_app = @import("app/http.zig");
@@ -234,6 +235,9 @@ pub const PromptPurpose = union(enum) {
     mount_open,
     /// `term.rename`: the new tab label for this pty pane.
     term_rename: PaneId,
+    /// Workspace grep: the query; the replacement for every enabled hit.
+    grep_query,
+    grep_replace,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -1606,6 +1610,7 @@ pub const App = struct {
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
+            .grep => |result| try grep.handle(self, result),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -1864,6 +1869,8 @@ test {
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");
     _ = @import("app/spend.zig");
+    _ = @import("app/grep.zig");
+    _ = @import("app/gitignore.zig");
     _ = @import("ai/suggest.zig");
     _ = @import("ai/transcript.zig");
     _ = @import("ai/api_client.zig");

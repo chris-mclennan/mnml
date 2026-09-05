@@ -157,7 +157,7 @@ fn previewCmd(app: *App) CommandError!void {
             if (!isMarkdownPath(path)) return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
             _ = try open(app, path, .here, active);
         },
-        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
     }
 }
 
@@ -167,7 +167,7 @@ fn editRawCmd(app: *App) CommandError!void {
     switch (pane.*) {
         .md_preview => _ = try swapToEditor(app, active),
         .editor => {},
-        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
     }
 }
 

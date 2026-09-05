@@ -84,7 +84,7 @@ fn show(app: *App) CommandError!void {
         .editor => active,
         .outline => |*o| o.source,
         .md_preview => return app.diag.fail(app.frame.allocator(), "outline: not for a preview", .{}),
-        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
+        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return error.NotAnEditor,
     } else return error.NoActivePane;
     if (app.panes.findOutline(source)) |id| {
         try refresh(app, id);

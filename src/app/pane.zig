@@ -24,6 +24,7 @@ const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
+const grep = @import("grep.zig");
 const dap = @import("dap.zig");
 const request_pane = @import("request_pane.zig");
 const ws_pane = @import("ws_pane.zig");
@@ -153,6 +154,8 @@ pub const Pane = union(enum) {
     claude_agents: agents.AgentsPane,
     /// The AI spend report (one at a time).
     spend_report: spend.SpendPane,
+    /// Workspace grep results (`find.grep`).
+    grep: grep.GrepPane,
     /// The debugger: call stack, variables + watches, output.
     debug: dap.DebugPane,
     /// The debugger's REPL.
@@ -206,6 +209,7 @@ pub const Pane = union(enum) {
             .ai => |*a| a.deinit(),
             .claude_agents => |*a| a.deinit(io),
             .spend_report => |*s| s.deinit(io),
+            .grep => |*g| g.deinit(io),
             .debug => {},
             .dap_repl => |*r| r.deinit(),
         }
@@ -229,6 +233,7 @@ pub const Pane = union(enum) {
             .ai => |*a| return a.title,
             .claude_agents => return "Claude Agents",
             .spend_report => return "AI spend (24h)",
+            .grep => return "Search",
             .debug => return "Debug",
             .dap_repl => return "DAP REPL",
             .request => |*r| return r.title(),
@@ -248,7 +253,7 @@ pub const Pane = union(enum) {
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 

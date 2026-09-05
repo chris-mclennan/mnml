@@ -84,6 +84,7 @@ const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
+const grep = @import("grep.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const files_pane = @import("files_pane.zig");
@@ -190,6 +191,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .spend_report => |*s| {
             if (try spend.handleKey(app, id, s, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .grep => |*g| {
+            if (try grep.handleKey(app, id, g, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -818,6 +824,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
         .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
         .term_rename => |id| try toastOnFail(app, cmd_term.renameAccept(app, id, text)),
+        .grep_query => try grep.acceptQuery(app, text),
+        .grep_replace => try grep.acceptReplace(app, text),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),
@@ -1235,6 +1243,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git_graph => |*g| try git_app.graphClick(app, sh.pane, g, sh.id, m),
                 .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
+                .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
                 .websocket => {},
@@ -1519,6 +1528,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .grep => |*g| grep.scrollBy(g, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),

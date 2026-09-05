@@ -1,0 +1,38 @@
+# zig-only
+# Workspace grep (src/app/grep.zig, src/ui/grep_view.zig): find.grep prompts
+# for a query, a worker streams the hits into a Search pane grouped by file
+# (.gitignore honoured), the `/` filter narrows, enter opens a hit at its
+# line, and find.grep_replace rewrites every enabled hit across the files.
+write src/a.zig "const alpha = 1;\nconst beta = alpha + alpha;\n"
+write docs/b.txt "Alpha at the top\nnothing here\n"
+write .gitignore "*.log\n"
+write build/out.log "alpha alpha\n"
+open src/a.zig
+command find.grep
+type alpha
+key enter
+expect screen contains SEARCH
+expect screen contains "4 matches in 2 files"
+expect screen contains "src/a.zig (3)"
+expect screen contains "docs/b.txt (1)"
+expect screen lacks "out.log"
+# The filter is a vim pattern over the line and the path.
+key /
+type b\.txt
+key enter
+expect screen lacks "src/a.zig (3)"
+expect screen contains "docs/b.txt (1)"
+# Down onto the hit, enter: the file opens on that line; the pane stays.
+key j
+key enter
+expect pane b.txt
+expect screen contains "Ln 1/"
+# Back to the search pane: replace every hit (both files are open and clean).
+command view.activity_search
+command find.grep_replace
+type omega
+key enter
+expect screen contains "replaced 4 in 2 files"
+expect file src/a.zig contains "const omega = 1;"
+expect file src/a.zig contains "beta = omega + omega"
+expect file docs/b.txt contains "omega at the top"
