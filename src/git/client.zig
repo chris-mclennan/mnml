@@ -56,6 +56,10 @@ pub const ListKind = enum { stashes, tags, reflog, worktrees };
 /// What `browse` opens: the file, the file at a line, or a commit.
 pub const BrowseKind = enum { file, line, commit };
 
+/// What an AI prompt is built from: the staged diff, or HEAD's patch
+/// and message.
+pub const AiContext = enum { staged, head };
+
 /// One unit of work. Strings are gpa-owned by the job (`deinit`).
 pub const Job = union(enum) {
     /// `status --porcelain=v2 -b` plus `diff -U0 HEAD` for the gutter.
@@ -97,9 +101,13 @@ pub const Job = union(enum) {
     worktree_add: struct { path: []u8, branch: ?[]u8 },
     worktree_remove: []u8,
     head_sha,
+    /// `commit --amend` with a new message (the AI recompose).
+    amend: []u8,
     /// A commit's full message and the files it touched (the graph's
     /// detail panel).
     commit_detail: []u8,
+    /// The text an AI commit-message prompt is built from.
+    ai_context: AiContext,
     /// The branch rail: branches with tracking counts, worktrees, and
     /// open PRs through `gh` when the UI found it on PATH.
     rail: struct { gh: bool },
@@ -127,6 +135,8 @@ pub const Job = union(enum) {
             .stash => |s| if (s) |m| gpa.free(m),
             .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .commit_detail => |s| gpa.free(s),
+            .amend => |s| gpa.free(s),
+            .ai_context => {},
             .rail => {},
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .stash_pop, .undo, .redo, .head_sha => {},
         }
@@ -154,6 +164,9 @@ pub const Result = struct {
         url: []const u8,
         head_sha: []const u8,
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
+        /// `diff` is empty when there is nothing to summarise; `message`
+        /// is HEAD's current message for `.head`.
+        ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
         rail: struct { branches: []parse.Branch, worktrees: []const []const u8, prs: []parse.Pr, gh: bool },
     };
 
@@ -541,6 +554,26 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 .message = if (msg.ok) trimmed(msg.stdout) else msg.reason(),
                 .files = if (files.ok) try parse.parseNameStatus(arena, files.stdout) else &.{},
             } };
+        },
+        .ai_context => |what| switch (what) {
+            .staged => {
+                const d = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "--cached" }, null);
+                r.payload = .{ .ai_context = .{ .what = what, .diff = if (d.ok) d.stdout else "", .message = "" } };
+            },
+            .head => {
+                const d = try git(repo, io, arena, &.{ "show", "--no-ext-diff", "--format=", "HEAD" }, null);
+                const m = try git(repo, io, arena, &.{ "log", "-1", "--format=%B" }, null);
+                r.payload = .{ .ai_context = .{ .what = what, .diff = if (d.ok) d.stdout else "", .message = if (m.ok) trimmed(m.stdout) else "" } };
+            },
+        },
+        .amend => |msg| {
+            const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+            const out = try git(repo, io, arena, &.{ "commit", "-q", "--amend", "-m", msg }, null);
+            if (out.ok) {
+                const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+                if (before.ok and after.ok) try pushUndo(repo, try std.fmt.allocPrint(arena, "amend {s}", .{firstLine(msg)}), .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, trimmed(after.stdout)) });
+            }
+            r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
         },
         .stage => |p| try simple(repo, io, r, &.{ "add", "--", p }, try std.fmt.allocPrint(arena, "staged {s}", .{p})),
         .unstage => |p| {

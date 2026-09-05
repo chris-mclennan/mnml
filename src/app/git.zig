@@ -28,6 +28,7 @@ const hooks = @import("../core/hooks.zig");
 const client = @import("../git/client.zig");
 const parse = @import("../git/parse.zig");
 const remote_mod = @import("../git/remote.zig");
+const ai_app = @import("ai.zig");
 const cmd_app = @import("cmd_app.zig");
 const builtin = @import("builtin");
 const Rect = @import("../ui/rect.zig");
@@ -88,6 +89,8 @@ pub const PromptKind = enum {
     worktree_add,
     /// The graph's hash-jump.
     graph_hash,
+    /// `commit --amend` with the AI's rewrite.
+    amend,
 };
 
 /// A confirm box's payload; the path is owned.
@@ -106,6 +109,13 @@ pub const Confirm = union(enum) {
             .none, .discard_hunk => {},
         }
     }
+};
+
+/// An AI commit-message job in flight: the `Pane.ai` it streams into
+/// and what to do with the answer when the pane says done.
+pub const AiWait = struct {
+    pane: PaneId,
+    what: enum { commit, recompose },
 };
 
 /// Blame for one editor pane: the worker's arena, adopted.
@@ -302,6 +312,12 @@ pub const State = struct {
     /// snapshot) and the forge it names, for the badge.
     remote: []const u8 = "",
     provider: remote_mod.Provider = .none,
+    /// The AI commit-message job whose pane `tick` watches.
+    ai_wait: ?AiWait = null,
+    ai_product: ai_app.Product = .claude,
+    /// A message body the AI returned, appended to the prompt's subject
+    /// line at accept. Owned.
+    ai_body: ?[]u8 = null,
     /// The branch rail: open or folded, its own snapshot, and which of
     /// its sections are folded.
     rail_open: bool = false,
@@ -331,6 +347,7 @@ pub const State = struct {
         self.filtered.deinit(gpa);
         self.rail.deinit(gpa);
         self.confirm.deinit(gpa);
+        if (self.ai_body) |b| gpa.free(b);
         self.rail_snapshot.deinit();
         self.snapshot.deinit();
     }
@@ -591,8 +608,10 @@ pub fn relToRepo(r: *const client.Repo, abs: []const u8) []const u8 {
 }
 
 /// The 3 s TTL: a stale snapshot of the active repo is asked for again.
+/// An AI commit-message pane that finished hands its answer over.
 pub fn tick(app: *App, now: i64) Allocator.Error!void {
     const st = &app.git;
+    try pollAiWait(app);
     if (st.activeRepo() == null or st.status_pending) return;
     if (now - st.status_at_ms >= status_ttl_ms) requestStatus(app) catch {};
 }
@@ -617,6 +636,125 @@ pub fn openExternal(app: *App, url: []const u8) void {
     };
     app.gpa.free(res.stdout);
     app.gpa.free(res.stderr);
+}
+
+// ─── AI commit messages ─────────────────────────────────────────────────
+
+/// Ask the repo for the text the prompt is built from; the answer lands
+/// in `aiContextReady`, which starts the AI job.
+pub fn askAi(app: *App, what: client.AiContext, product: ai_app.Product) CommandError!void {
+    const st = &app.git;
+    if (st.ai_wait != null) return app.diag.fail(app.frame.allocator(), "an AI commit message is already on its way", .{});
+    const repo = try requireRepo(app);
+    // Fail fast on a route that cannot run, before any git runs.
+    switch (ai_app.route(app, if (product == .claude) .claude else .codex)) {
+        .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.{s}] backend = \"off\")", .{@tagName(product)}),
+        .api => if (product == .codex) return app.diag.fail(app.frame.allocator(), "Codex has no API backend in this build", .{}),
+        .cli => {},
+    }
+    st.ai_product = product;
+    try submit(app, repo, .{ .ai_context = what });
+    app.toast("{s}: reading the {s}…", .{ if (product == .claude) "claude" else "codex", if (what == .staged) "staged diff" else "HEAD patch" });
+}
+
+const ai_diff_cap: usize = 24_000;
+
+fn aiContextReady(app: *App, repo: *client.Repo, what: client.AiContext, diff: []const u8, message: []const u8) Allocator.Error!void {
+    const st = &app.git;
+    const arena = app.frame.allocator();
+    if (std.mem.trim(u8, diff, " \t\r\n").len == 0) {
+        app.toast("{s}", .{if (what == .staged) "nothing staged — stage some changes first" else "HEAD has no patch to summarise"});
+        return;
+    }
+    const cut = diff[0..@min(diff.len, ai_diff_cap)];
+    const tail: []const u8 = if (diff.len > ai_diff_cap) "\n…(diff truncated)…" else "";
+    const prompt = switch (what) {
+        .staged => try std.fmt.allocPrint(arena, "Write a git commit message for the staged changes below. First line: imperative mood, ≤72 chars, no trailing period. Then a blank line and a short body ONLY if it adds something. Output ONLY the commit message — no preamble, no code fences.\n\n```diff\n{s}{s}\n```", .{ cut, tail }),
+        .head => try std.fmt.allocPrint(arena, "Rewrite this commit's message based on what actually changed. First line: imperative mood, ≤72 chars, no trailing period. Then a blank line and a short body ONLY if it adds something the subject doesn't. Output ONLY the new message — no preamble, no code fences.\n\n{s}{s}{s}```diff\n{s}{s}\n```", .{ if (message.len > 0) "Current message:\n```\n" else "", message, if (message.len > 0) "\n```\n\n" else "", cut, tail }),
+    };
+    _ = repo;
+    const title: []const u8 = if (what == .staged) "ai: commit message" else "ai: recompose HEAD";
+    const pane = ai_app.askProduct(app, st.ai_product, title, prompt, .git, null) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        runToast(app, err);
+        return;
+    };
+    st.ai_wait = .{ .pane = pane, .what = if (what == .staged) .commit else .recompose };
+}
+
+/// The AI pane finished: its answer becomes the commit prompt's text
+/// (the subject on the line, the body kept for the accept), the pane
+/// closes. A failed job toasts the AI track's reason.
+fn pollAiWait(app: *App) Allocator.Error!void {
+    const st = &app.git;
+    const w = st.ai_wait orelse return;
+    const pane = app.panes.get(w.pane) orelse {
+        st.ai_wait = null;
+        return;
+    };
+    const ap = switch (pane.*) {
+        .ai => |*a| a,
+        else => {
+            st.ai_wait = null;
+            return;
+        },
+    };
+    switch (ap.status) {
+        .running => return,
+        .failed => {
+            st.ai_wait = null;
+            try app.toastLevel(.err, "AI: {s}", .{ap.err orelse "the job failed"});
+            try app.closePane(w.pane, true);
+        },
+        .done => {
+            st.ai_wait = null;
+            const text = try app.gpa.dupe(u8, ap.answer.items);
+            defer app.gpa.free(text);
+            try app.closePane(w.pane, true);
+            const msg = cleanCommitMessage(text);
+            if (msg.subject.len == 0) {
+                app.toast("AI returned an empty message", .{});
+                return;
+            }
+            if (st.ai_body) |b| app.gpa.free(b);
+            st.ai_body = if (msg.body.len > 0) try app.gpa.dupe(u8, msg.body) else null;
+            const kind: PromptKind = if (w.what == .commit) .commit else .amend;
+            const title: []const u8 = if (msg.body.len > 0)
+                (if (kind == .commit) "Commit message (AI body attached)" else "Amend HEAD's message (AI body attached)")
+            else
+                (if (kind == .commit) "Commit message" else "Amend HEAD's message");
+            openPrompt(app, kind, title);
+            try app.overlay.prompt.state.setText(app.gpa, msg.subject);
+        },
+    }
+}
+
+/// The subject line and the body of what the model wrote, fences and
+/// blank edges stripped.
+pub fn cleanCommitMessage(text: []const u8) struct { subject: []const u8, body: []const u8 } {
+    var t = std.mem.trim(u8, text, " \t\r\n");
+    if (std.mem.startsWith(u8, t, "```")) {
+        const nl = std.mem.indexOfScalar(u8, t, '\n') orelse t.len;
+        t = t[nl..];
+    }
+    if (std.mem.endsWith(u8, t, "```")) t = t[0 .. t.len - 3];
+    t = std.mem.trim(u8, t, " \t\r\n");
+    const nl = std.mem.indexOfScalar(u8, t, '\n') orelse t.len;
+    const subject = std.mem.trim(u8, t[0..nl], " \t\r");
+    const body = std.mem.trim(u8, t[nl..], " \t\r\n");
+    return .{ .subject = subject, .body = body };
+}
+
+/// The message a commit / amend prompt submits: the line typed, plus
+/// the AI body when one is attached (consumed here).
+fn takeMessage(app: *App, subject: []const u8) Allocator.Error![]u8 {
+    const st = &app.git;
+    defer {
+        if (st.ai_body) |b| app.gpa.free(b);
+        st.ai_body = null;
+    }
+    if (st.ai_body) |b| return std.fmt.allocPrint(app.gpa, "{s}\n\n{s}", .{ subject, b });
+    return app.gpa.dupe(u8, subject);
 }
 
 // ─── the handler (D1) ───────────────────────────────────────────────────
@@ -752,6 +890,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 else => {},
             };
         },
+        .ai_context => |c| try aiContextReady(app, repo, c.what, c.diff, c.message),
         .rail => |rail| {
             st.rail_pending = false;
             const active = st.activeRepo() orelse return;
@@ -1425,6 +1564,10 @@ pub fn activeDiff(app: *App) ?*DiffPane {
 
 pub fn openPrompt(app: *App, kind: PromptKind, title: []const u8) void {
     app.overlay.deinit(app.gpa);
+    if (kind != .commit and kind != .amend) if (app.git.ai_body) |b| {
+        app.gpa.free(b);
+        app.git.ai_body = null;
+    };
     app.git.prompt = kind;
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, title), .purpose = .git } };
     app.focus = .overlay;
@@ -1441,7 +1584,11 @@ pub fn acceptPrompt(app: *App, text_in: []const u8) CommandError!void {
         .none => {},
         .commit => {
             if (text.len == 0) return app.diag.fail(app.frame.allocator(), "commit: empty message", .{});
-            try submitOp(app, try requireRepo(app), .{ .commit = try gpa.dupe(u8, text) });
+            try submitOp(app, try requireRepo(app), .{ .commit = try takeMessage(app, text) });
+        },
+        .amend => {
+            if (text.len == 0) return app.diag.fail(app.frame.allocator(), "amend: empty message", .{});
+            try submitOp(app, try requireRepo(app), .{ .amend = try takeMessage(app, text) });
         },
         .graph_hash => {
             const g = activeGraph(app) orelse return app.diag.fail(app.frame.allocator(), "graph: no graph pane is active", .{});
@@ -1536,6 +1683,16 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         .delete_branch => |b| try submitOp(app, try requireRepo(app), .{ .delete_branch = try gpa.dupe(u8, b) }),
         .worktree_remove => |p| try submitOp(app, try requireRepo(app), .{ .worktree_remove = try gpa.dupe(u8, p) }),
         .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
+    }
+}
+
+/// A prompt or confirm box closing by any route: an AI body waiting
+/// for a commit prompt that is gone is dropped.
+pub fn overlayClosing(app: *App) void {
+    const st = &app.git;
+    if (st.prompt == .commit or st.prompt == .amend) {
+        if (st.ai_body) |b| app.gpa.free(b);
+        st.ai_body = null;
     }
 }
 
@@ -2532,7 +2689,7 @@ const Fixture = struct {
         var i: usize = 0;
         while (i < max) : (i += 1) {
             try f.app.tick(App.nowMs(testing.io));
-            if (!f.app.git.status_pending and f.app.git.busy == 0 and f.app.git.blame_pending == null and !f.app.git.rail_pending and !anyPanePending(&f.app)) return;
+            if (!f.app.git.status_pending and f.app.git.busy == 0 and f.app.git.blame_pending == null and !f.app.git.rail_pending and f.app.git.ai_wait == null and !anyPanePending(&f.app)) return;
             testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
         }
     }
@@ -2786,6 +2943,15 @@ test "the WIP row: a dirty tree puts it first, its buttons stage / unstage throu
     syncWip(&f.app, g);
     try testing.expect(!g.has_wip);
     try testing.expectEqual(@as(usize, 0), g.cursor);
+}
+
+test "cleanCommitMessage strips fences and splits the subject from the body" {
+    const m = cleanCommitMessage("```\nfix: the thing\n\nA body line.\n```\n");
+    try testing.expectEqualStrings("fix: the thing", m.subject);
+    try testing.expectEqualStrings("A body line.", m.body);
+    const bare = cleanCommitMessage("  just a subject  ");
+    try testing.expectEqualStrings("just a subject", bare.subject);
+    try testing.expectEqual(@as(usize, 0), bare.body.len);
 }
 
 test "the branch rail: toggling it lists the branches with their tracking counts, worktrees and the PR note; a section folds; a branch row asks before checkout" {

@@ -589,11 +589,26 @@ const JobMode = enum { claude_cli, codex_cli, claude_api };
 
 /// Start a job and its pane. `prompt` is borrowed and copied.
 pub fn ask(app: *App, title: []const u8, prompt: []const u8, kind: AiPane.Kind, apply: ?AiPane.ApplyTarget) CommandError!PaneId {
+    return askProduct(app, .claude, title, prompt, kind, apply);
+}
+
+// ── git ──────────────────────────────────────────────────────────────────
+// The git track's hook: the same job as `ask`, on either product. Codex
+// has no API backend, so its `api` route is refused here; `git.zig`
+// watches the pane and takes the answer when it says done.
+pub fn askProduct(app: *App, product: Product, title: []const u8, prompt: []const u8, kind: AiPane.Kind, apply: ?AiPane.ApplyTarget) CommandError!PaneId {
     const gpa = app.gpa;
-    const mode: JobMode = switch (route(app, .claude)) {
-        .cli => .claude_cli,
-        .api => .claude_api,
-        .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+    const mode: JobMode = switch (product) {
+        .claude => switch (route(app, .claude)) {
+            .cli => .claude_cli,
+            .api => .claude_api,
+            .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.claude] backend = \"off\")", .{}),
+        },
+        .codex => switch (route(app, .codex)) {
+            .cli => .codex_cli,
+            .api => return app.diag.fail(app.frame.allocator(), "Codex has no API backend in this build ([ai.routing.codex] backend = \"api\")", .{}),
+            .off => return app.diag.fail(app.frame.allocator(), "AI is routed off ([ai.routing.codex] backend = \"off\")", .{}),
+        },
     };
     const key: []const u8 = if (mode == .claude_api) (app.env.get(api.env_key) orelse return app.diag.fail(app.frame.allocator(), "AI: ${s} not set (the API backend needs it)", .{api.env_key})) else "";
     const j = try gpa.create(Job);
@@ -654,6 +669,7 @@ pub fn ask(app: *App, title: []const u8, prompt: []const u8, kind: AiPane.Kind, 
     app.showPane(id);
     return id;
 }
+// ── end git ──────────────────────────────────────────────────────────────
 
 /// The job worker: one `claude -p` / `codex exec`, or the agent loop
 /// over the API. Owns every string it was handed.

@@ -38,9 +38,9 @@ pub const table = .{
     .@"git.discard" = &discard,
     .@"git.open_file" = &openFile,
     .@"git.commit" = &commit,
-    .@"git.ai_commit" = &notInBuild,
-    .@"git.codex_commit" = &notInBuild,
-    .@"git.ai_recompose" = &notInBuild,
+    .@"git.ai_commit" = &aiCommit,
+    .@"git.codex_commit" = &codexCommit,
+    .@"git.ai_recompose" = &aiRecompose,
     .@"git.branch_rail_toggle" = &branchRailToggle,
     .@"git.checkout" = &checkout,
     .@"git.recent_branches" = &recentBranches,
@@ -316,6 +316,25 @@ fn unstageAll(app: *App) CommandError!void {
 fn commit(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     git.openPrompt(app, .commit, "Commit message");
+}
+
+// ─── AI commit messages ─────────────────────────────────────────────────
+
+/// Claude writes the message from the staged diff; the commit prompt
+/// opens with it.
+fn aiCommit(app: *App) CommandError!void {
+    try git.askAi(app, .staged, .claude);
+}
+
+fn codexCommit(app: *App) CommandError!void {
+    try git.askAi(app, .staged, .codex);
+}
+
+/// With the commit prompt open: its message is recomposed from the
+/// staged diff. Otherwise HEAD's message is rewritten (`--amend`).
+fn aiRecompose(app: *App) CommandError!void {
+    const on_commit_prompt = app.overlay == .prompt and app.git.prompt == .commit;
+    try git.askAi(app, if (on_commit_prompt) .staged else .head, .claude);
 }
 
 fn branchRailToggle(app: *App) CommandError!void {
