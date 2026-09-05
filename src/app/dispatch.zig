@@ -54,6 +54,7 @@ const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
+const mount_pane = @import("mount_pane.zig");
 const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
@@ -176,6 +177,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .browser => |*b| {
             if (try browser_pane.handleKey(app, id, b, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .mount => |*mp| {
+            if (try mount_pane.handleKey(app, id, mp, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -638,6 +644,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .ai_ask => try toastOnFail(app, ai_app.askAccept(app, text)),
         .ai_chat => try toastOnFail(app, ai_app.chatAccept(app, text)),
         .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
+        .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),
@@ -740,6 +747,9 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     };
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.asWebsocket()) |w| {
         if (app.focus == .pane) return ws_pane.paste(app, w, text);
+    };
+    if (app.active) |id| if (app.panes.get(id)) |p| if (p.asMount()) |mp| {
+        if (app.focus == .pane) return mount_pane.paste(app, mp, text);
     };
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
@@ -948,6 +958,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .script_hit => |sh| {
+            // A mount forwards the wheel and the pointer; the rest of
+            // the panes only hear presses.
+            if (app.panes.get(sh.pane)) |mp_pane| if (mp_pane.asMount()) |mp| {
+                if (wheel) return mount_pane.wheel(mp, sh.id, m, hitRect(app, m.x, m.y), count);
+                if (m.kind == .motion) return mount_pane.hover(mp, sh.id, m, hitRect(app, m.x, m.y));
+            };
             if (wheel) return wheelOnPane(app, sh.pane, m, count);
             if (m.kind != .press) return;
             if (m.button != .left and m.button != .right) return;
@@ -974,6 +990,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
                 .websocket => {},
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
+                .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
                 .editor, .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1214,6 +1231,9 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .browser => |*b| browser_pane.scrollBy(b, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        // Reached only over a rect the view did not register (none): the
+        // mount's rows carry the wheel through `.script_hit`.
+        .mount => {},
     }
 }
 

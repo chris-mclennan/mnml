@@ -71,6 +71,7 @@ const http_app = @import("app/http.zig");
 const request_pane = @import("app/request_pane.zig");
 const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
+const mount_pane = @import("app/mount_pane.zig");
 const http_parse = @import("http/parse.zig");
 const builtin = @import("builtin");
 
@@ -172,6 +173,8 @@ pub const PromptPurpose = union(enum) {
     browser_eval,
     browser_add_cookie,
     browser_add_storage,
+    /// `mount.open`: the binary and args to host.
+    mount_open,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -1187,6 +1190,7 @@ pub const App = struct {
             .http => |result| try http_app.handle(self, result),
             .ws => |wev| try ws_pane.handle(self, wev),
             .cdp => |cev| try browser_pane.handle(self, cev),
+            .mount => |mev| try mount_pane.handle(self, mev),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1360,6 +1364,11 @@ test {
     _ = @import("app/context_menus.zig");
     _ = @import("app/cheatsheet.zig");
     _ = @import("app/cmd_term.zig");
+    _ = @import("app/mount_pane.zig");
+    _ = @import("app/marketplace.zig");
+    _ = @import("ui/mount_view.zig");
+    _ = @import("bridge/wire.zig");
+    _ = @import("bridge/host.zig");
     _ = @import("app/pty_pane.zig");
     _ = @import("app/http.zig");
     _ = @import("app/cmd_http.zig");

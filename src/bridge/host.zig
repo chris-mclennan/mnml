@@ -1,0 +1,517 @@
+//! The host end of a mount (E5). One `Mount` = one Unix socket mnml
+//! listens on, one child process told where it is (`MNML_MOUNT_SOCKET`),
+//! and one reader task in an `Io.Group` that turns what the sibling
+//! sends into `AppEvent.mount` posts.
+//!
+//! Frames never queue. The reader paints every `frame` / `frame_dirty`
+//! into the `Shared.grid` under a lock and posts one `.frame` event only
+//! when the grid goes clean → dirty (the pty ring's rule); the UI copies
+//! the grid out in its handler and the next frame paints it. A sibling
+//! that streams faster than the UI paints therefore coalesces in the
+//! grid instead of filling the queue, and a dirty row is never lost
+//! under a dropped full frame — there is nothing to drop.
+//!
+//! Everything else the sibling says (title, cursor, command, toast,
+//! bye) is a real event with a gpa-owned payload; `Event.destroy` frees
+//! it whether or not the handler adopted it.
+//!
+//! Sends go the other way from the UI thread only (`Mount.send`); the
+//! socket is full-duplex so the reader never contends with them. The
+//! stream and the child handle live in `Shared` under its lock because
+//! `close` (UI) and the reader's teardown both reach them.
+
+const std = @import("std");
+const builtin = @import("builtin");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const wire = @import("wire.zig");
+const event = @import("../core/event.zig");
+const ids = @import("../core/ids.zig");
+
+pub const PaneId = ids.PaneId;
+pub const supported = Io.net.has_unix_sockets;
+
+/// Bytes a cell keeps inline for its grapheme; a longer symbol is cut.
+pub const max_symbol = 24;
+
+/// One painted cell of a sibling's frame.
+pub const Cell = struct {
+    sym: [max_symbol]u8 = [_]u8{' '} ++ [_]u8{0} ** (max_symbol - 1),
+    len: u8 = 1,
+    fg: ?wire.Color = null,
+    bg: ?wire.Color = null,
+    mods: wire.Mods = .{},
+
+    pub fn set(c: *Cell, w: wire.Cell) void {
+        const n: u8 = @intCast(@min(w.symbol.len, max_symbol));
+        @memcpy(c.sym[0..n], w.symbol[0..n]);
+        c.len = n;
+        c.fg = w.fg;
+        c.bg = w.bg;
+        c.mods = w.mods;
+    }
+
+    pub fn symbol(c: *const Cell) []const u8 {
+        return c.sym[0..c.len];
+    }
+};
+
+/// The sibling's screen as the host holds it. Sized by what the sibling
+/// sends, not by the pane: a frame wider than the pane is clipped at
+/// paint time, a narrower one leaves the theme's ground.
+pub const Grid = struct {
+    cols: u16 = 0,
+    rows: u16 = 0,
+    cells: []Cell = &.{},
+
+    pub fn deinit(g: *Grid, gpa: Allocator) void {
+        gpa.free(g.cells);
+        g.* = .{};
+    }
+
+    pub fn at(g: *Grid, x: u16, y: u16) *Cell {
+        return &g.cells[@as(usize, y) * g.cols + x];
+    }
+
+    pub fn cell(g: *const Grid, x: u16, y: u16) *const Cell {
+        return &g.cells[@as(usize, y) * g.cols + x];
+    }
+
+    /// Reallocate to `cols × rows`, blank. Cheap when unchanged in size.
+    pub fn resize(g: *Grid, gpa: Allocator, cols: u16, rows: u16) Allocator.Error!void {
+        const n = @as(usize, cols) * rows;
+        if (n != g.cells.len) {
+            const fresh = try gpa.alloc(Cell, n);
+            gpa.free(g.cells);
+            g.cells = fresh;
+        }
+        @memset(g.cells, .{});
+        g.cols = cols;
+        g.rows = rows;
+    }
+
+    /// A whole screen: the grid takes the frame's shape.
+    pub fn applyFull(g: *Grid, gpa: Allocator, rows: []const []const wire.Cell) Allocator.Error!void {
+        var cols: usize = 0;
+        for (rows) |r| cols = @max(cols, r.len);
+        try g.resize(gpa, @intCast(@min(cols, std.math.maxInt(u16))), @intCast(@min(rows.len, std.math.maxInt(u16))));
+        for (rows[0..g.rows], 0..) |r, y| {
+            for (r[0..@min(r.len, g.cols)], 0..) |c, x| g.at(@intCast(x), @intCast(y)).set(c);
+        }
+    }
+
+    /// Rows that changed; a row outside the grid is ignored, a short
+    /// row leaves the rest of its line as it was.
+    pub fn applyDirty(g: *Grid, rows: []const wire.Row) void {
+        for (rows) |r| {
+            if (r.y >= g.rows) continue;
+            for (r.cells[0..@min(r.cells.len, g.cols)], 0..) |c, x| g.at(@intCast(x), r.y).set(c);
+        }
+    }
+
+    /// Become a copy of `other`.
+    pub fn copyFrom(g: *Grid, gpa: Allocator, other: *const Grid) Allocator.Error!void {
+        if (g.cells.len != other.cells.len) {
+            const fresh = try gpa.alloc(Cell, other.cells.len);
+            gpa.free(g.cells);
+            g.cells = fresh;
+        }
+        @memcpy(g.cells, other.cells);
+        g.cols = other.cols;
+        g.rows = other.rows;
+    }
+};
+
+/// What the reader posts. `pane` routes it; `generation` lets a pane
+/// that was re-mounted drop a dead reader's last words.
+pub const Event = struct {
+    pane: PaneId,
+    generation: u32,
+    kind: union(enum) {
+        /// The sibling connected; the host answers with `hello`.
+        connected,
+        /// `Shared.grid` changed since the UI last copied it.
+        frame,
+        title: []u8,
+        cursor: ?wire.Cursor,
+        command: []u8,
+        toast: struct { level: wire.ToastLevel, text: []u8 },
+        /// The sibling said goodbye.
+        bye,
+        /// The stream ended without one; the reason is for the banner.
+        closed: []u8,
+    },
+
+    pub fn destroy(self: *Event, gpa: Allocator) void {
+        switch (self.kind) {
+            .title, .command, .closed => |s| gpa.free(s),
+            .toast => |t| gpa.free(t.text),
+            .connected, .frame, .cursor, .bye => {},
+        }
+        gpa.destroy(self);
+    }
+};
+
+/// Between the UI thread and the reader task.
+pub const Shared = struct {
+    io: Io,
+    lock: Io.Mutex = .init,
+    grid: Grid = .{},
+    /// A `.frame` event is in flight; the next paint clears it.
+    grid_posted: bool = false,
+    stream: ?Io.net.Stream = null,
+    child: ?std.process.Child = null,
+    /// `close` began; the reader stops at its next step.
+    closing: bool = false,
+    /// The reader returned.
+    done: std.atomic.Value(bool) = .init(false),
+};
+
+pub const SpawnOptions = struct {
+    argv: []const []const u8,
+    cwd: []const u8,
+    /// The child's whole environment; the caller has already put
+    /// `MNML_MOUNT_SOCKET` and friends in it (`envFor`).
+    env: *const std.process.Environ.Map,
+    /// Where the socket goes (`socketPath`).
+    socket_path: []const u8,
+    pane: PaneId,
+    generation: u32,
+};
+
+pub const SpawnError = error{ Unsupported, BindFailed, SpawnFailed, ListenFailed } || Allocator.Error;
+
+pub const SendError = error{ NotConnected, WriteFailed } || Allocator.Error;
+
+pub const Mount = struct {
+    gpa: Allocator,
+    io: Io,
+    shared: *Shared,
+    server: ?Io.net.Server,
+    socket_path: []u8,
+    group: Io.Group = .init,
+    generation: u32,
+    /// The UI thread's writer over the accepted stream.
+    wbuf: []u8,
+    writer: ?Io.net.Stream.Writer = null,
+    /// `.connected` landed.
+    connected: bool = false,
+    /// `hello` went out.
+    greeted: bool = false,
+
+    pub const write_buffer = 64 * 1024;
+    /// How long `close` gives a sibling to leave after `goodbye`.
+    pub const grace_ms: u32 = 200;
+
+    /// Bind the socket, spawn the child, start the reader.
+    pub fn spawn(gpa: Allocator, io: Io, events: *event.EventQueue, opts: SpawnOptions) SpawnError!*Mount {
+        if (!supported) return error.Unsupported;
+        const path = try gpa.dupe(u8, opts.socket_path);
+        errdefer gpa.free(path);
+        if (std.fs.path.dirname(path)) |dir| Io.Dir.cwd().createDirPath(io, dir) catch {};
+        // A stale file from a crashed host would block the bind.
+        Io.Dir.cwd().deleteFile(io, path) catch {};
+        const addr = Io.net.UnixAddress.init(path) catch return error.BindFailed;
+        var server = addr.listen(io, .{}) catch return error.BindFailed;
+        errdefer server.deinit(io);
+        errdefer Io.Dir.cwd().deleteFile(io, path) catch {};
+
+        const shared = try gpa.create(Shared);
+        errdefer gpa.destroy(shared);
+        shared.* = .{ .io = io };
+        const wbuf = try gpa.alloc(u8, write_buffer);
+        errdefer gpa.free(wbuf);
+
+        shared.child = std.process.spawn(io, .{
+            .argv = opts.argv,
+            .cwd = .{ .path = opts.cwd },
+            .environ_map = opts.env,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .ignore,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.SpawnFailed,
+        };
+        errdefer if (shared.child) |*c| c.kill(io);
+
+        const m = try gpa.create(Mount);
+        errdefer gpa.destroy(m);
+        m.* = .{
+            .gpa = gpa,
+            .io = io,
+            .shared = shared,
+            .server = server,
+            .socket_path = path,
+            .generation = opts.generation,
+            .wbuf = wbuf,
+        };
+        m.group.concurrent(io, reader, .{ events, io, gpa, shared, &m.server.?, opts.pane, opts.generation }) catch return error.ListenFailed;
+        return m;
+    }
+
+    /// The UI's answer to `.connected`: arm the writer.
+    pub fn onConnected(m: *Mount) void {
+        m.shared.lock.lockUncancelable(m.io);
+        defer m.shared.lock.unlock(m.io);
+        const stream = m.shared.stream orelse return;
+        m.writer = .init(stream, m.io, m.wbuf);
+        m.connected = true;
+    }
+
+    /// One message to the sibling. UI thread only.
+    pub fn send(m: *Mount, msg: wire.HostMessage) SendError!void {
+        const w = if (m.writer) |*w| w else return error.NotConnected;
+        const body = try wire.encode(m.gpa, msg);
+        defer m.gpa.free(body);
+        wire.writeMessage(&w.interface, body) catch return error.WriteFailed;
+    }
+
+    /// Copy the reader's grid into `dst` and clear the posted flag, so
+    /// the next change posts again.
+    pub fn takeGrid(m: *Mount, gpa: Allocator, dst: *Grid) Allocator.Error!void {
+        m.shared.lock.lockUncancelable(m.io);
+        defer m.shared.lock.unlock(m.io);
+        try dst.copyFrom(gpa, &m.shared.grid);
+        m.shared.grid_posted = false;
+    }
+
+    /// Tell the sibling to go, give it `grace_ms`, then take everything
+    /// down: the reader, the child, the socket file.
+    pub fn close(m: *Mount) void {
+        const io = m.io;
+        const s = m.shared;
+        {
+            s.lock.lockUncancelable(io);
+            defer s.lock.unlock(io);
+            s.closing = true;
+            if (s.stream) |stream| {
+                if (m.writer != null) m.send(.goodbye) catch {};
+                stream.shutdown(io, .both) catch {};
+            }
+        }
+        if (!m.connected) {
+            // The reader is parked in `accept`; a connection of our own
+            // wakes it and it sees `closing`.
+            if (Io.net.UnixAddress.init(m.socket_path)) |addr| {
+                if (addr.connect(io)) |c| c.close(io) else |_| {}
+            } else |_| {}
+        }
+        var waited: u32 = 0;
+        while (!s.done.load(.acquire) and waited < grace_ms) : (waited += 10) {
+            io.sleep(.fromMilliseconds(10), .awake) catch break;
+        }
+        m.group.cancel(io);
+        s.lock.lockUncancelable(io);
+        if (s.child) |*c| c.kill(io);
+        s.child = null;
+        if (s.stream) |stream| stream.close(io);
+        s.stream = null;
+        s.lock.unlock(io);
+        if (m.server) |*srv| srv.deinit(io);
+        m.server = null;
+        Io.Dir.cwd().deleteFile(io, m.socket_path) catch {};
+    }
+
+    /// `close` first.
+    pub fn destroy(m: *Mount) void {
+        const gpa = m.gpa;
+        m.shared.grid.deinit(gpa);
+        gpa.destroy(m.shared);
+        gpa.free(m.wbuf);
+        gpa.free(m.socket_path);
+        gpa.destroy(m);
+    }
+};
+
+fn post(events: *event.EventQueue, io: Io, gpa: Allocator, ev: Event) void {
+    const box = gpa.create(Event) catch return;
+    box.* = ev;
+    events.post(io, .{ .mount = box });
+}
+
+fn postOwned(events: *event.EventQueue, io: Io, gpa: Allocator, pane: PaneId, generation: u32, comptime tag: []const u8, text: []const u8) void {
+    const copy = gpa.dupe(u8, text) catch return;
+    post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = @unionInit(@FieldType(Event, "kind"), tag, copy) });
+}
+
+/// The reader task: accept once, then one message at a time until the
+/// stream ends, then reap the child.
+fn reader(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, server: *Io.net.Server, pane: PaneId, generation: u32) void {
+    defer shared.done.store(true, .release);
+    readLoop(events, io, gpa, shared, server, pane, generation);
+    // Reap: the child exits on `goodbye` or its own `bye`; a cancel
+    // while we wait (the pane closed) kills it instead.
+    shared.lock.lockUncancelable(io);
+    var child = shared.child;
+    shared.child = null;
+    shared.lock.unlock(io);
+    if (child) |*c| {
+        _ = c.wait(io) catch {
+            c.kill(io);
+        };
+    }
+}
+
+fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, server: *Io.net.Server, pane: PaneId, generation: u32) void {
+    const stream = server.accept(io) catch |err| {
+        postOwned(events, io, gpa, pane, generation, "closed", @errorName(err));
+        return;
+    };
+    {
+        shared.lock.lockUncancelable(io);
+        defer shared.lock.unlock(io);
+        if (shared.closing) {
+            stream.close(io);
+            return;
+        }
+        shared.stream = stream;
+    }
+    post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .connected });
+
+    const rbuf = gpa.alloc(u8, 64 * 1024) catch return;
+    defer gpa.free(rbuf);
+    var r: Io.net.Stream.Reader = .init(stream, io, rbuf);
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    while (true) {
+        _ = arena_state.reset(.retain_capacity);
+        const arena = arena_state.allocator();
+        const msg = wire.receive(wire.SiblingMessage, gpa, arena, &r.interface) catch |err| {
+            postOwned(events, io, gpa, pane, generation, "closed", switch (err) {
+                error.TooLarge => "frame over 16 MiB",
+                error.Truncated => "stream cut mid-frame",
+                error.BadMessage => "unreadable message",
+                error.ReadFailed => "read failed",
+                error.OutOfMemory => "out of memory",
+            });
+            return;
+        } orelse {
+            postOwned(events, io, gpa, pane, generation, "closed", "connection closed");
+            return;
+        };
+        switch (msg) {
+            .frame => |f| {
+                shared.lock.lockUncancelable(io);
+                defer shared.lock.unlock(io);
+                shared.grid.applyFull(gpa, f.cells) catch continue;
+                if (!shared.grid_posted) {
+                    shared.grid_posted = true;
+                    post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .frame });
+                }
+            },
+            .frame_dirty => |d| {
+                shared.lock.lockUncancelable(io);
+                defer shared.lock.unlock(io);
+                shared.grid.applyDirty(d.rows);
+                if (!shared.grid_posted) {
+                    shared.grid_posted = true;
+                    post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .frame });
+                }
+            },
+            .title => |t| postOwned(events, io, gpa, pane, generation, "title", t),
+            .cursor => |c| post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .cursor = c } }),
+            .command => |c| postOwned(events, io, gpa, pane, generation, "command", c.id),
+            .toast => |t| {
+                const copy = gpa.dupe(u8, t.text) catch continue;
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .toast = .{ .level = t.level, .text = copy } } });
+            },
+            .bye => {
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .bye });
+                return;
+            },
+        }
+    }
+}
+
+// ─── paths + environment ─────────────────────────────────────────────────
+
+/// `<ipc_dir>/mounts/<pid>-<id>.sock`, or a short `/tmp` name when the
+/// workspace path would not fit a `sockaddr_un` (104 bytes on macOS).
+pub fn socketPath(gpa: Allocator, ipc_dir: []const u8, id: u32) Allocator.Error![]u8 {
+    const pid: u32 = if (builtin.os.tag == .windows) 0 else @intCast(@as(i64, std.c.getpid()));
+    const name = try std.fmt.allocPrint(gpa, "{d}-{d}.sock", .{ pid, id });
+    defer gpa.free(name);
+    const long = try std.fs.path.join(gpa, &.{ ipc_dir, "mounts", name });
+    if (builtin.os.tag == .windows or long.len < Io.net.UnixAddress.max_len - 4) return long;
+    gpa.free(long);
+    return std.fmt.allocPrint(gpa, "/tmp/mnml-mount-{s}", .{name});
+}
+
+pub const EnvVars = struct {
+    socket_path: []const u8,
+    workspace: []const u8,
+    theme: []const u8,
+    ipc_dir: []const u8,
+};
+
+/// The child's environment: the host's, plus the mount contract.
+pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVars) Allocator.Error!std.process.Environ.Map {
+    var env = try base.clone(gpa);
+    errdefer env.deinit();
+    try env.put("MNML_MOUNT_SOCKET", vars.socket_path);
+    try env.put("MNML_WORKSPACE", vars.workspace);
+    try env.put("MNML_THEME", vars.theme);
+    try env.put("MNML_IPC_DIR", vars.ipc_dir);
+    var pbuf: [4]u8 = undefined;
+    try env.put("MNML_PROTOCOL", std.fmt.bufPrint(&pbuf, "{d}", .{wire.protocol}) catch "2");
+    return env;
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "grid: a full frame sets the shape; dirty rows patch in place; short and long rows are clipped" {
+    const gpa = testing.allocator;
+    var g: Grid = .{};
+    defer g.deinit(gpa);
+    const a = [_]wire.Cell{ .{ .symbol = "a" }, .{ .symbol = "b", .fg = .{ .index = 3 } }, .{ .symbol = "漢" } };
+    const b = [_]wire.Cell{.{ .symbol = "z" }};
+    try g.applyFull(gpa, &.{ &a, &b });
+    try testing.expectEqual(@as(u16, 3), g.cols);
+    try testing.expectEqual(@as(u16, 2), g.rows);
+    try testing.expectEqualStrings("b", g.cell(1, 0).symbol());
+    try testing.expectEqual(wire.Color{ .index = 3 }, g.cell(1, 0).fg.?);
+    try testing.expectEqualStrings("漢", g.cell(2, 0).symbol());
+    try testing.expectEqualStrings("z", g.cell(0, 1).symbol());
+    try testing.expectEqualStrings(" ", g.cell(1, 1).symbol());
+    const patch = [_]wire.Cell{ .{ .symbol = "Q" }, .{ .symbol = "R" }, .{ .symbol = "S" }, .{ .symbol = "T" } };
+    g.applyDirty(&.{ .{ .y = 1, .cells = &patch }, .{ .y = 9, .cells = &patch } });
+    try testing.expectEqualStrings("Q", g.cell(0, 1).symbol());
+    try testing.expectEqualStrings("S", g.cell(2, 1).symbol());
+    try testing.expectEqualStrings("a", g.cell(0, 0).symbol());
+    var copy: Grid = .{};
+    defer copy.deinit(gpa);
+    try copy.copyFrom(gpa, &g);
+    try testing.expectEqualStrings("R", copy.cell(1, 1).symbol());
+    try testing.expectEqual(@as(u16, 3), copy.cols);
+    // A symbol longer than the inline slot is cut, never overrun.
+    const long = [_]wire.Cell{.{ .symbol = "0123456789012345678901234567890123456789" }};
+    try g.applyFull(gpa, &.{&long});
+    try testing.expectEqual(@as(usize, max_symbol), g.cell(0, 0).symbol().len);
+}
+
+test "envFor carries the mount contract; socketPath stays short enough for sockaddr_un" {
+    const gpa = testing.allocator;
+    var base = std.process.Environ.Map.init(gpa);
+    defer base.deinit();
+    try base.put("HOME", "/h");
+    var env = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig" });
+    defer env.deinit();
+    try testing.expectEqualStrings("/s.sock", env.get("MNML_MOUNT_SOCKET").?);
+    try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
+    try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
+    try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
+    try testing.expectEqualStrings("2", env.get("MNML_PROTOCOL").?);
+    try testing.expectEqualStrings("/h", env.get("HOME").?);
+    const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
+    defer gpa.free(short);
+    try testing.expect(std.mem.endsWith(u8, short, "-3.sock"));
+    try testing.expect(std.mem.startsWith(u8, short, "/ws/.mnml/ipc-zig/mounts/"));
+    const deep = "/" ++ "d" ** 120;
+    const fallback = try socketPath(gpa, deep, 4);
+    defer gpa.free(fallback);
+    try testing.expect(fallback.len < Io.net.UnixAddress.max_len);
+    try testing.expect(std.mem.startsWith(u8, fallback, "/tmp/mnml-mount-"));
+}

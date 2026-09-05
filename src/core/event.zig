@@ -18,12 +18,13 @@ const jsonrpc = @import("../rpc/jsonrpc.zig");
 const http_client = @import("../http/client.zig");
 const ws_pane = @import("../app/ws_pane.zig");
 const browser_pane = @import("../app/browser_pane.zig");
+const bridge_host = @import("../bridge/host.zig");
 
 pub const PtyId = u32;
 
 /// Who produced an `.err`. Workers never toast; they post this and the
 /// UI thread decides how to surface it.
-pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input };
+pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount };
 
 // Payloads for subsystems that do not exist yet. Each is an opaque
 // placeholder so the union has its final shape today; the subsystem
@@ -115,6 +116,9 @@ pub const AppEvent = union(enum) {
     statusline: StatuslineSegment,
     marketplace: *MarketResult,
     ipc: IpcCommand,
+    /// A mounted integration spoke (or its stream ended). Owned;
+    /// `mount_pane.handle` reads it and `destroy`s it on every path.
+    mount: *bridge_host.Event,
 
     /// A finished TODO scan. Owned; `todos.handle` adopts the arena.
     todos: *todos.ScanResult,
@@ -151,6 +155,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .ws => |p| p.destroy(gpa),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| gpa.destroy(p),
+        .mount => |p| p.destroy(gpa),
         .key, .mouse, .winsize, .focus, .sse, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
 }
