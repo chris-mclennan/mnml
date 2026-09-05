@@ -47,6 +47,35 @@ pub const table = .{
     .@"view.redraw" = &redraw,
     .@"view.reset_tree_width" = &resetTreeWidth,
     .@"view.toggle_right_panel" = &toggleRightPanel,
+    .@"view.right_panel_next_tab" = &rightPanelNext,
+    .@"view.right_panel_prev_tab" = &rightPanelPrev,
+    .@"view.focus_tab_1" = focusTabRunner(1),
+    .@"view.focus_tab_2" = focusTabRunner(2),
+    .@"view.focus_tab_3" = focusTabRunner(3),
+    .@"view.focus_tab_4" = focusTabRunner(4),
+    .@"view.focus_tab_5" = focusTabRunner(5),
+    .@"view.focus_tab_6" = focusTabRunner(6),
+    .@"view.focus_tab_7" = focusTabRunner(7),
+    .@"view.focus_tab_8" = focusTabRunner(8),
+    .@"view.focus_tab_last" = &focusTabLast,
+    .@"view.move_cursor_view_top" = &cursorViewTop,
+    .@"view.move_cursor_view_middle" = &cursorViewMiddle,
+    .@"view.move_cursor_view_bottom" = &cursorViewBottom,
+    .@"view.hscroll_left" = &hscrollLeft,
+    .@"view.hscroll_right" = &hscrollRight,
+    .@"view.hscroll_left_half" = &hscrollLeftHalf,
+    .@"view.hscroll_right_half" = &hscrollRightHalf,
+    .@"view.help" = &help,
+    .@"view.split_new_scratch" = &splitNewScratch,
+    .@"view.split_goto_definition" = &splitGotoDefinition,
+    .@"view.split_open_file_under_cursor" = &splitOpenFileUnderCursor,
+    .@"view.split_grow_width" = &splitGrowWidth,
+    .@"view.split_shrink_width" = &splitShrinkWidth,
+    .@"view.split_grow_height" = &splitGrowHeight,
+    .@"view.split_shrink_height" = &splitShrinkHeight,
+    .@"view.maximize_width" = &maximizeWidth,
+    .@"view.maximize_height" = &maximizeHeight,
+    .@"view.rotate_splits" = &rotateSplits,
     .@"view.focus_right_panel" = &focusRightPanel,
     .@"view.right_panel_close_tab" = &closeRightPanel,
     .@"view.activity_todos" = &activityTodos,
@@ -804,4 +833,269 @@ test "view.settings opens the settings overlay; Esc closes it; view.about paints
     // any press closes an info overlay
     try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
+}
+
+// ─── tabs of the active leaf ─────────────────────────────────────────────
+
+/// `view.focus_tab_N`: the Nth tab of the active leaf (1-based).
+fn focusTabRunner(comptime n: usize) command.CommandFn {
+    return &struct {
+        fn run(app: *App) CommandError!void {
+            const tabs = try activeLeafTabs(app);
+            if (n > tabs.len) return app.diag.fail(app.frame.allocator(), "this leaf has {d} tab(s)", .{tabs.len});
+            app.showPane(tabs[n - 1]);
+        }
+    }.run;
+}
+
+fn focusTabLast(app: *App) CommandError!void {
+    const tabs = try activeLeafTabs(app);
+    app.showPane(tabs[tabs.len - 1]);
+}
+
+fn activeLeafTabs(app: *App) CommandError![]const PaneId {
+    const cur = app.active orelse return error.NoActivePane;
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(cur) orelse return error.NoActivePane;
+    return layout.leaf(lid).?.tabs.items;
+}
+
+// ─── the viewport ────────────────────────────────────────────────────────
+
+/// `H` / `M` / `L`: the first non-blank of the top / middle / bottom
+/// visible row.
+fn cursorViewTop(app: *App) CommandError!void {
+    return cursorViewAt(app, .top);
+}
+fn cursorViewMiddle(app: *App) CommandError!void {
+    return cursorViewAt(app, .middle);
+}
+fn cursorViewBottom(app: *App) CommandError!void {
+    return cursorViewAt(app, .bottom);
+}
+
+fn cursorViewAt(app: *App, where: enum { top, middle, bottom }) CommandError!void {
+    const e = try app.requireEditor();
+    const ed = &e.buf.editor;
+    const total = ed.lineCount();
+    const top: usize = @min(e.view.scroll_line, total -| 1);
+    const rows = @max(app.pane_rows, 1);
+    const bottom = @min(top + rows - 1, total -| 1);
+    const row = switch (where) {
+        .top => top,
+        .middle => top + (bottom - top) / 2,
+        .bottom => bottom,
+    };
+    ed.setCursor(ed.firstNonWs(row));
+    ed.goal_col = null;
+    app.needs_render = true;
+}
+
+/// `zh` / `zl` / `zH` / `zL`: the viewport's column, when wrap is off.
+fn hscrollLeft(app: *App) CommandError!void {
+    return hscroll(app, -1, false);
+}
+fn hscrollRight(app: *App) CommandError!void {
+    return hscroll(app, 1, false);
+}
+fn hscrollLeftHalf(app: *App) CommandError!void {
+    return hscroll(app, -1, true);
+}
+fn hscrollRightHalf(app: *App) CommandError!void {
+    return hscroll(app, 1, true);
+}
+
+fn hscroll(app: *App, sign: i8, half: bool) CommandError!void {
+    const e = try app.requireEditor();
+    if (e.wrap orelse app.cfg.ui.wrap) return app.diag.fail(app.frame.allocator(), "wrap is on — nothing to scroll sideways (:set nowrap)", .{});
+    // Before the first frame the pane area is unknown; half of 80 then.
+    const width: u32 = if (app.panes_area.w > 0) app.panes_area.w else 80;
+    const step: u32 = if (half) @max(width / 2, 1) else 4;
+    e.view.scroll_col = if (sign < 0) e.view.scroll_col -| step else e.view.scroll_col + step;
+    app.needs_render = true;
+}
+
+/// F1: the cheatsheet pane is the help.
+fn help(app: *App) CommandError!void {
+    return command.run(app, .{ .static = .@"view.cheatsheet" });
+}
+
+// ─── splits ──────────────────────────────────────────────────────────────
+
+fn splitNewScratch(app: *App) CommandError!void {
+    const cur = app.active orelse return error.NoActivePane;
+    const id = app.openScratch() catch return error.OutOfMemory;
+    // openScratch showed it in the current leaf; move it out into the split.
+    app.setActive(cur);
+    try splitWith(app, .horizontal, id);
+}
+
+fn splitGotoDefinition(app: *App) CommandError!void {
+    try splitWith(app, .horizontal, null);
+    return command.run(app, .{ .static = .@"lsp.goto_definition" });
+}
+
+fn splitOpenFileUnderCursor(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const target = try @import("cmd_app.zig").pathUnderCursor(app, e);
+    try splitWith(app, .horizontal, null);
+    const id = app.openPath(target.abs) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return app.diag.fail(app.frame.allocator(), "open {s}: {s}", .{ app.relPath(target.abs), @errorName(err) }),
+    };
+    if (target.line) |l| if (app.panes.editor(id)) |ed| ed.buf.editor.placeCursor(l -| 1, (target.col orelse 1) -| 1);
+}
+
+/// The nearest enclosing split of `dir` above the active leaf, and
+/// whether the leaf sits in its first half.
+fn enclosingSplit(app: *App, dir: layout_mod.SplitDir) CommandError!struct { id: layout_mod.NodeId, first: bool, ratio: u16 } {
+    const cur = app.active orelse return error.NoActivePane;
+    const layout = app.layouts.current();
+    var node = layout.leafOf(cur) orelse return error.NoActivePane;
+    while (layout.parentOf(node)) |pid| {
+        const s = layout.node(pid).split;
+        if (s.dir == dir) return .{ .id = pid, .first = s.first == node, .ratio = s.ratio };
+        node = pid;
+    }
+    return app.diag.fail(app.frame.allocator(), "no {s} split to resize", .{if (dir == .horizontal) "side-by-side" else "stacked"});
+}
+
+/// Grow (or shrink) the active leaf's half of its enclosing split by 5 %.
+fn resize(app: *App, dir: layout_mod.SplitDir, grow: bool) CommandError!void {
+    const s = try enclosingSplit(app, dir);
+    const delta: i32 = if (grow == s.first) 5 else -5;
+    const next: i32 = std.math.clamp(@as(i32, s.ratio) + delta, 10, 90);
+    app.layouts.current().setRatio(s.id, @intCast(next));
+    app.needs_render = true;
+}
+
+fn splitGrowWidth(app: *App) CommandError!void {
+    return resize(app, .horizontal, true);
+}
+fn splitShrinkWidth(app: *App) CommandError!void {
+    return resize(app, .horizontal, false);
+}
+fn splitGrowHeight(app: *App) CommandError!void {
+    return resize(app, .vertical, true);
+}
+fn splitShrinkHeight(app: *App) CommandError!void {
+    return resize(app, .vertical, false);
+}
+
+/// `ctrl+w |` / `ctrl+w _`: the active half takes 90 %.
+fn maximize(app: *App, dir: layout_mod.SplitDir) CommandError!void {
+    const s = try enclosingSplit(app, dir);
+    app.layouts.current().setRatio(s.id, if (s.first) 90 else 10);
+    app.needs_render = true;
+}
+
+fn maximizeWidth(app: *App) CommandError!void {
+    return maximize(app, .horizontal);
+}
+fn maximizeHeight(app: *App) CommandError!void {
+    return maximize(app, .vertical);
+}
+
+/// `ctrl+w r`: the two halves of the active leaf's split swap places.
+fn rotateSplits(app: *App) CommandError!void {
+    const cur = app.active orelse return error.NoActivePane;
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(cur) orelse return error.NoActivePane;
+    const pid = layout.parentOf(lid) orelse return app.diag.fail(app.frame.allocator(), "only one pane — nothing to rotate", .{});
+    const s = &layout.node(pid).split;
+    std.mem.swap(layout_mod.NodeId, &s.first, &s.second);
+    app.needs_render = true;
+}
+
+// ─── right panel tabs ────────────────────────────────────────────────────
+
+/// The panels that are in this build, in tab order.
+const panel_order = [_]app_mod.PanelId{ .todos, .git, .diagnostics };
+
+fn rightPanelNext(app: *App) CommandError!void {
+    return rightPanelStep(app, 1);
+}
+fn rightPanelPrev(app: *App) CommandError!void {
+    return rightPanelStep(app, panel_order.len - 1);
+}
+
+fn rightPanelStep(app: *App, by: usize) CommandError!void {
+    const cur = app.right_panel orelse {
+        showRightPanel(app, panel_order[0]);
+        return;
+    };
+    var idx: usize = 0;
+    for (panel_order, 0..) |p, i| if (p == cur) {
+        idx = i;
+    };
+    showRightPanel(app, panel_order[(idx + by) % panel_order.len]);
+}
+
+test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right panel tabs" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const s1 = try app.openScratch();
+    const s2 = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.focus_tab_1" });
+    try t.expectEqual(s1, app.active.?);
+    try command.run(&app, .{ .static = .@"view.focus_tab_last" });
+    try t.expectEqual(s2, app.active.?);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.focus_tab_8" }));
+    // H / M / L over a 60-line buffer scrolled to line 20 with 10 rows.
+    const e = app.activeEditor().?;
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    var i: usize = 0;
+    while (i < 60) : (i += 1) {
+        const line = try std.fmt.allocPrint(t.allocator, "  line {d}\n", .{i});
+        defer t.allocator.free(line);
+        try text.appendSlice(t.allocator, line);
+    }
+    try e.buf.editor.setText(text.items);
+    e.view.scroll_line = 20;
+    app.pane_rows = 10;
+    try command.run(&app, .{ .static = .@"view.move_cursor_view_top" });
+    try t.expectEqual(@as(usize, 20), e.buf.editor.rowCol().row);
+    try t.expectEqual(@as(usize, 2), e.buf.editor.rowCol().col);
+    try command.run(&app, .{ .static = .@"view.move_cursor_view_bottom" });
+    try t.expectEqual(@as(usize, 29), e.buf.editor.rowCol().row);
+    try command.run(&app, .{ .static = .@"view.move_cursor_view_middle" });
+    try t.expectEqual(@as(usize, 24), e.buf.editor.rowCol().row);
+    // Sideways only with wrap off.
+    e.wrap = true;
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.hscroll_right" }));
+    e.wrap = false;
+    try app.render();
+    try command.run(&app, .{ .static = .@"view.hscroll_right" });
+    try t.expectEqual(@as(u32, 4), e.view.scroll_col);
+    try command.run(&app, .{ .static = .@"view.hscroll_left_half" });
+    try t.expectEqual(@as(u32, 0), e.view.scroll_col);
+    // A side-by-side split: grow, maximize, rotate.
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.split_grow_width" }));
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(app.active.?).?;
+    const pid = layout.parentOf(lid).?;
+    try t.expectEqual(@as(u16, 50), layout.node(pid).split.ratio);
+    try command.run(&app, .{ .static = .@"view.split_grow_width" });
+    // The new leaf is the second half, so growing it shrinks the ratio.
+    try t.expectEqual(@as(u16, 45), layout.node(pid).split.ratio);
+    try command.run(&app, .{ .static = .@"view.maximize_width" });
+    try t.expectEqual(@as(u16, 10), layout.node(pid).split.ratio);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.split_grow_height" }));
+    const first_before = layout.node(pid).split.first;
+    try command.run(&app, .{ .static = .@"view.rotate_splits" });
+    try t.expectEqual(first_before, layout.node(pid).split.second);
+    // Right panel tabs cycle the panels this build has.
+    try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
+    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
+    try t.expectEqual(app_mod.PanelId.git, app.right_panel.?);
+    try command.run(&app, .{ .static = .@"view.right_panel_prev_tab" });
+    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    // A scratch in a fresh split beside the current pane.
+    const before = app.active.?;
+    try command.run(&app, .{ .static = .@"view.split_new_scratch" });
+    try t.expect(app.active.? != before);
+    try t.expect(app.layouts.current().leafOf(app.active.?).? != app.layouts.current().leafOf(before).?);
 }
