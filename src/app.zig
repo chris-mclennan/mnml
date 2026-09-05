@@ -50,6 +50,7 @@ const toast_mod = @import("ui/toast.zig");
 const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const notes = @import("notes.zig");
+const findings = @import("findings.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -498,6 +499,7 @@ pub const App = struct {
     right_panel: ?PanelId = null,
     todos: todos.State,
     notes: notes.State,
+    findings: findings.State,
     git: git_app.State,
     snippets: snippets.State,
     ai: ai_app.State = .{},
@@ -627,6 +629,7 @@ pub const App = struct {
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
             .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
+            .findings = findings.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.findings_sort)),
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
@@ -647,6 +650,8 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
         try app.hooks.subscribe(.open, .{ .zig = &notes.onPathTouched });
         try app.hooks.subscribe(.save_post, .{ .zig = &notes.onPathTouched });
+        try app.hooks.subscribe(.open, .{ .zig = &findings.onPathTouched });
+        try app.hooks.subscribe(.save_post, .{ .zig = &findings.onPathTouched });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         try app.hooks.subscribe(.save_post, .{ .zig = &git_app.onSavePost });
@@ -781,6 +786,7 @@ pub const App = struct {
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
+        self.findings.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
@@ -1325,6 +1331,7 @@ pub const App = struct {
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
             .notes => |result| try notes.handle(self, result),
+            .findings => |result| try findings.handle(self, result),
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
@@ -1342,6 +1349,7 @@ pub const App = struct {
                 defer self.gpa.free(e.msg);
                 if (e.source == .todos) self.todos.scanning = false;
                 if (e.source == .notes) self.notes.scanning = false;
+                if (e.source == .findings) self.findings.scanning = false;
                 if (e.source == .git) {
                     self.git.status_pending = false;
                     if (self.git.busy > 0) self.git.busy -= 1;
@@ -1433,7 +1441,7 @@ pub const App = struct {
         // The TODOS panel's debounced rescan.
         if (self.todos.rescan_at_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.notes.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.notes.scanning or self.findings.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -1573,6 +1581,7 @@ test {
     _ = @import("ui/spend_view.zig");
     _ = @import("todos.zig");
     _ = @import("notes.zig");
+    _ = @import("findings.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");

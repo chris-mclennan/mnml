@@ -100,7 +100,13 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         }
     }
 
-    // The mode chip: full, icon, or nothing.
+    // The mode chip: full, icon, or nothing. The subtitle is sacrificed
+    // before the chip degrades: the full form without the count beats
+    // the icon with it, and the icon without the count beats no chip.
+    // // changed (panels): the first cut of this ladder only dropped
+    // the subtitle when the REFRESH chip needed the room, so a wide
+    // count (`(3 open of 12)`) deleted the sort chip at the shipped
+    // panel width — the Rust bug this file's header describes.
     var mode_text: ?[]const u8 = null;
     var mode_w: u16 = 0;
     if (p.mode_chip) |full| {
@@ -110,10 +116,21 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         if (w >= label_w + sub_w + refresh_w + full_w + 4) {
             mode_text = full;
             mode_w = full_w;
+        } else if (w >= label_w + refresh_w + full_w + 4) {
+            mode_text = full;
+            mode_w = full_w;
+            sub = null;
+            sub_w = 0;
         } else if (w >= label_w + sub_w + refresh_w + icon_w + 4) {
             mode_text = icon;
             mode_w = icon_w;
             out.mode_is_icon = true;
+        } else if (w >= label_w + refresh_w + icon_w + 4) {
+            mode_text = icon;
+            mode_w = icon_w;
+            out.mode_is_icon = true;
+            sub = null;
+            sub_w = 0;
         }
     }
 
@@ -202,6 +219,32 @@ test "the subtitle goes before the chips do, and the chips before the title" {
     try testing.expect(l.refresh == null);
     try i.expectRow(0, " TODOS");
     try testing.expectEqual(@as(usize, 0), i.hits.items.items.len);
+}
+
+test "a wide subtitle gives way to the chip: the count goes before the sort control does" {
+    // FINDINGS (8) + " (3 open of 12)" (15) + refresh 3 + icon 3 + 4 = 33.
+    var f = try Fixture.init(30, 1);
+    defer f.deinit();
+    var p = props(&f, " (3 open of 12)", full_chip);
+    p.label = "FINDINGS";
+    const l = draw(f.ui(), f.full(), p);
+    try testing.expect(l.mode != null);
+    try testing.expect(l.mode_is_icon);
+    try f.expectLacks("open of");
+    try testing.expectEqual(ChipKind.sort, f.hits.at(30 - 6, 0).?.chip.kind);
+    // At the shipped default width the full chip fits once the count goes.
+    var g = try Fixture.init(40, 1);
+    defer g.deinit();
+    const m = draw(g.ui(), g.full(), p);
+    try testing.expect(!m.mode_is_icon);
+    try g.expectContains(" sort: Newest first ");
+    try g.expectLacks("open of");
+    // With room for both, both paint.
+    var h = try Fixture.init(56, 1);
+    defer h.deinit();
+    _ = draw(h.ui(), h.full(), p);
+    try h.expectContains("(3 open of 12)");
+    try h.expectContains(" sort: Newest first ");
 }
 
 test "a chip that shrinks keeps its right edge: the same cell hits before and after" {

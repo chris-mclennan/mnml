@@ -12,6 +12,7 @@ const Allocator = std.mem.Allocator;
 const key = @import("key.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
+const findings = @import("../findings.zig");
 const git_client = @import("../git/client.zig");
 const agents = @import("../app/agents.zig");
 const spend = @import("../app/spend.zig");
@@ -127,6 +128,8 @@ pub const AppEvent = union(enum) {
     todos: *todos.ScanResult,
     /// A finished notes listing. Owned; `notes.handle` adopts the arena.
     notes: *notes.ScanResult,
+    /// A finished findings listing. Owned; `findings.handle` adopts the arena.
+    findings: *findings.ScanResult,
     /// A finished Claude / Codex session scan. Owned; the agents pane adopts it.
     agents: *agents.ScanResult,
     /// A finished spend computation. Owned; the spend pane (or the meter) adopts it.
@@ -150,6 +153,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .err => |e| gpa.free(e.msg),
         .todos => |r| r.destroy(gpa),
         .notes => |r| r.destroy(gpa),
+        .findings => |r| r.destroy(gpa),
         .agents => |r| r.destroy(gpa),
         .spend => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),
