@@ -1078,7 +1078,13 @@ test "vim inserts, opens and appends" {
     try vim("gIx<esc>", "  ab|c", "|x  abc");
     try vim("ox<esc>", "a|b\nc", "ab\n|x\nc");
     try vim("Ox<esc>", "a|b\nc", "|x\nab\nc");
-    try vim("i<cr><esc>", "ab|c", "ab|\nc"); // move_left crosses lines (Rust parity)
+    try vim("i<cr><esc>", "ab|c", "ab\n|c"); // Esc never crosses a line start (:help i_<Esc>)
+    try vim("A<esc>", "|abc", "ab|c");
+    try vim("i<esc>", "a|bc", "|abc");
+    try vim("i<esc>", "|abc", "|abc"); // column 0 stays
+    try vim("o<esc>", "a|b\nc", "ab\n|\nc");
+    try vim("O<esc>", "a|b\nc", "|\nab\nc");
+    try vim("A<cr><esc>", "|ab", "ab\n|");
     try vim("i<tab>x<esc>", "|a", "    |xa");
     try vim("i<c-v><tab><esc>", "|a", "|\ta");
     try vim("ib<bs><bs>x<esc>", "a|c", "|xc");
@@ -1440,7 +1446,7 @@ test "vim multi-cursor: typing, deletes, selections and puts fan out over every 
     try multi("|AAAxxxBBB\nAAAyyyBBB", &.{ .{ .keys = "lllv" }, below, .{ .keys = "lld" } }, "AAA|BBB\nAAABBB");
     try multi("|AAAxxxBBB\nAAAyyyBBB", &.{ .{ .keys = "lllv" }, below, .{ .keys = "llcZ<esc>" } }, "AAA|ZBBB\nAAAZBBB");
     try multi("|A.\nB.", &.{ .{ .keys = "v" }, below, .{ .keys = "y0" }, below, .{ .keys = "P" } }, "A|A.\nBB.");
-    try multi("|ab\ncd", &.{ .{ .keys = "i" }, below, .{ .keys = "<cr><esc>" } }, "|\nab\n\ncd");
+    try multi("|ab\ncd", &.{ .{ .keys = "i" }, below, .{ .keys = "<cr><esc>" } }, "\n|ab\n\ncd"); // Esc stays on the opened line
     try multi("|ab\ncd", &.{ .{ .keys = "A" }, below, .{ .keys = "<bs>!<esc>" } }, "a|!\nc!");
     try multi("|ab cd\nef gh", &.{ .{ .keys = "i" }, below, .{ .keys = "<c-right>-<esc>" } }, "ab |-cd\nef -gh");
     // The clear op collapses to the primary; the next edit is single-cursor again.
@@ -1556,6 +1562,8 @@ test "vim replace mode and cmdline" {
     try vim("RXYZW<esc>", "|abc", "XYZ|W");
     try vim("RXY<bs><bs><esc>", "|abc", "|abc");
     try vim("RX<cr>Y<esc>", "|abc", "X\n|Yc");
+    try vim("RX<esc>", "|abc", "|Xbc");
+    try vim("R<cr><esc>", "ab|cd", "ab\n|cd"); // Esc stays on the new line
     try vim(":wq<cr>", "|abc", "|abc");
     try vim(":%s/a/b/g<cr>", "|abc", "|abc");
     try vim("ZZ", "|abc", "|abc");
