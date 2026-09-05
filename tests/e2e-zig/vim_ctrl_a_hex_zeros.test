@@ -1,0 +1,25 @@
+# zig-only
+# `Ctrl-A` / `Ctrl-X` know Neovim's default `nrformats=bin,hex`: `0x0f`
+# becomes `0x10` (the letter case kept), `0b101` becomes `0b110`, and
+# a zero-padded decimal keeps its width — `007` `Ctrl-X` is `006`,
+# `000` `Ctrl-X` is `-001` (`:help CTRL-A`).
+write a.txt "hex 0x0f oct 007 pad 000 bin 0b101 up 0xFF\n"
+open a.txt
+command editor.use_vim
+
+key ctrl+a
+type fo
+key ctrl+x
+type fp
+key ctrl+x
+type fb
+key ctrl+a
+type fu
+key ctrl+a
+command file.save
+expect file a.txt contains "hex 0x10 oct 006 pad -001 bin 0b110 up 0x100\n"
+type 0
+type 3
+key ctrl+x
+command file.save
+expect file a.txt contains "hex 0x0d oct"
