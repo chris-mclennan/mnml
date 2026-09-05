@@ -37,6 +37,7 @@ pub const table = .{
     .@"view.focus_next_split" = &focusNextSplit,
     .@"view.close_split" = &closeSplit,
     .@"view.close_others" = &closeOthers,
+    .@"view.only" = &only,
     .@"view.equalize_splits" = &equalizeSplits,
     .@"view.focus_pane" = &focusPane,
     .@"view.cursor_to_center" = &cursorToCenter,
@@ -375,6 +376,31 @@ fn closeSplit(app: *App) CommandError!void {
     }
     const first = layout.firstLeaf() orelse return;
     app.setActive(layout.leaf(first).?.active);
+}
+
+/// `:only` / `Ctrl-W o`: every other leaf goes; this window stays with
+/// its tabs. Buffers are not closed — a clean duplicate of a file open
+/// elsewhere is dropped (the split made it), everything else becomes a
+/// background tab of this leaf so the bufferline still lists it.
+fn only(app: *App) CommandError!void {
+    const keep = app.active orelse return error.NoActivePane;
+    const layout = app.layouts.current();
+    const mine = layout.leafOf(keep) orelse return error.NoActivePane;
+    const arena = app.frame.allocator();
+    const leaves = try layout.leaves(arena);
+    if (leaves.len < 2) return;
+    for (leaves) |l| {
+        if (l == mine) continue;
+        const tabs = try arena.dupe(PaneId, layout.leaf(l).?.tabs.items);
+        for (tabs) |tab| {
+            const p = app.panes.get(tab) orelse continue;
+            if (!p.dirty() and hasTwin(app, tab)) {
+                try app.forceClosePane(tab);
+            } else _ = try layout.showIn(mine, tab);
+        }
+    }
+    app.setActive(keep);
+    app.needs_render = true;
 }
 
 /// Every other pane goes (dirty ones stay, with a toast).
@@ -847,6 +873,43 @@ test "the sidebar is the leftmost window: focus_left from the leftmost split ent
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"view.focus_left" });
     try t.expect(app.focus == .pane);
+}
+
+test "view.only keeps this window and its tabs; the other leaves' panes become background tabs here, a clean twin closes" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("dirty");
+    app.activeEditor().?.buf.dirty = true;
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try t.expect(b != a);
+    const c = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const d = app.active.?;
+    try t.expectEqual(@as(usize, 3), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    // `:only` from d: a, b, c all live on (no path, so no twin) as tabs of d's leaf.
+    try command.run(&app, .{ .static = .@"view.only" });
+    const layout = app.layouts.current();
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try t.expectEqual(d, app.active.?);
+    try t.expect(app.focus == .pane);
+    const tabs = layout.leaf(layout.leafOf(d).?).?.tabs.items;
+    try t.expectEqual(@as(usize, 4), tabs.len);
+    try t.expect(app.panes.get(a) != null and app.panes.get(b) != null and app.panes.get(c) != null);
+    try t.expect(app.panes.get(a).?.dirty());
+    // A clean duplicate of a file this leaf shows is dropped, not re-homed.
+    try app.activeEditor().?.buf.setPath("/tmp/mnml-zig-only.txt");
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const dup = app.active.?;
+    try t.expect(dup != d);
+    app.setActive(d);
+    try command.run(&app, .{ .static = .@"view.only" });
+    try t.expect(app.panes.get(dup) == null);
+    try t.expectEqual(@as(usize, 4), layout.leaf(layout.leafOf(d).?).?.tabs.items.len);
+    // One leaf: a no-op.
+    try command.run(&app, .{ .static = .@"view.only" });
+    try t.expectEqual(d, app.active.?);
 }
 
 test "a split duplicates the file; closing the split drops the clean duplicate" {

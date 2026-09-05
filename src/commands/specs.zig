@@ -73,6 +73,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_whitespace", .title = "Toggle visible whitespace markers (· / →)", .group = "view" },
     .{ .id = "view.toggle_bracket_rainbow", .title = "Toggle rainbow brackets (depth-cycling color on ()[]{})", .group = "view" },
     .{ .id = "view.close_others", .title = "Close all other panes (keep active; respects unsaved guards)", .group = "view", .keys = .{ .standard = &.{"ctrl+k w"} } },
+    .{ .id = "view.only", .title = "Close every other split, keep this window (vim `:only` / `Ctrl+W o`; buffers stay open)", .group = "view" },
     .{ .id = "view.toggle_scrollbar", .title = "Toggle the editor scrollbar (right-edge thumb)", .group = "view" },
     .{ .id = "view.toggle_breadcrumb", .title = "Toggle the editor breadcrumb row (path above each pane)", .group = "view" },
     .{ .id = "editor.toggle_auto_pair", .title = "Toggle bracket / quote auto-pairing", .group = "editor" },
@@ -959,7 +960,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "901 specs, unique ids" {
+test "902 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -968,7 +969,7 @@ test "901 specs, unique ids" {
     // SESSIONS commands + six dock commands + two lsp-more commands.
     // SESSIONS commands + six dock commands + two diff-view commands
     // + three browse commands (file / line / commit on the remote)
-    // + nine ui-polish commands.
-    try std.testing.expectEqual(@as(usize, 901), specs.len);
+    // + nine ui-polish commands + `view.only`.
+    try std.testing.expectEqual(@as(usize, 902), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

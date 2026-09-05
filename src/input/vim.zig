@@ -1017,7 +1017,7 @@ pub const Vim = struct {
                     'q', 'c' => runCmd(.@"view.close_split"),
                     's' => runCmd(.@"view.split_down"),
                     'v' => runCmd(.@"view.split_right"),
-                    'o' => runCmd(.@"view.close_others"),
+                    'o' => runCmd(.@"view.only"),
                     'h' => runCmd(.@"view.focus_left"),
                     'j' => runCmd(.@"view.focus_down"),
                     'k' => runCmd(.@"view.focus_up"),
@@ -2098,7 +2098,7 @@ test "cmdline: typing, caret edits, history walk, enter emits ex_command" {
     try testing.expectEqualStrings("b", v.exHistory()[1]);
 }
 
-test "ctrl+w H/J/K/L move the split; = r _ | + - > < n d f reach their runners; T is still pending" {
+test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f reach their runners; T is still pending" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -2119,6 +2119,9 @@ test "ctrl+w H/J/K/L move the split; = r _ | + - > < n d f reach their runners; 
         .{ .key = '>', .id = .@"view.split_grow_width" },
         .{ .key = '<', .id = .@"view.split_shrink_width" },
         .{ .key = 'n', .id = .@"view.split_new_scratch" },
+        .{ .key = 'o', .id = .@"view.only" },
+        .{ .key = 'w', .id = .@"view.focus_next_split" },
+        .{ .key = 'h', .id = .@"view.focus_left" },
         .{ .key = 'd', .id = .@"view.split_goto_definition" },
         .{ .key = 'f', .id = .@"view.split_open_file_under_cursor" },
     };
