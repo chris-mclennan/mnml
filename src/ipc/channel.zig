@@ -230,17 +230,23 @@ fn countLines(s: []const u8) usize {
 /// `Authorization` headers), so both belong in `.gitignore`.
 const workspace_state_dirs = [_][]const u8{ ".mnml", ".rqst" };
 
-/// True when `existing` already ignores `dir`, tolerating `x`, `x/`, `/x`,
-/// `/x/`, `x/**`, comments and indentation.
+/// True when `existing` already has a rule about `dir`: `x`, `x/`, `/x`,
+/// `/x/`, `x/**`, `x/*`, a rule on something inside it (`x/ipc/`) and a
+/// carve-out under it (`!x/findings/`) all count, as do comments and
+/// indentation around them. A rule inside the directory is the user's
+/// decision about it — appending `x/` after `x/*` + `!x/findings/`
+/// would defeat the carve-out, since a trailing directory rule stops
+/// git from re-including anything below it.
 fn gitignoreCovers(existing: []const u8, dir: []const u8) bool {
     var lines = std.mem.splitScalar(u8, existing, '\n');
     while (lines.next()) |line| {
         const before_comment = if (std.mem.indexOfScalar(u8, line, '#')) |i| line[0..i] else line;
         var s = std.mem.trim(u8, before_comment, " \t\r");
+        if (s.len > 0 and s[0] == '!') s = s[1..];
         while (s.len > 0 and s[0] == '/') s = s[1..];
-        while (std.mem.endsWith(u8, s, "**")) s = s[0 .. s.len - 2];
-        while (s.len > 0 and s[s.len - 1] == '/') s = s[0 .. s.len - 1];
-        if (std.mem.eql(u8, s, dir)) return true;
+        if (std.mem.startsWith(u8, s, "**/")) s = s[3..];
+        const seg = if (std.mem.indexOfScalar(u8, s, '/')) |i| s[0..i] else s;
+        if (std.mem.eql(u8, seg, dir)) return true;
     }
     return false;
 }
@@ -476,6 +482,33 @@ test ".gitignore gains the state dirs once, only in a git workspace, never throu
     const with_rqst = try ws.read(".gitignore");
     defer t.allocator.free(with_rqst);
     try t.expect(std.mem.endsWith(u8, with_rqst, ".mnml/\n# Added by mnml — workspace state: IPC, session, and HTTP\n# history / captured traffic / env values (these carry secrets)\n.rqst/\n"));
+
+    try ws.tmp.dir.deleteDir(t.io, ".rqst");
+    // A file that already has a rule about `.mnml` is left alone — in
+    // particular `.mnml/*` + `!.mnml/findings/`, where an appended
+    // `.mnml/` would stop git from re-including the carve-out.
+    for ([_][]const u8{
+        ".mnml/*\n!.mnml/findings/\n",
+        "/.mnml/\n",
+        "  .mnml  # state\n",
+        ".mnml/**\n",
+        "**/.mnml/\n",
+        ".mnml/ipc/\n",
+        "!.mnml/findings/\n",
+    }) |body| {
+        try ws.write(".gitignore", body);
+        try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
+        const kept = try ws.read(".gitignore");
+        defer t.allocator.free(kept);
+        try t.expectEqualStrings(body, kept);
+    }
+    // A rule that only resembles the name is not a decision about it.
+    try ws.write(".gitignore", "*.mnml\n.mnml-backup/\n");
+    try ensureWorkspaceGitignore(t.allocator, t.io, ws.path);
+    const grown = try ws.read(".gitignore");
+    defer t.allocator.free(grown);
+    try t.expect(std.mem.endsWith(u8, grown, ".mnml/\n"));
+    try t.expect(std.mem.startsWith(u8, grown, "*.mnml\n.mnml-backup/\n"));
 
     if (builtin.os.tag != .windows) {
         try ws.tmp.dir.deleteFile(t.io, ".gitignore");
