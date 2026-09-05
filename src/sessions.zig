@@ -23,6 +23,7 @@ const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const app_mod = @import("app.zig");
 const App = app_mod.App;
+const auto_refresh = @import("app/auto_refresh.zig");
 const Key = app_mod.Key;
 const key_mod = @import("core/key.zig");
 const Mouse = key_mod.Mouse;
@@ -376,7 +377,7 @@ pub fn setSort(app: *App, sort: SessionsSort) Allocator.Error!void {
 /// Every tick: a shown panel rescans on the dashboard's cadence.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
-    if (app.right_panel != .sessions or st.scanning or !st.scanned_once) return;
+    if (app.right_panel != .sessions or st.scanning or !st.scanned_once or !auto_refresh.on(app, .sessions)) return;
     if (now - st.last_scan_ms < refresh_ms) return;
     refresh(app) catch {};
 }
@@ -672,7 +673,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
-        .refresh => runToast(app, refresh(app)),
+        .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, refresh(app)),
         .new, .view => {},
     }
 }

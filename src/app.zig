@@ -98,6 +98,7 @@ const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
 const macros_store = @import("app/macros_store.zig");
 const find_history = @import("app/find_history.zig");
+const auto_refresh = @import("app/auto_refresh.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
@@ -723,6 +724,8 @@ pub const App = struct {
     /// The Undo chip beside the toast stack (`armUndo`): one click puts
     /// a destructive action back, a right-click drops the offer.
     undo_chip: ?UndoChip = null,
+    /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
+    auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).initEmpty(),
     /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /
     /// `plus_menu_hidden` and written back there (owned ids).
     plus_pinned: std.ArrayListUnmanaged([]u8) = .empty,
@@ -908,6 +911,7 @@ pub const App = struct {
         app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
         if (app.cfg.ui.right_panel_visible) app.right_panel = .todos;
         try app.seedPlusMenu();
+        auto_refresh.seed(&app);
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();
@@ -945,6 +949,7 @@ pub const App = struct {
         if (style != self.input_style) try self.setInputStyle(style);
         self.tree.width = self.cfg.ui.tree_width;
         try self.seedPlusMenu();
+        auto_refresh.seed(self);
         try self.toastConfigDiagnostics();
         try self.applyTheme();
         try script_api.rebind(self);
@@ -2047,6 +2052,7 @@ test {
     _ = @import("app/undo_store.zig");
     _ = @import("app/macros_store.zig");
     _ = @import("app/find_history.zig");
+    _ = @import("app/auto_refresh.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
     _ = @import("app/loclist.zig");

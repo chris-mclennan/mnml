@@ -358,12 +358,12 @@ the tree. Nothing left is larger than M.
 | Caps header with live count | done | `src/ui/header.zig`, `src/ui/list_panel.zig` | |
 | `/`-focus filter row | done | `src/ui/filter_input.zig` | |
 | Accent bar, scrollbar, wheel / drag scroll | done | `src/ui/list_panel.zig` | |
-| `⟳` chip right-click menu + auto-refresh | partial | `chipMouse` in `todos.zig` | left-click only; `ui.auto_refresh_off` unread |
+| `⟳` chip right-click menu + auto-refresh | done | `src/app/auto_refresh.zig` (`openRefreshMenu`, `on`, `toggle`, `seed`); the `.refresh` prong of `chipMouse` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | *Refresh now* + a ✓ *Auto-refresh* row; off stops TODOS' save / watcher rescan, NOTES' / FINDINGS' path hooks and SESSIONS' cadence; `ui.auto_refresh_off` seeds the set and the toggle persists it to the workspace config; `tests/e2e-zig/refresh_chip_row_menus.test` |
 | Sort chip — click cycles, right-click lists | done | `openSortMenu` in `todos.zig` / `notes.zig` / `findings.zig` / `sessions.zig` | every list panel |
 | Narrow-panel icon-only chip | done | the ladder in `src/ui/header.zig` | full + count → icon + count → full → icon; tested at 26 / 30 / 34 / 40 / 50 |
 | Four sort modes persisted for the three panels | done | `todos.sort` / `notes.sort` / `findings.sort` | each persists `ui.<panel>_sort` |
 | SESSIONS sort axis | done | `sortCmd` / `sort_auto` / `sort_manual` in `src/sessions.zig` | State / Manual; `J` / `K` build the manual order, persisted in `session.zon` |
-| Row context menus (NOTES / FINDINGS / SEARCH / AGENTS) | partial | `openRowMenu` in `notes.zig` / `findings.zig` / `sessions.zig` | no row menu on the grep pane or the agents pane |
+| Row context menus (NOTES / FINDINGS / SEARCH / AGENTS) | done | `openRowMenu` in `notes.zig` / `findings.zig` / `sessions.zig` / `src/app/grep.zig` / `src/app/agents.zig` | SEARCH: titled by the hit's `path:line` or the file — open, skip / include the hit, copy, include / skip every hit, replace in files, expand / collapse all, search again (`grep.*`, eight Zig-only ids); AGENTS: transcript, resume, copy id / cwd, export, kill, refresh |
 | `:messages` bell + history | done | `src/app/messages.zig` | Zig-only here; also under UI & theming |
 
 ## AI
@@ -608,7 +608,7 @@ the tree. Nothing left is larger than M.
 | Clock | missing | `ui.clock` unread; `clock.*` have no runner | the dock has a Zig-only Clock content |
 | Settings overlay | done | `src/app/settings.zig`, `src/ui/settings.zig` | 39 discrete rows + 9 number rows (`‹ [32] ›`) |
 | `:set` for every discrete field | done | `src/app/ex.zig` | Zig-only |
-| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | unread: `click_echo`, `coverage_chip_mode`, `menu_bar`, `clock`, `auto_equalize_splits`, `auto_refresh_off` |
+| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`); unread: `click_echo`, `coverage_chip_mode`, `menu_bar`, `clock`, `auto_equalize_splits` |
 | Update check | done | `src/app/update.zig` | GitHub releases JSON on a worker; `ui.check_updates`, `MNML_NO_UPDATE_CHECK` |
 | Startup picker | done | `src/app/startup_picker.zig` | |
 

@@ -543,6 +543,8 @@ pub const MenuAction = union(enum) {
     ai_profile: AiProfileAction,
     /// A dock kebab row: one setting on one widget.
     dock_set: struct { id: u32, setting: @import("dock.zig").Setting },
+    /// The `⟳` chip menu's toggle row (`app/auto_refresh.zig`).
+    toggle_auto_refresh: panel.PanelId,
     none,
 };
 
@@ -567,7 +569,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 902), count);
+    try std.testing.expectEqual(@as(usize, 910), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

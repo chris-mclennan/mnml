@@ -23,6 +23,7 @@ const edit_op = @import("../editor/edit_op.zig");
 const EditOp = edit_op.EditOp;
 const whichkey = @import("whichkey.zig");
 const find_history = @import("find_history.zig");
+const auto_refresh = @import("auto_refresh.zig");
 const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
@@ -633,6 +634,11 @@ fn isCuration(item: command.MenuItem) bool {
 }
 
 /// A menu row was chosen: close the menu, then act.
+/// Tests reach a menu row's action without a pointer to click.
+pub fn runMenuActionForTest(app: *App, action: command.MenuAction) Allocator.Error!void {
+    return runMenuAction(app, action);
+}
+
 fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // The `{{VAR}}` a quick-fix menu was opened on rides through the
     // close to the row's command.
@@ -662,6 +668,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             },
         },
         .dock_set => |s| dock.setSetting(app, s.id, s.setting),
+        .toggle_auto_refresh => |p| try auto_refresh.toggle(app, p),
         .none => {},
     }
 }

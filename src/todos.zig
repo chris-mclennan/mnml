@@ -22,6 +22,7 @@ const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const app_mod = @import("app.zig");
 const App = app_mod.App;
+const auto_refresh = @import("app/auto_refresh.zig");
 const Key = app_mod.Key;
 const key_mod = @import("core/key.zig");
 const Mouse = key_mod.Mouse;
@@ -213,7 +214,7 @@ pub const State = struct {
 /// D10.2: subscribed in `App.initWith`. A save may have added or
 /// removed a marker; rescan, but only once the panel has been used.
 pub fn onSavePost(app: *App, _: hooks.HookArgs) void {
-    if (!app.todos.scanned_once) return;
+    if (!app.todos.scanned_once or !auto_refresh.on(app, .todos)) return;
     refresh(app) catch {};
 }
 
@@ -222,7 +223,7 @@ pub fn onSavePost(app: *App, _: hooks.HookArgs) void {
 /// writes costs one scan; an unused panel stays quiet.
 pub fn noteFileChanged(app: *App) void {
     const st = &app.todos;
-    if (!st.scanned_once) return;
+    if (!st.scanned_once or !auto_refresh.on(app, .todos)) return;
     st.rescan_at_ms = app.now_ms + rescan_debounce_ms;
 }
 
@@ -828,7 +829,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
-        .refresh => runToast(app, refresh(app)),
+        .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .todos, m.x, m.y) else runToast(app, refresh(app)),
         .new => runToast(app, newCmd(app)),
         .view => {},
     }
