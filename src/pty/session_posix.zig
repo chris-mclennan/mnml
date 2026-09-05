@@ -4,16 +4,21 @@
 //!
 //! Threads and ownership
 //! ---------------------
-//! The reader thread is *detached*, not joined. A blocking `read(2)` on a
-//! pty master only returns EOF once every fd on the slave side is closed —
-//! and a grandchild that inherited the slave (an editor's `:!sh`, a stuck
-//! `ssh`) can hold it open long after our child died. Joining would wedge
-//! the UI thread on close. So `Session.deinit` never waits: it hangs up on
-//! the child, marks the shared block `closing`, drops its reference, and
-//! returns. The reader notices within one poll interval, closes the master,
-//! reaps if nobody else did, and drops the last reference. Whoever releases
-//! last frees the block. Everything the reader touches lives in `Shared`;
-//! it never dereferences `Session`.
+//! The reader thread is *detached*, not joined: its lifetime is the child's,
+//! and a child that shrugs off SIGHUP (or a grandchild that inherited the
+//! slave — an editor's `:!sh`, a stuck `ssh`) can outlive the pane by a lot.
+//! What `Session.deinit` does wait for is the reader to *let go of the
+//! shared block* — which is never long, because the reader only ever
+//! sleeps in `poll`, and `deinit` pops that with a byte down a wake pipe.
+//! `deinit` hangs up on the child, marks the block `closing`, wakes the
+//! reader, waits for it to drop its reference, and then drops the last one
+//! itself. Whoever releases last frees the block; after `deinit` returns
+//! that is always `deinit`, so the block never outlives the session and a
+//! leak-checked caller can tear down the allocator right after. The reader
+//! copies out the one thing it needs afterwards (the pid, to reap a child
+//! nobody else will) before its release, and touches nothing shared after
+//! it. Everything the reader touches lives in `Shared`; it never
+//! dereferences `Session`.
 //!
 //! Query replies (DSR, DA, XTVERSION, mode 2048 …)
 //! ---------------------------------------------
@@ -94,12 +99,14 @@ pub const Options = struct {
     notify: Notify = .none,
     /// Ring size; must be a power of two.
     ring_capacity: usize = Ring.default_capacity,
-    /// How long the reader blocks in poll before re-checking `closing`.
+    /// How long the reader blocks in poll before re-checking `closing` on
+    /// its own. `deinit` wakes it directly; this is the fallback cadence.
     poll_interval_ms: i32 = 250,
 };
 
 pub const SpawnError = error{
     OpenptyFailed,
+    PipeFailed,
     ForkFailed,
     NoShell,
     ArgvEmpty,
@@ -122,7 +129,14 @@ const SpinLock = struct {
 /// module doc for why it is not simply owned by the session.
 const Shared = struct {
     ring: Ring,
+    /// Closed with the block, not at EOF: the session may still `write`
+    /// to it after the child is gone (the bytes are dropped), and an fd
+    /// closed early could be reused under it.
     master: posix.fd_t,
+    /// The pipe `deinit` writes a byte to so the reader's poll returns at
+    /// once. `[0]` is polled by the reader; `[1]` is written by `deinit`.
+    /// Closed with the block.
+    wake: [2]posix.fd_t,
     child: posix.pid_t,
     notify: Notify,
     /// Guards `notify`: the reader calls it under the lock, `Session.deinit`
@@ -132,18 +146,47 @@ const Shared = struct {
     /// reader is a raw thread with no `Io` to park on.
     notify_lock: SpinLock = .{},
     poll_interval_ms: i32,
-    /// Set by `Session.deinit`. The reader exits at its next poll wakeup.
+    /// Set by `Session.deinit`, which then wakes the reader; the reader
+    /// exits its loop as soon as it sees this.
     closing: std.atomic.Value(bool) = .init(false),
     /// Set by the reader when the pty returned EOF / EIO.
     eof: std.atomic.Value(bool) = .init(false),
-    /// The child has been waited for (by whichever side got there first).
+    /// The claim on `waitpid`: whoever swaps this from false to true is
+    /// the one that reaps the child, so the pid is never waited for twice
+    /// (a second wait could land on a recycled pid — another pane's child).
+    /// The session claims it in `reap` while it lives; on close, the reader
+    /// claims it if the session never did — that wait may block, and it
+    /// happens after the reader's release, on a copied pid.
     reaped: std.atomic.Value(bool) = .init(false),
-    refs: std.atomic.Value(u32) = .init(2), // the session + the reader
+    /// The session + the reader. `deinit` waits for the reader's release
+    /// before its own, so the block is always freed by `deinit`, before
+    /// it returns — the last touch the reader makes is its `fetchSub`.
+    refs: std.atomic.Value(u32) = .init(2),
 
     fn release(self: *Shared, gpa: Allocator) void {
         if (self.refs.fetchSub(1, .acq_rel) != 1) return;
+        _ = c.close(self.master);
+        _ = c.close(self.wake[0]);
+        _ = c.close(self.wake[1]);
         self.ring.deinit();
         gpa.destroy(self);
+    }
+
+    /// Session side: pop the reader's poll. One byte is enough; the pipe
+    /// is written exactly once, so this never blocks.
+    fn wakeReader(self: *Shared) void {
+        const byte = [_]u8{0};
+        _ = c.write(self.wake[1], &byte, 1);
+    }
+
+    /// Session side: block until the reader has dropped its reference.
+    /// Bounded by the reader's wake-up latency — nothing on its way out
+    /// blocks — so a short spin, then 1 ms naps.
+    fn awaitReader(self: *Shared) void {
+        var spins: u32 = 0;
+        while (self.refs.load(.acquire) > 1) : (spins += 1) {
+            if (spins < 256) std.atomic.spinLoopHint() else sleepMs(1);
+        }
     }
 
     /// Reader side: fire the callback unless the session has let go.
@@ -231,6 +274,14 @@ pub const Session = struct {
             _ = c.close(slave);
         }
         setCloexec(master);
+        var wake: [2]posix.fd_t = undefined;
+        if (c.pipe(&wake) < 0) return error.PipeFailed;
+        errdefer {
+            _ = c.close(wake[0]);
+            _ = c.close(wake[1]);
+        }
+        setCloexec(wake[0]);
+        setCloexec(wake[1]);
 
         const pid = c.fork();
         if (pid < 0) return error.ForkFailed;
@@ -241,6 +292,7 @@ pub const Session = struct {
         shared.* = .{
             .ring = ring,
             .master = master,
+            .wake = wake,
             .child = pid,
             .notify = opts.notify,
             .poll_interval_ms = opts.poll_interval_ms,
@@ -265,18 +317,35 @@ pub const Session = struct {
         return self;
     }
 
-    /// Hang up on the child and let go. Returns immediately (see module doc).
+    /// Hang up on the child and let go. Waits only for the reader to drop
+    /// the shared block — microseconds — never for the child (see module
+    /// doc). When this returns nothing of the session is left allocated.
     pub fn deinit(self: *Session) void {
         const gpa = self.gpa;
-        self.shared.disarmNotify();
-        self.shared.closing.store(true, .release);
-        // The child called setsid, so its pid is its process group: hang up on
-        // everything it started, not just the shell.
-        if (!self.shared.reaped.load(.acquire)) _ = c.kill(-self.child, .HUP);
+        const shared = self.shared;
+        shared.disarmNotify();
+        shared.closing.store(true, .release);
+        // The child called setsid, so its pid is its process group: hang up
+        // on everything it started, not just the shell. `exit` is this
+        // thread's own knowledge of a wait that already happened; the
+        // reader's claim on the reap is not consulted, so it can never
+        // talk us out of the hangup.
+        if (self.exit == null) _ = c.kill(-self.child, .HUP);
+        shared.wakeReader();
         self.stream.deinit();
         self.term.deinit(gpa);
         self.responses.deinit(gpa);
-        self.shared.release(gpa);
+        shared.awaitReader();
+        // The reader is gone from the block. If neither side has claimed
+        // the reap — the reader reached EOF on its own before `closing`
+        // was set — take it now, without blocking: a child that closed the
+        // pty has almost always exited; one that has not was just hung up
+        // on and is left to init.
+        if (!shared.reaped.swap(true, .acq_rel)) {
+            var status: c_int = 0;
+            _ = c.waitpid(self.child, &status, c.W.NOHANG);
+        }
+        shared.release(gpa);
         self.* = undefined;
         gpa.destroy(self);
     }
@@ -356,6 +425,9 @@ pub const Session = struct {
         };
     }
 
+    /// The session's side of the reap. Only the session waits while it
+    /// lives (the reader claims the pid only once `closing` is set), so a
+    /// successful wait here is the one that sets `exit`.
     fn reap(self: *Session, block: bool) void {
         if (self.exit != null) return;
         if (self.shared.reaped.load(.acquire)) return;
@@ -376,12 +448,18 @@ fn exitFromStatus(status: u32) Exit {
 // ── reader thread ───────────────────────────────────────────────────
 
 fn readerMain(shared: *Shared, gpa: Allocator) void {
-    defer shared.release(gpa);
-    var fds = [_]posix.pollfd{.{ .fd = shared.master, .events = posix.POLL.IN, .revents = 0 }};
+    var fds = [_]posix.pollfd{
+        .{ .fd = shared.master, .events = posix.POLL.IN, .revents = 0 },
+        .{ .fd = shared.wake[0], .events = posix.POLL.IN, .revents = 0 },
+    };
     outer: while (!shared.closing.load(.acquire)) {
         fds[0].revents = 0;
+        fds[1].revents = 0;
         const n = posix.poll(&fds, shared.poll_interval_ms) catch break;
         if (n == 0) continue;
+        // `deinit`'s byte: `closing` is set, and the loop condition would
+        // see it, but there is no reason to read the pty first.
+        if (fds[1].revents != 0) break;
         if (fds[0].revents & (posix.POLL.ERR | posix.POLL.NVAL) != 0) break;
         // HUP without IN means the slave side is gone; with IN, drain first.
         if (fds[0].revents & posix.POLL.IN == 0) {
@@ -407,14 +485,22 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
         if (shared.ring.commit(got)) shared.callNotify();
     }
     shared.eof.store(true, .release);
-    _ = c.close(shared.master);
-    // If the session already let go, nobody else will reap the child.
-    if (shared.closing.load(.acquire) and !shared.reaped.load(.acquire)) {
-        var status: c_int = 0;
-        _ = c.waitpid(shared.child, &status, 0);
-        shared.reaped.store(true, .release);
-    }
     shared.callNotify();
+    // Everything needed after the release is decided and copied out here.
+    // If the session has let go, nobody else will wait for the child:
+    // claim the reap unless the session already did. (A session still
+    // alive reaps in `pump`, and must — it is where `exited()` comes from.)
+    const child = shared.child;
+    const reap = shared.closing.load(.acquire) and !shared.reaped.swap(true, .acq_rel);
+    shared.release(gpa);
+    // From here on `shared` may be freed: `deinit` was waiting on exactly
+    // that release. The child was hung up on; a wait that blocks anyway
+    // (SIGHUP ignored, a grandchild holding the pty) wedges only this
+    // thread, which is what a detached reader is for.
+    if (reap) {
+        var status: c_int = 0;
+        _ = c.waitpid(child, &status, 0);
+    }
 }
 
 // ── child side ──────────────────────────────────────────────────────
@@ -702,10 +788,10 @@ test "deinit while the child is still running does not hang" {
         .poll_interval_ms = 20,
     });
     _ = s.pump();
+    // The reader is mid-poll; `deinit` pops it and takes the block back
+    // before returning, so the leak check that follows this test sees it
+    // freed. No beat needed.
     s.deinit();
-    // The detached reader owns the rest; give it a beat so the leak
-    // checker sees the shared block freed on this run rather than later.
-    sleepMs(100);
 }
 
 test "no notify fires after deinit — the reader's EOF wakeup is disarmed under the lock" {
@@ -733,8 +819,32 @@ test "no notify fires after deinit — the reader's EOF wakeup is disarmed under
     try testing.expect(counter.n.load(.acquire) >= 1);
     const before = counter.n.load(.acquire);
     s.deinit();
-    // The reader wakes within one poll interval, sees `closing`, closes
-    // the master and reaches its final notify — which must be a no-op now.
-    sleepMs(150);
+    // By the time `deinit` returned the reader had seen `closing`, made
+    // its final notify — a no-op, disarmed — and let go of the block.
     try testing.expectEqual(before, counter.n.load(.acquire));
+}
+
+test "stress: the reader has let go of the block by the time deinit returns" {
+    // The shape every leak-checked caller has: an allocator that is torn
+    // down the moment `deinit` returns. Nothing may still be outstanding
+    // on it — not the block, and not a reader about to free the block
+    // through an allocator that no longer exists. Even iterations close
+    // the session before the reader has even polled; odd ones let the
+    // child exit and the reader reach EOF first.
+    var env = try testEnv();
+    defer env.deinit();
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        var dbg: std.heap.DebugAllocator(.{}) = .{};
+        const s = try Session.spawn(dbg.allocator(), testing.io, .{
+            .cols = 20,
+            .rows = 2,
+            .env = &env,
+            .argv = &.{"true"},
+            .poll_interval_ms = 20,
+        });
+        if (i % 2 == 1) _ = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
+        s.deinit();
+        try testing.expectEqual(std.heap.Check.ok, dbg.deinit());
+    }
 }
