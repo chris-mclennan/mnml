@@ -100,6 +100,9 @@ pub const Job = union(enum) {
     /// A commit's full message and the files it touched (the graph's
     /// detail panel).
     commit_detail: []u8,
+    /// The branch rail: branches with tracking counts, worktrees, and
+    /// open PRs through `gh` when the UI found it on PATH.
+    rail: struct { gh: bool },
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -124,6 +127,7 @@ pub const Job = union(enum) {
             .stash => |s| if (s) |m| gpa.free(m),
             .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
             .commit_detail => |s| gpa.free(s),
+            .rail => {},
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .stash_pop, .undo, .redo, .head_sha => {},
         }
     }
@@ -150,6 +154,7 @@ pub const Result = struct {
         url: []const u8,
         head_sha: []const u8,
         commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
+        rail: struct { branches: []parse.Branch, worktrees: []const []const u8, prs: []parse.Pr, gh: bool },
     };
 
     pub fn create(gpa: Allocator, repo: u32) Allocator.Error!*Result {
@@ -478,18 +483,19 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const commits: []parse.Commit = if (out.ok) try parse.parseLog(arena, out.stdout) else &.{};
             r.payload = .{ .log = .{ .commits = commits, .path = if (l.filter.path) |p| try arena.dupe(u8, p) else null } };
         },
-        .branches => {
-            const local = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/heads" }, null);
-            const remote = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/remotes" }, null);
-            const ls = try parse.parseBranches(arena, if (local.ok) local.stdout else "");
-            const rs = try parse.parseBranches(arena, if (remote.ok) remote.stdout else "");
-            const all = try arena.alloc(parse.Branch, ls.len + rs.len);
-            @memcpy(all[0..ls.len], ls);
-            for (rs, ls.len..) |b, i| {
-                all[i] = b;
-                all[i].remote = true;
+        .branches => r.payload = .{ .branches = try allBranches(repo, io, arena) },
+        .rail => |opts| {
+            const branches = try allBranches(repo, io, arena);
+            const worktrees = try worktreeList(repo, io, arena);
+            var prs: []parse.Pr = &.{};
+            if (opts.gh) {
+                const out = run(repo, io, arena, &.{ "gh", "pr", "list", "--json", "number,title,headRefName,url", "--limit", "50" }) catch |err| switch (err) {
+                    error.Canceled => return error.Canceled,
+                    error.OutOfMemory => return error.OutOfMemory,
+                };
+                if (out.ok) prs = try parse.parsePrs(arena, out.stdout);
             }
-            r.payload = .{ .branches = all };
+            r.payload = .{ .rail = .{ .branches = branches, .worktrees = worktrees, .prs = prs, .gh = opts.gh } };
         },
         .list => |kind| {
             const out = switch (kind) {
@@ -683,6 +689,70 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
     }
     events.post(io, .{ .git = r });
+}
+
+/// Local branches then remote ones, newest first within each.
+fn allBranches(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Branch {
+    const local = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/heads" }, null);
+    const remote = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/remotes" }, null);
+    const ls = try parse.parseBranches(arena, if (local.ok) local.stdout else "");
+    const rs = try parse.parseBranches(arena, if (remote.ok) remote.stdout else "");
+    const all = try arena.alloc(parse.Branch, ls.len + rs.len);
+    @memcpy(all[0..ls.len], ls);
+    for (rs, ls.len..) |b, i| {
+        all[i] = b;
+        all[i].remote = true;
+    }
+    return all;
+}
+
+/// `git worktree list --porcelain` as `<path>\x1f<branch>` items.
+fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]const []const u8 {
+    const out = try git(repo, io, arena, &.{ "worktree", "list", "--porcelain" }, null);
+    var items: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (!out.ok) return items.items;
+    // `worktree <path>` / `branch refs/heads/x` / blank per entry.
+    var path: ?[]const u8 = null;
+    var it = std.mem.splitScalar(u8, out.stdout, '\n');
+    while (it.next()) |line| {
+        if (std.mem.startsWith(u8, line, "worktree ")) {
+            path = line["worktree ".len..];
+        } else if (std.mem.startsWith(u8, line, "branch ")) {
+            const b = line["branch ".len..];
+            const short = if (std.mem.startsWith(u8, b, "refs/heads/")) b["refs/heads/".len..] else b;
+            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f{s}", .{ path orelse "", short }));
+            path = null;
+        } else if (line.len == 0 and path != null) {
+            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f(detached)", .{path.?}));
+            path = null;
+        }
+    }
+    return items.items;
+}
+
+/// Run a non-git binary (`gh`) in the repo, the same way `git` runs.
+fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError!Out {
+    const res = std.process.run(repo.gpa, io, .{
+        .argv = argv,
+        .cwd = .{ .path = repo.path },
+        .environ_map = if (repo.env) |*e| e else null,
+        .stdout_limit = .limited(8 * 1024 * 1024),
+        .stderr_limit = .limited(256 * 1024),
+    }) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .{ .ok = false, .stdout = "", .stderr = try std.fmt.allocPrint(arena, "cannot run {s}: {s}", .{ argv[0], @errorName(err) }) },
+    };
+    defer repo.gpa.free(res.stdout);
+    defer repo.gpa.free(res.stderr);
+    return .{
+        .ok = switch (res.term) {
+            .exited => |c| c == 0,
+            else => false,
+        },
+        .stdout = try arena.dupe(u8, res.stdout),
+        .stderr = try arena.dupe(u8, res.stderr),
+    };
 }
 
 /// Run `args` and post `desc` as the toast on success, git's reason on

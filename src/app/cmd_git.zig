@@ -41,6 +41,7 @@ pub const table = .{
     .@"git.ai_commit" = &notInBuild,
     .@"git.codex_commit" = &notInBuild,
     .@"git.ai_recompose" = &notInBuild,
+    .@"git.branch_rail_toggle" = &branchRailToggle,
     .@"git.checkout" = &checkout,
     .@"git.recent_branches" = &recentBranches,
     .@"git.new_branch" = &newBranch,
@@ -315,6 +316,10 @@ fn unstageAll(app: *App) CommandError!void {
 fn commit(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     git.openPrompt(app, .commit, "Commit message");
+}
+
+fn branchRailToggle(app: *App) CommandError!void {
+    try git.toggleRail(app);
 }
 
 // ─── branches ───────────────────────────────────────────────────────────

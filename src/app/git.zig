@@ -28,6 +28,7 @@ const hooks = @import("../core/hooks.zig");
 const client = @import("../git/client.zig");
 const parse = @import("../git/parse.zig");
 const remote_mod = @import("../git/remote.zig");
+const cmd_app = @import("cmd_app.zig");
 const builtin = @import("builtin");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
@@ -42,6 +43,7 @@ const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
 
 pub const Row = status_view.Row;
+pub const RailSection = status_view.RailSection;
 pub const Panel = list_panel.ListPanel(Row);
 
 /// How long a status snapshot is trusted before `tick` asks again.
@@ -95,10 +97,12 @@ pub const Confirm = union(enum) {
     discard_hunk: struct { pane: PaneId },
     delete_branch: []u8,
     worktree_remove: []u8,
+    /// A branch-rail row: checkout after a yes.
+    checkout: []u8,
 
     pub fn deinit(c: Confirm, gpa: Allocator) void {
         switch (c) {
-            .discard, .delete_branch, .worktree_remove => |s| gpa.free(s),
+            .discard, .delete_branch, .worktree_remove, .checkout => |s| gpa.free(s),
             .none, .discard_hunk => {},
         }
     }
@@ -298,9 +302,21 @@ pub const State = struct {
     /// snapshot) and the forge it names, for the badge.
     remote: []const u8 = "",
     provider: remote_mod.Provider = .none,
+    /// The branch rail: open or folded, its own snapshot, and which of
+    /// its sections are folded.
+    rail_open: bool = false,
+    rail_pending: bool = false,
+    rail_snapshot: alloc.SnapshotArena,
+    rail_branches: []parse.Branch = &.{},
+    rail_worktrees: []const []const u8 = &.{},
+    rail_prs: []parse.Pr = &.{},
+    /// The rail was asked for without `gh`; said once.
+    rail_gh_toasted: bool = false,
+    rail_loaded: bool = false,
+    rail_folded: std.enums.EnumSet(RailSection) = .initEmpty(),
 
     pub fn init(gpa: Allocator) State {
-        return .{ .snapshot = alloc.SnapshotArena.init(gpa) };
+        return .{ .snapshot = alloc.SnapshotArena.init(gpa), .rail_snapshot = alloc.SnapshotArena.init(gpa) };
     }
 
     /// Stops every worker first: they borrow `app.events` and post into it.
@@ -315,6 +331,7 @@ pub const State = struct {
         self.filtered.deinit(gpa);
         self.rail.deinit(gpa);
         self.confirm.deinit(gpa);
+        self.rail_snapshot.deinit();
         self.snapshot.deinit();
     }
 
@@ -735,6 +752,21 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 else => {},
             };
         },
+        .rail => |rail| {
+            st.rail_pending = false;
+            const active = st.activeRepo() orelse return;
+            if (active.id != repo.id) return;
+            adoptArena(&st.rail_snapshot.arena, &result.arena, gpa);
+            st.rail_branches = rail.branches;
+            st.rail_worktrees = rail.worktrees;
+            st.rail_prs = rail.prs;
+            st.rail_loaded = true;
+            if (!rail.gh and !st.rail_gh_toasted) {
+                st.rail_gh_toasted = true;
+                app.toast("open PRs need `gh` on PATH", .{});
+            }
+            try rebuildRows(app);
+        },
         .head_sha => |sha| {
             if (sha.len == 0) return;
             try app.clipboard.setYank(sha, false);
@@ -764,6 +796,7 @@ pub fn afterChange(app: *App, repo: *client.Repo) Allocator.Error!void {
     if (st.activeRepo()) |a| if (a.id == repo.id) {
         st.status_pending = false;
         requestStatus(app) catch {};
+        if (st.rail_open) requestRail(app) catch {};
     };
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
         .diff => |*dp| if (dp.repo == repo.id and dp.scope != .commit) refreshDiff(app, dp) catch {},
@@ -779,6 +812,12 @@ fn clearStatus(app: *App) void {
     st.status_at_ms = 0;
     st.remote = "";
     st.provider = .none;
+    st.rail_branches = &.{};
+    st.rail_worktrees = &.{};
+    st.rail_prs = &.{};
+    st.rail_loaded = false;
+    st.rail_pending = false;
+    st.rail_snapshot.reset();
     st.marks.clearRetainingCapacity();
     st.rows.clearRetainingCapacity();
     st.filtered.clearRetainingCapacity();
@@ -806,7 +845,79 @@ fn rebuildRows(app: *App) Allocator.Error!void {
             try st.rows.append(app.gpa, .{ .header = false, .group = g, .code = e.code, .path = e.path, .entry = @intCast(i) });
         };
     }
+    if (st.rail_open) try appendRailRows(app);
     try refilter(app);
+}
+
+/// The branch rail below the status groups: three section headers,
+/// each folding its rows. Before the data lands the sections say so.
+fn appendRailRows(app: *App) Allocator.Error!void {
+    const st = &app.git;
+    const gpa = app.gpa;
+    const g: parse.Group = .unstaged;
+    for ([_]RailSection{ .branches, .worktrees, .prs }) |sec| {
+        const folded = st.rail_folded.contains(sec);
+        const count: u32 = switch (sec) {
+            .branches => @intCast(st.rail_branches.len),
+            .worktrees => @intCast(st.rail_worktrees.len),
+            .prs => @intCast(st.rail_prs.len),
+        };
+        try st.rows.append(gpa, .{ .header = true, .group = g, .kind = .section, .section = sec, .count = count, .folded = folded });
+        if (folded) continue;
+        if (!st.rail_loaded) {
+            try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .note, .section = sec, .path = if (st.rail_pending) "loading…" else "press r to load" });
+            continue;
+        }
+        switch (sec) {
+            .branches => for (st.rail_branches, 0..) |b, i| {
+                const detail: []const u8 = if (b.gone) "gone" else if (b.ahead > 0 and b.behind > 0)
+                    try std.fmt.allocPrint(st.rail_snapshot.allocator(), "↑{d} ↓{d}", .{ b.ahead, b.behind })
+                else if (b.ahead > 0)
+                    try std.fmt.allocPrint(st.rail_snapshot.allocator(), "↑{d}", .{b.ahead})
+                else if (b.behind > 0)
+                    try std.fmt.allocPrint(st.rail_snapshot.allocator(), "↓{d}", .{b.behind})
+                else
+                    "";
+                try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .branch, .section = sec, .path = b.name, .detail = detail, .current = b.current, .remote = b.remote, .entry = @intCast(i) });
+            },
+            .worktrees => for (st.rail_worktrees, 0..) |w, i| {
+                const sep = std.mem.indexOfScalar(u8, w, '\x1f');
+                const path = if (sep) |x| w[0..x] else w;
+                const branch = if (sep) |x| w[x + 1 ..] else "";
+                try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .worktree, .section = sec, .path = path, .detail = branch, .current = i == 0, .entry = @intCast(i) });
+            },
+            .prs => {
+                if (st.rail_prs.len == 0) {
+                    try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .note, .section = sec, .path = if (cmd_app.onPath(app, "gh")) "no open PRs" else "needs `gh` on PATH" });
+                }
+                for (st.rail_prs) |pr| {
+                    try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .pr, .section = sec, .path = pr.title, .detail = pr.branch, .entry = pr.number });
+                }
+            },
+        }
+    }
+}
+
+/// Ask the active repo for the rail's data, unless it is on the way.
+pub fn requestRail(app: *App) CommandError!void {
+    const st = &app.git;
+    const r = st.activeRepo() orelse return;
+    if (st.rail_pending) return;
+    st.rail_pending = true;
+    submit(app, r, .{ .rail = .{ .gh = cmd_app.onPath(app, "gh") } }) catch |err| {
+        st.rail_pending = false;
+        return err;
+    };
+    try rebuildRows(app);
+}
+
+/// Show or fold the branch rail; showing it fetches the data.
+pub fn toggleRail(app: *App) CommandError!void {
+    const st = &app.git;
+    _ = try requireRepo(app);
+    st.rail_open = !st.rail_open;
+    if (st.rail_open) try requestRail(app) else try rebuildRows(app);
+    app.needs_render = true;
 }
 
 /// The filter is a case-insensitive substring over the path; headers
@@ -826,12 +937,12 @@ pub fn refilter(app: *App) Allocator.Error!void {
             var any = false;
             var j = i + 1;
             while (j < st.rows.items.len and !st.rows.items[j].header) : (j += 1) {
-                if (containsIgnoreCase(st.rows.items[j].path, q)) any = true;
+                if (st.rows.items[j].kind != .note and containsIgnoreCase(st.rows.items[j].path, q)) any = true;
             }
             if (any) try st.filtered.append(app.gpa, @intCast(i));
             continue;
         }
-        if (q.len == 0 or containsIgnoreCase(row.path, q)) try st.filtered.append(app.gpa, @intCast(i));
+        if (q.len == 0 or (row.kind != .note and containsIgnoreCase(row.path, q))) try st.filtered.append(app.gpa, @intCast(i));
     }
     if (st.rail.cursor >= st.filtered.items.len) st.rail.cursor = st.filtered.items.len -| 1;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
@@ -1424,6 +1535,7 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
         },
         .delete_branch => |b| try submitOp(app, try requireRepo(app), .{ .delete_branch = try gpa.dupe(u8, b) }),
         .worktree_remove => |p| try submitOp(app, try requireRepo(app), .{ .worktree_remove = try gpa.dupe(u8, p) }),
+        .checkout => |b| try submitOp(app, try requireRepo(app), .{ .checkout = try gpa.dupe(u8, b) }),
     }
 }
 
@@ -1431,16 +1543,54 @@ pub fn acceptConfirm(app: *App, choice: usize) CommandError!void {
 
 pub const RowAction = enum { open, stage, unstage, discard };
 
-/// Act on a rail / status-pane row. Headers toggle their group.
+/// Act on a rail / status-pane row. Headers toggle their group; a
+/// branch checks out after a yes (`x` deletes after one); a worktree
+/// row says where it is; a PR opens on the remote.
 pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
     if (row.header) {
         if (what == .open) {
-            st.collapsed.toggle(row.group);
+            if (row.kind == .section) st.rail_folded.toggle(row.section) else st.collapsed.toggle(row.group);
             try rebuildRows(app);
         }
         return;
+    }
+    switch (row.kind) {
+        .status => {},
+        .branch => {
+            if (row.entry >= st.rail_branches.len) return;
+            const b = st.rail_branches[row.entry];
+            switch (what) {
+                .open => {
+                    if (b.current) return app.diag.fail(app.frame.allocator(), "{s} is checked out", .{b.name});
+                    // A remote branch checks out as a local one of the same short name.
+                    const name = if (b.remote) (if (std.mem.indexOfScalar(u8, b.name, '/')) |x| b.name[x + 1 ..] else b.name) else b.name;
+                    try openConfirm(app, .{ .checkout = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Checkout {s}?", .{name}));
+                },
+                .discard => {
+                    if (b.current) return app.diag.fail(app.frame.allocator(), "cannot delete the checked-out branch", .{});
+                    if (b.remote) return app.diag.fail(app.frame.allocator(), "remote branches are not deleted from here", .{});
+                    try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, b.name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{b.name}));
+                },
+                .stage, .unstage => {},
+            }
+            return;
+        },
+        .worktree => {
+            if (what == .open) app.toast("worktree: {s}", .{row.path});
+            return;
+        },
+        .pr => {
+            if (what != .open) return;
+            for (st.rail_prs) |pr| if (pr.number == row.entry) {
+                openExternal(app, pr.url);
+                app.toast("{s}", .{pr.url});
+                return;
+            };
+            return;
+        },
+        .section, .note => return,
     }
     const repo = st.activeRepo() orelse return error.NoRepo;
     switch (what) {
@@ -1505,7 +1655,12 @@ pub fn rowLetter(app: *App, c: u21, row: ?Row) Allocator.Error!bool {
         'a' => runToast(app, command.run(app, .{ .static = .@"git.stage_all" })),
         'A' => runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })),
         'c' => runToast(app, command.run(app, .{ .static = .@"git.commit" })),
-        'r' => runToast(app, requestStatus(app)),
+        'n' => runToast(app, command.run(app, .{ .static = .@"git.new_branch" })),
+        'b' => runToast(app, toggleRail(app)),
+        'r' => {
+            runToast(app, requestStatus(app));
+            if (app.git.rail_open) runToast(app, requestRail(app));
+        },
         else => return false,
     }
     return true;
@@ -2136,6 +2291,8 @@ pub fn statusPaneClick(app: *App, sp: *StatusPane, idx: u32, m: Mouse) Allocator
 }
 
 fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const st = &app.git;
+    if (st.selectedRow()) |row| if (row.kind != .status) return openRailMenu(app, x, y);
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Open diff", .action = .{ .command = .@"git.diff_file" } },
         .{ .label = "Open file", .action = .{ .command = .@"git.open_file" } },
@@ -2150,6 +2307,22 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Git", items, x, y);
 }
 
+fn openRailMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const items = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "Checkout…", .action = .{ .command = .@"git.checkout" } },
+        .{ .label = "New branch…", .action = .{ .command = .@"git.new_branch" } },
+        .{ .label = "Delete branch…", .action = .{ .command = .@"git.delete_branch" } },
+        .{ .label = "Merge into current…", .action = .{ .command = .@"git.merge" }, .separator_before = true },
+        .{ .label = "Rebase onto…", .action = .{ .command = .@"git.rebase" } },
+        .{ .label = "Add worktree…", .action = .{ .command = .@"git.worktree_add" }, .separator_before = true },
+        .{ .label = "Remove worktree…", .action = .{ .command = .@"git.worktree_remove" } },
+        .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" }, .separator_before = true },
+        .{ .label = "Hide branch rail", .action = .{ .command = .@"git.branch_rail_toggle" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu("Branches", items, x, y);
+}
+
 // ─── draw (D6) ──────────────────────────────────────────────────────────
 
 const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
@@ -2160,6 +2333,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const st = &app.git;
     if (!st.discovered) discover(app) catch {};
     if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
+    if (st.rail_open and !st.rail_loaded and !st.rail_pending and st.activeRepo() != null) requestRail(app) catch {};
     const rows = try ui.arena.alloc(Row, st.filtered.items.len);
     for (st.filtered.items, 0..) |idx, i| rows[i] = st.rows.items[idx];
     const repo_name: []const u8 = if (st.activeRepo()) |r| r.name else "";
@@ -2208,7 +2382,7 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect
     if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
     const repo_name: []const u8 = if (st.repoById(sp.repo)) |r| r.name else "";
     const branch = st.branchLabel() orelse "…";
-    const header = ui.fmt(" {s} · {s} · {d} change{s}   ·   s stage · u unstage · x discard · a all · c commit · enter diff ", .{ repo_name, branch, st.badge(), if (st.badge() == 1) "" else "s" });
+    const header = ui.fmt(" {s} · {s} · {d} change{s}   ·   s stage · u unstage · x discard · a all · c commit · b branches · enter diff ", .{ repo_name, branch, st.badge(), if (st.badge() == 1) "" else "s" });
     const focused = app.active == id and app.focus == .pane;
     status_view.drawPane(ui, id, area, .{ .header = header, .rows = st.rows.items, .cursor = sp.cursor, .focused = focused, .empty = if (st.status == null) "Reading git status…" else "Working tree clean.", .badge = st.provider.label() }, &sp.scroll);
     if (app.active == id) app.pane_rows = @max(area.h -| 1, 1);
@@ -2358,7 +2532,7 @@ const Fixture = struct {
         var i: usize = 0;
         while (i < max) : (i += 1) {
             try f.app.tick(App.nowMs(testing.io));
-            if (!f.app.git.status_pending and f.app.git.busy == 0 and f.app.git.blame_pending == null and !anyPanePending(&f.app)) return;
+            if (!f.app.git.status_pending and f.app.git.busy == 0 and f.app.git.blame_pending == null and !f.app.git.rail_pending and !anyPanePending(&f.app)) return;
             testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
         }
     }
@@ -2612,4 +2786,64 @@ test "the WIP row: a dirty tree puts it first, its buttons stage / unstage throu
     syncWip(&f.app, g);
     try testing.expect(!g.has_wip);
     try testing.expectEqual(@as(usize, 0), g.cursor);
+}
+
+test "the branch rail: toggling it lists the branches with their tracking counts, worktrees and the PR note; a section folds; a branch row asks before checkout" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.sh(&.{ "branch", "feature" });
+    f.app.tree.visible = false;
+    const st = &f.app.git;
+    try command.run(&f.app, .{ .static = .@"view.activity_git" });
+    try command.run(&f.app, .{ .static = .@"git.refresh" });
+    try f.settle(2000);
+    try testing.expect(!st.rail_open);
+    try command.run(&f.app, .{ .static = .@"git.branch_rail_toggle" });
+    try testing.expect(st.rail_open);
+    try f.settle(2000);
+    try testing.expect(st.rail_loaded);
+    try testing.expectEqual(@as(usize, 2), st.rail_branches.len);
+    try testing.expectEqual(@as(usize, 1), st.rail_worktrees.len);
+    var txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "Branches (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "* main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "feature") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Worktrees (1)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Pull requests (0)") != null);
+    testing.allocator.free(txt);
+    // Fold the branches section: its rows go, the header stays.
+    var branches_row: ?usize = null;
+    var feature_row: ?usize = null;
+    for (st.rows.items, 0..) |r, i| {
+        if (r.kind == .section and r.section == .branches) branches_row = i;
+        if (r.kind == .branch and std.mem.eql(u8, r.path, "feature")) feature_row = i;
+    }
+    try testing.expect(feature_row != null);
+    try actOnRow(&f.app, st.rows.items[branches_row.?], .open);
+    txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "▸ Branches (2)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "feature") == null);
+    testing.allocator.free(txt);
+    try actOnRow(&f.app, st.rows.items[branches_row.?], .open);
+    // Enter on `feature` asks first; yes checks it out through the worker.
+    feature_row = null;
+    for (st.rows.items, 0..) |r, i| if (r.kind == .branch and std.mem.eql(u8, r.path, "feature")) {
+        feature_row = i;
+    };
+    try actOnRow(&f.app, st.rows.items[feature_row.?], .open);
+    try testing.expect(f.app.overlay == .confirm);
+    try testing.expect(st.confirm == .checkout);
+    try acceptConfirm(&f.app, 0);
+    try f.settle(2000);
+    try f.settle(2000);
+    try testing.expectEqualStrings("feature", st.branchLabel().?);
+    // Hiding the rail drops its rows.
+    try command.run(&f.app, .{ .static = .@"git.branch_rail_toggle" });
+    txt = try f.screen();
+    try testing.expect(std.mem.indexOf(u8, txt, "Branches (") == null);
+    testing.allocator.free(txt);
 }
