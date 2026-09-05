@@ -1,0 +1,25 @@
+# zig-only
+# `:q` closes the window, not the buffer: with another window on the
+# file, the text (edits included) stays; the last window refuses a
+# dirty buffer without `!`, and `:q!` discards it.
+write a.txt "alpha\n"
+write b.txt "beta\n"
+open b.txt
+open a.txt
+command editor.use_vim
+ex vsplit
+expect pane "a.txt"
+key I
+type "R "
+key esc
+expect screen contains "R alpha"
+ex q
+expect pane "a.txt"
+expect screen contains "R alpha"
+expect dirty true
+ex q
+expect screen contains "unsaved changes"
+expect pane "a.txt"
+ex q!
+expect pane "b.txt"
+expect screen lacks "R alpha"

@@ -1,0 +1,15 @@
+# zig-only
+# `:bd` closes the buffer: every window on the document goes, and the
+# split collapses onto what is left.
+write a.txt "alpha\n"
+write b.txt "beta\n"
+open b.txt
+open a.txt
+command editor.use_vim
+ex vsplit
+expect pane "a.txt"
+expect screen contains "alpha"
+ex bd
+expect pane "b.txt"
+expect screen lacks "alpha"
+expect screen contains "beta"

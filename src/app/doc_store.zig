@@ -127,3 +127,45 @@ test "doc store: two windows on one path share the document; the last close drop
     try testing.expectEqual(@as(usize, 0), store.count());
     try testing.expect(store.find("/ws/a.txt") == null);
 }
+
+test "doc store: dirty and save are the document's — an edit through one window dirties both, a save from the other cleans both" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const path = try std.fs.path.join(gpa, &.{ pbuf[0..n], "shared.txt" });
+    defer gpa.free(path);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "shared.txt", .data = "one\ntwo\n" });
+    const store = try DocStore.create(gpa);
+    defer store.destroy();
+    var a = try Buffer.load(gpa, testing.io, path, .vim, .{});
+    _ = try store.adopt(a.doc);
+    var b = try Buffer.initOn(gpa, a.doc, .vim, .{});
+    defer b.deinit();
+    var clip = @import("../editor/clipboard.zig").Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    // B sits on "two"; A inserts a line above it: B's cursor follows the text.
+    b.editor.setCursor(4);
+    _ = try a.applyOps(&.{.{ .replace_range = .{ .start = 0, .end = 0, .text = "zero\n" } }}, &clip, 10, arena.allocator());
+    try testing.expect(a.doc.dirty);
+    try testing.expect(b.doc.dirty);
+    try testing.expectEqual(@as(usize, 9), b.editor.cursor);
+    try testing.expectEqualStrings("zero\none\ntwo\n", b.editor.bytes());
+    // Save from B: one write, both windows clean, one undo history.
+    try b.save(testing.io);
+    try testing.expect(!a.doc.dirty);
+    try testing.expect(!b.doc.dirty);
+    const on_disk = try tmp.dir.readFileAlloc(testing.io, "shared.txt", gpa, .limited(1 << 20));
+    defer gpa.free(on_disk);
+    try testing.expectEqualStrings("zero\none\ntwo\n", on_disk);
+    // Undo from B takes back A's edit: the text, and B's cursor lands on it.
+    _ = try b.applyOps(&.{.undo}, &clip, 10, arena.allocator());
+    try testing.expectEqualStrings("one\ntwo\n", a.editor.bytes());
+    try testing.expectEqual(@as(usize, 0), b.editor.cursor);
+    try testing.expect(a.doc.dirty);
+    a.deinit();
+    try testing.expectEqual(@as(usize, 1), store.count());
+}

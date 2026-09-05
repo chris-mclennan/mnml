@@ -1,0 +1,31 @@
+# zig-only
+# The finding `nvchad-vsplit-clones-buffer`: `:vsplit` opens a second
+# window on the SAME buffer, not a copy of the file. An insert in one
+# window shows in the other, both report dirty, `:w` from either
+# writes the shared text and leaves both clean — and the other window
+# never sees a "changed on disk" toast for its own file.
+write a.txt "alpha bravo charlie\nsecond line\n"
+open a.txt
+command editor.use_vim
+ex vsplit
+expect pane "a.txt"
+key g
+key g
+key I
+type "R "
+key esc
+# Both windows paint line 1 with the edit; the old line 1 is nowhere.
+expect screen contains "1 R alpha bravo charlie"
+expect screen lacks "1 alpha bravo charlie"
+expect dirty true
+command view.focus_left
+expect pane "a.txt"
+expect dirty true
+expect screen contains "1 R alpha bravo charlie"
+ex w
+expect dirty false
+expect file a.txt contains "R alpha bravo charlie"
+command view.focus_right
+expect dirty false
+wait 2200
+expect screen lacks "changed on disk"
