@@ -20,6 +20,9 @@ const CommandError = command.CommandError;
 const Rect = @import("../ui/rect.zig");
 const context = @import("../ui/context.zig");
 const Ui = context;
+const files_pane = @import("files_pane.zig");
+const file_clipboard = @import("file_clipboard.zig");
+const trash = @import("trash.zig");
 
 pub const table = .{
     .@"view.toggle_tree" = &toggle,
@@ -75,6 +78,9 @@ pub const Tree = struct {
     cursor: usize = 0,
     scroll: usize = 0,
     loaded: bool = false,
+    /// vim's two-key `yy` / `dd` (ranger's vocabulary): the first key,
+    /// until the next key. Two keys so a stray press cannot move a file.
+    pending: ?u8 = null,
 
     pub fn init(gpa: Allocator) Tree {
         return .{ .gpa = gpa };
@@ -155,7 +161,7 @@ pub const Tree = struct {
         return self.expanded.contains(rel);
     }
 
-    fn setExpanded(self: *Tree, rel: []const u8, on: bool) Allocator.Error!void {
+    pub fn setExpanded(self: *Tree, rel: []const u8, on: bool) Allocator.Error!void {
         if (on) {
             if (self.expanded.contains(rel)) return;
             const key = try self.gpa.dupe(u8, rel);
@@ -183,7 +189,28 @@ pub const Tree = struct {
     /// The keys the tree answers when it has focus. Returns false for a
     /// key it does not want (the chord chain gets it).
     pub fn handleKey(self: *Tree, app: *App, k: Key) Allocator.Error!bool {
-        if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+        // A pending `y` / `d` must not survive an unrelated key.
+        const pending = self.pending;
+        self.pending = null;
+        // The file clipboard's chords: Ctrl+X/C/V/D in both profiles —
+        // the tree never edits text, so nothing else can want them here
+        // (Rust parity). vim also gets ranger's `yy` / `dd` / `P` below.
+        if (k.mods.ctrl or k.mods.alt or k.mods.super) {
+            if (k.mods.ctrl and !k.mods.alt and !k.mods.super and k.code == .char) {
+                const id: ?command.CommandId = switch (k.code.char) {
+                    'x' => .@"file.cut",
+                    'c' => .@"file.copy",
+                    'v' => .@"file.paste",
+                    'd' => .@"file.duplicate",
+                    else => null,
+                };
+                if (id) |cid| {
+                    try runCmd(app, cid);
+                    return true;
+                }
+            }
+            return false;
+        }
         const n = self.rows.items.len;
         switch (k.code) {
             .down => self.cursor = @min(self.cursor + 1, n -| 1),
@@ -210,6 +237,20 @@ pub const Tree = struct {
                 'H' => {
                     self.show_hidden = !self.show_hidden;
                     try self.refresh(app);
+                },
+                'D' => try runCmd(app, .@"file.duplicate"),
+                'y', 'd' => {
+                    if (app.input_style != .vim) return false;
+                    if (pending != null and pending.? == c) {
+                        try runCmd(app, if (c == 'y') .@"file.copy" else .@"file.cut");
+                    } else {
+                        self.pending = @intCast(c);
+                        app.toast("{c} — press again to {s}", .{ @as(u8, @intCast(c)), if (c == 'y') "copy" else "cut" });
+                    }
+                },
+                'P' => {
+                    if (app.input_style != .vim) return false;
+                    try runCmd(app, .@"file.paste");
                 },
                 else => return false,
             },
@@ -296,6 +337,14 @@ pub const Tree = struct {
     }
 };
 
+/// A command reached from a key: `command.run` toasts the reason.
+fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
+    command.run(app, .{ .static = id }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
 fn isNoisy(name: []const u8) bool {
     for (noisy_dirs) |nd| if (std.mem.eql(u8, name, nd)) return true;
     return false;
@@ -357,12 +406,14 @@ pub fn promptNewFile(app: *App) CommandError!void {
 }
 
 fn newFolder(app: *App) CommandError!void {
+    if (files_pane.focused(app) != null) return files_pane.newFolderCmd(app);
     const dir = try app.gpa.dupe(u8, dirBeside(app));
     errdefer app.gpa.free(dir);
     try openPathPrompt(app, "New folder (workspace-relative)", .{ .new_folder = dir }, dir);
 }
 
 fn rename(app: *App) CommandError!void {
+    if (files_pane.focused(app) != null) return files_pane.renameCmd(app);
     const row = try app.tree.selected(app);
     const rel = try app.gpa.dupe(u8, row.rel);
     errdefer app.gpa.free(rel);
@@ -374,27 +425,20 @@ fn rename(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
-pub const delete_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'd', .label = "Delete" }, .{ .key = 'c', .label = "Cancel" } };
 pub const move_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'm', .label = "Move" }, .{ .key = 'c', .label = "Cancel" } };
 
+/// `Delete…` on the cursor row — or a focused Files pane's marks. The
+/// confirm offers the trash and the permanent form (`trash.zig`).
 fn delete(app: *App) CommandError!void {
-    const row = try app.tree.selected(app);
-    const rel = try app.gpa.dupe(u8, row.rel);
-    errdefer app.gpa.free(rel);
-    const msg = try std.fmt.allocPrint(app.gpa, "  Delete {s}{s}? This cannot be undone.", .{ rel, if (row.is_dir) "/" else "" });
-    errdefer app.gpa.free(msg);
-    app.overlay.deinit(app.gpa);
-    app.overlay = .{ .confirm = .{
-        .state = .{ .title = "Delete", .message = msg, .choices = &delete_choices },
-        .purpose = .{ .delete_path = rel },
-        .message = msg,
-    } };
-    app.focus = .overlay;
-    app.needs_render = true;
+    const arena = app.frame.allocator();
+    const paths = try file_clipboard.targetPaths(app, arena);
+    if (paths.len == 0) return app.diag.fail(arena, "no tree row selected", .{});
+    try trash.confirmDelete(app, paths);
 }
 
 /// `Move to…`: a prompt for the destination folder.
 fn moveTo(app: *App) CommandError!void {
+    if (files_pane.focused(app) != null) return files_pane.moveToCmd(app);
     const row = try app.tree.selected(app);
     const rel = try app.gpa.dupe(u8, row.rel);
     errdefer app.gpa.free(rel);
@@ -451,7 +495,7 @@ pub fn acceptNewFile(app: *App, dir: []const u8, text: []const u8) Allocator.Err
             return;
         };
     };
-    try app.tree.refresh(app);
+    try files_pane.refreshAfterFsChange(app);
     _ = app.openPath(abs) catch |err| app.toast("open {s}: {s}", .{ full, @errorName(err) });
     if (app.tree.rowOf(full)) |i| app.tree.cursor = i;
 }
@@ -463,7 +507,7 @@ pub fn acceptNewFolder(app: *App, dir: []const u8, text: []const u8) Allocator.E
         app.toast("mkdir {s}: {s}", .{ full, @errorName(err) });
         return;
     };
-    try app.tree.refresh(app);
+    try files_pane.refreshAfterFsChange(app);
     if (app.tree.rowOf(full)) |i| app.tree.cursor = i;
     app.toast("created {s}/", .{full});
 }
@@ -473,6 +517,11 @@ pub fn acceptNewFolder(app: *App, dir: []const u8, text: []const u8) Allocator.E
 pub fn acceptRename(app: *App, from: []const u8, text: []const u8) Allocator.Error!void {
     const arena = app.frame.allocator();
     var to = cleanRel(app, text) orelse return;
+    // A bare name typed for an absolute source (a Files pane's row) stays
+    // beside it — it is not a workspace-relative path.
+    if (std.fs.path.isAbsolute(from) and std.mem.indexOfScalar(u8, to, '/') == null and !std.fs.path.isAbsolute(to)) {
+        to = try std.fs.path.join(arena, &.{ std.fs.path.dirname(from) orelse "/", to });
+    }
     if (std.mem.eql(u8, to, from)) return;
     const to_abs = try app.absPath(to);
     if (std.Io.Dir.cwd().statFile(app.io, to_abs, .{})) |st| {
@@ -503,31 +552,16 @@ fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
             try e.buf.setPath(moved);
         }
     };
-    try app.tree.refresh(app);
+    try files_pane.refreshAfterFsChange(app);
     if (app.tree.rowOf(to)) |i| app.tree.cursor = i;
-    app.toast("moved {s} → {s}", .{ from, to });
+    app.toast("moved {s} → {s}", .{ app.relPath(from), app.relPath(to) });
 }
 
+/// Delete `rel` into the trash (`trash.deletePaths`); buffers on the
+/// path close and the tree and every browser re-read.
 pub fn acceptDelete(app: *App, rel: []const u8) Allocator.Error!void {
-    const abs = try app.absPath(rel);
-    const is_dir = if (std.Io.Dir.cwd().statFile(app.io, abs, .{})) |st| st.kind == .directory else |_| false;
-    const result = if (is_dir) std.Io.Dir.cwd().deleteTree(app.io, abs) else std.Io.Dir.cwd().deleteFile(app.io, abs);
-    result catch |err| {
-        app.toast("delete {s}: {s}", .{ rel, @errorName(err) });
-        return;
-    };
-    // Buffers on the deleted path close (their text is gone from disk).
-    var i: usize = 0;
-    while (i < app.panes.slots.items.len) : (i += 1) {
-        const p = &(app.panes.slots.items[i] orelse continue);
-        const e = p.asEditor() orelse continue;
-        const bp = e.buf.path orelse continue;
-        if (std.mem.eql(u8, bp, abs) or (is_dir and std.mem.startsWith(u8, bp, abs) and bp.len > abs.len and bp[abs.len] == '/')) {
-            try app.forceClosePane(@intCast(i));
-        }
-    }
-    try app.tree.refresh(app);
-    app.toast("deleted {s}", .{rel});
+    const abs = try app.frame.allocator().dupe(u8, try app.absPath(rel));
+    try trash.deletePaths(app, &.{abs}, false);
 }
 
 fn toggle(app: *App) CommandError!void {

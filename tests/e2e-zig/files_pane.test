@@ -1,0 +1,63 @@
+# zig-only
+# The Files pane (src/app/files_pane.zig): a directory listing as a
+# Pane — the breadcrumb row with the sort / hidden chips, the columns,
+# dirs first; `.` toggles hidden files, `/` filters, `s` cycles the
+# sort, Space marks, Enter descends / opens, `h` goes up, `p` previews.
+write src/main.zig "const x = 1;\n"
+write README.md "# hi\nsecond line\n"
+write notes.txt "n"
+write .hidden "h"
+command files.open
+expect screen contains "sort: Name"
+expect screen contains "Modified"
+expect screen contains "src/"
+expect screen contains "README.md"
+expect screen contains "notes.txt"
+expect screen contains "(3)"
+expect screen lacks ".hidden"
+# `.` shows dot files; again hides them.
+key .
+expect screen contains ".hidden"
+expect screen contains "(4)"
+key .
+expect screen lacks ".hidden"
+# Space marks the row and advances; the crumb row counts the marks;
+# Esc clears them.
+key space
+expect screen contains "✓1"
+key space
+expect screen contains "✓2"
+key esc
+expect screen lacks "✓2"
+# The filter narrows by name, case-insensitively; Esc twice clears it.
+key /
+type READ
+expect screen contains "(1 of 3)"
+expect screen lacks "notes.txt"
+key esc
+key esc
+expect screen contains "notes.txt"
+# `s` cycles the sort chip.
+key s
+expect screen contains "sort: Size"
+key s
+expect screen contains "sort: Modified"
+# Enter on a directory descends (the crumb grows); `h` goes back up
+# with the cursor on the directory just left.
+key g
+key enter
+expect screen contains "› src"
+expect screen contains "main.zig"
+expect screen lacks "README.md"
+key h
+expect screen contains "README.md"
+# The preview column shows the head of the file under the cursor while
+# the pane is wide enough; `p` opens it in a leaf of its own without
+# leaving the browser; Enter opens it for real.
+key G
+expect screen contains "│ # hi"
+expect screen contains "│ second line"
+key p
+expect screen contains "second line"
+key enter
+expect pane README.md

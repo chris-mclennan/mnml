@@ -80,6 +80,8 @@ const integrations = @import("integrations.zig");
 const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
+const files_pane = @import("files_pane.zig");
+const transfers = @import("transfers.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -296,7 +298,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -375,6 +377,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
                 flaky_view.draw(ui, pr.pane, rect, fp, app.active == pr.pane and app.focus == .pane);
             },
+            .files => |*f| try files_pane.draw(app, ui, pr.pane, f, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -707,7 +710,13 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             info.col = c.x + 1;
         };
         info.total_lines = p.rows;
-    } else if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+    } else if (app.panes.get(id)) |p| if (p.asFiles()) |f| {
+        info.mode_label = if (f.in_trash) "TRASH" else "FILES";
+        info.mode_kind = .edit;
+        info.file = app.relPath(f.cwd);
+        info.line = @intCast(f.cursor + 1);
+        info.total_lines = @intCast(f.count());
+    } else if (p.asRequest()) |rp| {
         info.mode_label = if (rp.isSending()) "SENDING" else "HTTP";
         info.mode_kind = .edit;
         info.file = if (rp.source_path) |sp| app.relPath(sp) else rp.title();
@@ -725,6 +734,8 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.
     const branch_seg = try git_app.statusSegment(app, ui.arena);
     const meter_seg = try ai_app.meterSegment(app, ui.arena);
+    // The transfer chip: progress and speed while a copy runs, nothing at rest.
+    const transfer_seg = try transfers.chip(app, ui.arena, ui.ascii);
     // A script's segments (`mnml.statusline.segment`): the `left` ones
     // sit at the inner edge of the right cluster, the `right` ones after
     // the built-in chips. Then the unread-messages bell and the frame-time
@@ -738,7 +749,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const budget: usize = area.w -| 40;
     info.dyn_left = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .left, budget / 2, ui.ascii));
     info.dyn_right = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .right, budget / 2, ui.ascii));
-    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, bell_seg, stress_seg };
+    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, transfer_seg, bell_seg, stress_seg };
     var extra: usize = lua_left.len + lua_right.len;
     for (maybes) |m| extra += @intFromBool(m != null);
     if (extra > 0) {

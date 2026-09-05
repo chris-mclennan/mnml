@@ -76,6 +76,8 @@ const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
+const files_pane = @import("files_pane.zig");
+const trash = @import("trash.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -225,6 +227,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .marketplace => |*mk| {
             if (try marketplace.handleKey(app, id, mk, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .files => |*f| {
+            if (try files_pane.handleKey(app, id, f, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -694,6 +701,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
         .new_folder => |dir| try tree_mod.acceptNewFolder(app, dir, text),
         .rename => |from| try tree_mod.acceptRename(app, from, text),
+        .move_paths => |ps| try files_pane.acceptMoveTo(app, @ptrCast(ps), text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
         .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
         .ai_ask => try toastOnFail(app, ai_app.askAccept(app, text)),
@@ -755,7 +763,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             1 => app.quit = true,
             else => {},
         },
-        .delete_path => |rel| if (choice == 0) try tree_mod.acceptDelete(app, rel),
+        .delete_paths => |d| try trash.acceptDelete(app, @ptrCast(d.paths), d.permanent_only, choice),
+        .empty_trash => try trash.acceptEmpty(app, choice),
         .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
@@ -1069,6 +1078,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
+                .files => |*f| try files_pane.click(app, sh.pane, f, sh.id, m),
                 .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1323,6 +1333,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .files => |*f| files_pane.scrollBy(f, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 

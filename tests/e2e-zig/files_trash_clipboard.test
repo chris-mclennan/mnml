@@ -1,0 +1,59 @@
+# zig-only
+# The workspace trash (src/app/trash.zig) and the file clipboard
+# (src/app/file_clipboard.zig): a delete from the Files pane goes to
+# the trash and `files.trash` / `files.restore_from_trash` bring it
+# back; copy / paste / duplicate run on the transfer worker
+# (src/app/transfers.zig) and the listing re-reads when they finish.
+write a.txt "aa"
+write b.txt "bb"
+write out/.keep ""
+command files.open
+expect screen contains "out/"
+# Row 1 is a.txt: delete offers the trash and the permanent form.
+key j
+command file.delete
+expect screen contains "Delete a.txt? It goes to the trash."
+expect screen contains "Delete [P]ermanently"
+key d
+expect screen contains "deleted a.txt"
+expect screen contains "(2)"
+# The trash is a Files pane of its own; the entry carries its stamp.
+command files.trash
+expect pane Trash
+expect screen contains "-a.txt"
+command files.restore_from_trash
+expect screen contains "restored a.txt"
+expect screen contains "The trash is empty"
+expect file a.txt contains "aa"
+# Close the trash: the browser is back, a.txt with it.
+key q
+expect screen contains "a.txt"
+expect screen contains "(3)"
+# Mark a.txt and b.txt, Ctrl+C, into out/, Ctrl+V: the copy runs on
+# the worker and toasts when it lands.
+key g
+key j
+key space
+key space
+expect screen contains "✓2"
+key ctrl+c
+expect screen contains "copied 2 items"
+key g
+key enter
+expect screen contains "› out"
+key ctrl+v
+wait 400
+expect screen contains "copy finished — 2 items"
+expect file out/a.txt contains "aa"
+expect file out/b.txt contains "bb"
+expect screen contains "b.txt"
+# The marks survived the copy (their paths still exist) and would win
+# over the cursor: Esc clears them, then Duplicate makes `-copy` beside
+# the cursor row.
+key esc
+expect screen lacks "✓2"
+key g
+command file.duplicate
+wait 400
+expect screen contains "a-copy.txt"
+expect file out/a-copy.txt contains "aa"

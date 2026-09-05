@@ -34,6 +34,7 @@ const marketplace = @import("marketplace.zig");
 const ai_apply = @import("ai_apply.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
+const files_pane = @import("files_pane.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -42,6 +43,7 @@ pub const RequestPane = request_pane.RequestPane;
 pub const WebsocketPane = ws_pane.WebsocketPane;
 pub const BrowserPane = browser_pane.BrowserPane;
 pub const MountPane = mount_pane.MountPane;
+pub const FilesPane = files_pane.FilesPane;
 
 /// What the file watcher last saw on disk for an editor's file.
 pub const DiskStamp = struct { mtime_ns: i128, size: u64 };
@@ -157,6 +159,8 @@ pub const Pane = union(enum) {
     tests: tests_pane.TestsPane,
     /// The flaky-test dashboard (one at a time).
     flaky: flaky.FlakyPane,
+    /// A directory listing (`files.open`); the trash is one too.
+    files: FilesPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -170,6 +174,7 @@ pub const Pane = union(enum) {
             .ai_apply => |*a| a.deinit(),
             .tests => |*tp| tp.deinit(gpa, io),
             .flaky => |*fp| fp.deinit(),
+            .files => |*f| f.deinit(),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -216,13 +221,14 @@ pub const Pane = union(enum) {
             .ai_apply => return "ai.apply",
             .tests => |*tp| return tp.title(),
             .flaky => |*fp| return fp.title(),
+            .files => |*f| return f.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
         };
     }
 
@@ -271,6 +277,13 @@ pub const Pane = union(enum) {
     pub fn asMount(self: *Pane) ?*MountPane {
         return switch (self.*) {
             .mount => |*m| m,
+            else => null,
+        };
+    }
+
+    pub fn asFiles(self: *Pane) ?*FilesPane {
+        return switch (self.*) {
+            .files => |*f| f,
             else => null,
         };
     }

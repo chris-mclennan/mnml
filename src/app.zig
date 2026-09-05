@@ -88,6 +88,10 @@ const undo_store = @import("app/undo_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
 const startup_picker = @import("app/startup_picker.zig");
+const files_pane = @import("app/files_pane.zig");
+const file_clipboard = @import("app/file_clipboard.zig");
+const trash = @import("app/trash.zig");
+const transfers = @import("app/transfers.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -158,6 +162,9 @@ pub const PromptPurpose = union(enum) {
     new_folder: []u8,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
+    /// `file.move_to` from a Files pane: the absolute paths to move
+    /// (owned) into the folder typed into the prompt.
+    move_paths: [][]u8,
     /// AI: a bare question; a question with the file + selection;
     /// a transcript search; a branch description; the OAuth token.
     ai_ask,
@@ -206,6 +213,10 @@ pub const PromptPurpose = union(enum) {
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
             .new_file, .new_folder, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .move_paths => |ps| {
+                for (ps) |q| gpa.free(q);
+                gpa.free(ps);
+            },
             .dap_bp_condition, .dap_hit_count => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             else => {},
@@ -221,8 +232,11 @@ pub const ConfirmPurpose = union(enum) {
     install_tool: u16,
     /// A git yes/no; `git.State.confirm` holds the payload.
     git,
-    /// Delete the workspace-relative path (owned).
-    delete_path: []u8,
+    /// Delete these absolute paths (owned); `permanent_only` when they
+    /// are already in the trash (`trash.confirmDelete`).
+    delete_paths: DeletePaths,
+    /// `files.empty_trash`.
+    empty_trash,
     /// Move `from` into directory `into` (both workspace-relative, owned).
     move_path: struct { from: []u8, into: []u8 },
     /// An AI job's write_file waits on this box (the job id).
@@ -232,9 +246,15 @@ pub const ConfirmPurpose = union(enum) {
     /// `integrations.remove`: the manifest id to delete (owned).
     remove_integration: []u8,
 
+    pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
+
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration => |s| gpa.free(s),
+            .remove_integration => |s| gpa.free(s),
+            .delete_paths => |d| {
+                for (d.paths) |p| gpa.free(p);
+                gpa.free(d.paths);
+            },
             .kill_pids => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
@@ -592,6 +612,13 @@ pub const App = struct {
     stress: stress.Meter = .{},
     update: update.State = .{},
     session: session.State = .{},
+    /// Background copies / moves (`transfers.zig`); the statusline chip
+    /// and the `:qa` guard read it.
+    transfers: transfers.State = .{},
+    /// The file clipboard (`file.cut` / `file.copy` / `file.paste`).
+    file_clipboard: file_clipboard.State = .{},
+    /// The workspace trash's prune clock and bounds.
+    trash: trash.State = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -786,6 +813,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
+        self.transfers.deinit(gpa, self.io);
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
@@ -810,6 +838,7 @@ pub const App = struct {
         self.toasts.deinit(gpa);
         self.messages.deinit(gpa);
         self.harpoon.deinit(gpa);
+        self.file_clipboard.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
         var it = self.abbrevs.iterator();
@@ -1187,6 +1216,7 @@ pub const App = struct {
         const next = layout.removePane(id);
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
+        files_pane.onPaneClosed(self, id);
         if (self.last_editor == id) self.last_editor = null;
         if (self.active == id) {
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
@@ -1298,6 +1328,11 @@ pub const App = struct {
         self.needs_render = true;
     }
 
+    /// How many background transfers are still writing.
+    pub fn transfersRunning(self: *App) usize {
+        return transfers.running(self);
+    }
+
     /// Any pane with unsaved changes?
     pub fn anyDirty(self: *App) bool {
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| if (p.dirty()) return true;
@@ -1347,6 +1382,7 @@ pub const App = struct {
             .cdp => |cev| try browser_pane.handle(self, cev),
             .mount => |mev| try mount_pane.handle(self, mev),
             .marketplace => |r| try marketplace.handle(self, r),
+            .transfer => |tev| try transfers.handle(self, tev),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1424,6 +1460,7 @@ pub const App = struct {
         try self.script().tick(now);
         try update.tick(self);
         session.tick(self, now);
+        trash.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1443,6 +1480,7 @@ pub const App = struct {
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -1629,6 +1667,11 @@ test {
     _ = @import("app/session.zig");
     _ = @import("app/cmd_session.zig");
     _ = @import("app/startup_picker.zig");
+    _ = @import("app/files_pane.zig");
+    _ = @import("app/file_clipboard.zig");
+    _ = @import("app/trash.zig");
+    _ = @import("app/transfers.zig");
+    _ = @import("ui/files_view.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

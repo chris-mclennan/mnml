@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 Rust ids plus 21 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 797 Rust ids plus 39 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -888,12 +888,32 @@ pub const specs = [_]Spec{
     .{ .id = "app.startup_picker", .title = "Startup picker — new file / open file / recent files / workspaces", .group = "app" },
     .{ .id = "messages.clear", .title = "Messages: clear the toast history", .group = "view" },
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
+    // The file manager (Zig-only ids): the Files pane's own verbs.
+    .{ .id = "files.up", .title = "Files: go to the parent directory", .group = "files" },
+    .{ .id = "files.refresh", .title = "Files: re-read the listing", .group = "files" },
+    .{ .id = "files.toggle_hidden", .title = "Files: show / hide dot files in the listing", .group = "files" },
+    .{ .id = "files.cycle_sort", .title = "Files: cycle the sort (name → size → modified)", .group = "files" },
+    .{ .id = "files.sort_name", .title = "Files: sort by name (directories first)", .group = "files" },
+    .{ .id = "files.sort_size", .title = "Files: sort by size, largest first", .group = "files" },
+    .{ .id = "files.sort_modified", .title = "Files: sort by modified, newest first", .group = "files" },
+    .{ .id = "files.activate", .title = "Files: enter the selected directory / open the selected file (Enter)", .group = "files" },
+    .{ .id = "files.preview", .title = "Files: preview the selected file beside the listing (p)", .group = "files" },
+    .{ .id = "files.mark_toggle", .title = "Files: mark / unmark the selected row (Space)", .group = "files" },
+    .{ .id = "files.mark_all", .title = "Files: mark every listed row (a)", .group = "files" },
+    .{ .id = "files.mark_invert", .title = "Files: invert the marks (*)", .group = "files" },
+    .{ .id = "files.mark_clear", .title = "Files: clear the marks (Esc)", .group = "files" },
+    .{ .id = "files.copy_path", .title = "Files: copy the selected row's path", .group = "files" },
+    .{ .id = "files.new_file", .title = "Files: new file in this directory…", .group = "files" },
+    .{ .id = "files.new_folder", .title = "Files: new folder in this directory…", .group = "files" },
+    .{ .id = "files.destinations", .title = "Files: go to… (home, workspace, trash, open browsers)", .group = "files" },
+    .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "836 specs, unique ids" {
+test "854 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
-    // commands + three HTTP panel commands + six Playwright commands.
-    try std.testing.expectEqual(@as(usize, 836), specs.len);
+    // commands + three HTTP panel commands + six Playwright commands
+    // + eighteen file-manager commands.
+    try std.testing.expectEqual(@as(usize, 854), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
