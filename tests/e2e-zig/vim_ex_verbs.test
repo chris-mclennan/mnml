@@ -1,0 +1,54 @@
+# zig-only
+# Everyday ex verbs: `:t` / `:m` copy and move lines, `:update` writes
+# only when dirty, `:saveas` re-targets the buffer, `:bfirst` / `:blast`
+# reach the ends of the tab strip, `:new` / `:vnew` split a scratch,
+# and `:set number?` answers like `:set wrap?`.
+write doc.txt "alpha\nbravo\ncharlie\n"
+open doc.txt
+command editor.use_vim
+
+type ":t."
+key enter
+command file.save
+expect file doc.txt contains "alpha\nalpha\nbravo\n"
+type ":m0"
+key enter
+type ":3t$"
+key enter
+command file.save
+expect file doc.txt contains "alpha\nalpha\nbravo\ncharlie\nbravo\n"
+type ":$m1"
+key enter
+command file.save
+expect file doc.txt contains "alpha\nbravo\nalpha\nbravo\ncharlie\n"
+
+key x
+expect dirty true
+type ":up"
+key enter
+expect dirty false
+
+type ":sav copy.txt"
+key enter
+expect pane copy.txt
+expect file copy.txt contains "bravo"
+
+type ":e doc.txt"
+key enter
+type ":bfirst"
+key enter
+expect pane copy.txt
+type ":blast"
+key enter
+expect pane doc.txt
+
+type ":set number?"
+key enter
+expect screen contains "ui.line_numbers=on"
+
+type ":new"
+key enter
+expect pane "[scratch]"
+type ":vnew"
+key enter
+expect pane "[scratch]"

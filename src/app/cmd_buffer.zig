@@ -48,6 +48,17 @@ fn next(app: *App) CommandError!void {
     return cycle(app, 1, true);
 }
 
+/// `:bfirst` / `:blast`: the ends of the leaf's tab strip.
+pub fn firstTab(app: *App) CommandError!void {
+    const tabs = tabsOfActive(app) orelse return error.NoActivePane;
+    if (tabs.len > 0) app.showPane(tabs[0]);
+}
+
+pub fn lastTab(app: *App) CommandError!void {
+    const tabs = tabsOfActive(app) orelse return error.NoActivePane;
+    if (tabs.len > 0) app.showPane(tabs[tabs.len - 1]);
+}
+
 fn prev(app: *App) CommandError!void {
     return cycle(app, -1, true);
 }

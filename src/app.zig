@@ -607,6 +607,8 @@ pub const App = struct {
     /// What a spawned child inherits. Owned.
     env: std.process.Environ.Map,
     quit: bool = false,
+    /// What the process exits with once `quit` is set: `:cq` asks for 1.
+    exit_code: u8 = 0,
     restart: bool = false,
 
     panes: PaneStore,
