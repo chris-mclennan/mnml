@@ -132,6 +132,7 @@ pub fn open(app: *App, path: []const u8, placement: Placement, near: ?PaneId) Al
             const anchor = near orelse app.active;
             const split_ok = if (anchor) |a| (try layout.split(a, .horizontal, id)) != null else false;
             if (!split_ok) app.showPane(id);
+            app.afterSplitChange();
         },
     }
     app.needs_render = true;

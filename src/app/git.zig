@@ -633,11 +633,8 @@ pub fn openExternal(app: *App, url: []const u8) void {
         app.toast("not a web URL: {s}", .{url});
         return;
     }
-    const argv: []const []const u8 = switch (builtin.os.tag) {
-        .macos => &.{ "open", url },
-        .windows => &.{ "cmd", "/c", "start", "", url },
-        else => &.{ "xdg-open", url },
-    };
+    // `ui.external_browser` names the application (trust-stripped upstream).
+    const argv = @import("browser_open.zig").argv(app, app.frame.allocator(), url) catch return;
     const res = std.process.run(app.gpa, app.io, .{ .argv = argv, .cwd = .{ .path = app.workspace }, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) }) catch |err| {
         app.toast("could not open a browser: {s}", .{@errorName(err)});
         return;

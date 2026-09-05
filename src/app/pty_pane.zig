@@ -290,6 +290,7 @@ pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
         .right, .left => .horizontal,
         .tab => unreachable,
     };
+    defer app.afterSplitChange();
     const new_leaf = (try layout.split(anchor.?, dir, id)) orelse {
         app.showPane(id);
         return;

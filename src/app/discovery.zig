@@ -141,6 +141,7 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
         return null;
     }
     if (render.Button.newTabLeaf(id) != null) return .{ .title = "+ New tab", .detail = "click opens a scratch buffer · right-click: the + menu (New / Open / Panels / Tools / Integrations)" };
+    if (@import("menu_bar.zig").buttonOf(id)) |m| return .{ .title = try std.fmt.allocPrint(arena, "{s} menu", .{m.label()}), .detail = "click drops the menu" };
     return switch (@as(render.Button, @enumFromInt(id))) {
         .palette => .{ .title = "Command palette", .detail = "search files · run commands (ctrl+shift+p)" },
         .toggle_tree => .{ .title = "Left panel", .detail = "click toggles the file tree (ctrl+n)" },
@@ -206,6 +207,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .encoding => .{ .title = "Encoding — utf-8", .detail = "the only encoding in this build" },
         .transfer => .{ .title = "File transfers", .detail = "progress of the running copies · right-click: cancel all" },
         .clock => .{ .title = "Clock", .detail = "local time (a Z is UTC) · click: local / UTC / hide" },
+        .coverage => .{ .title = "Coverage", .detail = "feature (F) and code (C) coverage from the trends files · click toasts both · right-click picks the mode" },
         _ => null,
     };
 }

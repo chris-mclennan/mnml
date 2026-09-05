@@ -25,6 +25,9 @@ const whichkey = @import("whichkey.zig");
 const find_history = @import("find_history.zig");
 const auto_refresh = @import("auto_refresh.zig");
 const clock_mod = @import("clock.zig");
+const coverage = @import("coverage.zig");
+const menu_bar = @import("menu_bar.zig");
+const browser_open = @import("browser_open.zig");
 const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
@@ -586,6 +589,7 @@ fn restoreFocus(app: *App) void {
 fn closeOverlay(app: *App) void {
     // A confirm that a worker is parked on answers no before it goes.
     ai_app.overlayClosing(app);
+    menu_bar.menuClosed(app);
     http_app.overlayClosing(app);
     // Esc on a `:s///c` box keeps what was replaced and stops.
     if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
@@ -670,6 +674,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .dock_set => |s| dock.setSetting(app, s.id, s.setting),
         .toggle_auto_refresh => |p| try auto_refresh.toggle(app, p),
+        .set_coverage_mode => |m| try coverage.setMode(app, m),
         .none => {},
     }
 }
@@ -1175,6 +1180,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             const hit_rect = hitRect(app, m.x, m.y) orelse return;
             const col = cell.col + (m.x - hit_rect.x);
             const byte = @min(ed.byteAtCol(line, col), ed.lineEnd(line));
+            // `ui.click_echo`: the word under a left press underlines
+            // for 120 ms — "did that click land?".
+            if (m.button == .left and app.cfg.ui.click_echo) {
+                const r = find_mod.wordAt(ed.bytes(), byte) orelse find_mod.Range{ .start = byte, .end = @min(byte + 1, ed.len()) };
+                app.click_echo = .{ .pane = cell.pane, .start = r.start, .end = r.end, .until_ms = app.now_ms + app_mod.click_echo_ms };
+            }
             switch (m.button) {
                 .right => {
                     // Right-click inside a selection keeps it; elsewhere it moves the cursor.
@@ -1375,6 +1386,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
                     .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
                     .clock => try clock_mod.openMenu(app, m.x, m.y),
+                    .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
                     .indent => try runCmd(app, .@"editor.set_tab_width"),
                     .encoding => app.toast("utf-8 is the only encoding in this build", .{}),
                     .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
@@ -1413,6 +1425,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // The palette bar's integration chips.
             if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
                 return integrations.chipClick(app, id - integrations_view.chip_base, m);
+            }
+            if (menu_bar.buttonOf(id)) |which| {
+                const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                return menu_bar.open(app, which, r.x, m.y + 1);
             }
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
                 if (m.button == .right) return context_menus.openNewTabMenu(app, m.x, m.y);
@@ -1803,6 +1819,7 @@ fn dropIntoLeaf(app: *App, pane: PaneId, target: layout_mod.NodeId, zone: layout
         .center => unreachable,
     };
     const new_leaf = (try layout.split(leaf.active, dir, pane)) orelse return app.showPane(pane);
+    app.afterSplitChange();
     if (zone == .left or zone == .top) {
         // The split put the new leaf second; swap the halves.
         const parent = layout.parentOf(new_leaf) orelse return app.setActive(pane);

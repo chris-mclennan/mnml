@@ -140,6 +140,8 @@ pub const Doc = struct {
     bracket_rainbow: bool = false,
     /// Every occurrence of the word under the cursor, sorted, underlined.
     word_matches: []const Range = &.{},
+    /// `ui.click_echo`: the word just clicked, underlined for a moment.
+    echo: ?Range = null,
     /// `TODO` / `FIXME` / `XXX` / `HACK` / `NOTE` / `BUG` after a comment
     /// marker paint bold on the warning (or error) colour.
     todo_keywords: bool = false,
@@ -795,6 +797,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     style.ul_style = .single;
                     style.bold = true;
                 }
+                if (doc.echo) |ec| if (off >= ec.start and off < ec.end) {
+                    style.ul_style = .double;
+                };
                 if (toggles.styleAt(i)) |o| {
                     if (o.glyph) |g| glyph = g;
                     if (o.fg) |fg| style.fg = fg;

@@ -100,6 +100,8 @@ const macros_store = @import("app/macros_store.zig");
 const find_history = @import("app/find_history.zig");
 const auto_refresh = @import("app/auto_refresh.zig");
 const clock = @import("app/clock.zig");
+const coverage = @import("app/coverage.zig");
+const menu_bar = @import("app/menu_bar.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
@@ -506,6 +508,10 @@ pub const RepeatInsert = struct { pane: PaneId, count: u32, above: bool, start_b
 
 pub const ClosedBuffer = struct { path: []u8, cursor: usize };
 
+/// `ui.click_echo`: a byte range of one pane underlined for `click_echo_ms`.
+pub const ClickEcho = struct { pane: PaneId, start: usize, end: usize, until_ms: i64 };
+pub const click_echo_ms: i64 = 120;
+
 /// A closed tab page, for `tab.reopen`: the files it showed (absolute,
 /// owned) and which of them was active. The page's split tree is not
 /// kept — closing a page closes its clean panes, so the files come
@@ -729,6 +735,14 @@ pub const App = struct {
     undo_chip: ?UndoChip = null,
     /// The statusline clock (`app/clock.zig`).
     clock: clock.State = .{},
+    /// The statusline coverage chip (`app/coverage.zig`).
+    coverage: coverage.State = .{},
+    /// The menu-bar menu that is open, if one is (`app/menu_bar.zig`).
+    menu_bar_open: ?menu_bar.Menu = null,
+    /// Where the bar painted its first word last frame (`view.menu_bar_open`).
+    menu_bar_x: u16 = 4,
+    /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
+    click_echo: ?ClickEcho = null,
     /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
     auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).initEmpty(),
     /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /
@@ -1565,6 +1579,7 @@ pub const App = struct {
         const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
         const layout = self.layouts.current();
         const next = layout.removePane(id);
+        self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
         files_pane.onPaneClosed(self, id);
@@ -1625,6 +1640,12 @@ pub const App = struct {
     pub fn absPath(self: *App, rel: []const u8) Allocator.Error![]const u8 {
         if (std.fs.path.isAbsolute(rel)) return rel;
         return std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+    }
+
+    /// `ui.auto_equalize_splits`: a split just opened or closed — even
+    /// them out.
+    pub fn afterSplitChange(self: *App) void {
+        if (self.cfg.ui.auto_equalize_splits) self.layouts.current().equalize();
     }
 
     /// `~` / `~/…` → the home directory (the config's `HOME`, else the
@@ -1830,6 +1851,10 @@ pub const App = struct {
         todos.tick(self, now);
         sessions.tick(self, now);
         clock.tick(self);
+        if (self.click_echo) |e| if (now >= e.until_ms) {
+            self.click_echo = null;
+            self.needs_render = true;
+        };
         dock.tick(self, now);
         try git_app.tick(self, now);
         try lsp.tick(self, now);
@@ -1863,6 +1888,8 @@ pub const App = struct {
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (coverage.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -2072,6 +2099,9 @@ test {
     _ = @import("app/find_history.zig");
     _ = @import("app/auto_refresh.zig");
     _ = @import("app/clock.zig");
+    _ = @import("app/coverage.zig");
+    _ = @import("app/menu_bar.zig");
+    _ = @import("app/browser_open.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
     _ = @import("app/loclist.zig");

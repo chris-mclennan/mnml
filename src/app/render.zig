@@ -30,6 +30,8 @@ const statusline = @import("../ui/statusline.zig");
 const messages = @import("messages.zig");
 const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
+const coverage = @import("coverage.zig");
+const menu_bar = @import("menu_bar.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const prompt_mod = @import("../ui/prompt.zig");
 const confirm_mod = @import("../ui/confirm.zig");
@@ -152,10 +154,12 @@ pub const SegId = enum(u32) {
     transfer,
     /// The clock beside the bell (`app/clock.zig`).
     clock,
+    /// The coverage chip (`app/coverage.zig`).
+    coverage,
     _,
 
     pub fn of(id: u32) ?SegId {
-        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.clock)) return null;
+        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.coverage)) return null;
         return @enumFromInt(id);
     }
 };
@@ -287,8 +291,23 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     // left-off` / `layout-sidebar-right-off` — with `=` / `#` as their
     // ASCII twins.
     const tree_glyph: []const u8 = if (ui.ascii) " = " else " " ++ tree_codicon ++ " ";
-    const w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
+    var w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
     ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
+    // The menu bar's words, after the sidebar toggle (`app/menu_bar.zig`).
+    if (menu_bar.shown(app) and bar.w >= palette_bar_narrow_width) {
+        var mx = bar.x + w0 + 1;
+        app.menu_bar_x = mx;
+        for (menu_bar.Menu.all) |m| {
+            const word = ui.fmt(" {s} ", .{m.label()});
+            const ww = ui.width(word);
+            if (mx + ww > bar.x + bar.w / 3) break;
+            const open = app.menu_bar_open == m;
+            _ = ui.putStr(mx, y, ww, word, if (open) Theme.onBg(th.accent, bg.bg) else btn);
+            ui.hit(Rect.init(mx, y, ww, 1), .{ .button = menu_bar.button_base + @as(u32, @intFromEnum(m)) });
+            mx += ww;
+        }
+        w0 = mx - bar.x;
+    }
     const right_glyph: []const u8 = if (ui.ascii) " # " else " " ++ right_panel_codicon ++ " ";
     const rw = ui.width(right_glyph);
     const narrow = bar.w < palette_bar_narrow_width;
@@ -840,6 +859,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .underlines = try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme)),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
+        .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
         .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
         .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
         // ── ui toggles ──
@@ -1003,6 +1023,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const bell_seg: statusline.Seg = .{ .text = bell_text orelse (if (ui.ascii) "o" else "○"), .id = @intFromEnum(SegId.bell), .style = bell_style, .low = bell_text == null };
     const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
     const clock_seg: ?statusline.Seg = if (try clock_mod.segment(app, ui.arena)) |txt| .{ .text = txt, .id = @intFromEnum(SegId.clock), .low = true } else null;
+    const coverage_seg: ?statusline.Seg = if (try coverage.segment(app, ui.arena)) |txt| .{ .text = txt, .id = @intFromEnum(SegId.coverage), .low = true } else null;
     // A host's `statusline-set-segment` chips, packed by priority into
     // what is left beside the built-ins (`ipc/effects.zig`).
     const budget: usize = area.w -| 40;
@@ -1017,6 +1038,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         if (lsp_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.diagnostics) } else null,
         if (meter_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.ai_meter) } else null,
         if (transfer_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.transfer) } else null,
+        coverage_seg,
         bell_seg,
         clock_seg,
         if (stress_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.stress) } else null,
@@ -1530,4 +1552,36 @@ test "the palette bar: codicons with ASCII twins, the + chip opens the Marketpla
     const arow = ascii[0..std.mem.indexOfScalar(u8, ascii, '\n').?];
     try t.expect(std.mem.indexOf(u8, arow, " = ") != null);
     try t.expect(std.mem.indexOf(u8, arow, " # ") != null);
+}
+
+test "ui.click_echo: a left press underlines the word under it for 120 ms; off, nothing" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("hello world\n");
+    try app.render();
+    // The text row is under the bar and the strip; the gutter is 5 cells.
+    const y: u16 = 2;
+    const x: u16 = 7; // inside "hello"
+    try t.expect(app.hits.at(x, y).? == .editor_cell);
+    app.cfg.ui.click_echo = false;
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try t.expect(app.click_echo == null);
+    try app.render();
+    try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
+    app.cfg.ui.click_echo = true;
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try t.expect(app.click_echo != null);
+    try t.expectEqual(@as(usize, 0), app.click_echo.?.start);
+    try t.expectEqual(@as(usize, 5), app.click_echo.?.end);
+    try app.render();
+    try t.expect(app.screen.readCell(x, y).?.style.ul_style == .double);
+    try t.expect(app.screen.readCell(12, y).?.style.ul_style != .double); // "world" is not echoed
+    try t.expectEqual(app.click_echo.?.until_ms, app.nextDeadlineMs().?);
+    // 120 ms later the echo is gone.
+    try app.tick(app.now_ms + app_mod.click_echo_ms + 1);
+    try t.expect(app.click_echo == null);
+    try app.render();
+    try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
 }

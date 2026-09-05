@@ -182,7 +182,7 @@ the tree. Nothing left is larger than M.
 | `Ctrl-W` move `H J K L` | done | `moveToEdge` in `src/app/layout.zig`, `view.move_split_*` in `src/app/cmd_view.zig`, the `.window` prong | the leaf re-hangs as one half of a new root split |
 | `Ctrl-W` resize `+ - < >`, `_` / `\|` maximize | done | `view.split_grow_*` / `shrink_*` / `maximize_*` in `src/app/cmd_view.zig`; bound in the `.window` prong (with `r n d f`) | ratio on the enclosing split |
 | `Ctrl-W` rotate `r` | done | `view.rotate_splits` in `cmd_view.zig` | |
-| `Ctrl-W =` equalize | done | `'='` in the `.window` prong → `view.equalize_splits` | `ui.auto_equalize_splits` / `view.toggle_auto_equalize_splits` unread, no runner |
+| `Ctrl-W =` equalize | done | `'='` in the `.window` prong → `view.equalize_splits`; `ui.auto_equalize_splits` via `App.afterSplitChange` on every split and close, `view.toggle_auto_equalize_splits` in `cmd_view.zig` | the toggle persists to the workspace config and evens the splits at once |
 | Mouse click-to-focus | done | `src/app/dispatch.zig`, `src/ui/hit.zig` | |
 | Mouse drag-to-resize dividers | done | `dispatch.zig` `.divider` drag | |
 | Tab pages `:tab*` with independent trees | done | `src/app/cmd_tab.zig`, `Layouts` in `layout.zig` | `tab.reopen` (`tabReopen`, `App.closed_tabs`, 8 deep) — `// changed:` a closed page's clean panes are closed, so its files come back as tabs of one leaf after the current page, the active one focused; `tests/e2e-zig/buffer_pin_reopen.test` |
@@ -571,7 +571,7 @@ the tree. Nothing left is larger than M.
 | Curated five-section `+` menu | done | `plus_sections` / `openNewTabMenu` in `context_menus.zig` | New / Open / Panels / Tools / Integrations, pinned rows first |
 | Per-row kebab pin / hide / copy id | done | `openCuration` in `context_menus.zig`, `menu.pin_row` / `unpin_row` / `hide_row` / `copy_id` | ⋯ on the focused leaf row, or → on it |
 | `plus_menu_pinned` / `hidden` | done | `App.plus_pinned` / `plus_hidden`, `persistPlus` in `context_menus.zig` | written back to the home config |
-| `ui.external_browser` | partial | field + trust sink | nothing launches with it |
+| `ui.external_browser` | done | `src/app/browser_open.zig` (`argv`), used by `git.openExternal` and `lsp_decor.openExternal` | `open -a <name>` / `start "" <name>` / `<name> <url>`; the trust layer strips the key from an untrusted workspace before it is read |
 | 94 themes | done | `themes/*.zon`, `src/ui/theme.zig`, `theme.pick` | committed ZON, parsed at comptime |
 | F1 click-discovery overlay | done | `src/app/discovery.zig` (`drawOverlay`, `explain`), `view.discovery` | every hit tinted and labelled; the next click explains |
 | Hover tooltips on chips | done | `describe` in `discovery.zig`, `src/ui/tooltip.zig` | `ui.hover_tooltip` popup and the `ui.hover_help` rail box; wake on motion only |
@@ -608,7 +608,7 @@ the tree. Nothing left is larger than M.
 | Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e-zig/palette_bar_clock.test` |
 | Settings overlay | done | `src/app/settings.zig`, `src/ui/settings.zig` | 39 discrete rows + 9 number rows (`‹ [32] ›`) |
 | `:set` for every discrete field | done | `src/app/ex.zig` | Zig-only |
-| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`); unread: `click_echo`, `coverage_chip_mode`, `menu_bar`, `auto_equalize_splits` |
+| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`), `click_echo` (a 120 ms double underline under a left press — `App.click_echo`, `Doc.echo`), `coverage_chip_mode` (`coverage.zig`: the `F` / `C` chip from the two `trends.json` files, four modes), `menu_bar` (`menu_bar.zig`: File / Edit / View / Go / Help on the bar row — always / auto / hidden, `view.menu_bar_cycle` / `menu_bar_open`), `auto_equalize_splits` (`App.afterSplitChange`); each has a test that changes a cell |
 | Update check | done | `src/app/update.zig` | GitHub releases JSON on a worker; `ui.check_updates`, `MNML_NO_UPDATE_CHECK` |
 | Startup picker | done | `src/app/startup_picker.zig` | |
 
