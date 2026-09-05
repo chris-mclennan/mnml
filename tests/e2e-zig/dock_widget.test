@@ -1,0 +1,27 @@
+# zig-only
+# A dock widget (src/app/dock.zig, src/ui/dock_view.zig): a text note
+# pinned to a corner of the editor body, hidden and shown by
+# dock.toggle, moved by dock.move_corner_next, renamed through the
+# prompt, and closed by dock.close_all.
+command dock.new_text_tr
+type remember the milk
+key enter
+expect screen contains "Note"
+expect screen contains "remember the milk"
+command dock.toggle
+expect screen lacks "remember the milk"
+command dock.toggle
+expect screen contains "remember the milk"
+command dock.move_corner_next
+expect screen contains "dock: Bottom-right"
+command dock.rename
+key backspace
+key backspace
+key backspace
+key backspace
+type Shopping
+key enter
+expect screen contains "Shopping"
+command dock.close_all
+expect screen lacks "Shopping"
+expect screen contains "closed 1 dock widget"

@@ -38,6 +38,7 @@ const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const sessions = @import("../sessions.zig");
+const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
@@ -537,6 +538,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             .findings => try findings.setSort(app, s.sort),
             .sessions, .git, .diagnostics, .http => {},
         },
+        .dock_set => |s| dock.setSetting(app, s.id, s.setting),
         .none => {},
     }
 }
@@ -674,6 +676,10 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),
+        .dock_new_text => |c| try dock.acceptNewText(app, c, text),
+        .dock_new_log => |c| try dock.acceptNewLog(app, c, text),
+        .dock_edit => |id| try dock.acceptEdit(app, id, text),
+        .dock_rename => |id| try dock.acceptRename(app, id, text),
         .new_folder => |dir| try tree_mod.acceptNewFolder(app, dir, text),
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
@@ -1098,6 +1104,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => {},
             }
         },
+        .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .button => |id| {
             if (m.kind != .press) return;
             // The strip's markdown chip (`render.drawMdChip`).
@@ -1390,6 +1397,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             };
         },
         .scrollbar => |sb| dragScrollbar(app, sb.pane, sb.grab, m.y),
+        .dock => |*dd| return dock.continueDrag(app, dd, m),
         .tab => |*tb| {
             if (m.kind == .drag) {
                 if (tb.x != m.x or tb.y != m.y) tb.moved = true;

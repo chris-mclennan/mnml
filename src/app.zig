@@ -52,6 +52,7 @@ const todos = @import("todos.zig");
 const notes = @import("notes.zig");
 const findings = @import("findings.zig");
 const sessions = @import("sessions.zig");
+const dock = @import("app/dock.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -158,6 +159,12 @@ pub const PromptPurpose = union(enum) {
     new_finding: []u8,
     /// SESSIONS: the alias for this session id (owned).
     sessions_rename: []u8,
+    /// Dock: a new note / tail lands in this corner; an edit / rename
+    /// names the widget.
+    dock_new_text: dock.Corner,
+    dock_new_log: dock.Corner,
+    dock_edit: u32,
+    dock_rename: u32,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
     /// AI: a bare question; a question with the file + selection;
@@ -424,7 +431,10 @@ pub const Drag = union(enum) {
     /// The editor scrollbar thumb; `grab` is the row inside the thumb
     /// the pointer took hold of.
     scrollbar: struct { pane: PaneId, grab: u16 },
+    /// A dock widget's title bar; `moved` once the pointer left the cell.
+    dock: DockDrag,
 };
+pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };
 
 /// The last left press, for double / triple clicks.
@@ -506,6 +516,9 @@ pub const App = struct {
     notes: notes.State,
     findings: findings.State,
     sessions: sessions.State,
+    dock: dock.State = .{},
+    /// The editor body before the dock's inline strips came off it.
+    dock_area: Rect = .{},
     git: git_app.State,
     snippets: snippets.State,
     ai: ai_app.State = .{},
@@ -795,6 +808,7 @@ pub const App = struct {
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
         self.sessions.deinit(gpa, self.io);
+        self.dock.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
@@ -1341,6 +1355,7 @@ pub const App = struct {
             .notes => |result| try notes.handle(self, result),
             .findings => |result| try findings.handle(self, result),
             .sessions => |result| try sessions.handle(self, result),
+            .dock => |result| try dock.handle(self, result),
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
@@ -1430,6 +1445,7 @@ pub const App = struct {
         try watch.tick(self, now);
         todos.tick(self, now);
         sessions.tick(self, now);
+        dock.tick(self, now);
         try git_app.tick(self, now);
         try ai_app.tick(self);
         try self.script().tick(now);
@@ -1457,6 +1473,7 @@ pub const App = struct {
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -1595,6 +1612,9 @@ test {
     _ = @import("notes.zig");
     _ = @import("findings.zig");
     _ = @import("sessions.zig");
+    _ = @import("app/dock.zig");
+    _ = @import("ui/dock_view.zig");
+    _ = @import("core/dock.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");
@@ -1644,10 +1664,17 @@ test {
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
     defer app.deinit();
-    // `dock.close_all` has a spec and no runner until the dock lands
-    // (`ai.ask`, `git.commit` and `http.send` all grew runners).
-    try std.testing.expectError(error.Failed, command.run(&app, .{ .static = .@"dock.close_all" }));
-    try std.testing.expectEqualStrings("dock.close_all: not implemented yet", app.lastToast().?);
+    // A spec without a runner (found by scanning — every id this test
+    // once named, `dock.close_all` last, has grown one) toasts and fails.
+    var missing: ?command.CommandId = null;
+    for (std.enums.values(command.CommandId)) |id| if (command.runners.get(id) == null) {
+        missing = id;
+        break;
+    };
+    if (missing) |id| {
+        try std.testing.expectError(error.Failed, command.run(&app, .{ .static = id }));
+        try std.testing.expect(std.mem.endsWith(u8, app.lastToast().?, ": not implemented yet"));
+    }
     try std.testing.expectError(error.Failed, command.runNamed(&app, "nope.nope"));
     try std.testing.expectEqualStrings("no such command: nope.nope", app.lastToast().?);
     // A dyn command with an ex runner reaches the interpreter.

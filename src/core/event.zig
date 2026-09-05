@@ -14,6 +14,7 @@ const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const sessions = @import("../sessions.zig");
+const dock = @import("../app/dock.zig");
 const git_client = @import("../git/client.zig");
 const agents = @import("../app/agents.zig");
 const spend = @import("../app/spend.zig");
@@ -133,6 +134,8 @@ pub const AppEvent = union(enum) {
     findings: *findings.ScanResult,
     /// A finished session listing. Owned; `sessions.handle` adopts the arena.
     sessions: *sessions.ScanResult,
+    /// A finished dock tail read. Owned; `dock.handle` adopts the lines.
+    dock: *dock.TailResult,
     /// A finished Claude / Codex session scan. Owned; the agents pane adopts it.
     agents: *agents.ScanResult,
     /// A finished spend computation. Owned; the spend pane (or the meter) adopts it.
@@ -158,6 +161,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .notes => |r| r.destroy(gpa),
         .findings => |r| r.destroy(gpa),
         .sessions => |r| r.destroy(gpa),
+        .dock => |r| r.destroy(gpa),
         .agents => |r| r.destroy(gpa),
         .spend => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),

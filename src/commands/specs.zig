@@ -743,6 +743,12 @@ pub const specs = [_]Spec{
     .{ .id = "dock.new_log_tail", .title = "Dock: tail a file (bottom-left)", .group = "dock" },
     .{ .id = "dock.close_all", .title = "Dock: close all widgets", .group = "dock" },
     .{ .id = "dock.move_corner_next", .title = "Dock: move focused widget to next corner", .group = "dock" },
+    .{ .id = "dock.toggle", .title = "Dock: hide / show every widget", .group = "dock" },
+    .{ .id = "dock.add", .title = "Dock: new text widget (bottom-left)", .group = "dock" },
+    .{ .id = "dock.add_preset", .title = "Dock: add a preset widget (clock, git branch, log tail, note)", .group = "dock" },
+    .{ .id = "dock.remove", .title = "Dock: close the focused widget", .group = "dock" },
+    .{ .id = "dock.edit", .title = "Dock: edit the focused widget's text or file", .group = "dock" },
+    .{ .id = "dock.rename", .title = "Dock: rename the focused widget", .group = "dock" },
     .{ .id = "term.scratch_toggle", .title = "Terminal: quick scratch strip at the bottom (Ctrl+`)", .group = "term", .keys = .{ .both = &.{"ctrl+`"} } },
     .{ .id = "term.paste", .title = "Terminal: paste clipboard into the active Pty pane", .group = "terminal" },
     .{ .id = "term.clear", .title = "Terminal: clear screen (`Ctrl+L` in the child)", .group = "terminal" },
@@ -903,12 +909,12 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "851 specs, unique ids" {
+test "857 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + four TODOS row commands
     // + three NOTES row commands + four FINDINGS row commands + ten
-    // SESSIONS commands.
-    try std.testing.expectEqual(@as(usize, 851), specs.len);
+    // SESSIONS commands + six dock commands.
+    try std.testing.expectEqual(@as(usize, 857), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

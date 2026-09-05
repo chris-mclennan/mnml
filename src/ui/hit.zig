@@ -24,6 +24,11 @@ pub const PanelId = panel.PanelId;
 
 pub const ChipKind = enum { sort, refresh, new, view };
 
+/// The parts of a dock widget (`app/dock.zig`).
+/// // changed (panels): `.dock` joins the target set — the widgets
+/// register their title / kebab / close / body here like any component.
+pub const DockPart = enum { body, title, kebab, close };
+
 pub const Owner = union(enum) {
     pane: PaneId,
     panel: PanelId,
@@ -55,6 +60,7 @@ pub const HitTarget = union(enum) {
     /// line (the line's length for cells past its end).
     editor_cell: struct { pane: PaneId, line: u32, col: u32 },
     overlay_item: u32,
+    dock: struct { id: u32, part: DockPart },
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -77,6 +83,7 @@ pub const HitTarget = union(enum) {
             .menu_item => |v| try w.print(":{d}:{d}", .{ v.menu, v.idx }),
             .script_hit => |v| try w.print(":{d}:{d}", .{ v.pane, v.id }),
             .editor_cell => |v| try w.print(":{d}:{d}:{d}", .{ v.pane, v.line, v.col }),
+            .dock => |v| try w.print(":{d}:{s}", .{ v.id, @tagName(v.part) }),
         }
     }
 };

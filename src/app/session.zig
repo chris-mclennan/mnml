@@ -33,6 +33,7 @@ const panel = @import("../core/panel.zig");
 const theme_mod = @import("../ui/theme.zig");
 const zen = @import("zen.zig");
 const command = @import("../core/command.zig");
+const dock = @import("dock.zig");
 
 pub const format_version: u32 = 1;
 pub const rel_path = ".mnml/session.zon";
@@ -102,6 +103,9 @@ pub const Saved = struct {
     /// SESSIONS: the manual order (session ids, first on top) and the aliases.
     sessions_order: []const []const u8 = &.{},
     sessions_aliases: []const SessionAlias = &.{},
+    /// The dock widgets and whether the dock is hidden.
+    dock: []const dock.SavedWidget = &.{},
+    dock_hidden: bool = false,
 };
 
 // ─── app-side state ──────────────────────────────────────────────────────
@@ -260,6 +264,8 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     const aliases = try arena.alloc(SessionAlias, app.sessions.aliases.items.len);
     for (app.sessions.aliases.items, 0..) |a, i| aliases[i] = .{ .id = a.id, .name = a.name };
     saved.sessions_aliases = aliases;
+    saved.dock = try dock.capture(app, arena);
+    saved.dock_hidden = app.dock.hidden;
     return saved;
 }
 
@@ -345,7 +351,7 @@ pub fn restore(app: *App) RestoreError!void {
 pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }!Saved {
     // The parser is instantiated per field of `Saved`; the default quota
     // ran out when the SESSIONS lists joined the file.
-    @setEvalBranchQuota(4000);
+    @setEvalBranchQuota(8000);
     return std.zon.parse.fromSliceAlloc(Saved, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false });
 }
 
@@ -416,6 +422,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
         try app.sessions.order.append(gpa, owned);
     }
     for (saved.sessions_aliases) |a| if (a.id.len > 0) try app.sessions.setAlias(gpa, a.id, a.name);
+    try dock.apply(app, saved.dock, saved.dock_hidden);
     for (saved.recent) |p| try app.noteRecent(p);
     for (saved.closed) |c| {
         if (c.path.len == 0) continue;

@@ -44,6 +44,7 @@ const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const sessions = @import("../sessions.zig");
+const dock = @import("dock.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -177,8 +178,13 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         drawDivider(app, ui, div.rest, right_divider_id);
         try drawRightPanel(app, ui, cols.rest, which);
     };
+    // The dock's inline strips come off the body; its widgets paint
+    // over whatever the panes drew.
+    const dock_area = panes_area;
+    if (!app.zen) panes_area = dock.bodyAfterStrips(dock_area, dock.strips(dock_area, app.dock.widgets.items, app.dock.hidden));
     app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
+    if (!app.zen) try dock.draw(app, ui, dock_area);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
