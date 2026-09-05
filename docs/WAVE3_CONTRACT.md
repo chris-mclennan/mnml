@@ -1935,3 +1935,58 @@ NvChad-exact; these are the places the editor was not, and what moved.
   `tools/break-check.sh "vim undo, redo, dot-repeat" src/editor/buffer.zig
   's/if (countedOp(d)) |n| n\.\* = count else times = count;/times = count;/'`
   — both fail with the break in place.
+
+## Chrome fixes (2026-09-05, branch `fix-chrome`) — `// changed:` notes
+
+Five findings from the VS Code-persona hunt, each a `.test` watched
+failing on the unfixed tree first.
+
+- `// changed (settings hits):` a row registers its `.overlay_item(id)`
+  rect *before* its chips and arrows, not after. D6's scan is back to
+  front, so the order is the z-order: the row is the floor, every chip
+  a target on top of it. A painted chip that the row swallowed was the
+  finding; the draw test now walks every registered chip and asserts
+  `hits.at` on its own cells resolves to it.
+- `// changed (settings wheel):` `ui/settings.State.wheel(items, delta)`
+  slides the window and pulls the cursor inside it (`draw` scrolls to the
+  cursor, so a cursor left outside would drag the window straight back).
+  `app/settings.wheel` wraps it; the dispatcher's `.overlay_item` arm
+  routes `.scroll_up` / `.scroll_down` there while `.settings` is up —
+  the one wheel path an overlay item has.
+- `// changed (settings rows):` a listed-choice row that overflows paints
+  a window: `choiceWindow(ui, options, current, avail)` grows from the
+  active value outward (right, left, right…) while `a / [b] / c` plus a
+  `‹ ` / ` ›` per hidden side still fits. The marks are hits on the
+  nearest hidden choice each way (`optionHit(id, lo - 1)` /
+  `optionHit(id, hi)`). The row never drops the bracketed value, so `→`
+  never steps onto a choice that is not on screen. `max_listed_options`
+  (the `[x] ‹ i/n ›` form) is unchanged. The box keeps its width: the
+  `widest` estimate still measures each row by its own label rather than
+  the label column, which is why rows are cramped at 71 cells — left as
+  is on purpose, the family box is 60 % of the screen and the finding's
+  chip coordinates hold.
+- `// changed (menus):` a context menu is the topmost layer. `render`
+  paints the `.menu` overlay after the toasts (the overlay pass skips
+  it), clamped to `Rect(full.x, full.y, full.w, fr.upper.bottom())` —
+  the rows above the statusline and the `:` line, whichever panel the
+  click was in. `menuTop(screen, anchor_y, h)`: below the pointer when
+  it fits, else above it with the frame's bottom row on the pointer's
+  row, else as low as the area allows. A menu that fit below its anchor
+  opens where it always did.
+- `// changed (layout):` `ratioAt(len, pos)` returns the percent whose
+  `firstLen` lands on `pos`: `⌈100·pos/len⌉`, and past 100 cells (where
+  a whole percent is wider than a cell) the nearer of that and the one
+  below. The old floor-then-floor round trip lost a cell whenever the
+  division was inexact. The ratio stays a percent (session.zon carries
+  it), so on a 200-column pane a drag can still settle a cell off; the
+  unit test pins exactness to 100 cells and ±1 beyond.
+- `// changed (tests):` `tests/e2e-zig/settings_chip_click.test`,
+  `settings_wheel.test`, `settings_row_window.test`,
+  `toast_menu_fits.test`, `split_divider_lands_on_pointer.test`. Unit
+  rows in `src/ui/settings.zig` (chip walk, wheel, window),
+  `src/app/render.zig` (toast menu, `menuTop`), `src/app/layout.zig`
+  (`ratioAt` round trip). Break-checks in each commit body; the
+  paint-order one first "passed" by crashing the test (a break that
+  read `app.overlay.menu` under `.none`) — `tools/break-check.sh` counts
+  a crash as a fail through the build summary's `(1 failed)`, so a
+  break has to be re-read for *why* it failed before it counts.
