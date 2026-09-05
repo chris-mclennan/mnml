@@ -1,0 +1,191 @@
+name: Release
+
+# A `v*` tag builds every shipped artifact on one ubuntu runner —
+# `zig build dist` cross-compiles the five targets and packages them — then
+# creates the GitHub release with notes from CHANGELOG.md's top section. A
+# second job on windows-latest turns the Windows zip into the MSI winget
+# needs. A third counts the assets: a green run that shipped one file is the
+# failure mode this repo's history remembers (mnml v0.2.9, v0.2.18).
+#
+# bump-homebrew-tap.yml, winget-releaser.yml and package-linux.yml run
+# after this workflow completes (workflow_run) and add the tap bump, the
+# winget PR and the .deb/.rpm.
+#
+# workflow_dispatch is the dry run: same build, artifacts uploaded to the
+# workflow, no release created. Use it before the first real tag on a new
+# remote.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (no leading v), e.g. 0.3.0-rc0. Dry run: no release is created."
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  build:
+    name: zig build dist (all five targets)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      publishing: ${{ steps.ver.outputs.publishing }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        id: ver
+        # Values from the event go through env, never straight into the
+        # script: a ref name may contain shell metacharacters.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            v="${INPUT_VERSION#v}"
+            publishing=false
+          else
+            v="${REF_NAME#v}"
+            publishing=true
+          fi
+          case "$v" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$v' is not a version (want major.minor.patch[-pre])"; exit 1 ;;
+          esac
+          case "$v" in *-*) pre=true ;; *) pre=false ;; esac
+          {
+            echo "version=$v"
+            echo "tag=v$v"
+            echo "publishing=$publishing"
+            echo "prerelease=$pre"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $v (tag v$v, publishing=$publishing, prerelease=$pre)"
+
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: release
+
+      - name: Release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          scripts/release-notes.sh CHANGELOG.md "$VERSION" > "$RUNNER_TEMP/notes.md"
+          echo "── notes ──"
+          cat "$RUNNER_TEMP/notes.md"
+
+      # The secret-scrub trap. GitHub replaces any substring that equals a
+      # repo secret with *** — inside JSON, inside a manifest. A changelog
+      # line shaped like a credential is what tripped it twice in the Rust
+      # repo. Fail here, before anything is uploaded.
+      - name: Scrub check on the notes
+        run: |
+          if grep -Eiq '(bearer |xox[bp]-|sk-[a-z0-9]{8,}|token\s*=\s*")' "$RUNNER_TEMP/notes.md"; then
+            echo "::error::release notes contain a credential-shaped literal — describe the shape in prose instead (see docs/RELEASE.md)"
+            grep -Ein '(bearer |xox[bp]-|sk-[a-z0-9]{8,}|token\s*=\s*")' "$RUNNER_TEMP/notes.md"
+            exit 1
+          fi
+          echo "notes are clean"
+
+      - name: zig build dist -Dversion=${{ steps.ver.outputs.version }}
+        run: zig build dist -Dversion=${{ steps.ver.outputs.version }} --summary all
+
+      - name: The assets
+        run: |
+          ls -la zig-out/dist/
+          cat zig-out/dist/sha256.sum
+          cat zig-out/dist/dist-manifest.json
+
+      # The Windows zip is what the msi job builds from — a workflow
+      # artifact, so that job does not wait on the release to exist.
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: |
+            zig-out/dist/*
+            ${{ runner.temp }}/notes.md
+          if-no-files-found: error
+
+      - name: Create the GitHub release
+        if: steps.ver.outputs.publishing == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          PRERELEASE: ${{ steps.ver.outputs.prerelease == 'true' && '--prerelease' || '' }}
+        run: |
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "mnml $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            $PRERELEASE \
+            zig-out/dist/*
+
+  msi:
+    name: MSI (winget)
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist-in
+      - name: Build the MSI from the Windows zip
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path dist-in -Recurse -Filter 'mnml-x86_64-pc-windows-gnu.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'no mnml-x86_64-pc-windows-gnu.zip in the dist artifact' }
+          dist\msi\build.ps1 -Zip $zip.FullName -Version '${{ needs.build.outputs.version }}'
+          Get-ChildItem *.msi, *.msi.sha256
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: msi
+          path: |
+            mnml-x86_64-pc-windows-gnu.msi
+            mnml-x86_64-pc-windows-gnu.msi.sha256
+          if-no-files-found: error
+      - name: Upload to the release
+        if: needs.build.outputs.publishing == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: gh release upload "$TAG" mnml-x86_64-pc-windows-gnu.msi mnml-x86_64-pc-windows-gnu.msi.sha256 --clobber
+
+  # A green run is not enough — count what the release actually carries.
+  # 16 here: five archives, five .sha256, sha256.sum, two installers, the
+  # manifest, the MSI and its .sha256. package-linux.yml adds four more
+  # later; scripts/dist-check.sh's default (20) is the number to check by
+  # hand once everything has run.
+  verify:
+    name: Count the assets
+    needs: [build, msi]
+    if: needs.build.outputs.publishing == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/dist-check.sh "${{ needs.build.outputs.tag }}" --min 16 --without-linux-packages
