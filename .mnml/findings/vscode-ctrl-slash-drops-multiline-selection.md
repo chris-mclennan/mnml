@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl+/` on a multi-line selection collapses the selection to its start, so the second press only un-comments the first line
 
@@ -37,3 +37,7 @@ After the second press:
 **Actual**: the selection is dropped and the cursor parked at the selection start; the second press toggles line 3 only, leaving line 4 commented. (Also: mnml inserts `//` at each line's own indent — `    // return 1;` — where VS Code aligns all markers at the block's minimum indent; cosmetic.)
 
 **Source pointer**: `editor.toggle_line_comment` runner in `src/app/cmd_editor.zig` / the `EditOp` it emits — the selection is not restored after the line edits.
+
+## Fix
+
+`75e55a8` on branch `fix-editor` — editor: Ctrl+/ keeps a multi-line selection, so a second press puts it back. Regression: `tests/e2e-zig/vscode_ctrl_slash_selection.test`, plus unit rows in `src/editor/line.zig` and `src/editor/buffer.zig`. The min-indent alignment of the markers (cosmetic) is left as it was.

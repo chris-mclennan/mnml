@@ -284,8 +284,13 @@ pub fn toggleLineComment(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const trimmed = std.mem.trimEnd(u8, token, " \t");
     const close_trimmed = std.mem.trimStart(u8, close, " \t");
     const range = selectedLineRange(ed);
-    // The cursor comes back to the range's first line, where `gcip` found it.
-    const pos = ed.rowColAt(if (ed.selection()) |s| s[0] else ed.cursor);
+    // A selection survives the toggle, both ends kept by (row, col) the
+    // way vim's marks sit still: VS Code's Ctrl+/ twice is a no-op,
+    // and the line range is the same whichever end the cursor holds. A
+    // handler that wants the cursor on the first line afterwards says
+    // so (`move_cursor_to_selection_start`, `select_clear`).
+    const sel_pos: ?[2]editor.Pos = if (ed.anchor) |a| .{ ed.rowColAt(a), ed.rowColAt(ed.cursor) } else null;
+    const pos = ed.rowCol();
     const already = std.mem.startsWith(u8, ed.bytes()[ed.firstNonWs(range[0])..], trimmed);
     try ed.checkpoint();
     var changed = false;
@@ -321,7 +326,12 @@ pub fn toggleLineComment(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
         }
     }
     if (changed) {
-        restoreCursorAfterLineOp(ed, pos);
+        if (sel_pos) |sp| {
+            const last = ed.lineCount() - 1;
+            ed.anchor = ed.byteAtCol(@min(sp[0].row, last), sp[0].col);
+            ed.cursor = ed.byteAtCol(@min(sp[1].row, last), sp[1].col);
+            ed.goal_col = null;
+        } else restoreCursorAfterLineOp(ed, pos);
         out.buffer_changed = true;
     } else {
         ed.popCheckpoint();
@@ -493,11 +503,15 @@ test "toggle comment: line and block styles, indent kept, blank lines skipped, e
     ed.cursor = 7;
     try toggleLineComment(&ed, &out);
     try std.testing.expectEqualStrings("  // a\n\n// b", ed.text.items);
-    try std.testing.expect(ed.anchor == null);
-    ed.anchor = 0;
-    ed.cursor = ed.len();
+    // The selection stays, each end at its (row, col): the same range
+    // again puts the text back.
+    try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
+    try std.testing.expectEqual(ed.byteAtCol(2, 1), ed.cursor);
     try toggleLineComment(&ed, &out);
     try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+    try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
+    try std.testing.expectEqual(ed.len(), ed.cursor);
+    ed.anchor = null;
     ed.comment_token = "<!-- ";
     ed.comment_token_close = " -->";
     ed.cursor = 0;
@@ -505,6 +519,32 @@ test "toggle comment: line and block styles, indent kept, blank lines skipped, e
     try std.testing.expectEqualStrings("  <!-- a -->\n\nb", ed.text.items);
     try toggleLineComment(&ed, &out);
     try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+}
+
+test "toggle comment keeps a multi-line selection: Ctrl+/ twice is a no-op" {
+    var ed = try Editor.init(std.testing.allocator, "fn a() {\n    return 1;\n}\n");
+    defer ed.deinit();
+    ed.comment_token = "// ";
+    var out: EditOutcome = .{};
+    // Anchor at the top of line 0, cursor at the top of line 2: line 2
+    // is outside the range, as VS Code reads a selection ending at col 0.
+    ed.anchor = 0;
+    ed.cursor = ed.lineStart(2);
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("// fn a() {\n    // return 1;\n}\n", ed.text.items);
+    try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
+    try std.testing.expectEqual(ed.lineStart(2), ed.cursor);
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("fn a() {\n    return 1;\n}\n", ed.text.items);
+    try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
+    try std.testing.expectEqual(ed.lineStart(2), ed.cursor);
+    // Without a selection the cursor keeps its column (Rust mnml parity).
+    ed.anchor = null;
+    ed.cursor = ed.byteAtCol(1, 6);
+    try toggleLineComment(&ed, &out);
+    try std.testing.expectEqualStrings("fn a() {\n    // return 1;\n}\n", ed.text.items);
+    try std.testing.expectEqual(ed.byteAtCol(1, 6), ed.cursor);
+    try std.testing.expect(ed.anchor == null);
 }
 
 test "change number: under or after the cursor, a free minus, counts, saturation, cursor on the last digit" {

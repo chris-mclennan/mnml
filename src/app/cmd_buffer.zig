@@ -142,6 +142,43 @@ fn reopen(app: *App) CommandError!void {
     const last = app.closed.getLastOrNull() orelse return app.diag.fail(arena, "no recently closed buffer", .{});
     const path = try arena.dupe(u8, last.path);
     _ = app.openPath(path) catch |err| return app.diag.fail(arena, "reopen {s}: {s}", .{ app.relPath(path), @errorName(err) });
+    // An editor drops its entry as it loads; a preview does not, so the
+    // entry that was just used goes here — a second reopen must not
+    // hand back the same file.
+    if (app.closed.getLastOrNull()) |still| if (std.mem.eql(u8, still.path, path)) {
+        app.gpa.free(app.closed.pop().?.path);
+    };
+}
+
+test "close others: the Undo chip puts the tabs back in order, the markdown preview among them, the kept tab active" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    const names = [_][]const u8{ "a.txt", "b.txt", "c.md", "d.txt" };
+    var ids: [4]PaneId = undefined;
+    for (names, 0..) |name, i| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = name });
+        const path = try std.fs.path.join(t.allocator, &.{ root, name });
+        defer t.allocator.free(path);
+        ids[i] = try app.openPath(path);
+    }
+    try t.expect(app.panes.get(ids[2]).?.* == .md_preview);
+    try command.run(&app, .{ .static = .@"buffer.close_others" });
+    try t.expectEqualStrings("closed 3 tab(s)", app.undo_chip.?.label);
+    try t.expectEqual(@as(usize, 3), app.closed.items.len);
+    try app.takeUndo();
+    try t.expectEqualStrings("reopened 3 tab(s)", app.lastToast().?);
+    try t.expectEqual(@as(usize, 0), app.closed.items.len);
+    const layout = app.layouts.current();
+    const tabs = layout.leaf(layout.leafOf(app.active.?).?).?.tabs.items;
+    try t.expectEqual(@as(usize, 4), tabs.len);
+    for (names, 0..) |name, i| try t.expectEqualStrings(name, app.panes.get(tabs[i]).?.title());
+    try t.expect(app.panes.get(tabs[2]).?.* == .md_preview);
+    try t.expectEqualStrings("d.txt", app.panes.get(app.active.?).?.title());
 }
 
 test "buffer.next/prev cycle the leaf's tabs; close + reopen round-trip through the closed list" {

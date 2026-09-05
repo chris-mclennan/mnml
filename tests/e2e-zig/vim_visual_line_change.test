@@ -1,0 +1,22 @@
+# zig-only
+# `Vc` changes the selected lines the way `cc` changes one: the lines go,
+# an empty line stays where they were and Insert opens on it
+# (`:help v_c`). The buffer used to lose the line's newline too.
+write notes.txt "alpha\nbravo\ncharlie\ndelta\n"
+open notes.txt
+command editor.use_vim
+key j
+key V
+key j
+key c
+expect screen contains "Ln 2/3"
+expect screen contains "INSERT"
+type "x"
+expect screen contains "  1 alpha"
+expect screen contains "  2 x"
+expect screen contains "  3 delta"
+key escape
+key u
+expect screen contains "  2 bravo"
+expect screen contains "  3 charlie"
+expect screen contains "  4 delta"

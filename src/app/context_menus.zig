@@ -431,7 +431,14 @@ fn closeRight(app: *App) CommandError!void {
 fn closeTabs(app: *App, tabs: []const PaneId, keep: PaneId, after: ?usize) CommandError!void {
     var skipped: usize = 0;
     var reopenable: usize = 0;
-    for (tabs, 0..) |id, i| {
+    var left_of_keep: usize = 0;
+    const keep_idx = std.mem.indexOfScalar(PaneId, tabs, keep) orelse tabs.len;
+    // Right to left: `buffer.reopen` pops the closed list, so the Undo
+    // chip's reopens then land in the order the tabs had.
+    var i = tabs.len;
+    while (i > 0) {
+        i -= 1;
+        const id = tabs[i];
         if (id == keep) continue;
         if (after) |a| if (i <= a) continue;
         const p = app.panes.get(id) orelse continue;
@@ -439,15 +446,21 @@ fn closeTabs(app: *App, tabs: []const PaneId, keep: PaneId, after: ?usize) Comma
             skipped += 1;
             continue;
         }
-        if (p.asEditor()) |e| if (e.buf.path != null) {
+        const is_file = if (p.asEditor()) |e| e.buf.path != null else p.* == .md_preview;
+        if (is_file) {
             reopenable += 1;
-        };
+            if (i < keep_idx) left_of_keep += 1;
+        }
         try app.forceClosePane(id);
     }
     app.setActive(keep);
     if (skipped > 0) app.toast("kept {d} tab(s) with unsaved changes", .{skipped});
-    // The Undo chip: the closed files come back in one click.
-    if (reopenable > 0) try app.armUndo(.{ .reopen = reopenable }, "closed {d} tab(s)", .{reopenable});
+    // The Undo chip: the closed files come back in one click, where they
+    // were — the kept tab slides back past the ones that sat left of it.
+    if (reopenable > 0) {
+        const keep_at = (std.mem.indexOfScalar(PaneId, (try siblingTabs(app)), keep) orelse 0) + left_of_keep;
+        try app.armUndo(.{ .reopen = .{ .n = reopenable, .keep = keep, .keep_at = keep_at } }, "closed {d} tab(s)", .{reopenable});
+    }
 }
 
 /// `perf.copy_stress`: the summary `perf.toast_stress` shows, to the clipboard.

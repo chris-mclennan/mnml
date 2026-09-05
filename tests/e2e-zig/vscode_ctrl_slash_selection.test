@@ -1,0 +1,19 @@
+# zig-only
+# VS Code: Ctrl+/ on a multi-line selection toggles every selected line
+# and keeps the selection, so a second Ctrl+/ puts every line back.
+write alpha.zig "const std = @import(\"std\");\n\npub fn alpha() u32 {\n    return 1;\n}\n"
+open alpha.zig
+key ctrl+g
+type 3
+key enter
+key shift+down
+key shift+down
+expect screen contains "Sel "
+key ctrl+/
+expect screen contains "// pub fn alpha() u32 {"
+expect screen contains "// return 1;"
+expect screen contains "Sel "
+key ctrl+/
+expect screen lacks "// pub fn"
+expect screen lacks "// return"
+expect screen contains "Sel "

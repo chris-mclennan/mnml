@@ -791,6 +791,9 @@ pub const Vim = struct {
             },
             .comment => {
                 try b.push(.toggle_line_comment);
+                // The toggle keeps the range selected; `gcip` ends on
+                // its first line.
+                try b.push(.move_cursor_to_selection_start);
                 try b.push(.select_clear);
             },
             .surround_add => {
@@ -892,7 +895,7 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 self.resetPending();
-                if (motion(key.code)) |m| return ops(arena, &.{ .select_start, m, .toggle_line_comment, .select_clear });
+                if (motion(key.code)) |m| return ops(arena, &.{ .select_start, m, .toggle_line_comment, .move_cursor_to_selection_start, .select_clear });
                 return .consumed;
             },
             .gq => {
@@ -1775,6 +1778,13 @@ pub const Vim = struct {
                             return runCmd(if (forward) .@"find.select_match_forward" else .@"find.select_match_backward");
                         return ops(arena, &.{.{ .set_cursor_byte = if (forward) r[1] else r[0] }});
                     },
+                    // Neovim's `gc` in Visual: every selected line toggles,
+                    // NORMAL resumes at the range's start (`'<`).
+                    'c' => {
+                        self.enterNormal();
+                        const widen: EditOp = if (linewise) .normalize_linewise_selection else .make_selection_inclusive;
+                        return ops(arena, &.{ widen, .toggle_line_comment, .move_cursor_to_selection_start, .select_clear });
+                    },
                     else => return .consumed,
                 }
             },
@@ -1882,9 +1892,13 @@ pub const Vim = struct {
                 self.enterNormal();
                 return ops(arena, &.{ widen, .delete_selection });
             },
-            'c', 's' => {
+            'c', 's', 'R' => {
                 self.vmode = .insert;
                 self.resetPending();
+                // Linewise (`V…c`, and `R` from any Visual — `S` is
+                // surround's here): the lines go, one empty line stays
+                // (`:help v_c`, `v_R`).
+                if (linewise or c == 'R') return ops(arena, &.{ .normalize_linewise_selection_inner, .{ .replace_selection = "" }, .continue_insert_run });
                 return ops(arena, &.{ widen, .{ .replace_selection = "" }, .continue_insert_run });
             },
             'y' => {

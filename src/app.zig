@@ -485,6 +485,9 @@ pub const FindBarState = struct {
     reverse: bool = false,
     /// Enter chains straight into the replace prompt (VS Code `Ctrl+H`).
     chain_to_replace: bool = false,
+    /// An Enter (or a step) has put the cursor on a match of this
+    /// query; the next Enter steps instead of landing again.
+    landed: bool = false,
 };
 
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
@@ -569,8 +572,10 @@ pub const UndoChip = struct {
     expires_ms: i64,
 
     pub const Action = union(enum) {
-        /// `buffer.reopen` this many times.
-        reopen: usize,
+        /// `buffer.reopen` this many times; then the tab "close others"
+        /// kept goes back to index `keep_at` of its strip (the reopens
+        /// land after it) and is active again, if it is still open.
+        reopen: struct { n: usize, keep: ?PaneId = null, keep_at: usize = 0 },
     };
 };
 
@@ -1231,11 +1236,15 @@ pub const App = struct {
         const action = chip.action;
         self.dropUndo();
         switch (action) {
-            .reopen => |n| {
+            .reopen => |r| {
                 var i: usize = 0;
-                while (i < n) : (i += 1) command.run(self, .{ .static = .@"buffer.reopen" }) catch |err| switch (err) {
+                while (i < r.n) : (i += 1) command.run(self, .{ .static = .@"buffer.reopen" }) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => break,
+                };
+                if (r.keep) |k| if (self.panes.get(k) != null) {
+                    self.layouts.current().reorderTab(k, r.keep_at);
+                    self.setActive(k);
                 };
                 self.toast("reopened {d} tab(s)", .{i});
             },
@@ -1479,12 +1488,19 @@ pub const App = struct {
 
     pub fn forceClosePane(self: *App, id: PaneId) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
-        if (pane.asEditor()) |e| if (e.buf.path) |p| {
-            const copy = try self.gpa.dupe(u8, p);
+        // Editors and markdown previews are files: they can come back.
+        const closed_file: ?ClosedBuffer = if (pane.asEditor()) |e|
+            (if (e.buf.path) |p| .{ .path = @constCast(p), .cursor = e.buf.editor.cursor } else null)
+        else switch (pane.*) {
+            .md_preview => |*m| .{ .path = m.path, .cursor = 0 },
+            else => null,
+        };
+        if (closed_file) |c| {
+            const copy = try self.gpa.dupe(u8, c.path);
             errdefer self.gpa.free(copy);
             if (self.closed.items.len >= max_closed) self.gpa.free(self.closed.orderedRemove(0).path);
-            try self.closed.append(self.gpa, .{ .path = copy, .cursor = e.buf.editor.cursor });
-        };
+            try self.closed.append(self.gpa, .{ .path = copy, .cursor = c.cursor });
+        }
         if (self.find_bar) |*fb| if (fb.pane == id) self.closeFindBar(false);
         if (self.block_insert) |b| if (b.pane == id) {
             self.block_insert = null;

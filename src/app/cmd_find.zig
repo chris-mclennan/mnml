@@ -52,6 +52,9 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
     if (app.find_bar) |*fb| {
         if (fb.pane == id) {
             fb.reverse = reverse;
+            // Ctrl+F on an open bar selects the query (VS Code): typing
+            // starts over, a move keeps it.
+            fb.state.select_all = fb.state.query.items.len > 0;
             app.focus = .overlay;
             return;
         }
@@ -74,6 +77,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     const e = app.panes.editor(fb.pane) orelse return;
     const q = fb.state.query.items;
     e.find.regex = fb.state.regex;
+    fb.landed = false;
     if (q.len == 0) {
         e.find.clear();
     } else {
@@ -105,8 +109,71 @@ fn patternProblem(err: regex.Error) []const u8 {
     };
 }
 
-/// Enter in the bar: land on the match and close (or chain to replace).
+/// Enter in the bar. vim's `/` lands on the match and closes; the
+/// standard profile keeps the bar (VS Code: Enter = next, Shift+Enter =
+/// previous, Esc closes) — the first Enter lands on the current match,
+/// the next ones step. A bar that chains into the replace prompt
+/// closes either way.
 pub fn acceptFromBar(app: *App) Allocator.Error!void {
+    const fb = &(app.find_bar orelse return);
+    if (app.input_style == .vim or fb.chain_to_replace) return acceptAndClose(app);
+    const e = app.panes.editor(fb.pane) orelse {
+        app.closeFindBar(false);
+        return;
+    };
+    const q = fb.state.query.items;
+    if (q.len == 0) return;
+    // Already on the current match (a previous Enter put us there)?
+    // Then this one steps; `setQuery` forgets `current`, so ask first.
+    const cursor = e.buf.editor.cursor;
+    const was_on: ?usize = if (fb.landed) (if (e.find.current) |c| (if (c < e.find.matches.items.len and cursor == e.find.matches.items[c].start) c else null) else null) else null;
+    e.find.regex = fb.state.regex;
+    try e.find.setQuery(q, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
+    const n = e.find.matches.items.len;
+    if (n == 0) {
+        if (e.find.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), q }) else app.toast("no matches for \"{s}\"", .{q});
+        return;
+    }
+    if (was_on) |c| {
+        e.find.current = @min(c, n - 1);
+        _ = e.find.step(if (fb.reverse) -1 else 1);
+    } else {
+        e.find.current = (if (fb.reverse) e.find.indexBefore(cursor) else e.find.indexAtOrAfter(cursor)) orelse 0;
+    }
+    try landFromBar(app, fb, e);
+}
+
+/// The cursor goes to the current match and the bar's snapshot moves
+/// up to here: Esc from now on keeps the query and the jump.
+fn landFromBar(app: *App, fb: *app_mod.FindBarState, e: *EditorPane) Allocator.Error!void {
+    const idx = e.find.current orelse return;
+    e.buf.editor.setCursor(e.find.matches.items[idx].start);
+    e.buf.editor.goal_col = null;
+    app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
+    const snap = e.find.clone() catch return error.OutOfMemory;
+    if (fb.snapshot) |*old| old.deinit();
+    fb.snapshot = snap;
+    fb.snapshot_cursor = e.buf.editor.cursor;
+    fb.landed = true;
+    app.needs_render = true;
+}
+
+/// The bar's ↓ / ↑ / Shift+Enter / F3: a step that also commits, so
+/// Esc keeps the match it landed on.
+pub fn stepFromBar(app: *App, delta: i32) Allocator.Error!void {
+    const fb = &(app.find_bar orelse return);
+    const e = app.panes.editor(fb.pane) orelse return;
+    try stepFind(app, delta);
+    if (app.input_style == .vim or e.find.current == null) return;
+    const snap = e.find.clone() catch return error.OutOfMemory;
+    if (fb.snapshot) |*old| old.deinit();
+    fb.snapshot = snap;
+    fb.snapshot_cursor = e.buf.editor.cursor;
+    fb.landed = true;
+}
+
+/// vim's Enter: land on the match and close (or chain to replace).
+fn acceptAndClose(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
     const pane = fb.pane;
     const reverse = fb.reverse;
@@ -419,7 +486,7 @@ test "find: type → live matches, Enter lands on match 1/3, next/prev wrap, no-
     const e = app.activeEditor().?;
     try t.expectEqual(@as(usize, 3), e.find.matches.items.len);
     try app.handle(.{ .key = Key.named(.enter) });
-    try t.expect(app.find_bar == null);
+    try t.expect(app.find_bar != null); // standard: the bar stays
     try t.expectEqualStrings("match 1/3", app.lastToast().?);
     try command.run(&app, .{ .static = .@"find.next" });
     try t.expectEqualStrings("match 2/3", app.lastToast().?);
@@ -434,6 +501,56 @@ test "find: type → live matches, Enter lands on match 1/3, next/prev wrap, no-
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("no matches for \"zzz\"", app.lastToast().?);
     try t.expectEqual(@as(usize, 0), e.find.matches.items.len);
+}
+
+test "find: standard Enter steps and keeps the bar, Esc keeps the landing, Ctrl+F selects the query; vim Enter closes" {
+    var app = try appWith("alpha\nbeta\nalpha\ngamma\nalpha\n");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("alpha") |c| try app.handle(.{ .key = Key.char(c) });
+    const e = app.activeEditor().?;
+    // Live matches leave the cursor alone, so the first Enter lands on
+    // the match at the cursor; the ones after it step.
+    try t.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.find_bar != null);
+    try t.expectEqualStrings("match 1/3", app.lastToast().?);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("match 2/3", app.lastToast().?);
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try app.handle(.{ .key = .{ .code = .enter, .mods = .{ .shift = true } } });
+    try t.expectEqualStrings("match 1/3", app.lastToast().?);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("match 3/3", app.lastToast().?);
+    try t.expectEqual(@as(usize, 4), e.buf.editor.currentLine());
+    try t.expect(!e.buf.dirty);
+    // Esc closes and keeps the landing: the query and the cursor stay.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.find_bar == null);
+    try t.expectEqual(@as(usize, 4), e.buf.editor.currentLine());
+    try t.expectEqualStrings("alpha", e.find.query.items);
+    // Ctrl+F on an open bar selects the query: typing starts over, and
+    // Esc on that draft goes back to the last landing.
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("beta") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("match 1/1", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"find.find" });
+    try t.expect(app.find_bar.?.state.select_all);
+    for ("gam") |c| try app.handle(.{ .key = Key.char(c) });
+    try t.expectEqualStrings("gam", app.find_bar.?.state.queryText());
+    try t.expectEqual(@as(usize, 1), e.find.matches.items.len);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqualStrings("beta", e.find.query.items);
+    try t.expectEqual(@as(usize, 1), e.buf.editor.currentLine());
+    // vim: `/` + Enter lands and closes, as it always did.
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("alpha") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.find_bar == null);
+    try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
 }
 
 test "find: ctrl+r turns the query into a vim pattern; replace expands groups; a bad pattern says so" {

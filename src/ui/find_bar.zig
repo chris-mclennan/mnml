@@ -35,6 +35,10 @@ pub const State = struct {
     match_case: bool = false,
     in_selection: bool = false,
     show_replace: bool = false,
+    /// The whole query is selected (a second Ctrl+F on an open bar, as
+    /// VS Code does): the next typed char replaces it, Backspace /
+    /// Delete clear it, any other field key just drops the selection.
+    select_all: bool = false,
 
     pub fn deinit(s: *State, gpa: Allocator) void {
         s.query.deinit(gpa);
@@ -57,7 +61,9 @@ pub const State = struct {
     }
 };
 
-pub const Outcome = enum { consumed, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed };
+/// `ignored`: not a bar key and not a field key — a modified chord the
+/// app may still resolve (Ctrl+S saves from the bar, as in VS Code).
+pub const Outcome = enum { consumed, ignored, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed };
 
 /// Match info from the app: `current` is 0-based.
 pub const Info = struct { current: ?usize, total: usize };
@@ -111,11 +117,28 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
         },
         else => {},
     }
+    if (s.select_all) {
+        s.select_all = false;
+        const replaces = switch (key.code) {
+            .backspace, .delete => true,
+            .char => key.typed() != null,
+            else => false,
+        };
+        if (replaces and s.focus == .query) {
+            s.query.clearRetainingCapacity();
+            s.caret = 0;
+            if (key.code != .char) return .changed;
+        }
+    }
     const edit = if (s.focus == .query)
         try text_field.handleKey(&s.query, &s.caret, gpa, key)
     else
         try text_field.handleKey(&s.replace, &s.replace_caret, gpa, key);
-    return if (edit == .changed) .changed else .consumed;
+    return switch (edit) {
+        .changed => .changed,
+        .moved => .consumed,
+        .ignored => .ignored,
+    };
 }
 
 /// Into the focused field.
@@ -179,7 +202,8 @@ pub fn draw(ui: Ui, area: Rect, s: *const State, info: Info) ?Caret {
     }
     const qf = Rect.init(x, r0.y, right -| x, 1);
     ui.hit(qf, .{ .overlay_item = hit_query });
-    const qc = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = field_style, .focused = s.focus == .query });
+    const query_style = if (s.select_all and s.query.items.len > 0) t.selection else field_style;
+    const qc = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = query_style, .focused = s.focus == .query });
     if (s.focus == .query) caret = qc;
 
     // ── row 1: Replace ──
@@ -273,6 +297,9 @@ test "keys map to outcomes and flip the toggles; typing is changed" {
     try testing.expectEqual(Outcome.toggle_case, try handleKey(&s, gpa, Key.ctrl('c')));
     try testing.expect(s.match_case);
     try testing.expectEqual(Outcome.cancel, try handleKey(&s, gpa, Key.named(.esc)));
+    // A chord neither the bar nor the field wants is the app's to resolve.
+    try testing.expectEqual(Outcome.ignored, try handleKey(&s, gpa, Key.ctrl('s')));
+    try testing.expectEqual(Outcome.ignored, try handleKey(&s, gpa, .{ .code = .{ .char = 'P' }, .mods = .{ .ctrl = true, .shift = true } }));
     // Without a replace row, tab reports but the focus stays on the query.
     try testing.expectEqual(Outcome.focus_toggle, try handleKey(&s, gpa, Key.named(.tab)));
     try testing.expectEqual(Focus.query, s.focus);
@@ -283,6 +310,37 @@ test "keys map to outcomes and flip the toggles; typing is changed" {
     try paste(&s, gpa, "new\nvalue");
     try testing.expectEqualStrings("new value", s.replaceText());
     try testing.expectEqualStrings("", s.queryText());
+}
+
+test "a selected query is replaced by typing, cleared by Backspace, kept by a move" {
+    const gpa = testing.allocator;
+    var s: State = .{};
+    defer s.deinit(gpa);
+    try s.setQuery(gpa, "alpha");
+    s.select_all = true;
+    try testing.expectEqual(Outcome.consumed, try handleKey(&s, gpa, Key.named(.left)));
+    try testing.expectEqualStrings("alpha", s.queryText());
+    try testing.expect(!s.select_all);
+    s.select_all = true;
+    // Enter / ↓ act without touching the selection: typing afterwards still replaces.
+    try testing.expectEqual(Outcome.next, try handleKey(&s, gpa, Key.named(.down)));
+    try testing.expect(s.select_all);
+    try testing.expectEqual(Outcome.changed, try handleKey(&s, gpa, Key.char('z')));
+    try testing.expectEqualStrings("z", s.queryText());
+    try testing.expectEqual(@as(usize, 1), s.caret);
+    s.select_all = true;
+    try testing.expectEqual(Outcome.changed, try handleKey(&s, gpa, Key.named(.backspace)));
+    try testing.expectEqualStrings("", s.queryText());
+    // Painted as a selection while it stands.
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    try s.setQuery(gpa, "beta");
+    s.select_all = true;
+    _ = draw(f.ui(), f.full(), &s, .{ .current = 0, .total = 1 });
+    try testing.expect(f.bgEql(7, 0, f.theme.selection));
+    s.select_all = false;
+    _ = draw(f.ui(), f.full(), &s, .{ .current = 0, .total = 1 });
+    try testing.expect(f.bgEql(7, 0, f.theme.chip));
 }
 
 test "narrow bars drop the toggles, then the count, and never panic" {

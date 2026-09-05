@@ -1500,6 +1500,8 @@ test "vim comment toggle uses the buffer's token; a commentless buffer is a no-o
     try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
     try h.feed("gcj");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 0), h.buf.editor.cursor); // `gc{motion}` ends on the first line
+    try testing.expect(h.buf.editor.anchor == null);
     try h.feed("gcip");
     try testing.expectEqualStrings("// a\n  // b\n// c", h.buf.editor.bytes());
     try h.feed("j.");
@@ -1508,10 +1510,32 @@ test "vim comment toggle uses the buffer's token; a commentless buffer is a no-o
     try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
     try h.feed("u");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    // Visual `gc` leaves NORMAL on the range's first line, no selection.
+    try h.feed("jVjgc");
+    try testing.expectEqualStrings("a\n  // b\n// c", h.buf.editor.bytes());
+    try testing.expect(h.buf.editor.anchor == null);
+    try testing.expectEqual(h.buf.editor.lineStart(1), h.buf.editor.cursor);
+    try h.feed("u");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
     try testing.expectEqualStrings("// ", commentTokenFor("zig")[0]);
     try testing.expectEqualStrings(" -->", commentTokenFor("html")[1]);
     try testing.expectEqualStrings("", commentTokenFor("txt")[0]);
     try testing.expectEqualStrings("", commentTokenFor(null)[0]);
+}
+
+test "vim Vc keeps an empty line where the lines were" {
+    // `V…c` is `cc` over the range: the lines go, one empty line stays,
+    // Insert opens on it (`:help v_c`); `R` from any Visual is the same.
+    try vim("Vc", "a\n|b\nc", "a\n|\nc");
+    try vim("Vjc", "a\n|b\nc\nd", "a\n|\nd");
+    try vim("Vkc", "a\nb\n|c\nd", "a\n|\nd");
+    try vim("Vcx", "|a\nb", "x|\nb");
+    try vim("Vc", "a\n|b", "a\n|");
+    try vim("vjR", "a\n|b\nc\nd", "a\n|\nd");
+    try vim("vR", "a\n|b\nc", "a\n|\nc");
+    try vim("Vc<esc>u", "a\n|b\nc", "a\n|b\nc");
+    // Charwise `c` still takes exactly the selection.
+    try vim("vjc", "a\n|b\nc", "a\n|");
 }
 
 test "vim replace mode and cmdline" {

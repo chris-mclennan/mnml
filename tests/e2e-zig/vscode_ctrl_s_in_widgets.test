@@ -1,0 +1,25 @@
+# zig-only
+# VS Code binds save with no `when` clause: Ctrl+S writes the file while
+# the find bar or the command palette has focus, and the widget stays.
+write alpha.zig "pub fn alpha() u32 {\n    return 1;\n}\n"
+open alpha.zig
+key ctrl+end
+type "// dirty"
+expect dirty true
+key ctrl+f
+type alpha
+expect screen contains " Find "
+key ctrl+s
+expect dirty false
+expect file alpha.zig contains "// dirty"
+expect screen contains " Find "
+key esc
+type "!"
+expect dirty true
+key ctrl+shift+p
+expect screen contains "palette"
+key ctrl+s
+expect dirty false
+expect file alpha.zig contains "!"
+expect screen contains "palette"
+key esc

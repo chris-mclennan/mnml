@@ -2095,3 +2095,58 @@ failing on the unfixed tree first.
   's/if (leaves\.len < 2) return app\.closePane(cur, false);/if (leaves.len < 2) return;/'`,
   `tools/break-check.sh "worktree_add: Tab completes" src/app/dispatch.zig
   's/else if (p\.purpose == \.git and app\.git\.prompt == \.worktree_add) true else null/else null/'`.
+
+## The standard profile's editor chrome (2026-09-05, branch `fix-editor`) — `// changed:` notes
+
+Three findings from the vscode-persona hunt plus two of its
+"observed, not filed" notes. D4b says the standard profile is VS Code;
+these are the places the editor's chrome still spoke vim, and what
+moved.
+
+- `// changed (find bar):` Enter no longer submits-and-closes under the
+  standard profile. The first Enter lands on the current match, the
+  ones after step (`FindBarState.landed`, cleared by a query edit);
+  ↓ / ↑ / Shift+Enter / F3 keep stepping; Esc closes. A landing moves
+  the bar's snapshot up to itself, so Esc after Enter keeps the query
+  and the jump, and Esc on a draft typed over it goes back to the last
+  landing. Ctrl+F on an open bar selects the whole query
+  (`FindBar.State.select_all`, painted in `theme.selection`): the next
+  typed char replaces it, Backspace clears it, a move keeps it. vim's
+  `/` + Enter and a bar chained into the replace prompt still close.
+- `// changed (widgets and the keymap):` `FindBar.handleKey` and
+  `Picker.handleKey` report `.ignored` for a key neither the widget nor
+  its field wanted; `dispatch.widgetFallthrough` resolves such a key
+  through the keymap as a single chord when it carries a modifier or is
+  a function key, so `ctrl+s` saves from the find bar and the palette
+  and the widget keeps focus. A leader prefix (`ctrl+k …`) stays with
+  the widget; plain keys never leave it. The prompt overlay was not
+  changed.
+- `// changed (toggle_line_comment):` a selection survives the toggle,
+  both ends kept by (row, col) — VS Code's Ctrl+/ twice is a no-op.
+  The vim handler adds `move_cursor_to_selection_start` before its
+  `select_clear` on `gc{motion}` / `gcip`, so those still end on the
+  range's first line; Neovim's Visual `gc` is bound (widened like `>`).
+- `// changed (D4, EditOp):` 138 tags. `normalize_linewise_selection_inner`
+  is `V…c` / `V…s` / Visual `R`: the range's lines with the last `\n`
+  left out, so the replace leaves one empty line — `cc`'s shape. Esc
+  leaving Insert still steps left across a line start (the pinned
+  Rust-parity row `i<cr><esc>`, and `vim_replace_mode.test`'s save-then-
+  `A` chain depends on it); `Vc<esc>` lands where `cc<esc>` does.
+- `// changed (Undo chip):` `UndoChip.Action.reopen` carries the kept
+  tab and the index it had. `closeTabs` closes right to left so the
+  pops of the closed list land in strip order; a markdown preview goes
+  on the closed list too (`forceClosePane`), and `buffer.reopen` drops
+  the entry it used since a preview never passes through the editor
+  load that does it for buffers.
+- `// changed (tests):` `tests/e2e-zig/vscode_ctrl_slash_selection.test`,
+  `vscode_find_enter_stays_open.test`, `vscode_ctrl_s_in_widgets.test`,
+  `vim_visual_line_change.test`, `ui_undo_close_others_order.test`, each
+  watched failing on the unfixed tree first. Break-checks run (all fail
+  with the break in place): `tools/break-check.sh "toggle comment keeps"
+  src/editor/line.zig 's/ed.anchor = ed.byteAtCol(@min(sp\[0\].row, last), sp\[0\].col);/ed.anchor = null;/'`,
+  `tools/break-check.sh "standard Enter steps" src/app/cmd_find.zig
+  's/if (app.input_style == .vim or fb.chain_to_replace) return acceptAndClose(app);/if (true) return acceptAndClose(app);/'`,
+  `tools/break-check.sh "Ctrl+S saves" src/app/dispatch.zig '…runTarget(app, t),/… _ = t,/'`,
+  `tools/break-check.sh "vim Vc keeps" src/editor/apply.zig '…normalizeLinewiseSelectionInner(ed),/…normalizeLinewiseSelection(ed),/'`,
+  `tools/break-check.sh "close others: the Undo" src/app/context_menus.zig
+  's/        const id = tabs\[i\];/        const id = tabs[tabs.len - 1 - i];/'`.

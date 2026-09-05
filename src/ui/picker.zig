@@ -59,7 +59,9 @@ pub const State = struct {
     }
 };
 
-pub const Outcome = union(enum) { consumed, cancel, changed, accept: usize };
+/// `ignored`: not a picker key and not a field key — a modified chord
+/// the app may still resolve (Ctrl+S saves from the palette).
+pub const Outcome = union(enum) { consumed, ignored, cancel, changed, accept: usize };
 
 /// The `.scrollbar` owner the picker's bar registers under.
 pub const scrollbar_owner: ids.PaneId = std.math.maxInt(ids.PaneId);
@@ -103,7 +105,8 @@ fn editKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
             s.scroll = 0;
             return .changed;
         },
-        else => return .consumed,
+        .moved => return .consumed,
+        .ignored => return .ignored,
     }
 }
 

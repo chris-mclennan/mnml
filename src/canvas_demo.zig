@@ -472,7 +472,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
             switch (try ui.picker.handleKey(&g.picker, g.gpa, key, order.len)) {
                 .accept => |i| g.setNote("accepted: {s}", .{commands[order[i]].label}),
                 .cancel => g.setNote("picker cancelled", .{}),
-                .changed, .consumed => {},
+                .changed, .consumed, .ignored => {},
             }
         },
         .find => {
@@ -496,7 +496,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
                 .toggle_regex => g.setNote("regex: {}", .{g.find.regex}),
                 .toggle_case => g.setNote("match case: {}", .{g.find.match_case}),
                 .focus_toggle => g.setNote("focus: {s}", .{@tagName(g.find.focus)}),
-                .consumed => {},
+                .consumed, .ignored => {},
             }
         },
     }
