@@ -119,6 +119,21 @@ test "header, kinds right-aligned, depth indents, the cursor row and hits that n
     try testing.expect(f.bgEql(3, 5, f.theme.selection));
 }
 
+test "a 100k-char symbol name paints clipped without overflowing the cell sum" {
+    var f = try Fixture.init(44, 5);
+    defer f.deinit();
+    var scroll: usize = 0;
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 'n');
+    const rows = [_]Row{.{ .name = long, .kind = "fn", .line = 0, .col = 0, .depth = 0 }};
+    draw(f.ui(), 2, f.full(), &scroll, .{ .title = long, .rows = &rows, .cursor = 0, .current = null, .focused = true });
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, f.row(0, &buf), "nnnn") != null);
+    try testing.expect(std.mem.indexOf(u8, f.row(3, &buf), "fn nnnn") != null);
+    try testing.expect(std.mem.endsWith(u8, f.row(3, &buf), "…"));
+}
+
 test "the list scrolls to keep the cursor visible and paints a bar" {
     var f = try Fixture.init(30, 6);
     defer f.deinit();

@@ -227,6 +227,24 @@ const Fixture = struct {
     }
 };
 
+test "the location list pane paints a 100k-char entry clipped without overflowing the cell sum" {
+    var f = try Fixture.init("one\ntwo\n");
+    defer f.deinit();
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 'q');
+    const expr = try std.fmt.allocPrint(testing.allocator, "lexpr doc.txt:2:1:{s}", .{long});
+    defer testing.allocator.free(expr);
+    try f.ex(expr);
+    try f.ex("lopen");
+    try f.app.render();
+    const txt = try @import("../ipc/screen.zig").toTestText(testing.allocator, &f.app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "location list") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "doc.txt:2:1 qqqq") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "qqqq…") != null);
+}
+
 test "loclist: lexpr fills the active editor's list; lnext/lprev/lfirst/llast walk it and E553 at both ends" {
     var f = try Fixture.init("one\ntwo\nthree\nfour\n");
     defer f.deinit();

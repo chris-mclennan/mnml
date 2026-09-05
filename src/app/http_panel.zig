@@ -687,10 +687,14 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     }
     x += ui.putStr(x, r.y, end -| x, "  ", base);
     const avail: u16 = end -| x;
-    const label_w = ui.width(row.label);
-    const detail_w: u16 = if (row.detail.len > 0) ui.width(row.detail) + 2 else 0;
+    // Capped at the row: a 100k-char label must not sum past u16.
+    const label_w = ui.widthUpTo(row.label, avail);
+    const detail_w: u16 = if (row.detail.len > 0) ui.widthUpTo(row.detail, avail) + 2 else 0;
     var label = row.label;
-    if (label_w + detail_w > avail) label = ui.clipStr(row.label, avail -| detail_w);
+    // The detail yields before the label does: a long detail is clipped
+    // at the paint, never squeezing the label to nothing.
+    const label_max = @max(avail -| detail_w, @min(label_w, avail / 2));
+    if (label_w > label_max) label = ui.clipStr(row.label, label_max);
     x += ui.putStr(x, r.y, end -| x, label, Theme.onBg(t.fg, base.bg));
     if (row.detail.len > 0 and end > x + 2) {
         x += ui.putStr(x, r.y, end -| x, "  ", base);
@@ -871,6 +875,23 @@ test "headless: the panel paints seven headers, the filter row narrows, enter on
     try testing.expect(std.mem.indexOf(u8, txt3, "CHAINS (1)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "RECENT (1)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "ENVS") == null);
+}
+
+test "paintRow: a 100k-char label and detail paint clipped without overflowing the cell sum" {
+    const UiFixture = @import("../ui/test_fixture.zig");
+    var f = try UiFixture.init(60, 2);
+    defer f.deinit();
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 'h');
+    paintRow(f.ui(), f.full().row(0), .{ .section = .recent, .label = long, .detail = "200" }, false);
+    paintRow(f.ui(), f.full().row(1), .{ .section = .recent, .label = "GET x", .detail = long }, true);
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.startsWith(u8, f.row(0, &buf), "  hhhh"));
+    try testing.expect(std.mem.endsWith(u8, f.row(0, &buf), "…  200"));
+    // A long detail clips itself; the label keeps its cells.
+    try testing.expect(std.mem.startsWith(u8, f.row(1, &buf), "  GET x  hhhh"));
+    try testing.expect(std.mem.endsWith(u8, f.row(1, &buf), "…"));
 }
 
 test "the green + chip on the header opens a blank request; its hit is the .new chip of the http panel" {

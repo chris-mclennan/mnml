@@ -957,15 +957,16 @@ fn paintRow(ui: Ui, r: Rect, row: Item, selected: bool) void {
     const loc = ui.fmt("{s}:{d}", .{ row.path, row.line });
     const min_loc: u16 = 10;
     const avail: u16 = end -| x;
-    const title_w = ui.width(row.title);
-    const loc_w = ui.width(loc);
+    // Capped at the row: a 100k-char title must not sum past u16.
+    const title_w = ui.widthUpTo(row.title, avail);
+    const loc_w = ui.widthUpTo(loc, avail);
     var title = row.title;
     var loc_shown = loc;
     if (title_w + 2 + loc_w > avail) {
         const loc_keep = @min(loc_w, min_loc);
         const title_max = avail -| (2 + loc_keep);
         title = ui.clipStr(row.title, title_max);
-        const loc_max = avail -| (ui.width(title) + 2);
+        const loc_max = avail -| (ui.widthUpTo(title, avail) + 2);
         loc_shown = clipLeft(ui, loc, loc_max);
     }
     x += ui.putStr(x, r.y, end -| x, title, Theme.onBg(t.fg, base.bg));
@@ -991,6 +992,20 @@ fn clipLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
 const testing = std.testing;
 
 const kw: []const []const u8 = &@import("config/Config.zig").default_todo_keywords;
+
+test "paintRow: a 100k-char title paints clipped and keeps the path:line, without overflowing the cell sum" {
+    const UiFixture = @import("ui/test_fixture.zig");
+    var f = try UiFixture.init(60, 1);
+    defer f.deinit();
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 't');
+    paintRow(f.ui(), f.full().row(0), .{ .tag = .todo, .marker = "TODO", .path = "src/a.zig", .line = 7, .title = long, .mtime = 0 }, false);
+    var buf: [256]u8 = undefined;
+    const row = f.row(0, &buf);
+    try testing.expect(std.mem.startsWith(u8, row, "TODO tttt"));
+    try testing.expect(std.mem.endsWith(u8, row, "…  …c/a.zig:7"));
+}
 
 test "matchLine: comment openers, markdown items, word boundaries, one marker per line" {
     try testing.expectEqualStrings("wire it up", matchLine("    // TODO: wire it up", false, kw).?.title);

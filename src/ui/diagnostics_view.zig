@@ -47,11 +47,13 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
     const avail: u16 = end -| x;
     var message = row.message;
     var loc_shown = loc;
-    if (ui.width(message) + 2 + ui.width(loc) > avail) {
-        const loc_keep = @min(ui.width(loc), min_loc);
+    // Measures are capped at the row: a 100k-char message must not sum
+    // two saturated widths past u16.
+    if (ui.widthUpTo(message, avail) + 2 + ui.widthUpTo(loc, avail) > avail) {
+        const loc_keep = @min(ui.widthUpTo(loc, avail), min_loc);
         message = ui.clipStr(row.message, avail -| (2 + loc_keep));
-        const loc_max = avail -| (ui.width(message) + 2);
-        if (ui.width(loc) > loc_max) {
+        const loc_max = avail -| (ui.widthUpTo(message, avail) + 2);
+        if (ui.widthUpTo(loc, avail) > loc_max) {
             const ell: []const u8 = if (ui.ascii) "..." else "…";
             var start: usize = 0;
             while (start < loc.len and ui.width(loc[start..]) > loc_max -| ui.width(ell)) start += std.unicode.utf8ByteSequenceLength(loc[start]) catch 1;
@@ -76,4 +78,17 @@ test "glyph, message, then the location; a long message keeps the file:line" {
     const row = f.row(1, &buf);
     try testing.expect(std.mem.endsWith(u8, row, "api.ts:3"));
     try testing.expect(std.mem.startsWith(u8, row, "⚠ a very"));
+}
+
+test "a 100k-char message paints clipped, the location intact, without overflowing the cell sum" {
+    var f = try Fixture.init(60, 1);
+    defer f.deinit();
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 'm');
+    paintRow(f.ui(), f.full().row(0), .{ .path = "/ws/src/api.ts", .rel = "src/api.ts", .line = 2, .character = 4, .severity = .err, .message = long, .source = null }, false);
+    var buf: [256]u8 = undefined;
+    const row = f.row(0, &buf);
+    try testing.expect(std.mem.startsWith(u8, row, "✗ mmmm"));
+    try testing.expect(std.mem.endsWith(u8, row, "…  …/api.ts:3"));
 }
