@@ -111,7 +111,12 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     while (row <= last) : (row += 1) {
         if (lineHas(ed.lineSlice(row), &re) != invert) try targets.append(arena, ed.lineStart(row));
     }
-    if (targets.items.len == 0) return app.diag.fail(arena, "{s} — E486: pattern not found: {s}", .{ label, needle });
+    if (targets.items.len == 0) {
+        // Vim's `ex_global`: `:v` with every line matching says so;
+        // E486 is the `:g` wording and would claim the opposite.
+        if (invert) return app.diag.fail(arena, "{s} — Pattern found in every line: {s}", .{ label, needle });
+        return app.diag.fail(arena, "{s} — E486: pattern not found: {s}", .{ label, needle });
+    }
     const total = targets.items.len;
 
     if (isPrint(cmd)) {
