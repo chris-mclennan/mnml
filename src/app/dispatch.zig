@@ -719,6 +719,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         },
         .picker => |*p| switch (try Picker.handleKey(&p.state, gpa, k, p.filtered.items.len)) {
             .consumed => cmd_picker.preview(app),
+            .ignored => try widgetFallthrough(app, k),
             .cancel => {
                 cmd_picker.cancel(app);
                 closeOverlay(app);
@@ -938,6 +939,7 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
     const fb = &app.find_bar.?;
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
         .consumed, .focus_toggle => {},
+        .ignored => try widgetFallthrough(app, k),
         .toggle_regex, .toggle_case => try cmd_find.liveUpdate(app),
         .cancel => app.closeFindBar(true),
         .changed => try cmd_find.liveUpdate(app),
@@ -949,6 +951,20 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
             const text = try app.frame.allocator().dupe(u8, fb.state.replace.items);
             try cmd_find.replaceAll(app, text);
         },
+    }
+}
+
+/// A modified chord (or a function key) a text widget did not claim
+/// goes to the keymap as a single chord: Ctrl+S saves from the find bar
+/// and the palette, the way VS Code binds save with no `when` clause,
+/// and the widget stays. Leader prefixes (`ctrl+k …`) stay with the
+/// widget — a pending chain has nowhere to finish while it holds the
+/// keys. Plain keys never leave the widget.
+fn widgetFallthrough(app: *App, k: Key) Allocator.Error!void {
+    if (!(k.mods.ctrl or k.mods.alt or k.mods.super) and k.code != .f) return;
+    switch (app.keymap.resolveSeq(&.{Chord.of(k)})) {
+        .run, .pending_with_fallback => |t| try runTarget(app, t),
+        .pending, .none => {},
     }
 }
 

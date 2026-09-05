@@ -61,7 +61,9 @@ pub const State = struct {
     }
 };
 
-pub const Outcome = enum { consumed, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed };
+/// `ignored`: not a bar key and not a field key — a modified chord the
+/// app may still resolve (Ctrl+S saves from the bar, as in VS Code).
+pub const Outcome = enum { consumed, ignored, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed };
 
 /// Match info from the app: `current` is 0-based.
 pub const Info = struct { current: ?usize, total: usize };
@@ -132,7 +134,11 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
         try text_field.handleKey(&s.query, &s.caret, gpa, key)
     else
         try text_field.handleKey(&s.replace, &s.replace_caret, gpa, key);
-    return if (edit == .changed) .changed else .consumed;
+    return switch (edit) {
+        .changed => .changed,
+        .moved => .consumed,
+        .ignored => .ignored,
+    };
 }
 
 /// Into the focused field.
@@ -291,6 +297,9 @@ test "keys map to outcomes and flip the toggles; typing is changed" {
     try testing.expectEqual(Outcome.toggle_case, try handleKey(&s, gpa, Key.ctrl('c')));
     try testing.expect(s.match_case);
     try testing.expectEqual(Outcome.cancel, try handleKey(&s, gpa, Key.named(.esc)));
+    // A chord neither the bar nor the field wants is the app's to resolve.
+    try testing.expectEqual(Outcome.ignored, try handleKey(&s, gpa, Key.ctrl('s')));
+    try testing.expectEqual(Outcome.ignored, try handleKey(&s, gpa, .{ .code = .{ .char = 'P' }, .mods = .{ .ctrl = true, .shift = true } }));
     // Without a replace row, tab reports but the focus stays on the query.
     try testing.expectEqual(Outcome.focus_toggle, try handleKey(&s, gpa, Key.named(.tab)));
     try testing.expectEqual(Focus.query, s.focus);

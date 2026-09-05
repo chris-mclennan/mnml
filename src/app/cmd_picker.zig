@@ -444,6 +444,42 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try t.expectEqual(true, app.activeEditor().?.wrap.?);
 }
 
+test "Ctrl+S saves from the palette and from the find bar; both stay open" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "alpha\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
+    defer t.allocator.free(path);
+    _ = try app.openPath(path);
+    const e = app.activeEditor().?;
+    _ = try app.applyOps(e, &.{.{ .insert_str = "x" }});
+    try t.expect(e.buf.dirty);
+    try command.run(&app, .{ .static = .palette });
+    try app.handle(.{ .key = Key.ctrl('s') });
+    try t.expect(!e.buf.dirty);
+    try t.expect(app.overlay == .picker);
+    try app.handle(.{ .key = Key.named(.esc) });
+    _ = try app.applyOps(e, &.{.{ .insert_str = "y" }});
+    try command.run(&app, .{ .static = .@"find.find" });
+    try app.handle(.{ .key = Key.char('a') });
+    try app.handle(.{ .key = Key.ctrl('s') });
+    try t.expect(!e.buf.dirty);
+    try t.expect(app.find_bar != null);
+    try t.expectEqualStrings("a", app.find_bar.?.state.queryText());
+    // A leader prefix stays with the widget: nothing pends, nothing opens.
+    try app.handle(.{ .key = Key.ctrl('k') });
+    try t.expect(app.find_bar != null);
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(@as(usize, 0), app.chord.len);
+    const saved = try tmp.dir.readFileAlloc(t.io, "a.txt", t.allocator, .limited(64));
+    defer t.allocator.free(saved);
+    try t.expectEqualStrings("xyalpha\n", saved);
+}
+
 /// The tmp dir's absolute path, gpa-owned without a sentinel.
 fn realRoot(tmp: *std.testing.TmpDir, gpa: std.mem.Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
