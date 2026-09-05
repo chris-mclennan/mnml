@@ -1,0 +1,21 @@
+# zig-only
+# Insert-mode Ctrl-O runs one normal-mode command and comes back to
+# INSERT (`:help i_CTRL-O`): after `A`, `Ctrl-O 0` puts the cursor on
+# column 1 and the mode chip still reads INSERT. In NORMAL, Ctrl-O is the
+# jumplist. Neither opens the file picker — that chord is VS Code's.
+write b.txt "hello world\n"
+open b.txt
+command editor.use_vim
+key A
+expect screen contains " INSERT "
+expect screen contains "Col 12 "
+key ctrl+o
+key 0
+expect screen lacks "╭ Files"
+expect screen contains " INSERT "
+expect screen contains "Col 1 "
+key esc
+expect screen contains " NORMAL "
+key ctrl+o
+expect screen lacks "╭ Files"
+expect screen contains " NORMAL "

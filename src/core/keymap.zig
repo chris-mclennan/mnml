@@ -484,6 +484,11 @@ test "profiles are isolated: a vim chord is unbound in standard and vice versa" 
     const cb = parseKeySeqBuf("ctrl+b", &buf).?;
     try std.testing.expectEqual(command.CommandId.@"view.toggle_tree", standard.resolveSeq(cb).run.static);
     try std.testing.expect(vim.resolveSeq(cb) == .none);
+    // standard-only: ctrl+o opens the file picker in VS Code; in vim it is
+    // the jumplist (normal) and one-shot normal (insert).
+    const co = parseKeySeqBuf("ctrl+o", &buf).?;
+    try std.testing.expectEqual(command.CommandId.@"picker.files", standard.resolveSeq(co).run.static);
+    try std.testing.expect(vim.resolveSeq(co) == .none);
     // standard-only: the ctrl+k menus do not exist in vim.
     const ck = parseKeySeqBuf("ctrl+k z", &buf).?;
     try std.testing.expectEqual(command.CommandId.@"view.fullscreen", standard.resolveSeq(ck).run.static);

@@ -12,7 +12,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 
 ## Rules
 
-1. **vim reserves** `ctrl+w g d u e y r n h j t f b` — each has an insert- or
+1. **vim reserves** `ctrl+w g d u e y r n h j t f b o` — each has an insert- or
    normal-mode meaning the editor must receive. Any default chord starting
    with one of these is `standard` only.
 2. **`ctrl+k …` menus are the standard leader.** NvChad uses `ctrl+k` for
@@ -60,6 +60,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `view.focus_down` | `ctrl+k ctrl+down` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `editor.indent_line` | `ctrl+]` | (new) | standard | VS Code indent |
 | `view.toggle_tree` | `ctrl+b` | both | standard | vim: `Ctrl-B` is page-back (the pair of `Ctrl-F`); it was toggling the sidebar |
+| `picker.files` | `ctrl+o` | both | standard | vim: `Ctrl-O` is the jumplist in NORMAL and one-shot normal in INSERT (`:help i_CTRL-O`); the picker was opening over insert mode and eating the next keys. `ctrl+p` stays in both |
 | `editor.outdent_line` | `ctrl+[` | (new) | standard | VS Code outdent |
 | `picker.files` | `space f f` | both | both | NvChad <leader>ff (already the Rust default) |
 | `picker.files` | `ctrl+o` | both | standard | vim: `ctrl+o` is the jumplist (`nav.back`, with `ctrl+i` forward) — the chord chain runs before the vim handler, so a `both` binding would shadow it |
