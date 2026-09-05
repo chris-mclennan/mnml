@@ -18,6 +18,7 @@ const find_mod = @import("find.zig");
 const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
+const Config = app_mod.Config;
 
 /// 0-based inclusive rows.
 pub const Range = struct { first: usize, last: usize };
@@ -105,6 +106,14 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "delm", "delmarks" })) return delmarks(app, args, bang);
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
     if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
+    if (eqAny(verb, &.{ "mes", "messages", "Messages" })) {
+        if (bang) return @import("messages.zig").dump(app);
+        return command.run(app, .{ .static = .@"messages.show" });
+    }
+    if (eqAny(verb, &.{ "cn", "cnext" })) return command.run(app, .{ .static = .@"qf.next" });
+    if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return command.run(app, .{ .static = .@"qf.prev" });
+    if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return command.run(app, .{ .static = .@"qf.first" });
+    if (eqAny(verb, &.{ "cla", "clast" })) return command.run(app, .{ .static = .@"qf.last" });
     if (eqAny(verb, &.{ "theme", "colorscheme", "colo" })) {
         if (args.len == 0) return command.run(app, .{ .static = .@"theme.pick" });
         return @import("cmd_view.zig").useTheme(app, args);
@@ -761,12 +770,191 @@ fn set(app: *App, args: []const u8) CommandError!void {
                 else => {},
             };
             app.toast(":set {s}={d}", .{ name, n });
-        } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "ai", "autoindent", "et", "expandtab", "rnu", "relativenumber", "list", "cul", "cursorline" })) {
-            // Accepted for muscle memory; the spike has no setting behind them yet.
+        } else if (eqAny(name, &.{ "rightpanel", "rightpanel!", "invrightpanel" })) {
+            const toggle = std.mem.endsWith(u8, name, "!") or std.mem.startsWith(u8, name, "inv");
+            const want = if (toggle) app.right_panel == null else !off;
+            if (want != (app.right_panel != null)) try command.run(app, .{ .static = .@"view.toggle_right_panel" });
+        } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "et", "expandtab" })) {
+            // Accepted for muscle memory; nothing is behind them.
             app.toast(":set {s} — noted", .{opt});
-        } else return app.diag.fail(arena, ":set — unknown option \"{s}\"", .{opt});
+        } else {
+            // Every discrete config field, by its dotted path or bare name.
+            try setOption(app, opt, name, value, off);
+        }
     }
-    if (!any) return app.diag.fail(arena, ":set — usage: :set wrap|nowrap|ic|noic|input=vim|standard", .{});
+    if (!any) return app.diag.fail(arena, ":set — usage: :set <option>[=value] | no<option> | <option>! | <option>?  (tab completes)", .{});
+}
+
+// ─── :set over the config ────────────────────────────────────────────────
+
+const settings = @import("settings.zig");
+
+/// The vim spellings `:set` understands ahead of the config table.
+pub const vim_option_names = [_][]const u8{ "wrap", "ignorecase", "smartcase", "number", "relativenumber", "list", "cursorline", "autoindent", "tabstop", "shiftwidth", "input", "theme", "stickycontext", "rightpanel" };
+
+/// Vim names that are one config field in disguise.
+const vim_aliases = [_]struct { name: []const u8, path: []const u8 }{
+    .{ .name = "rnu", .path = "ui.relative_line_numbers" },
+    .{ .name = "relativenumber", .path = "ui.relative_line_numbers" },
+    .{ .name = "list", .path = "ui.show_whitespace" },
+    .{ .name = "cul", .path = "ui.cursor_line" },
+    .{ .name = "cursorline", .path = "ui.cursor_line" },
+    .{ .name = "ai", .path = "editor.auto_indent" },
+    .{ .name = "autoindent", .path = "editor.auto_indent" },
+};
+
+/// Sections whose values are user-keyed maps or forwarded blobs — no
+/// discrete leaf to set.
+const skipped_sections = [_][]const u8{ "lsp", "tasks", "snippets", "abbr", "formatters", "linters", "dap", "tools", "keys", "workspaces" };
+
+/// Every `section.field` in `Config` whose type is `bool` or an enum —
+/// the same dotted paths the settings overlay's rows name.
+pub const option_paths: []const []const u8 = blk: {
+    @setEvalBranchQuota(200_000);
+    var out: []const []const u8 = &.{};
+    for (std.meta.fields(Config)) |sec| {
+        if (@typeInfo(sec.type) != .@"struct") continue;
+        var skip = false;
+        for (skipped_sections) |s| if (std.mem.eql(u8, s, sec.name)) {
+            skip = true;
+        };
+        if (skip) continue;
+        for (std.meta.fields(sec.type)) |f| {
+            switch (@typeInfo(f.type)) {
+                .bool, .@"enum" => out = out ++ &[_][]const u8{sec.name ++ "." ++ f.name},
+                else => {},
+            }
+        }
+    }
+    break :blk out;
+};
+
+/// `name` → the one path it means: an exact dotted path, a vim alias,
+/// or a bare field name that exactly one section has.
+pub fn resolveOption(name: []const u8) ?[]const u8 {
+    for (vim_aliases) |a| if (std.mem.eql(u8, a.name, name)) return a.path;
+    var found: ?[]const u8 = null;
+    for (option_paths) |path| {
+        if (std.mem.eql(u8, path, name)) return path;
+        const dot = std.mem.indexOfScalar(u8, path, '.') orelse continue;
+        if (std.mem.eql(u8, path[dot + 1 ..], name)) {
+            if (found != null) return null; // ambiguous — say the section
+            found = path;
+        }
+    }
+    return found;
+}
+
+/// `:set <opt>`, `:set no<opt>`, `:set <opt>!`, `:set <opt>?`, `:set <opt>=<value>`
+/// on a discrete config field. Applies in memory; the settings overlay
+/// is where a value is written to disk.
+fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8, off: bool) CommandError!void {
+    const arena = app.frame.allocator();
+    var name = name_in;
+    var toggle = false;
+    var query = false;
+    if (std.mem.startsWith(u8, name, "inv")) {
+        toggle = true;
+        name = name[3..];
+    } else if (std.mem.endsWith(u8, name, "!")) {
+        toggle = true;
+        name = name[0 .. name.len - 1];
+    } else if (std.mem.endsWith(u8, name, "?")) {
+        query = true;
+        name = name[0 .. name.len - 1];
+    }
+    const path = resolveOption(name) orelse {
+        if (name.len > 0 and resolveOption(name) == null and ambiguous(name)) return app.diag.fail(arena, ":set — \"{s}\" is in more than one section; use section.{s}", .{ name, name });
+        return app.diag.fail(arena, ":set — unknown option \"{s}\"", .{opt});
+    };
+    inline for (option_paths) |cp| if (std.mem.eql(u8, cp, path)) {
+        const opts = comptime settings.options(cp);
+        const cur = settings.currentIndex(&app.cfg, cp);
+        if (query) {
+            app.toast("{s}={s}", .{ cp, opts[cur] });
+            return;
+        }
+        const idx: usize = if (value) |v| blk: {
+            for (opts, 0..) |o, i| if (std.mem.eql(u8, o, v)) break :blk i;
+            if (opts.len == 2 and std.mem.eql(u8, opts[0], "off")) {
+                if (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "1")) break :blk 1;
+                if (std.mem.eql(u8, v, "false") or std.mem.eql(u8, v, "0")) break :blk 0;
+            }
+            return app.diag.fail(arena, ":set {s} — not one of {s}", .{ cp, try joinOptions(arena, opts) });
+        } else if (toggle) blk: {
+            if (opts.len != 2) return app.diag.fail(arena, ":set {s}! — not a switch; use {s}=<{s}>", .{ cp, cp, try joinOptions(arena, opts) });
+            break :blk (cur + 1) % 2;
+        } else if (opts.len == 2 and std.mem.eql(u8, opts[0], "off")) @as(usize, @intFromBool(!off)) else {
+            return app.diag.fail(arena, ":set {s}=<{s}>", .{ cp, try joinOptions(arena, opts) });
+        };
+        settings.setIndex(&app.cfg, cp, idx);
+        if (comptime std.mem.eql(u8, cp, "editor.input_style")) {
+            try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
+        }
+        app.needs_render = true;
+        app.toast("{s}={s}", .{ cp, opts[idx] });
+        return;
+    };
+    return app.diag.fail(arena, ":set — unknown option \"{s}\"", .{opt});
+}
+
+fn ambiguous(name: []const u8) bool {
+    var n: usize = 0;
+    for (option_paths) |path| {
+        const dot = std.mem.indexOfScalar(u8, path, '.') orelse continue;
+        if (std.mem.eql(u8, path[dot + 1 ..], name)) n += 1;
+    }
+    return n > 1;
+}
+
+fn joinOptions(arena: Allocator, opts: []const []const u8) Allocator.Error![]const u8 {
+    return std.mem.join(arena, "|", opts);
+}
+
+/// Tab completion for `:set <partial>`: option names (dotted paths, bare
+/// field names and the vim spellings) that start with `partial`, or —
+/// after a `=` — the values the named option takes. Each candidate is a
+/// gpa string the caller frees.
+pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
+    var out: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (out.items) |c| gpa.free(c);
+        out.deinit(gpa);
+    }
+    if (std.mem.indexOfScalar(u8, partial, '=')) |eq| {
+        const name = partial[0..eq];
+        const vpart = partial[eq + 1 ..];
+        const path = resolveOption(name) orelse return try out.toOwnedSlice(gpa);
+        inline for (option_paths) |cp| if (std.mem.eql(u8, cp, path)) {
+            for (comptime settings.options(cp)) |o| if (std.mem.startsWith(u8, o, vpart)) {
+                try out.append(gpa, try std.mem.concat(gpa, u8, &.{ name, "=", o }));
+            };
+        };
+        return try out.toOwnedSlice(gpa);
+    }
+    var bare = partial;
+    var prefix: []const u8 = "";
+    if (std.mem.startsWith(u8, partial, "no") and partial.len > 2) {
+        // `:set no<tab>` completes switches, keeping the `no`.
+        bare = partial[2..];
+        prefix = "no";
+    }
+    for (vim_option_names) |n| if (std.mem.startsWith(u8, n, partial)) try out.append(gpa, try gpa.dupe(u8, n));
+    for (option_paths) |path| {
+        const dot = std.mem.indexOfScalar(u8, path, '.') orelse continue;
+        const field = path[dot + 1 ..];
+        if (std.mem.startsWith(u8, path, partial)) {
+            try out.append(gpa, try gpa.dupe(u8, path));
+        } else if (bare.len > 0 and (std.mem.startsWith(u8, path, bare) or std.mem.startsWith(u8, field, bare))) {
+            try out.append(gpa, try std.mem.concat(gpa, u8, &.{ prefix, path }));
+        }
+    }
+    std.mem.sort([]u8, out.items, {}, struct {
+        fn lt(_: void, a: []u8, b: []u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    return try out.toOwnedSlice(gpa);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -879,6 +1067,111 @@ test "ex: write, abbreviations, set, registers, unknown verbs" {
     try f.ex("w copy.txt");
     try testing.expectEqualStrings("copy.txt", f.app.panes.get(f.app.active.?).?.title());
     _ = try f.tmp.dir.statFile(testing.io, "copy.txt", .{});
+}
+
+test "ex: set reaches every discrete config field — dotted, bare, no/!/?/=, aliases, and the errors" {
+    var f = try Fixture.init("x");
+    defer f.deinit();
+    try testing.expect(option_paths.len > 60);
+    try testing.expectEqualStrings("ui.relative_line_numbers", resolveOption("rnu").?);
+    try testing.expectEqualStrings("ui.relative_line_numbers", resolveOption("relative_line_numbers").?);
+    try testing.expect(resolveOption("enabled") == null); // sonos.enabled and marketplace.enabled
+    try testing.expect(!f.app.cfg.ui.relative_line_numbers);
+    try f.ex("set relative_line_numbers");
+    try testing.expect(f.app.cfg.ui.relative_line_numbers);
+    try f.ex("set norelative_line_numbers");
+    try testing.expect(!f.app.cfg.ui.relative_line_numbers);
+    try f.ex("set ui.relative_line_numbers!");
+    try testing.expect(f.app.cfg.ui.relative_line_numbers);
+    try f.ex("set invrnu");
+    try testing.expect(!f.app.cfg.ui.relative_line_numbers);
+    try f.ex("set editor.scroll_accel=fast");
+    try testing.expectEqual(app_mod.Config.ScrollAccel.fast, f.app.cfg.editor.scroll_accel);
+    try f.ex("set scroll_accel?");
+    try testing.expectEqualStrings("editor.scroll_accel=fast", f.app.lastToast().?);
+    try f.ex("set cursor_line=true");
+    try testing.expect(f.app.cfg.ui.cursor_line);
+    try testing.expectError(error.Failed, f.ex("set editor.scroll_accel=warp"));
+    try testing.expectError(error.Failed, f.ex("set editor.scroll_accel!"));
+    try testing.expectError(error.Failed, f.ex("set enabled"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "more than one section") != null);
+    try testing.expectError(error.Failed, f.ex("set nosuchthing"));
+    // The input style goes through setInputStyle, so the keymap follows.
+    try f.ex("set editor.input_style=vim");
+    try testing.expectEqual(input.Style.vim, f.app.input_style);
+    try f.ex("set input_style=standard");
+    try testing.expectEqual(input.Style.standard, f.app.input_style);
+}
+
+test "ex: set completion — names by path, bare field or vim spelling; values after =; no<tab> keeps the no" {
+    const gpa = testing.allocator;
+    const free = struct {
+        fn f(list: [][]u8) void {
+            for (list) |c| gpa.free(c);
+            gpa.free(list);
+        }
+    }.f;
+    const a = try completeSet(gpa, "ui.line_n");
+    defer free(a);
+    try testing.expectEqual(@as(usize, 1), a.len);
+    try testing.expectEqualStrings("ui.line_numbers", a[0]);
+    const b = try completeSet(gpa, "scroll_acc");
+    defer free(b);
+    try testing.expectEqual(@as(usize, 1), b.len);
+    try testing.expectEqualStrings("editor.scroll_accel", b[0]);
+    const c = try completeSet(gpa, "editor.scroll_accel=");
+    defer free(c);
+    try testing.expectEqual(@as(usize, 4), c.len);
+    try testing.expectEqualStrings("editor.scroll_accel=off", c[0]);
+    const d = try completeSet(gpa, "scroll_accel=f");
+    defer free(d);
+    try testing.expectEqual(@as(usize, 1), d.len);
+    try testing.expectEqualStrings("scroll_accel=fast", d[0]);
+    const e = try completeSet(gpa, "noline_n");
+    defer free(e);
+    try testing.expectEqual(@as(usize, 1), e.len);
+    try testing.expectEqualStrings("noui.line_numbers", e[0]);
+    const g = try completeSet(gpa, "rel");
+    defer free(g);
+    try testing.expect(g.len >= 2); // relativenumber + ui.relative_line_numbers
+    try testing.expectEqualStrings("relativenumber", g[0]);
+    const h = try completeSet(gpa, "zzz");
+    defer free(h);
+    try testing.expectEqual(@as(usize, 0), h.len);
+}
+
+test "ex: Tab on `:set ui.line_n` completes the option on the : line" {
+    var f = try Fixture.init("x");
+    defer f.deinit();
+    const Key = app_mod.Key;
+    try f.app.setInputStyle(.vim);
+    try f.app.handle(.{ .key = Key.char(':') });
+    for ("set ui.line_n") |c| try f.app.handle(.{ .key = Key.char(c) });
+    try f.app.handle(.{ .key = Key.named(.tab) });
+    const e = f.app.activeEditor().?;
+    try testing.expectEqualStrings("set ui.line_numbers", e.buf.input.cmdlineGet().?);
+    // Enter runs it; the gutter flag flips.
+    try testing.expect(f.app.cfg.ui.line_numbers);
+    try f.app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(f.app.cfg.ui.line_numbers); // bare `set x` on a switch = on
+    try f.app.handle(.{ .key = Key.char(':') });
+    for ("set noui.line_numbers") |c| try f.app.handle(.{ .key = Key.char(c) });
+    try f.app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(!f.app.cfg.ui.line_numbers);
+}
+
+test "ex: :messages opens the picker, :messages! dumps, :cn/:cp walk the quickfix list" {
+    var f = try Fixture.init("x");
+    defer f.deinit();
+    try testing.expectError(error.Failed, f.ex("messages")); // nothing yet
+    f.app.toast("hello there", .{});
+    try f.ex("messages");
+    try testing.expect(f.app.overlay == .picker);
+    f.app.overlay.deinit(f.app.gpa);
+    try f.ex("messages!");
+    try testing.expect(std.mem.indexOf(u8, f.app.activeEditor().?.buf.editor.bytes(), "hello there") != null);
+    try testing.expectError(error.Failed, f.ex("cn"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "no quickfix list") != null);
 }
 
 test "ex: q refuses a dirty buffer, q! discards, the last close quits" {

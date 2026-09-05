@@ -128,7 +128,11 @@ pub fn build(b: *std.Build) void {
 
     // ── tests ──
     const test_step = b.step("test", "Run unit tests");
-    const tests = b.addTest(.{ .root_module = exe.root_module });
+    // `-Dtest-filter=<substring>` runs the matching tests only — what
+    // `tools/break-check.sh` uses to run one test against a broken copy.
+    const test_filter = b.option([]const u8, "test-filter", "Run only the unit tests whose name contains this");
+    const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
+    const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters });
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
     // src/ui is reached through its barrel (`src/ui/ui.zig`) from main.zig's
@@ -146,6 +150,7 @@ pub fn build(b: *std.Build) void {
     // target; tests that need a pty or a tty skip themselves on Windows
     // (`error.SkipZigTest`). The two demos are POSIX-only executables.
     const tui_tests = b.addTest(.{
+        .filters = test_filters,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tui/tui.zig"),
             .target = target,
@@ -157,17 +162,70 @@ pub fn build(b: *std.Build) void {
         }),
     });
     test_step.dependOn(&b.addRunArtifact(tui_tests).step);
-    const pty_tests = b.addTest(.{ .root_module = pty_mod });
+    const pty_tests = b.addTest(.{ .root_module = pty_mod, .filters = test_filters });
     const pty_test_run = b.addRunArtifact(pty_tests);
     const pty_test_step = b.step("pty-test", "Run the pty module tests");
     pty_test_step.dependOn(&pty_test_run.step);
     test_step.dependOn(&pty_test_run.step);
     const demos_supported = target.result.os.tag != .windows;
 
-    const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime });
-    const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight });
+    const ts_tests = b.addTest(.{ .name = "tree-sitter-tests", .root_module = ts.runtime, .filters = test_filters });
+    const highlight_tests = b.addTest(.{ .name = "highlight-tests", .root_module = ts.highlight, .filters = test_filters });
     test_step.dependOn(&b.addRunArtifact(ts_tests).step);
     test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
+
+    // ── docs + check (cutover prep) ─────────────────────────────────────
+    // `zig build docs` regenerates docs/commands.md from the comptime spec
+    // table (E8). `zig build check` is the CI gate (E7): fmt, the unit
+    // tests in Debug and ReleaseSafe, the Phase-0 e2e gate, the same gate
+    // swept at 80x24 / 120x40 / 200x60, and defaults.test.
+    const specs_mod = b.createModule(.{ .root_source_file = b.path("src/commands/specs.zig"), .target = target, .optimize = optimize });
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("tools/gen_commands.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "specs", .module = specs_mod }},
+    });
+    const gen = b.addExecutable(.{ .name = "gen-commands", .root_module = gen_mod });
+    const gen_run = b.addRunArtifact(gen);
+    gen_run.addArg(b.pathFromRoot("docs/commands.md"));
+    gen_run.has_side_effects = true;
+    const docs_step = b.step("docs", "Regenerate docs/commands.md from the command spec table");
+    docs_step.dependOn(&gen_run.step);
+    const gen_tests = b.addTest(.{ .root_module = gen_mod, .filters = test_filters });
+    test_step.dependOn(&b.addRunArtifact(gen_tests).step);
+
+    const check_step = b.step("check", "The safety gates: fmt, Debug + ReleaseSafe unit tests, the e2e gate, the width sweep, defaults.test");
+    const fmt_check = b.addFmt(.{ .paths = &.{ "src", "build.zig", "tools" }, .check = true });
+    check_step.dependOn(&fmt_check.step);
+    // Each optimize mode is its own nested build so the mode is explicit
+    // whatever -Doptimize this invocation carries; they run in sequence.
+    const debug_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", "-Doptimize=Debug" });
+    debug_tests.setName("zig build test -Doptimize=Debug");
+    debug_tests.step.dependOn(&fmt_check.step);
+    const safe_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", "-Doptimize=ReleaseSafe" });
+    safe_tests.setName("zig build test -Doptimize=ReleaseSafe");
+    safe_tests.step.dependOn(&debug_tests.step);
+    const gate_run = b.addRunArtifact(exe);
+    gate_run.setName("mnml-zig test --gate");
+    gate_run.addArgs(&.{ "test", "--gate" });
+    gate_run.setCwd(b.path("."));
+    gate_run.has_side_effects = true;
+    gate_run.step.dependOn(&safe_tests.step);
+    const sweep_run = b.addRunArtifact(exe);
+    sweep_run.setName("mnml-zig test --gate --sizes 80x24,120x40,200x60");
+    sweep_run.addArgs(&.{ "test", "--gate", "--sizes", "80x24,120x40,200x60" });
+    sweep_run.setCwd(b.path("."));
+    sweep_run.has_side_effects = true;
+    sweep_run.step.dependOn(&gate_run.step);
+    const defaults_run = b.addRunArtifact(exe);
+    defaults_run.setName("mnml-zig test tests/e2e-zig/defaults.test");
+    defaults_run.addArgs(&.{ "test", "tests/e2e-zig/defaults.test" });
+    defaults_run.setCwd(b.path("."));
+    defaults_run.has_side_effects = true;
+    defaults_run.step.dependOn(&sweep_run.step);
+    check_step.dependOn(&defaults_run.step);
+    // ── end docs + check ────────────────────────────────────────────────
 
     // ── e2e: gate-build ──
     // Compile the exe and every test binary for the selected target without

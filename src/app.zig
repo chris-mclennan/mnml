@@ -74,6 +74,13 @@ const browser_pane = @import("app/browser_pane.zig");
 const http_parse = @import("http/parse.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
+const messages = @import("app/messages.zig");
+const harpoon = @import("app/harpoon.zig");
+const stress = @import("app/stress.zig");
+const undo_store = @import("app/undo_store.zig");
+const update = @import("app/update.zig");
+const session = @import("app/session.zig");
+const startup_picker = @import("app/startup_picker.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -220,7 +227,51 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, lua, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
+pub const PickerKind = enum {
+    buffers,
+    files,
+    recent,
+    commands,
+    tabs,
+    themes,
+    go_run_cmd,
+    tools,
+    tasks,
+    lua,
+    git,
+    ai_suggest_backend,
+    ai_session,
+    dap_remove_watch,
+    dap_exceptions,
+    dap_threads,
+    lsp_locations,
+    lsp_code_actions,
+    lsp_symbols,
+    http_env_vars,
+    http_env_delete,
+    http_env_pick,
+    http_history,
+    http_captured,
+    http_chains,
+    auth_presets,
+    cookies_show,
+    cookies_delete,
+    http_insert_header,
+    http_copy_as,
+    http_lookup_file,
+    http_lookup_item,
+    ws_history,
+    browser_device,
+    browser_throttle,
+    browser_url_history,
+    /// A picker whose accept is the opener's own function
+    /// (`Overlay.picker.on_accept`): messages, harpoon, the startup picker.
+    custom,
+};
+
+/// The accept of a `.custom` picker: the row's unfiltered index and its
+/// label (a frame copy — the overlay is already gone when this runs).
+pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Allocator.Error!void;
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -257,6 +308,8 @@ pub const Overlay = union(enum) {
         /// The themes picker previews as the cursor moves; Esc puts
         /// this one back.
         restore_theme: ?*const theme_mod = null,
+        /// `.custom` only.
+        on_accept: ?PickerAccept = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
@@ -496,6 +549,16 @@ pub const App = struct {
     last_watch_ms: i64 = 0,
     /// Frames since something changed; the loop skips idle renders.
     needs_render: bool = true,
+    /// The toast history (`:messages`).
+    messages: messages.State = .{},
+    /// Zen: the editor and the `:` line, nothing else painted.
+    zen: bool = false,
+    /// Nine pinned files (`harpoon.*`).
+    harpoon: harpoon.State = .{},
+    /// Render durations for the statusline stress meter.
+    stress: stress.Meter = .{},
+    update: update.State = .{},
+    session: session.State = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -565,6 +628,14 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        // The session comes back before anything else the startup hook
+        // does, so the update toast and the picker land on the restored frame.
+        try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
+        try app.hooks.subscribe(.startup, .{ .zig = &update.onStartup });
+        try app.hooks.subscribe(.startup, .{ .zig = &startup_picker.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
+        try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
+        try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
@@ -676,6 +747,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
+        self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
@@ -690,6 +762,8 @@ pub const App = struct {
         }
         for (self.toasts.items) |t| freeToast(gpa, t);
         self.toasts.deinit(gpa);
+        self.messages.deinit(gpa);
+        self.harpoon.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
         var it = self.abbrevs.iterator();
@@ -781,6 +855,7 @@ pub const App = struct {
     pub fn toastLevel(self: *App, level: ToastLevel, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         const s = try std.fmt.allocPrint(self.gpa, fmt, args);
         errdefer self.gpa.free(s);
+        try self.messages.record(self.gpa, s, level, self.now_ms);
         if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms });
         self.needs_render = true;
@@ -794,6 +869,7 @@ pub const App = struct {
         errdefer self.gpa.free(s);
         const owned_id = try self.gpa.dupe(u8, id);
         errdefer self.gpa.free(owned_id);
+        try self.messages.record(self.gpa, text, level, self.now_ms);
         if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = std.math.maxInt(i64), .id = owned_id });
         self.needs_render = true;
@@ -1296,6 +1372,8 @@ pub const App = struct {
         try git_app.tick(self, now);
         try ai_app.tick(self);
         try self.script().tick(now);
+        try update.tick(self);
+        session.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1334,7 +1412,10 @@ pub const App = struct {
     /// One frame into any screen (the terminal loop paints into the
     /// terminal's).
     pub fn renderInto(self: *App, screen: *vaxis.Screen) Allocator.Error!void {
+        const t0 = Io.Timestamp.now(self.io, .awake);
         try render_mod.render(self, screen);
+        const us = @divTrunc(t0.durationTo(Io.Timestamp.now(self.io, .awake)).nanoseconds, 1000);
+        self.stress.push(@intCast(std.math.clamp(us, 0, std.math.maxInt(u32))));
         self.needs_render = false;
     }
 
@@ -1470,6 +1551,16 @@ test {
     _ = @import("app/script_pane.zig");
     _ = @import("app/cmd_script.zig");
     _ = @import("ui/script_view.zig");
+    _ = @import("app/messages.zig");
+    _ = @import("app/zen.zig");
+    _ = @import("app/harpoon.zig");
+    _ = @import("app/cmd_harpoon.zig");
+    _ = @import("app/stress.zig");
+    _ = @import("app/undo_store.zig");
+    _ = @import("app/update.zig");
+    _ = @import("app/session.zig");
+    _ = @import("app/cmd_session.zig");
+    _ = @import("app/startup_picker.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

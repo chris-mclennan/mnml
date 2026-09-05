@@ -339,6 +339,17 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
+        .custom => {
+            const f = p.on_accept orelse {
+                app.overlay.deinit(app.gpa);
+                app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+                return;
+            };
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try f(app, i, label);
+        },
         .http_env_vars, .http_env_delete, .http_env_pick, .http_history, .http_captured, .http_chains, .auth_presets, .cookies_show, .cookies_delete, .http_insert_header, .http_copy_as, .http_lookup_file, .http_lookup_item, .ws_history, .browser_device, .browser_throttle, .browser_url_history => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);

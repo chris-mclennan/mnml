@@ -1805,6 +1805,21 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
         // `<cmd> <partial path>` → workspace entries.
         const head = line[0..sp];
         const partial = line[sp + 1 ..];
+        if (std.mem.eql(u8, head, "set") or std.mem.eql(u8, head, "se")) {
+            // `:set <option>` — every discrete config field (ex.zig).
+            const names = try ex.completeSet(gpa, partial);
+            defer {
+                for (names) |n| gpa.free(n);
+                gpa.free(names);
+            }
+            for (names) |n| try cands.append(gpa, try std.mem.concat(gpa, u8, &.{ head, " ", n }));
+            if (cands.items.len == 0) return;
+            const prefix = try gpa.dupe(u8, line);
+            errdefer gpa.free(prefix);
+            app.cmd_complete = .{ .prefix = prefix, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
+            try e.buf.input.cmdlineSet(app.cmd_complete.?.candidates[0]);
+            return;
+        }
         var is_path_cmd = false;
         for (path_commands) |p| if (std.mem.eql(u8, p, head)) {
             is_path_cmd = true;
@@ -1885,7 +1900,7 @@ fn bigWordAt(text: []const u8, byte: usize) ?find_mod.Range {
     return .{ .start = s, .end = en };
 }
 
-fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Error!void {
+pub fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Error!void {
     const line = e.buf.input.cmdlineGet() orelse return;
     const caret = e.buf.input.cmdlineCaret() orelse line.len;
     var clean: std.ArrayListUnmanaged(u8) = .empty;

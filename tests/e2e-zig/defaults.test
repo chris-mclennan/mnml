@@ -1,0 +1,37 @@
+# zig-only
+# The shipped defaults (E7): what a first launch with no config looks
+# like. Every assertion here is a `Config{}` value made visible — the
+# test fails if a default changes, which is the point: a default changes
+# on purpose, in the same commit as this file.
+write a.txt hello\nworld
+
+# editor.input_style = standard: the statusline's input-style chip.
+open a.txt
+expect screen contains "standard"
+
+# ui.line_numbers = true: the gutter numbers the rows.
+expect screen contains "1 hello"
+expect screen contains "2 world"
+
+# The tree rail is visible with its default width, so the workspace file
+# is listed beside the editor and the divider column is painted.
+expect screen contains "a.txt"
+
+# ui.wrap = false: a long line is clipped, not wrapped onto a second row.
+write long.txt aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nend
+open long.txt
+expect screen contains "2 end"
+
+# ui.relative_line_numbers = false: absolute numbers, so the row under
+# the cursor reads "1", never "0".
+expect screen lacks "0 aaaa"
+
+# ui.stress_meter = false and no unread warnings: the statusline carries
+# neither the frame-time bar nor the bell.
+expect screen lacks "ms "
+expect screen lacks "⚠"
+
+# session.restore = true, editor.persistent_undo = false, ui.check_updates
+# = true, editor.tab_width = 4 are asserted by the unit test
+# "defaults are the shipped values" in src/config/Config.zig; the screen
+# cannot show them.
