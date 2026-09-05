@@ -1855,3 +1855,83 @@ is the contract-level list of what moved.
 - Deferred, by design: `:vsplit` opening a second buffer. Rust does the
   same (from disk); a shared-buffer window model needs `Editor` split
   into document + view — see the finding for the design and estimate.
+
+## Vim editing semantics (2026-09-05, branch `vim-edit`) — `// changed:` notes
+
+Fourteen findings from the nvchad-persona hunt, editing-semantics
+half. `docs/DESIGN.md` D4 / D4b say the vim profile is Neovim /
+NvChad-exact; these are the places the editor was not, and what moved.
+
+- `// changed (D4, EditOp):` 137 tags, not 131. `move_right_no_cross_line`
+  / `move_left_no_cross_line` are `l` / `h` as operator targets (`x` is
+  `dl`, `X` is `dh` — real deletes, so the char reaches `""` and `"-`);
+  `move_word_end_cw` / `move_big_word_end_cw` carry `cw`'s count in the
+  op (the current word's end even when the cursor is already on it, `e`
+  for the rest, a `w` on blanks — `:help cw`); `block_eol` is `$` in
+  V-BLOCK; `reindent` is the `=` operator. `EditOp.countPtr` names the
+  count a `{count}.` rewrites. The Lua bridge reads a `bool` payload as
+  `value`.
+- `// changed (registers):` the small-delete register `"-` exists: a
+  delete of less than a line fills it and leaves `"1`–`"9` alone
+  (`:help quote-`); a linewise or multi-line delete shifts the history
+  as before. A selection delete / replace snapshots the cursor at the
+  range's start with no live anchor, so `xu` and `cwu` come back where
+  the text began.
+- `// changed (dot-repeat):` a count given to `.` replaces the recorded
+  change's count in place (the first counted op — the handler now always
+  puts an operator's motion under a `repeat`, count 1 included) and
+  sticks for the next bare `.`; a record with nothing counted is
+  replayed count times. The key that entered Insert is part of the
+  record even when it only moved (`A` = `move_line_end` + text). A
+  visual operator's record is prefixed with ops that reselect the same
+  extent from the cursor, captured in rows / columns before the key
+  applies (`:help visual-repeat`). A replay is one undo step.
+- `// changed (undo):` one Insert / Replace session is one undo step
+  (`:help undo-blocks`): `Buffer` anchors the undo depth past the first
+  snapshot the entering key pushed and truncates back to it when a later
+  key finds the handler in Normal. Arrow keys do not split the session
+  (vim would); nothing asked for that yet.
+- `// changed (folds):` closed folds are one line to `j` / `k` / `+` /
+  `-` and to `dd` / `<n>dd` / `dj` / `yy` / `<n>yy`: `Buffer.foldAwareOps`
+  rewrites the handler's list before it is applied, dropping the folds a
+  delete takes with it; the dot record keeps the handler's own list.
+- `// changed (indent):` `editor.auto_indent` reaches the buffers
+  (`applyBufferPrefs`, `App.syncAutoIndent` on `:set ai` / the settings
+  row) and carries NvChad's `smartindent` brace habits: one level deeper
+  after a line ending in `{`, a `}` typed first on a line takes the indent
+  of the line holding its `{`. `=` re-indents by the same brace rules
+  (`line.reindent`), vim's `=` without an `indentexpr`; `=G` / `>G` /
+  `cG` take the last line whole, `=gg` / `>gg` / `cgg` reach back from
+  the end of the cursor's line. `editor.auto_pair` is still never copied
+  onto an `Editor` at open (only the toggle sets it) — left alone, it is
+  outside these findings and the corpus types brackets as if it were off.
+- `// changed (view):` `Lines` carries the painted count: a trailing
+  `\n` opens no phantom line N+1 unless the cursor, the anchor or an
+  extra cursor sits at EOF. `Doc.block_eol` paints a ragged-right block
+  to each line's text.
+- `// changed (macros):` a macro is its register. `qa…q` writes the keys
+  in `parseKeys` notation as the charwise text of `"a`; `@a` parses what
+  the register holds when it runs; a register yanked back with `yy`
+  replays its newline as Enter, as vim executes it. `Clipboard.macros`
+  is gone; `macros.zon` carries the named registers `a`–`z` (plus the
+  anonymous `'@'` slot, which `:reg` never lists) — any `"ayy` travels
+  too.
+- `// changed (ex):` `:w !cmd` / `:[range]w !cmd` pipe to the shell
+  through `:!`'s runner and output pane and write nothing. `:t` / `:m`
+  (address `0` = the top; E134 into its own range), `:new` / `:vnew`,
+  `:update`, `:saveas`, `:bfirst` / `:blast`, `:cq` (exit code 1 —
+  `App.exit_code`, returned by `tui/loop.run`), `:b N` / `:b name` /
+  `:b#`. `buffer.last` (`Ctrl-^`) had a spec and no runner; it has one,
+  on `App.prev_active`, which `setActive` records. The verb scanner keeps
+  taking dots and digits (command ids), so the copy / move verbs split at
+  their first non-letter. `number` / `nu` are aliases of `ui.line_numbers`
+  through the config table, so `:set number?` / `!` work like `wrap?`.
+- `// changed (tests):` `tests/e2e-zig/vim_*.test`, one per finding
+  (fourteen files), each watched failing on the unfixed tree first; unit
+  rows in `src/editor/buffer.zig`'s vim tables and in `block`, `line`,
+  `insert`, `clipboard`, `editor_view`, `cmd_buffer`, `ex`. Break-checks
+  run: `tools/break-check.sh "small-delete register" src/editor/clipboard.zig
+  "s/putNamed('-', /putNamed('1', /"` and
+  `tools/break-check.sh "vim undo, redo, dot-repeat" src/editor/buffer.zig
+  's/if (countedOp(d)) |n| n\.\* = count else times = count;/times = count;/'`
+  — both fail with the break in place.
