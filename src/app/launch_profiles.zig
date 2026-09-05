@@ -268,7 +268,64 @@ pub fn menuItems(app: *const App, gpa: Allocator, product: Product) Allocator.Er
             .separator_before = i == 0,
         });
     }
+    // The Rust chip's legacy row: a single launcher script. Profiles
+    // cover it (`binary` + `args` + `env`), so the row opens the
+    // profile picker and says so.
+    try items.append(gpa, .{
+        .label = try gpa.dupe(u8, legacy_label),
+        .action = .{ .ai_profile = .{ .product = product, .index = legacy_index, .set_default = false } },
+        .separator_before = true,
+    });
     return items.toOwnedSlice(gpa);
+}
+
+pub const legacy_label = "Set launcher script…";
+/// `AiProfileAction.index` of the legacy row.
+pub const legacy_index: u16 = std.math.maxInt(u16);
+pub const legacy_note = "launcher scripts are launch profiles now — a profile names the binary, its args and env (config `.ai.launch_profiles`); pick one to start";
+
+/// The legacy row: the profiles as a picker (Enter starts a session)
+/// and the migration note.
+pub fn openProfilePicker(app: *App, product: Product) CommandError!void {
+    const gpa = app.gpa;
+    const arena = app.frame.allocator();
+    const profiles = try list(app, arena, product);
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
+    }
+    try labels.append(gpa, try gpa.dupe(u8, builtin_name));
+    try details.append(gpa, try std.fmt.allocPrint(gpa, "{s} on PATH", .{binaryOf(product)}));
+    for (profiles) |p| {
+        try labels.append(gpa, try gpa.dupe(u8, p.name));
+        try details.append(gpa, try std.fmt.allocPrint(gpa, "{s} {s}", .{ p.binary, try std.mem.join(arena, " ", p.args) }));
+    }
+    const cmd_picker = @import("cmd_picker.zig");
+    try cmd_picker.openPickerWith(app, if (product == .claude) "Claude Code launch profiles" else "Codex launch profiles", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), try gpa.alloc([]u8, 0));
+    app.overlay.picker.on_accept = if (product == .claude) &acceptClaudeProfile else &acceptCodexProfile;
+    app.toast("{s}", .{legacy_note});
+}
+
+fn acceptClaudeProfile(app: *App, _: usize, label: []const u8) Allocator.Error!void {
+    return acceptProfile(app, .claude, label);
+}
+
+fn acceptCodexProfile(app: *App, _: usize, label: []const u8) Allocator.Error!void {
+    return acceptProfile(app, .codex, label);
+}
+
+fn acceptProfile(app: *App, product: Product, name: []const u8) Allocator.Error!void {
+    _ = openSessionWith(app, product, name, .right) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            if (app.diag.msg) |m| app.toast("{s}", .{m});
+            app.diag.clear();
+        },
+    };
 }
 
 /// The chip's right-click.
@@ -284,6 +341,7 @@ pub fn openChipMenu(app: *App, product: Product, x: u16, y: u16) Allocator.Error
 /// A menu row: `index` 0 is the built-in, else `list()[index - 1]`.
 pub fn menuAction(app: *App, a: command.AiProfileAction) CommandError!void {
     const arena = app.frame.allocator();
+    if (a.index == legacy_index) return openProfilePicker(app, a.product);
     const profiles = try list(app, arena, a.product);
     const name: []const u8 = if (a.index == 0) builtin_name else (if (a.index - 1 < profiles.len) profiles[a.index - 1].name else return app.diag.fail(arena, "that profile is gone", .{}));
     if (a.set_default) return setDefault(app, a.product, name);
@@ -398,6 +456,31 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
     }
     try t.expectEqual(@as(usize, 4), cx.len);
     try t.expectEqualStrings("New session: fast", cx[1].label);
+}
+
+test "the legacy launcher-script row ends the chip menu and opens the profile picker with the migration note" {
+    var cfg: Config = .{};
+    cfg.ai.launch_profiles = &two_profiles;
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    const items = try menuItems(&app, t.allocator, .claude);
+    defer {
+        for (items) |it| t.allocator.free(it.label);
+        t.allocator.free(items);
+    }
+    try t.expectEqual(@as(usize, 5), items.len);
+    try t.expectEqualStrings(legacy_label, items[4].label);
+    try t.expect(items[4].separator_before);
+    try t.expectEqual(legacy_index, items[4].action.ai_profile.index);
+    try menuAction(&app, items[4].action.ai_profile);
+    try t.expect(app.overlay == .picker);
+    try t.expectEqual(app_mod.PickerKind.custom, app.overlay.picker.kind);
+    try t.expectEqual(@as(usize, 2), app.overlay.picker.labels.len);
+    try t.expectEqualStrings(builtin_name, app.overlay.picker.labels[0]);
+    try t.expectEqualStrings("multi-repo", app.overlay.picker.labels[1]);
+    try t.expectEqualStrings("/opt/bin/claude-multi.sh --add-dir ../lib", app.overlay.picker.details[1]);
+    try t.expect(app.overlay.picker.on_accept != null);
+    try t.expectEqualStrings(legacy_note, app.lastToast().?);
 }
 
 test "setDefault persists to the home config and takes effect at once" {

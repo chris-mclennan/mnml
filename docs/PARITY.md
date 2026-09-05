@@ -385,11 +385,11 @@ the tree. Nothing left is larger than M.
 | Ghost text — local FIM model | cut | `ai.zig` header; `suggest_backend = local` toasts the migration note | |
 | Opt-in via the first-launch wizard | done | `src/app/first_launch.zig` | |
 | Opt-in via `ai.setup_suggestions` | done | `ai.zig` | |
-| Opt-in via Settings → AI | partial | two rows under Integrations in `src/app/settings.zig` | `Section` is `ui` / `editor` / `integrations` — no AI section / model rows |
+| Opt-in via Settings → AI | done | `Section.ai` in `src/app/settings.zig` — ghost text, ghost-text backend (a virtual row over `ai.extra` + the setup picker's override), Claude / Codex backend (`ai.routing.*.backend`, optional enums: `unset` first), Claude meter | the model stays `ai.model` in the config — free text, and v1 rows are discrete choices (the family idiom); `tests/e2e-zig/settings_ai_section.test` |
 | Secret-bearing files never sent | done | `isSecretBearing` in `suggest.zig` | |
 | Context-aware chat | done | `chatCmd` in `ai.zig` | |
 | Launch profiles | done | `src/app/launch_profiles.zig`, `Config.Ai.launch_profiles` / `default_profile` | the chip menu's *New session:* / *Default:* lanes; the `mnml-ai-<name>` shim (`writeShim`) |
-| Legacy "Set launcher script…" | missing | — | launch profiles cover the use |
+| Legacy "Set launcher script…" | done | the last row of the AI chip menu (`legacy_label` / `openProfilePicker` in `src/app/launch_profiles.zig`) | opens the launch-profile picker (Enter starts a session) and toasts that launcher scripts are profiles now |
 | Agents dashboard, spend report | done | `src/app/agents.zig`, `src/app/spend.zig` | beyond the Rust list |
 
 ## Terminal & process panes
@@ -658,7 +658,7 @@ the tree. Nothing left is larger than M.
 | Settings overlay `:settings` | done | `view.settings`, `src/app/settings.zig` | a row per manifest `settings[]` entry too |
 | Rows `▸ label: [active] / other *`, section headers | done | `src/ui/settings.zig` | |
 | Keys `←→` `↑↓` `r` `R` Enter Esc | done | `settings.zig` | Esc restores the file's bytes |
-| Centered ~60 % × 70 % | partial | content-sized | cosmetic |
+| Centered ~60 % × 70 % | done | `draw` in `src/ui/settings.zig` | ~60 % wide (wider when a row needs it, up to 84), capped at ~70 % tall — a long list scrolls inside; a test pins the frame at 120×40 |
 | Right-panel visible / width rows | done | the number rows in `settings.zig`, `ui.right_panel_visible` / `_width` | |
 | Startup picker overlay | done | `src/app/startup_picker.zig` | `// changed:` a workspace row names the relaunch |
 | `MNML_STARTUP_PICKER=1` | done | `wanted` in `startup_picker.zig` | also when the workspace is `$HOME` |
