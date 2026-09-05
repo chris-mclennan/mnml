@@ -293,6 +293,9 @@ pub fn build(b: *std.Build) void {
     glyph_opts.addOptionPath("glyph_json", b.path("data/nerd-glyphnames.json"));
     const glyph_mod = b.createModule(.{ .root_source_file = b.path("tools/glyph_audit.zig"), .target = target, .optimize = optimize });
     glyph_mod.addOptions("build_options", glyph_opts);
+    // The app runs the same audit in-process (`integrations.audit_glyphs`,
+    // `menu.glyph_audit`, the `bake_*` ids — `src/app/glyph_audit.zig`).
+    root_module.addImport("glyph_audit", glyph_mod);
     const glyph_exe = b.addExecutable(.{ .name = "glyph-audit", .root_module = glyph_mod });
     const glyph_bake = b.addRunArtifact(glyph_exe);
     glyph_bake.addArg("bake");

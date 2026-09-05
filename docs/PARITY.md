@@ -566,7 +566,7 @@ the tree. Nothing left is larger than M.
 | Palette bar — narrow drops TABS | done | `palette_bar_narrow_width` (80) / `palette_bar_min_width` (40) in `render.zig` | below 80 the bar stays: the cluster's extras (badges, AI chips, the stress copy, the `+`) drop and the palette chip is the icon; below 40 it goes; the frame tests pin 39 / 40 / 48 / 120 |
 | Menu glyphs | done | `src/ui/menu_glyph.zig`, `paintMenuRows` in `render.zig` | one glyph per command group; `MenuItem.icon` overrides |
 | `ascii_icons` blanks glyphs | done | `forItem(it, ascii)` in `menu_glyph.zig` | every group glyph has a one-character ASCII twin |
-| `menu.glyph_audit` | missing | spec only | `zig build glyph-audit` is the tool |
+| `menu.glyph_audit` | done | `menuAuditCmd` in `src/app/glyph_audit.zig` | the menu glyph table (group · codepoint · catalog name · ASCII twin · one-codepoint check) then the source audit, in a scratch pane; needs the workspace's `data/nerd-glyphnames.json` (the mnml-zig tree) |
 | Submenus | done | `MenuState.sub`, `openSubmenu` in `context_menus.zig`, `overlayKey` in `dispatch.zig` | → / l / Enter / click open, ← / h step back |
 | Curated five-section `+` menu | done | `plus_sections` / `openNewTabMenu` in `context_menus.zig` | New / Open / Panels / Tools / Integrations, pinned rows first |
 | Per-row kebab pin / hide / copy id | done | `openCuration` in `context_menus.zig`, `menu.pin_row` / `unpin_row` / `hide_row` / `copy_id` | ⋯ on the focused leaf row, or → on it |
@@ -617,7 +617,7 @@ the tree. Nothing left is larger than M.
 | feature | status | Zig file(s) | note |
 |---|---|---|---|
 | Exec-bearing keys gated before use | done | `src/config/trust.zig` (`exec_bearing`, `strip`, `claims`) | 9 sinks, `init.lua` among them |
-| `.mnml/integrations/*` manifests gated | missing | no `exec_bearing` row; workspace manifests register on scan | |
+| `.mnml/integrations/*` manifests gated | done | the `workspace_manifests` sink in `src/config/trust.zig` (`Facts.manifests` via `manifestNames`, one claim per file); the scan gate in `integrations.refresh`; `reloadConfig` re-scans on the grant | quiet like every other stripped sink; the dialog lists `integration <name> — runs .mnml/integrations/<name>.zon` |
 | Quiet by default | done | `promptIfNeeded` in `src/app/trust.zig` | |
 | Dialog shows the commands, "Don't trust" focused | done | `src/app/trust.zig`, `Claim.format` | |
 | Untrusted is restricted, not broken | done | `strip` / `stripSink` | |
@@ -653,7 +653,7 @@ the tree. Nothing left is larger than M.
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
 | Installed / Marketplace / In-Dev tabs | partial | `Pane.integrations` + `Pane.marketplace`, `integrations.toggle_tab` | `integrations.show_in_dev` toasts "not in this build" |
 | `integrations.icon_picker` | missing | spec only | |
-| Glyph baking / audit tooling | partial | `tools/glyph_audit.zig` (`zig build glyph-audit` — `bake` from `data/nerd-glyphnames.json`, `audit` over `src/`) | a build step; `integrations.audit_glyphs` / `bake_*_glyphs` have no runner |
+| Glyph baking / audit tooling | done | `tools/glyph_audit.zig` (`zig build glyph-audit`), and the same logic in-process — the tool is an import of the app — behind `integrations.audit_glyphs` / `bake_ai_glyphs` / `bake_all_glyphs` / `bake_integration_glyphs` in `src/app/glyph_audit.zig` | the audit lands in a scratch pane with a toast; the three `bake_*` ids do the one bake this build has (the catalog → `<data root>/nerd-glyphs.tsv`) — Rust baked SVGs into a font, which is cut; `tests/e2e-zig/glyph_audit.test` |
 | Glyph-builder SVG preview / font patching | cut | `cutRunner` toasts | |
 | Settings overlay `:settings` | done | `view.settings`, `src/app/settings.zig` | a row per manifest `settings[]` entry too |
 | Rows `▸ label: [active] / other *`, section headers | done | `src/ui/settings.zig` | |

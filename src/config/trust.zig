@@ -32,6 +32,10 @@ pub const Sink = enum {
     /// config, which runs with the whole `mnml` table (tasks, panes,
     /// keys) once the workspace is trusted.
     init_lua,
+    /// `<ws>/.mnml/integrations/*.zon` — manifests beside the config,
+    /// each declaring commands that spawn a binary; registered only
+    /// once the workspace is trusted.
+    workspace_manifests,
 
     /// Human label for the trust dialog's bullet list.
     pub fn label(s: Sink) []const u8 {
@@ -45,6 +49,7 @@ pub const Sink = enum {
             .startup_task => "task at startup",
             .external_browser => "browser",
             .init_lua => "script",
+            .workspace_manifests => "integration",
         };
     }
 
@@ -59,6 +64,7 @@ pub const Sink = enum {
             .startup_pty, .startup_task => "immediately, on open",
             .external_browser => "when you open a link",
             .init_lua => "immediately, on open",
+            .workspace_manifests => "when you run one of its commands",
         };
     }
 };
@@ -78,6 +84,7 @@ pub const exec_bearing = [_]Rule{
     .{ .path = "startup.layout[] with .kind = .pty", .sink = .startup_pty },
     .{ .path = "startup.tasks", .sink = .startup_task },
     .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
+    .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },
 };
 
 /// What the loader knows about the workspace beyond its config patch:
@@ -87,7 +94,29 @@ pub const exec_bearing = [_]Rule{
 /// trusted workspace asks again.
 pub const Facts = struct {
     init_lua: bool = false,
+    /// The `.zon` file names under `<ws>/.mnml/integrations/`, sorted.
+    manifests: []const []const u8 = &.{},
 };
+
+/// The `.zon` names under `<ws>/.mnml/integrations/`, sorted — the
+/// `Facts.manifests` a loader and the review build the same way.
+pub fn manifestNames(arena: Allocator, io: std.Io, workspace: []const u8) Allocator.Error![]const []const u8 {
+    const dir_path = try std.fs.path.join(arena, &.{ workspace, ".mnml", "integrations" });
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return &.{};
+    defer dir.close(io);
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zon")) continue;
+        try names.append(arena, try arena.dupe(u8, entry.name));
+    }
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    return names.toOwnedSlice(arena);
+}
 
 comptime {
     // Every sink has a row, every row a sink.
@@ -165,6 +194,8 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
         },
         // Nothing in the patch: the file is gated by `workspace_trusted`.
         .init_lua => return 0,
+        // Nothing in the patch either: the scan skips the directory.
+        .workspace_manifests => return 0,
     }
 }
 
@@ -233,6 +264,16 @@ fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts
     switch (sink) {
         .init_lua => {
             if (facts.init_lua) try out.append(arena, .{ .sink = sink, .key = "script.init", .command = ".mnml/init.lua" });
+        },
+        .workspace_manifests => {
+            for (facts.manifests) |name| {
+                const stem = if (std.mem.endsWith(u8, name, ".zon")) name[0 .. name.len - 4] else name;
+                try out.append(arena, .{
+                    .sink = sink,
+                    .key = try std.fmt.allocPrint(arena, "integrations.{s}", .{stem}),
+                    .command = try std.fmt.allocPrint(arena, ".mnml/integrations/{s}", .{name}),
+                });
+            }
         },
         .external_browser => {
             const ui = p.ui orelse return;
@@ -448,6 +489,27 @@ test "an init.lua beside the config is a claim of its own, and moves the fingerp
     try t.expectEqualStrings("script init — runs `.mnml/init.lua` immediately, on open", w.buffered());
     try t.expect(fingerprint(with) != fingerprint(try claims(arena, p)));
     // Stripping has nothing to remove: the file is gated, not merged.
+    var q = p;
+    try t.expectEqual(@as(usize, 0), try strip(arena, &q));
+}
+
+test "a workspace manifest beside the config is a claim of its own — one per file — and moves the fingerprint; nothing to strip" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diags = Diagnostics.init(arena);
+    const p = try load.parseLayer(arena, ".{ .editor = .{ .tab_width = 2 } }", "ws.zon", &diags);
+    const with = try claimsWith(arena, p, .{ .manifests = &.{ "deploy.zon", "lint.zon" } });
+    try t.expectEqual(@as(usize, 2), with.len);
+    try t.expectEqual(Sink.workspace_manifests, with[0].sink);
+    try t.expectEqualStrings("integrations.deploy", with[0].key);
+    try t.expectEqualStrings(".mnml/integrations/deploy.zon", with[0].command);
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try with[1].format(&w);
+    try t.expectEqualStrings("integration lint — runs `.mnml/integrations/lint.zon` when you run one of its commands", w.buffered());
+    try t.expect(fingerprint(with) != fingerprint(try claims(arena, p)));
+    try t.expect(fingerprint(with) != fingerprint(try claimsWith(arena, p, .{ .manifests = &.{"deploy.zon"} })));
     var q = p;
     try t.expectEqual(@as(usize, 0), try strip(arena, &q));
 }

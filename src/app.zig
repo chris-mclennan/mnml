@@ -974,10 +974,12 @@ pub const App = struct {
         try self.toastConfigDiagnostics();
         try self.applyTheme();
         try script_api.rebind(self);
-        // A workspace just trusted gets its `.mnml/init.lua` now.
+        // A workspace just trusted gets its `.mnml/init.lua` now, and
+        // its manifests join the integrations.
         if (!was_trusted and self.workspace_trusted) {
             try self.script().reset();
             try self.script().loadInitFiles();
+            if (self.integrations.scanned) try integrations.refresh(self);
         }
         self.needs_render = true;
     }
@@ -2102,6 +2104,7 @@ test {
     _ = @import("app/coverage.zig");
     _ = @import("app/menu_bar.zig");
     _ = @import("app/browser_open.zig");
+    _ = @import("app/glyph_audit.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
     _ = @import("app/loclist.zig");

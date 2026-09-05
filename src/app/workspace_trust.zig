@@ -41,7 +41,10 @@ fn currentClaims(app: *App, arena: Allocator) Allocator.Error![]const config.tru
     var diags = config.diag.Diagnostics.init(arena);
     const patch = try config.load.parseLayer(arena, src, l.workspace_path, &diags);
     const init_lua = try std.fs.path.join(arena, &.{ app.workspace, ".mnml", "init.lua" });
-    const facts: config.trust.Facts = .{ .init_lua = if (Io.Dir.cwd().access(app.io, init_lua, .{})) true else |_| false };
+    const facts: config.trust.Facts = .{
+        .init_lua = if (Io.Dir.cwd().access(app.io, init_lua, .{})) true else |_| false,
+        .manifests = try config.trust.manifestNames(arena, app.io, app.workspace),
+    };
     return config.trust.claimsWith(arena, patch, facts);
 }
 

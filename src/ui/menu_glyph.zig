@@ -13,10 +13,10 @@ const command = @import("../core/command.zig");
 /// Glyph column width in cells (a one-cell glyph and a space).
 pub const width: u16 = 2;
 
-const Entry = struct { group: []const u8, glyph: []const u8, fallback: []const u8 };
+pub const Entry = struct { group: []const u8, glyph: []const u8, fallback: []const u8 };
 
 /// By command-id prefix (the part before the dot); the first match wins.
-const by_group = [_]Entry{
+pub const by_group = [_]Entry{
     .{ .group = "file", .glyph = "\u{f15b}", .fallback = "f" }, //  file
     .{ .group = "files", .glyph = "\u{f15b}", .fallback = "f" },
     .{ .group = "buffer", .glyph = "\u{f0c5}", .fallback = "b" }, //  copy / tab

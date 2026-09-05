@@ -166,6 +166,10 @@ pub fn refresh(app: *App) Allocator.Error!void {
     for (roots, 0..) |maybe, i| {
         const dir_path = maybe orelse continue;
         const source: Source = if (i == 0) .home else .workspace;
+        // A workspace's manifests spawn binaries: they wait for trust
+        // (`config/trust.zig`, the `workspace_manifests` sink). Quiet,
+        // like every other stripped sink — the RESTRICTED chip says so.
+        if (source == .workspace and !app.workspace_trusted) continue;
         try scanDir(app, arena, dir_path, source, &found, &problems);
     }
     std.mem.sort(Installed, found.items, {}, byLabel);
@@ -999,4 +1003,32 @@ test "the pane lists what is installed and its keys act on the cursor" {
     try testing.expect(std.mem.indexOf(u8, txt2, "ctrl+k h") != null);
     try testing.expect(try handleKey(&app, id, p, .{ .code = .{ .char = 'y' } }));
     try testing.expectEqualStrings("hello", app.clipboard.text());
+}
+
+test "a workspace manifest waits for trust: skipped while the workspace is untrusted, registered once it is trusted" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "ws/.mnml/integrations");
+    const ws_manifest = std.mem.replaceOwned(u8, testing.allocator, fixture_manifest, "hello", "wsonly") catch unreachable;
+    defer testing.allocator.free(ws_manifest);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/.mnml/integrations/wsonly.zon", .data = ws_manifest });
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .cols = 100, .rows = 20, .workspace_trusted = false });
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 0), app.integrations.list.len);
+    try testing.expect(command.resolve(&app, "wsonly.open") == null);
+    // The trust decision lands: the scan takes the manifest.
+    app.workspace_trusted = true;
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 1), app.integrations.list.len);
+    try testing.expectEqualStrings("wsonly", app.integrations.list[0].id());
+    try testing.expect(command.resolve(&app, "wsonly.open") != null);
+    // The claim the dialog lists: one per file.
+    const facts_names = try @import("../config/trust.zig").manifestNames(app.frame.allocator(), app.io, ws);
+    try testing.expectEqual(@as(usize, 1), facts_names.len);
+    try testing.expectEqualStrings("wsonly.zon", facts_names[0]);
 }
