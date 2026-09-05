@@ -382,11 +382,14 @@ pub const Buffer = struct {
     fn handleApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         switch (cmd) {
             .dot_repeat => |n| return self.dotRepeat(n, clip, viewport_rows, arena),
+            // Uppercase marks are the app's (a file + position).
             .set_mark => |c| {
+                if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 try self.marks.put(self.gpa, c, self.editor.rowCol());
                 return .redraw;
             },
             .jump_to_mark_line => |c| {
+                if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.marks.get(c) orelse return .noop;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
@@ -394,6 +397,7 @@ pub const Buffer = struct {
                 return .redraw;
             },
             .jump_to_mark_exact => |c| {
+                if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.marks.get(c) orelse return .noop;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;

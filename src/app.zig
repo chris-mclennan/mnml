@@ -92,6 +92,7 @@ const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
 const macros_store = @import("app/macros_store.zig");
+const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
 const startup_picker = @import("app/startup_picker.zig");
@@ -606,6 +607,8 @@ pub const App = struct {
     cursor_pos: ?editor_view.Cursor = null,
 
     clipboard: Clipboard,
+    /// `mA`…`mZ`: cross-file marks, persisted (`marks_store.zig`).
+    global_marks: marks_store.Map = .empty,
     keymap: keymap.Keymap,
     chord: ChordChain = .{},
     toasts: std.ArrayListUnmanaged(Toast) = .empty,
@@ -762,6 +765,8 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &macros_store.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &macros_store.onExit });
+        try app.hooks.subscribe(.startup, .{ .zig = &marks_store.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &marks_store.onExit });
         // Installed integrations are scanned once the app is up.
         try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
         app.now_ms = nowMs(io);
@@ -930,6 +935,7 @@ pub const App = struct {
         self.dyn_commands.deinit();
         self.keymap.deinit();
         self.clipboard.deinit();
+        marks_store.deinitMap(gpa, &self.global_marks);
         self.layouts.deinit();
         self.tree.deinit();
         // Script panes unref'd into the state when the pane store went
@@ -1755,6 +1761,7 @@ test {
     _ = @import("app/stress.zig");
     _ = @import("app/undo_store.zig");
     _ = @import("app/macros_store.zig");
+    _ = @import("app/marks_store.zig");
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");
     _ = @import("app/cmd_session.zig");

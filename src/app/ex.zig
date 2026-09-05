@@ -16,6 +16,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const marks_store = @import("marks_store.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
 const editor_mod = @import("../editor/editor.zig");
@@ -306,6 +307,7 @@ const Parser = struct {
                     const row = ed.buf.editor.lineOfByte(hi);
                     break :blk if (hi > 0 and hi == ed.buf.editor.lineStart(row) and row > ed.buf.editor.lineOfByte(@min(s[0], s[1]))) row - 1 else row;
                 } else return app.diag.fail(arena, "E20: mark '> not set", .{}),
+                'A'...'Z' => marks_store.rowIn(app, m, ed.buf.path) orelse return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
                 else => if (ed.buf.marks.get(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
             };
         } else if (c == '+' or c == '-') {
@@ -718,13 +720,15 @@ fn registers(app: *App, filter: []const u8) CommandError!void {
     try app.toastPersistent("ex:reg", msg, .info);
 }
 
+/// Local marks first (`'a@row:col`), then global (`'A  path:row:col`).
 fn marks(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":marks");
     var names: std.ArrayListUnmanaged(u8) = .empty;
     var it = e.buf.marks.keyIterator();
     while (it.next()) |k| try names.append(arena, k.*);
-    if (names.items.len == 0) {
+    const globals = try marks_store.letters(app, arena);
+    if (names.items.len == 0 and globals.len == 0) {
         app.toast(":marks — none set", .{});
         return;
     }
@@ -733,6 +737,10 @@ fn marks(app: *App) CommandError!void {
     for (names.items, 0..) |c, i| {
         const pos = e.buf.marks.get(c).?;
         try parts.print(arena, "{s}'{c}@{d}:{d}", .{ if (i > 0) "  " else "", c, pos.row + 1, pos.col + 1 });
+    }
+    for (globals) |c| {
+        const m = app.global_marks.get(c).?;
+        try parts.print(arena, "{s}'{c}  {s}:{d}:{d}", .{ if (parts.items.len > 0) "  " else "", c, app.relPath(m.path), m.row + 1, m.col + 1 });
     }
     app.toast(":marks · {s}", .{parts.items});
 }
@@ -748,7 +756,9 @@ fn delmarks(app: *App, args: []const u8, bang: bool) CommandError!void {
     var n: usize = 0;
     for (std.mem.trim(u8, args, " \t")) |c| {
         if (c == ' ') continue;
-        if (e.buf.marks.remove(c)) n += 1;
+        if (marks_store.isGlobal(c)) {
+            if (marks_store.remove(app, c)) n += 1;
+        } else if (e.buf.marks.remove(c)) n += 1;
     }
     if (args.len == 0) return app.diag.fail(app.frame.allocator(), ":delmarks — usage: `:delmarks <letters>` or `:delmarks!`", .{});
     app.toast(":delmarks — cleared {d} mark(s)", .{n});

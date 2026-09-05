@@ -27,6 +27,7 @@ const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
 const macros_store = @import("macros_store.zig");
+const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -370,8 +371,10 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const still = app.panes.editor(pane_id) orelse return true;
     // A recording that just stopped is on the clipboard: persist it.
     if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
-    // Marks toast from here: the buffer handles them silently.
-    if (mark != null and mark_key != null and ev != .unhandled) {
+    // Local marks toast from here: the buffer handles them silently.
+    // Global (uppercase) ones toast in `marks_store`, which also knows
+    // whether the set was refused.
+    if (mark != null and mark_key != null and ev != .unhandled and !marks_store.isGlobal(mark_key.?)) {
         const c = mark_key.?;
         switch (mark.?) {
             .set => app.toast("mark '{c} set", .{c}),
@@ -1677,8 +1680,12 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        // Uppercase marks reach here; the buffer answered lowercase ones.
+        .set_mark => |c| if (marks_store.isGlobal(c)) try marks_store.set(app, e, c),
+        .jump_to_mark_line => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, false),
+        .jump_to_mark_exact => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, true),
         // Buffer-local; the buffer answered them before we got here.
-        .dot_repeat, .set_mark, .jump_to_mark_line, .jump_to_mark_exact, .macro_record_into, .macro_replay_from => {},
+        .dot_repeat, .macro_record_into, .macro_replay_from => {},
         .block_insert_start => |b| try beginBlockInsert(app, pane_id, e, b.append, false),
         .block_change_start => try beginBlockInsert(app, pane_id, e, false, true),
         .block_replace_with => |r| try blockReplace(app, e, r.ch),

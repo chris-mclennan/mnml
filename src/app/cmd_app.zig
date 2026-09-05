@@ -16,6 +16,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const CommandFn = command.CommandFn;
 const cmd_picker = @import("cmd_picker.zig");
+const marks_store = @import("marks_store.zig");
 const cmd_term = @import("cmd_term.zig");
 const dispatch = @import("dispatch.zig");
 const ex = @import("ex.zig");
@@ -547,10 +548,12 @@ fn qfGo(app: *App, where: enum { first, last, next, prev }) CommandError!void {
 
 // ─── pickers over what the app already holds ─────────────────────────────
 
+/// The buffer's marks, then the global (uppercase) ones with their file.
 fn pickMarks(app: *App) CommandError!void {
     const gpa = app.gpa;
     const e = try app.requireEditor();
-    if (e.buf.marks.count() == 0) return app.diag.fail(app.frame.allocator(), "no marks in this buffer (m<a-z> sets one)", .{});
+    const globals = try marks_store.letters(app, app.frame.allocator());
+    if (e.buf.marks.count() == 0 and globals.len == 0) return app.diag.fail(app.frame.allocator(), "no marks in this buffer (m<a-z> sets one)", .{});
     var letters: std.ArrayListUnmanaged(u8) = .empty;
     defer letters.deinit(gpa);
     var it = e.buf.marks.keyIterator();
@@ -572,11 +575,17 @@ fn pickMarks(app: *App) CommandError!void {
         const le = e.buf.editor.lineEnd(row);
         try details.append(gpa, try gpa.dupe(u8, std.mem.trim(u8, e.buf.editor.bytes()[ls..le], " \t")));
     }
+    for (globals) |c| {
+        const m = app.global_marks.get(c).?;
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{c}  Ln {d}, Col {d}", .{ c, m.row + 1, m.col + 1 }));
+        try details.append(gpa, try gpa.dupe(u8, app.relPath(m.path)));
+    }
     try cmd_picker.openPickerWith(app, "Marks", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
     app.overlay.picker.on_accept = &acceptMark;
 }
 
 fn acceptMark(app: *App, _: usize, label: []const u8) Allocator.Error!void {
+    if (marks_store.isGlobal(label[0])) return marks_store.jump(app, label[0], true);
     const e = app.activeEditor() orelse return;
     const pos = e.buf.marks.get(label[0]) orelse return;
     e.buf.editor.placeCursor(pos.row, pos.col);
