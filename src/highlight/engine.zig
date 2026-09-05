@@ -297,6 +297,49 @@ pub const Highlighter = struct {
     }
 };
 
+// ── layering (lsp-more) ──
+// changed: semantic tokens from a language server paint OVER the
+// tree-sitter spans, never instead of them. `layerSpans` is the one
+// merge: `over` wins where the two overlap and `base` keeps every byte
+// `over` leaves alone, so a server that only names identifiers still
+// leaves keywords and strings to the grammar.
+
+/// Lay `over` on top of `base`. Both are sorted by `start` and
+/// non-overlapping; `T` needs `start` / `end` fields. The result is
+/// sorted and non-overlapping, on `arena`.
+pub fn layerSpans(comptime T: type, arena: Allocator, base: []const T, over: []const T) Allocator.Error![]T {
+    if (over.len == 0) return arena.dupe(T, base);
+    var out: std.ArrayListUnmanaged(T) = .empty;
+    var oi: usize = 0;
+    for (base) |b| {
+        while (oi < over.len and over[oi].end <= b.start) oi += 1;
+        var cur = b.start;
+        var j = oi;
+        while (j < over.len and over[j].start < b.end) : (j += 1) {
+            const o = over[j];
+            if (o.start > cur) {
+                var piece = b;
+                piece.start = cur;
+                piece.end = o.start;
+                try out.append(arena, piece);
+            }
+            cur = @max(cur, o.end);
+        }
+        if (cur < b.end) {
+            var piece = b;
+            piece.start = cur;
+            try out.append(arena, piece);
+        }
+    }
+    try out.appendSlice(arena, over);
+    std.mem.sort(T, out.items, {}, struct {
+        fn lt(_: void, a: T, c: T) bool {
+            return a.start < c.start;
+        }
+    }.lt);
+    return out.items;
+}
+
 // ── tests ──
 
 const testing = std.testing;
@@ -400,6 +443,27 @@ test "shiftSpans keeps stale spans aligned across an insert and a delete" {
     h.shiftSpans(6, 13, 6); // delete [6,13): clips the function span, drops the type span
     try testing.expectEqual(@as(usize, 2), h.spans.items.len);
     try testing.expectEqual(@as(u32, 6), h.spans.items[1].end);
+}
+
+test "layerSpans: the overlay wins where it covers, the base keeps the rest, and the result stays sorted" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const base = [_]Span{ .{ .start = 0, .end = 10, .role = .keyword }, .{ .start = 12, .end = 20, .role = .string }, .{ .start = 30, .end = 34, .role = .type } };
+    const over = [_]Span{ .{ .start = 3, .end = 5, .role = .function }, .{ .start = 8, .end = 14, .role = .variable }, .{ .start = 40, .end = 42, .role = .constant } };
+    const out = try layerSpans(Span, arena.allocator(), &base, &over);
+    const want = [_]Span{
+        .{ .start = 0, .end = 3, .role = .keyword },
+        .{ .start = 3, .end = 5, .role = .function },
+        .{ .start = 5, .end = 8, .role = .keyword },
+        .{ .start = 8, .end = 14, .role = .variable },
+        .{ .start = 14, .end = 20, .role = .string },
+        .{ .start = 30, .end = 34, .role = .type },
+        .{ .start = 40, .end = 42, .role = .constant },
+    };
+    try testing.expectEqualSlices(Span, &want, out);
+    // No overlay: the base as it was. No base: the overlay as it was.
+    try testing.expectEqualSlices(Span, &base, try layerSpans(Span, arena.allocator(), &base, &.{}));
+    try testing.expectEqualSlices(Span, &over, try layerSpans(Span, arena.allocator(), &.{}, &over));
 }
 
 test "spansIn slices by byte range" {
