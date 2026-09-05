@@ -1,11 +1,13 @@
 //! `Buffer` — an `Editor` plus the handler that drives it, the file it
-//! came from, marks, folds, and the two cross-iteration op holders
-//! (dot-repeat and macro registers). `feedKey` is THE seam: the only
-//! place an `InputResult` is destructured.
+//! came from, marks, folds, the dot-repeat holder and the macro
+//! recording in flight. `feedKey` is THE seam: the only place an
+//! `InputResult` is destructured.
 //!
-//! Buffer-local `AppCommand`s (marks, dot-repeat, macros) are handled
-//! here and come back as `.edited` / `.redraw`; everything else bubbles
-//! up as `.app` for the app to run.
+//! Buffer-local `AppCommand`s (lowercase marks, dot-repeat, macros) are
+//! handled here and come back as `.edited` / `.redraw`; everything else
+//! — an uppercase (global) mark included — bubbles up as `.app` for the
+//! app to run. Finished macro registers live on the `Clipboard`
+//! (`clipboard.zig`), so a macro recorded here replays in any buffer.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -78,10 +80,8 @@ pub const Buffer = struct {
     dot_collecting: bool = false,
     replaying_dot: bool = false,
 
-    /// Macro registers: raw keys, replayed through `feedKey`.
-    macros: std.AutoHashMapUnmanaged(u8, []Key) = .empty,
+    /// The macro being recorded; the finished keys go to the clipboard.
     recording: ?Recording = null,
-    last_macro: ?u8 = null,
     replay_depth: u8 = 0,
 
     pub const max_replay_depth = 8;
@@ -112,9 +112,6 @@ pub const Buffer = struct {
         if (self.dot) |d| freeOps(gpa, d);
         for (self.dot_pending.items) |o| o.free(gpa);
         self.dot_pending.deinit(gpa);
-        var it = self.macros.valueIterator();
-        while (it.next()) |k| gpa.free(k.*);
-        self.macros.deinit(gpa);
         if (self.recording) |*r| r.keys.deinit(gpa);
     }
 
@@ -342,15 +339,13 @@ pub const Buffer = struct {
 
     // ─── macros ───
 
-    fn macroToggle(self: *Buffer, reg: u8) Allocator.Error!BufferEvent {
+    fn macroToggle(self: *Buffer, reg: u8, clip: *Clipboard) Allocator.Error!BufferEvent {
         if (self.recording) |*r| {
             // The `q` that stopped us was recorded too — drop it.
             _ = r.keys.pop();
             const keys = try r.keys.toOwnedSlice(self.gpa);
-            errdefer self.gpa.free(keys);
-            if (self.macros.fetchRemove(r.reg)) |old| self.gpa.free(old.value);
-            try self.macros.put(self.gpa, r.reg, keys);
-            self.last_macro = r.reg;
+            try clip.putMacro(r.reg, keys);
+            clip.last_macro = r.reg;
             self.recording = null;
             return .redraw;
         }
@@ -361,12 +356,12 @@ pub const Buffer = struct {
     }
 
     fn macroReplay(self: *Buffer, reg_in: u8, count: u32, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
-        const reg = if (reg_in == '@') (self.last_macro orelse return .noop) else reg_in;
-        const keys = self.macros.get(reg) orelse return .noop;
+        const reg = if (reg_in == '@') (clip.last_macro orelse return .noop) else reg_in;
+        const keys = clip.macro(reg) orelse return .noop;
         if (self.replay_depth >= max_replay_depth) return .noop;
         self.replay_depth += 1;
         defer self.replay_depth -= 1;
-        self.last_macro = reg;
+        clip.last_macro = reg;
         var edited = false;
         for (0..@max(count, 1)) |_| {
             for (keys) |k| {
@@ -402,7 +397,7 @@ pub const Buffer = struct {
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },
-            .macro_record_into => |reg| return self.macroToggle(reg),
+            .macro_record_into => |reg| return self.macroToggle(reg, clip),
             .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, clip, viewport_rows, wrap_width, arena),
             else => return .{ .app = cmd },
         }
@@ -781,6 +776,40 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jVd", "a|b\ncd\ne", "ab\n|e");
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
     try vim("<c-v>jdu", "|ab\ncd", "ab\n|cd"); // one undo step; the snapshot cursor comes back
+}
+
+test "macro registers are shared through the clipboard: `qa` in one buffer, `@a` in another" {
+    const gpa = testing.allocator;
+    var a = try Buffer.init(gpa, "one\ntwo", .vim, .{ .tab_width = 4 });
+    defer a.deinit();
+    var b = try Buffer.init(gpa, "three\nfour", .vim, .{ .tab_width = 4 });
+    defer b.deinit();
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const feed = struct {
+        fn run(buf: *Buffer, c: *Clipboard, ar: Allocator, spec: []const u8) !void {
+            const keys = try parseKeys(testing.allocator, spec);
+            defer testing.allocator.free(keys);
+            for (keys) |k| _ = try buf.feedKey(k, c, 10, null, ar);
+        }
+    }.run;
+    try feed(&a, &clip, arena.allocator(), "qaA!<esc>jq");
+    try testing.expectEqualStrings("one!\ntwo", a.editor.bytes());
+    try testing.expect(!a.isRecording());
+    try testing.expectEqual(@as(usize, 4), clip.macro('a').?.len);
+    try testing.expectEqual(@as(?u8, 'a'), clip.last_macro);
+    // A different buffer, the same clipboard: the register replays.
+    try feed(&b, &clip, arena.allocator(), "@a");
+    try testing.expectEqualStrings("three!\nfour", b.editor.bytes());
+    try feed(&b, &clip, arena.allocator(), "@@");
+    try testing.expectEqualStrings("three!\nfour!", b.editor.bytes());
+    // A fresh clipboard knows nothing.
+    var empty = Clipboard.init(gpa);
+    defer empty.deinit();
+    try feed(&b, &empty, arena.allocator(), "@a");
+    try testing.expectEqualStrings("three!\nfour!", b.editor.bytes());
 }
 
 /// `feed` / `ops` interleaved: each row is a list of steps.

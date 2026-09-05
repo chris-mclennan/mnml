@@ -16,10 +16,18 @@
 //! vim's rule for the system selection. Until `attach` installs a sink
 //! the clipboard is in-process only, which is what every test, the
 //! headless loop and a `.test` run get.
+//!
+//! Macro registers live here too: vim's `qa` / `@a` are registers, not
+//! buffer state, so a macro recorded in one buffer replays in another.
+//! `Buffer` keeps the in-flight recording and reaches the finished
+//! registers through the `*Clipboard` every `feedKey` already takes.
+//! // changed: D4 placed macro registers on `Buffer`; that made them
+//! per-file, which vim users notice the first time `@a` says nothing.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const clipboard_os = @import("../core/clipboard_os.zig");
+const Key = @import("../core/key.zig").Key;
 
 pub const Entry = struct {
     text: []u8,
@@ -47,6 +55,11 @@ pub const Clipboard = struct {
     /// The last text read back from the OS, gpa-owned — what `text()`
     /// handed out for a `"+` / `"*` read. Freed on the next such read.
     os_text: ?[]u8 = null,
+    /// Macro registers: raw keys, gpa-owned, replayed through
+    /// `Buffer.feedKey`. `'@'` is the anonymous register (`qq` / `@@`).
+    macros: std.AutoHashMapUnmanaged(u8, []Key) = .empty,
+    /// The register `@@` repeats: the last one recorded or replayed.
+    last_macro: ?u8 = null,
 
     pub fn init(gpa: Allocator) Clipboard {
         return .{ .gpa = gpa };
@@ -58,6 +71,9 @@ pub const Clipboard = struct {
         while (it.next()) |e| self.gpa.free(e.text);
         self.named.deinit(self.gpa);
         if (self.os_text) |t| self.gpa.free(t);
+        var mit = self.macros.valueIterator();
+        while (mit.next()) |k| self.gpa.free(k.*);
+        self.macros.deinit(self.gpa);
     }
 
     /// Install what the session has — the terminal's buffered writer and
@@ -72,6 +88,18 @@ pub const Clipboard = struct {
     /// Re-run the chain (`:set clipboard=…`, the settings row).
     pub fn selectMode(self: *Clipboard, mode: clipboard_os.Mode) void {
         self.os = clipboard_os.select(mode, self.live, self.tool);
+    }
+
+    /// Store `keys` (adopted; gpa-owned) as macro `reg`, replacing any
+    /// previous recording.
+    pub fn putMacro(self: *Clipboard, reg: u8, keys: []Key) Allocator.Error!void {
+        errdefer self.gpa.free(keys);
+        if (self.macros.fetchRemove(reg)) |old| self.gpa.free(old.value);
+        try self.macros.put(self.gpa, reg, keys);
+    }
+
+    pub fn macro(self: *const Clipboard, reg: u8) ?[]const Key {
+        return self.macros.get(reg);
     }
 
     pub fn setPendingRegister(self: *Clipboard, reg: ?u21) void {
