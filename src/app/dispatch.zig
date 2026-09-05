@@ -1123,9 +1123,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     }
                 },
                 .git_status => |*s| try git_app.statusPaneClick(app, s, sh.id, m),
-                .diff => |*d| if (sh.id < d.rows.len) {
-                    d.cursor = sh.id;
-                },
+                .diff => |*d| try git_app.diffClick(app, sh.pane, d, sh.id, m),
                 .git_graph => |*g| if (sh.id < g.commits.len) {
                     if (g.cursor == sh.id and m.button == .left) git_app.runToast(app, git_app.showSelectedCommit(app, g)) else g.cursor = sh.id;
                 },
@@ -1385,7 +1383,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .git_status => |*s| s.cursor = if (down) @min(s.cursor + n, app.git.rows.items.len -| 1) else s.cursor -| n,
-        .diff => |*d| d.cursor = if (down) @min(d.cursor + n, d.rows.len -| 1) else d.cursor -| n,
+        .diff => |*d| git_app.stepDiff(d, if (down) @as(isize, @intCast(n)) else -@as(isize, @intCast(n))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.commits.len -| 1) else g.cursor -| n,
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
@@ -1481,6 +1479,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         .right_divider => if (m.kind == .drag) {
             app.right_panel_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
+        .git_divider => |id| if (m.kind == .drag) git_app.dragDivider(app, id, m.x),
         .select => |sel| {
             extendSelection(app, sel, m.x, m.y);
             // A press-and-release on one cell is a click: no selection.

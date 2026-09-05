@@ -132,17 +132,46 @@ pub const DiffPane = struct {
     arena: std.heap.ArenaAllocator,
     files: []parse.FileDiff = &.{},
     rows: []diff_view.Row = &.{},
+    /// The split view's aligned rows; borrows `arena` like `rows`.
+    split_rows: []diff_view.SplitRow = &.{},
+    /// Indices into `rows` / `split_rows` that pass the filter. Owned.
+    shown: []u32 = &.{},
+    split_shown: []u32 = &.{},
     view: diff_view.State = .{},
+    mode: diff_view.Mode = .hunk,
+    /// The loaded diff carries every line (Inline / Split asked for it).
+    full: bool = false,
+    /// The old side's share of the split body, in percent.
+    ratio: u16 = 50,
+    /// Index into `rows` (Hunk / Inline) or `split_rows` (Split).
     cursor: usize = 0,
     pending: bool = true,
     /// `]` / `[` typed, waiting for `c` / `f`.
     bracket: ?u8 = null,
+    /// The `/` filter: the needle, and whether keys go to it.
+    filter: std.ArrayListUnmanaged(u8) = .empty,
+    filter_mode: bool = false,
+    /// What the last frame measured, for the divider drag and the strip.
+    body: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
+    strip_cells: u16 = 0,
 
     pub fn deinit(self: *DiffPane) void {
         if (self.path) |p| self.gpa.free(p);
         if (self.rev) |r| self.gpa.free(r);
         self.gpa.free(self.title);
+        self.gpa.free(self.shown);
+        self.gpa.free(self.split_shown);
+        self.filter.deinit(self.gpa);
         self.arena.deinit();
+    }
+
+    /// The row list the cursor walks in the current view.
+    pub fn rowCount(self: *const DiffPane) usize {
+        return if (self.mode == .split) self.split_rows.len else self.rows.len;
+    }
+
+    pub fn shownRows(self: *const DiffPane) []const u32 {
+        return if (self.mode == .split) self.split_shown else self.shown;
     }
 };
 
@@ -204,6 +233,8 @@ pub const State = struct {
     /// Mutating jobs in flight (a spinner on the rail).
     busy: u32 = 0,
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
+    /// The view the last diff pane was switched to; new panes open in it.
+    diff_mode: diff_view.Mode = .hunk,
     /// `remote.origin.url` as the last status reported (borrows the
     /// snapshot) and the forge it names, for the badge.
     remote: []const u8 = "",
@@ -548,8 +579,10 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                     adoptArena(&dp.arena, &result.arena, gpa);
                     dp.files = d.files;
                     dp.rows = try diff_view.flatten(dp.arena.allocator(), d.files);
+                    dp.split_rows = try diff_view.pairs(dp.arena.allocator(), d.files);
+                    dp.full = d.full;
                     dp.pending = false;
-                    if (dp.cursor >= dp.rows.len) dp.cursor = dp.rows.len -| 1;
+                    try refilterDiff(app, dp);
                     // The result's arena is one pane's now; a second pane
                     // on the same diff refreshes on its own.
                     return;
@@ -805,7 +838,7 @@ pub fn openDiff(app: *App, repo: *client.Repo, scope: client.DiffScope, rel: ?[]
         .orig => try std.fmt.allocPrint(gpa, "orig: {s}", .{std.fs.path.basename(rel orelse "")}),
     };
     errdefer gpa.free(title);
-    var dp: DiffPane = .{ .gpa = gpa, .repo = repo.id, .scope = scope, .title = title, .arena = .init(gpa) };
+    var dp: DiffPane = .{ .gpa = gpa, .repo = repo.id, .scope = scope, .title = title, .arena = .init(gpa), .mode = app.git.diff_mode };
     errdefer dp.deinit();
     if (rel) |p| dp.path = try gpa.dupe(u8, p);
     if (rev) |v| dp.rev = try gpa.dupe(u8, v);
@@ -831,7 +864,84 @@ fn refreshDiffWith(app: *App, dp: *DiffPane, text: ?[]const u8) CommandError!voi
     const body = if (text) |t| try gpa.dupe(u8, t) else null;
     errdefer if (body) |b| gpa.free(b);
     dp.pending = true;
-    try submit(app, repo, .{ .diff = .{ .scope = dp.scope, .path = path, .rev = rev, .text = body } });
+    try submit(app, repo, .{ .diff = .{ .scope = dp.scope, .path = path, .rev = rev, .text = body, .full = dp.mode.wantsFullContext() } });
+}
+
+/// Recompute the rows the filter lets through, in both row lists, and
+/// keep the cursor on a shown row.
+pub fn refilterDiff(app: *App, dp: *DiffPane) Allocator.Error!void {
+    const gpa = app.gpa;
+    gpa.free(dp.shown);
+    dp.shown = &.{};
+    gpa.free(dp.split_shown);
+    dp.split_shown = &.{};
+    dp.shown = try diff_view.filterRows(gpa, dp.files, dp.rows, dp.filter.items, dp.mode == .flat);
+    dp.split_shown = try diff_view.filterSplitRows(gpa, dp.files, dp.split_rows, dp.filter.items);
+    const shown = dp.shownRows();
+    if (shown.len == 0) {
+        dp.cursor = 0;
+        return;
+    }
+    // A cursor on a hidden row moves to the nearest shown row before it.
+    var best: usize = shown[0];
+    for (shown) |r| {
+        if (r == dp.cursor) return;
+        if (r < dp.cursor) best = r;
+    }
+    dp.cursor = best;
+}
+
+/// Switch the view. Inline and Split need the whole file, so the diff
+/// is fetched again with full context when the loaded one is not; the
+/// cursor follows its hunk across the two row lists.
+pub fn setDiffMode(app: *App, dp: *DiffPane, mode: diff_view.Mode) CommandError!void {
+    if (dp.mode == mode) return;
+    const at = hunkAtCursor(dp);
+    const was_split = dp.mode == .split;
+    dp.mode = mode;
+    app.git.diff_mode = mode;
+    if (was_split != (mode == .split)) {
+        dp.cursor = 0;
+        if (at) |h| {
+            if (mode == .split) {
+                for (dp.split_rows, 0..) |r, i| if (r == .pair and r.pair.file == h.file and r.pair.hunk == h.hunk) {
+                    dp.cursor = i;
+                    break;
+                };
+            } else {
+                for (dp.rows, 0..) |r, i| if (r == .hunk and r.hunk.file == h.file and r.hunk.hunk == h.hunk) {
+                    dp.cursor = i;
+                    break;
+                };
+            }
+        }
+    }
+    try refilterDiff(app, dp);
+    app.needs_render = true;
+    if (mode.wantsFullContext() != dp.full) try refreshDiff(app, dp);
+}
+
+/// Move the cursor `delta` shown rows.
+pub fn stepDiff(dp: *DiffPane, delta: isize) void {
+    const shown = dp.shownRows();
+    if (shown.len == 0) return;
+    var pos: usize = 0;
+    for (shown, 0..) |r, i| {
+        if (r == dp.cursor) {
+            pos = i;
+            break;
+        }
+        if (r < dp.cursor) pos = i;
+    }
+    const next: isize = @as(isize, @intCast(pos)) + delta;
+    const clamped: usize = @intCast(std.math.clamp(next, 0, @as(isize, @intCast(shown.len - 1))));
+    dp.cursor = shown[clamped];
+}
+
+pub fn diffHome(dp: *DiffPane, end: bool) void {
+    const shown = dp.shownRows();
+    if (shown.len == 0) return;
+    dp.cursor = if (end) shown[shown.len - 1] else shown[0];
 }
 
 pub fn openGraph(app: *App, repo: *client.Repo) CommandError!PaneId {
@@ -877,6 +987,13 @@ pub fn openStatusPane(app: *App, repo: *client.Repo) CommandError!PaneId {
 
 /// The diff pane's current hunk, if the cursor is inside one.
 pub fn hunkAtCursor(dp: *const DiffPane) ?struct { file: u32, hunk: u32 } {
+    if (dp.mode == .split) {
+        if (dp.cursor >= dp.split_rows.len) return null;
+        return switch (dp.split_rows[dp.cursor]) {
+            .pair => |p| .{ .file = p.file, .hunk = p.hunk },
+            .file, .blank => null,
+        };
+    }
     if (dp.cursor >= dp.rows.len) return null;
     return switch (dp.rows[dp.cursor]) {
         .hunk => |h| .{ .file = h.file, .hunk = h.hunk },
@@ -1335,10 +1452,39 @@ pub fn statusPaneKey(app: *App, id: PaneId, sp: *StatusPane, k: Key) Allocator.E
     return true;
 }
 
-/// The diff pane: motion, `]c [c` / `n p` between hunks, `]f [f`
-/// between files, `s u x` on the hunk, enter opens the file at the line.
+/// The diff pane: motion over the shown rows, `]c [c` / `n p` between
+/// hunks, `]f [f` between files, `s u x` on the hunk, `v` cycles the
+/// view, `/` filters, enter opens the file at the line. While the
+/// filter takes keys, esc clears it and enter keeps it.
 pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!bool {
-    const n = dp.rows.len;
+    if (dp.filter_mode) {
+        switch (k.code) {
+            .esc => {
+                dp.filter.clearRetainingCapacity();
+                dp.filter_mode = false;
+                try refilterDiff(app, dp);
+            },
+            .enter => dp.filter_mode = false,
+            .backspace => {
+                if (dp.filter.items.len > 0) {
+                    var n: usize = 1;
+                    while (n < dp.filter.items.len and (dp.filter.items[dp.filter.items.len - n] & 0xC0) == 0x80) n += 1;
+                    dp.filter.items.len -= n;
+                }
+                try refilterDiff(app, dp);
+            },
+            .char => |c| {
+                if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+                var buf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(c, &buf) catch return true;
+                try dp.filter.appendSlice(app.gpa, buf[0..n]);
+                try refilterDiff(app, dp);
+            },
+            else => return false,
+        }
+        app.needs_render = true;
+        return true;
+    }
     if (dp.bracket) |b| {
         dp.bracket = null;
         if (k.code == .char and k.mods.eql(.{})) {
@@ -1351,30 +1497,42 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
             return true;
         }
     }
+    const page: isize = @intCast(@max(app.pane_rows, 1));
     switch (k.code) {
-        .up => dp.cursor -|= 1,
-        .down => dp.cursor = @min(dp.cursor + 1, n -| 1),
-        .page_up => dp.cursor -|= app.pane_rows,
-        .page_down => dp.cursor = @min(dp.cursor + app.pane_rows, n -| 1),
-        .home => dp.cursor = 0,
-        .end => dp.cursor = n -| 1,
+        .up => stepDiff(dp, -1),
+        .down => stepDiff(dp, 1),
+        .page_up => stepDiff(dp, -page),
+        .page_down => stepDiff(dp, page),
+        .home => diffHome(dp, false),
+        .end => diffHome(dp, true),
         .enter => runToast(app, openDiffLine(app, dp)),
-        .esc => try app.closePane(id, true),
+        .esc => {
+            if (dp.filter.items.len > 0) {
+                dp.filter.clearRetainingCapacity();
+                try refilterDiff(app, dp);
+            } else try app.closePane(id, true);
+        },
         .char => |c| {
             if (k.mods.ctrl and (c == 'd' or c == 'u')) {
-                if (c == 'd') dp.cursor = @min(dp.cursor + app.pane_rows / 2, n -| 1) else dp.cursor -|= app.pane_rows / 2;
+                stepDiff(dp, if (c == 'd') @divTrunc(page, 2) else -@divTrunc(page, 2));
                 app.needs_render = true;
                 return true;
             }
             if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
             switch (c) {
-                'j' => dp.cursor = @min(dp.cursor + 1, n -| 1),
-                'k' => dp.cursor -|= 1,
-                'g' => dp.cursor = 0,
-                'G' => dp.cursor = n -| 1,
+                'j' => stepDiff(dp, 1),
+                'k' => stepDiff(dp, -1),
+                'g' => diffHome(dp, false),
+                'G' => diffHome(dp, true),
                 ']', '[' => dp.bracket = @intCast(c),
                 'n' => moveHunk(dp, true),
                 'p' => moveHunk(dp, false),
+                'v' => runToast(app, setDiffMode(app, dp, dp.mode.next())),
+                '/' => {
+                    dp.filter_mode = true;
+                    dp.filter.clearRetainingCapacity();
+                    try refilterDiff(app, dp);
+                },
                 's' => runToast(app, applyHunk(app, dp, .stage)),
                 'u' => runToast(app, applyHunk(app, dp, .unstage)),
                 'x' => {
@@ -1393,39 +1551,71 @@ pub fn diffKey(app: *App, id: PaneId, dp: *DiffPane, k: Key) Allocator.Error!boo
     return true;
 }
 
+/// True when the shown row at `pos` starts a change: a hunk header in
+/// the Hunk view, the first changed row after a context row in the
+/// Inline and Split views (which have no hunk rows).
+fn startsChange(dp: *const DiffPane, pos: usize) bool {
+    const shown = dp.shownRows();
+    const ri = shown[pos];
+    switch (dp.mode) {
+        .hunk => return dp.rows[ri] == .hunk,
+        .flat => {
+            if (diff_view.rowKind(dp.files, dp.rows[ri]) == .none) return false;
+            if (pos == 0) return true;
+            return diff_view.rowKind(dp.files, dp.rows[shown[pos - 1]]) == .none;
+        },
+        .split => {
+            if (diff_view.splitRowKind(dp.files, dp.split_rows[ri]) == .none) return false;
+            if (pos == 0) return true;
+            return diff_view.splitRowKind(dp.files, dp.split_rows[shown[pos - 1]]) == .none;
+        },
+    }
+}
+
+fn cursorPos(dp: *const DiffPane) usize {
+    var pos: usize = 0;
+    for (dp.shownRows(), 0..) |r, i| {
+        if (r == dp.cursor) return i;
+        if (r < dp.cursor) pos = i;
+    }
+    return pos;
+}
+
+/// The next / previous hunk among the shown rows.
 pub fn moveHunk(dp: *DiffPane, forward: bool) void {
-    const n = dp.rows.len;
-    if (n == 0) return;
-    var i = dp.cursor;
+    const shown = dp.shownRows();
+    if (shown.len == 0) return;
+    var i = cursorPos(dp);
     while (true) {
         if (forward) {
-            if (i + 1 >= n) return;
+            if (i + 1 >= shown.len) return;
             i += 1;
         } else {
             if (i == 0) return;
             i -= 1;
         }
-        if (dp.rows[i] == .hunk) {
-            dp.cursor = i;
+        if (startsChange(dp, i)) {
+            dp.cursor = shown[i];
             return;
         }
     }
 }
 
 pub fn moveFile(dp: *DiffPane, forward: bool) void {
-    const n = dp.rows.len;
-    if (n == 0) return;
-    var i = dp.cursor;
+    const shown = dp.shownRows();
+    if (shown.len == 0) return;
+    var i = cursorPos(dp);
     while (true) {
         if (forward) {
-            if (i + 1 >= n) return;
+            if (i + 1 >= shown.len) return;
             i += 1;
         } else {
             if (i == 0) return;
             i -= 1;
         }
-        if (dp.rows[i] == .file) {
-            dp.cursor = i;
+        const is_file = if (dp.mode == .split) dp.split_rows[shown[i]] == .file else dp.rows[shown[i]] == .file;
+        if (is_file) {
+            dp.cursor = shown[i];
             return;
         }
     }
@@ -1433,10 +1623,18 @@ pub fn moveFile(dp: *DiffPane, forward: bool) void {
 
 /// Enter on a diff row: the file at that line.
 fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
-    if (dp.cursor >= dp.rows.len) return;
+    if (dp.cursor >= dp.rowCount()) return;
     const repo = app.git.repoById(dp.repo) orelse return error.NoRepo;
     const arena = app.frame.allocator();
-    const fi: u32, const line: ?u32 = switch (dp.rows[dp.cursor]) {
+    const fi: u32, const line: ?u32 = if (dp.mode == .split) switch (dp.split_rows[dp.cursor]) {
+        .file => |f| .{ f, null },
+        .pair => |p| blk: {
+            const lines = dp.files[p.file].hunks[p.hunk].lines;
+            const no: ?u32 = if (p.right) |r| lines[r].new_no else if (p.left) |l| lines[l].old_no else null;
+            break :blk .{ p.file, no };
+        },
+        .blank => return,
+    } else switch (dp.rows[dp.cursor]) {
         .file => |f| .{ f, null },
         .hunk => |h| .{ h.file, dp.files[h.file].hunks[h.hunk].new_start },
         .line => |l| blk: {
@@ -1457,6 +1655,49 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
         ed.placeCursor(@min(@as(usize, ln) -| 1, ed.lineCount() -| 1), 0);
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);
     };
+}
+
+/// A click in the diff pane (`.script_hit`): a view chip switches the
+/// view, the divider starts a drag, a strip cell jumps to its band, the
+/// filter banner takes the keys, a row selects (a second click opens it).
+pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Allocator.Error!void {
+    if (m.kind != .press) return;
+    if (diff_view.chipOf(hit_id)) |mode| {
+        if (m.button == .left) runToast(app, setDiffMode(app, dp, mode));
+        return;
+    }
+    if (hit_id == diff_view.divider_id) {
+        if (m.button == .left) app.drag = .{ .git_divider = id };
+        return;
+    }
+    if (hit_id == diff_view.filter_id) {
+        dp.filter_mode = true;
+        app.needs_render = true;
+        return;
+    }
+    if (diff_view.stripCellOf(hit_id)) |cell| {
+        const shown = dp.shownRows();
+        if (shown.len == 0) return;
+        dp.cursor = shown[diff_view.stripCellRow(cell, dp.strip_cells, shown.len)];
+        app.needs_render = true;
+        return;
+    }
+    if (hit_id >= dp.rowCount()) return;
+    if (dp.cursor == hit_id and m.button == .left) runToast(app, openDiffLine(app, dp)) else dp.cursor = hit_id;
+    app.needs_render = true;
+}
+
+/// The split divider follows the pointer while it is held.
+pub fn dragDivider(app: *App, id: PaneId, x: u16) void {
+    const pane = app.panes.get(id) orelse return;
+    const dp = switch (pane.*) {
+        .diff => |*d| d,
+        else => return,
+    };
+    const w: u32 = @max(dp.body.w -| 1, 1);
+    const off: u32 = x -| dp.body.x;
+    dp.ratio = @intCast(std.math.clamp(off * 100 / w, 15, 85));
+    app.needs_render = true;
 }
 
 /// The graph pane: motion, enter shows the commit, `c` cherry-picks,
@@ -1679,8 +1920,23 @@ pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, area: Rect) vo
     const header = if (dp.pending and dp.rows.len == 0)
         ui.fmt(" {s} · loading… ", .{dp.title})
     else
-        ui.fmt(" {s} · {d} file{s} · {d} hunk{s}   ·   ]c [c hunk · ]f [f file · s stage · u unstage · x discard · enter opens ", .{ dp.title, dp.files.len, if (dp.files.len == 1) "" else "s", hunks, if (hunks == 1) "" else "s" });
-    diff_view.draw(ui, id, area, &dp.view, .{ .files = dp.files, .rows = dp.rows, .cursor = dp.cursor, .focused = focused, .header = header });
+        ui.fmt(" {s} · {d} file{s} · {d} hunk{s} ", .{ dp.title, dp.files.len, if (dp.files.len == 1) "" else "s", hunks, if (hunks == 1) "" else "s" });
+    const painted = diff_view.draw(ui, id, area, &dp.view, .{
+        .files = dp.files,
+        .rows = dp.rows,
+        .shown = dp.shown,
+        .split_rows = dp.split_rows,
+        .split_shown = dp.split_shown,
+        .mode = dp.mode,
+        .cursor = dp.cursor,
+        .focused = focused,
+        .header = header,
+        .filter = dp.filter.items,
+        .filter_mode = dp.filter_mode,
+        .ratio = dp.ratio,
+    });
+    dp.body = painted.body;
+    dp.strip_cells = painted.strip_cells;
     if (app.active == id) app.pane_rows = @max(area.h -| 1, 1);
 }
 

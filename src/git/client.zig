@@ -60,7 +60,9 @@ pub const BrowseKind = enum { file, line, commit };
 pub const Job = union(enum) {
     /// `status --porcelain=v2 -b` plus `diff -U0 HEAD` for the gutter.
     status,
-    diff: struct { scope: DiffScope, path: ?[]u8 = null, rev: ?[]u8 = null, text: ?[]u8 = null },
+    /// `full` asks for every line of the file (the Inline / Split views)
+    /// instead of three lines of context.
+    diff: struct { scope: DiffScope, path: ?[]u8 = null, rev: ?[]u8 = null, text: ?[]u8 = null, full: bool = false },
     blame: []u8,
     log: struct { n: u32, filter: LogFilter },
     branches,
@@ -133,7 +135,7 @@ pub const Result = struct {
 
     pub const Payload = union(enum) {
         status: struct { status: parse.Status, signs: []parse.FileDiff, remote: []const u8 = "" },
-        diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff },
+        diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff, full: bool = false },
         blame: struct { path: []const u8, lines: []parse.BlameLine },
         log: struct { commits: []parse.Commit, path: ?[]const u8 },
         branches: []parse.Branch,
@@ -425,32 +427,33 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .diff => |d| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
+            const ctx: []const u8 = if (d.full) "-U999999" else "-U3";
             switch (d.scope) {
-                .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "HEAD", "--", d.path orelse "" }),
-                .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "HEAD", "--" }),
-                .worktree => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "--" }),
+                .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--", d.path orelse "" }),
+                .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--" }),
+                .worktree => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "--" }),
                 .staged => {
-                    try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "--cached", "--" });
+                    try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "--cached", "--" });
                     if (d.path) |p| try args.append(arena, p);
                 },
                 .commit => {
-                    try args.appendSlice(arena, &.{ "show", "--no-ext-diff", "-U3", "--format=", d.rev orelse "HEAD", "--" });
+                    try args.appendSlice(arena, &.{ "show", "--no-ext-diff", ctx, "--format=", d.rev orelse "HEAD", "--" });
                     if (d.path) |p| try args.append(arena, p);
                 },
                 .orig => {
                     // The buffer against the file on disk: `--no-index`
                     // with the buffer piped in as `-`.
-                    try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", "-U3", "--", d.path orelse "", "-" });
+                    try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", d.path orelse "", "-" });
                 },
             }
             var out = try git(repo, io, arena, args.items, if (d.scope == .orig) (d.text orelse "") else null);
             // `diff HEAD -- untracked` is empty; show the file as new so
             // the pane has something to say.
             if (d.scope == .file and out.ok and trimmed(out.stdout).len == 0) {
-                out = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "-U3", "--no-index", "--", "/dev/null", d.path orelse "" }, null);
+                out = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", ctx, "--no-index", "--", "/dev/null", d.path orelse "" }, null);
             }
             const files = try parse.parseDiff(arena, out.stdout);
-            r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files } };
+            r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files, .full = d.full } };
         },
         .blame => |path| {
             const out = try git(repo, io, arena, &.{ "blame", "--porcelain", "--", path }, null);

@@ -904,6 +904,9 @@ pub const specs = [_]Spec{
     .{ .id = "git.unstage_all", .title = "Git: unstage everything", .group = "git" },
     .{ .id = "git.discard", .title = "Git: discard changes to the selected file (confirm)", .group = "git" },
     .{ .id = "git.open_file", .title = "Git: open the selected file in an editor", .group = "git" },
+    // Zig-only: the diff pane's views and filter.
+    .{ .id = "git.diff_toggle_view", .title = "Diff: cycle the view (Hunk → Inline → Split)", .group = "git" },
+    .{ .id = "git.diff_filter", .title = "Diff: filter to the hunks containing a string (/)", .group = "git" },
     // Zig-only: browse a file / a line / a commit on the remote.
     .{ .id = "git.browse_line", .title = "Git: open the current line on the remote", .group = "git" },
     .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
@@ -942,13 +945,15 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "886 specs, unique ids" {
+test "888 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
     // + eighteen file-manager commands + four TODOS row commands
     // + three NOTES row commands + four FINDINGS row commands + ten
     // SESSIONS commands + six dock commands + two lsp-more commands.
-    try std.testing.expectEqual(@as(usize, 886), specs.len);
+    // SESSIONS commands + six dock commands + two diff-view commands
+    // + three browse commands (file / line / commit on the remote).
+    try std.testing.expectEqual(@as(usize, 888), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

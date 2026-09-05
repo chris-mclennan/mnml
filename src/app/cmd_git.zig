@@ -23,6 +23,8 @@ pub const table = .{
     .@"git.diff" = &diffWorktree,
     .@"git.diff_all" = &diffAll,
     .@"git.diff_orig" = &diffOrig,
+    .@"git.diff_toggle_view" = &diffToggleView,
+    .@"git.diff_filter" = &diffFilter,
     .@"git.diff_next_file" = &diffNextFile,
     .@"git.diff_prev_file" = &diffPrevFile,
     .@"git.peek_change" = &peekChange,
@@ -142,6 +144,21 @@ fn diffOrig(app: *App) CommandError!void {
     _ = try git.openDiff(app, repo, .orig, git.relToRepo(repo, p), null, e.buf.editor.bytes());
 }
 
+/// Hunk → Inline → Split → Hunk on the active diff pane.
+fn diffToggleView(app: *App) CommandError!void {
+    const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
+    try git.setDiffMode(app, dp, dp.mode.next());
+}
+
+/// Start typing a `/` filter on the active diff pane.
+fn diffFilter(app: *App) CommandError!void {
+    const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
+    dp.filter_mode = true;
+    dp.filter.clearRetainingCapacity();
+    try git.refilterDiff(app, dp);
+    app.needs_render = true;
+}
+
 fn diffNextFile(app: *App) CommandError!void {
     const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
     git.moveFile(dp, true);
@@ -164,7 +181,18 @@ fn peekChange(app: *App) CommandError!void {
     const id = try git.openDiff(app, repo, .file, rel, null, null);
     const pane = app.panes.get(id) orelse return;
     const dp = &pane.diff;
-    // The rows may already be here (a refresh of an open pane).
+    // The rows may already be here (a refresh of an open pane); the
+    // split view walks its own rows.
+    if (dp.mode == .split) {
+        for (dp.split_rows, 0..) |row, i| if (row == .pair) {
+            const h = dp.files[row.pair.file].hunks[row.pair.hunk];
+            if (h.new_start + h.new_count >= line) {
+                dp.cursor = i;
+                break;
+            }
+        };
+        return;
+    }
     for (dp.rows, 0..) |row, i| if (row == .hunk) {
         const h = dp.files[row.hunk.file].hunks[row.hunk.hunk];
         if (h.new_start + h.new_count >= line) {
