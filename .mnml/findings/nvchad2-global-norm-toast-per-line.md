@@ -32,4 +32,4 @@ right edge of screen.txt, rows 22-36:
 
 ## Fix
 
-Commit `c184b0f` — toasts are dropped while `in_global` is set; `:g` clears it before its own summary. Test: `tests/e2e-zig/vim_global_norm_one_toast.test`.
+Commit `db51eb9` — toasts are dropped while `in_global` is set; `:g` clears it before its own summary. Test: `tests/e2e-zig/vim_global_norm_one_toast.test`.

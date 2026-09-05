@@ -45,4 +45,4 @@ Earlier in the same shape (a15): type " n" → toast │ no active find — use 
 
 ## Fix
 
-Commit `8df591f` — a leader chain the keymap rejects is looked up in the which-key tree (a leaf runs, a group opens the popup at its path); a pending leader prefix that times out with no fallback resolves the same way. Test: `tests/e2e-zig/vim_leader_menu_only_leaf.test`.
+Commit `07c02f6` — a leader chain the keymap rejects is looked up in the which-key tree (a leaf runs, a group opens the popup at its path); a pending leader prefix that times out with no fallback resolves the same way. Test: `tests/e2e-zig/vim_leader_menu_only_leaf.test`.

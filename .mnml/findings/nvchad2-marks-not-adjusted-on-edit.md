@@ -41,4 +41,4 @@ toasts: │ mark 'a set │  then  │ → 'a 5:1 │  then  │ → 'a 5:6 │
 
 ## Fix
 
-Commit `4d3fa7f` — lowercase marks live on the `Editor` as byte offsets and `splice` moves them with every edit; `Editor.markPos` / `setMarkPos` translate for the session file, `:marks` and the picker. Test: `tests/e2e-zig/vim_marks_follow_edits.test`.
+Commit `ae7bee7` — lowercase marks live on the `Editor` as byte offsets and `splice` moves them with every edit; `Editor.markPos` / `setMarkPos` translate for the session file, `:marks` and the picker. Test: `tests/e2e-zig/vim_marks_follow_edits.test`.

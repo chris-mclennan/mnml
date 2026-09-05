@@ -43,4 +43,4 @@ after 2yy3p (cursor Ln 4):            after yiw3p:
 
 ## Fix
 
-Commit `c8f7310` — `[count]p` is one put of the register repeated `count` times (`register.putTimes`, routed from the `repeat` prong). Test: `tests/e2e-zig/vim_count_p_consecutive.test`.
+Commit `b042377` — `[count]p` is one put of the register repeated `count` times (`register.putTimes`, routed from the `repeat` prong). Test: `tests/e2e-zig/vim_count_p_consecutive.test`.

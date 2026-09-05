@@ -31,4 +31,4 @@ Workspace `/Users/chrismclennan/Projects/mnml-zig-worktrees/hunt`, launched `MNM
 
 ## Fix
 
-Commit `01dcd8e` — the vim accept splits `/pat/offset` (`e[±N]`, `s[±N]`, `b[±N]`, `[±]N`), stores the offset on the find state and lands through it; `n` / `N` keep it. Test: `tests/e2e-zig/vim_search_offset.test`.
+Commit `0653d4e` — the vim accept splits `/pat/offset` (`e[±N]`, `s[±N]`, `b[±N]`, `[±]N`), stores the offset on the find state and lands through it; `n` / `N` keep it. Test: `tests/e2e-zig/vim_search_offset.test`.

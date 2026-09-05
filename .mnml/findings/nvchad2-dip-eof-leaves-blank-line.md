@@ -39,4 +39,4 @@ after dip (status Ln 6/6):     after dap (status Ln 6/6):
 
 ## Fix
 
-Commit `7559fa9` — `ip` / `ap` name lines; the operator widens them linewise (`dip` → no empty line, `cip` → one, `dap` at EOF takes the preceding blanks, `vip` is V-LINE). Test: `tests/e2e-zig/vim_dap_eof.test`.
+Commit `1465ffe` — `ip` / `ap` name lines; the operator widens them linewise (`dip` → no empty line, `cip` → one, `dap` at EOF takes the preceding blanks, `vip` is V-LINE). Test: `tests/e2e-zig/vim_dap_eof.test`.

@@ -35,4 +35,4 @@ after V j y, gv:         "mode":"VISUAL","cursor":{"line":3,"col":1}   statuslin
 
 ## Fix
 
-Commit `eaa1b08` — the handler remembers the Visual mode it left and `restore_last_selection` carries the shape (linewise steps back onto the last line, block sets the block anchor). Test: `tests/e2e-zig/vim_gv_mode.test`.
+Commit `2f475e4` — the handler remembers the Visual mode it left and `restore_last_selection` carries the shape (linewise steps back onto the last line, block sets the block anchor). Test: `tests/e2e-zig/vim_gv_mode.test`.

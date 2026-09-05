@@ -40,4 +40,4 @@ after :20 zj:     cursor stays 20:5
 
 ## Fix
 
-Commit `cdf049b` — `foldStep` walks every bracket block plus the closed folds, leaves from a closed fold's edges and skips folds a closed one hides. Test: `tests/e2e-zig/vim_zj_zk.test`.
+Commit `115b445` — `foldStep` walks every bracket block plus the closed folds, leaves from a closed fold's edges and skips folds a closed one hides. Test: `tests/e2e-zig/vim_zj_zk.test`.

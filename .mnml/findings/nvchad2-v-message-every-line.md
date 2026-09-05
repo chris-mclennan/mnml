@@ -27,4 +27,4 @@ Workspace `/Users/chrismclennan/Projects/mnml-zig-worktrees/hunt`, launched `MNM
 
 ## Fix
 
-Commit `9f5411c` — `:v` with nothing to act on says "Pattern found in every line"; E486 stays with `:g`. Test: `tests/e2e-zig/vim_vglobal_every_line.test`.
+Commit `c6de032` — `:v` with nothing to act on says "Pattern found in every line"; E486 stays with `:g`. Test: `tests/e2e-zig/vim_vglobal_every_line.test`.

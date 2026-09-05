@@ -34,4 +34,4 @@ after u then Normal-mode p:  Ln 1/9, unchanged (correct)
 
 ## Fix
 
-Commit `ada0626` — `EditCtx.register_empty`; a Visual `p` / `P` with nothing to put ends the selection without deleting. Test: `tests/e2e-zig/vim_visual_p_empty_register.test`.
+Commit `fa23266` — `EditCtx.register_empty`; a Visual `p` / `P` with nothing to put ends the selection without deleting. Test: `tests/e2e-zig/vim_visual_p_empty_register.test`.

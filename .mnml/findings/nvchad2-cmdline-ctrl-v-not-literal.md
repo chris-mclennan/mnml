@@ -29,4 +29,4 @@ statusline cmdline:   :agents.new_from_pr▏      (Tab completed the first comma
 
 ## Fix
 
-Commit `cf92f1d` — `Ctrl-V` / `Ctrl-Q` on the `:` line insert the next key literally; `Ctrl-R "` / `+` / `*` paste the register. Test: `tests/e2e-zig/vim_cmdline_ctrl_v_literal.test`.
+Commit `6e68c73` — `Ctrl-V` / `Ctrl-Q` on the `:` line insert the next key literally; `Ctrl-R "` / `+` / `*` paste the register. Test: `tests/e2e-zig/vim_cmdline_ctrl_v_literal.test`.

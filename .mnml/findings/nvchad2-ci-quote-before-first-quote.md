@@ -34,4 +34,4 @@ after 0di":         1 Xname = "world";      (unchanged)
 
 ## Fix
 
-Commit `5a67861` — `enclosingQuotePairOnLine` takes the first pair after the cursor when none contains it. Test: `tests/e2e-zig/vim_ci_quote_forward.test`.
+Commit `6797a3e` — `enclosingQuotePairOnLine` takes the first pair after the cursor when none contains it. Test: `tests/e2e-zig/vim_ci_quote_forward.test`.

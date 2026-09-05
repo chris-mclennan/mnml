@@ -36,4 +36,4 @@ after :g/a/norm A; then u:        after :g/o/s/o/0/g then u:
 
 ## Fix
 
-Commit `f85edfe` — `global` wraps the per-line loop in one atomic undo group. Test: `tests/e2e-zig/vim_global_one_undo.test`.
+Commit `782e27e` — `global` wraps the per-line loop in one atomic undo group. Test: `tests/e2e-zig/vim_global_one_undo.test`.

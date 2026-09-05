@@ -41,4 +41,4 @@ after G k V j d:  Ln 8/7 — same phantom row 8
 
 ## Fix
 
-Commit `15222ed` — `dd` / `V…d` on the last line clamp back onto the new last line (`delete.zig` `clampOffPhantomLine`); a `{count}dd` past EOF takes only the lines that exist. Test: `tests/e2e-zig/vim_dd_last_line.test`.
+Commit `e549928` — `dd` / `V…d` on the last line clamp back onto the new last line (`delete.zig` `clampOffPhantomLine`); a `{count}dd` past EOF takes only the lines that exist. Test: `tests/e2e-zig/vim_dd_last_line.test`.

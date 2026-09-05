@@ -37,4 +37,4 @@ after V'bd: Ln 1/8 — one line deleted (V, then `b` as back-word, then d), not 
 
 ## Fix
 
-Commit `4fb9d88` — `'` / `` ` `` after `d` / `y` / `c` and in Visual arm the mark prefix with the operator kept; the buffer builds the range (`operator_to_mark`), linewise or exclusive-charwise. Test: `tests/e2e-zig/vim_operator_to_mark.test`.
+Commit `db69c96` — `'` / `` ` `` after `d` / `y` / `c` and in Visual arm the mark prefix with the operator kept; the buffer builds the range (`operator_to_mark`), linewise or exclusive-charwise. Test: `tests/e2e-zig/vim_operator_to_mark.test`.

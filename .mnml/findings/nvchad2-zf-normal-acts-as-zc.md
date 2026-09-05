@@ -33,4 +33,4 @@ after :10 zfap:  "mode":"INSERT","cursor":{"line":10,"col":3};  10 ppub fn fn2(a
 
 ## Fix
 
-Commit `9fb0e19` — `zf` is a pending operator; the range goes live as whole lines and the app folds it (`fold_after`); `zF` folds `count` lines; the Visual `zf` takes the same route. Test: `tests/e2e-zig/vim_zf_operator.test`.
+Commit `e8de7d8` — `zf` is a pending operator; the range goes live as whole lines and the app folds it (`fold_after`); `zF` folds `count` lines; the Visual `zf` takes the same route. Test: `tests/e2e-zig/vim_zf_operator.test`.

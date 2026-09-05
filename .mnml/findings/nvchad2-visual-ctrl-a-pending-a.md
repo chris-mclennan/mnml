@@ -34,4 +34,4 @@ after Esc:           "mode":"V-LINE" still (the Esc cancelled the pending text o
 
 ## Fix
 
-Commit `5187f3c` — `change_numbers_in_selection` (one undo step; `g Ctrl-A` progressive), routed ahead of the `a` / `i` text-object keys. Test: `tests/e2e-zig/vim_visual_ctrl_a.test`.
+Commit `6d427ca` — `change_numbers_in_selection` (one undo step; `g Ctrl-A` progressive), routed ahead of the `a` / `i` text-object keys. Test: `tests/e2e-zig/vim_visual_ctrl_a.test`.

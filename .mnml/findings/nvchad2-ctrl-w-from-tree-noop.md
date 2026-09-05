@@ -35,4 +35,4 @@ status.json "focus" after each step:  tree → tree (Ctrl-W w) → tree (Ctrl-W 
 
 ## Fix
 
-Commit `b6645b2` — the tree arms a pending `Ctrl-W` under the vim profile; `w` / `p` / `h` / `j` / `k` / `l` and the arrows move on; `focus_next_split` from the sidebar enters the first window. Test: `tests/e2e-zig/vim_ctrl_w_from_tree.test`.
+Commit `6168280` — the tree arms a pending `Ctrl-W` under the vim profile; `w` / `p` / `h` / `j` / `k` / `l` and the arrows move on; `focus_next_split` from the sidebar enters the first window. Test: `tests/e2e-zig/vim_ctrl_w_from_tree.test`.

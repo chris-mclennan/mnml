@@ -35,4 +35,4 @@ after fo Ctrl-X:  1 hex 1x0f oct 6 neg -0
 
 ## Fix
 
-Commit `9f42883` — the number scanner reads `0x…` / `0b…` whole (case and width kept, unsigned wrap) and keeps a zero-padded decimal's width (`007` → `006`, `000` → `-001`). Test: `tests/e2e-zig/vim_ctrl_a_hex_zeros.test`.
+Commit `973bc85` — the number scanner reads `0x…` / `0b…` whole (case and width kept, unsigned wrap) and keeps a zero-padded decimal's width (`007` → `006`, `000` → `-001`). Test: `tests/e2e-zig/vim_ctrl_a_hex_zeros.test`.

@@ -40,4 +40,4 @@ divider column in screen.txt row 1:  75 → 79 after Ctrl-W <  → 75 after 5 Ct
 
 ## Fix
 
-Commit `1d3f1ce` — `:tabmove [N]`, `:resize [±]N`, `:vertical resize [±]N` (and `:vertical split`); `{count} Ctrl-W >` / `<` / `+` / `-` resize by `count` cells. Test: `tests/e2e-zig/vim_tabmove_resize.test`.
+Commit `5506cb0` — `:tabmove [N]`, `:resize [±]N`, `:vertical resize [±]N` (and `:vertical split`); `{count} Ctrl-W >` / `<` / `+` / `-` resize by `count` cells. Test: `tests/e2e-zig/vim_tabmove_resize.test`.

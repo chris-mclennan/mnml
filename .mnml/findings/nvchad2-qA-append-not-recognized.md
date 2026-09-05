@@ -37,4 +37,4 @@ after :reg a⏎:     panes [a.txt, "cmdline history"], mode none
 
 ## Fix
 
-Commit `4809409` — `q{A-Z}` records into the lowercase register, appending; `@{A-Z}` replays it. Test: `tests/e2e-zig/vim_macro_append_upper.test`.
+Commit `bac7fd6` — `q{A-Z}` records into the lowercase register, appending; `@{A-Z}` replays it. Test: `tests/e2e-zig/vim_macro_append_upper.test`.
