@@ -166,7 +166,9 @@ pub fn build(b: *std.Build) void {
 
     // ── docs + check (cutover prep) ─────────────────────────────────────
     // `zig build docs` regenerates docs/commands.md from the comptime spec
-    // table (E8).
+    // table (E8). `zig build check` is the CI gate (E7): fmt, the unit
+    // tests in Debug and ReleaseSafe, the Phase-0 e2e gate, the same gate
+    // swept at 80x24 / 120x40 / 200x60, and defaults.test.
     const specs_mod = b.createModule(.{ .root_source_file = b.path("src/commands/specs.zig"), .target = target, .optimize = optimize });
     const gen_mod = b.createModule(.{
         .root_source_file = b.path("tools/gen_commands.zig"),
@@ -183,6 +185,36 @@ pub fn build(b: *std.Build) void {
     const gen_tests = b.addTest(.{ .root_module = gen_mod, .filters = test_filters });
     test_step.dependOn(&b.addRunArtifact(gen_tests).step);
 
+    const check_step = b.step("check", "The safety gates: fmt, Debug + ReleaseSafe unit tests, the e2e gate, the width sweep, defaults.test");
+    const fmt_check = b.addFmt(.{ .paths = &.{ "src", "build.zig", "tools" }, .check = true });
+    check_step.dependOn(&fmt_check.step);
+    // Each optimize mode is its own nested build so the mode is explicit
+    // whatever -Doptimize this invocation carries; they run in sequence.
+    const debug_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", "-Doptimize=Debug" });
+    debug_tests.setName("zig build test -Doptimize=Debug");
+    debug_tests.step.dependOn(&fmt_check.step);
+    const safe_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", "-Doptimize=ReleaseSafe" });
+    safe_tests.setName("zig build test -Doptimize=ReleaseSafe");
+    safe_tests.step.dependOn(&debug_tests.step);
+    const gate_run = b.addRunArtifact(exe);
+    gate_run.setName("mnml-zig test --gate");
+    gate_run.addArgs(&.{ "test", "--gate" });
+    gate_run.setCwd(b.path("."));
+    gate_run.has_side_effects = true;
+    gate_run.step.dependOn(&safe_tests.step);
+    const sweep_run = b.addRunArtifact(exe);
+    sweep_run.setName("mnml-zig test --gate --sizes 80x24,120x40,200x60");
+    sweep_run.addArgs(&.{ "test", "--gate", "--sizes", "80x24,120x40,200x60" });
+    sweep_run.setCwd(b.path("."));
+    sweep_run.has_side_effects = true;
+    sweep_run.step.dependOn(&gate_run.step);
+    const defaults_run = b.addRunArtifact(exe);
+    defaults_run.setName("mnml-zig test tests/e2e-zig/defaults.test");
+    defaults_run.addArgs(&.{ "test", "tests/e2e-zig/defaults.test" });
+    defaults_run.setCwd(b.path("."));
+    defaults_run.has_side_effects = true;
+    defaults_run.step.dependOn(&sweep_run.step);
+    check_step.dependOn(&defaults_run.step);
     // ── end docs + check ────────────────────────────────────────────────
 
     // ── e2e: gate-build ──
