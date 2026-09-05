@@ -43,6 +43,10 @@ const jsonrpc = @import("../rpc/jsonrpc.zig");
 const client = @import("../lsp/client.zig");
 const types = @import("../lsp/types.zig");
 const snippets = @import("snippets.zig");
+const decor = @import("lsp_decor.zig");
+const semantic_app = @import("lsp_semantic.zig");
+const format_app = @import("lsp_format.zig");
+const rename_app = @import("lsp_rename.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const cmd_view = @import("cmd_view.zig");
 const layout_mod = @import("layout.zig");
@@ -55,14 +59,42 @@ pub const ReqKind = client.ReqKind;
 pub const Ctx = client.Ctx;
 const Value = jsonrpc.Value;
 
-/// One file's diagnostics, replaced wholesale by every publish.
+/// One file's diagnostics from two sources — the server's publish and
+/// an external linter's run — each replaced wholesale by its next
+/// delivery, merged into `items` (sorted, gpa-owned) for every reader.
 const FileDiags = struct {
     arena: alloc.SnapshotArena,
+    lint_arena: alloc.SnapshotArena,
+    server_items: []types.Diagnostic = &.{},
+    lint_items: []types.Diagnostic = &.{},
     items: []types.Diagnostic = &.{},
+
+    fn create(gpa: Allocator) Allocator.Error!*FileDiags {
+        const fd = try gpa.create(FileDiags);
+        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa), .lint_arena = alloc.SnapshotArena.init(gpa) };
+        return fd;
+    }
 
     fn destroy(self: *FileDiags, gpa: Allocator) void {
         self.arena.deinit();
+        self.lint_arena.deinit();
+        gpa.free(self.items);
         gpa.destroy(self);
+    }
+
+    /// Rebuild `items` from both sources.
+    fn merge(self: *FileDiags, gpa: Allocator) Allocator.Error!void {
+        const merged = try gpa.alloc(types.Diagnostic, self.server_items.len + self.lint_items.len);
+        @memcpy(merged[0..self.server_items.len], self.server_items);
+        @memcpy(merged[self.server_items.len..], self.lint_items);
+        std.mem.sort(types.Diagnostic, merged, {}, struct {
+            fn lt(_: void, a: types.Diagnostic, b: types.Diagnostic) bool {
+                if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
+                return a.range.start.character < b.range.start.character;
+            }
+        }.lt);
+        gpa.free(self.items);
+        self.items = merged;
     }
 };
 
@@ -188,8 +220,18 @@ pub const State = struct {
     synced: std.AutoHashMapUnmanaged(PaneId, u64) = .empty,
     /// The completion request in flight; a newer one cancels it.
     completion_req: ?struct { server: *Server, id: i64 } = null,
+    /// Inlay hints, code lenses, colours, links — by absolute path (owned keys).
+    decor: std.StringHashMapUnmanaged(*decor.FileDecor) = .empty,
+    /// When each pane last asked for its decorations.
+    decor_track: std.AutoHashMapUnmanaged(PaneId, decor.Track) = .empty,
+    /// Semantic tokens by absolute path (owned keys).
+    semantic: std.StringHashMapUnmanaged(*semantic_app.SemFile) = .empty,
+    /// The external linters' workers.
+    lint_group: Io.Group = .init,
+    rename: rename_app.State = .{},
 
-    pub fn deinit(self: *State, gpa: Allocator) void {
+    pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
+        self.lint_group.cancel(io);
         for (self.servers.items) |s| s.deinit();
         self.servers.deinit(gpa);
         var dk = self.dead.keyIterator();
@@ -219,6 +261,20 @@ pub const State = struct {
         if (self.ladder) |l| gpa.free(l.ranges);
         self.panel.deinit(gpa);
         self.synced.deinit(gpa);
+        var dc = self.decor.iterator();
+        while (dc.next()) |e| {
+            gpa.free(e.key_ptr.*);
+            e.value_ptr.*.destroy(gpa);
+        }
+        self.decor.deinit(gpa);
+        self.decor_track.deinit(gpa);
+        var sm = self.semantic.iterator();
+        while (sm.next()) |e| {
+            gpa.free(e.key_ptr.*);
+            e.value_ptr.*.destroy(gpa);
+        }
+        self.semantic.deinit(gpa);
+        self.rename.deinit();
     }
 };
 
@@ -295,7 +351,7 @@ fn findRoot(app: *App, arena: Allocator, path: []const u8, markers: []const []co
 }
 
 /// Is `cmd` runnable: an absolute path that exists, or a name on PATH.
-fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool {
+pub fn onPath(app: *App, arena: Allocator, cmd: []const u8) Allocator.Error!bool {
     if (std.fs.path.isAbsolute(cmd) or std.mem.indexOfScalar(u8, cmd, '/') != null) {
         return if (Io.Dir.cwd().statFile(app.io, cmd, .{})) |_| true else |_| false;
     }
@@ -388,7 +444,7 @@ pub fn ensureServer(app: *App, path: []const u8) Allocator.Error!?*Server {
     return s;
 }
 
-fn retireServer(app: *App, s: *Server) void {
+pub fn retireServer(app: *App, s: *Server) void {
     for (app.lsp.servers.items, 0..) |x, i| if (x == s) {
         _ = app.lsp.servers.orderedRemove(i);
         break;
@@ -409,8 +465,10 @@ pub fn onOpen(app: *App, args: hooks.HookArgs) void {
     attach(app, args.open.pane, e) catch {};
 }
 
-fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
+pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     const path = e.buf.path orelse return;
+    // The external linter does not need a server.
+    format_app.lintOnHook(app, path);
     const s = (try ensureServer(app, path)) orelse return;
     const was_open = s.isOpen(path);
     s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
@@ -421,19 +479,26 @@ fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     }
 }
 
+/// Before the write: `willSaveWaitUntil` and the external formatter
+/// (`lsp_format.onSavePre`), then format-on-save through the server
+/// when it formats.
 pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
-    if (!app.cfg.editor.format_on_save) return;
-    const e = app.panes.editor(args.save_pre.pane) orelse return;
+    const pane = args.save_pre.pane;
+    const e = app.panes.editor(pane) orelse return;
     const path = e.buf.path orelse return;
-    const s = serverFor(app, path) orelse return;
-    if (!s.caps.formatting) return;
-    syncPane(app, args.save_pre.pane, e);
-    requestFormatting(app, s, args.save_pre.pane, e, true) catch {};
+    const s = serverFor(app, path);
+    if (s != null) syncPane(app, pane, e);
+    format_app.onSavePre(app, pane, e, s);
+    if (!app.cfg.editor.format_on_save) return;
+    const srv = s orelse return;
+    if (!srv.caps.formatting or !srv.ready) return;
+    requestFormatting(app, srv, pane, e, true) catch {};
 }
 
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     const e = app.panes.editor(args.save_post.pane) orelse return;
     const path = e.buf.path orelse return;
+    format_app.lintOnHook(app, path);
     const s = serverFor(app, path) orelse return;
     syncPane(app, args.save_post.pane, e);
     s.didSave(path, e.buf.editor.bytes()) catch {};
@@ -444,11 +509,14 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
 /// for it go too (a reopen republishes).
 pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
     _ = app.lsp.synced.remove(pane);
+    decor.forgetPane(app, pane);
     if (app.lsp.completion) |c| if (c.pane == pane) closeCompletion(app);
     if (app.lsp.hover) |h| if (h.pane == pane) closeHover(app);
     if (app.lsp.peek) |p| if (p.pane == pane) closePeek(app);
     if (app.panes.findPath(path) != null) return;
     for (app.lsp.servers.items) |s| s.didClose(path) catch {};
+    decor.drop(app, path);
+    semantic_app.drop(app, path);
 }
 
 /// Push the edits since the last sync as `didChange`: one splice on an
@@ -487,6 +555,11 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
 // ─── events (D1: adopt or free, on every path) ──────────────────────────
 
 pub fn handle(app: *App, server_id: u32, ev: *event.LspEvent) Allocator.Error!void {
+    if (server_id == format_app.linter_server_id) {
+        try format_app.handleLintEvent(app, ev);
+        app.needs_render = true;
+        return;
+    }
     var adopted = false;
     defer if (!adopted) ev.destroy(app.gpa);
     var server: ?*Server = null;
@@ -601,7 +674,13 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
         .definition, .declaration, .type_definition, .implementation => try gotoResult(app, kind, ctx, result),
         .references => try locationsPicker(app, "References", try types.readLocations(app.frame.allocator(), result), "no references"),
         .rename => {
-            const n = if (result) |r| try applyWorkspaceEdit(app, s, r) else 0;
+            const r = result orelse {
+                app.toast("rename: no edits", .{});
+                return false;
+            };
+            // More than one file: the preview asks first.
+            if (rename_app.fileCount(r) > 1) return try adoptRenamePreview(app, s, r);
+            const n = try applyWorkspaceEdit(app, s, r);
             if (n == 0) app.toast("rename: no edits", .{}) else app.toast("LSP rename · applied {d} edit(s)", .{n});
         },
         .formatting => try applyFormatting(app, s, ctx, result),
@@ -615,13 +694,16 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
         .document_highlight => try applyHighlights(app, s, ctx, result),
         .selection_range => try applyLadder(app, s, ctx, result),
         .folding_range => try applyFolds(app, ctx, result),
+        .inlay_hint, .code_lens, .code_lens_resolve, .document_color, .document_link => return try decor.handleResponse(app, s, kind, ctx, result, msg),
+        .semantic_full, .semantic_delta, .semantic_range => try semantic_app.handleResponse(app, s, kind, ctx, result),
+        .on_type_formatting, .will_save_wait_until, .range_formatting => try format_app.handleResponse(app, s, kind, ctx, result),
     }
     return false;
 }
 
 // ─── diagnostics ────────────────────────────────────────────────────────
 
-fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.Error!void {
+fn fileDiags(app: *App, path: []const u8) Allocator.Error!*FileDiags {
     const gpa = app.gpa;
     const gop = try app.lsp.diags.getOrPut(gpa, path);
     if (!gop.found_existing) {
@@ -629,38 +711,62 @@ fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.
             _ = app.lsp.diags.remove(path);
             return err;
         };
-        const fd = try gpa.create(FileDiags);
-        fd.* = .{ .arena = alloc.SnapshotArena.init(gpa) };
-        gop.value_ptr.* = fd;
+        gop.value_ptr.* = FileDiags.create(gpa) catch |err| {
+            gpa.free(gop.key_ptr.*);
+            _ = app.lsp.diags.remove(path);
+            return err;
+        };
     }
-    const fd = gop.value_ptr.*;
-    fd.arena.reset();
-    fd.items = &.{};
-    const arena = fd.arena.allocator();
-    var out: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
-    var errors: u32 = 0;
-    var warnings: u32 = 0;
-    for (list) |v| {
-        var d = types.readDiagnostic(v) orelse continue;
+    return gop.value_ptr.*;
+}
+
+/// Copy `list` onto `arena` (messages, source, code) and sort it.
+fn copyDiagnostics(arena: Allocator, list: []const types.Diagnostic) Allocator.Error![]types.Diagnostic {
+    const out = try arena.alloc(types.Diagnostic, list.len);
+    for (list, 0..) |d_in, i| {
+        var d = d_in;
         d.message = try arena.dupe(u8, d.message);
         if (d.source) |src| d.source = try arena.dupe(u8, src);
         if (d.code) |c| d.code = try arena.dupe(u8, c);
-        try out.append(arena, d);
-        switch (d.severity) {
-            .err => errors += 1,
-            .warning => warnings += 1,
-            else => {},
-        }
+        out[i] = d;
     }
-    std.mem.sort(types.Diagnostic, out.items, {}, struct {
-        fn lt(_: void, a: types.Diagnostic, b: types.Diagnostic) bool {
-            if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
-            return a.range.start.character < b.range.start.character;
-        }
-    }.lt);
-    fd.items = out.items;
+    return out;
+}
+
+/// After either source landed: merge, tell the hooks, repaint.
+fn finishDiagnostics(app: *App, path: []const u8, fd: *FileDiags) Allocator.Error!void {
+    try fd.merge(app.gpa);
+    var errors: u32 = 0;
+    var warnings: u32 = 0;
+    for (fd.items) |d| switch (d.severity) {
+        .err => errors += 1,
+        .warning => warnings += 1,
+        else => {},
+    };
     app.hooks.emit(app, .{ .diagnostics = .{ .path = app.relPath(path), .errors = errors, .warnings = warnings } });
     app.needs_render = true;
+}
+
+/// The server's publish for `path`: its list replaced wholesale.
+fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    var read: std.ArrayListUnmanaged(types.Diagnostic) = .empty;
+    for (list) |v| if (types.readDiagnostic(v)) |d| try read.append(arena, d);
+    const fd = try fileDiags(app, path);
+    fd.arena.reset();
+    fd.server_items = &.{};
+    fd.server_items = try copyDiagnostics(fd.arena.allocator(), read.items);
+    try finishDiagnostics(app, path, fd);
+}
+
+/// An external linter's findings for `path`: its list replaced
+/// wholesale; the server's stays.
+pub fn applyLintDiagnostics(app: *App, path: []const u8, list: []const types.Diagnostic) Allocator.Error!void {
+    const fd = try fileDiags(app, path);
+    fd.lint_arena.reset();
+    fd.lint_items = &.{};
+    fd.lint_items = try copyDiagnostics(fd.lint_arena.allocator(), list);
+    try finishDiagnostics(app, path, fd);
 }
 
 pub fn diagnosticsFor(app: *App, path: []const u8) []const types.Diagnostic {
@@ -921,10 +1027,10 @@ pub fn cycleFilter(app: *App) CommandError!void {
 
 // ─── requests from the cursor ───────────────────────────────────────────
 
-const Target = struct { server: *Server, pane: PaneId, e: *EditorPane, path: []const u8 };
+pub const Target = struct { server: *Server, pane: PaneId, e: *EditorPane, path: []const u8 };
 
 /// The active editor's server, or the reason there is none.
-fn requireServer(app: *App, what: []const u8) CommandError!Target {
+pub fn requireServer(app: *App, what: []const u8) CommandError!Target {
     const arena = app.frame.allocator();
     const pane = app.active orelse return app.diag.fail(arena, "no active editor", .{});
     const e = app.panes.editor(pane) orelse return app.diag.fail(arena, "no active editor", .{});
@@ -1254,15 +1360,21 @@ const manual_flag: u32 = 0x8000_0000;
 
 /// Typing in an editor: a trigger character or an identifier of two
 /// characters opens the popup; a cursor that left the word closes it.
+/// An on-type formatting trigger asks the server for its edits.
 pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!void {
     const c = k.typed() orelse return;
+    const path = e.buf.path orelse return;
+    const s = serverFor(app, path) orelse return;
+    if (!s.ready) return;
+    if (s.caps.on_type_triggers.len > 0) {
+        syncPane(app, pane, e);
+        format_app.onTyped(app, pane, e, s, c);
+    }
     if (app.lsp.completion) |comp| if (comp.pane == pane) {
         if (e.buf.editor.cursor < comp.start) closeCompletion(app);
         return;
     };
-    const path = e.buf.path orelse return;
-    const s = serverFor(app, path) orelse return;
-    if (!s.ready or !s.caps.completion) return;
+    if (!s.caps.completion) return;
     const ed = &e.buf.editor;
     const w = snippets.wordBefore(ed.bytes(), ed.cursor);
     const is_trigger = c < 128 and std.mem.indexOfScalar(u8, s.caps.trigger_chars, @intCast(c)) != null;
@@ -1334,6 +1446,7 @@ pub fn visibleCompletions(app: *App, arena: Allocator) Allocator.Error![]u32 {
 
 /// Keys the popups take before the editor sees them. False = not ours.
 pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
+    if (try rename_app.interceptKey(app, k)) return true;
     if (app.lsp.peek != null) {
         const p = &app.lsp.peek.?;
         switch (k.code) {
@@ -1376,7 +1489,8 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
         app.needs_render = true;
         return true;
     }
-    const comp = &(app.lsp.completion orelse return false);
+    // No popup: Enter on a code lens's line runs it (vim Normal only).
+    const comp = &(app.lsp.completion orelse return decor.interceptKey(app, k));
     if (app.active != comp.pane) {
         closeCompletion(app);
         return false;
@@ -1556,7 +1670,7 @@ fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Er
 
 /// Apply `edits` to one pane, last first so earlier offsets stay valid.
 /// One undo step; the cursor keeps its byte where it can.
-fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextEdit, enc: types.Encoding) Allocator.Error!void {
+pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextEdit, enc: types.Encoding) Allocator.Error!void {
     const arena = app.frame.allocator();
     const edits = try arena.dupe(types.TextEdit, edits_in);
     std.mem.sort(types.TextEdit, edits, {}, struct {
@@ -1577,6 +1691,13 @@ fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextEdit,
     ed.anchor = null;
     ed.setCursor(@min(cursor, ed.len()));
     app.needs_render = true;
+}
+
+/// A multi-file rename: the preview box takes over. The reply is not
+/// adopted — the preview copies what it shows.
+fn adoptRenamePreview(app: *App, s: *Server, edit: Value) Allocator.Error!bool {
+    try rename_app.open(app, s, edit);
+    return false;
 }
 
 /// A `WorkspaceEdit` (`changes` or `documentChanges`): every file's
@@ -1744,7 +1865,7 @@ fn applyResolvedAction(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocato
     } else app.toast("code action: '{s}' has no edit", .{jsonrpc.getStr(r, "title") orelse "?"});
 }
 
-fn executeCommand(app: *App, s: *Server, cmd: Value) Allocator.Error!void {
+pub fn executeCommand(app: *App, s: *Server, cmd: Value) Allocator.Error!void {
     const name = jsonrpc.getStr(cmd, "command") orelse return;
     const gpa = app.gpa;
     const args_json = if (jsonrpc.getField(cmd, "arguments")) |a| try jsonrpc.stringify(gpa, a) else try gpa.dupe(u8, "[]");
@@ -2097,11 +2218,6 @@ fn applyFolds(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
     app.needs_render = true;
 }
 
-pub fn inlayHintsToggle(app: *App) CommandError!void {
-    app.cfg.editor.inlay_hints = !app.cfg.editor.inlay_hints;
-    app.toast("inlay hints: {s} (painting them is a later slice)", .{if (app.cfg.editor.inlay_hints) "on" else "off"});
-}
-
 // ─── popups: the frame ──────────────────────────────────────────────────
 
 /// After the panes and the overlay: the completion popup, the hover box,
@@ -2129,6 +2245,7 @@ pub fn drawPopups(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     if (app.lsp.peek) |*p| if (p.pane == app.active) {
         peek_view.draw(ui, body, &p.scroll, .{ .title = app.relPath(p.path), .lines = p.lines, .first_line = p.first_line, .highlight = p.highlight });
     };
+    rename_app.draw(app, ui, body);
 }
 
 fn firstLine(s: []const u8) ?[]const u8 {
@@ -2229,6 +2346,19 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, "/tmp/api.ts").len);
 }
 
+// The lsp-more modules are file-scope imports above; a `test` block is
+// what puts their tests in front of `-Dtest-filter` (the full suite
+// finds them either way, the filter — and so `tools/break-check.sh` —
+// only through here).
+test {
+    _ = decor;
+    _ = semantic_app;
+    _ = format_app;
+    _ = rename_app;
+    _ = @import("../lsp/semantic.zig");
+    _ = @import("../lsp/tools.zig");
+}
+
 // ─── a scripted language server, in process ─────────────────────────────
 
 fn lspReply(io: Io, gpa: Allocator, out: Io.File, id: i64, result: []const u8) void {
@@ -2252,7 +2382,7 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
             .request => |rq| {
                 const m = rq.method;
                 if (std.mem.eql(u8, m, "initialize")) {
-                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":2,\"hoverProvider\":true,\"definitionProvider\":true,\"renameProvider\":true,\"documentSymbolProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]}}}");
+                    lspReply(io, gpa, out, rq.id, "{\"capabilities\":{\"textDocumentSync\":{\"change\":2,\"willSaveWaitUntil\":true},\"hoverProvider\":true,\"definitionProvider\":true,\"renameProvider\":true,\"documentSymbolProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"inlayHintProvider\":true,\"codeLensProvider\":{\"resolveProvider\":true},\"colorProvider\":true,\"documentLinkProvider\":{},\"documentRangeFormattingProvider\":true,\"documentOnTypeFormattingProvider\":{\"firstTriggerCharacter\":\";\"},\"executeCommandProvider\":{\"commands\":[\"refs\"]},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"variable\",\"function\"],\"tokenModifiers\":[\"declaration\"]},\"full\":{\"delta\":true}}}}");
                 } else if (std.mem.eql(u8, m, "textDocument/completion")) {
                     lspReply(io, gpa, out, rq.id, "{\"isIncomplete\":false,\"items\":[{\"label\":\"alphaOne\",\"kind\":3,\"detail\":\"fn\"},{\"label\":\"alphaTwo\",\"kind\":2,\"insertText\":\"alphaTwo($1)\",\"insertTextFormat\":2}]}");
                 } else if (std.mem.eql(u8, m, "textDocument/hover")) {
@@ -2265,11 +2395,62 @@ fn fakeLanguageServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File) Io.Canc
                 } else if (std.mem.eql(u8, m, "textDocument/rename")) {
                     const uri = jsonrpc.getStr(jsonrpc.getObj(rq.params.?, "textDocument").?, "uri").?;
                     const name = jsonrpc.getStr(rq.params.?, "newName").?;
-                    const r = std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name }) catch return;
+                    // A name starting `multi` also renames line 1 of a
+                    // second file, `/tmp/mnml-zig-fake-lsp-other.ts`.
+                    const r = if (std.mem.startsWith(u8, name, "multi"))
+                        std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}],\"file:///tmp/mnml-zig-fake-lsp-other.ts\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":0}},\"end\":{{\"line\":1,\"character\":3}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name, name }) catch return
+                    else
+                        std.fmt.allocPrint(gpa, "{{\"changes\":{{\"{s}\":[{{\"range\":{{\"start\":{{\"line\":1,\"character\":6}},\"end\":{{\"line\":1,\"character\":9}}}},\"newText\":\"{s}\"}}]}}}}", .{ uri, name }) catch return;
                     defer gpa.free(r);
                     lspReply(io, gpa, out, rq.id, r);
                 } else if (std.mem.eql(u8, m, "textDocument/documentSymbol")) {
                     lspReply(io, gpa, out, rq.id, "[{\"name\":\"foo\",\"kind\":12,\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":12}},\"selectionRange\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":9}}}]");
+                } else if (std.mem.eql(u8, m, "textDocument/inlayHint")) {
+                    // A type hint after `x` on line 0, its label in parts.
+                    lspReply(io, gpa, out, rq.id, "[{\"position\":{\"line\":0,\"character\":5},\"label\":[{\"value\":\": \"},{\"value\":\"number\"}],\"kind\":1}]");
+                } else if (std.mem.eql(u8, m, "textDocument/codeLens")) {
+                    // Line 1's lens carries its command; line 0's needs a resolve.
+                    lspReply(io, gpa, out, rq.id, "[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":5}},\"command\":{\"title\":\"2 references\",\"command\":\"refs\",\"arguments\":[1]}},{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":3}},\"data\":7}]");
+                } else if (std.mem.eql(u8, m, "codeLens/resolve")) {
+                    lspReply(io, gpa, out, rq.id, "{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":3}},\"command\":{\"title\":\"resolved lens\",\"command\":\"refs\",\"arguments\":[0]}}");
+                } else if (std.mem.eql(u8, m, "workspace/executeCommand")) {
+                    lspReply(io, gpa, out, rq.id, "null");
+                    // Announce what ran as a warning so the client toasts it.
+                    const cmd = jsonrpc.getStr(rq.params.?, "command") orelse "?";
+                    const args = jsonrpc.getArr(rq.params.?, "arguments") orelse &.{};
+                    const first: i64 = if (args.len > 0) switch (args[0]) {
+                        .integer => |i| i,
+                        else => -1,
+                    } else -1;
+                    const note = std.fmt.allocPrint(gpa, "{{\"jsonrpc\":\"2.0\",\"method\":\"window/showMessage\",\"params\":{{\"type\":2,\"message\":\"ran {s} #{d}\"}}}}", .{ cmd, first }) catch return;
+                    defer gpa.free(note);
+                    jsonrpc.writeFrame(io, out, note) catch return;
+                } else if (std.mem.eql(u8, m, "textDocument/documentColor")) {
+                    // The `1` on line 0 is red.
+                    lspReply(io, gpa, out, rq.id, "[{\"range\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":9}},\"color\":{\"red\":1,\"green\":0,\"blue\":0,\"alpha\":1}}]");
+                } else if (std.mem.eql(u8, m, "textDocument/documentLink")) {
+                    // `foo` on line 1 links out.
+                    lspReply(io, gpa, out, rq.id, "[{\"range\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":9}},\"target\":\"https://example.com/foo\"}]");
+                } else if (std.mem.eql(u8, m, "textDocument/semanticTokens/full")) {
+                    // `let` keyword, `x` a declared variable, `const` keyword.
+                    lspReply(io, gpa, out, rq.id, "{\"resultId\":\"1\",\"data\":[0,0,3,0,0,0,4,1,1,1,1,0,5,0,0]}");
+                } else if (std.mem.eql(u8, m, "textDocument/semanticTokens/full/delta")) {
+                    // The `const` token becomes `foo`, a function, on line 1 col 6.
+                    lspReply(io, gpa, out, rq.id, "{\"resultId\":\"2\",\"edits\":[{\"start\":10,\"deleteCount\":5,\"data\":[1,6,3,2,0]}]}");
+                } else if (std.mem.eql(u8, m, "textDocument/rangeFormatting")) {
+                    const range = jsonrpc.stringify(gpa, jsonrpc.getObj(rq.params.?, "range").?) catch return;
+                    defer gpa.free(range);
+                    const r = std.fmt.allocPrint(gpa, "[{{\"range\":{s},\"newText\":\"formatted\"}}]", .{range}) catch return;
+                    defer gpa.free(r);
+                    lspReply(io, gpa, out, rq.id, r);
+                } else if (std.mem.eql(u8, m, "textDocument/onTypeFormatting")) {
+                    // Two spaces at the start of the typed line.
+                    const line = jsonrpc.getInt(jsonrpc.getObj(rq.params.?, "position").?, "line") orelse 0;
+                    const r = std.fmt.allocPrint(gpa, "[{{\"range\":{{\"start\":{{\"line\":{d},\"character\":0}},\"end\":{{\"line\":{d},\"character\":0}}}},\"newText\":\"  \"}}]", .{ line, line }) catch return;
+                    defer gpa.free(r);
+                    lspReply(io, gpa, out, rq.id, r);
+                } else if (std.mem.eql(u8, m, "textDocument/willSaveWaitUntil")) {
+                    lspReply(io, gpa, out, rq.id, "[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"newText\":\"// saved\\n\"}]");
                 } else {
                     lspReply(io, gpa, out, rq.id, "null");
                 }
@@ -2295,6 +2476,97 @@ fn pumpUntil(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, bud
         try testing.io.sleep(.fromMilliseconds(10), .awake);
         try app.tick(App.nowMs(app.io));
     }
+}
+
+/// The scripted server wired into an `App` for the tests of the
+/// app-side modules (`lsp_decor`, `lsp_semantic`, `lsp_format`,
+/// `lsp_rename`): `start` spawns `fakeLanguageServer` on two pipes and
+/// registers it as the typescript server rooted at `/tmp`, so a `.ts`
+/// path under `/tmp` attaches to it without a binary or a root marker;
+/// `stop` retires it and joins the task.
+pub const TestRig = struct {
+    group: Io.Group = .init,
+    in_r: Io.File = undefined,
+    out_w: Io.File = undefined,
+    server: *Server = undefined,
+
+    pub const file = "/tmp/mnml-zig-fake-lsp.ts";
+    pub const other = "/tmp/mnml-zig-fake-lsp-other.ts";
+    pub const text = "let x = 1;\nconst foo = 2;\nfoo.\n";
+
+    pub fn start(self: *TestRig, app: *App) !void {
+        const gpa = app.gpa;
+        const io = app.io;
+        const c2s = try Io.Threaded.pipe2(.{});
+        const s2c = try Io.Threaded.pipe2(.{});
+        const F = Io.File;
+        const flags: F.Flags = .{ .nonblocking = false };
+        self.* = .{ .in_r = F{ .handle = c2s[0], .flags = flags }, .out_w = F{ .handle = s2c[1], .flags = flags } };
+        try self.group.concurrent(io, fakeLanguageServer, .{ io, gpa, self.in_r, self.out_w });
+        const s = try Server.initFiles(gpa, io, &app.events, app.lsp.next_id, F{ .handle = c2s[1], .flags = flags }, F{ .handle = s2c[0], .flags = flags }, .{ .name = "typescript", .argv = &.{"fake-ts"}, .root = "/tmp" });
+        app.lsp.next_id += 1;
+        try app.lsp.servers.append(gpa, s);
+        try s.initialize();
+        self.server = s;
+    }
+
+    pub fn stop(self: *TestRig, app: *App) !void {
+        retireServer(app, self.server);
+        try self.group.await(app.io);
+        self.in_r.close(app.io);
+        self.out_w.close(app.io);
+    }
+
+    /// A scratch editor given `path` and `text_in`, attached to the server.
+    pub fn openFile(app: *App, path: []const u8, text_in: []const u8) !*EditorPane {
+        _ = try app.openScratch();
+        const pane = app.active.?;
+        const e = app.activeEditor().?;
+        try e.buf.setPath(path);
+        try e.buf.editor.setText(text_in);
+        try attach(app, pane, e);
+        return e;
+    }
+
+    /// Tick and render until `cond`: the decorations are asked for from
+    /// the frame, so a wait that never paints never asks.
+    pub fn pump(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, budget_ms: u32) !void {
+        var spent: u32 = 0;
+        while (!cond(ctx)) : (spent += 10) {
+            if (spent > budget_ms) return error.Timeout;
+            try testing.io.sleep(.fromMilliseconds(10), .awake);
+            try app.tick(App.nowMs(app.io));
+            try app.render();
+        }
+    }
+
+    pub fn screenText(app: *App, gpa: Allocator) ![]u8 {
+        try app.render();
+        return screen_mod.toTestText(gpa, &app.screen);
+    }
+};
+
+test "diagnostics from a server and a linter merge sorted, and each source replaces only its own" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    const path = "/tmp/merge.ts";
+    var parsed = try std.json.parseFromSlice(Value, testing.allocator, "[{\"range\":{\"start\":{\"line\":3,\"character\":0},\"end\":{\"line\":3,\"character\":1}},\"severity\":1,\"message\":\"server\"}]", .{});
+    defer parsed.deinit();
+    try applyDiagnostics(&app, path, parsed.value.array.items);
+    const lint = [_]types.Diagnostic{.{ .range = .{ .start = .{ .line = 1, .character = 0 }, .end = .{ .line = 1, .character = 1 } }, .severity = .warning, .message = "lint", .source = "lint", .code = null }};
+    try applyLintDiagnostics(&app, path, &lint);
+    var list = diagnosticsFor(&app, path);
+    try testing.expectEqual(@as(usize, 2), list.len);
+    try testing.expectEqualStrings("lint", list[0].message);
+    try testing.expectEqualStrings("server", list[1].message);
+    // The server republishes empty: the linter's finding stays.
+    try applyDiagnostics(&app, path, &.{});
+    list = diagnosticsFor(&app, path);
+    try testing.expectEqual(@as(usize, 1), list.len);
+    try testing.expectEqualStrings("lint", list[0].message);
+    // The linter runs clean: nothing left.
+    try applyLintDiagnostics(&app, path, &.{});
+    try testing.expectEqual(@as(usize, 0), diagnosticsFor(&app, path).len);
 }
 
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {
