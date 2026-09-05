@@ -1,0 +1,30 @@
+# zig-only
+# A leader chord resolves on its second key, however fast it is typed:
+# `space e` toggles the sidebar and `space f f` opens the file picker
+# with no wait between the keys (Neovim resolves the mapping on the key,
+# not on `timeoutlen`). The `e` must not run as the end-of-word motion —
+# the cursor stays on column 1 — and Esc on a pending leader cancels it
+# without opening which-key. The runner settles and expires chords after
+# every `key` step, so the fast typing is a `type` step — its keys go in
+# back to back.
+write b.zig "const std = @import(\"std\");\n"
+open b.zig
+command editor.use_vim
+expect screen contains "● mnml-e2e-"
+expect screen contains "Col 1 "
+type " e"
+expect screen lacks "● mnml-e2e-"
+expect screen contains "Col 1 "
+expect screen lacks "╭ Leader"
+type " e"
+expect screen contains "● mnml-e2e-"
+expect screen contains "Col 1 "
+type " ff"
+expect screen contains "╭ Files"
+key esc
+expect screen lacks "╭ Files"
+key space
+key esc
+wait 700
+expect screen lacks "╭ Leader"
+expect screen contains "Col 1 "
