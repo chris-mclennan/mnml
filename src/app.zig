@@ -78,6 +78,7 @@ const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
+const startup_picker = @import("app/startup_picker.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -616,6 +617,7 @@ pub const App = struct {
         // does, so the update toast and the picker land on the restored frame.
         try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
         try app.hooks.subscribe(.startup, .{ .zig = &update.onStartup });
+        try app.hooks.subscribe(.startup, .{ .zig = &startup_picker.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
         try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
@@ -1514,6 +1516,7 @@ test {
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");
     _ = @import("app/cmd_session.zig");
+    _ = @import("app/startup_picker.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
