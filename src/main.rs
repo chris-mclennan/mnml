@@ -5,6 +5,8 @@
 //!     request, after `{{VAR}}` substitution from `.mnml/env/<NAME>.env`.
 //!   - `mnml chain run FILE [--env NAME] [--workspace DIR]` — run a `.chain.json`.
 //!   - `mnml discover SPEC [--out DIR] [--base-url URL]` — OpenAPI/Swagger → `.curl` stubs.
+//!   - `mnml export-config-zon [--out PATH] [--workspace DIR] [--in PATH] [--force]` —
+//!     convert a 0.2.x `config.toml` to the `config.zon` mnml 0.3 (mnml-zig) reads.
 //!
 //! Later phases add `mnml test GLOB`, `mnml ipc …`.
 
@@ -48,6 +50,10 @@ fn main() -> ExitCode {
         Some("test") => {
             args.next();
             test_subcommand(args.collect())
+        }
+        Some("export-config-zon") => {
+            args.next();
+            export_config_zon_subcommand(args.collect())
         }
         Some("commands") => {
             // `mnml commands` — dump the full command registry to
@@ -221,6 +227,96 @@ fn gc_stale_sandbox_tempdirs() {
         };
         if age.as_secs() > STALE_SECS {
             let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+// ───────────────────────── `export-config-zon` ────────────────────
+
+/// `mnml export-config-zon [--out PATH] [--workspace DIR] [--in PATH]
+/// [--force]` — convert a 0.2.x `config.toml` to the `config.zon`
+/// mnml-zig (0.3.0) reads. The source is the home config by default,
+/// `<DIR>/.mnml/config.toml` with `--workspace`, or `--in PATH`. The
+/// output lands beside the source as `config.zon` unless `--out` says
+/// otherwise, and an existing file is never overwritten without
+/// `--force`. The TOML is left where it was.
+fn export_config_zon_subcommand(argv: Vec<String>) -> ExitCode {
+    let usage = "usage: mnml export-config-zon [--out PATH] [--workspace DIR] [--in PATH] [--force]\n  converts a 0.2.x config.toml to the config.zon mnml 0.3 (mnml-zig) reads\n  default source: the home config (~/.config/mnml/config.toml)\n  --workspace DIR  convert DIR/.mnml/config.toml instead\n  --in PATH        convert this file instead\n  --out PATH       where to write (default: config.zon beside the source)\n  --force          overwrite an existing output file";
+    let (mut out, mut workspace, mut input) = (None::<PathBuf>, None::<PathBuf>, None::<PathBuf>);
+    let mut force = false;
+    let mut it = argv.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--out" | "-o" => match it.next() {
+                Some(v) => out = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("mnml export-config-zon: --out needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--workspace" | "-w" => match it.next() {
+                Some(v) => workspace = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("mnml export-config-zon: --workspace needs a directory");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--in" | "-i" => match it.next() {
+                Some(v) => input = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("mnml export-config-zon: --in needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--force" | "-f" => force = true,
+            "-h" | "--help" => {
+                println!("{usage}");
+                return ExitCode::SUCCESS;
+            }
+            s => {
+                eprintln!("mnml export-config-zon: unexpected argument: {s}\n{usage}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let src = match (input, workspace) {
+        (Some(p), _) => p,
+        (None, Some(ws)) => mnml::config::workspace_config_path(&ws),
+        (None, None) => match mnml::config::user_config_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("mnml export-config-zon: no home directory — pass --in PATH");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    if !src.is_file() {
+        eprintln!(
+            "mnml export-config-zon: {} does not exist — nothing to convert",
+            src.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let out = out.unwrap_or_else(|| mnml::config_zon_export::default_out_path(&src));
+    match mnml::config_zon_export::export_file(&src, &out, force) {
+        Ok(e) => {
+            println!(
+                "wrote {} — {} value(s) migrated from {}",
+                out.display(),
+                e.migrated,
+                src.display()
+            );
+            if e.unmigrated > 0 {
+                println!(
+                    "{} item(s) could not be placed — see the `// unmigrated:` block at the end",
+                    e.unmigrated
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("mnml export-config-zon: {e}");
+            ExitCode::FAILURE
         }
     }
 }
