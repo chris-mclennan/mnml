@@ -1,0 +1,24 @@
+# zig-only
+# The which-key popup offers the NvChad groups — +http +test +lang/run
+# +integrations +insert +harpoon, the harpoon digits and the root
+# leaves — and descends into them.
+write a.txt alpha
+open a.txt
+command whichkey.leader
+expect screen contains "+test"
+expect screen contains "+http"
+expect screen contains "+lang/run"
+expect screen contains "+harpoon"
+expect screen contains "harpoon 1"
+expect screen contains "command palette"
+key T
+expect screen contains "run all"
+expect screen contains "flaky/wobbly dashboard"
+key esc
+expect screen lacks "run all"
+command whichkey.leader
+key t
+expect screen contains "right panel"
+expect screen contains "hidden files (all)"
+key r
+expect screen lacks "right panel"

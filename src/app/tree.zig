@@ -30,6 +30,7 @@ pub const table = .{
     .@"view.toggle_tree" = &toggle,
     .@"view.focus_tree" = &focus,
     .@"view.toggle_hidden" = &toggleHidden,
+    .@"view.toggle_hidden_all" = &toggleHidden,
     .@"tree.refresh" = &refreshCmd,
     .@"tree.collapse_all" = &collapseAll,
     .@"tree.expand_all" = &expandAll,

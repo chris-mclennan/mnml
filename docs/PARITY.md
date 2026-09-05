@@ -202,7 +202,7 @@ the tree. Nothing left is larger than M.
 | Files pane as a `Pane` (`files.open`) | done | `Pane.files`, `src/app/files_pane.zig`, `src/ui/files_view.zig` | name / size / modified / kind columns; the tab title is the directory's name |
 | `files.open_split` dual layout | done | `openSplitCmd` in `files_pane.zig` | two browsers side by side, the right one focused |
 | Three sort orders | done | `FilesPane.Sort`, `setSort` | dirs first in every mode; `s` cycles; the `sort:` chip and the column headers |
-| Hidden-file toggle in the Files pane | done | `files.toggle_hidden`, the `.` chip | `.` / `H` keys |
+| Hidden-file toggle in the Files pane | done | `files.toggle_hidden`, the `.` chip | `.` / `H` keys; `view.toggle_hidden_all` is the same runner as `view.toggle_hidden` — the tree keeps one `show_hidden` for every root |
 | Clickable breadcrumb + destinations picker | done | `drawCrumbs` in `files_view.zig`, `files.destinations` | each segment a target; `b` opens the Go to… picker |
 | Per-row git status badges | done | `gitBadge` in `files_pane.zig`, `gitStyle` in `files_view.zig` | the porcelain letter; a directory carries its first child's |
 | `p` preview from the listing | done | `preview` in `files_pane.zig` | a leaf of its own, reused on the next `p`; a preview column at ≥ 80 cells |
@@ -236,10 +236,10 @@ the tree. Nothing left is larger than M.
 | Recent-commands picker | done | `picker.recent_commands` in `cmd_app.zig` (+ `view.cmdline_history`) | |
 | Which-key leader popup | partial | `src/app/whichkey.zig`, `src/ui/which_key.zig` | see the group rows |
 | Which-key `f` find | done | `whichkey.zig` | `f g` → `find.grep` |
-| Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` lacks hidden-files / keymap / theme leaves |
-| Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | missing | — | `H` harpoon and `i` integrations exist as ids but not in the tree |
+| Which-key `b` `t` `g` `s` `l` `a` `c` | done | `whichkey.zig` | `t` has the NvChad leaves — explorer, right panel (+ next / prev / close tab), keymap, theme, hidden files (focused / all) — plus wrap / numbers; `g` and `a` carry the Rust leaves (`a M` mixr is cut) |
+| Which-key `h` `T` `L` `P` `i` `I` `H` + `1`–`9` | done | `whichkey.zig`; `tests/e2e-zig/whichkey_groups.test` | `P` (+pr) is dropped — `pr.*` are cut with the Rust integration binaries; `i p` waits on `integrations.icon_picker` (the icon-rail track); `L c r` has no `cargo.run` id; a test asserts every key under a group is unique |
 | Which-key root leaves `/ n e w q` | done | `whichkey.zig` | `x` closes a buffer here |
-| Which-key root leaves `? B m p o` | missing | — | |
+| Which-key root leaves `? B m p o` | done | `whichkey.zig` | cheatsheet / browser / markdown preview / palette / task |
 | In-buffer find — literal, smart-case, incremental | done | `src/app/find.zig`, `src/app/cmd_find.zig`, `src/ui/find_bar.zig` | |
 | In-buffer find — regex | done | `src/regex/regex.zig` (Oniguruma via ghostty's `pkg/oniguruma`), `src/regex/vim.zig`, `regex` / `bad_pattern` in `find.zig`, `find.toggle_regex` | vim patterns; `ctrl+r` / the `.*` chip; a bad pattern toasts why |
 | Replace | done | `cmd_find.zig` `replace`, `:%s` | groups expand in the replacement |
@@ -554,7 +554,7 @@ the tree. Nothing left is larger than M.
 | Right panel — persisted visible + width | done | `ui.right_panel_visible` / `ui.right_panel_width` read in `initWith` (`src/app.zig`), number rows in `settings.zig` | `// changed:` the default width is 40, not 32 — 32 drops the sort chip to its icon; a session restore still overrides |
 | `:set rightpanel` / `rightpanel!` / `norightpanel` | done | `src/app/ex.zig` | |
 | Right-panel icon in the palette bar | partial | `render.zig` | `▤`, not the codicon |
-| `<leader>tr` | missing | not in `whichkey.zig` | |
+| `<leader>tr` | done | the `t` group in `whichkey.zig` | `view.toggle_right_panel`; `t ]` / `t [` / `t x` step and close the panel's tabs |
 | Outline / diagnostics hosted in the panel | done | `render.zig`, `lsp.drawPanel` | |
 | `×` evicts the hosted pane | done | `view.right_panel_close_tab` | |
 | Empty-state copy | done | `src/ui/empty_state.zig` | |
@@ -649,7 +649,7 @@ the tree. Nothing left is larger than M.
 | Integration-icon rail | missing | `IntegrationIcon` has `in_palette_bar` only; nothing places an icon in the tree rail | |
 | `+` add-integration → Marketplace | partial | the `+` menu's Integrations submenu | a row, not a chip |
 | Marketplace | done | `src/app/marketplace.zig`, `Pane.marketplace`, `src/ui/marketplace_view.zig`, `marketplace.*` | `github_launcher_folder` and `github_monorepo_apps` sources; a `crates_keyword` source lists nothing |
-| `integrations.toggle_enabled`, `<leader>iE` | partial | `toggleEnabled` in `integrations.zig` (a picker) | no `<leader>i` group |
+| `integrations.toggle_enabled`, `<leader>iE` | done | `toggleEnabled` in `integrations.zig` (a picker); the `i` group in `whichkey.zig` | `i d` details, `i h` / `i I` / `i r` the tool panes |
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |
 | Installed / Marketplace / In-Dev tabs | partial | `Pane.integrations` + `Pane.marketplace`, `integrations.toggle_tab` | `integrations.show_in_dev` toasts "not in this build" |
 | `integrations.icon_picker` | missing | spec only | |
