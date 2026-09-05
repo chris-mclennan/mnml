@@ -474,6 +474,8 @@ pub const Drag = union(enum) {
     dock: DockDrag,
     /// A diff pane's split divider.
     git_divider: PaneId,
+    /// A graph pane's detail divider.
+    graph_divider: PaneId,
 };
 pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };

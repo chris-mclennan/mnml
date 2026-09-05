@@ -77,6 +77,9 @@ pub const table = .{
     .@"git.browse_line" = &browseLine,
     .@"git.browse_file" = &browseFile,
     .@"git.browse_commit" = &browseCommit,
+    .@"git.graph_sort" = &graphSort,
+    .@"git.graph_jump_hash" = &graphJumpHash,
+    .@"git.graph_detail" = &graphDetail,
     .@"git.switch_repo" = &switchRepo,
     .@"git.next_repo" = &nextRepo,
     .@"git.prev_repo" = &prevRepo,
@@ -531,6 +534,27 @@ fn revert(app: *App) CommandError!void {
     const sha = try selectedCommit(app);
     const repo = try git.requireRepo(app);
     try git.submitOp(app, repo, .{ .revert = try app.gpa.dupe(u8, sha) });
+}
+
+fn graphSort(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    try git.setSort(app, g, .{ .col = g.sort.col.next(), .asc = false });
+}
+
+fn graphJumpHash(app: *App) CommandError!void {
+    _ = try requireGraph(app);
+    git.openPrompt(app, .graph_hash, "Jump to commit (hash prefix)");
+}
+
+fn graphDetail(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    git.syncWip(app, g);
+    if (g.detail_open and !g.detail_focus) {
+        g.detail_focus = true;
+        app.needs_render = true;
+        return;
+    }
+    try git.openDetail(app, g);
 }
 
 fn fileHistory(app: *App) CommandError!void {

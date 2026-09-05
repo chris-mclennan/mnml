@@ -668,6 +668,33 @@ fn isRemoteName(name: []const u8) bool {
     return std.mem.startsWith(u8, name, "origin/") or std.mem.startsWith(u8, name, "upstream/");
 }
 
+// ─── a commit's files ───────────────────────────────────────────────────
+
+/// One line of `git diff-tree --name-status`: the letter and the path
+/// (the new path of a rename).
+pub const DetailFile = struct { status: u8, path: []const u8 };
+
+pub fn parseNameStatus(arena: Allocator, text: []const u8) Allocator.Error![]DetailFile {
+    var out: std.ArrayListUnmanaged(DetailFile) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        var f = std.mem.splitScalar(u8, line, '\t');
+        const code = f.next() orelse continue;
+        var path = f.next() orelse continue;
+        // `R100\told\tnew`: the new path is the last field.
+        if (f.next()) |newer| path = newer;
+        try out.append(arena, .{ .status = if (code.len > 0) code[0] else '?', .path = try arena.dupe(u8, unquotePath(path)) });
+    }
+    return out.items;
+}
+
+fn unquotePath(p: []const u8) []const u8 {
+    if (p.len >= 2 and p[0] == '"' and p[p.len - 1] == '"') return p[1 .. p.len - 1];
+    return p;
+}
+
 // ─── relative age ───────────────────────────────────────────────────────
 
 /// `3m`, `2h`, `5d`, `3w`, `4mo`, `2y` — the blame gutter's age column.
@@ -923,4 +950,15 @@ test "relativeAge buckets" {
     try testing.expectEqualStrings("2y", relativeAge(&buf, 1, 1 + 800 * 86_400));
     // Unknown time (an uncommitted blame line) paints nothing.
     try testing.expectEqualStrings("", relativeAge(&buf, 0, 5));
+}
+
+test "parseNameStatus keeps the rename's new path and unquotes" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const files = try parseNameStatus(a.allocator(), "M\tsrc/a.zig\nR090\told.zig\tnew.zig\nA\t\"sp ace.txt\"\n");
+    try testing.expectEqual(@as(usize, 3), files.len);
+    try testing.expectEqual(@as(u8, 'M'), files[0].status);
+    try testing.expectEqualStrings("new.zig", files[1].path);
+    try testing.expectEqual(@as(u8, 'R'), files[1].status);
+    try testing.expectEqualStrings("sp ace.txt", files[2].path);
 }

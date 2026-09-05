@@ -97,6 +97,9 @@ pub const Job = union(enum) {
     worktree_add: struct { path: []u8, branch: ?[]u8 },
     worktree_remove: []u8,
     head_sha,
+    /// A commit's full message and the files it touched (the graph's
+    /// detail panel).
+    commit_detail: []u8,
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -120,6 +123,7 @@ pub const Job = union(enum) {
             },
             .stash => |s| if (s) |m| gpa.free(m),
             .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
+            .commit_detail => |s| gpa.free(s),
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .stash_pop, .undo, .redo, .head_sha => {},
         }
     }
@@ -145,6 +149,7 @@ pub const Result = struct {
         op: struct { desc: []const u8, ok: bool, msg: []const u8 = "", refresh: bool = true },
         url: []const u8,
         head_sha: []const u8,
+        commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
     };
 
     pub fn create(gpa: Allocator, repo: u32) Allocator.Error!*Result {
@@ -521,6 +526,15 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 }
             }
             r.payload = .{ .list = .{ .kind = kind, .items = items.items } };
+        },
+        .commit_detail => |sha| {
+            const msg = try git(repo, io, arena, &.{ "show", "-s", "--format=%B", sha }, null);
+            const files = try git(repo, io, arena, &.{ "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-m", "--first-parent", sha }, null);
+            r.payload = .{ .commit_detail = .{
+                .sha = try arena.dupe(u8, sha),
+                .message = if (msg.ok) trimmed(msg.stdout) else msg.reason(),
+                .files = if (files.ok) try parse.parseNameStatus(arena, files.stdout) else &.{},
+            } };
         },
         .stage => |p| try simple(repo, io, r, &.{ "add", "--", p }, try std.fmt.allocPrint(arena, "staged {s}", .{p})),
         .unstage => |p| {
