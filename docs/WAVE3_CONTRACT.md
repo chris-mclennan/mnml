@@ -1724,3 +1724,104 @@ is the contract-level list of what moved.
   `sleep 30`, outside this branch's touch list: `tests/e2e/pty_tabs.test`
   and the unit tests in `src/app/cmd_term.zig` / `cmd_buffer.zig` —
   harmless now, and free to shorten.
+
+## Search (Phase 8 follow-up) — `// changed:` notes (2026-09-05, branch `search`)
+
+- `// changed (build):` a regex engine. Oniguruma, reached as a
+  sub-dependency of the ghostty dependency already fetched for the
+  terminal core (`ghostty_dep.builder.lazyDependency("oniguruma")`), so
+  no second copy and no new hash in `build.zig.zon`. `src/regex/regex.zig`
+  is the one interface (`Regex.compile(pattern, .{ .ignore_case })`,
+  `find(haystack, from)`, `findAll`, `expandReplacement`); nothing
+  outside `src/regex/` imports `oniguruma`. Oniguruma's global init is
+  an atomic once-hand-off (`ensureInit`) because a compile has no `Io`
+  in reach and the in-process grep compiles on its worker thread.
+- `// changed (core):` patterns are vim's, not Oniguruma's.
+  `src/regex/vim.zig` translates once per compile into a caller buffer
+  (`max_pattern = 4096`): the four magic modes, `\{n,m}` / `\{-n,m}`,
+  `\(` `\%(` `\|`, `\<` `\>`, the classes and their `\_` forms, `\zs`
+  / `\ze` (lookbehind / lookahead), `\@=` `\@!` `\@<=` `\@<!` `\@>`,
+  `\1`–`\9`, `\%^` `\%$` `\%d` `\%x` `\%u`, `\c` / `\C`. `\&`, `\%V`,
+  `\%#` and the cursor-relative items are `error.Unsupported` and the
+  caller toasts which. The conformance table in `regex.zig` is 106
+  rows checked against vim's `matchstr()`.
+- `// changed (ui):` `find_bar`'s `regex` toggle (`ctrl+r`, the `.*`
+  chip, `find.toggle_regex`) now recomputes live and is sticky per
+  editor (`Editor.find.regex`); `Editor.find.bad_pattern: ?regex.Error`
+  is why a regex query has no matches. `find.replace` / `replace_all`
+  in regex mode re-find each match for its groups and expand `&`,
+  `\0`–`\9`, `\u \l \U \L \E`. `:s` takes the same pattern and
+  replacement grammar (`ex.substitute`, `ex.compilePattern`); so do
+  `:g` / `:v` (`ex_verbs.lineHas`), `:s///n` and `:s///c`
+  (`ex_verbs.scanMatches` walks the regex per line) — the
+  `TODO(regex)` plug-points editor-ex left. Under `c` each match's
+  replacement is expanded at scan time (`ReplaceConfirm.expansions`),
+  so `\1` means the groups of the match being asked about.
+  `find.Range` aliases `regex.Range`.
+- `// changed (core):` `Pane.grep` (`grep.GrepPane`), `AppEvent.grep:
+  *grep.Result` (a batch of ≤ 64 hits, the last says `done`; owned by
+  the event, `handle` copies onto the pane's snapshot arena and
+  destroys it), `Source.grep`. Every exhaustive `Pane` switch
+  (`md_preview`, `outline`, `pane.isEditorLike`, `render`) names it.
+- `// changed (app):` `find.grep` prompts (`PromptPurpose.grep_query`)
+  and opens the pane in a horizontal split beside the active editor;
+  a second run re-uses the pane (`grep.find(app)`), cancels the worker
+  (`Abort.generation` + `Io.Group.cancel`) and restarts it. Backend:
+  `rg --json --no-config --no-require-git --max-filesize 1M` when
+  ripgrep is on PATH (a stand-in `rg` is tested), else an in-process
+  walk honouring `.gitignore` at every depth (`app/gitignore.zig`:
+  negation, anchoring, dir-only, `**`, a stack whose innermost wins)
+  plus the artifact dirs the tree hides; `max_hits = 5000` then
+  `truncated`. Smart case; `flags.regex` starts from the active
+  editor's find-bar toggle (rg's syntax under rg, a vim pattern under
+  the walk). The `/` filter is a vim pattern over line + path.
+  Keys: `j k g G`, `h l` / `← →` fold, `E` / `C` all, `n` / `N` step
+  and open, Enter opens (the pane stays), `y` copies, Space toggles a
+  hit, `A` enables all, `D` disables all, `r` reruns, Esc closes.
+  `view.activity_search` focuses (or opens) the pane.
+- `// changed (app):` `find.grep_replace` (`PromptPurpose.grep_replace`)
+  → `grep.replaceAll`: per file, newest-first byte ranges located by
+  line + column against the current text (`locate` guards against a
+  line that moved). An open clean buffer takes `EditOp.replace_range`s
+  through `Editor.apply` and is saved — one undo step; a closed file is
+  rewritten on disk; a dirty buffer is skipped and counted
+  (`ReplaceReport.skipped_dirty` → "N unsaved buffers skipped — save
+  first", `.warn`). A disabled hit is kept. Under `flags.regex` the
+  replacement expands group references per hit.
+- `// changed (app):` `App.jumplist: jumplist.State` — `back` /
+  `forward` stacks of `Point{ path, row, col }` (gpa-owned, `cap = 100`),
+  `prev` for `''` / ``` `` ```. Push points: `dispatch.key` snapshots the
+  active editor's file + cursor before and after every key and records
+  a file switch or a move of ≥ 3 rows (`row_threshold`), which covers
+  `G` `gg` `{N}G` `/`+`n` `%` `:N` `gd` marks `{` `}`; `App.openEditor`
+  records when another file was active. `in_jump` marks a key that
+  *is* a `nav.back` / `nav.forward` / `nav.jump_toggle_prev` so its
+  landing is not a push; a nav command run without a key (IPC, the
+  palette) clears it on the next snapshot.
+- `// changed (specs):` `picker.files` had `ctrl+o` in `both`; it is
+  now `standard` only. The chord chain runs before the vim handler, so
+  a `both` binding shadowed vim's `Ctrl+O` (jumplist back; `Ctrl+I` —
+  a ctrl-modified Tab — forward, in `input/vim.zig`; plain Tab stays
+  `buffer.next`). `docs/KEYMAP_PROFILES.md`
+  has the row. The pin stays 901.
+- `// changed (app):` multi-root. `Tree.roots: []Root{ name, path,
+  expanded }` from `cfg.workspaces` (`syncRoots`, once; `~` expanded,
+  the workspace itself and a missing dir skipped) and
+  `view.add_workspace` (`addRoot`: canonicalised, duplicates and files
+  refused). Each root is a section header row (the folder glyph of
+  `ui.expand_indicator` + the name; `Row.header`, `Row.root` = index + 1; the primary is root 0 and
+  gains its own header only when extras exist); rows under an extra
+  root carry absolute `rel`s, which `App.absPath` passes through.
+  `←` at a root's top lands on its header; Enter / `l` / `h` on a
+  header opens / folds the section. The add prompt Tab-completes a
+  directory segment and cycles the candidates (`dispatch.promptPathComplete`,
+  reusing `App.cmd_complete`). `view.switch_workspace` is a `.custom`
+  picker over primary + roots (`*` marks an open one); `Tree.switchTo`
+  opens the pick, folds the rest and lands the cursor on its header.
+  `git.discover` appends every extra root's repo (or the repos under it)
+  after the primary's, so the GIT rail and `git.switch_repo` see each
+  root; the workspace-root rule ("the workspace is a repo → that alone")
+  applies to the primary's tree only.
+- Not done, by design: a grep pane per query (one pane is re-used);
+  `\&`, `\%V` and the cursor-relative vim items; rg's own `--type`
+  filters.
