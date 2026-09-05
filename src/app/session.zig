@@ -186,11 +186,11 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
         const p = &(slot.* orelse continue);
         const sp: ?Pane = switch (p.*) {
             .editor => |*e| blk: {
-                const file = e.buf.path orelse break :blk null;
+                const file = e.buf.doc.path orelse break :blk null;
                 var folds: std.ArrayListUnmanaged(Fold) = .empty;
-                for (e.buf.folds.keys(), e.buf.folds.values()) |s, en| try folds.append(arena, .{ .start = s, .end = en });
+                for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |s, en| try folds.append(arena, .{ .start = s, .end = en });
                 var marks: std.ArrayListUnmanaged(Mark) = .empty;
-                var it = e.buf.marks.iterator();
+                var it = e.buf.doc.marks.iterator();
                 while (it.next()) |m| try marks.append(arena, .{ .letter = m.key_ptr.*, .row = m.value_ptr.row, .col = m.value_ptr.col });
                 break :blk .{
                     .kind = .editor,
@@ -365,7 +365,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     const gpa = app.gpa;
     // Panes → ids.
     const ids = try arena.alloc(?PaneId, saved.panes.len);
-    for (saved.panes, 0..) |sp, i| ids[i] = openSaved(app, sp) catch |err| switch (err) {
+    for (saved.panes, 0..) |sp, i| ids[i] = openSaved(app, sp, ids[0..i]) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => null,
     };
@@ -447,15 +447,24 @@ const OpenError = Allocator.Error || error{Skipped};
 
 /// One saved pane back into the store. `Skipped` for anything that
 /// cannot be reopened (a file that went away, a pty where there is none).
-fn openSaved(app: *App, sp: Pane) OpenError!?PaneId {
+/// `opened` is what this restore has brought back so far: a file already
+/// among them was saved from two windows, and gets its second one.
+fn openSaved(app: *App, sp: Pane, opened: []const ?PaneId) OpenError!?PaneId {
     switch (sp.kind) {
         .editor => {
             if (sp.path.len == 0) return null;
             // A file that went away is not recreated as an empty buffer.
             Io.Dir.cwd().access(app.io, sp.path, .{}) catch return null;
-            const id = app.openEditor(sp.path) catch |err| switch (err) {
+            var id = app.openEditor(sp.path) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return null,
+            };
+            for (opened) |o| if (o == id) {
+                id = app.duplicatePane(id) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return null,
+                };
+                break;
             };
             const e = app.panes.editor(id) orelse return null;
             e.buf.editor.setCursor(@min(sp.cursor, e.buf.editor.len()));
@@ -467,9 +476,9 @@ fn openSaved(app: *App, sp: Pane) OpenError!?PaneId {
             e.pinned = sp.pinned;
             for (sp.folds) |f| {
                 if (f.start >= lines or f.end >= lines or f.end < f.start) continue;
-                try e.buf.folds.put(app.gpa, f.start, f.end);
+                try e.buf.editor.folds.put(app.gpa, f.start, f.end);
             }
-            for (sp.marks) |m| try e.buf.marks.put(app.gpa, m.letter, .{ .row = m.row, .col = m.col });
+            for (sp.marks) |m| try e.buf.doc.marks.put(app.gpa, m.letter, .{ .row = m.row, .col = m.col });
             return id;
         },
         .md_preview => {
@@ -622,8 +631,8 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         const e = app.panes.editor(ida).?;
         e.buf.editor.setCursor(9); // "three"
         e.wrap = true;
-        try e.buf.folds.put(t.allocator, 1, 2);
-        try e.buf.marks.put(t.allocator, 'q', .{ .row = 3, .col = 0 });
+        try e.buf.editor.folds.put(t.allocator, 1, 2);
+        try e.buf.doc.marks.put(t.allocator, 'q', .{ .row = 3, .col = 0 });
         // A second file split to the right, a markdown preview on a second tab page.
         _ = try app.openPath(b);
         try command.run(&app, .{ .static = .@"view.split_right" });
@@ -651,13 +660,21 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         try t.expectEqual(@as(usize, 2), leaves.len);
         // The active pane is a.txt with its cursor, wrap, fold and mark.
         const e = app.activeEditor().?;
-        try t.expectEqualStrings(a, e.buf.path.?);
+        try t.expectEqualStrings(a, e.buf.doc.path.?);
         try t.expectEqual(@as(usize, 9), e.buf.editor.cursor);
         try t.expectEqual(true, e.wrap.?);
-        try t.expectEqual(@as(usize, 2), e.buf.folds.get(1).?);
-        try t.expectEqual(@as(usize, 3), e.buf.marks.get('q').?.row);
-        // The preview came back on the second page.
+        try t.expectEqual(@as(usize, 2), e.buf.editor.folds.get(1).?);
+        try t.expectEqual(@as(usize, 3), e.buf.doc.marks.get('q').?.row);
+        // The preview came back on the second page; b.txt's two windows
+        // came back as two windows on one document.
         try t.expect(app.panes.findPreview(c) != null);
+        var b_views: usize = 0;
+        var b_doc: ?*const @import("../editor/document.zig").Document = null;
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |ep| if (ep.buf.doc.isAt(b)) {
+            b_views += 1;
+            if (b_doc) |d| try t.expect(d == ep.buf.doc) else b_doc = ep.buf.doc;
+        };
+        try t.expectEqual(@as(usize, 2), b_views);
         // Chrome and lists.
         try t.expectEqual(@as(u16, 44), app.tree.width);
         try t.expect(!app.tree.visible);
@@ -674,7 +691,7 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         var arena_state = std.heap.ArenaAllocator.init(t.allocator);
         defer arena_state.deinit();
         const again = try capture(&app, arena_state.allocator());
-        try t.expectEqual(@as(usize, 3), again.panes.len);
+        try t.expectEqual(@as(usize, 4), again.panes.len);
         try t.expectEqual(@as(usize, 2), again.tabs.len);
         try t.expectEqual(@as(usize, 9), again.panes[again.active.?].cursor);
     }

@@ -125,63 +125,63 @@ pub fn changeSurround(ed: *Editor, from: u21, to: u21, out: *EditOutcome) Alloca
 const testing = std.testing;
 
 test "wrap: quotes are bare, an opener pads, a closer does not" {
-    var ed = try Editor.init(testing.allocator, "abc def");
+    const ed = try Editor.init(testing.allocator, "abc def");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.setSelection(0, 3);
-    try surroundSelection(&ed, '"', '"', false, &out);
-    try testing.expectEqualStrings("\"abc\" def", ed.text.items);
+    try surroundSelection(ed, '"', '"', false, &out);
+    try testing.expectEqualStrings("\"abc\" def", ed.doc.text.items);
     try testing.expectEqual(@as(usize, 4), ed.cursor);
     try testing.expect(ed.anchor == null);
     ed.setSelection(6, 9);
-    try surroundSelection(&ed, '(', ')', true, &out);
-    try testing.expectEqualStrings("\"abc\" ( def )", ed.text.items);
+    try surroundSelection(ed, '(', ')', true, &out);
+    try testing.expectEqualStrings("\"abc\" ( def )", ed.doc.text.items);
     try testing.expectEqual(@as(usize, 12), ed.cursor); // on the closer, past its padding
     ed.setSelection(0, 5);
-    try surroundSelection(&ed, '[', ']', false, &out);
-    try testing.expectEqualStrings("[\"abc\"] ( def )", ed.text.items);
+    try surroundSelection(ed, '[', ']', false, &out);
+    try testing.expectEqualStrings("[\"abc\"] ( def )", ed.doc.text.items);
 }
 
 test "ds: quotes on the line, brackets with depth, an opener eats its padding, t drops both tags" {
-    var ed = try Editor.init(testing.allocator, "x \"a b\" ( c ) <b>hi</b>");
+    const ed = try Editor.init(testing.allocator, "x \"a b\" ( c ) <b>hi</b>");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 4;
-    try deleteSurround(&ed, '"', &out);
-    try testing.expectEqualStrings("x a b ( c ) <b>hi</b>", ed.text.items);
+    try deleteSurround(ed, '"', &out);
+    try testing.expectEqualStrings("x a b ( c ) <b>hi</b>", ed.doc.text.items);
     try testing.expectEqual(@as(usize, 2), ed.cursor);
     ed.cursor = 8;
-    try deleteSurround(&ed, ')', &out);
-    try testing.expectEqualStrings("x a b  c  <b>hi</b>", ed.text.items);
+    try deleteSurround(ed, ')', &out);
+    try testing.expectEqualStrings("x a b  c  <b>hi</b>", ed.doc.text.items);
     try ed.setText("f( a, (b) )");
     ed.cursor = 3;
-    try deleteSurround(&ed, '(', &out);
-    try testing.expectEqualStrings("fa, (b)", ed.text.items);
+    try deleteSurround(ed, '(', &out);
+    try testing.expectEqualStrings("fa, (b)", ed.doc.text.items);
     try ed.setText("<b>hi</b>");
     ed.cursor = 4;
-    try deleteSurround(&ed, 't', &out);
-    try testing.expectEqualStrings("hi", ed.text.items);
+    try deleteSurround(ed, 't', &out);
+    try testing.expectEqualStrings("hi", ed.doc.text.items);
     ed.cursor = 0;
-    try deleteSurround(&ed, '{', &out); // nothing to delete
-    try testing.expectEqualStrings("hi", ed.text.items);
+    try deleteSurround(ed, '{', &out); // nothing to delete
+    try testing.expectEqualStrings("hi", ed.doc.text.items);
 }
 
 test "cs: from and to resolve through the same table; `<` never pads" {
-    var ed = try Editor.init(testing.allocator, "let t = (1, 2); s = \"x\"");
+    const ed = try Editor.init(testing.allocator, "let t = (1, 2); s = \"x\"");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 9;
-    try changeSurround(&ed, '(', '<', &out);
-    try testing.expectEqualStrings("let t = <1, 2>; s = \"x\"", ed.text.items);
+    try changeSurround(ed, '(', '<', &out);
+    try testing.expectEqualStrings("let t = <1, 2>; s = \"x\"", ed.doc.text.items);
     try testing.expectEqual(@as(usize, 8), ed.cursor);
     ed.cursor = 21;
-    try changeSurround(&ed, '"', '\'', &out);
-    try testing.expectEqualStrings("let t = <1, 2>; s = 'x'", ed.text.items);
+    try changeSurround(ed, '"', '\'', &out);
+    try testing.expectEqualStrings("let t = <1, 2>; s = 'x'", ed.doc.text.items);
     ed.cursor = 9;
-    try changeSurround(&ed, '>', '{', &out);
-    try testing.expectEqualStrings("let t = { 1, 2 }; s = 'x'", ed.text.items);
-    try changeSurround(&ed, '{', ']', &out);
-    try testing.expectEqualStrings("let t = [1, 2]; s = 'x'", ed.text.items);
-    try changeSurround(&ed, '[', 't', &out); // a tag needs a name: no-op
-    try testing.expectEqualStrings("let t = [1, 2]; s = 'x'", ed.text.items);
+    try changeSurround(ed, '>', '{', &out);
+    try testing.expectEqualStrings("let t = { 1, 2 }; s = 'x'", ed.doc.text.items);
+    try changeSurround(ed, '{', ']', &out);
+    try testing.expectEqualStrings("let t = [1, 2]; s = 'x'", ed.doc.text.items);
+    try changeSurround(ed, '[', 't', &out); // a tag needs a name: no-op
+    try testing.expectEqualStrings("let t = [1, 2]; s = 'x'", ed.doc.text.items);
 }

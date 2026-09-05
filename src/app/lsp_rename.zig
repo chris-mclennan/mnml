@@ -375,7 +375,7 @@ test "through the fake server: a rename over two files opens the preview; an unt
         }
     };
     try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     ed.setCursor(17); // `foo` on line 1
 
     // Two files: the box lists both, sorted by path, hunks under each.

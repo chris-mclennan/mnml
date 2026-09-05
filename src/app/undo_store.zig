@@ -46,14 +46,14 @@ pub fn pathFor(arena: Allocator, data_root: []const u8, file: []const u8) Alloca
 pub fn onOpen(app: *App, args: hooks.HookArgs) void {
     if (!app.cfg.editor.persistent_undo or app.data_root.len == 0) return;
     const e = app.panes.editor(args.open.pane) orelse return;
-    const file = e.buf.path orelse return;
+    const file = e.buf.doc.path orelse return;
     _ = load(app, e, file) catch {};
 }
 
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     if (!app.cfg.editor.persistent_undo or app.data_root.len == 0) return;
     const e = app.panes.editor(args.save_post.pane) orelse return;
-    const file = e.buf.path orelse return;
+    const file = e.buf.doc.path orelse return;
     store(app, e, file) catch {};
 }
 
@@ -66,7 +66,7 @@ pub fn store(app: *App, e: *EditorPane, file: []const u8) StoreError!void {
     var arena_state = std.heap.ArenaAllocator.init(app.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const stored = try capture(arena, &e.buf.editor);
+    const stored = try capture(arena, e.buf.editor);
     var out: std.Io.Writer.Allocating = .init(arena);
     std.zon.stringify.serialize(stored, .{ .emit_default_optional_fields = false }, &out.writer) catch return error.OutOfMemory;
     const target = try pathFor(arena, app.data_root, file);
@@ -90,15 +90,15 @@ pub fn load(app: *App, e: *EditorPane, file: []const u8) Allocator.Error!bool {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => return false,
     };
-    return restore(&e.buf.editor, stored);
+    return restore(e.buf.editor, stored);
 }
 
 /// The newest `limit` of each stack, oldest first, pinned to the text.
 pub fn capture(arena: Allocator, ed: *const @import("../editor/editor.zig").Editor) Allocator.Error!Stored {
     return .{
         .text_hash = hash(ed.bytes()),
-        .undo = try tail(arena, &ed.history.undo),
-        .redo = try tail(arena, &ed.history.redo),
+        .undo = try tail(arena, ed.doc.history.undo),
+        .redo = try tail(arena, ed.doc.history.redo),
     };
 }
 
@@ -114,8 +114,8 @@ fn tail(arena: Allocator, ring: anytype) Allocator.Error![]const Snap {
 /// matches the text. False (and nothing changed) otherwise.
 pub fn restore(ed: *@import("../editor/editor.zig").Editor, stored: Stored) Allocator.Error!bool {
     if (stored.text_hash != hash(ed.bytes())) return false;
-    for (stored.undo) |s| try ed.history.pushUndo(.{ .text = s.text, .cursor = s.cursor, .anchor = s.anchor });
-    for (stored.redo) |s| try ed.history.pushRedo(.{ .text = s.text, .cursor = s.cursor, .anchor = s.anchor });
+    for (stored.undo) |s| try ed.doc.history.pushUndo(.{ .text = s.text, .cursor = s.cursor, .anchor = s.anchor });
+    for (stored.redo) |s| try ed.doc.history.pushRedo(.{ .text = s.text, .cursor = s.cursor, .anchor = s.anchor });
     return true;
 }
 
@@ -144,11 +144,11 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
         const e = app.panes.editor(id).?;
         try app.splice(e, 3, 3, " two");
         try app.splice(e, 7, 7, " three");
-        try t.expectEqual(@as(usize, 2), e.buf.editor.history.undoLen());
+        try t.expectEqual(@as(usize, 2), e.buf.doc.history.undoLen());
         // The save's trailing-newline fix is an undo step of its own, so
         // the store holds three.
         try @import("../core/command.zig").run(&app, .{ .static = .@"file.save" });
-        try t.expectEqual(@as(usize, 3), e.buf.editor.history.undoLen());
+        try t.expectEqual(@as(usize, 3), e.buf.doc.history.undoLen());
         const target = try pathFor(t.allocator, data, file);
         defer t.allocator.free(target);
         _ = try Io.Dir.cwd().statFile(t.io, target, .{});
@@ -158,7 +158,7 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
         defer app.deinit();
         const id = try app.openEditor(file);
         const e = app.panes.editor(id).?;
-        try t.expectEqual(@as(usize, 3), e.buf.editor.history.undoLen());
+        try t.expectEqual(@as(usize, 3), e.buf.doc.history.undoLen());
         _ = try app.applyOps(e, &.{.undo});
         try t.expectEqualStrings("one two three", e.buf.editor.bytes());
         _ = try app.applyOps(e, &.{.undo});
@@ -172,7 +172,7 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
         var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = root, .data_root = data, .cols = 80, .rows = 20 });
         defer app.deinit();
         const id = try app.openEditor(file);
-        try t.expectEqual(@as(usize, 0), app.panes.editor(id).?.buf.editor.history.undoLen());
+        try t.expectEqual(@as(usize, 0), app.panes.editor(id).?.buf.doc.history.undoLen());
     }
     // Off by default: nothing is written.
     {
@@ -192,13 +192,13 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
 
 test "persistent undo: the store keeps the newest `limit` snapshots" {
     const Editor = @import("../editor/editor.zig").Editor;
-    var ed = try Editor.init(t.allocator, "");
+    const ed = try Editor.init(t.allocator, "");
     defer ed.deinit();
     var i: usize = 0;
     while (i < limit + 20) : (i += 1) try ed.checkpoint();
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
-    const stored = try capture(arena_state.allocator(), &ed);
+    const stored = try capture(arena_state.allocator(), ed);
     try t.expectEqual(limit, stored.undo.len);
     try t.expectEqual(hash(""), stored.text_hash);
 }

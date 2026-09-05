@@ -464,110 +464,110 @@ pub fn findCharOnLine(ed: *Editor, ch: u21, forward: bool, before: bool, inclusi
 
 // ─── tests ──────────────────────────────────────────────────────────────
 
-fn mk(text: []const u8, cursor: usize) !Editor {
-    var ed = try Editor.init(std.testing.allocator, text);
+fn mk(text: []const u8, cursor: usize) !*Editor {
+    const ed = try Editor.init(std.testing.allocator, text);
     ed.cursor = cursor;
     return ed;
 }
 
 test "word motions: w b e ge over punctuation and lines" {
-    var ed = try mk("foo.bar baz\n  qux", 0);
+    const ed = try mk("foo.bar baz\n  qux", 0);
     defer ed.deinit();
-    wordRight(&ed);
+    wordRight(ed);
     try std.testing.expectEqual(@as(usize, 3), ed.cursor); // `.`
-    wordRight(&ed);
+    wordRight(ed);
     try std.testing.expectEqual(@as(usize, 4), ed.cursor); // bar
-    wordRight(&ed);
+    wordRight(ed);
     try std.testing.expectEqual(@as(usize, 8), ed.cursor); // baz
-    wordRight(&ed);
+    wordRight(ed);
     try std.testing.expectEqual(@as(usize, 14), ed.cursor); // qux (crossed the line)
-    wordLeft(&ed);
+    wordLeft(ed);
     try std.testing.expectEqual(@as(usize, 8), ed.cursor);
     ed.cursor = 0;
-    wordEnd(&ed);
+    wordEnd(ed);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
-    wordEnd(&ed);
+    wordEnd(ed);
     try std.testing.expectEqual(@as(usize, 3), ed.cursor);
     ed.cursor = 8;
-    wordEndBack(&ed);
+    wordEndBack(ed);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
     ed.cursor = 8;
-    wordRightNoCrossLine(&ed);
+    wordRightNoCrossLine(ed);
     try std.testing.expectEqual(@as(usize, 11), ed.cursor);
 }
 
 test "WORD motions treat punctuation as part of the word" {
-    var ed = try mk("foo.bar baz", 0);
+    const ed = try mk("foo.bar baz", 0);
     defer ed.deinit();
-    bigWordRight(&ed);
+    bigWordRight(ed);
     try std.testing.expectEqual(@as(usize, 8), ed.cursor);
-    bigWordLeft(&ed);
+    bigWordLeft(ed);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
-    bigWordEnd(&ed);
+    bigWordEnd(ed);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
     ed.cursor = 9;
-    bigWordEndBack(&ed);
+    bigWordEndBack(ed);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
 }
 
 test "vertical keeps the goal column and clamps on the last line" {
-    var ed = try mk("abcdef\nab\nabcd", 4);
+    const ed = try mk("abcdef\nab\nabcd", 4);
     defer ed.deinit();
-    vertical(&ed, 1);
+    vertical(ed, 1);
     try std.testing.expectEqual(@as(usize, 9), ed.cursor); // end of `ab`
-    vertical(&ed, 1);
+    vertical(ed, 1);
     try std.testing.expectEqual(@as(usize, 14), ed.cursor); // col 4 of abcd
-    vertical(&ed, 1);
+    vertical(ed, 1);
     try std.testing.expectEqual(@as(usize, 14), ed.cursor); // clamped
-    vertical(&ed, -1);
-    vertical(&ed, -1);
+    vertical(ed, -1);
+    vertical(ed, -1);
     try std.testing.expectEqual(@as(usize, 4), ed.cursor);
 }
 
 test "line motions: 0 ^ g_ $ end + -" {
-    var ed = try mk("  ab  \nxy", 3);
+    const ed = try mk("  ab  \nxy", 3);
     defer ed.deinit();
-    lineStart(&ed);
+    lineStart(ed);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
-    lineFirstNonWs(&ed);
+    lineFirstNonWs(ed);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
-    lineLastNonWs(&ed);
+    lineLastNonWs(ed);
     try std.testing.expectEqual(@as(usize, 3), ed.cursor);
-    lineLastChar(&ed);
+    lineLastChar(ed);
     try std.testing.expectEqual(@as(usize, 5), ed.cursor);
-    lineEnd(&ed);
+    lineEnd(ed);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
-    downFirstNonWs(&ed);
+    downFirstNonWs(ed);
     try std.testing.expectEqual(@as(usize, 7), ed.cursor);
-    upFirstNonWs(&ed);
+    upFirstNonWs(ed);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
 }
 
 test "paragraph, buffer end, goto line/col, find char" {
-    var ed = try mk("a\nb\n\nc\nd\n\ne\n", 0);
+    const ed = try mk("a\nb\n\nc\nd\n\ne\n", 0);
     defer ed.deinit();
-    paragraph(&ed, true);
+    paragraph(ed, true);
     try std.testing.expectEqual(@as(usize, 4), ed.cursor);
-    paragraph(&ed, true);
+    paragraph(ed, true);
     try std.testing.expectEqual(@as(usize, 9), ed.cursor);
-    paragraph(&ed, false);
+    paragraph(ed, false);
     try std.testing.expectEqual(@as(usize, 4), ed.cursor);
-    bufferEnd(&ed);
+    bufferEnd(ed);
     try std.testing.expectEqual(@as(usize, 10), ed.cursor); // the trailing newline opens no line
-    toLine(&ed, 2);
+    toLine(ed, 2);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
-    toLine(&ed, 999);
+    toLine(ed, 999);
     try std.testing.expectEqual(@as(usize, 10), ed.cursor);
-    var ed2 = try mk("a-b-c-d", 0);
+    const ed2 = try mk("a-b-c-d", 0);
     defer ed2.deinit();
-    findCharOnLine(&ed2, '-', true, false, false, false);
+    findCharOnLine(ed2, '-', true, false, false, false);
     try std.testing.expectEqual(@as(usize, 1), ed2.cursor);
-    findCharOnLine(&ed2, '-', true, true, false, true); // `;` after a t: skips adjacent
+    findCharOnLine(ed2, '-', true, true, false, true); // `;` after a t: skips adjacent
     try std.testing.expectEqual(@as(usize, 2), ed2.cursor);
-    findCharOnLine(&ed2, 'a', false, false, false, false);
+    findCharOnLine(ed2, 'a', false, false, false, false);
     try std.testing.expectEqual(@as(usize, 0), ed2.cursor);
-    toCol(&ed2, 5);
+    toCol(ed2, 5);
     try std.testing.expectEqual(@as(usize, 4), ed2.cursor);
-    sentence(&ed2, true);
+    sentence(ed2, true);
     try std.testing.expectEqual(@as(usize, 7), ed2.cursor);
 }

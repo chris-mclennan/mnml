@@ -409,58 +409,58 @@ pub fn selectionsExtent(ed: *const Editor) ?[2]usize {
 const testing = std.testing;
 
 test "add below/above stack from the outermost cursor; toggling removes; never on the primary" {
-    var ed = try Editor.init(testing.allocator, "ab\ncd\nef\ngh");
+    const ed = try Editor.init(testing.allocator, "ab\ncd\nef\ngh");
     defer ed.deinit();
     ed.cursor = 1;
-    try addCursorBelow(&ed);
-    try addCursorBelow(&ed);
+    try addCursorBelow(ed);
+    try addCursorBelow(ed);
     try testing.expectEqualSlices(usize, &.{ 4, 7 }, ed.extra_cursors.items);
-    try addCursorAbove(&ed); // the primary is already the top row
+    try addCursorAbove(ed); // the primary is already the top row
     try testing.expectEqual(@as(usize, 2), ed.extra_cursors.items.len);
-    try addExtra(&ed, 4); // toggle off
+    try addExtra(ed, 4); // toggle off
     try testing.expectEqualSlices(usize, &.{7}, ed.extra_cursors.items);
-    try addExtra(&ed, 1); // the primary
+    try addExtra(ed, 1); // the primary
     try testing.expectEqualSlices(usize, &.{7}, ed.extra_cursors.items);
     ed.cursor = 10;
-    try addCursorBelow(&ed); // nothing below the bottom-most cursor
+    try addCursorBelow(ed); // nothing below the bottom-most cursor
     try testing.expectEqualSlices(usize, &.{7}, ed.extra_cursors.items);
-    clear(&ed);
-    try testing.expect(!hasExtras(&ed));
+    clear(ed);
+    try testing.expect(!hasExtras(ed));
 }
 
 test "ctrl+d: first press selects the word, later presses add anchored cursors at whole-word matches" {
-    var ed = try Editor.init(testing.allocator, "foo bar foo baz foobar foo");
+    const ed = try Editor.init(testing.allocator, "foo bar foo baz foobar foo");
     defer ed.deinit();
     ed.cursor = 1;
-    try addCursorAtNextWord(&ed);
+    try addCursorAtNextWord(ed);
     try testing.expectEqual(@as(?usize, 0), ed.anchor);
     try testing.expectEqual(@as(usize, 3), ed.cursor);
-    try testing.expect(!hasExtras(&ed));
-    try addCursorAtNextWord(&ed);
+    try testing.expect(!hasExtras(ed));
+    try addCursorAtNextWord(ed);
     try testing.expectEqualSlices(usize, &.{11}, ed.extra_cursors.items);
     try testing.expectEqual(@as(?usize, 8), ed.extra_anchors.items[0]);
-    try addCursorAtNextWord(&ed); // skips `foobar`
+    try addCursorAtNextWord(ed); // skips `foobar`
     try testing.expectEqualSlices(usize, &.{ 11, 26 }, ed.extra_cursors.items);
-    try addCursorAtNextWord(&ed); // no more
+    try addCursorAtNextWord(ed); // no more
     try testing.expectEqual(@as(usize, 2), ed.extra_cursors.items.len);
 }
 
 test "insert, backspace, forward delete and range delete fan out and keep offsets straight" {
-    var ed = try Editor.init(testing.allocator, "ab\ncd\nef");
+    const ed = try Editor.init(testing.allocator, "ab\ncd\nef");
     defer ed.deinit();
     ed.cursor = 1;
-    try addExtra(&ed, 4);
-    try addExtra(&ed, 7);
-    try insertStrAll(&ed, "XY");
-    try testing.expectEqualStrings("aXYb\ncXYd\neXYf", ed.text.items);
+    try addExtra(ed, 4);
+    try addExtra(ed, 7);
+    try insertStrAll(ed, "XY");
+    try testing.expectEqualStrings("aXYb\ncXYd\neXYf", ed.doc.text.items);
     try testing.expectEqual(@as(usize, 3), ed.cursor);
     try testing.expectEqualSlices(usize, &.{ 8, 13 }, ed.extra_cursors.items);
-    try deleteBackwardAll(&ed);
-    try deleteBackwardAll(&ed);
-    try testing.expectEqualStrings("ab\ncd\nef", ed.text.items);
+    try deleteBackwardAll(ed);
+    try deleteBackwardAll(ed);
+    try testing.expectEqualStrings("ab\ncd\nef", ed.doc.text.items);
     try testing.expectEqualSlices(usize, &.{ 4, 7 }, ed.extra_cursors.items);
-    try deleteForwardAll(&ed);
-    try testing.expectEqualStrings("a\nc\ne", ed.text.items);
+    try deleteForwardAll(ed);
+    try testing.expectEqualStrings("a\nc\ne", ed.doc.text.items);
     try testing.expectEqualSlices(usize, &.{ 3, 5 }, ed.extra_cursors.items);
     // Selections: anchor each at its line start, then delete the ranges.
     ed.anchor = 0;
@@ -469,28 +469,28 @@ test "insert, backspace, forward delete and range delete fan out and keep offset
     ed.cursor = 1;
     ed.extra_cursors.items[0] = 3;
     ed.extra_cursors.items[1] = 5;
-    const joined = (try joinedSelections(&ed)).?;
+    const joined = (try joinedSelections(ed)).?;
     defer testing.allocator.free(joined);
     try testing.expectEqualStrings("a\nc\ne", joined);
-    try deleteRangePerCursor(&ed, {}, ownRange);
-    try testing.expectEqualStrings("\n\n", ed.text.items);
+    try deleteRangePerCursor(ed, {}, ownRange);
+    try testing.expectEqualStrings("\n\n", ed.doc.text.items);
     try testing.expectEqualSlices(usize, &.{ 1, 2 }, ed.extra_cursors.items);
 }
 
 test "distributed paste pairs parts with cursors top to bottom; motions fan out" {
-    var ed = try Editor.init(testing.allocator, "A.\nB.\nC.");
+    const ed = try Editor.init(testing.allocator, "A.\nB.\nC.");
     defer ed.deinit();
     ed.cursor = 6;
-    try addExtra(&ed, 0);
-    try addExtra(&ed, 3);
-    try pasteDistribute(&ed, &.{ "A", "B", "C" }, false);
-    try testing.expectEqualStrings("AA.\nBB.\nCC.", ed.text.items);
+    try addExtra(ed, 0);
+    try addExtra(ed, 3);
+    try pasteDistribute(ed, &.{ "A", "B", "C" }, false);
+    try testing.expectEqualStrings("AA.\nBB.\nCC.", ed.doc.text.items);
     try testing.expectEqual(@as(usize, 9), ed.cursor);
     try testing.expectEqualSlices(usize, &.{ 1, 5 }, ed.extra_cursors.items);
     const motion = @import("motion.zig");
-    try moveExtras(&ed, motion.right);
+    try moveExtras(ed, motion.right);
     try testing.expectEqualSlices(usize, &.{ 2, 6 }, ed.extra_cursors.items);
     ed.cursor = 0;
-    try moveExtras(&ed, motion.lineStart);
+    try moveExtras(ed, motion.lineStart);
     try testing.expectEqualSlices(usize, &.{4}, ed.extra_cursors.items); // one collided with the primary
 }

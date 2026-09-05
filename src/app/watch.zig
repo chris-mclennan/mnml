@@ -28,11 +28,11 @@ pub fn stamp(io: Io, path: []const u8) ?pane_mod.DiskStamp {
 
 /// Record the file as it is now — after a read or a write.
 pub fn restamp(app: *App, e: *EditorPane) void {
-    const path = e.buf.path orelse {
-        e.disk = null;
+    const path = e.buf.doc.path orelse {
+        e.buf.doc.disk = null;
         return;
     };
-    e.disk = stamp(app.io, path);
+    e.buf.doc.disk = stamp(app.io, path);
 }
 
 /// `save_post` subscriber: the buffer just wrote the file.
@@ -53,24 +53,24 @@ pub fn check(app: *App) Allocator.Error!void {
     for (app.panes.slots.items, 0..) |*slot, i| {
         const pane = &(slot.* orelse continue);
         const e = pane.asEditor() orelse continue;
-        const path = e.buf.path orelse continue;
-        const known = e.disk orelse continue;
+        const path = e.buf.doc.path orelse continue;
+        const known = e.buf.doc.disk orelse continue;
         const now_on_disk = stamp(app.io, path) orelse continue;
         if (now_on_disk.mtime_ns == known.mtime_ns and now_on_disk.size == known.size) continue;
         // The change event: the TODOS panel queues a debounced rescan
         // whether the buffer reloads or is left dirty — the disk moved.
         todos.noteFileChanged(app);
         const rel = app.relPath(path);
-        if (e.buf.dirty) {
+        if (e.buf.doc.dirty) {
             app.toast("{s} changed on disk — :e! to discard / save to overwrite", .{rel});
-            e.disk = now_on_disk;
+            e.buf.doc.disk = now_on_disk;
             continue;
         }
         reload(app, @intCast(i)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
                 app.toast("{s}: reload failed: {s}", .{ rel, @errorName(err) });
-                e.disk = now_on_disk;
+                e.buf.doc.disk = now_on_disk;
                 continue;
             },
         };
@@ -85,17 +85,23 @@ pub const ReloadError = Allocator.Error || Io.Dir.ReadFileAllocError || error{No
 /// clean and restamps it. `:e!` and the watcher both come through here.
 pub fn reload(app: *App, id: PaneId) ReloadError!void {
     const e = app.panes.editor(id) orelse return error.NoPath;
-    const path = e.buf.path orelse return error.NoPath;
+    const path = e.buf.doc.path orelse return error.NoPath;
     const text = try Io.Dir.cwd().readFileAlloc(app.io, path, app.frame.allocator(), .limited(1 << 30));
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = ed.currentLine();
     const scroll = e.view.scroll_line;
+    // The other windows on the document keep their row too; the splice
+    // would land them on byte 0.
+    const others = e.buf.doc.views.items;
+    const rows = try app.frame.allocator().alloc(usize, others.len);
+    for (others, 0..) |v, i| rows[i] = v.currentLine();
     try app.splice(e, 0, ed.len(), text);
     try e.buf.markSaved();
     const last = ed.lineCount() -| 1;
+    for (others, 0..) |v, i| if (v != ed) v.placeCursor(@min(rows[i], last), 0);
     ed.placeCursor(@min(row, last), 0);
     e.view.scroll_line = @intCast(@min(@as(usize, scroll), last));
-    e.hl_dirty = true;
+    e.syntax.dirty = true;
     restamp(app, e);
     app.needs_render = true;
 }
@@ -139,7 +145,7 @@ test "a clean buffer reloads when the file changes on disk; the cursor row survi
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "one\ntwo\nthree\n" });
     const id = try f.open("notes.txt");
     const e = f.app.panes.editor(id).?;
-    try t.expect(e.disk != null);
+    try t.expect(e.buf.doc.disk != null);
     e.buf.editor.placeCursor(2, 0);
     // Nothing changed: no toast.
     f.app.last_watch_ms = 0;
@@ -152,11 +158,11 @@ test "a clean buffer reloads when the file changes on disk; the cursor row survi
     try tick(&f.app, 2 * interval_ms);
     try t.expectEqualStrings("notes.txt reloaded", f.app.lastToast().?);
     try t.expectEqualStrings("one\ntwo\nthree\nfour\nfive\n", e.buf.editor.bytes());
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
     try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
     // Dirty: warned, not reloaded, and only once for this change.
     _ = try f.app.applyOps(e, &.{.{ .insert_str = "EDIT " }});
-    try t.expect(e.buf.dirty);
+    try t.expect(e.buf.doc.dirty);
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "changed again\n" });
     f.app.dismissToasts();
     try tick(&f.app, 3 * interval_ms);
@@ -168,7 +174,7 @@ test "a clean buffer reloads when the file changes on disk; the cursor row survi
     // :e! discards and takes the disk's text.
     try f.app.runEx("e!");
     try t.expectEqualStrings("changed again\n", e.buf.editor.bytes());
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
 }
 
 test "a save restamps the file so the writer's own change is not reported" {
@@ -179,7 +185,7 @@ test "a save restamps the file so the writer's own change is not reported" {
     const e = f.app.panes.editor(id).?;
     _ = try f.app.applyOps(e, &.{.{ .insert_str = "more text " }});
     try f.app.runEx("w");
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
     f.app.dismissToasts();
     try tick(&f.app, 10 * interval_ms);
     try t.expect(f.app.lastToast() == null);

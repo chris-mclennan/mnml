@@ -397,11 +397,11 @@ fn bufCursor(L: *State) !i32 {
     return 3;
 }
 
-/// `mnml.buf.path(pane?)` → the workspace-relative path, nil for scratch.
+/// `mnml.buf.doc.path(pane?)` → the workspace-relative path, nil for scratch.
 fn bufPath(L: *State) !i32 {
     const c = ctx(L);
     const e = editorArg(L, c.app, 1);
-    if (e.buf.path) |p| _ = L.pushString(c.app.relPath(p)) else L.pushNil();
+    if (e.buf.doc.path) |p| _ = L.pushString(c.app.relPath(p)) else L.pushNil();
     return 1;
 }
 

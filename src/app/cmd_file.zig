@@ -24,7 +24,7 @@ pub fn saveCurrent(app: *App) CommandError!void {
     // A request pane writes itself back into its source block.
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .request) return @import("http.zig").saveToSource(app);
     const e = try app.requireEditor();
-    const path = e.buf.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
     const rel = app.relPath(path);
     app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = app.active.? } });
     e.buf.save(app.io) catch |err| return app.diag.fail(arena, "save failed: {s}: {s}", .{ rel, @errorName(err) });
@@ -41,8 +41,8 @@ fn saveAllCmd(app: *App) CommandError!void {
 pub fn saveAll(app: *App) CommandError!void {
     var n: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| if (e.buf.dirty and e.buf.path != null) {
-            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
+        .editor => |*e| if (e.buf.doc.dirty and e.buf.doc.path != null) {
+            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), "save failed: {s}: {s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err) });
             n += 1;
         },
         else => {},
@@ -53,12 +53,12 @@ pub fn saveAll(app: *App) CommandError!void {
 fn reload(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try app.requireEditor();
-    const path = e.buf.path orelse return app.diag.fail(arena, "reload — no file name", .{});
-    if (e.buf.dirty) return app.diag.fail(arena, "reload refused — unsaved changes", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "reload — no file name", .{});
+    if (e.buf.doc.dirty) return app.diag.fail(arena, "reload refused — unsaved changes", .{});
     const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(1 << 30)) catch |err| return app.diag.fail(arena, "reload — {s}", .{@errorName(err)});
     e.buf.editor.setText(text) catch return error.OutOfMemory;
     e.buf.markSaved() catch return error.OutOfMemory;
-    e.hl_dirty = true;
+    e.syntax.dirty = true;
     app.needs_render = true;
     app.toast("reloaded {s}", .{app.relPath(path)});
 }
@@ -87,9 +87,9 @@ test "file.save writes the active buffer and clears dirty; a scratch buffer is r
     _ = try app.openPath(path);
     const e = app.activeEditor().?;
     try e.buf.editor.setText("hello");
-    e.buf.dirty = true;
+    e.buf.doc.dirty = true;
     try command.run(&app, .{ .static = .@"file.save" });
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
     const back = try tmp.dir.readFileAlloc(t.io, "a.txt", t.allocator, .limited(64));
     defer t.allocator.free(back);
     try t.expectEqualStrings("hello\n", back); // save adds the terminating newline

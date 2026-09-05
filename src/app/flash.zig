@@ -96,7 +96,7 @@ pub fn findPairs(gpa: Allocator, out: *std.ArrayList(usize), line: []const u8, b
 pub fn start(app: *App, pane_id: PaneId, e: *EditorPane, a: u21, b: u21) Allocator.Error!void {
     cancel(app);
     const arena = app.frame.allocator();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     var hits: std.ArrayList(usize) = .empty;
     // The rows the last frame showed: from the view's first line, one
     // row per visible line, a closed fold counting as its first line.
@@ -105,7 +105,7 @@ pub fn start(app: *App, pane_id: PaneId, e: *EditorPane, a: u21, b: u21) Allocat
     const total = ed.lineCount();
     while (line < total and rows < @max(app.pane_rows, 1)) : (rows += 1) {
         try findPairs(arena, &hits, ed.lineSlice(line), ed.lineStart(line), a, b);
-        line = if (e.buf.folds.get(line)) |end| end + 1 else line + 1;
+        line = if (e.buf.editor.folds.get(line)) |end| end + 1 else line + 1;
     }
     // The pair under the cursor is where we already are.
     const cursor = ed.cursor;
@@ -145,7 +145,7 @@ pub fn start(app: *App, pane_id: PaneId, e: *EditorPane, a: u21, b: u21) Allocat
             return x.byte < y.byte;
         }
     }.lessThan);
-    app.flash = .{ .pane = pane_id, .a = a, .b = b, .matches = matches, .edit_seq = ed.edits.head() };
+    app.flash = .{ .pane = pane_id, .a = a, .b = b, .matches = matches, .edit_seq = ed.doc.edits.head() };
     app.needs_render = true;
 }
 
@@ -157,7 +157,7 @@ pub fn pairText(a: u21, b: u21, buf: *[8]u8) []const u8 {
 }
 
 fn jumpTo(e: *EditorPane, byte: usize) void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const p = ed.rowColAt(byte);
     ed.placeCursor(p.row, p.col);
     e.view.pin = null;
@@ -175,7 +175,7 @@ pub fn cancel(app: *App) void {
 /// and its text has not changed since. Anything else disarms.
 pub fn current(app: *App) ?*State {
     const f: *State = if (app.flash) |*f| f else return null;
-    const alive = app.active == f.pane and if (app.panes.editor(f.pane)) |e| e.buf.editor.edits.head() == f.edit_seq else false;
+    const alive = app.active == f.pane and if (app.panes.editor(f.pane)) |e| e.buf.doc.edits.head() == f.edit_seq else false;
     if (!alive) {
         cancel(app);
         return null;

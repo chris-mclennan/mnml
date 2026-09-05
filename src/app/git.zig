@@ -558,7 +558,7 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     requestStatus(app) catch {};
     const pane: PaneId = args.save_post.pane;
     if (st.blames.contains(pane)) {
-        if (app.panes.editor(pane)) |e| if (e.buf.path) |p| {
+        if (app.panes.editor(pane)) |e| if (e.buf.doc.path) |p| {
             requestBlame(app, pane, p) catch {};
         };
     }
@@ -822,7 +822,7 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 return;
             }
             const e = app.panes.editor(pane) orelse return;
-            const abs = e.buf.path orelse return;
+            const abs = e.buf.doc.path orelse return;
             if (!std.mem.eql(u8, relToRepo(repo, abs), b.path)) return;
             var blame: Blame = .{ .arena = .init(gpa), .lines = b.lines };
             adoptArena(&blame.arena, &result.arena, gpa);
@@ -1539,7 +1539,7 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         .tag_delete => try submitOp(app, try requireRepo(app), .{ .tag_delete = try gpa.dupe(u8, detail) }),
         .reflog, .file_history => {
             const repo = try requireRepo(app);
-            const rel: ?[]const u8 = if (what == .file_history) (if (app.activeEditor()) |e| (if (e.buf.path) |p| relToRepo(repo, p) else null) else null) else null;
+            const rel: ?[]const u8 = if (what == .file_history) (if (app.activeEditor()) |e| (if (e.buf.doc.path) |p| relToRepo(repo, p) else null) else null) else null;
             _ = try openDiff(app, repo, .commit, rel, detail, null);
         },
         .worktree_open, .worktree_shell => app.toast("worktree: {s}", .{detail}),
@@ -2056,7 +2056,7 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
         else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
     };
     if (line) |ln| if (app.panes.editor(id)) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         ed.anchor = null;
         ed.placeCursor(@min(@as(usize, ln) -| 1, ed.lineCount() -| 1), 0);
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);

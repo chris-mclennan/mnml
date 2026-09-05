@@ -889,7 +889,7 @@ fn openTranscript(app: *App, p: *AgentsPane) CommandError!void {
         }
     };
     if (app.panes.editor(id)) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         ed.placeCursor(ed.lineCount() -| 1, 0);
     }
 }

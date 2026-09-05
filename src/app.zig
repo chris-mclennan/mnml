@@ -34,6 +34,8 @@ const pane_mod = @import("app/pane.zig");
 const layout_mod = @import("app/layout.zig");
 const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
+const doc_store = @import("app/doc_store.zig");
+pub const DocStore = doc_store.DocStore;
 const snippets = @import("app/snippets.zig");
 const md_preview = @import("app/md_preview.zig");
 const image = @import("image/root.zig");
@@ -661,6 +663,9 @@ pub const App = struct {
     restart: bool = false,
 
     panes: PaneStore,
+    /// The open documents — one per file however many panes show it.
+    /// Outlives `panes`: a pane's buffer releases its document here.
+    docs: *DocStore,
     layouts: LayoutState,
     tree: tree_mod.Tree,
     /// The right-hand panel slot (Rust's activity panel). One panel at a
@@ -858,6 +863,8 @@ pub const App = struct {
         errdefer layouts.deinit();
         var screen = try vaxis.Screen.init(gpa, .{ .cols = opts.cols, .rows = opts.rows, .x_pixel = 0, .y_pixel = 0 });
         errdefer screen.deinit(gpa);
+        const docs = try DocStore.create(gpa);
+        errdefer docs.destroy();
         screen.width_method = .unicode;
         var app: App = .{
             .gpa = gpa,
@@ -871,6 +878,7 @@ pub const App = struct {
             .data_root = dr,
             .env = env,
             .panes = PaneStore.init(gpa, io),
+            .docs = docs,
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
@@ -1003,7 +1011,7 @@ pub const App = struct {
     pub fn setTheme(self: *App, t: *const theme_mod) void {
         self.theme = t.*;
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.hl_dirty = true,
+            .editor => |*e| e.syntax.dirty = true,
             else => {},
         };
         self.needs_render = true;
@@ -1034,10 +1042,10 @@ pub const App = struct {
     /// overrides land before the first edit. A scratch buffer takes the
     /// config's defaults only.
     pub fn applyBufferPrefs(self: *App, buf: *Buffer) Allocator.Error!void {
-        buf.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
-        buf.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
-        buf.editor.auto_indent = self.cfg.editor.auto_indent;
-        const path = buf.path orelse return;
+        buf.doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
+        buf.doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
+        buf.doc.auto_indent = self.cfg.editor.auto_indent;
+        const path = buf.doc.path orelse return;
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
         buf.applyEditorconfig(try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace));
@@ -1079,8 +1087,10 @@ pub const App = struct {
         self.ipc_fx.deinit(gpa);
         self.flaky.deinit(gpa);
         self.dap.deinit(gpa);
-        // Panes go before the manifests their mount runners borrow.
+        // Panes go before the manifests their mount runners borrow, and
+        // before the documents their buffers release.
         self.panes.deinit();
+        self.docs.destroy();
         self.integrations.deinit(gpa);
         self.lsp.deinit(gpa, self.io);
         self.snippets.deinit();
@@ -1358,7 +1368,7 @@ pub const App = struct {
     /// open buffer follows.
     pub fn syncAutoIndent(self: *App) void {
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.buf.editor.auto_indent = self.cfg.editor.auto_indent,
+            .editor => |*e| e.buf.doc.auto_indent = self.cfg.editor.auto_indent,
             else => {},
         };
     }
@@ -1421,10 +1431,9 @@ pub const App = struct {
                 break;
             }
         }
-        var syn = syntax.Syntax.init(gpa);
-        errdefer syn.deinit();
-        syn.setLanguage(path, buf.editor.bytes());
-        const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn } });
+        const entry = try self.docs.adopt(buf.doc);
+        entry.syntax.setLanguage(path, buf.editor.bytes());
+        const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = &entry.syntax } });
         // Moved into the store: the errdefers above must not run from here.
         watch.restamp(self, self.panes.editor(id).?);
         self.showPane(id);
@@ -1457,23 +1466,21 @@ pub const App = struct {
         try self.cmd_history.append(self.gpa, copy);
     }
 
-    /// A second editor on the same file (a split's starting point):
-    /// same text, same cursor, its own undo from here.
+    /// A second window on the same document (a split's starting point):
+    /// vim's `:split` — the same text, dirty flag and undo history, its
+    /// own cursor, scroll and folds, starting where the source pane is.
     pub fn duplicatePane(self: *App, id: PaneId) !PaneId {
         const src = self.panes.editor(id) orelse return error.NotAnEditor;
         const gpa = self.gpa;
-        var buf = try Buffer.init(gpa, src.buf.editor.bytes(), self.input_style, self.editorConfig());
+        var buf = try Buffer.initOn(gpa, src.buf.doc, self.input_style, self.editorConfig());
         errdefer buf.deinit();
-        if (src.buf.path) |p| try buf.setPath(p);
-        try self.applyBufferPrefs(&buf);
-        try buf.markSaved();
-        buf.dirty = src.buf.dirty;
         buf.editor.setCursor(src.buf.editor.cursor);
-        var syn = syntax.Syntax.init(gpa);
-        errdefer syn.deinit();
-        if (src.buf.path) |p| syn.setLanguage(p, buf.editor.bytes());
+        var it = src.buf.editor.folds.iterator();
+        while (it.next()) |f| try buf.editor.folds.put(gpa, f.key_ptr.*, f.value_ptr.*);
+        const view = src.view;
         const wrap = src.wrap;
-        const new_id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn, .wrap = wrap } });
+        const syn = src.syntax;
+        const new_id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syn, .wrap = wrap, .view = view } });
         return new_id;
     }
 
@@ -1483,7 +1490,8 @@ pub const App = struct {
         var buf = try Buffer.init(gpa, "", self.input_style, self.editorConfig());
         errdefer buf.deinit();
         try self.applyBufferPrefs(&buf);
-        const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syntax.Syntax.init(gpa) } });
+        const entry = try self.docs.adopt(buf.doc);
+        const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = &entry.syntax } });
         self.showPane(id);
         return id;
     }
@@ -1536,10 +1544,40 @@ pub const App = struct {
         self.hooks.emit(self, .{ .pane_focus = .{ .pane = id } });
     }
 
+    /// True when `id` is an editor whose document another pane also
+    /// shows: closing it is a window going, not a buffer.
+    pub fn isSharedView(self: *App, id: PaneId) bool {
+        const e = self.panes.editor(id) orelse return false;
+        return e.buf.doc.hasOtherView(e.buf.editor);
+    }
+
+    /// `:bd`: close the buffer — every window on `id`'s document goes,
+    /// the last one through `closePane` so a dirty document still gets
+    /// its Save / Discard / Cancel box (or `force`).
+    pub fn closeDocument(self: *App, id: PaneId, force: bool) Allocator.Error!void {
+        const e = self.panes.editor(id) orelse return self.closePane(id, force);
+        const doc = e.buf.doc;
+        var again = true;
+        while (again) {
+            again = false;
+            for (self.panes.slots.items, 0..) |*slot, i| {
+                const p = &(slot.* orelse continue);
+                const other = p.asEditor() orelse continue;
+                if (other.buf.doc != doc or i == id) continue;
+                try self.forceClosePane(@intCast(i));
+                again = true;
+                break;
+            }
+        }
+        try self.closePane(id, force);
+    }
+
     /// Close `id`. A dirty editor gets the Save / Discard / Cancel box
-    /// instead; `force` skips it (discarding).
+    /// instead; `force` skips it (discarding). A window on a document
+    /// another pane still shows just goes — the text lives on there.
     pub fn closePane(self: *App, id: PaneId, force: bool) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
+        if (self.isSharedView(id)) return self.forceClosePane(id);
         if (!force and pane.dirty()) {
             const msg = try std.fmt.allocPrint(self.gpa, "  {s} has unsaved changes.", .{pane.title()});
             errdefer self.gpa.free(msg);
@@ -1560,9 +1598,11 @@ pub const App = struct {
 
     pub fn forceClosePane(self: *App, id: PaneId) Allocator.Error!void {
         const pane = self.panes.get(id) orelse return;
-        // Editors and markdown previews are files: they can come back.
+        // Editors and markdown previews are files: they can come back —
+        // once the last window on the file goes.
+        const shared = self.isSharedView(id);
         const closed_file: ?ClosedBuffer = if (pane.asEditor()) |e|
-            (if (e.buf.path) |p| .{ .path = @constCast(p), .cursor = e.buf.editor.cursor } else null)
+            (if (!shared) (if (e.buf.doc.path) |p| .{ .path = @constCast(p), .cursor = e.buf.editor.cursor } else null) else null)
         else switch (pane.*) {
             .md_preview => |*m| .{ .path = m.path, .cursor = 0 },
             else => null,
@@ -1582,7 +1622,7 @@ pub const App = struct {
         };
         // The language server hears about the last editor on a file
         // closing, once the store no longer has it.
-        const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
+        const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.doc.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
         const layout = self.layouts.current();
         const next = layout.removePane(id);
         self.afterSplitChange();
@@ -1622,7 +1662,7 @@ pub const App = struct {
     fn objectLookup(ctx: *anyopaque, ed: *const edit_op_editor.Editor, kind: edit_op_editor.ObjectKind, byte: usize, around: bool) ?[2]usize {
         const self: *App = @ptrCast(@alignCast(ctx));
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| if (&e.buf.editor == ed) return e.syntax.objectRange(ed, kind, byte, around),
+            .editor => |*e| if (e.buf.editor == ed) return e.syntax.objectRange(ed, kind, byte, around),
             else => {},
         };
         return null;
@@ -1675,7 +1715,7 @@ pub const App = struct {
             pane.buf.last_unsupported = null;
         }
         if (changed) {
-            pane.hl_dirty = true;
+            pane.syntax.dirty = true;
             self.needs_render = true;
             if (self.paneIdOf(pane)) |id| snippets.afterEdit(self, id, pane);
         }
@@ -1879,8 +1919,8 @@ pub const App = struct {
         if (self.theme_auto_poll_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A pane waiting out the highlight idle gate wants a frame then.
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| if (e.hl_dirty) {
-                const due = (e.hl_since_ms orelse self.now_ms) + syntax.idle_ms;
+            .editor => |*e| if (e.syntax.dirty) {
+                const due = (e.syntax.since_ms orelse self.now_ms) + syntax.idle_ms;
                 next = @min(next orelse std.math.maxInt(i64), due);
             },
             else => {},
@@ -2177,7 +2217,7 @@ test "config → App: every behaviour-changing field flipped once" {
     try t.expectEqual(input.Style.vim, app.activeBuffer().?.input.style());
     try t.expectEqualStrings("NORMAL", app.activeBuffer().?.input.mode().label().?);
     // tab_width / text_width reach the editor
-    try t.expectEqual(@as(usize, 2), app.activeBuffer().?.editor.tab_width);
+    try t.expectEqual(@as(usize, 2), app.activeBuffer().?.editor.doc.tab_width);
     try t.expectEqual(@as(usize, 40), app.editorConfig().text_width);
     // chord timeout is the deadline the chain waits for
     try t.expectEqual(@as(u16, 900), app.cfg.editor.chord_timeout_ms);
@@ -2266,11 +2306,11 @@ test "editorconfig reaches an opened buffer; a scratch takes the config's save p
     defer t.allocator.free(mk);
     _ = try app.openEditor(mk);
     const e = app.activeEditor().?;
-    try t.expect(e.buf.editor.use_tabs);
-    try t.expectEqual(@as(usize, 8), e.buf.editor.tab_width);
+    try t.expect(e.buf.doc.use_tabs);
+    try t.expectEqual(@as(usize, 8), e.buf.doc.tab_width);
     try t.expectEqual(@as(usize, 8), e.buf.input.vim.tab_width);
-    try t.expect(e.buf.trim_trailing_ws_on_save);
-    try t.expect(!e.buf.ensure_trailing_newline);
+    try t.expect(e.buf.doc.trim_trailing_ws_on_save);
+    try t.expect(!e.buf.doc.ensure_trailing_newline);
     // Through the real key path: Tab in insert mode is a `\t`.
     const keys = try buffer_mod.parseKeys(t.allocator, "I<tab><esc>");
     defer t.allocator.free(keys);
@@ -2286,16 +2326,16 @@ test "editorconfig reaches an opened buffer; a scratch takes the config's save p
     defer t.allocator.free(txt);
     _ = try app.openEditor(txt);
     const e2 = app.activeEditor().?;
-    try t.expect(!e2.buf.editor.use_tabs);
-    try t.expectEqual(@as(usize, 2), e2.buf.editor.tab_width);
-    try t.expect(e2.buf.trim_trailing_ws_on_save);
-    try t.expect(e2.buf.ensure_trailing_newline);
+    try t.expect(!e2.buf.doc.use_tabs);
+    try t.expectEqual(@as(usize, 2), e2.buf.doc.tab_width);
+    try t.expect(e2.buf.doc.trim_trailing_ws_on_save);
+    try t.expect(e2.buf.doc.ensure_trailing_newline);
     try @import("app/cmd_file.zig").saveCurrent(&app);
     const back2 = try tmp.dir.readFileAlloc(t.io, "notes.txt", t.allocator, .limited(256));
     defer t.allocator.free(back2);
     try t.expectEqualStrings("x\n", back2);
     // A scratch buffer: the config's prefs, no file to resolve against.
     _ = try app.openScratch();
-    try t.expect(app.activeEditor().?.buf.trim_trailing_ws_on_save);
-    try t.expect(app.activeEditor().?.buf.path == null);
+    try t.expect(app.activeEditor().?.buf.doc.trim_trailing_ws_on_save);
+    try t.expect(app.activeEditor().?.buf.doc.path == null);
 }

@@ -111,7 +111,7 @@ pub fn lexpr(app: *App, args: []const u8) CommandError!void {
 /// An empty list takes the file's LSP diagnostics, in their sorted
 /// order, as `path:line:col:message` entries.
 fn seedFromDiagnostics(app: *App, e: *EditorPane) Allocator.Error!void {
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const diags = lsp.diagnosticsFor(app, path);
     if (diags.len == 0) return;
     const gpa = app.gpa;
@@ -305,7 +305,7 @@ test "loclist: lopen with nothing is E776; an empty list seeds from the file's L
     try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "E776") != null);
     try testing.expectEqual(@as(usize, 1), f.app.panes.count());
     // Diagnostics land for the file; :lopen seeds the list from them.
-    const path = f.app.activeEditor().?.buf.path.?;
+    const path = f.app.activeEditor().?.buf.doc.path.?;
     var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, "[{\"range\":{\"start\":{\"line\":2,\"character\":4},\"end\":{\"line\":2,\"character\":5}},\"severity\":2,\"message\":\"c unused\"},{\"range\":{\"start\":{\"line\":0,\"character\":4},\"end\":{\"line\":0,\"character\":5}},\"severity\":1,\"message\":\"a unused\"}]", .{});
     defer parsed.deinit();
     try lsp.applyDiagnostics(&f.app, path, parsed.value.array.items);

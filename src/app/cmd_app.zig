@@ -180,7 +180,7 @@ test "app.quit sets quit when clean and asks first when a buffer is dirty" {
     app.quit = false;
     const e = app.activeEditor().?;
     try e.buf.editor.setText("x");
-    e.buf.dirty = true;
+    e.buf.doc.dirty = true;
     try command.run(&app, .{ .static = .@"app.quit" });
     try t.expect(!app.quit);
     try t.expect(app.overlay == .confirm);
@@ -291,13 +291,13 @@ fn fileStats(app: *App) CommandError!void {
     var it = std.mem.tokenizeAny(u8, text, " \t\r\n");
     while (it.next()) |_| words += 1;
     const chars = std.unicode.utf8CountCodepoints(text) catch text.len;
-    app.toast("{s}: {d} lines, {d} words, {d} chars, {d} bytes", .{ if (e.buf.path) |p| app.relPath(p) else "[scratch]", e.buf.editor.lineCount(), words, chars, text.len });
+    app.toast("{s}: {d} lines, {d} words, {d} chars, {d} bytes", .{ if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]", e.buf.editor.lineCount(), words, chars, text.len });
 }
 
 /// The codepoint under the cursor, `ga` style.
 fn charInfo(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     if (ed.cursor >= text.len) return app.diag.fail(app.frame.allocator(), "char info: end of buffer", .{});
     const n = std.unicode.utf8ByteSequenceLength(text[ed.cursor]) catch 1;
@@ -308,7 +308,7 @@ fn charInfo(app: *App) CommandError!void {
 
 fn charUtf8(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     if (ed.cursor >= text.len) return app.diag.fail(app.frame.allocator(), "char info: end of buffer", .{});
     const n = std.unicode.utf8ByteSequenceLength(text[ed.cursor]) catch 1;
@@ -326,7 +326,7 @@ fn hexBytes(arena: Allocator, bytes: []const u8) Allocator.Error![]const u8 {
 fn toggleAutoPair(app: *App) CommandError!void {
     app.cfg.editor.auto_pair = !app.cfg.editor.auto_pair;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| e.buf.editor.auto_pair = app.cfg.editor.auto_pair,
+        .editor => |*e| e.buf.doc.auto_pair = app.cfg.editor.auto_pair,
         else => {},
     };
     app.toast("auto-pair {s}", .{if (app.cfg.editor.auto_pair) "on" else "off"});
@@ -344,10 +344,10 @@ fn foldPrev(app: *App) CommandError!void {
 
 fn foldStep(app: *App, forward: bool) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = ed.rowCol().row;
     var best: ?usize = null;
-    for (e.buf.folds.keys()) |start| {
+    for (e.buf.editor.folds.keys()) |start| {
         if (forward and start > row and (best == null or start < best.?)) best = start;
         if (!forward and start < row and (best == null or start > best.?)) best = start;
     }
@@ -360,12 +360,12 @@ fn foldStep(app: *App, forward: bool) CommandError!void {
 /// `zf` over the selection: the rows it spans become one closed fold.
 fn foldSelection(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const sel = ed.selection() orelse return app.diag.fail(app.frame.allocator(), "fold: nothing selected", .{});
     const start = ed.rowColAt(sel[0]).row;
     const end_row = ed.rowColAt(if (sel[1] > sel[0]) sel[1] - 1 else sel[1]).row;
     if (end_row <= start) return app.diag.fail(app.frame.allocator(), "fold: the selection is one line", .{});
-    try e.buf.folds.put(app.gpa, start, end_row);
+    try e.buf.editor.folds.put(app.gpa, start, end_row);
     ed.setCursor(ed.firstNonWs(start));
     ed.anchor = null;
     app.needs_render = true;
@@ -390,7 +390,7 @@ fn insertText(app: *App, e: *EditorPane, text: []const u8) CommandError!void {
 
 fn insertCurrentFilename(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const path = e.buf.path orelse return app.diag.fail(app.frame.allocator(), "the buffer has no file name", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "the buffer has no file name", .{});
     return insertText(app, e, try app.frame.allocator().dupe(u8, app.relPath(path)));
 }
 
@@ -496,7 +496,7 @@ fn dirtyStep(app: *App, forward: bool) CommandError!void {
         const i = if (forward) (start + k) % n else (start + n - (k % n)) % n;
         const slot = app.panes.slots.items[i] orelse continue;
         switch (slot) {
-            .editor => |e| if (e.buf.dirty) {
+            .editor => |e| if (e.buf.doc.dirty) {
                 app.showPane(@intCast(i));
                 return;
             },
@@ -553,10 +553,10 @@ fn pickMarks(app: *App) CommandError!void {
     const gpa = app.gpa;
     const e = try app.requireEditor();
     const globals = try marks_store.letters(app, app.frame.allocator());
-    if (e.buf.marks.count() == 0 and globals.len == 0) return app.diag.fail(app.frame.allocator(), "no marks in this buffer (m<a-z> sets one)", .{});
+    if (e.buf.doc.marks.count() == 0 and globals.len == 0) return app.diag.fail(app.frame.allocator(), "no marks in this buffer (m<a-z> sets one)", .{});
     var letters: std.ArrayListUnmanaged(u8) = .empty;
     defer letters.deinit(gpa);
-    var it = e.buf.marks.keyIterator();
+    var it = e.buf.doc.marks.keyIterator();
     while (it.next()) |k| try letters.append(gpa, k.*);
     std.mem.sort(u8, letters.items, {}, std.sort.asc(u8));
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
@@ -568,7 +568,7 @@ fn pickMarks(app: *App) CommandError!void {
         details.deinit(gpa);
     }
     for (letters.items) |c| {
-        const pos = e.buf.marks.get(c).?;
+        const pos = e.buf.doc.marks.get(c).?;
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{c}  Ln {d}, Col {d}", .{ c, pos.row + 1, pos.col + 1 }));
         const row = @min(pos.row, e.buf.editor.lineCount() -| 1);
         const ls = e.buf.editor.lineStart(row);
@@ -587,7 +587,7 @@ fn pickMarks(app: *App) CommandError!void {
 fn acceptMark(app: *App, _: usize, label: []const u8) Allocator.Error!void {
     if (marks_store.isGlobal(label[0])) return marks_store.jump(app, label[0], true);
     const e = app.activeEditor() orelse return;
-    const pos = e.buf.marks.get(label[0]) orelse return;
+    const pos = e.buf.doc.marks.get(label[0]) orelse return;
     e.buf.editor.placeCursor(pos.row, pos.col);
     app.needs_render = true;
 }
@@ -725,8 +725,8 @@ test "small commands: recent jumps, scratch from the register, fold navigation, 
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"file.open_recent_9" }));
     // Folds: two closed folds, zj / zk walk them.
     const e = app.activeEditor().?;
-    try e.buf.folds.put(t.allocator, 1, 2);
-    try e.buf.folds.put(t.allocator, 3, 4);
+    try e.buf.editor.folds.put(t.allocator, 1, 2);
+    try e.buf.editor.folds.put(t.allocator, 3, 4);
     e.buf.editor.setCursor(0);
     try command.run(&app, .{ .static = .@"editor.fold_next" });
     try t.expectEqual(@as(usize, 1), e.buf.editor.rowCol().row);

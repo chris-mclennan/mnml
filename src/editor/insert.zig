@@ -50,7 +50,7 @@ pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Error!void {
     // A deleted selection already pushed a checkpoint; ride it so the
     // delete + this char undo together (VS Code coalesces).
     if (try delete.deleteSelectionIfAny(ed, out)) {
-        ed.history.clearRedo();
+        ed.doc.history.clearRedo();
         ed.in_insert_run = true;
     } else {
         try ed.checkpointInsertRun();
@@ -59,14 +59,14 @@ pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Error!void {
     const s = encode(c, &buf);
     // smartindent: a `}` typed first on its line takes the indent of the
     // line that opened the block.
-    if (ed.auto_indent and c == '}' and !mc.hasExtras(ed)) try dedentClosingBrace(ed);
+    if (ed.doc.auto_indent and c == '}' and !mc.hasExtras(ed)) try dedentClosingBrace(ed);
     if (mc.hasExtras(ed)) {
         // Every cursor types; auto-pair is skipped across N cursors.
         try mc.insertStrAll(ed, s);
         out.buffer_changed = true;
         return;
     }
-    if (ed.auto_pair) {
+    if (ed.doc.auto_pair) {
         if (autoPairClose(c)) |closer| {
             if (nextCharAllowsPair(ed)) {
                 var cbuf: [4]u8 = undefined;
@@ -91,7 +91,7 @@ pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Error!void {
 pub fn insertStr(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!void {
     if (s.len == 0) return;
     if (try delete.deleteSelectionIfAny(ed, out)) {
-        ed.history.clearRedo();
+        ed.doc.history.clearRedo();
     } else {
         try ed.checkpoint();
     }
@@ -110,12 +110,12 @@ pub fn insertStr(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!
 /// its last non-blank char is `{` (vim's `smartindent`). Copied into
 /// `buf` — the source points into `text`, which is about to move.
 fn newLineIndent(ed: *const Editor, line: usize, limit: ?usize, buf: *[256]u8) []const u8 {
-    if (!ed.auto_indent) return "";
+    if (!ed.doc.auto_indent) return "";
     const src = ed.leadingIndent(line, limit);
     var n: usize = @min(src.len, buf.len);
     @memcpy(buf[0..n], src[0..n]);
     if (lastNonBlank(ed, line, limit) == '{') {
-        const unit: []const u8 = if (ed.use_tabs) "\t" else "        "[0..@min(ed.tab_width, 8)];
+        const unit: []const u8 = if (ed.doc.use_tabs) "\t" else "        "[0..@min(ed.doc.tab_width, 8)];
         const room = @min(unit.len, buf.len - n);
         @memcpy(buf[n .. n + room], unit[0..room]);
         n += room;
@@ -130,7 +130,7 @@ fn lastNonBlank(ed: *const Editor, line: usize, limit: ?usize) ?u8 {
     if (limit) |l| end = @min(end, l);
     while (end > start) {
         end -= 1;
-        const b = ed.text.items[end];
+        const b = ed.doc.text.items[end];
         if (b != ' ' and b != '\t') return b;
     }
     return null;
@@ -148,7 +148,7 @@ fn dedentClosingBrace(ed: *Editor) Allocator.Error!void {
     var open: ?usize = null;
     while (i > 0) {
         i -= 1;
-        switch (ed.text.items[i]) {
+        switch (ed.doc.text.items[i]) {
             '}' => depth += 1,
             '{' => if (depth == 0) {
                 open = i;
@@ -164,7 +164,7 @@ fn dedentClosingBrace(ed: *Editor) Allocator.Error!void {
     var buf: [256]u8 = undefined;
     const want = buf[0..@min(want_src.len, buf.len)];
     @memcpy(want, want_src[0..want.len]);
-    if (std.mem.eql(u8, want, ed.text.items[bol..ed.cursor])) return;
+    if (std.mem.eql(u8, want, ed.doc.text.items[bol..ed.cursor])) return;
     try ed.splice(bol, ed.cursor, want);
     ed.cursor = bol + want.len;
 }
@@ -173,7 +173,7 @@ fn dedentClosingBrace(ed: *Editor) Allocator.Error!void {
 /// cursor, one level deeper after a `{`.
 pub fn insertNewline(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try delete.deleteSelectionIfAny(ed, out)) {
-        ed.history.clearRedo();
+        ed.doc.history.clearRedo();
     } else {
         try ed.checkpoint();
     }
@@ -217,7 +217,7 @@ pub fn insertNewlineAbove(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     try ed.checkpoint();
     const line = ed.currentLine();
     const bol = ed.lineStart(line);
-    const indent_src = if (ed.auto_indent) ed.leadingIndent(line, null) else "";
+    const indent_src = if (ed.doc.auto_indent) ed.leadingIndent(line, null) else "";
     var ibuf: [256]u8 = undefined;
     const indent = ibuf[0..@min(indent_src.len, ibuf.len)];
     @memcpy(indent, indent_src[0..indent.len]);
@@ -302,87 +302,87 @@ pub fn appendChar(buf: *std.ArrayList(u8), gpa: Allocator, c: u21) Allocator.Err
 // ─── tests ──────────────────────────────────────────────────────────────
 
 test "insert char/str/newline with auto-indent, coalesced undo run" {
-    var ed = try Editor.init(std.testing.allocator, "  ab");
+    const ed = try Editor.init(std.testing.allocator, "  ab");
     defer ed.deinit();
-    ed.auto_indent = true;
+    ed.doc.auto_indent = true;
     ed.cursor = 4;
     var out: EditOutcome = .{};
-    try insertChar(&ed, 'c', &out);
-    try insertChar(&ed, 'é', &out);
-    try std.testing.expectEqualStrings("  abcé", ed.text.items);
+    try insertChar(ed, 'c', &out);
+    try insertChar(ed, 'é', &out);
+    try std.testing.expectEqualStrings("  abcé", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 7), ed.cursor);
-    try std.testing.expectEqual(@as(usize, 1), ed.history.undoLen()); // one coalesced run
-    try insertNewline(&ed, &out);
-    try std.testing.expectEqualStrings("  abcé\n  ", ed.text.items);
-    try insertStr(&ed, "zz", &out);
-    try std.testing.expectEqualStrings("  abcé\n  zz", ed.text.items);
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.history.undoLen()); // one coalesced run
+    try insertNewline(ed, &out);
+    try std.testing.expectEqualStrings("  abcé\n  ", ed.doc.text.items);
+    try insertStr(ed, "zz", &out);
+    try std.testing.expectEqualStrings("  abcé\n  zz", ed.doc.text.items);
     try std.testing.expect(out.buffer_changed);
 }
 
 test "smartindent: a `{` opens one level deeper on Enter and `o`; a `}` typed first steps back" {
-    var ed = try Editor.init(std.testing.allocator, "fn f() {\n    if (x) {\n}");
+    const ed = try Editor.init(std.testing.allocator, "fn f() {\n    if (x) {\n}");
     defer ed.deinit();
-    ed.auto_indent = true;
+    ed.doc.auto_indent = true;
     var out: EditOutcome = .{};
     ed.cursor = ed.lineEnd(1);
-    try insertNewline(&ed, &out);
-    try std.testing.expectEqualStrings("fn f() {\n    if (x) {\n        \n}", ed.text.items);
-    try insertChar(&ed, '}', &out);
-    try std.testing.expectEqualStrings("fn f() {\n    if (x) {\n    }\n}", ed.text.items);
+    try insertNewline(ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    if (x) {\n        \n}", ed.doc.text.items);
+    try insertChar(ed, '}', &out);
+    try std.testing.expectEqualStrings("fn f() {\n    if (x) {\n    }\n}", ed.doc.text.items);
     try std.testing.expectEqual(ed.lineEnd(2), ed.cursor);
     // `o` on the `fn` line: one level in; Enter mid-line only looks left.
     ed.cursor = 0;
-    try insertNewlineBelow(&ed, &out);
-    try std.testing.expectEqualStrings("fn f() {\n    \n    if (x) {\n    }\n}", ed.text.items);
+    try insertNewlineBelow(ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    \n    if (x) {\n    }\n}", ed.doc.text.items);
     ed.cursor = 3; // `fn |f() {`
-    try insertNewline(&ed, &out);
-    try std.testing.expectEqualStrings("fn \nf() {\n    \n    if (x) {\n    }\n}", ed.text.items);
+    try insertNewline(ed, &out);
+    try std.testing.expectEqualStrings("fn \nf() {\n    \n    if (x) {\n    }\n}", ed.doc.text.items);
     // Off: nothing of the sort.
-    ed.auto_indent = false;
+    ed.doc.auto_indent = false;
     ed.cursor = ed.lineEnd(1);
-    try insertNewline(&ed, &out);
-    try std.testing.expectEqualStrings("fn \nf() {\n\n    \n    if (x) {\n    }\n}", ed.text.items);
+    try insertNewline(ed, &out);
+    try std.testing.expectEqualStrings("fn \nf() {\n\n    \n    if (x) {\n    }\n}", ed.doc.text.items);
 }
 
 test "o and O open lines with the line's indent" {
-    var ed = try Editor.init(std.testing.allocator, "\tfoo\nbar");
+    const ed = try Editor.init(std.testing.allocator, "\tfoo\nbar");
     defer ed.deinit();
-    ed.auto_indent = true;
+    ed.doc.auto_indent = true;
     ed.cursor = 2;
     var out: EditOutcome = .{};
-    try insertNewlineBelow(&ed, &out);
-    try std.testing.expectEqualStrings("\tfoo\n\t\nbar", ed.text.items);
+    try insertNewlineBelow(ed, &out);
+    try std.testing.expectEqualStrings("\tfoo\n\t\nbar", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
     ed.cursor = 0;
-    try insertNewlineAbove(&ed, &out);
-    try std.testing.expectEqualStrings("\t\n\tfoo\n\t\nbar", ed.text.items);
+    try insertNewlineAbove(ed, &out);
+    try std.testing.expectEqualStrings("\t\n\tfoo\n\t\nbar", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
 }
 
 test "auto-pair inserts a closer and skips over a typed closer" {
-    var ed = try Editor.init(std.testing.allocator, "");
+    const ed = try Editor.init(std.testing.allocator, "");
     defer ed.deinit();
-    ed.auto_pair = true;
+    ed.doc.auto_pair = true;
     var out: EditOutcome = .{};
-    try insertChar(&ed, '(', &out);
-    try std.testing.expectEqualStrings("()", ed.text.items);
+    try insertChar(ed, '(', &out);
+    try std.testing.expectEqualStrings("()", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
-    try insertChar(&ed, ')', &out);
-    try std.testing.expectEqualStrings("()", ed.text.items);
+    try insertChar(ed, ')', &out);
+    try std.testing.expectEqualStrings("()", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
 }
 
 test "replace mode overwrites, appends past EOL, and backspace restores" {
-    var ed = try Editor.init(std.testing.allocator, "ab\n");
+    const ed = try Editor.init(std.testing.allocator, "ab\n");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 1;
-    replaceSessionBegin(&ed);
-    try overwriteCharAndAdvance(&ed, 'X', &out);
-    try overwriteCharAndAdvance(&ed, 'Y', &out);
-    try std.testing.expectEqualStrings("aXY\n", ed.text.items);
-    try replaceUndoOne(&ed, &out);
-    try replaceUndoOne(&ed, &out);
-    try std.testing.expectEqualStrings("ab\n", ed.text.items);
+    replaceSessionBegin(ed);
+    try overwriteCharAndAdvance(ed, 'X', &out);
+    try overwriteCharAndAdvance(ed, 'Y', &out);
+    try std.testing.expectEqualStrings("aXY\n", ed.doc.text.items);
+    try replaceUndoOne(ed, &out);
+    try replaceUndoOne(ed, &out);
+    try std.testing.expectEqualStrings("ab\n", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
 }

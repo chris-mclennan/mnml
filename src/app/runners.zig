@@ -105,7 +105,7 @@ pub fn findManifestDir(io: Io, start: []const u8, manifests: []const []const u8,
 pub fn startDir(app: *App) []const u8 {
     const id = app.last_editor orelse return app.workspace;
     const e = app.panes.editor(id) orelse return app.workspace;
-    const path = e.buf.path orelse return app.workspace;
+    const path = e.buf.doc.path orelse return app.workspace;
     return std.fs.path.dirname(path) orelse app.workspace;
 }
 
@@ -462,7 +462,7 @@ fn testRunAll(app: *App) CommandError!void {
 /// The active file, workspace-relative.
 fn activeRel(app: *App) CommandError![]const u8 {
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "open a test file first", .{});
-    const path = e.buf.path orelse return app.diag.fail(app.frame.allocator(), "open a saved test file first", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "open a saved test file first", .{});
     return app.relPath(path);
 }
 

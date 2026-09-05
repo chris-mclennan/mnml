@@ -153,7 +153,7 @@ fn sortByLine(list: *types.FileBreakpoints) void {
 /// The editor + its path, or the reasons the Rust toasts.
 fn editorWithPath(app: *App) CommandError!struct { e: *EditorPane, path: []const u8 } {
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "no active editor", .{});
-    const path = e.buf.path orelse return app.diag.fail(app.frame.allocator(), "buffer has no path", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "buffer has no path", .{});
     return .{ .e = e, .path = path };
 }
 
@@ -678,7 +678,7 @@ fn jumpTo(app: *App, path: []const u8, line: u32) Allocator.Error!void {
         else => return,
     };
     if (app.panes.editor(id)) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         ed.anchor = null;
         ed.placeCursor(@min(line, @as(u32, @intCast(ed.lineCount() -| 1))), 0);
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);

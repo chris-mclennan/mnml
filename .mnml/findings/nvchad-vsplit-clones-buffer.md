@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: deferred
+status: fixed
 ---
 # `:vsplit` / `:split` / `Ctrl-W s|v` open a second independent copy of the file, not a second window on the same buffer
 
@@ -78,3 +78,53 @@ tests assert two dirty flags today), plus the bufferline decision.
 disk) and the changed-on-disk toast blocks a silent overwrite; the
 "save to overwrite" advice on that toast is the part most likely to cost a
 user the other window's edits and is worth softening independently.
+
+## Fix — the shared-buffer window model (branch `split-buffers`, 2026-09-05)
+
+`Editor` was split along the line the deferral drew. `Document`
+(`src/editor/document.zig`) owns what belongs to the text: the bytes, the
+line index, the edit log, the undo history, the change list, the path,
+`dirty` / `saved_text`, marks, the language and its comment tokens, the
+save settings (`eol`, trailing newline, trim), the disk stamp and the
+language server's sync point. `Editor` is now one window's view of a
+document — a heap box holding `doc: *Document` plus the cursor, anchor,
+goal column, `last_selection`, block anchor, the extra cursors, the
+replace stack, the ghost text and the folds. `Buffer` is a window: its
+`*Editor`, the `InputHandler`, dot-repeat and the macro recording;
+`Buffer.initOn(doc)` is the split's constructor.
+
+Documents are refcounted by their views. The app's `DocStore`
+(`src/app/doc_store.zig`, a heap box on `App.docs`) adopts each
+document as it is opened and keeps the per-document syntax state (the
+tree-sitter tree and spans) beside it, so a reparse runs once per
+document; the last view's release calls back and drops both.
+`App.duplicatePane` (`:vsplit` / `:split` / `Ctrl-W v` / `Ctrl-W s`)
+makes a second `Buffer` on the same document, starting at the source's
+cursor, scroll and folds.
+
+Every `Document.spliceBy` tells the other views (`Editor.onForeignSplice`):
+cursor, anchor, block anchor, `last_selection`, extra cursors and folds
+shift by the byte delta (a position inside the replaced range lands on
+its start), and the row delta is queued for the pane's scroll offset,
+which the frame applies. A wholesale replacement (undo, `:e!`) clamps
+the other views. Undo and redo are the document's; the applying view's
+cursor follows the snapshot.
+
+Identity moved from pane to document: `dirty()`, `hasTwin`
+(`Document.hasOtherView`), `closeSplit`, `view.only`, the watcher's
+stamp and reload (the other windows keep their row), `:w` /
+`file.save_all`, the LSP `didChange` sync point (`Document.lsp_seen`
+— two windows send an edit once), the highlight dirty flag (on the
+shared `Syntax`), the bufferline (a second window on a document folds
+into its tab) and the session (a file saved from two windows comes
+back as two windows on one document). `:q` / `Ctrl-W c` close the
+window and keep the buffer while another window shows it; `:bd`
+(`App.closeDocument`) closes every window, the last through the
+unsaved-changes box.
+
+Tests: `tests/e2e-zig/vsplit_shared_buffer.test` is this report's
+reproduction (fails on the previous code at "screen unexpectedly
+contains `1 alpha bravo charlie`", passes now), with
+`vsplit_quit_keeps_buffer.test` and `vsplit_bd_closes_both.test`
+beside it; the unit tests live in `document.zig`, `editor.zig` and
+`doc_store.zig`.

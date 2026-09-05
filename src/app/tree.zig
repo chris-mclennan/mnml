@@ -837,7 +837,7 @@ fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
         return;
     };
     // An open buffer follows its file.
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.path) |bp| {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
         if (std.mem.eql(u8, bp, from_abs)) {
             try e.buf.setPath(to_abs);
         } else if (std.mem.startsWith(u8, bp, from_abs) and bp.len > from_abs.len and bp[from_abs.len] == '/') {
@@ -989,7 +989,7 @@ test "tree file verbs: new file, new folder, rename into a folder, move by drag-
     try t.expect(app.overlay == .none);
     const expect_path = try std.fs.path.join(t.allocator, &.{ buf[0..n], "lib", "bb.txt" });
     defer t.allocator.free(expect_path);
-    try t.expectEqualStrings(expect_path, app.activeEditor().?.buf.path.?);
+    try t.expectEqualStrings(expect_path, app.activeEditor().?.buf.doc.path.?);
     // Delete closes the buffer and drops the row.
     try acceptDelete(&app, "lib/bb.txt");
     try t.expect(app.active == null);
@@ -1133,7 +1133,7 @@ test "multi-root: cfg.workspaces become collapsed sections; a header opens on en
     app.tree.cursor = 4;
     _ = try app.tree.handleKey(&app, Key.named(.enter));
     try t.expectEqualStrings("b.zig", app.panes.get(app.active.?).?.title());
-    try t.expect(std.mem.startsWith(u8, app.activeEditor().?.buf.path.?, extra_ws));
+    try t.expect(std.mem.startsWith(u8, app.activeEditor().?.buf.doc.path.?, extra_ws));
     // The switcher: pick the primary → it opens, the extra folds.
     try app.tree.switchTo(&app, 0);
     try t.expect(app.tree.primary_expanded);

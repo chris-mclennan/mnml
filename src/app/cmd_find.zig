@@ -528,7 +528,7 @@ test "find: standard Enter steps and keeps the bar, Esc keeps the landing, Ctrl+
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("match 3/3", app.lastToast().?);
     try t.expectEqual(@as(usize, 4), e.buf.editor.currentLine());
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
     // Esc closes and keeps the landing: the query and the cursor stay.
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expect(app.find_bar == null);
@@ -607,7 +607,7 @@ test "find: Esc restores the previous find state; replace prompts and splices ev
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("DELTA beta DELTA gamma DELTA", e.buf.editor.bytes());
     try t.expectEqualStrings("replaced 3", app.lastToast().?);
-    try t.expect(e.buf.dirty);
+    try t.expect(e.buf.doc.dirty);
     // One undo step for the whole run.
     _ = try app.applyOps(e, &.{.undo});
     try t.expectEqualStrings("alpha beta alpha gamma alpha", e.buf.editor.bytes());

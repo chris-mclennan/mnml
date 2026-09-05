@@ -146,9 +146,9 @@ pub const History = struct {
 // ─── ops ────────────────────────────────────────────────────────────────
 
 pub fn undoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
-    const s = ed.history.popUndo() orelse return;
-    defer ed.history.freeSnapshot(s);
-    try ed.history.pushRedo(.{ .text = ed.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
+    const s = ed.doc.history.popUndo() orelse return;
+    defer ed.doc.history.freeSnapshot(s);
+    try ed.doc.history.pushRedo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
     try ed.restore(s);
     ed.extra_cursors.clearRetainingCapacity();
     ed.extra_anchors.clearRetainingCapacity();
@@ -156,9 +156,9 @@ pub fn undoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 }
 
 pub fn redoOp(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
-    const s = ed.history.popRedo() orelse return;
-    defer ed.history.freeSnapshot(s);
-    try ed.history.pushUndo(.{ .text = ed.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
+    const s = ed.doc.history.popRedo() orelse return;
+    defer ed.doc.history.freeSnapshot(s);
+    try ed.doc.history.pushUndo(.{ .text = ed.doc.text.items, .cursor = ed.cursor, .anchor = ed.anchor });
     try ed.restore(s);
     ed.extra_cursors.clearRetainingCapacity();
     ed.extra_anchors.clearRetainingCapacity();

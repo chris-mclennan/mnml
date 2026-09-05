@@ -50,7 +50,7 @@ pub const State = struct {
 /// The active editor's file, or the reason there is none.
 fn activePath(app: *App) CommandError![]const u8 {
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "harpoon: no file", .{});
-    return e.buf.path orelse app.diag.fail(app.frame.allocator(), "harpoon: the buffer has no file", .{});
+    return e.buf.doc.path orelse app.diag.fail(app.frame.allocator(), "harpoon: the buffer has no file", .{});
 }
 
 pub fn add(app: *App) CommandError!void {

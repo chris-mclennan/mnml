@@ -148,7 +148,7 @@ pub fn switchTo(app: *App, args_in: []const u8) CommandError!void {
     for (order) |id| {
         const title = app.panes.get(id).?.title();
         var hit = std.mem.indexOf(u8, title, args) != null;
-        if (!hit) if (app.panes.editor(id)) |e| if (e.buf.path) |p| {
+        if (!hit) if (app.panes.editor(id)) |e| if (e.buf.doc.path) |p| {
             hit = std.mem.indexOf(u8, app.relPath(p), args) != null;
         };
         if (hit) {

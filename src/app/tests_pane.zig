@@ -667,7 +667,7 @@ fn runAll(app: *App) CommandError!void {
 /// The active file, workspace-relative.
 fn activeRel(app: *App) CommandError![]const u8 {
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "open a .spec file first", .{});
-    const path = e.buf.path orelse return app.diag.fail(app.frame.allocator(), "open a saved .spec file first", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "open a saved .spec file first", .{});
     return app.relPath(path);
 }
 
@@ -936,7 +936,7 @@ test "test.run_playwright needs a package.json; a result lands in the pane and t
     app.showPane(id);
     _ = try handleKey(&app, id, p, .{ .code = .enter });
     const e = app.activeEditor().?;
-    try t.expectEqualStrings("login.spec.ts", app.relPath(e.buf.path.?));
+    try t.expectEqualStrings("login.spec.ts", app.relPath(e.buf.doc.path.?));
     try t.expectEqual(@as(usize, 14), e.buf.editor.rowCol().row);
     // A stale result is dropped; an error result flips the state.
     const stale = try Result.create(t.allocator, p.generation -% 1, id);

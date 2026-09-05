@@ -124,10 +124,10 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // The completion / hover / peek popups take their keys first: an
     // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
     // accept that edited the text leaves any ghost stale — drop it.
-    const seq_before: ?u64 = if (app.activeEditor()) |e| e.buf.editor.edits.head() else null;
+    const seq_before: ?u64 = if (app.activeEditor()) |e| e.buf.doc.edits.head() else null;
     if (try lsp.interceptKey(app, k)) {
         if (seq_before) |before| if (app.activeEditor()) |e| {
-            if (e.buf.editor.edits.head() != before and e.buf.editor.ghost_suggestion != null) try e.buf.editor.setGhostSuggestion(null);
+            if (e.buf.doc.edits.head() != before and e.buf.editor.ghost_suggestion != null) try e.buf.editor.setGhostSuggestion(null);
         };
         return;
     }
@@ -373,7 +373,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const before_mode = e.buf.input.mode();
     const mark = markPrefix(e);
     const mark_key: ?u8 = if (k.typed()) |c| (if (c < 128 and std.ascii.isAlphabetic(@intCast(c))) @as(u8, @intCast(c)) else null) else null;
-    const had_mark: bool = if (mark != null and mark_key != null) e.buf.marks.contains(mark_key.?) else false;
+    const had_mark: bool = if (mark != null and mark_key != null) e.buf.doc.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
     const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
@@ -390,7 +390,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .noop => {},
         .redraw => {},
         .edited => {
-            e.hl_dirty = true;
+            e.syntax.dirty = true;
             flash.cancel(app);
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
@@ -904,7 +904,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;
-                if (e.buf.path == null) {
+                if (e.buf.doc.path == null) {
                     app.toast("can't save a scratch buffer — pick Discard or Cancel", .{});
                     return;
                 }
@@ -1174,7 +1174,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.overlay != .none) closeOverlay(app);
             if (app.active != cell.pane) app.showPane(cell.pane);
             const e = app.panes.editor(cell.pane) orelse return;
-            const ed = &e.buf.editor;
+            const ed = e.buf.editor;
             const line = @min(cell.line, ed.lineCount() - 1);
             // The column under the pointer: the hit's first column plus the offset.
             const hit_rect = hitRect(app, m.x, m.y) orelse return;
@@ -1482,7 +1482,7 @@ fn pressOutside(app: *App) void {
 /// press within the double-click window selects the word, a third the
 /// line; and the press anchors a drag-select at its granularity.
 fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) Allocator.Error!void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const now = app.now_ms;
     var count: u8 = 1;
     if (app.last_click) |lc| {
@@ -1520,7 +1520,7 @@ fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) A
 /// The byte under a pointer cell of an editor, if the cell is one.
 fn byteUnder(app: *App, pane: PaneId, x: u16, y: u16) ?usize {
     const e = app.panes.editor(pane) orelse return null;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const entry = app.hits.entryAt(x, y) orelse return null;
     const cell = switch (entry.target) {
         .editor_cell => |c| c,
@@ -1534,7 +1534,7 @@ fn byteUnder(app: *App, pane: PaneId, x: u16, y: u16) ?usize {
 
 fn extendSelection(app: *App, sel: anytype, x: u16, y: u16) void {
     const e = app.panes.editor(sel.pane) orelse return;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     // Off the text (the strip, the gutter row above / below): clamp to
     // the nearest line's edge so a drag past the pane still selects.
     const to = byteUnder(app, sel.pane, x, y) orelse blk: {
@@ -1576,7 +1576,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
     const down = m.kind == .scroll_down;
     switch (pane.*) {
         .editor => |*e| {
-            const ed = &e.buf.editor;
+            const ed = e.buf.editor;
             if (m.mods.shift) {
                 const cur: usize = e.view.scroll_col;
                 e.view.scroll_col = @intCast(if (down) cur + n else cur -| n);
@@ -1932,7 +1932,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             try openFilterPrompt(app, row, last);
         },
         .filter_paragraph_from_cursor => |p| {
-            const range = paragraphRows(&e.buf.editor, p.around);
+            const range = paragraphRows(e.buf.editor, p.around);
             try openFilterPrompt(app, range[0], range[1]);
         },
         .repeat_insert_start => |r| try beginRepeatInsert(app, pane_id, e, r.count, r.above),
@@ -1962,7 +1962,7 @@ pub fn runExLine(app: *App, line: []const u8) Allocator.Error!void {
 // ── visual block ──
 
 fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1: usize } {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const anchor = ed.block_anchor orelse e.block_anchor orelse return null;
     const a = ed.rowColAt(anchor);
     const b = ed.rowCol();
@@ -1973,7 +1973,7 @@ fn blockRect(e: *const EditorPane) ?struct { r0: usize, r1: usize, c0: usize, c1
 /// the cursor on the first row at the insert column, enter Insert, and
 /// remember the rectangle so the typed run is replayed on Esc.
 fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, change: bool) Allocator.Error!void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const eol = ed.block_eol;
     ed.block_eol = false;
     const rect = blockRect(e) orelse {
@@ -1995,7 +1995,7 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
             if (en > s) try ed.splice(s, en, "");
         }
         col = rect.c0;
-        e.hl_dirty = true;
+        e.syntax.dirty = true;
     }
     // `$A`: append at every row's own end.
     const ragged = eol and append and !change;
@@ -2008,7 +2008,7 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
 
 /// `r<ch>` on a visual block: every cell in the rectangle becomes `ch`.
 fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const eol = ed.block_eol;
     ed.block_eol = false;
     const rect = blockRect(e) orelse return;
@@ -2033,8 +2033,8 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
         }
     }
     ed.setCursor(ed.byteAtCol(rect.r0, rect.c0));
-    e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-    e.hl_dirty = true;
+    e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+    e.syntax.dirty = true;
     _ = app;
 }
 
@@ -2042,7 +2042,7 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
 fn beginRepeatInsert(app: *App, pane_id: PaneId, e: *EditorPane, count: u32, above: bool) Allocator.Error!void {
     e.buf.input.requestInsertMode();
     _ = try app.applyOps(e, &.{if (above) .insert_newline_above else .insert_newline_below});
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     app.repeat_insert = .{ .pane = pane_id, .count = count, .above = above, .start_byte = ed.cursor, .len_before = ed.len() };
 }
 
@@ -2056,7 +2056,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         };
         if (e.buf.input.mode() == .insert) return;
         app.block_insert = null;
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         if (ed.len() < b.len_before) return;
         const typed_len = ed.len() - b.len_before;
         if (typed_len == 0 or b.start_byte + typed_len > ed.len()) return;
@@ -2070,8 +2070,8 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
             try ed.splice(at, at, typed);
         }
         ed.setCursor(b.start_byte);
-        e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-        e.hl_dirty = true;
+        e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+        e.syntax.dirty = true;
         app.needs_render = true;
     }
     if (app.repeat_insert) |r| {
@@ -2081,7 +2081,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         };
         if (e.buf.input.mode() == .insert) return;
         app.repeat_insert = null;
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         if (ed.len() < r.len_before) return;
         const typed_len = ed.len() - r.len_before;
         if (r.start_byte + typed_len > ed.len()) return;
@@ -2099,8 +2099,8 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
                 try ed.splice(at, at, with_nl);
             }
         }
-        e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-        e.hl_dirty = true;
+        e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+        e.syntax.dirty = true;
         app.needs_render = true;
     }
 }
@@ -2110,7 +2110,7 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
 /// `dG` / `dgg` / `<n>dG` / `yG`…: `target` null = last line, 0 = first,
 /// n = 1-based line. Whole lines, inclusive, into the unnamed register.
 fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const total = ed.lineCount();
     const cur = ed.currentLine();
     const tgt: usize = if (target) |t| @min(@as(usize, t) -| 1, total - 1) else total - 1;
@@ -2136,8 +2136,8 @@ fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!v
             try ed.splice(del_start, del_end, "");
             const row = @min(r0, ed.lineCount() - 1);
             ed.setCursor(ed.firstNonWs(row));
-            e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-            e.hl_dirty = true;
+            e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+            e.syntax.dirty = true;
         },
         else => {},
     }
@@ -2169,7 +2169,7 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
     const rows = app.filter_rows orelse return;
     app.filter_rows = null;
     const e = app.activeEditor() orelse return;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const start = ed.lineStart(@min(rows[0], ed.lineCount() - 1));
     const end = ed.lineEnd(@min(rows[1], ed.lineCount() - 1));
     const gpa = app.gpa;

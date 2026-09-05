@@ -142,10 +142,10 @@ pub fn forgetPane(app: *App, pane: PaneId) void {
 /// the buffer has been idle, and the hints when the view left their
 /// window. `first`..`last` are the visible lines.
 pub fn onFrame(app: *App, pane: PaneId, e: *EditorPane, first: u32, last: u32) Allocator.Error!void {
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const s = lsp.serverFor(app, path) orelse return;
     if (!s.ready or !s.isOpen(path)) return;
-    const head = e.buf.editor.edits.head();
+    const head = e.buf.doc.edits.head();
     const gop = try app.lsp.decor_track.getOrPut(app.gpa, pane);
     if (!gop.found_existing) gop.value_ptr.* = .{};
     const tr = gop.value_ptr;
@@ -174,12 +174,12 @@ pub fn onFrame(app: *App, pane: PaneId, e: *EditorPane, first: u32, last: u32) A
 /// The hints for a line window; the reply replaces the file's set.
 fn requestHints(app: *App, s: *Server, pane: PaneId, e: *EditorPane, path: []const u8, window: [2]u32, tr: *Track) void {
     const arena = app.frame.allocator();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     const last_line: u32 = @intCast(@min(window[1], ed.lineCount() - 1));
     const uri = types.uriFromPath(arena, path) catch return;
     const range: types.Range = .{ .start = .{ .line = window[0], .character = 0 }, .end = types.positionOf(text, ed.lineEnd(last_line), s.encoding) };
-    const head = ed.edits.head();
+    const head = ed.doc.edits.head();
     _ = s.request(.inlay_hint, "textDocument/inlayHint", .{ .textDocument = .{ .uri = uri }, .range = range }, .{ .pane = pane, .extra = seqLow(head) }) catch return;
     tr.hint_lines = .{ window[0], last_line };
     tr.hint_seq = head;
@@ -213,9 +213,9 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
         return false;
     }
     const e = app.panes.editor(ctx.pane) orelse return false;
-    const path = e.buf.path orelse return false;
+    const path = e.buf.doc.path orelse return false;
     const fd = (try fileDecor(app, path, true)).?;
-    const head = e.buf.editor.edits.head();
+    const head = e.buf.doc.edits.head();
     const seq: u64 = if (seqLow(head) == ctx.extra) head else 0;
     var adopted = false;
     switch (kind) {
@@ -263,10 +263,10 @@ fn setFresh(comptime T: type, set: *const Set(T), head: u64) bool {
 
 /// Hints and colour swatches as virtual text, sorted by byte.
 pub fn virtualTextFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.VirtualText {
-    const path = e.buf.path orelse return &.{};
+    const path = e.buf.doc.path orelse return &.{};
     const fd = app.lsp.decor.get(path) orelse return &.{};
-    const ed = &e.buf.editor;
-    const head = ed.edits.head();
+    const ed = e.buf.editor;
+    const head = ed.doc.edits.head();
     const enc = if (lsp.serverFor(app, path)) |s| s.encoding else .utf16;
     var out: std.ArrayListUnmanaged(editor_view.VirtualText) = .empty;
     if (app.cfg.editor.inlay_hints and setFresh(types.InlayHint, &fd.hints, head)) {
@@ -304,9 +304,9 @@ fn byteAt(ed: anytype, pos: types.Position, enc: types.Encoding) usize {
 /// One row per line that has lenses: the titles, each a click target.
 pub fn virtualLinesFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme, ascii: bool) Allocator.Error![]editor_view.VirtualLine {
     if (!app.cfg.editor.code_lens) return &.{};
-    const path = e.buf.path orelse return &.{};
+    const path = e.buf.doc.path orelse return &.{};
     const fd = app.lsp.decor.get(path) orelse return &.{};
-    const head = e.buf.editor.edits.head();
+    const head = e.buf.doc.edits.head();
     if (!setFresh(types.CodeLens, &fd.lenses, head)) return &.{};
     var out: std.ArrayListUnmanaged(editor_view.VirtualLine) = .empty;
     var segs: std.ArrayListUnmanaged(editor_view.VirtualSeg) = .empty;
@@ -329,10 +329,10 @@ pub fn virtualLinesFor(app: *App, arena: Allocator, e: *EditorPane, theme: *cons
 
 /// Document links as single underlines in the accent colour.
 pub fn linkUnderlinesFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme) Allocator.Error![]editor_view.Underline {
-    const path = e.buf.path orelse return &.{};
+    const path = e.buf.doc.path orelse return &.{};
     const fd = app.lsp.decor.get(path) orelse return &.{};
-    const ed = &e.buf.editor;
-    if (!setFresh(types.DocumentLink, &fd.links, ed.edits.head())) return &.{};
+    const ed = e.buf.editor;
+    if (!setFresh(types.DocumentLink, &fd.links, ed.doc.edits.head())) return &.{};
     const enc = if (lsp.serverFor(app, path)) |s| s.encoding else .utf16;
     var out: std.ArrayListUnmanaged(editor_view.Underline) = .empty;
     var style = theme.accent;
@@ -363,7 +363,7 @@ pub fn mergeUnderlines(arena: Allocator, prime: []const editor_view.Underline, o
 /// Run lens `idx` of the pane's file: its command, else resolve it first.
 pub fn runLens(app: *App, pane: PaneId, idx: usize) Allocator.Error!void {
     const e = app.panes.editor(pane) orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const fd = app.lsp.decor.get(path) orelse return;
     if (idx >= fd.lenses.items.len) return;
     const lens = fd.lenses.items[idx];
@@ -391,7 +391,7 @@ pub fn runLens(app: *App, pane: PaneId, idx: usize) Allocator.Error!void {
 /// A resolved lens: its title lands on the set, its command runs.
 fn runResolvedLens(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Error!void {
     const r = result orelse return;
-    if (app.panes.editor(ctx.pane)) |e| if (e.buf.path) |path| if (app.lsp.decor.get(path)) |fd| {
+    if (app.panes.editor(ctx.pane)) |e| if (e.buf.doc.path) |path| if (app.lsp.decor.get(path)) |fd| {
         const idx: usize = ctx.extra;
         if (idx < fd.lenses.items.len) if (jsonrpc.getObj(r, "command")) |cmd| if (jsonrpc.getStr(cmd, "title")) |title| {
             fd.lenses.items[idx].title = try fd.lenses.arena.allocator().dupe(u8, title);
@@ -413,9 +413,9 @@ pub fn scriptHit(app: *App, pane: PaneId, id: u32) Allocator.Error!void {
 pub fn lensAtCursor(app: *App) ?struct { pane: PaneId, idx: usize } {
     const pane = app.active orelse return null;
     const e = app.panes.editor(pane) orelse return null;
-    const path = e.buf.path orelse return null;
+    const path = e.buf.doc.path orelse return null;
     const fd = app.lsp.decor.get(path) orelse return null;
-    if (!app.cfg.editor.code_lens or !setFresh(types.CodeLens, &fd.lenses, e.buf.editor.edits.head())) return null;
+    if (!app.cfg.editor.code_lens or !setFresh(types.CodeLens, &fd.lenses, e.buf.doc.edits.head())) return null;
     const line: u32 = @intCast(e.buf.editor.currentLine());
     for (fd.lenses.items, 0..) |l, i| if (l.range.start.line == line) return .{ .pane = pane, .idx = i };
     return null;
@@ -446,9 +446,9 @@ pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
 /// `scheme://…` token on the line.
 pub fn linkAtCursor(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     const e = app.activeEditor() orelse return null;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const cur = ed.cursor;
-    if (e.buf.path) |path| if (app.lsp.decor.get(path)) |fd| if (setFresh(types.DocumentLink, &fd.links, ed.edits.head())) {
+    if (e.buf.doc.path) |path| if (app.lsp.decor.get(path)) |fd| if (setFresh(types.DocumentLink, &fd.links, ed.doc.edits.head())) {
         const enc = if (lsp.serverFor(app, path)) |s| s.encoding else .utf16;
         for (fd.links.items) |l| {
             const start = byteAt(ed, l.range.start, enc);
@@ -520,7 +520,7 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
         }
         fn hintsFresh(a: *App) bool {
             const fd = a.lsp.decor.get(lsp.TestRig.file) orelse return false;
-            return fd.hints.seq != 0 and fd.hints.seq == a.activeEditor().?.buf.editor.edits.head();
+            return fd.hints.seq != 0 and fd.hints.seq == a.activeEditor().?.buf.doc.edits.head();
         }
         fn ranOne(a: *App) bool {
             return std.mem.indexOf(u8, a.lastToast() orelse return false, "ran refs #1") != null;

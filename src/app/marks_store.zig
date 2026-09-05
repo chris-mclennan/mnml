@@ -49,7 +49,7 @@ pub fn pathFor(arena: Allocator, data_root: []const u8) Allocator.Error![]u8 {
 
 /// `m<A-Z>` on `e`: a scratch buffer has nowhere to point.
 pub fn set(app: *App, e: *const EditorPane, letter: u8) Allocator.Error!void {
-    const path = e.buf.path orelse {
+    const path = e.buf.doc.path orelse {
         app.toast("global marks need a saved file", .{});
         return;
     };
@@ -69,7 +69,7 @@ pub fn jump(app: *App, letter: u8, exact: bool) Allocator.Error!void {
         app.toast("no mark '{c}", .{letter});
         return;
     };
-    const here_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.path else null;
+    const here_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.doc.path else null;
     if (here_path == null or !std.mem.eql(u8, here_path.?, m.path)) {
         try app.noteRecent(m.path);
         _ = app.openEditor(m.path) catch |err| switch (err) {
@@ -81,7 +81,7 @@ pub fn jump(app: *App, letter: u8, exact: bool) Allocator.Error!void {
         };
     }
     const e = app.activeEditor() orelse return;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = @min(m.row, ed.lineCount() - 1);
     if (exact) ed.placeCursor(row, m.col) else {
         ed.cursor = ed.firstNonWs(row);
@@ -239,12 +239,12 @@ test "global marks: `mA` in one file, `'A` from another opens it and lands on th
         defer t.allocator.free(text);
         try t.expect(std.mem.indexOf(u8, text, ".letter = 65") != null);
         // The buffer never saw it as a local mark.
-        try t.expect(!app.activeEditor().?.buf.marks.contains('A'));
+        try t.expect(!app.activeEditor().?.buf.doc.marks.contains('A'));
         // From another file: `'A` opens a.txt, lands on the first non-blank.
         _ = try app.openEditor(b);
         try feed(&app, "'A");
         const e = app.activeEditor().?;
-        try t.expectEqualStrings(a, e.buf.path.?);
+        try t.expectEqualStrings(a, e.buf.doc.path.?);
         try t.expectEqual(@as(usize, 1), e.buf.editor.rowCol().row);
         try t.expectEqual(@as(usize, 2), e.buf.editor.rowCol().col);
         try t.expectEqualStrings("→ 'A 2:3", app.lastToast().?);
@@ -252,7 +252,7 @@ test "global marks: `mA` in one file, `'A` from another opens it and lands on th
         _ = try app.openEditor(b);
         try feed(&app, "`A");
         try t.expectEqual(@as(usize, 6), app.activeEditor().?.buf.editor.rowCol().col);
-        try t.expectEqualStrings(a, app.activeEditor().?.buf.path.?);
+        try t.expectEqualStrings(a, app.activeEditor().?.buf.doc.path.?);
         // Not set.
         try feed(&app, "'Z");
         try t.expectEqualStrings("no mark 'Z", app.lastToast().?);
@@ -296,7 +296,7 @@ test "global marks: `mA` in one file, `'A` from another opens it and lands on th
         try t.expect(app.activeEditor() == null);
         _ = try app.openScratch();
         try feed(&app, "'C");
-        try t.expectEqualStrings(a, app.activeEditor().?.buf.path.?);
+        try t.expectEqualStrings(a, app.activeEditor().?.buf.doc.path.?);
         try t.expectEqual(@as(usize, 1), app.activeEditor().?.buf.editor.rowCol().row);
     }
     // No data root: nothing is written.

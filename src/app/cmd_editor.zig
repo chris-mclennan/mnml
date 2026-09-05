@@ -144,7 +144,7 @@ fn isTodoLine(line: []const u8) bool {
 /// section). Toasts `none` when nothing matches.
 fn jumpToLine(app: *App, comptime pred: fn ([]const u8) bool, forward: bool, land_on_end: bool, none: []const u8) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const cur = ed.currentLine();
     const total = ed.lineCount();
     var row = cur;
@@ -205,11 +205,11 @@ fn gotoLine(app: *App) CommandError!void {
 
 fn fileInfo(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = ed.currentLine() + 1;
     const total = ed.lineCount();
     const pct = if (total == 0) 0 else row * 100 / total;
-    app.toast("{s}{s} · Ln {d}/{d} · {d}%", .{ if (e.buf.path) |p| app.relPath(p) else "[scratch]", if (e.buf.dirty) " [+]" else "", row, total, pct });
+    app.toast("{s}{s} · Ln {d}/{d} · {d}%", .{ if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]", if (e.buf.doc.dirty) " [+]" else "", row, total, pct });
 }
 
 // ─── folds (Rust `fold_methods.rs`) ─────────────────────────────────────
@@ -228,16 +228,16 @@ fn closeFold(app: *App) CommandError!void {
 
 /// The closed fold whose range holds `row`, if any.
 fn foldOwning(e: *const EditorPane, row: usize) ?usize {
-    for (e.buf.folds.keys(), e.buf.folds.values()) |s, en| if (row >= s and row <= en) return s;
+    for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |s, en| if (row >= s and row <= en) return s;
     return null;
 }
 
 fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = ed.currentLine();
     if (action != .close) if (foldOwning(e, row)) |owner| {
-        _ = e.buf.folds.orderedRemove(owner);
+        _ = e.buf.editor.folds.orderedRemove(owner);
         app.toast("unfolded line {d}", .{owner + 1});
         app.needs_render = true;
         return;
@@ -247,14 +247,14 @@ fn foldAtCursor(app: *App, action: FoldAction) CommandError!void {
         app.toast("nothing to fold here", .{});
         return;
     };
-    try e.buf.folds.put(app.gpa, best[0], best[1]);
+    try e.buf.editor.folds.put(app.gpa, best[0], best[1]);
     // Keep the map sorted by start so the view walks it in order.
-    e.buf.folds.sort(struct {
+    e.buf.editor.folds.sort(struct {
         keys: []const usize,
         pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
             return ctx.keys[a] < ctx.keys[b];
         }
-    }{ .keys = e.buf.folds.keys() });
+    }{ .keys = e.buf.editor.folds.keys() });
     if (row > best[0]) ed.setCursor(ed.lineStart(best[0]));
     app.toast("folded {d} lines", .{best[1] - best[0]});
     app.needs_render = true;
@@ -346,7 +346,7 @@ fn matchBackward(text: []const u8, close_byte: usize, open: u8, close: u8) ?usiz
 /// swallowed it.
 fn foldAllBrackets(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     const arena = app.frame.allocator();
     var stack: std.ArrayListUnmanaged(usize) = .empty;
@@ -360,8 +360,8 @@ fn foldAllBrackets(app: *App) CommandError!void {
                 const o = stack.pop() orelse continue;
                 const lo = ed.lineOfByte(o);
                 const hi = ed.lineOfByte(i);
-                if (hi <= lo or e.buf.folds.contains(lo)) continue;
-                try e.buf.folds.put(app.gpa, lo, hi);
+                if (hi <= lo or e.buf.editor.folds.contains(lo)) continue;
+                try e.buf.editor.folds.put(app.gpa, lo, hi);
                 added += 1;
             }
         }
@@ -370,12 +370,12 @@ fn foldAllBrackets(app: *App) CommandError!void {
         app.toast("nothing to fold", .{});
         return;
     }
-    e.buf.folds.sort(struct {
+    e.buf.editor.folds.sort(struct {
         keys: []const usize,
         pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
             return ctx.keys[a] < ctx.keys[b];
         }
-    }{ .keys = e.buf.folds.keys() });
+    }{ .keys = e.buf.editor.folds.keys() });
     if (foldOwning(e, ed.currentLine())) |owner| if (ed.currentLine() > owner) ed.setCursor(ed.lineStart(owner));
     app.toast("folded {d} block(s)", .{added});
     app.needs_render = true;
@@ -383,8 +383,8 @@ fn foldAllBrackets(app: *App) CommandError!void {
 
 fn unfoldAll(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const n = e.buf.folds.count();
-    e.buf.folds.clearRetainingCapacity();
+    const n = e.buf.editor.folds.count();
+    e.buf.editor.folds.clearRetainingCapacity();
     app.toast("unfolded {d} fold(s)", .{n});
     app.needs_render = true;
 }
@@ -396,7 +396,7 @@ fn unfoldAll(app: *App) CommandError!void {
 /// Silent when there is nothing to match.
 fn bracketMatch(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     const pairs = [_][2]u8{ .{ '(', ')' }, .{ '[', ']' }, .{ '{', '}' } };
     var at = ed.cursor;
@@ -424,7 +424,7 @@ fn bracketKind(c: u8, pairs: []const [2]u8) ?struct { idx: usize, open: bool } {
 
 fn jumpPrevEdit(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const list = e.buf.editor.change_list.items;
+    const list = e.buf.doc.change_list.items;
     if (list.len == 0) {
         app.toast("no earlier edit", .{});
         return;
@@ -446,7 +446,7 @@ fn jumpPrevEdit(app: *App) CommandError!void {
 
 fn jumpNextEdit(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const list = e.buf.editor.change_list.items;
+    const list = e.buf.doc.change_list.items;
     const nav = app.change_nav orelse {
         app.toast("at newest edit", .{});
         return;
@@ -485,14 +485,14 @@ test "fold_all_brackets closes every multi-line pair once, outermost first per s
     e.buf.editor.setCursor(e.buf.editor.lineStart(2));
     try command.run(&app, .{ .static = .@"editor.fold_all_brackets" });
     // `{…}` 0–4, `[…]` 1–3, `(…)` 5–7; `(1)` is one line.
-    try t.expectEqualSlices(usize, &.{ 0, 1, 5 }, e.buf.folds.keys());
-    try t.expectEqualSlices(usize, &.{ 4, 3, 7 }, e.buf.folds.values());
+    try t.expectEqualSlices(usize, &.{ 0, 1, 5 }, e.buf.editor.folds.keys());
+    try t.expectEqualSlices(usize, &.{ 4, 3, 7 }, e.buf.editor.folds.values());
     try t.expectEqualStrings("folded 3 block(s)", app.lastToast().?);
     try t.expectEqual(@as(usize, 0), e.buf.editor.currentLine());
     // Again: nothing new.
     try command.run(&app, .{ .static = .@"editor.fold_all_brackets" });
     try t.expectEqualStrings("nothing to fold", app.lastToast().?);
-    try t.expectEqual(@as(usize, 3), e.buf.folds.count());
+    try t.expectEqual(@as(usize, 3), e.buf.editor.folds.count());
 }
 
 test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, unfold_all clears" {
@@ -501,23 +501,23 @@ test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, un
     const e = app.activeEditor().?;
     e.buf.editor.placeCursor(2, 4);
     try command.run(&app, .{ .static = .@"editor.toggle_fold" });
-    try t.expectEqual(@as(usize, 1), e.buf.folds.count());
-    try t.expectEqual(@as(usize, 0), e.buf.folds.keys()[0]);
-    try t.expectEqual(@as(usize, 4), e.buf.folds.values()[0]);
+    try t.expectEqual(@as(usize, 1), e.buf.editor.folds.count());
+    try t.expectEqual(@as(usize, 0), e.buf.editor.folds.keys()[0]);
+    try t.expectEqual(@as(usize, 4), e.buf.editor.folds.values()[0]);
     try t.expectEqualStrings("folded 4 lines", app.lastToast().?);
     // Closing again is a no-op; opening removes; opening twice stays open.
     try command.run(&app, .{ .static = .@"editor.close_fold" });
-    try t.expectEqual(@as(usize, 1), e.buf.folds.count());
+    try t.expectEqual(@as(usize, 1), e.buf.editor.folds.count());
     try command.run(&app, .{ .static = .@"editor.open_fold" });
-    try t.expectEqual(@as(usize, 0), e.buf.folds.count());
+    try t.expectEqual(@as(usize, 0), e.buf.editor.folds.count());
     try command.run(&app, .{ .static = .@"editor.open_fold" });
-    try t.expectEqual(@as(usize, 0), e.buf.folds.count());
+    try t.expectEqual(@as(usize, 0), e.buf.editor.folds.count());
     // A header line folds its own block.
     e.buf.editor.placeCursor(0, 0);
     try command.run(&app, .{ .static = .@"editor.toggle_fold" });
-    try t.expectEqual(@as(usize, 1), e.buf.folds.count());
+    try t.expectEqual(@as(usize, 1), e.buf.editor.folds.count());
     try command.run(&app, .{ .static = .@"editor.unfold_all" });
-    try t.expectEqual(@as(usize, 0), e.buf.folds.count());
+    try t.expectEqual(@as(usize, 0), e.buf.editor.folds.count());
     e.buf.editor.placeCursor(5, 0);
     try command.run(&app, .{ .static = .@"editor.toggle_fold" });
     try t.expectEqualStrings("nothing to fold here", app.lastToast().?);

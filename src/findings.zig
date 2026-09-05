@@ -564,10 +564,10 @@ fn resolveCmd(app: *App) CommandError!void {
     Io.Dir.cwd().writeFile(app.io, .{ .sub_path = abs, .data = out }) catch |err| {
         return app.diag.fail(arena, "findings: write {s}: {s}", .{ rel, @errorName(err) });
     };
-    if (app.panes.findPath(abs)) |id| if (app.panes.editor(id)) |e| if (!e.buf.dirty) {
+    if (app.panes.findPath(abs)) |id| if (app.panes.editor(id)) |e| if (!e.buf.doc.dirty) {
         e.buf.editor.setText(out) catch return error.OutOfMemory;
         e.buf.markSaved() catch return error.OutOfMemory;
-        e.hl_dirty = true;
+        e.syntax.dirty = true;
     };
     app.toast("resolved {s}", .{rel});
     try refresh(app);

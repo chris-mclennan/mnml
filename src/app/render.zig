@@ -446,13 +446,27 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
     }
 }
 
-/// The tabs of leaf `lid` for the strip.
+/// The tabs of leaf `lid` for the strip. The strip lists documents,
+/// not windows: a second window on a file already in the strip folds
+/// into the first tab (which is active when either window is).
 fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
     var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
     const leaf = layout.leaf(lid) orelse return tabs.items;
     for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
-        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file, .pinned = p.pinned() });
+        const active = leaf.active == id;
+        if (p.asEditor()) |e| {
+            var folded = false;
+            for (tabs.items) |*tab| {
+                const other = app.panes.editor(tab.id) orelse continue;
+                if (other.buf.doc != e.buf.doc) continue;
+                tab.active = tab.active or active;
+                folded = true;
+                break;
+            }
+            if (folded) continue;
+        }
+        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = active, .kind = if (p.* == .pty) .pty else .file, .pinned = p.pinned() });
     }
     return tabs.items;
 }
@@ -465,7 +479,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
     const pane = app.panes.get(active) orelse return 0;
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
-        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
+        .editor => |*e| if (e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
         .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
     };
     const w = ui.width(label);
@@ -483,7 +497,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
 /// — a clipped path reads as a different file.
 fn drawBreadcrumb(app: *App, ui: Ui, pane: *app_mod.Pane, strip: Rect, reserved: u16) void {
     const path = switch (pane.*) {
-        .editor => |*e| e.buf.path orelse return,
+        .editor => |*e| e.buf.doc.path orelse return,
         .md_preview => |*m| m.path,
         else => return,
     };
@@ -754,9 +768,9 @@ fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
 /// and the first change mark it finds for a line (one column each; in
 /// a one-cell gutter the sign wins).
 fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
-    const d = try dap.marksFor(app, arena, e.buf.path, &app.theme, ascii);
-    const l = try lsp.marksFor(app, arena, e.buf.path, &app.theme, ascii);
-    const g: []const editor_view.GutterMark = if (e.buf.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
+    const d = try dap.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
+    const l = try lsp.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
+    const g: []const editor_view.GutterMark = if (e.buf.doc.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
     if (l.len == 0 and g.len == 0) return d;
     if (d.len == 0 and g.len == 0) return l;
     if (d.len == 0 and l.len == 0) return g;
@@ -795,22 +809,30 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         bar = s.rest;
     };
     const focused = app.active == id and app.focus == .pane;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
+    // Another window's edit above this one's viewport moved the lines
+    // under it: the scroll follows so the same text stays in view.
+    for (try ed.takeLineShifts(app.frame.allocator())) |sh| {
+        if (e.view.scroll_line > sh.row) {
+            const moved = @as(isize, @intCast(e.view.scroll_line)) + sh.delta;
+            e.view.scroll_line = @intCast(@max(moved, @as(isize, @intCast(sh.row))));
+        }
+    }
     // The language server hears every edit before the frame paints.
     lsp.syncPane(app, id, e);
     // Highlighting: every frame folds the edits since the last one into
     // the tree and slides the cached spans along, so what is painted
     // lines up with the text; the reparse itself waits for the idle
     // gate — or runs at once for a first parse or a lost log.
-    if (e.hl_dirty and e.hl_since_ms == null) e.hl_since_ms = app.now_ms;
+    if (e.syntax.dirty and e.syntax.since_ms == null) e.syntax.since_ms = app.now_ms;
     const lost = e.syntax.absorb(ed);
-    const due = e.hl_dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.hl_since_ms.? >= syntax.idle_ms);
+    const due = e.syntax.dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.syntax.since_ms.? >= syntax.idle_ms);
     if (due) {
         try e.syntax.refresh(ed);
-        e.hl_dirty = false;
-        e.hl_since_ms = null;
+        e.syntax.dirty = false;
+        e.syntax.since_ms = null;
     }
-    ed.edits.trim(e.syntax.seen_seq);
+    ed.doc.edits.trim(e.syntax.seen_seq);
     // Spans for a window around the viewport and the cursor — the view
     // may scroll to the cursor inside `draw`, so both are covered.
     const line_count = ed.lineCount();
@@ -825,8 +847,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     try decor.onFrame(app, id, e, first_vis, last_vis);
     const base_spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
     const spans = try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line);
-    const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());
-    for (e.buf.folds.keys(), e.buf.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
+    const folds = try arena.alloc(editor_view.Fold, e.buf.editor.folds.count());
+    for (e.buf.editor.folds.keys(), e.buf.editor.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
     for (e.find.matches.items, 0..) |m, i| matches[i] = .{ .start = m.start, .end = m.end };
     const mode = e.buf.input.mode();
@@ -876,7 +898,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .word_matches = if (app.cfg.ui.highlight_word_under_cursor) try wordMatches(arena, ed, ed.lineStart(lo_line), ed.lineEnd(hi_line)) else &.{},
         .todo_keywords = app.cfg.ui.highlight_todo_keywords,
         .color_column = app.cfg.ui.color_column,
-        .render_markdown = app.cfg.ui.render_markdown and e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?),
+        .render_markdown = app.cfg.ui.render_markdown and e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);
@@ -956,7 +978,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     };
     var lsp_seg: ?[]const u8 = null;
     if (app.activeEditor()) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         const mode = e.buf.input.mode();
         info.mode_label = mode.label() orelse "EDIT";
         info.mode_kind = switch (mode) {
@@ -966,8 +988,8 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             .replace => .replace,
             .visual, .visual_line, .visual_block => .visual,
         };
-        info.file = if (e.buf.path) |p| app.relPath(p) else "[scratch]";
-        info.dirty = e.buf.dirty;
+        info.file = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
+        info.dirty = e.buf.doc.dirty;
         const pos = ed.rowCol();
         info.line = @intCast(pos.row + 1);
         info.col = @intCast(pos.col + 1);
