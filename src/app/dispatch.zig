@@ -50,6 +50,7 @@ const statusline = @import("../ui/statusline.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const cmd_term = @import("cmd_term.zig");
 const ai_apply = @import("ai_apply.zig");
+const launch_profiles = @import("launch_profiles.zig");
 const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
@@ -537,6 +538,13 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
             .notes, .findings, .sessions, .git, .diagnostics, .http => {},
+        },
+        .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                if (app.diag.msg) |m| app.toast("{s}", .{m});
+                app.diag.clear();
+            },
         },
         .none => {},
     }

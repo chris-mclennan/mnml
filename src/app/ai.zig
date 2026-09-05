@@ -37,6 +37,7 @@ const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
+const launch_profiles = @import("launch_profiles.zig");
 
 pub const table = .{
     .@"ai.ask" = &askCmd,
@@ -151,6 +152,9 @@ pub const State = struct {
     meter_generation: u32 = 0,
     chip_detail: ChipDetail = .both,
     chip_reset_suffix: bool = false,
+    /// A default profile name set this session (`launch_profiles.setDefault`);
+    /// the config borrows it until the next load.
+    owned_default: ?[]u8 = null,
     cloud_compact: bool = false,
     /// The workers posting `.spend` for the meter (no pane).
     spend_group: Io.Group = .init,
@@ -162,6 +166,7 @@ pub const State = struct {
         self.spend_group.cancel(io);
         for (self.jobs.items) |j| gpa.destroy(j);
         self.jobs.deinit(gpa);
+        if (self.owned_default) |d| gpa.free(d);
     }
 
     pub fn job(self: *State, id: u64) ?*Job {
@@ -1091,29 +1096,23 @@ pub fn encodeWorkspace(arena: Allocator, ws: []const u8) Allocator.Error![]u8 {
 
 // ─── commands: sessions as pty panes ────────────────────────────────────
 
-pub const Product = enum { claude, codex };
+pub const Product = launch_profiles.Product;
 
-fn productArgv(product: Product) []const []const u8 {
-    return switch (product) {
-        .claude => &.{cli.claude_binary},
-        .codex => &.{cli.codex_binary},
-    };
-}
-
-/// Open an interactive session. `ai_layout_mode = "tabs"` puts every
-/// new session on the active leaf's strip; the default splits.
+/// Open an interactive session with the product's default launch
+/// profile (`launch_profiles.zig`). `ai_layout_mode = "tabs"` puts
+/// every new session on the active leaf's strip; the default splits.
 fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!PaneId {
     if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in [ai.routing]", .{@tagName(product)});
     const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else false;
     const where: pty_pane.Placement = placement orelse (if (tabs) .tab else .right);
-    return pty_pane.open(app, .{ .argv = productArgv(product), .label = @tagName(product), .placement = where, .kind = .command });
+    return launch_profiles.openSessionWith(app, product, launch_profiles.defaultName(app, product), where);
 }
 
-/// The live session pane of `product`, if one is open.
+/// The live session pane of `product`, if one is open — the bare
+/// binary or one of its profile shims.
 pub fn findSession(app: *App, product: Product) ?PaneId {
-    const want = productArgv(product)[0];
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
-        .pty => |*term| if (term.exit == null and term.argv.len > 0 and std.mem.eql(u8, term.argv[0], want)) return @intCast(i),
+        .pty => |*term| if (term.exit == null and term.argv.len > 0 and launch_profiles.isProductArgv(app, term.argv[0], product)) return @intCast(i),
         else => {},
     };
     return null;

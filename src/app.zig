@@ -1572,6 +1572,7 @@ test {
     _ = @import("ui/agents_view.zig");
     _ = @import("ui/spend_view.zig");
     _ = @import("app/ai_apply.zig");
+    _ = @import("app/launch_profiles.zig");
     _ = @import("ui/ai_apply_view.zig");
     _ = @import("todos.zig");
     _ = @import("app/git.zig");

@@ -515,10 +515,15 @@ fn runDyn(app: *App, slot: u32) CommandError!void {
 
 /// What a context-menu row does. A static command is an enum — a menu
 /// cannot name an id that does not exist.
+/// A row of the AI chip's profile menu (`app/launch_profiles.zig`):
+/// `index` 0 is the built-in profile, else the product's `index - 1`th.
+pub const AiProfileAction = struct { product: @import("../config/Config.zig").AiProduct, index: u16, set_default: bool };
+
 pub const MenuAction = union(enum) {
     command: CommandId,
     dyn: u32,
     set_panel_sort: struct { panel: panel.PanelId, sort: panel.ListSort },
+    ai_profile: AiProfileAction,
     none,
 };
 
