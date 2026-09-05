@@ -79,6 +79,25 @@ pub fn clipCells(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options)
     return out;
 }
 
+/// Byte length of the longest grapheme prefix of `s` that fits in
+/// `max_cells` — no ellipsis, never past `s.len`. The wrap primitive:
+/// `clipCells` marks a cut with "…", which can make the clipped form
+/// longer in bytes than the text it came from, so a caller slicing the
+/// original by the clipped length walks off its end.
+pub fn fitCells(s: []const u8, max_cells: u16, method: Method) usize {
+    var used: u16 = 0;
+    var end: usize = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| {
+        const bytes = g.bytes(s);
+        const w = width(bytes, method);
+        if (used + w > max_cells) break;
+        used += w;
+        end = g.start + g.len;
+    }
+    return end;
+}
+
 fn expectClip(expected: []const u8, s: []const u8, max: u16, opts: Options) !void {
     const got = try clipCells(std.testing.allocator, s, max, opts);
     defer std.testing.allocator.free(got);
@@ -90,6 +109,19 @@ test "fits: returned whole" {
     try expectClip("hello", "hello", 40, .{});
     try expectClip("", "", 0, .{});
     try expectClip("漢字", "漢字", 4, .{});
+}
+
+test "fitCells: the prefix that fits, in bytes, never past the text" {
+    try std.testing.expectEqual(@as(usize, 5), fitCells("hello world", 5, .unicode));
+    try std.testing.expectEqual(@as(usize, 3), fitCells("abc", 10, .unicode));
+    try std.testing.expectEqual(@as(usize, 0), fitCells("abc", 0, .unicode));
+    // A wide glyph is never torn: 3 cells hold one 漢 (3 bytes), not half of 字.
+    try std.testing.expectEqual(@as(usize, 3), fitCells("漢字", 3, .unicode));
+    try std.testing.expectEqual(@as(usize, 6), fitCells("漢字", 4, .unicode));
+    // The case that panicked the commit detail: 41 cells at width 40 is
+    // 40 bytes, where the "…"-clipped form is 42.
+    const line = "x" ** 41;
+    try std.testing.expectEqual(@as(usize, 40), fitCells(line, 40, .unicode));
 }
 
 test "ascii clip with each ellipsis" {
