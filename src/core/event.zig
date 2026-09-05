@@ -12,6 +12,8 @@ const Allocator = std.mem.Allocator;
 const key = @import("key.zig");
 const todos = @import("../todos.zig");
 const http_client = @import("../http/client.zig");
+const ws_pane = @import("../app/ws_pane.zig");
+const browser_pane = @import("../app/browser_pane.zig");
 
 pub const PtyId = u32;
 
@@ -24,10 +26,8 @@ pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, 
 // replaces the placeholder with its real type when it lands.
 pub const LspEvent = struct { _todo: u8 = 0 }; // TODO(lsp)
 pub const DapEvent = struct { _todo: u8 = 0 }; // TODO(dap)
-pub const CdpEvent = struct { _todo: u8 = 0 }; // TODO(cdp)
 pub const GitResult = struct { _todo: u8 = 0 }; // TODO(git)
 pub const SseChunk = struct { _todo: u8 = 0 }; // TODO(http)
-pub const WsFrame = struct { _todo: u8 = 0 }; // TODO(http)
 pub const AiMsg = struct { _todo: u8 = 0 }; // TODO(ai)
 pub const SonosUpdate = struct { _todo: u8 = 0 }; // TODO(sonos)
 pub const NowPlaying = struct { _todo: u8 = 0 }; // TODO(now_playing)
@@ -45,12 +45,14 @@ pub const AppEvent = union(enum) {
 
     lsp: struct { server: u32, msg: *LspEvent },
     dap: struct { session: u32, msg: *DapEvent },
-    cdp: CdpEvent,
+    /// The CDP worker: connected / a raw message / closed. Owned.
+    cdp: *browser_pane.CdpEvent,
     git: *GitResult,
     /// A finished send. Owned; `http.handle` adopts the response.
     http: *http_client.JobResult,
     sse: SseChunk,
-    ws: WsFrame,
+    /// The WebSocket pane's reader: open / a message / closed. Owned.
+    ws: *ws_pane.WsEvent,
     ai: struct { job: u64, msg: AiMsg },
     pty_readable: PtyId,
     sonos: SonosUpdate,
@@ -83,9 +85,11 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .dap => |d| gpa.destroy(d.msg),
         .git => |p| gpa.destroy(p),
         .http => |p| p.destroy(gpa),
+        .cdp => |p| p.destroy(gpa),
+        .ws => |p| p.destroy(gpa),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| gpa.destroy(p),
-        .key, .mouse, .winsize, .focus, .cdp, .sse, .ws, .ai, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
+        .key, .mouse, .winsize, .focus, .sse, .ai, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
 }
 

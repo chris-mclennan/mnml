@@ -290,7 +290,14 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
-            try @import("cmd_http.zig").acceptPicker(app, kind, i, label);
+            switch (kind) {
+                .ws_history => _ = @import("ws_pane.zig").open(app, label) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                },
+                .browser_device, .browser_throttle, .browser_url_history => try @import("cmd_browser.zig").acceptPicker(app, kind, i, label),
+                else => try @import("cmd_http.zig").acceptPicker(app, kind, i, label),
+            }
         },
     }
     app.needs_render = true;

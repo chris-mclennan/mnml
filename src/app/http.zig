@@ -96,6 +96,8 @@ pub const State = struct {
     sync_normalize: bool = false,
     /// Panes whose send is in flight, for the spinner.
     sending: u32 = 0,
+    /// Lines a `.ws` file queued for a pane that is still connecting.
+    ws_queue: std.ArrayListUnmanaged(struct { pane: PaneId, text: []u8 }) = .empty,
 
     pub fn init(gpa: Allocator) State {
         return .{ .picker_arena = .init(gpa) };
@@ -110,6 +112,8 @@ pub const State = struct {
         if (self.bench) |*b| b.deinit(gpa);
         if (self.jar) |*j| j.deinit();
         if (self.picker_title) |t| gpa.free(t);
+        for (self.ws_queue.items) |q| gpa.free(q.text);
+        self.ws_queue.deinit(gpa);
         self.picker_arena.deinit();
     }
 

@@ -1,0 +1,1046 @@
+//! `Pane.browser` — a Chrome the IDE drives over CDP. The pane keeps
+//! the live log (console, navigations, eval results), the filtered
+//! network list (Document / XHR / Fetch), the cookies / storage / perf /
+//! DOM panels, snapshots, and the URL history. A worker thread owns
+//! the process and the WebSocket: launch → `/json` → connect → enable
+//! the domains, then every message it reads is posted as `.cdp` and
+//! routed here on the UI thread. Requests the pane makes go straight
+//! to the socket; the reply is matched by id to what it was for.
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const PaneId = app_mod.PaneId;
+const Key = app_mod.Key;
+const key_mod = @import("../core/key.zig");
+const Mouse = key_mod.Mouse;
+const command = @import("../core/command.zig");
+const CommandError = command.CommandError;
+const event = @import("../core/event.zig");
+const Rect = @import("../ui/rect.zig");
+const Ui = @import("../ui/context.zig");
+const view = @import("../ui/browser_view.zig");
+const cdp = @import("../cdp/client.zig");
+const parse = @import("../http/parse.zig");
+const captured = @import("../http/captured.zig");
+const history = @import("../http/history.zig");
+const http = @import("http.zig");
+
+pub const LogKind = view.LogKind;
+pub const Panel = view.Panel;
+
+pub const LogLine = struct { kind: LogKind, text: []u8 };
+
+pub const NetEntry = struct {
+    request_id: []u8,
+    method: []u8,
+    url: []u8,
+    headers: std.ArrayListUnmanaged(parse.Header) = .empty,
+    post_data: ?[]u8 = null,
+    status: ?i64 = null,
+    mime: ?[]u8 = null,
+    failed: ?[]u8 = null,
+
+    fn deinit(self: *NetEntry, gpa: Allocator) void {
+        gpa.free(self.request_id);
+        gpa.free(self.method);
+        gpa.free(self.url);
+        for (self.headers.items) |h| {
+            gpa.free(h.name);
+            gpa.free(h.value);
+        }
+        self.headers.deinit(gpa);
+        if (self.post_data) |p| gpa.free(p);
+        if (self.mime) |m| gpa.free(m);
+        if (self.failed) |f| gpa.free(f);
+    }
+
+    pub fn toRequest(self: *const NetEntry, gpa: Allocator) Allocator.Error!parse.Request {
+        var req = try parse.Request.init(gpa);
+        errdefer req.deinit(gpa);
+        try req.setMethod(gpa, self.method);
+        try req.setUrl(gpa, self.url);
+        for (self.headers.items) |h| {
+            if (h.name.len > 0 and h.name[0] == ':') continue;
+            try req.addHeader(gpa, h.name, h.value);
+        }
+        if (self.post_data) |b| try req.setBody(gpa, b);
+        return req;
+    }
+};
+
+/// What a request the pane sent was for; the reply is routed by it.
+pub const Pending = enum { eval, screenshot, screenshot_clip, pdf, cookies, storage, perf, dom, box_model, quiet };
+
+pub const Snapshot = struct {
+    url: []u8,
+    net_urls: [][]u8,
+    at_ms: i64,
+
+    pub fn deinit(self: *Snapshot, gpa: Allocator) void {
+        gpa.free(self.url);
+        for (self.net_urls) |u| gpa.free(u);
+        gpa.free(self.net_urls);
+    }
+};
+
+pub const Row = struct { text: []u8, key: []u8 };
+
+pub const DevicePreset = struct { name: []const u8, width: u32, height: u32, scale: f64, mobile: bool, ua: []const u8 };
+
+pub const device_presets = [_]DevicePreset{
+    .{ .name = "Desktop (clear emulation)", .width = 0, .height = 0, .scale = 1, .mobile = false, .ua = "" },
+    .{ .name = "iPhone 14 Pro", .width = 393, .height = 852, .scale = 3, .mobile = true, .ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
+    .{ .name = "iPhone SE", .width = 375, .height = 667, .scale = 2, .mobile = true, .ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" },
+    .{ .name = "Pixel 7", .width = 412, .height = 915, .scale = 2.625, .mobile = true, .ua = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36" },
+    .{ .name = "iPad Air", .width = 820, .height = 1180, .scale = 2, .mobile = true, .ua = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
+    .{ .name = "Laptop 1366×768", .width = 1366, .height = 768, .scale = 1, .mobile = false, .ua = "" },
+};
+
+pub const Throttle = struct { name: []const u8, offline: bool, latency_ms: u32, down: i64, up: i64 };
+
+pub const throttles = [_]Throttle{
+    .{ .name = "Online (no throttle)", .offline = false, .latency_ms = 0, .down = -1, .up = -1 },
+    .{ .name = "Offline", .offline = true, .latency_ms = 0, .down = 0, .up = 0 },
+    .{ .name = "Slow 3G", .offline = false, .latency_ms = 2000, .down = 400 * 1024 / 8, .up = 400 * 1024 / 8 },
+    .{ .name = "Fast 3G", .offline = false, .latency_ms = 563, .down = 1_600_000 / 8, .up = 750_000 / 8 },
+    .{ .name = "WiFi", .offline = false, .latency_ms = 2, .down = 30_000_000 / 8, .up = 15_000_000 / 8 },
+};
+
+/// What the worker posts.
+pub const CdpEvent = struct {
+    pane: PaneId,
+    kind: union(enum) {
+        connected: []u8,
+        message: []u8,
+        closed: []u8,
+    },
+
+    pub fn destroy(self: *CdpEvent, gpa: Allocator) void {
+        switch (self.kind) {
+            .connected, .message, .closed => |s| gpa.free(s),
+        }
+        gpa.destroy(self);
+    }
+};
+
+const Shared = struct {
+    io: Io,
+    lock: Io.Mutex = .init,
+    session: ?cdp.Session = null,
+    launch: ?cdp.Launch = null,
+    closing: bool = false,
+};
+
+pub const BrowserPane = struct {
+    gpa: Allocator,
+    url: []u8,
+    state: enum { launching, connected, closed } = .launching,
+    log: std.ArrayListUnmanaged(LogLine) = .empty,
+    net: std.ArrayListUnmanaged(NetEntry) = .empty,
+    net_sel: usize = 0,
+    panel: Panel = .log,
+    /// Rows from the bottom of the log; 0 follows the tail.
+    scroll: usize = 0,
+    shared: *Shared,
+    thread: ?std.Thread = null,
+    pending: std.AutoHashMapUnmanaged(i64, Pending) = .empty,
+    /// `{method, params}` sent before the socket opened.
+    queued: std.ArrayListUnmanaged(struct { method: []u8, params: []u8, purpose: Pending }) = .empty,
+    cookies: std.ArrayListUnmanaged(Row) = .empty,
+    cookies_sel: usize = 0,
+    storage: std.ArrayListUnmanaged(Row) = .empty,
+    storage_sel: usize = 0,
+    perf: std.ArrayListUnmanaged([]u8) = .empty,
+    dom: std.ArrayListUnmanaged(Row) = .empty,
+    dom_sel: usize = 0,
+    snapshots: std.ArrayListUnmanaged(Snapshot) = .empty,
+    /// URLs visited, oldest first. Owned.
+    visited: std.ArrayListUnmanaged([]u8) = .empty,
+    device: ?usize = null,
+    title_buf: []u8,
+    port: ?u16 = null,
+    profile_dir: []u8,
+    headless: bool,
+
+    pub fn deinit(self: *BrowserPane, gpa: Allocator) void {
+        self.shutdown();
+        if (self.thread) |t| t.join();
+        if (self.shared.session) |*s| s.deinit();
+        if (self.shared.launch) |*l| l.kill(self.shared.io);
+        gpa.destroy(self.shared);
+        for (self.log.items) |l| gpa.free(l.text);
+        self.log.deinit(gpa);
+        for (self.net.items) |*n| n.deinit(gpa);
+        self.net.deinit(gpa);
+        self.pending.deinit(gpa);
+        for (self.queued.items) |q| {
+            gpa.free(q.method);
+            gpa.free(q.params);
+        }
+        self.queued.deinit(gpa);
+        freeRows(gpa, &self.cookies);
+        freeRows(gpa, &self.storage);
+        for (self.perf.items) |p| gpa.free(p);
+        self.perf.deinit(gpa);
+        freeRows(gpa, &self.dom);
+        for (self.snapshots.items) |*s| s.deinit(gpa);
+        self.snapshots.deinit(gpa);
+        for (self.visited.items) |v| gpa.free(v);
+        self.visited.deinit(gpa);
+        gpa.free(self.url);
+        gpa.free(self.title_buf);
+        gpa.free(self.profile_dir);
+    }
+
+    fn freeRows(gpa: Allocator, rows: *std.ArrayListUnmanaged(Row)) void {
+        for (rows.items) |r| {
+            gpa.free(r.text);
+            gpa.free(r.key);
+        }
+        rows.deinit(gpa);
+    }
+
+    pub fn title(self: *const BrowserPane) []const u8 {
+        return self.title_buf;
+    }
+
+    fn refreshTitle(self: *BrowserPane) Allocator.Error!void {
+        const badge: []const u8 = switch (self.state) {
+            .launching => "…",
+            .connected => "●",
+            .closed => "·",
+        };
+        const fresh = try std.fmt.allocPrint(self.gpa, "browser {s} {s}", .{ badge, history.shortUrl(self.url) });
+        self.gpa.free(self.title_buf);
+        self.title_buf = fresh;
+    }
+
+    /// Ask the worker to stop: close the socket, kill Chrome.
+    pub fn shutdown(self: *BrowserPane) void {
+        const io = self.shared.io;
+        self.shared.lock.lockUncancelable(io);
+        defer self.shared.lock.unlock(io);
+        self.shared.closing = true;
+        if (self.shared.session) |*s| {
+            s.conn.close(1000, "") catch {};
+            s.conn.stream.shutdown(io, .both) catch {};
+        }
+        if (self.shared.launch) |*l| l.child.kill(io);
+    }
+
+    pub fn push(self: *BrowserPane, kind: LogKind, text: []const u8) Allocator.Error!void {
+        const copy = try self.gpa.dupe(u8, text);
+        errdefer self.gpa.free(copy);
+        if (self.log.items.len >= 5000) self.gpa.free(self.log.orderedRemove(0).text);
+        try self.log.append(self.gpa, .{ .kind = kind, .text = copy });
+    }
+
+    pub fn setUrl(self: *BrowserPane, url: []const u8) Allocator.Error!void {
+        const copy = try self.gpa.dupe(u8, url);
+        self.gpa.free(self.url);
+        self.url = copy;
+        try self.refreshTitle();
+        if (self.visited.items.len == 0 or !std.mem.eql(u8, self.visited.items[self.visited.items.len - 1], url)) {
+            try self.visited.append(self.gpa, try self.gpa.dupe(u8, url));
+        }
+    }
+
+    pub fn selectedNet(self: *BrowserPane) ?*NetEntry {
+        if (self.net_sel >= self.net.items.len) return null;
+        return &self.net.items[self.net_sel];
+    }
+
+    fn findNet(self: *BrowserPane, request_id: []const u8) ?*NetEntry {
+        for (self.net.items) |*n| if (std.mem.eql(u8, n.request_id, request_id)) return n;
+        return null;
+    }
+};
+
+// ─── open / worker ──────────────────────────────────────────────────────
+
+/// The Chrome profile dir for `[browser] profile_mode`.
+fn profileDir(app: *App, arena: Allocator, index: usize) Allocator.Error![]u8 {
+    const suffix = if (index == 0) "" else try std.fmt.allocPrint(arena, "-{d}", .{index});
+    return switch (app.cfg.browser.profile_mode) {
+        .shared => if (app.data_root.len > 0) try std.fmt.allocPrint(arena, "{s}/chrome-profile{s}", .{ app.data_root, suffix }) else try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile{s}", .{ app.workspace, suffix }),
+        .ephemeral => try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile-ephemeral-{d}", .{ app.workspace, app.now_ms }),
+        .workspace => try std.fmt.allocPrint(arena, "{s}/.mnml/chrome-profile{s}", .{ app.workspace, suffix }),
+    };
+}
+
+pub fn countBrowsers(app: *App) usize {
+    var n: usize = 0;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.* == .browser) {
+        n += 1;
+    };
+    return n;
+}
+
+/// Launch Chrome at `url` in a new pane beside the active one.
+pub fn open(app: *App, url_in: []const u8) CommandError!PaneId {
+    const gpa = app.gpa;
+    if (!cdp.available(gpa, app.io, &app.env)) return app.diag.fail(app.frame.allocator(), "no Chrome found — run `:browser.install_cft` to install Chrome for Testing", .{});
+    const url = std.mem.trim(u8, url_in, " \t");
+    const shared = try gpa.create(Shared);
+    errdefer gpa.destroy(shared);
+    shared.* = .{ .io = app.io };
+    const pdir = try profileDir(app, app.frame.allocator(), countBrowsers(app));
+    Io.Dir.cwd().createDirPath(app.io, pdir) catch {};
+    var pane: BrowserPane = .{
+        .gpa = gpa,
+        .url = try gpa.dupe(u8, if (url.len == 0) "about:blank" else url),
+        .shared = shared,
+        .title_buf = try gpa.dupe(u8, "browser"),
+        .profile_dir = try gpa.dupe(u8, pdir),
+        .headless = app.cfg.browser.headless,
+    };
+    errdefer pane.deinit(gpa);
+    try pane.refreshTitle();
+    try pane.push(.system, "launching Chrome…");
+    const id = try app.panes.add(.{ .browser = pane });
+    // Beside the active pane (the "watch the network while editing the request" layout).
+    if (app.active) |cur| {
+        if (app.layouts.current().split(cur, .horizontal, id) catch null) |_| {
+            app.setActive(id);
+        } else app.showPane(id);
+    } else app.showPane(id);
+    const p = app.panes.get(id).?.asBrowser().?;
+    const url_owned = try gpa.dupe(u8, p.url);
+    errdefer gpa.free(url_owned);
+    const dir_owned = try gpa.dupe(u8, p.profile_dir);
+    errdefer gpa.free(dir_owned);
+    p.thread = std.Thread.spawn(.{}, worker, .{ &app.events, app.io, gpa, &app.env, shared, id, url_owned, dir_owned, p.headless }) catch |err| {
+        return app.diag.fail(app.frame.allocator(), "browser: could not start the worker: {s}", .{@errorName(err)});
+    };
+    if (p.device) |d| _ = d;
+    return id;
+}
+
+fn post(events: *event.EventQueue, io: Io, gpa: Allocator, ev: CdpEvent) void {
+    const box = gpa.create(CdpEvent) catch return;
+    box.* = ev;
+    events.post(io, .{ .cdp = box });
+}
+
+fn postClosed(events: *event.EventQueue, io: Io, gpa: Allocator, pane: PaneId, reason: []const u8) void {
+    const copy = gpa.dupe(u8, reason) catch return;
+    post(events, io, gpa, .{ .pane = pane, .kind = .{ .closed = copy } });
+}
+
+fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, env: *const std.process.Environ.Map, shared: *Shared, pane: PaneId, url: []u8, profile_dir: []u8, headless: bool) void {
+    defer gpa.free(url);
+    defer gpa.free(profile_dir);
+    var launch = cdp.launch(gpa, io, env, .{ .url = url, .profile_dir = profile_dir, .headless = headless }) catch |err| {
+        const msg: []const u8 = switch (err) {
+            error.ChromeNotFound => "Chrome not found. Install Chrome for Testing:\n    npx @puppeteer/browsers install chrome@stable\nor run `:browser.install_cft`.",
+            error.NoDevToolsPort => "couldn't find Chrome's DevTools port — did it start?",
+            error.OutOfMemory => "out of memory launching Chrome",
+        };
+        postClosed(events, io, gpa, pane, msg);
+        return;
+    };
+    {
+        shared.lock.lockUncancelable(io);
+        defer shared.lock.unlock(io);
+        if (shared.closing) {
+            launch.kill(io);
+            return;
+        }
+        shared.launch = launch;
+    }
+    const ws_url = cdp.pageWsUrl(gpa, io, launch.port) catch |err| {
+        const msg = std.fmt.allocPrint(gpa, "couldn't reach Chrome's /json endpoint: {s}", .{@errorName(err)}) catch return;
+        defer gpa.free(msg);
+        postClosed(events, io, gpa, pane, msg);
+        return;
+    };
+    defer gpa.free(ws_url);
+    var session = cdp.Session.connect(gpa, io, ws_url) catch |err| {
+        const msg = std.fmt.allocPrint(gpa, "connecting to {s}: {s}", .{ ws_url, @errorName(err) }) catch return;
+        defer gpa.free(msg);
+        postClosed(events, io, gpa, pane, msg);
+        return;
+    };
+    session.enableAll() catch {};
+    {
+        shared.lock.lockUncancelable(io);
+        defer shared.lock.unlock(io);
+        if (shared.closing) {
+            session.deinit();
+            return;
+        }
+        shared.session = session;
+    }
+    const connected = std.fmt.allocPrint(gpa, "{s}\n{d}", .{ ws_url, launch.port }) catch return;
+    post(events, io, gpa, .{ .pane = pane, .kind = .{ .connected = connected } });
+    while (true) {
+        const text = shared.session.?.next() catch |err| {
+            const msg = std.fmt.allocPrint(gpa, "WebSocket error: {s}", .{@errorName(err)}) catch break;
+            defer gpa.free(msg);
+            postClosed(events, io, gpa, pane, msg);
+            return;
+        } orelse break;
+        const copy = gpa.dupe(u8, text) catch break;
+        post(events, io, gpa, .{ .pane = pane, .kind = .{ .message = copy } });
+    }
+    postClosed(events, io, gpa, pane, if (shared.closing) "closed" else "page closed");
+}
+
+// ─── requests ───────────────────────────────────────────────────────────
+
+/// Send a CDP request from the pane (queued until connected).
+pub fn send(app: *App, p: *BrowserPane, method: []const u8, params_json: []const u8, purpose: Pending) Allocator.Error!void {
+    const io = app.io;
+    p.shared.lock.lockUncancelable(io);
+    defer p.shared.lock.unlock(io);
+    if (p.shared.session) |*s| {
+        const id = s.send(method, params_json, null) catch |err| {
+            try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "send {s} failed: {s}", .{ method, @errorName(err) }));
+            return;
+        };
+        try p.pending.put(app.gpa, id, purpose);
+        return;
+    }
+    try p.queued.append(app.gpa, .{ .method = try app.gpa.dupe(u8, method), .params = try app.gpa.dupe(u8, params_json), .purpose = purpose });
+}
+
+fn flushQueued(app: *App, p: *BrowserPane) Allocator.Error!void {
+    const items = try app.frame.allocator().dupe(@TypeOf(p.queued.items[0]), p.queued.items);
+    p.queued.clearRetainingCapacity();
+    for (items) |q| {
+        defer {
+            app.gpa.free(q.method);
+            app.gpa.free(q.params);
+        }
+        try send(app, p, q.method, q.params, q.purpose);
+    }
+}
+
+pub fn navigate(app: *App, p: *BrowserPane, url: []const u8) Allocator.Error!void {
+    const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"url\":{f}}}", .{std.json.fmt(url, .{})});
+    try send(app, p, "Page.navigate", params, .quiet);
+    try p.push(.nav, try std.fmt.allocPrint(app.frame.allocator(), "→ {s}", .{url}));
+}
+
+pub fn eval(app: *App, p: *BrowserPane, expr: []const u8, purpose: Pending) Allocator.Error!void {
+    const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"expression\":{f},\"returnByValue\":true,\"userGesture\":true,\"awaitPromise\":true}}", .{std.json.fmt(expr, .{})});
+    try send(app, p, "Runtime.evaluate", params, purpose);
+    if (purpose == .eval) try p.push(.eval, try std.fmt.allocPrint(app.frame.allocator(), "» {s}", .{expr}));
+}
+
+// ─── the event handler ──────────────────────────────────────────────────
+
+/// D1: the event is ours; the text is parsed on the frame arena and
+/// what the pane keeps is copied.
+pub fn handle(app: *App, ev: *CdpEvent) Allocator.Error!void {
+    defer ev.destroy(app.gpa);
+    const pane = app.panes.get(ev.pane) orelse return;
+    const p = pane.asBrowser() orelse return;
+    app.needs_render = true;
+    switch (ev.kind) {
+        .connected => |info| {
+            p.state = .connected;
+            var lines = std.mem.splitScalar(u8, info, '\n');
+            const ws_url = lines.next() orelse "";
+            if (lines.next()) |port| p.port = std.fmt.parseInt(u16, port, 10) catch null;
+            try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "connected — {s}", .{ws_url}));
+            try p.refreshTitle();
+            try flushQueued(app, p);
+            if (p.device) |d| try applyDevice(app, p, d);
+        },
+        .closed => |reason| {
+            p.state = .closed;
+            try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "session ended: {s}", .{reason}));
+            try p.refreshTitle();
+        },
+        .message => |text| try onMessage(app, ev.pane, p, text),
+    }
+}
+
+fn onMessage(app: *App, id: PaneId, p: *BrowserPane, text: []const u8) Allocator.Error!void {
+    _ = id;
+    const arena = app.frame.allocator();
+    const m = cdp.parseMessage(arena, text) catch return;
+    if (m.method) |method| return onEvent(app, p, method, m);
+    const rid = m.id orelse return;
+    const purpose = p.pending.get(rid) orelse return;
+    _ = p.pending.remove(rid);
+    if (m.error_message) |e| {
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s}: {s}", .{ @tagName(purpose), e }));
+        return;
+    }
+    switch (purpose) {
+        .quiet => {},
+        .eval => {
+            const value = cdp.get(m.result, &.{"result"}) orelse return;
+            try p.push(.eval, try std.fmt.allocPrint(arena, "= {s}", .{try cdp.remoteObjectText(arena, value)}));
+        },
+        .screenshot, .screenshot_clip, .pdf => {
+            const data = cdp.str(m.result, &.{"data"}) orelse return;
+            const ext: []const u8 = if (purpose == .pdf) "pdf" else "png";
+            const path = try saveBase64(app, data, ext);
+            if (path) |pth| {
+                app.toast("{s} saved: {s}", .{ if (purpose == .pdf) "pdf" else "screenshot", app.relPath(pth) });
+                try p.push(.system, try std.fmt.allocPrint(arena, "saved {s}", .{app.relPath(pth)}));
+            }
+        },
+        .cookies => {
+            BrowserPane.freeRows(app.gpa, &p.cookies);
+            p.cookies = .empty;
+            const list = cdp.get(m.result, &.{"cookies"}) orelse return;
+            if (list != .array) return;
+            for (list.array.items) |c| {
+                const name = cdp.str(c, &.{"name"}) orelse continue;
+                const value = cdp.str(c, &.{"value"}) orelse "";
+                const domain = cdp.str(c, &.{"domain"}) orelse "";
+                const path = cdp.str(c, &.{"path"}) orelse "/";
+                const line = try std.fmt.allocPrint(app.gpa, "{s}={s}   {s}{s}", .{ name, if (value.len > 40) value[0..38] else value, domain, path });
+                errdefer app.gpa.free(line);
+                const key = try std.fmt.allocPrint(app.gpa, "{s}\t{s}\t{s}", .{ name, domain, path });
+                errdefer app.gpa.free(key);
+                try p.cookies.append(app.gpa, .{ .text = line, .key = key });
+            }
+            p.panel = .cookies;
+            p.cookies_sel = 0;
+        },
+        .storage => {
+            BrowserPane.freeRows(app.gpa, &p.storage);
+            p.storage = .empty;
+            const value = cdp.str(m.result, &.{ "result", "value" }) orelse return;
+            const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, value, .{}) catch return;
+            if (parsed != .array) return;
+            for (parsed.array.items) |e| {
+                const scope = cdp.str(e, &.{"scope"}) orelse "local";
+                const k = cdp.str(e, &.{"key"}) orelse continue;
+                const v = cdp.str(e, &.{"value"}) orelse "";
+                const line = try std.fmt.allocPrint(app.gpa, "[{s}] {s} = {s}", .{ scope, k, if (v.len > 60) v[0..58] else v });
+                errdefer app.gpa.free(line);
+                const key = try std.fmt.allocPrint(app.gpa, "{s}\t{s}", .{ scope, k });
+                errdefer app.gpa.free(key);
+                try p.storage.append(app.gpa, .{ .text = line, .key = key });
+            }
+            p.panel = .storage;
+            p.storage_sel = 0;
+        },
+        .perf => {
+            for (p.perf.items) |l| app.gpa.free(l);
+            p.perf.clearRetainingCapacity();
+            const value = cdp.str(m.result, &.{ "result", "value" }) orelse return;
+            var lines = std.mem.splitScalar(u8, value, '\n');
+            while (lines.next()) |l| if (l.len > 0) try p.perf.append(app.gpa, try app.gpa.dupe(u8, l));
+            p.panel = .perf;
+        },
+        .dom => {
+            BrowserPane.freeRows(app.gpa, &p.dom);
+            p.dom = .empty;
+            const root = cdp.get(m.result, &.{"root"}) orelse return;
+            try flattenDom(app, p, root, 0);
+            p.panel = .dom;
+            p.dom_sel = 0;
+        },
+        .box_model => {
+            const content = cdp.get(m.result, &.{ "model", "content" }) orelse return;
+            if (content != .array or content.array.items.len < 8) return;
+            const q = content.array.items;
+            const xs = [_]f64{ num(q[0]), num(q[2]), num(q[4]), num(q[6]) };
+            const ys = [_]f64{ num(q[1]), num(q[3]), num(q[5]), num(q[7]) };
+            const x = @min(@min(xs[0], xs[1]), @min(xs[2], xs[3]));
+            const y = @min(@min(ys[0], ys[1]), @min(ys[2], ys[3]));
+            const w = @max(@max(xs[0], xs[1]), @max(xs[2], xs[3])) - x;
+            const h = @max(@max(ys[0], ys[1]), @max(ys[2], ys[3])) - y;
+            const params = try std.fmt.allocPrint(arena, "{{\"format\":\"png\",\"clip\":{{\"x\":{d},\"y\":{d},\"width\":{d},\"height\":{d},\"scale\":1}}}}", .{ x, y, w, h });
+            try send(app, p, "Page.captureScreenshot", params, .screenshot_clip);
+        },
+    }
+}
+
+fn num(v: std.json.Value) f64 {
+    return switch (v) {
+        .float => |f| f,
+        .integer => |i| @floatFromInt(i),
+        else => 0,
+    };
+}
+
+fn flattenDom(app: *App, p: *BrowserPane, node: std.json.Value, depth: usize) Allocator.Error!void {
+    if (node != .object) return;
+    const name = cdp.str(node, &.{"nodeName"}) orelse "?";
+    const node_id = cdp.int(node, &.{"nodeId"}) orelse 0;
+    var attrs: std.ArrayListUnmanaged(u8) = .empty;
+    if (cdp.get(node, &.{"attributes"})) |a| if (a == .array) {
+        var i: usize = 0;
+        while (i + 1 < a.array.items.len) : (i += 2) {
+            const k = a.array.items[i];
+            const v = a.array.items[i + 1];
+            if (k != .string or v != .string) continue;
+            if (std.mem.eql(u8, k.string, "id")) try appendFmt(app.frame.allocator(), &attrs, "#{s}", .{v.string});
+            if (std.mem.eql(u8, k.string, "class")) try appendFmt(app.frame.allocator(), &attrs, ".{s}", .{std.mem.sliceTo(v.string, ' ')});
+        }
+    };
+    const skipped = std.mem.eql(u8, name, "#text") or std.mem.eql(u8, name, "#comment") or std.mem.eql(u8, name, "#document");
+    if (!skipped) {
+        const line = try std.fmt.allocPrint(app.gpa, "{s}{s}{s}", .{ try indent(app.frame.allocator(), depth), std.ascii.lowerString(try app.frame.allocator().alloc(u8, name.len), name), attrs.items });
+        errdefer app.gpa.free(line);
+        const key = try std.fmt.allocPrint(app.gpa, "{d}", .{node_id});
+        errdefer app.gpa.free(key);
+        try p.dom.append(app.gpa, .{ .text = line, .key = key });
+    }
+    if (cdp.get(node, &.{"children"})) |c| if (c == .array) {
+        for (c.array.items) |child| try flattenDom(app, p, child, if (skipped) depth else depth + 1);
+    };
+}
+
+fn indent(arena: Allocator, depth: usize) Allocator.Error![]u8 {
+    const out = try arena.alloc(u8, @min(depth, 40) * 2);
+    @memset(out, ' ');
+    return out;
+}
+
+fn appendFmt(a: Allocator, list: *std.ArrayListUnmanaged(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+    const s = try std.fmt.allocPrint(a, fmt, args);
+    try list.appendSlice(a, s);
+}
+
+fn saveBase64(app: *App, data: []const u8, ext: []const u8) Allocator.Error!?[]const u8 {
+    const arena = app.frame.allocator();
+    const dec = std.base64.standard.Decoder;
+    const size = dec.calcSizeForSlice(data) catch return null;
+    const bytes = try arena.alloc(u8, size);
+    dec.decode(bytes, data) catch return null;
+    const dir = try std.fs.path.join(arena, &.{ app.workspace, ".mnml", "screenshots" });
+    Io.Dir.cwd().createDirPath(app.io, dir) catch return null;
+    const ts: i64 = @intCast(@divFloor(Io.Timestamp.now(app.io, .real).toNanoseconds(), std.time.ns_per_ms));
+    const path = try std.fmt.allocPrint(arena, "{s}/shot-{d}.{s}", .{ dir, ts, ext });
+    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = bytes }) catch return null;
+    return path;
+}
+
+fn onEvent(app: *App, p: *BrowserPane, method: []const u8, m: cdp.Message) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    if (std.mem.eql(u8, method, "Runtime.consoleAPICalled")) {
+        const kind = cdp.str(m.params, &.{"type"}) orelse "log";
+        var text: std.ArrayListUnmanaged(u8) = .empty;
+        if (cdp.get(m.params, &.{"args"})) |args| if (args == .array) {
+            for (args.array.items, 0..) |a, i| {
+                if (i > 0) try text.append(arena, ' ');
+                try text.appendSlice(arena, try cdp.remoteObjectText(arena, a));
+            }
+        };
+        const is_err = std.mem.eql(u8, kind, "error") or std.mem.eql(u8, kind, "warning") or std.mem.eql(u8, kind, "assert");
+        try p.push(if (is_err) .console_err else .console, try std.fmt.allocPrint(arena, "console.{s}: {s}", .{ kind, text.items }));
+    } else if (std.mem.eql(u8, method, "Log.entryAdded")) {
+        const level = cdp.str(m.params, &.{ "entry", "level" }) orelse "info";
+        const text = cdp.str(m.params, &.{ "entry", "text" }) orelse "";
+        try p.push(if (std.mem.eql(u8, level, "error") or std.mem.eql(u8, level, "warning")) .console_err else .console, try std.fmt.allocPrint(arena, "[{s}] {s}", .{ level, text }));
+    } else if (std.mem.eql(u8, method, "Runtime.exceptionThrown")) {
+        const text = cdp.str(m.params, &.{ "exceptionDetails", "text" }) orelse "exception";
+        const desc = cdp.str(m.params, &.{ "exceptionDetails", "exception", "description" }) orelse "";
+        try p.push(.console_err, try std.fmt.allocPrint(arena, "{s} {s}", .{ text, std.mem.sliceTo(desc, '\n') }));
+    } else if (std.mem.eql(u8, method, "Page.frameNavigated")) {
+        if (cdp.str(m.params, &.{ "frame", "parentId" }) != null) return;
+        const url = cdp.str(m.params, &.{ "frame", "url" }) orelse return;
+        try p.setUrl(url);
+        try p.push(.nav, try std.fmt.allocPrint(arena, "navigated: {s}", .{url}));
+    } else if (std.mem.eql(u8, method, "Network.requestWillBeSent")) {
+        const ty = cdp.str(m.params, &.{"type"}) orelse "";
+        if (!(std.mem.eql(u8, ty, "Document") or std.mem.eql(u8, ty, "XHR") or std.mem.eql(u8, ty, "Fetch"))) return;
+        const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
+        const url = cdp.str(m.params, &.{ "request", "url" }) orelse return;
+        const meth = cdp.str(m.params, &.{ "request", "method" }) orelse "GET";
+        var entry: NetEntry = .{ .request_id = try app.gpa.dupe(u8, request_id), .method = undefined, .url = undefined };
+        errdefer app.gpa.free(entry.request_id);
+        entry.method = try app.gpa.dupe(u8, meth);
+        errdefer app.gpa.free(entry.method);
+        entry.url = try app.gpa.dupe(u8, url);
+        errdefer app.gpa.free(entry.url);
+        if (cdp.get(m.params, &.{ "request", "headers" })) |hs| if (hs == .object) {
+            var it = hs.object.iterator();
+            while (it.next()) |e| if (e.value_ptr.* == .string) {
+                const n = try app.gpa.dupe(u8, e.key_ptr.*);
+                errdefer app.gpa.free(n);
+                const v = try app.gpa.dupe(u8, e.value_ptr.string);
+                errdefer app.gpa.free(v);
+                try entry.headers.append(app.gpa, .{ .name = n, .value = v });
+            };
+        };
+        if (cdp.str(m.params, &.{ "request", "postData" })) |pd| entry.post_data = try app.gpa.dupe(u8, pd);
+        if (p.net.items.len >= 500) {
+            var oldest = p.net.orderedRemove(0);
+            oldest.deinit(app.gpa);
+        }
+        try p.net.append(app.gpa, entry);
+        try p.push(.net, try std.fmt.allocPrint(arena, "{s} {s}", .{ meth, history.shortUrl(url) }));
+        if (app.cfg.browser.autocapture_to_log) try appendCaptured(app, &p.net.items[p.net.items.len - 1]);
+    } else if (std.mem.eql(u8, method, "Network.responseReceived")) {
+        const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
+        const n = p.findNet(request_id) orelse return;
+        n.status = cdp.int(m.params, &.{ "response", "status" });
+        if (cdp.str(m.params, &.{ "response", "mimeType" })) |mt| {
+            if (n.mime) |old| app.gpa.free(old);
+            n.mime = try app.gpa.dupe(u8, mt);
+        }
+    } else if (std.mem.eql(u8, method, "Network.loadingFailed")) {
+        const request_id = cdp.str(m.params, &.{"requestId"}) orelse return;
+        const n = p.findNet(request_id) orelse return;
+        const why = cdp.str(m.params, &.{"errorText"}) orelse "failed";
+        if (n.failed) |old| app.gpa.free(old);
+        n.failed = try app.gpa.dupe(u8, why);
+    } else if (std.mem.eql(u8, method, "Target.attachedToTarget")) {
+        const url = cdp.str(m.params, &.{ "targetInfo", "url" }) orelse "";
+        const ty = cdp.str(m.params, &.{ "targetInfo", "type" }) orelse "";
+        try p.push(.nav, try std.fmt.allocPrint(arena, "attached {s}: {s}", .{ ty, url }));
+    }
+}
+
+/// One captured-log line per Document / XHR / Fetch request.
+pub fn appendCaptured(app: *App, n: *const NetEntry) Allocator.Error!void {
+    const path = try captured.logPath(app.frame.allocator(), app.workspace);
+    const ts: i64 = @intCast(@divFloor(Io.Timestamp.now(app.io, .real).toNanoseconds(), std.time.ns_per_ms));
+    const line = try captured.renderLine(app.gpa, ts, n.request_id, n.method, n.url, n.headers.items, n.post_data);
+    defer app.gpa.free(line);
+    history.appendLine(app.gpa, app.io, path, line) catch {};
+}
+
+pub fn applyDevice(app: *App, p: *BrowserPane, idx: usize) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    if (idx >= device_presets.len) return;
+    const d = device_presets[idx];
+    if (d.width == 0) {
+        try send(app, p, "Emulation.clearDeviceMetricsOverride", "{}", .quiet);
+        try send(app, p, "Emulation.setUserAgentOverride", "{\"userAgent\":\"\"}", .quiet);
+        p.device = null;
+        try p.push(.system, "device emulation cleared");
+        return;
+    }
+    const metrics = try std.fmt.allocPrint(arena, "{{\"width\":{d},\"height\":{d},\"deviceScaleFactor\":{d},\"mobile\":{}}}", .{ d.width, d.height, d.scale, d.mobile });
+    try send(app, p, "Emulation.setDeviceMetricsOverride", metrics, .quiet);
+    if (d.ua.len > 0) {
+        const ua = try std.fmt.allocPrint(arena, "{{\"userAgent\":{f}}}", .{std.json.fmt(d.ua, .{})});
+        try send(app, p, "Emulation.setUserAgentOverride", ua, .quiet);
+    }
+    p.device = idx;
+    try p.push(.system, try std.fmt.allocPrint(arena, "emulating: {s} ({d}×{d})", .{ d.name, d.width, d.height }));
+}
+
+pub fn applyThrottle(app: *App, p: *BrowserPane, idx: usize) Allocator.Error!void {
+    if (idx >= throttles.len) return;
+    const t = throttles[idx];
+    const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"offline\":{},\"latency\":{d},\"downloadThroughput\":{d},\"uploadThroughput\":{d}}}", .{ t.offline, t.latency_ms, t.down, t.up });
+    try send(app, p, "Network.emulateNetworkConditions", params, .quiet);
+    try p.push(.system, try std.fmt.allocPrint(app.frame.allocator(), "network: {s}", .{t.name}));
+}
+
+// ─── snapshots ──────────────────────────────────────────────────────────
+
+pub fn captureSnapshot(app: *App, p: *BrowserPane) Allocator.Error!usize {
+    const gpa = app.gpa;
+    const urls = try gpa.alloc([]u8, p.net.items.len);
+    var filled: usize = 0;
+    errdefer {
+        for (urls[0..filled]) |u| gpa.free(u);
+        gpa.free(urls);
+    }
+    for (p.net.items) |n| {
+        urls[filled] = try gpa.dupe(u8, n.url);
+        filled += 1;
+    }
+    const url = try gpa.dupe(u8, p.url);
+    errdefer gpa.free(url);
+    try p.snapshots.append(gpa, .{ .url = url, .net_urls = urls, .at_ms = app.now_ms });
+    return p.snapshots.items.len;
+}
+
+/// Lines `-` / `+` / ` ` comparing the latest snapshot to now.
+pub fn diffSnapshot(app: *App, p: *BrowserPane) Allocator.Error!?[]const u8 {
+    if (p.snapshots.items.len == 0) return null;
+    const arena = app.frame.allocator();
+    const snap = p.snapshots.items[p.snapshots.items.len - 1];
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try appendFmt(arena, &out, "# browser snapshot diff — #{d} vs now\n\nurl: {s} → {s}\n\n## network\n\n", .{ p.snapshots.items.len, snap.url, p.url });
+    for (snap.net_urls) |u| {
+        var still = false;
+        for (p.net.items) |n| if (std.mem.eql(u8, n.url, u)) {
+            still = true;
+        };
+        try appendFmt(arena, &out, "{s} {s}\n", .{ if (still) " " else "-", u });
+    }
+    for (p.net.items) |n| {
+        var was = false;
+        for (snap.net_urls) |u| if (std.mem.eql(u8, n.url, u)) {
+            was = true;
+        };
+        if (!was) try appendFmt(arena, &out, "+ {s}\n", .{n.url});
+    }
+    return out.items;
+}
+
+// ─── keys / mouse / draw ────────────────────────────────────────────────
+
+pub fn handleKey(app: *App, id: PaneId, p: *BrowserPane, k: Key) Allocator.Error!bool {
+    app.needs_render = true;
+    if (k.mods.ctrl and k.code == .char and k.code.char == 'r') {
+        try runCmd(app, .@"browser.url_history");
+        return true;
+    }
+    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    const rows = @max(app.pane_rows, 1);
+    switch (k.code) {
+        .esc => {
+            if (p.panel != .log) {
+                p.panel = .log;
+                return true;
+            }
+            return false;
+        },
+        .up => {
+            moveSel(p, -1, rows);
+            return true;
+        },
+        .down => {
+            moveSel(p, 1, rows);
+            return true;
+        },
+        .page_up => {
+            moveSel(p, -@as(i64, @intCast(rows)), rows);
+            return true;
+        },
+        .page_down => {
+            moveSel(p, @intCast(rows), rows);
+            return true;
+        },
+        .enter => {
+            if (p.panel == .net) try resendSelected(app, p);
+            return true;
+        },
+        .char => |c| switch (c) {
+            'j' => moveSel(p, 1, rows),
+            'k' => moveSel(p, -1, rows),
+            'g' => try runCmd(app, .@"browser.navigate"),
+            'e' => try evalPrompt(app),
+            'r' => try runCmd(app, .@"browser.reload"),
+            'n' => p.panel = if (p.panel == .net) .log else .net,
+            'K' => try runCmd(app, .@"browser.cookies"),
+            'L' => try runCmd(app, .@"browser.storage"),
+            'P' => try runCmd(app, .@"browser.perf"),
+            'D' => try runCmd(app, .@"browser.dom"),
+            'm' => try runCmd(app, .@"browser.device_picker"),
+            's' => try runCmd(app, .@"browser.screenshot"),
+            'y' => try copySelectedCurl(app, p),
+            'd' => if (p.panel == .cookies) try runCmd(app, .@"browser.delete_cookie") else if (p.panel == .storage) try runCmd(app, .@"browser.delete_storage"),
+            'a' => if (p.panel == .cookies) try runCmd(app, .@"browser.add_cookie") else if (p.panel == .storage) try runCmd(app, .@"browser.add_storage"),
+            'q' => try app.closePane(id, true),
+            else => return false,
+        },
+        else => return false,
+    }
+    return true;
+}
+
+fn runCmd(app: *App, cmd: command.CommandId) Allocator.Error!void {
+    command.run(app, .{ .static = cmd }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
+fn moveSel(p: *BrowserPane, delta: i64, rows: usize) void {
+    _ = rows;
+    const step = struct {
+        fn f(sel: *usize, d: i64, len: usize) void {
+            if (len == 0) return;
+            const cur: i64 = @intCast(sel.*);
+            sel.* = @intCast(std.math.clamp(cur + d, 0, @as(i64, @intCast(len - 1))));
+        }
+    }.f;
+    switch (p.panel) {
+        .log, .perf => {
+            if (delta < 0) p.scroll += @intCast(-delta) else p.scroll -|= @intCast(delta);
+        },
+        .net => step(&p.net_sel, delta, p.net.items.len),
+        .cookies => step(&p.cookies_sel, delta, p.cookies.items.len),
+        .storage => step(&p.storage_sel, delta, p.storage.items.len),
+        .dom => step(&p.dom_sel, delta, p.dom.items.len),
+    }
+}
+
+pub fn evalPrompt(app: *App) Allocator.Error!void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Evaluate in page"), .purpose = .browser_eval } };
+    app.focus = .overlay;
+}
+
+fn copySelectedCurl(app: *App, p: *BrowserPane) Allocator.Error!void {
+    if (p.panel != .net) {
+        app.toast("browser: open the network panel (n) and pick a request", .{});
+        return;
+    }
+    const n = p.selectedNet() orelse return;
+    var req = try n.toRequest(app.frame.allocator());
+    const curl = try parse.toCurl(app.frame.allocator(), &req);
+    try app.clipboard.set(curl, false);
+    app.toast("copied as curl: {s} {s}", .{ n.method, history.shortUrl(n.url) });
+}
+
+fn resendSelected(app: *App, p: *BrowserPane) Allocator.Error!void {
+    const n = p.selectedNet() orelse return;
+    const req = try n.toRequest(app.gpa);
+    _ = http.openFromRequest(app, req, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+}
+
+pub fn scrollBy(p: *BrowserPane, delta: i32) void {
+    moveSel(p, delta, 1);
+}
+
+pub fn click(app: *App, p: *BrowserPane, hit_id: u32) Allocator.Error!void {
+    app.needs_render = true;
+    if (hit_id >= view.hit_row_base) {
+        const idx = hit_id - view.hit_row_base;
+        switch (p.panel) {
+            .net => {
+                if (idx == p.net_sel) try resendSelected(app, p) else p.net_sel = idx;
+            },
+            .cookies => p.cookies_sel = idx,
+            .storage => p.storage_sel = idx,
+            .dom => p.dom_sel = idx,
+            .log, .perf => {},
+        }
+        return;
+    }
+    if (hit_id >= view.hit_panel_base and hit_id < view.hit_panel_base + view.Panel.all.len) {
+        const which = view.Panel.all[hit_id - view.hit_panel_base];
+        switch (which) {
+            .cookies => try runCmd(app, .@"browser.cookies"),
+            .storage => try runCmd(app, .@"browser.storage"),
+            .perf => try runCmd(app, .@"browser.perf"),
+            .dom => try runCmd(app, .@"browser.dom"),
+            .log, .net => p.panel = which,
+        }
+    }
+}
+
+pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocator.Error!void {
+    const arena = ui.arena;
+    const focused = app.active == id and app.focus == .pane;
+    const log = try arena.alloc(view.LogLine, p.log.items.len);
+    for (p.log.items, 0..) |l, i| log[i] = .{ .kind = l.kind, .text = l.text };
+    const net = try arena.alloc(view.NetRow, p.net.items.len);
+    for (p.net.items, 0..) |n, i| net[i] = .{
+        .method = n.method,
+        .url = history.shortUrl(n.url),
+        .status = if (n.failed != null) "✗" else if (n.status) |s| try std.fmt.allocPrint(arena, "{d}", .{s}) else "…",
+        .mime = n.mime orelse "",
+    };
+    const rows: []const []const u8 = switch (p.panel) {
+        .cookies => try rowTexts(arena, p.cookies.items),
+        .storage => try rowTexts(arena, p.storage.items),
+        .dom => try rowTexts(arena, p.dom.items),
+        .perf => p.perf.items,
+        .log, .net => &.{},
+    };
+    const sel: usize = switch (p.panel) {
+        .net => p.net_sel,
+        .cookies => p.cookies_sel,
+        .storage => p.storage_sel,
+        .dom => p.dom_sel,
+        .log, .perf => 0,
+    };
+    view.draw(ui, id, area, .{
+        .url = p.url,
+        .state = @tagName(p.state),
+        .port = p.port,
+        .panel = p.panel,
+        .log = log,
+        .net = net,
+        .rows = rows,
+        .sel = sel,
+        .scroll = &p.scroll,
+        .focused = focused,
+        .device = if (p.device) |d| device_presets[d].name else null,
+    });
+    if (app.active == id) {
+        app.pane_rows = @max(area.h, 1);
+        app.pane_cols = @max(area.w, 1);
+    }
+}
+
+fn rowTexts(arena: Allocator, rows: []const Row) Allocator.Error![]const []const u8 {
+    const out = try arena.alloc([]const u8, rows.len);
+    for (rows, 0..) |r, i| out[i] = r.text;
+    return out;
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "events route into the log, the net list, the url and the captured log; replies by purpose" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const root = pbuf[0..n];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const shared = try gpa.create(Shared);
+    shared.* = .{ .io = testing.io };
+    var pane: BrowserPane = .{ .gpa = gpa, .url = try gpa.dupe(u8, "about:blank"), .shared = shared, .title_buf = try gpa.dupe(u8, "browser"), .profile_dir = try gpa.dupe(u8, "/tmp/x"), .headless = true };
+    const id = try app.panes.add(.{ .browser = pane });
+    pane = undefined;
+    app.showPane(id);
+    const p = app.panes.get(id).?.asBrowser().?;
+    const mk = struct {
+        fn ev(g: Allocator, pid: PaneId, text: []const u8) !*CdpEvent {
+            const box = try g.create(CdpEvent);
+            box.* = .{ .pane = pid, .kind = .{ .message = try g.dupe(u8, text) } };
+            return box;
+        }
+    };
+    try handle(&app, try mk.ev(gpa, id, "{\"method\":\"Runtime.consoleAPICalled\",\"params\":{\"type\":\"error\",\"args\":[{\"type\":\"string\",\"value\":\"boom\"},{\"type\":\"number\",\"value\":3}]}}"));
+    try testing.expectEqualStrings("console.error: boom 3", p.log.items[p.log.items.len - 1].text);
+    try testing.expect(p.log.items[p.log.items.len - 1].kind == .console_err);
+    try handle(&app, try mk.ev(gpa, id, "{\"method\":\"Page.frameNavigated\",\"params\":{\"frame\":{\"id\":\"F\",\"url\":\"https://example.com/home\"}}}"));
+    try testing.expectEqualStrings("https://example.com/home", p.url);
+    try testing.expectEqualStrings("browser … example.com/home", p.title());
+    try handle(&app, try mk.ev(gpa, id, "{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"r1\",\"type\":\"XHR\",\"request\":{\"url\":\"https://api.example.com/items?x=1\",\"method\":\"POST\",\"headers\":{\"accept\":\"*/*\",\":authority\":\"x\"},\"postData\":\"{}\"}}}"));
+    try handle(&app, try mk.ev(gpa, id, "{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"r2\",\"type\":\"Image\",\"request\":{\"url\":\"https://x/a.png\",\"method\":\"GET\"}}}"));
+    try handle(&app, try mk.ev(gpa, id, "{\"method\":\"Network.responseReceived\",\"params\":{\"requestId\":\"r1\",\"response\":{\"status\":201,\"mimeType\":\"application/json\"}}}"));
+    try testing.expectEqual(@as(usize, 1), p.net.items.len);
+    try testing.expectEqual(@as(?i64, 201), p.net.items[0].status);
+    var req = try p.net.items[0].toRequest(gpa);
+    defer req.deinit(gpa);
+    try testing.expectEqual(@as(usize, 1), req.headers.items.len);
+    try testing.expectEqualStrings("{}", req.body.?);
+    const log = try tmp.dir.readFileAlloc(testing.io, ".rqst/captured/log.jsonl", gpa, .limited(1 << 16));
+    defer gpa.free(log);
+    try testing.expect(std.mem.indexOf(u8, log, "\"request_id\":\"r1\"") != null);
+    // A queued eval flushes on connect and its reply lands as `= value`.
+    try eval(&app, p, "1+1", .eval);
+    try testing.expectEqual(@as(usize, 1), p.queued.items.len);
+    try p.pending.put(gpa, 7, .eval);
+    try handle(&app, try mk.ev(gpa, id, "{\"id\":7,\"result\":{\"result\":{\"type\":\"number\",\"value\":2}}}"));
+    try testing.expectEqualStrings("= 2", p.log.items[p.log.items.len - 1].text);
+    try p.pending.put(gpa, 8, .cookies);
+    try handle(&app, try mk.ev(gpa, id, "{\"id\":8,\"result\":{\"cookies\":[{\"name\":\"sid\",\"value\":\"abc\",\"domain\":\"example.com\",\"path\":\"/\"}]}}"));
+    try testing.expect(p.panel == .cookies);
+    try testing.expectEqualStrings("sid\texample.com\t/", p.cookies.items[0].key);
+    try p.pending.put(gpa, 9, .dom);
+    try handle(&app, try mk.ev(gpa, id, "{\"id\":9,\"result\":{\"root\":{\"nodeId\":1,\"nodeName\":\"#document\",\"children\":[{\"nodeId\":2,\"nodeName\":\"HTML\",\"children\":[{\"nodeId\":3,\"nodeName\":\"DIV\",\"attributes\":[\"id\",\"app\",\"class\",\"main x\"]}]}]}}}"));
+    try testing.expectEqual(@as(usize, 2), p.dom.items.len);
+    try testing.expectEqualStrings("  div#app.main", p.dom.items[1].text);
+    const count = try captureSnapshot(&app, p);
+    try testing.expectEqual(@as(usize, 1), count);
+    const diff = (try diffSnapshot(&app, p)).?;
+    try testing.expect(std.mem.indexOf(u8, diff, "  https://api.example.com/items?x=1") != null);
+    try handle(&app, try mk.ev(gpa, id, "{\"id\":99,\"result\":{}}"));
+    const closed = try gpa.create(CdpEvent);
+    closed.* = .{ .pane = id, .kind = .{ .closed = try gpa.dupe(u8, "page closed") } };
+    try handle(&app, closed);
+    try testing.expect(p.state == .closed);
+}

@@ -63,6 +63,8 @@ const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
 const http_app = @import("app/http.zig");
 const request_pane = @import("app/request_pane.zig");
+const ws_pane = @import("app/ws_pane.zig");
+const browser_pane = @import("app/browser_pane.zig");
 const http_parse = @import("http/parse.zig");
 const builtin = @import("builtin");
 
@@ -136,6 +138,13 @@ pub const PromptPurpose = union(enum) {
     http_new_collection,
     http_new_request,
     http_lookup_var,
+    ws_url,
+    ws_message,
+    browser_url,
+    browser_navigate,
+    browser_eval,
+    browser_add_cookie,
+    browser_add_storage,
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
@@ -167,7 +176,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -1113,6 +1122,8 @@ pub const App = struct {
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
             .http => |result| try http_app.handle(self, result),
+            .ws => |wev| try ws_pane.handle(self, wev),
+            .cdp => |cev| try browser_pane.handle(self, cev),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1179,6 +1190,7 @@ pub const App = struct {
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
+        ws_pane.tickAll(self);
         try watch.tick(self, now);
     }
 
@@ -1196,6 +1208,7 @@ pub const App = struct {
         };
         // A spinner is animating: keep frames coming.
         if (self.todos.scanning or self.http.sending > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -1293,6 +1306,11 @@ test {
     _ = @import("http/captured.zig");
     _ = @import("http/chain.zig");
     _ = @import("http/bench.zig");
+    _ = @import("http/ws.zig");
+    _ = @import("cdp/client.zig");
+    _ = @import("app/ws_pane.zig");
+    _ = @import("app/browser_pane.zig");
+    _ = @import("app/cmd_browser.zig");
     _ = @import("app/runners.zig");
     _ = @import("app/tasks.zig");
     _ = @import("app/watch.zig");

@@ -53,6 +53,8 @@ const cheatsheet = @import("cheatsheet.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
+const ws_pane = @import("ws_pane.zig");
+const browser_pane = @import("browser_pane.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -231,7 +233,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .request => return,
+        .outline, .cheatsheet, .list, .pty, .request, .websocket, .browser => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -287,6 +289,8 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
             .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
             .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
+            .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
+            .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -500,6 +504,14 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         info.mode_kind = .edit;
         info.file = if (rp.source_path) |sp| app.relPath(sp) else rp.title();
         info.dirty = rp.edited;
+    } else if (p.asWebsocket()) |w| {
+        info.mode_label = "WS";
+        info.mode_kind = .edit;
+        info.file = w.url;
+    } else if (p.asBrowser()) |b| {
+        info.mode_label = "CDP";
+        info.mode_kind = .edit;
+        info.file = b.url;
     };
     statusline.draw(ui, area, info);
 }

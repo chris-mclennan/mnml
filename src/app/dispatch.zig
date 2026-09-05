@@ -52,6 +52,9 @@ const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
+const ws_pane = @import("ws_pane.zig");
+const browser_pane = @import("browser_pane.zig");
+const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
 
@@ -105,6 +108,16 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .request => |*rp| {
             if (try request_pane.handleKey(app, id, rp, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .websocket => |*w| {
+            if (try ws_pane.handleKey(app, id, w, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .browser => |*b| {
+            if (try browser_pane.handleKey(app, id, b, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -554,6 +567,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
         .go_run_path => try toastOnFail(app, runners.goRunPathAccept(app, text)),
+        .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
+        .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
         else => try cmd_http.acceptPrompt(app, purpose, text),
     }
 }
@@ -640,6 +655,9 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     };
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
         if (app.focus == .pane) return request_pane.paste(app, rp, text);
+    };
+    if (app.active) |id| if (app.panes.get(id)) |p| if (p.asWebsocket()) |w| {
+        if (app.focus == .pane) return ws_pane.paste(app, w, text);
     };
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
@@ -852,6 +870,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     }
                 },
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
+                .websocket => {},
+                .browser => |*b| try browser_pane.click(app, b, sh.id),
                 .editor, .outline, .md_preview, .pty => {},
             }
         },
@@ -1083,6 +1103,8 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .browser => |*b| browser_pane.scrollBy(b, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
     }
 }
 
