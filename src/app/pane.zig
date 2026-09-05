@@ -31,6 +31,7 @@ const script_pane = @import("script_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
 const marketplace = @import("marketplace.zig");
+const ai_apply = @import("ai_apply.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -148,6 +149,8 @@ pub const Pane = union(enum) {
     integrations: integrations.IntegrationsPane,
     /// What can be installed (one at a time).
     marketplace: marketplace.MarketplacePane,
+    /// An AI proposal reviewed hunk by hunk before it reaches the editor.
+    ai_apply: ai_apply.AiApplyPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -158,6 +161,7 @@ pub const Pane = union(enum) {
             .script => |*s| s.deinit(gpa),
             .mount => |*m| m.deinit(gpa),
             .integrations, .marketplace => {},
+            .ai_apply => |*a| a.deinit(),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -201,13 +205,14 @@ pub const Pane = union(enum) {
             .mount => |*m| return m.title(),
             .integrations => return "Integrations",
             .marketplace => return "Marketplace",
+            .ai_apply => return "ai.apply",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply => false,
         };
     }
 

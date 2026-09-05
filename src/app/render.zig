@@ -62,6 +62,8 @@ const spend = @import("spend.zig");
 const ai_view = @import("../ui/ai_view.zig");
 const agents_view = @import("../ui/agents_view.zig");
 const spend_view = @import("../ui/spend_view.zig");
+const ai_apply_view = @import("../ui/ai_apply_view.zig");
+const ai_apply = @import("ai_apply.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
@@ -279,7 +281,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -352,6 +354,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .mount => |*mp| try mount_pane.draw(app, ui, pr.pane, mp, rect),
             .integrations => |*ip| try integrations.draw(app, ui, pr.pane, ip, rect),
             .marketplace => |*mk| try marketplace.draw(app, ui, pr.pane, mk, rect),
+            .ai_apply => |*ap| drawAiApply(app, ui, pr.pane, ap, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -418,6 +421,27 @@ fn drawAi(app: *App, ui: Ui, id: PaneId, a: *ai_app.AiPane, rect: Rect) void {
         .running = a.status == .running,
     });
     if (a.scroll > over) a.scroll = over;
+}
+
+/// The `ai.apply` review: hunks with their accept / skip badges.
+fn drawAiApply(app: *App, ui: Ui, id: PaneId, p: *ai_apply.AiApplyPane, rect: Rect) void {
+    if (app.active == id) app.pane_rows = @max(rect.h, 1);
+    const Text = struct {
+        var pane: *ai_apply.AiApplyPane = undefined;
+        fn line(row: ai_apply.Row) []const u8 {
+            return ai_apply.lineText(pane, row);
+        }
+    };
+    Text.pane = p;
+    ai_apply_view.draw(ui, id, rect, &p.scroll, .{
+        .file = p.file,
+        .hunks = p.hunks,
+        .rows = p.rows,
+        .cursor = p.cursor,
+        .focused = app.active == id and app.focus == .pane,
+        .cursor_row = p.cursorRow(),
+        .lineText = &Text.line,
+    });
 }
 
 /// The Claude Agents dashboard: rows in the pane's display order.

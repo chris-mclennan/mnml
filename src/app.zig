@@ -1561,6 +1561,8 @@ test {
     _ = @import("ui/ai_view.zig");
     _ = @import("ui/agents_view.zig");
     _ = @import("ui/spend_view.zig");
+    _ = @import("app/ai_apply.zig");
+    _ = @import("ui/ai_apply_view.zig");
     _ = @import("todos.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");

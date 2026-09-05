@@ -49,6 +49,7 @@ const scrollbar = @import("../ui/scrollbar.zig");
 const statusline = @import("../ui/statusline.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const cmd_term = @import("cmd_term.zig");
+const ai_apply = @import("ai_apply.zig");
 const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
@@ -200,6 +201,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .integrations => |*ip| {
             if (try integrations.handleKey(app, id, ip, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .ai_apply => |*ap| {
+            if (try ai_apply.handleKey(app, id, ap, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1039,6 +1045,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 .editor => |*e| try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
+                .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
                 .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1289,6 +1296,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .mount => {},
         .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .marketplace => |*mk| marketplace.scrollBy(app, mk, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 

@@ -36,6 +36,7 @@ const settings = @import("settings.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const transcript = @import("../ai/transcript.zig");
+const ai_apply = @import("ai_apply.zig");
 
 pub const table = .{
     .@"ai.ask" = &askCmd,
@@ -1037,26 +1038,24 @@ fn promoteCmd(app: *App) CommandError!void {
     _ = try pty_pane.open(app, .{ .argv = argv, .label = "claude", .placement = .tab, .kind = .command });
 }
 
-/// `a`: the first code block replaces what the action was run on.
+/// `a`: the first code block becomes a proposal for what the action
+/// was run on, reviewed hunk by hunk in `Pane.ai_apply` before any of
+/// it reaches the editor (`ai_apply.zig`).
 fn applyCmd(app: *App) CommandError!void {
+    const source = app.active orelse return error.NoActivePane;
     const p = try activeAi(app);
     const arena = app.frame.allocator();
     const code = cli.firstCodeBlock(p.answer.items) orelse return app.diag.fail(arena, "no code block in the answer", .{});
     const target = p.apply orelse blk: {
         const id = app.last_editor orelse return app.diag.fail(arena, "no editor to apply to", .{});
         const e = app.panes.editor(id) orelse return app.diag.fail(arena, "no editor to apply to", .{});
-        const sel = e.buf.editor.selection() orelse [2]usize{ e.buf.editor.cursor, e.buf.editor.cursor };
+        const sel = e.buf.editor.selection() orelse [2]usize{ 0, e.buf.editor.len() };
         break :blk AiPane.ApplyTarget{ .pane = id, .start = sel[0], .end = sel[1] };
     };
-    const e = app.panes.editor(target.pane) orelse return app.diag.fail(arena, "the editor is gone", .{});
-    const len = e.buf.editor.len();
-    const start = @min(target.start, len);
-    const end = @min(target.end, len);
-    const copy = try arena.dupe(u8, code);
-    try app.splice(e, start, end, copy);
-    p.apply = .{ .pane = target.pane, .start = start, .end = start + copy.len };
-    app.showPane(target.pane);
-    app.toast("applied {d} bytes", .{copy.len});
+    // The block's own trailing newline is part of the proposal; the
+    // fence's is not.
+    const proposal = try std.fmt.allocPrint(arena, "{s}\n", .{code});
+    _ = try ai_apply.open(app, source, target.pane, target.start, target.end, proposal);
 }
 
 /// `ai.session_view`: the transcript file of this pane's session, live
