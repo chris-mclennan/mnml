@@ -43,6 +43,7 @@ const Theme = @import("../ui/theme.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
+const sessions = @import("../sessions.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -252,14 +253,7 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
         .git => try git_app.draw(app, ui, area),
         .diagnostics => try lsp.drawPanel(app, ui, area),
         .http => try http_panel.draw(app, ui, area),
-        .sessions => {
-            ui.fill(area, app.theme.panel_bg);
-            const caps = ui.fmt(" {s}", .{@tagName(which)});
-            const up = try ui.arena.dupe(u8, caps);
-            for (up) |*c| c.* = std.ascii.toUpper(c.*);
-            _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(up, area.w), Theme.onBg(app.theme.accent, app.theme.panel_bg.bg));
-            if (area.h > 1) _ = ui.putStr(area.x, area.y + 1, area.w, ui.clipStr(" not in this build yet", area.w), Theme.onBg(app.theme.muted, app.theme.panel_bg.bg));
-        },
+        .sessions => try sessions.draw(app, ui, area),
     }
 }
 

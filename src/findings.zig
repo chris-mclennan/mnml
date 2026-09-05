@@ -957,7 +957,9 @@ test "headless: the panel lists findings with severity tags; d resolves the sele
     // Room for the count and the full chip side by side.
     f.app.right_panel_width = 56;
     try command.run(&f.app, .{ .static = .@"view.activity_findings" });
-    try f.app.render();
+    // Through the registry, not the first draw: a table left out of
+    // `command.runner_tables` fails here instead of passing silently.
+    try command.run(&f.app, .{ .static = .@"findings.refresh" });
     try f.settle(2000);
     const txt = try f.screen();
     defer testing.allocator.free(txt);
@@ -975,7 +977,7 @@ test "headless: the panel lists findings with severity tags; d resolves the sele
     defer testing.allocator.free(txt2);
     try testing.expect(std.mem.indexOf(u8, txt2, "(0 open of 1)") != null);
     // A second d is a no-op with a toast, not a rewrite.
-    try f.app.handle(.{ .key = Key.char('d') });
+    try command.run(&f.app, .{ .static = .@"findings.resolve" });
     try testing.expectEqualStrings("finding-1 is already resolved", f.app.lastToast().?);
     // n seeds the next name; enter creates the file with the template and opens it.
     try f.app.handle(.{ .key = Key.char('n') });
@@ -1042,10 +1044,11 @@ test "mouse: the row menu names real ids; the sort chip cycles and persists ui.f
     try testing.expectEqual(@as(usize, 1), f.app.findings.items.len);
 }
 
-test "the sort chip at 26 / 30 / 34 cells is icon-only and live; at the shipped 40 the full label paints" {
-    inline for (.{ 26, 30, 34, 40 }) |panel_w| {
-        // The right panel takes `panel_w` plus a divider off the screen.
-        var f = try Fixture.init(60, 12);
+test "the sort chip at 26 / 30 / 34 cells and the shipped 40 is icon-only and live; the full label needs 50" {
+    inline for (.{ 26, 30, 34, 40, 50 }) |panel_w| {
+        // The right panel takes `panel_w` plus a divider off the screen
+        // (and is clamped to the screen less 21, so the screen is wide).
+        var f = try Fixture.init(100, 12);
         defer f.deinit();
         try f.write(".mnml/findings/a.md", "# A\n");
         f.app.tree.visible = false;
@@ -1060,12 +1063,15 @@ test "the sort chip at 26 / 30 / 34 cells is icon-only and live; at the shipped 
             chip_rect = h.rect;
         };
         try testing.expect(chip_rect != null);
-        // FINDINGS is the widest label: the full chip needs 35 cells.
-        if (panel_w < 40) {
+        // FINDINGS is the widest label: with its count the full chip
+        // needs 49 cells; the count stays beside the icon down to 32.
+        if (panel_w < 50) {
             try testing.expectEqual(@as(u16, 3), chip_rect.?.w);
             try testing.expect(std.mem.indexOf(u8, txt, "sort:") == null);
+            if (panel_w >= 32) try testing.expect(std.mem.indexOf(u8, txt, "(1 open of 1)") != null);
         } else {
             try testing.expect(std.mem.indexOf(u8, txt, "sort: Newest first") != null);
+            try testing.expect(std.mem.indexOf(u8, txt, "(1 open of 1)") != null);
         }
         // The chip is live at every rung: a right-click lists the modes.
         try f.app.handle(.{ .mouse = .{ .x = chip_rect.?.x + 1, .y = chip_rect.?.y, .kind = .press, .button = .right } });

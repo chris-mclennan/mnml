@@ -51,6 +51,7 @@ const editor_view = @import("ui/editor_view.zig");
 const todos = @import("todos.zig");
 const notes = @import("notes.zig");
 const findings = @import("findings.zig");
+const sessions = @import("sessions.zig");
 const panel_mod = @import("core/panel.zig");
 const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
@@ -155,6 +156,8 @@ pub const PromptPurpose = union(enum) {
     /// is the panel's directory, workspace-relative (owned).
     new_note: []u8,
     new_finding: []u8,
+    /// SESSIONS: the alias for this session id (owned).
+    sessions_rename: []u8,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
     /// AI: a bare question; a question with the file + selection;
@@ -202,7 +205,7 @@ pub const PromptPurpose = union(enum) {
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .new_note, .new_finding, .rename, .http_env_edit_value => |s| gpa.free(s),
+            .new_file, .new_folder, .new_note, .new_finding, .sessions_rename, .rename, .http_env_edit_value => |s| gpa.free(s),
             .dap_bp_condition, .dap_hit_count => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             else => {},
@@ -228,10 +231,12 @@ pub const ConfirmPurpose = union(enum) {
     kill_pids: []u32,
     /// `integrations.remove`: the manifest id to delete (owned).
     remove_integration: []u8,
+    /// SESSIONS: the absolute transcript path to delete (owned).
+    delete_session: []u8,
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path, .remove_integration => |s| gpa.free(s),
+            .delete_path, .remove_integration, .delete_session => |s| gpa.free(s),
             .kill_pids => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
@@ -500,6 +505,7 @@ pub const App = struct {
     todos: todos.State,
     notes: notes.State,
     findings: findings.State,
+    sessions: sessions.State,
     git: git_app.State,
     snippets: snippets.State,
     ai: ai_app.State = .{},
@@ -630,6 +636,7 @@ pub const App = struct {
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
             .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
             .findings = findings.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.findings_sort)),
+            .sessions = sessions.State.init(gpa, opts.cfg.ui.sessions_sort),
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
@@ -787,6 +794,7 @@ pub const App = struct {
         self.todos.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
+        self.sessions.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
@@ -1332,6 +1340,7 @@ pub const App = struct {
             .todos => |result| try todos.handle(self, result),
             .notes => |result| try notes.handle(self, result),
             .findings => |result| try findings.handle(self, result),
+            .sessions => |result| try sessions.handle(self, result),
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
@@ -1350,6 +1359,7 @@ pub const App = struct {
                 if (e.source == .todos) self.todos.scanning = false;
                 if (e.source == .notes) self.notes.scanning = false;
                 if (e.source == .findings) self.findings.scanning = false;
+                if (e.source == .sessions) self.sessions.scanning = false;
                 if (e.source == .git) {
                     self.git.status_pending = false;
                     if (self.git.busy > 0) self.git.busy -= 1;
@@ -1419,6 +1429,7 @@ pub const App = struct {
         ws_pane.tickAll(self);
         try watch.tick(self, now);
         todos.tick(self, now);
+        sessions.tick(self, now);
         try git_app.tick(self, now);
         try ai_app.tick(self);
         try self.script().tick(now);
@@ -1441,10 +1452,11 @@ pub const App = struct {
         // The TODOS panel's debounced rescan.
         if (self.todos.rescan_at_ms) |at| next = @min(next orelse std.math.maxInt(i64), at);
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.notes.scanning or self.findings.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.notes.scanning or self.findings.scanning or self.sessions.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -1582,6 +1594,7 @@ test {
     _ = @import("todos.zig");
     _ = @import("notes.zig");
     _ = @import("findings.zig");
+    _ = @import("sessions.zig");
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");

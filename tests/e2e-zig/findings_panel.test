@@ -24,10 +24,10 @@ key g
 key d
 wait 400
 expect screen contains "(1 open of 2)"
-# The sort chip cycles and the palette command matches the chip.
+# The sort chip cycles through the palette command; at the shipped panel
+# width the chip is icon-only beside the count, so the toast says which.
 command findings.sort
-wait 100
-expect screen contains "(1 open of 2)"
+expect screen contains "findings: Oldest first"
 # `n` seeds the next free name; enter writes the template and opens it.
 key n
 expect screen contains "finding-2.md"

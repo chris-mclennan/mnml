@@ -37,6 +37,7 @@ const fuzzy = @import("../ui/fuzzy.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
+const sessions = @import("../sessions.zig");
 const snippets = @import("snippets.zig");
 const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
@@ -105,7 +106,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
             .git => try git_app.handleKey(app, k),
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
-            .sessions => false,
+            .sessions => try sessions.handleKey(app, k),
         };
         if (took) return;
         _ = try chordChain(app, k);
@@ -672,6 +673,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
+        .sessions_rename => |id| try sessions.acceptRename(app, id, text),
         .new_folder => |dir| try tree_mod.acceptNewFolder(app, dir, text),
         .rename => |from| try tree_mod.acceptRename(app, from, text),
         .npm_run_script => try toastOnFail(app, runners.npmRunScriptAccept(app, text)),
@@ -740,6 +742,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             findings.onPathRemoved(app, rel);
         },
         .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
+        .delete_session => |path| if (choice == 0) try sessions.acceptDelete(app, path),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
         .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
@@ -840,46 +843,47 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.rowMouse(app, pr.idx, m),
             .notes => try notes.rowMouse(app, pr.idx, m),
             .findings => try findings.rowMouse(app, pr.idx, m),
+            .sessions => try sessions.rowMouse(app, pr.idx, m),
             .git => try git_app.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
-            .sessions => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
             .notes => try notes.kebabMouse(app, pr.idx, m),
             .findings => try findings.kebabMouse(app, pr.idx, m),
+            .sessions => try sessions.kebabMouse(app, pr.idx, m),
             .git => try git_app.kebabMouse(app, pr.idx, m),
             .http => try http_panel.kebabMouse(app, pr.idx, m),
-            .sessions, .diagnostics => {},
+            .diagnostics => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
             .notes => try notes.chipMouse(app, c.kind, m),
             .findings => try findings.chipMouse(app, c.kind, m),
+            .sessions => try sessions.chipMouse(app, c.kind, m),
             .git => try git_app.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
-            .sessions => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
             .notes => notes.filterMouse(app, m),
             .findings => findings.filterMouse(app, m),
+            .sessions => sessions.filterMouse(app, m),
             .git => git_app.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
-            .sessions => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
             .panel => |p| switch (p) {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
                 .notes => if (hitRect(app, m.x, m.y)) |r| notes.scrollbarMouse(app, r, m),
                 .findings => if (hitRect(app, m.x, m.y)) |r| findings.scrollbarMouse(app, r, m),
+                .sessions => if (hitRect(app, m.x, m.y)) |r| sessions.scrollbarMouse(app, r, m),
                 .git => if (hitRect(app, m.x, m.y)) |r| git_app.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
-                .sessions => {},
             },
             .pane => |id| {
                 if (wheel) return wheelOnPane(app, id, m, count);

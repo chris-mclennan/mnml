@@ -466,6 +466,16 @@ pub const specs = [_]Spec{
     .{ .id = "findings.copy_path", .title = "Findings: copy the selected finding's path", .group = "findings" },
     .{ .id = "findings.resolve", .title = "Findings: mark the selected finding resolved (status: resolved)", .group = "findings" },
     .{ .id = "findings.delete", .title = "Findings: delete the selected finding (confirm)", .group = "findings" },
+    .{ .id = "sessions.sort", .title = "Sessions: toggle the sort axis (State / Manual)", .group = "sessions" },
+    .{ .id = "sessions.cycle_state", .title = "Sessions: cycle the state filter (every / live / tool / idle / ended)", .group = "sessions" },
+    .{ .id = "sessions.open", .title = "Sessions: resume the selected session in a terminal", .group = "sessions" },
+    .{ .id = "sessions.open_transcript", .title = "Sessions: open the selected session's transcript", .group = "sessions" },
+    .{ .id = "sessions.rename", .title = "Sessions: rename the selected session (empty = reset)", .group = "sessions" },
+    .{ .id = "sessions.copy_id", .title = "Sessions: copy the selected session id", .group = "sessions" },
+    .{ .id = "sessions.delete", .title = "Sessions: delete the selected session's transcript (confirm)", .group = "sessions" },
+    .{ .id = "sessions.move_up", .title = "Sessions: move the selected session up (manual order)", .group = "sessions" },
+    .{ .id = "sessions.move_down", .title = "Sessions: move the selected session down (manual order)", .group = "sessions" },
+    .{ .id = "sessions.all_workspaces", .title = "Sessions: toggle every workspace's sessions / this one's", .group = "sessions" },
     // Zig-only: the context-menu rows on a tab, a tree row and the
     // editor body name commands, so these act on "the row / tab the
     // menu was opened on" (the tree cursor; the active pane).
@@ -893,11 +903,12 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "841 specs, unique ids" {
+test "851 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + four TODOS row commands
-    // + three NOTES row commands + four FINDINGS row commands.
-    try std.testing.expectEqual(@as(usize, 841), specs.len);
+    // + three NOTES row commands + four FINDINGS row commands + ten
+    // SESSIONS commands.
+    try std.testing.expectEqual(@as(usize, 851), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

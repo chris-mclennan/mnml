@@ -73,6 +73,8 @@ pub const Node = union(enum) {
 pub const Tab = struct { nodes: []const Node = &.{}, root: ?u32 = null };
 pub const Closed = struct { path: []const u8 = "", cursor: usize = 0 };
 pub const Message = struct { level: Level = .info, age_ms: i64 = 0, text: []const u8 = "" };
+/// SESSIONS: a display name for a session id.
+pub const SessionAlias = struct { id: []const u8 = "", name: []const u8 = "" };
 
 pub const Saved = struct {
     version: u32 = format_version,
@@ -97,6 +99,9 @@ pub const Saved = struct {
     recent: []const []const u8 = &.{},
     closed: []const Closed = &.{},
     messages: []const Message = &.{},
+    /// SESSIONS: the manual order (session ids, first on top) and the aliases.
+    sessions_order: []const []const u8 = &.{},
+    sessions_aliases: []const SessionAlias = &.{},
 };
 
 // ─── app-side state ──────────────────────────────────────────────────────
@@ -251,6 +256,10 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
         .text = m.text,
     };
     saved.messages = msgs;
+    saved.sessions_order = try dupeList(arena, app.sessions.order.items);
+    const aliases = try arena.alloc(SessionAlias, app.sessions.aliases.items.len);
+    for (app.sessions.aliases.items, 0..) |a, i| aliases[i] = .{ .id = a.id, .name = a.name };
+    saved.sessions_aliases = aliases;
     return saved;
 }
 
@@ -334,6 +343,9 @@ pub fn restore(app: *App) RestoreError!void {
 }
 
 pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }!Saved {
+    // The parser is instantiated per field of `Saved`; the default quota
+    // ran out when the SESSIONS lists joined the file.
+    @setEvalBranchQuota(4000);
     return std.zon.parse.fromSliceAlloc(Saved, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false });
 }
 
@@ -397,6 +409,13 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
         try app.harpoon.set(gpa, i, p);
     }
     for (saved.ex_history) |line| try app.noteCmdLine(line);
+    for (saved.sessions_order) |id| {
+        if (id.len == 0 or app.sessions.orderIndex(id) != null) continue;
+        const owned = try gpa.dupe(u8, id);
+        errdefer gpa.free(owned);
+        try app.sessions.order.append(gpa, owned);
+    }
+    for (saved.sessions_aliases) |a| if (a.id.len > 0) try app.sessions.setAlias(gpa, a.id, a.name);
     for (saved.recent) |p| try app.noteRecent(p);
     for (saved.closed) |c| {
         if (c.path.len == 0) continue;

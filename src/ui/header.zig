@@ -100,9 +100,11 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         }
     }
 
-    // The mode chip: full, icon, or nothing. The subtitle is sacrificed
-    // before the chip degrades: the full form without the count beats
-    // the icon with it, and the icon without the count beats no chip.
+    // The mode chip: full, icon, or nothing — and the subtitle goes
+    // before the chip does. In order: the full chip with the count, the
+    // icon with the count, the full chip alone, the icon alone. A count
+    // beside an icon still says what the panel holds and the icon is
+    // still the whole button (click cycles, right-click lists).
     // // changed (panels): the first cut of this ladder only dropped
     // the subtitle when the REFRESH chip needed the room, so a wide
     // count (`(3 open of 12)`) deleted the sort chip at the shipped
@@ -116,15 +118,15 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         if (w >= label_w + sub_w + refresh_w + full_w + 4) {
             mode_text = full;
             mode_w = full_w;
+        } else if (sub != null and w >= label_w + sub_w + refresh_w + icon_w + 4) {
+            mode_text = icon;
+            mode_w = icon_w;
+            out.mode_is_icon = true;
         } else if (w >= label_w + refresh_w + full_w + 4) {
             mode_text = full;
             mode_w = full_w;
             sub = null;
             sub_w = 0;
-        } else if (w >= label_w + sub_w + refresh_w + icon_w + 4) {
-            mode_text = icon;
-            mode_w = icon_w;
-            out.mode_is_icon = true;
         } else if (w >= label_w + refresh_w + icon_w + 4) {
             mode_text = icon;
             mode_w = icon_w;
@@ -232,19 +234,29 @@ test "a wide subtitle gives way to the chip: the count goes before the sort cont
     try testing.expect(l.mode_is_icon);
     try f.expectLacks("open of");
     try testing.expectEqual(ChipKind.sort, f.hits.at(30 - 6, 0).?.chip.kind);
-    // At the shipped default width the full chip fits once the count goes.
+    // At the shipped default width the count and the icon share the row.
     var g = try Fixture.init(40, 1);
     defer g.deinit();
     const m = draw(g.ui(), g.full(), p);
-    try testing.expect(!m.mode_is_icon);
-    try g.expectContains(" sort: Newest first ");
-    try g.expectLacks("open of");
-    // With room for both, both paint.
+    try testing.expect(m.mode_is_icon);
+    try g.expectContains("(3 open of 12)");
+    try g.expectLacks("sort:");
+    // With room for both, both paint in full.
     var h = try Fixture.init(56, 1);
     defer h.deinit();
-    _ = draw(h.ui(), h.full(), p);
+    const n = draw(h.ui(), h.full(), p);
+    try testing.expect(!n.mode_is_icon);
     try h.expectContains("(3 open of 12)");
     try h.expectContains(" sort: Newest first ");
+    // A count too wide for even the icon rung goes, and the full chip
+    // takes the room: TODOS (5) + 19 + 3 + 3 + 4 = 34 > 33 ≥ 5 + 3 + 20 + 4.
+    var i = try Fixture.init(33, 1);
+    defer i.deinit();
+    const q = props(&i, " (120 open of 3400)", full_chip);
+    const o = draw(i.ui(), i.full(), q);
+    try testing.expect(!o.mode_is_icon);
+    try i.expectContains(" sort: Newest first ");
+    try i.expectLacks("open of");
 }
 
 test "a chip that shrinks keeps its right edge: the same cell hits before and after" {
