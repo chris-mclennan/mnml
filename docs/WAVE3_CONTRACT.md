@@ -2313,3 +2313,47 @@ goal.
   src/editor/buffer.zig 's/else @min(cursor, n);/else @max(cursor, n + 1);/'`
   and `tools/break-check.sh "vim inserts, opens and appends" src/input/vim.zig
   's/break :blk ops(arena, &.{.move_left_no_cross_line});/break :blk ops(arena, \&.{.move_left});/'`.
+
+## The `vim-round2` track (2026-09-05, on `main`) — `// changed:` notes
+
+Twenty-three findings from the second NvChad hunt: 20 fixed, 1
+rejected against Vim (`vim -es` reproduces mnml-zig's V-BLOCK edge),
+2 parked (the doubled-case cursor sits on a Rust corpus line in the
+gate; see the finding). Each fix has a `tests/e2e-zig/vim_*.test`
+repro and, for seven of them, a `vim()` case in the buffer harness.
+
+- `// changed (editor):` the buffer-local marks are byte offsets on
+  the `Document`, moved by `spliceBy` — the one place every edit from
+  every window passes — with `Document.markPos` / `setMarkPos` for the
+  session file, `:marks`, the picker and the `'a` address. A mark in a
+  deleted range lands at the deletion's start; a wholesale replacement
+  (undo, reload) snaps them to a boundary.
+- `// changed (editor):` `EditOp` has 139 tags: `restore_last_selection`
+  carries a `SelectionShape` (charwise / linewise / block) and
+  `change_numbers_in_selection` is `v_CTRL-A`. `EditCtx` has 13 scalars
+  again — `register_empty`, so a Visual `p` can refuse before it
+  deletes. `AppCommand` has 26 variants: `operator_to_mark`,
+  `split_resize`, `fold_after` (ops that select, then
+  `editor.fold_selection`).
+- `// changed (editor):` `ip` / `ap` name lines, the operator widens
+  them (`dip` leaves no empty line, `cip` opens one, `vip` is V-LINE);
+  `dap` on the last paragraph takes the blank lines before it. Two
+  buffer tests that pinned the Rust "charwise paragraph" shape pin
+  Vim's, as does the `vlp` case (nothing to put ⇒ nothing deleted).
+- `// changed (editor):` a `repeat` of a put is one put of the text
+  `count` times; a `repeat` of `delete_line` takes only the lines that
+  exist. `dd` / `V…d` on the last line clamp onto the new last line.
+- `// changed (app):` toasts are dropped while `in_global` is set —
+  `:g` reports once. `:g` is one undo step. `:v` with every line
+  matching says "Pattern found in every line".
+- `// changed (app):` the chord chain consults the which-key tree when
+  a leader chain bottoms out in the keymap (a leaf runs, a group opens
+  the popup at that path), and a pending leader prefix that times out
+  with no fallback resolves the same way. The tree arms `Ctrl-W` under
+  the vim profile. `zj` / `zk` walk every bracket block
+  (`cmd_editor.allFoldRanges`) plus the closed folds.
+- `// changed (app):` `:tabmove`, `:resize`, `:vertical resize` /
+  `split`; `{count} Ctrl-W >` is `count` cells (the bare chord keeps its
+  5 % step). `/pat/e` is a search offset kept on the pane's find state.
+  `Ctrl-V` on the `:` line quotes the next key (the paste is `Ctrl-R "`).
+  `q{A-Z}` appends to the register.
