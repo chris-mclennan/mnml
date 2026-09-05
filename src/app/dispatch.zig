@@ -85,6 +85,7 @@ const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const grep = @import("grep.zig");
+const jumplist = @import("jumplist.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const files_pane = @import("files_pane.zig");
@@ -94,7 +95,15 @@ const flash = @import("flash.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
+/// One key. The cursor is snapshotted around it so a big jump lands on
+/// the jumplist (`jumplist.afterKey`).
 pub fn key(app: *App, k: Key) Allocator.Error!void {
+    const before = try jumplist.snapshot(app);
+    try keyInner(app, k);
+    try jumplist.afterKey(app, before);
+}
+
+fn keyInner(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
     switch (app.overlay) {
         .none => {},

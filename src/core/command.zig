@@ -121,6 +121,7 @@ const runner_tables = .{
     @import("../app/tests_pane.zig"),
     @import("../app/flaky.zig"),
     @import("../app/grep.zig"),
+    @import("../app/jumplist.zig"),
     @import("../app/cmd_dap.zig"),
     @import("../app/cmd_lsp.zig"),
     @import("../app/http.zig"),
