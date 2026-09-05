@@ -101,7 +101,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     var cmd = std.mem.trim(u8, parts.tail, " \t");
     if (cmd.len == 0) cmd = "p";
 
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const r = range orelse Range{ .first = 0, .last = ed.lineCount() - 1 };
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
@@ -129,20 +129,20 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     defer leave(app);
     app.in_global = true;
     defer app.in_global = false;
-    var seen = ed.edits.head();
+    var seen = ed.doc.edits.head();
     var ran: usize = 0;
     var failed: usize = 0;
     var i: usize = 0;
     while (i < targets.items.len) : (i += 1) {
         const pane = app.panes.editor(pane_id) orelse break;
         if (app.active != pane_id) break;
-        const cur = &pane.buf.editor;
+        const cur = pane.buf.editor;
         // Map what is left through the edits the last command made.
-        if (cur.edits.lostSince(seen)) {
+        if (cur.doc.edits.lostSince(seen)) {
             app.toast("{s} — stopped after {d}: the text was replaced wholesale", .{ label, ran });
             break;
         }
-        for (cur.edits.since(seen)) |sp| {
+        for (cur.doc.edits.since(seen)) |sp| {
             for (targets.items[i..]) |*t| {
                 const b = t.* orelse continue;
                 if (b >= sp.old_end) {
@@ -152,7 +152,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
                 }
             }
         }
-        seen = cur.edits.head();
+        seen = cur.doc.edits.head();
         const b = targets.items[i] orelse continue;
         if (b > cur.len()) continue;
         cur.placeCursor(cur.lineOfByte(b), 0);
@@ -206,7 +206,7 @@ pub fn normal(app: *App, range: ?Range, keys_spec: []const u8) CommandError!void
     defer app.gpa.free(keys);
     try enter(app, ":norm");
     defer leave(app);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
     var row = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
@@ -522,7 +522,7 @@ pub fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!voi
 fn filter(app: *App, r: Range, cmd: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":!");
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
     const start = ed.lineStart(first);
@@ -571,7 +571,7 @@ pub fn read(app: *App, range: ?Range, args_in: []const u8) CommandError!void {
         };
     }
     const text = std.mem.trimEnd(u8, body, "\n");
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = @min(if (range) |r| r.last else ed.currentLine(), ed.lineCount() - 1);
     const at = ed.lineEnd(row);
     const payload = try std.mem.concat(arena, u8, &.{ "\n", text });
@@ -592,7 +592,7 @@ pub fn shift(app: *App, range: ?Range, right: bool, args: []const u8) CommandErr
     const arena = app.frame.allocator();
     const label: []const u8 = if (right) ":>" else ":<";
     const e = try editor(app, label);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const sign: u8 = if (right) '>' else '<';
     var times: usize = 1;
     var i: usize = 0;
@@ -607,7 +607,7 @@ pub fn shift(app: *App, range: ?Range, right: bool, args: []const u8) CommandErr
         first = last;
         last = @min(last + n - 1, ed.lineCount() - 1);
     }
-    const tw: usize = @max(ed.tab_width, 1);
+    const tw: usize = @max(ed.doc.tab_width, 1);
     const width = tw * times;
     var out: std.ArrayListUnmanaged(u8) = .empty;
     var row = first;
@@ -775,7 +775,7 @@ fn substituteConfirm(app: *App, range: ?Range, parts: SubParts, whole: bool) Com
     const label: []const u8 = if (whole) ":%s" else ":s";
     const e = try editor(app, label);
     const pane_id = app.active.?;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const needle = try ex.unescapeDelim(arena, parts.pattern, parts.delim);
     const replacement = try ex.unescapeDelim(arena, parts.replacement, parts.delim);
     if (needle.len == 0) return app.diag.fail(arena, "{s} — empty pattern", .{label});
@@ -858,7 +858,7 @@ fn substituteCount(app: *App, range: ?Range, parts: SubParts, whole: bool) Comma
     const arena = app.frame.allocator();
     const label: []const u8 = if (whole) ":%s" else ":s";
     const e = try editor(app, label);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const needle = try ex.unescapeDelim(arena, parts.pattern, parts.delim);
     if (needle.len == 0) return app.diag.fail(arena, "{s} — empty pattern", .{label});
     var all = false;
@@ -883,7 +883,7 @@ fn showNext(app: *App) Allocator.Error!void {
     const e = app.panes.editor(c.pane) orelse return finishConfirm(app);
     if (c.idx >= c.matches.len) return finishConfirm(app);
     const m = c.current();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     if (m[1] > ed.len()) return finishConfirm(app);
     ed.setSelection(m[0], m[1]);
     ed.goal_col = null;

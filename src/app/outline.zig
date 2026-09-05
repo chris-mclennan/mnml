@@ -116,7 +116,7 @@ pub fn refresh(app: *App, id: PaneId) Allocator.Error!void {
     const from_server: ?[]const lsp_types.Symbol = if (src.buf.path) |p| lsp.symbolsFor(app, p) else null;
     if (from_server) |syms| {
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = lsp_types.symbolKindLabel(s.kind), .line = s.line, .col = s.character, .depth = s.depth });
-    } else if (try src.syntax.symbols(&src.buf.editor, a)) |syms| {
+    } else if (try src.syntax.symbols(src.buf.editor, a)) |syms| {
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = s.kind.label(), .line = s.line, .col = s.col, .depth = s.depth });
     } else {
         var buf: [32]u8 = undefined;

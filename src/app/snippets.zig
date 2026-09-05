@@ -206,7 +206,7 @@ pub fn wordBefore(text: []const u8, cursor: usize) struct { start: usize, word: 
 /// Expand the trigger before the cursor in `e`. Returns false (and
 /// toasts) when nothing matches.
 pub fn expand(app: *App, pane_id: PaneId, e: *EditorPane) Allocator.Error!bool {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const w = wordBefore(ed.bytes(), ed.cursor);
     var scope_buf: [32]u8 = undefined;
     const scope = scopeFor(e.buf.path, &scope_buf);
@@ -221,7 +221,7 @@ pub fn expand(app: *App, pane_id: PaneId, e: *EditorPane) Allocator.Error!bool {
 /// `body` replaces `[start, cursor)` and its stops open a session — the
 /// tail of a trigger expansion, and the whole of a picker insert.
 fn insertBody(app: *App, pane_id: PaneId, e: *EditorPane, start: usize, cursor: usize, body: []const u8) Allocator.Error!void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     var parsed = try parse(app.gpa, body);
     defer parsed.deinit(app.gpa);
     app.snippets.endSession();
@@ -239,7 +239,7 @@ fn insertBody(app: *App, pane_id: PaneId, e: *EditorPane, start: usize, cursor: 
     if (parsed.stops.len > 1) {
         const stops = try app.gpa.alloc(Stop, parsed.stops.len);
         for (parsed.stops, 0..) |s, i| stops[i] = .{ .pos = start + s.pos, .default_len = s.default_len, .exit = if (i == 0 and s.default_len > 0) start + s.pos + s.default_len else null };
-        app.snippets.session = .{ .pane = pane_id, .stops = stops, .current = 0, .seen_seq = ed.edits.head() };
+        app.snippets.session = .{ .pane = pane_id, .stops = stops, .current = 0, .seen_seq = ed.doc.edits.head() };
     }
     app.needs_render = true;
 }
@@ -341,7 +341,7 @@ pub fn step(app: *App, dir: i8) void {
     const sess = if (app.snippets.session) |*s| s else return;
     const e = app.panes.editor(sess.pane) orelse return app.snippets.endSession();
     if (app.active != sess.pane) return app.snippets.endSession();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     afterEdit(app, sess.pane, e);
     sess.stops[sess.current].exit = ed.cursor;
     const next: i64 = @as(i64, @intCast(sess.current)) + dir;
@@ -369,15 +369,15 @@ pub fn step(app: *App, dir: i8) void {
 pub fn afterEdit(app: *App, pane_id: PaneId, e: *EditorPane) void {
     const sess = if (app.snippets.session) |*s| s else return;
     if (sess.pane != pane_id) return;
-    const ed = &e.buf.editor;
-    if (ed.edits.lostSince(sess.seen_seq)) return app.snippets.endSession();
-    for (ed.edits.since(sess.seen_seq)) |sp| {
+    const ed = e.buf.editor;
+    if (ed.doc.edits.lostSince(sess.seen_seq)) return app.snippets.endSession();
+    for (ed.doc.edits.since(sess.seen_seq)) |sp| {
         for (sess.stops) |*s| {
             s.pos = shift(s.pos, sp.start, sp.old_end, sp.new_end);
             if (s.exit) |x| s.exit = shift(x, sp.start, sp.old_end, sp.new_end);
         }
     }
-    sess.seen_seq = ed.edits.head();
+    sess.seen_seq = ed.doc.edits.head();
 }
 
 fn shift(pos: usize, start: usize, old_end: usize, new_end: usize) usize {
@@ -408,7 +408,7 @@ pub fn interceptKey(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocato
     const mode = e.buf.input.mode();
     if (mode != .insert and mode != .none) return false;
     if (app.snippets.count() == 0) return false;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const w = wordBefore(ed.bytes(), ed.cursor);
     if (w.word.len == 0) return false;
     var scope_buf: [32]u8 = undefined;

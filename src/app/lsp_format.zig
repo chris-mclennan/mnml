@@ -112,7 +112,7 @@ pub fn formatSelection(app: *App) CommandError!void {
     const t = try lsp.requireServer(app, "format selection");
     const arena = app.frame.allocator();
     if (!t.server.caps.range_formatting) return app.diag.fail(arena, "{s} does not format ranges", .{t.server.name});
-    const ed = &t.e.buf.editor;
+    const ed = t.e.buf.editor;
     const sel = ed.selection() orelse return app.diag.fail(arena, "select a range first", .{});
     const text = ed.bytes();
     const uri = try types.uriFromPath(arena, t.path);
@@ -154,7 +154,7 @@ pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandErro
         return;
     };
     const argv = try tools.expandArgv(arena, f.argv, app.relPath(path));
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const before = ed.bytes();
     if (f.in_place) {
         // The tool wants the file: write what the buffer holds, run it
@@ -176,7 +176,7 @@ pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandErro
 /// The whole text as one splice, cursor kept where it can be. A tool
 /// that returned the same bytes changes nothing.
 fn replaceWhole(app: *App, e: *EditorPane, after: []const u8) Allocator.Error!void {
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     if (std.mem.eql(u8, ed.bytes(), after)) return;
     const cursor = ed.cursor;
     // Trim the common prefix and suffix so the undo step and the edit
@@ -416,7 +416,7 @@ test "through the fake server: on-type formatting behind its flag, range formatt
         }
     };
     try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     // Off by default: a typed `;` is only a `;`.
     ed.setCursor(10);
     try app.handle(.{ .key = Key.char(';') });
@@ -560,16 +560,16 @@ test "replaceWhole splices only the changed middle and keeps the cursor" {
     const e = app.activeEditor().?;
     try e.buf.editor.setText("aaa\nbbb\nccc\n");
     e.buf.editor.setCursor(9);
-    const seq = e.buf.editor.edits.head();
+    const seq = e.buf.editor.doc.edits.head();
     try replaceWhole(&app, e, "aaa\nBBB\nccc\n");
     try testing.expectEqualStrings("aaa\nBBB\nccc\n", e.buf.editor.bytes());
     try testing.expectEqual(@as(usize, 9), e.buf.editor.cursor);
-    const splices = e.buf.editor.edits.since(seq);
+    const splices = e.buf.editor.doc.edits.since(seq);
     try testing.expectEqual(@as(usize, 1), splices.len);
     try testing.expectEqual(@as(usize, 4), splices[0].start);
     try testing.expectEqual(@as(usize, 7), splices[0].old_end);
     // The same bytes change nothing.
-    const seq2 = e.buf.editor.edits.head();
+    const seq2 = e.buf.editor.doc.edits.head();
     try replaceWhole(&app, e, "aaa\nBBB\nccc\n");
-    try testing.expectEqual(seq2, e.buf.editor.edits.head());
+    try testing.expectEqual(seq2, e.buf.editor.doc.edits.head());
 }

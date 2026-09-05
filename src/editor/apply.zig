@@ -235,21 +235,21 @@ test "apply: repeat + atomic collapse to one undo step; undo/redo round-trip" {
     const arena = arena_state.allocator();
     var clip = Clipboard.init(gpa);
     defer clip.deinit();
-    var ed = try Editor.init(gpa, "abcdef");
+    const ed = try Editor.init(gpa, "abcdef");
     defer ed.deinit();
     _ = try ed.apply(.{ .repeat = .{ .count = 3, .inner = &.delete_forward } }, 10, &clip, arena);
-    try std.testing.expectEqualStrings("def", ed.text.items);
-    try std.testing.expectEqual(@as(usize, 1), ed.history.undoLen());
+    try std.testing.expectEqualStrings("def", ed.doc.text.items);
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.history.undoLen());
     _ = try ed.apply(.undo, 10, &clip, arena);
-    try std.testing.expectEqualStrings("abcdef", ed.text.items);
+    try std.testing.expectEqualStrings("abcdef", ed.doc.text.items);
     _ = try ed.apply(.redo, 10, &clip, arena);
-    try std.testing.expectEqualStrings("def", ed.text.items);
+    try std.testing.expectEqualStrings("def", ed.doc.text.items);
     const group = [_]EditOp{ .{ .insert_char = 'x' }, .move_left, .{ .insert_str = "yz" } };
     _ = try ed.apply(.{ .atomic = &group }, 10, &clip, arena);
-    try std.testing.expectEqualStrings("yzxdef", ed.text.items);
-    try std.testing.expectEqual(@as(usize, 2), ed.history.undoLen());
+    try std.testing.expectEqualStrings("yzxdef", ed.doc.text.items);
+    try std.testing.expectEqual(@as(usize, 2), ed.doc.history.undoLen());
     _ = try ed.apply(.undo, 10, &clip, arena);
-    try std.testing.expectEqualStrings("def", ed.text.items);
+    try std.testing.expectEqualStrings("def", ed.doc.text.items);
 }
 
 test "apply: outcome flags, text edit inference, changelist, goal col" {
@@ -259,7 +259,7 @@ test "apply: outcome flags, text edit inference, changelist, goal col" {
     const arena = arena_state.allocator();
     var clip = Clipboard.init(gpa);
     defer clip.deinit();
-    var ed = try Editor.init(gpa, "ab\ncd");
+    const ed = try Editor.init(gpa, "ab\ncd");
     defer ed.deinit();
     var out = try ed.apply(.move_right, 10, &clip, arena);
     try std.testing.expect(out.cursor_moved and !out.buffer_changed);
@@ -267,7 +267,7 @@ test "apply: outcome flags, text edit inference, changelist, goal col" {
     try std.testing.expect(out.buffer_changed);
     try std.testing.expectEqual(@as(usize, 1), out.text_edits.len);
     try std.testing.expectEqual(edit_op.TextEdit{ .start_byte = 1, .old_end_byte = 1, .new_end_byte = 2 }, out.text_edits[0]);
-    try std.testing.expectEqual(@as(usize, 1), ed.change_list.items.len);
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.change_list.items.len);
     // Replace-range reports its explicit extent.
     out = try ed.apply(.{ .replace_range = .{ .start = 0, .end = 2, .text = "Q" } }, 10, &clip, arena);
     try std.testing.expectEqual(edit_op.TextEdit{ .start_byte = 0, .old_end_byte = 2, .new_end_byte = 1 }, out.text_edits[0]);
@@ -300,9 +300,9 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
     var text = std.ArrayList(u8).empty;
     defer text.deinit(gpa);
     for (0..200) |_| try insert.appendChar(&text, gpa, seed_chars[rnd.uintLessThan(usize, seed_chars.len)]);
-    var ed = try Editor.init(gpa, text.items);
+    const ed = try Editor.init(gpa, text.items);
     defer ed.deinit();
-    ed.comment_token = "// ";
+    ed.doc.comment_token = "// ";
     const inner_ops = [_]EditOp{ .move_right, .delete_forward, .{ .insert_char = 'z' }, .move_down };
     const ops = [_]EditOp{
         .move_left,                                                             .move_right,                                            .move_up,                                                                                                        .move_down,
@@ -351,7 +351,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
             try std.testing.expect(ed.isBoundary(c) and c <= ed.len() and c != ed.cursor);
             if (a) |av| try std.testing.expect(ed.isBoundary(av) and av <= ed.len());
         }
-        try std.testing.expect(std.unicode.utf8ValidateSlice(ed.text.items));
+        try std.testing.expect(std.unicode.utf8ValidateSlice(ed.doc.text.items));
         if (ed.len() > 20_000) try ed.setText("reset\n");
     }
 }

@@ -1,12 +1,19 @@
-//! `Editor` — a UTF-8 text buffer with a byte cursor, an optional
-//! selection anchor, a line index and full-text undo history. Every
-//! mutation goes through `splice`, so the line index is always current and
-//! the cursor is always on a character boundary.
+//! `Editor` — one window's view of a `Document`: the byte cursor, the
+//! selection anchor, the goal column, the multi-cursor extras, the
+//! visual block, the replace stack and the closed folds. The text, its
+//! line index and its undo history live on the document, which several
+//! editors may share (`:vsplit`); a splice through one editor moves the
+//! others' positions along (`onForeignSplice`).
 //!
 //! Text is edited only through `apply`: one `EditOp` in, one `EditOutcome`
 //! out. The exhaustive switch lives in `apply.zig`; the work is split by
 //! family into `motion.zig`, `insert.zig`, `delete.zig`, `select.zig`,
-//! `line.zig`, `register.zig` and `undo.zig`. Nothing else touches `text`.
+//! `line.zig`, `register.zig` and `undo.zig`. Nothing else touches the
+//! document's text.
+//!
+//! An `Editor` is a heap box (`init` returns `*Editor`) so the document
+//! can keep a stable pointer to every view while the pane that owns the
+//! editor moves around its store.
 //!
 //! Columns are chars, not display cells (tabs / CJK width is a later
 //! refinement — same as the Rust editor today).
@@ -20,6 +27,12 @@ const EditOutcome = edit_op.EditOutcome;
 const TextEdit = edit_op.TextEdit;
 const undo = @import("undo.zig");
 const apply_mod = @import("apply.zig");
+const document = @import("document.zig");
+pub const Document = document.Document;
+pub const Point = document.Point;
+pub const Splice = document.Splice;
+pub const EditLog = document.EditLog;
+pub const change_list_max = document.change_list_max;
 pub const Clipboard = @import("clipboard.zig").Clipboard;
 
 /// `Unsupported` is an op tag that has no implementation yet (the vim
@@ -27,76 +40,6 @@ pub const Clipboard = @import("clipboard.zig").Clipboard;
 pub const Error = error{Unsupported} || Allocator.Error;
 
 pub const Pos = struct { row: usize, col: usize };
-
-/// A (row, byte column) position — what tree-sitter's `InputEdit` wants.
-pub const Point = struct { row: u32, col: u32 };
-
-/// One `splice`, in pre-edit byte coordinates plus the points on either
-/// side of it. `seq` climbs by one per record, so a consumer that
-/// remembers the last `seq` it applied can pull exactly the edits it
-/// missed (`EditLog.since`).
-pub const Splice = struct {
-    start: usize,
-    old_end: usize,
-    new_end: usize,
-    start_pt: Point,
-    old_end_pt: Point,
-    new_end_pt: Point,
-    seq: u64,
-};
-
-/// The incremental-parse contract, kept where the text changes. Every
-/// `splice` appends a record; a wholesale replacement (`setText`, an
-/// undo restore) has no record and instead bumps `lost_at`, telling a
-/// consumer whose `seen` predates it to rebuild from scratch. The log
-/// is trimmed by its slowest consumer (`trim`) and capped so a
-/// consumer that never reads it cannot grow it without bound.
-pub const EditLog = struct {
-    items: std.ArrayList(Splice) = .empty,
-    next_seq: u64 = 1,
-    lost_at: u64 = 0,
-
-    pub const cap = 4096;
-
-    /// Records after `seen`, oldest first.
-    pub fn since(self: *const EditLog, seen: u64) []const Splice {
-        const items = self.items.items;
-        var lo: usize = 0;
-        var hi: usize = items.len;
-        while (lo < hi) {
-            const mid = lo + (hi - lo) / 2;
-            if (items[mid].seq <= seen) lo = mid + 1 else hi = mid;
-        }
-        return items[lo..];
-    }
-
-    /// True when the text changed in a way the records after `seen` do
-    /// not describe.
-    pub fn lostSince(self: *const EditLog, seen: u64) bool {
-        return self.lost_at > seen;
-    }
-
-    /// The seq a consumer is current at once it has applied `since(seen)`.
-    pub fn head(self: *const EditLog) u64 {
-        return self.next_seq - 1;
-    }
-
-    /// Drop records at or before `seq` (every consumer has seen them).
-    pub fn trim(self: *EditLog, seq: u64) void {
-        const items = self.items.items;
-        var n: usize = 0;
-        while (n < items.len and items[n].seq <= seq) n += 1;
-        if (n == 0) return;
-        std.mem.copyForwards(Splice, items[0 .. items.len - n], items[n..]);
-        self.items.items.len -= n;
-    }
-
-    fn markLost(self: *EditLog) void {
-        self.items.clearRetainingCapacity();
-        self.lost_at = self.next_seq;
-        self.next_seq += 1;
-    }
-};
 
 /// Which structural object a text-object op asks for. The editor knows
 /// nothing about syntax trees; the app installs an `ObjectProvider`
@@ -112,8 +55,9 @@ pub const ObjectProvider = struct {
     lookup: *const fn (ctx: *anyopaque, ed: *const Editor, kind: ObjectKind, byte: usize, around: bool) ?[2]usize,
 };
 
-/// Cap for `change_list` — vim's `:changes` shows the last ~100.
-pub const change_list_max = 100;
+/// A foreign edit added or removed rows at `row`; a pane's scroll offset
+/// past it moves by `delta` (`takeLineShifts`).
+pub const LineShift = struct { row: usize, delta: isize };
 
 pub const CharClass = enum { word, punct, space };
 
@@ -142,23 +86,14 @@ pub fn charLen(c: u21) usize {
 
 pub const Editor = struct {
     gpa: Allocator,
-    text: std.ArrayList(u8) = .empty,
+    /// The shared text. Retained for as long as this view exists.
+    doc: *Document,
     /// Byte offset. Always on a char boundary.
     cursor: usize = 0,
     /// Selection start (byte). `null` = no selection.
     anchor: ?usize = null,
     /// Sticky column for vertical motion; `null` = recompute from the cursor.
     goal_col: ?usize = null,
-    /// Byte offset of every line's first char; `[0] == 0`, one entry per
-    /// `\n` + 1. Maintained incrementally by `splice`.
-    line_starts: std.ArrayList(usize) = .empty,
-    tab_width: usize = 4,
-    /// `>>` / indent pad with one `\t` instead of `tab_width` spaces.
-    use_tabs: bool = false,
-    /// Carry the previous line's indent on Enter / `o`.
-    auto_indent: bool = false,
-    /// Insert the matching closer after `(` `[` `{` `"` `'` `` ` ``.
-    auto_pair: bool = false,
     /// The last selection that was closed — `gv` restores it.
     last_selection: ?[2]usize = null,
     /// Visual-block anchor. Independent of `anchor`.
@@ -174,60 +109,59 @@ pub const Editor = struct {
     replace_stack: std.ArrayList(?u21) = .empty,
     /// AI ghost text painted after the cursor. Owned.
     ghost_suggestion: ?[]u8 = null,
-    /// The language's line-comment token (`// `) and, for block styles
-    /// (`<!-- ` … ` -->`), its closer. Static; empty = commentless file.
-    comment_token: []const u8 = "",
-    comment_token_close: []const u8 = "",
-    /// `:changes` — where each mutation left the cursor, newest last.
-    change_list: std.ArrayList(Pos) = .empty,
-    history: undo.History,
-    /// A coalescing run of typed chars is open.
+    /// Closed folds: start line → end line. A window's, in vim.
+    folds: std.AutoArrayHashMapUnmanaged(usize, usize) = .empty,
+    /// Row shifts from other views' edits, for the pane's scroll offset.
+    line_shifts: std.ArrayListUnmanaged(LineShift) = .empty,
+    /// A coalescing run of typed chars is open (and is this view's —
+    /// `doc.insert_run_owner`).
     in_insert_run: bool = false,
-    /// Every `splice`, for incremental consumers (the highlighter's tree,
-    /// a snippet session's tab stops).
-    edits: EditLog = .{},
     /// Tree-sitter text objects, installed by the app; null = the ops
     /// that need one are no-ops.
     objects: ?ObjectProvider = null,
 
-    pub fn init(gpa: Allocator, text: []const u8) Allocator.Error!Editor {
-        var ed: Editor = .{ .gpa = gpa, .history = .init(gpa) };
-        errdefer ed.deinit();
-        try ed.text.appendSlice(gpa, text);
-        try ed.rebuildLineIndex();
+    /// A view on a fresh document holding `text`.
+    pub fn init(gpa: Allocator, text: []const u8) Allocator.Error!*Editor {
+        const doc = try Document.create(gpa, text);
+        errdefer doc.destroy();
+        return initOn(gpa, doc);
+    }
+
+    /// A view on `doc` (retained; released by `deinit`).
+    pub fn initOn(gpa: Allocator, doc: *Document) Allocator.Error!*Editor {
+        const ed = try gpa.create(Editor);
+        errdefer gpa.destroy(ed);
+        ed.* = .{ .gpa = gpa, .doc = doc };
+        try doc.attachView(ed);
         return ed;
     }
 
     pub fn deinit(self: *Editor) void {
         const gpa = self.gpa;
-        self.text.deinit(gpa);
-        self.line_starts.deinit(gpa);
         self.extra_cursors.deinit(gpa);
         self.extra_anchors.deinit(gpa);
         self.replace_stack.deinit(gpa);
         if (self.ghost_suggestion) |g| gpa.free(g);
-        self.change_list.deinit(gpa);
-        self.edits.items.deinit(gpa);
-        self.history.deinit();
+        self.folds.deinit(gpa);
+        self.line_shifts.deinit(gpa);
+        self.doc.detachView(self);
+        gpa.destroy(self);
     }
 
-    // ─── text access ────────────────────────────────────────────────
+    // ─── text access (the document's, through the view) ─────────────
 
     pub fn bytes(self: *const Editor) []const u8 {
-        return self.text.items;
+        return self.doc.text.items;
     }
 
     pub fn len(self: *const Editor) usize {
-        return self.text.items.len;
+        return self.doc.text.items.len;
     }
 
     /// Replace the whole text (file reload, undo restore). Resets the
-    /// selection and clamps the cursor.
+    /// selection and clamps the cursor; the other views clamp theirs.
     pub fn setText(self: *Editor, text: []const u8) Allocator.Error!void {
-        self.text.clearRetainingCapacity();
-        try self.text.appendSlice(self.gpa, text);
-        try self.rebuildLineIndex();
-        self.edits.markLost();
+        try self.doc.setTextBy(text, self);
         self.anchor = null;
         self.goal_col = null;
         self.setCursor(self.cursor);
@@ -238,124 +172,115 @@ pub const Editor = struct {
         self.ghost_suggestion = if (s) |v| try self.gpa.dupe(u8, v) else null;
     }
 
-    /// THE mutation chokepoint. Replaces `[start, end)` with `new` and
-    /// patches the line index in O(lines) without rescanning the text.
-    /// Both ends must be char boundaries. Does not touch the cursor.
+    /// The mutation chokepoint for this view: the document splices and
+    /// tells every other view. Does not touch this view's cursor.
     pub fn splice(self: *Editor, start: usize, end: usize, new: []const u8) Allocator.Error!void {
-        assert(start <= end and end <= self.text.items.len);
-        assert(self.isBoundary(start) and self.isBoundary(end));
-        const gpa = self.gpa;
-        const nl_new = std.mem.count(u8, new, "\n");
-        try self.line_starts.ensureUnusedCapacity(gpa, nl_new);
-        try self.edits.items.ensureUnusedCapacity(gpa, 1);
-        const start_pt = self.pointAt(start);
-        const old_end_pt = self.pointAt(end);
-        try self.text.replaceRange(gpa, start, end - start, new);
-
-        const ls = &self.line_starts;
-        // Line starts strictly inside `(start, end]` belonged to newlines
-        // that are gone; everything after shifts by the length delta.
-        const lo = firstGreater(ls.items, start);
-        const hi = firstGreater(ls.items, end);
-        const removed = hi - lo;
-        if (nl_new > removed) {
-            _ = try ls.addManyAt(gpa, lo, nl_new - removed);
-        } else if (nl_new < removed) {
-            const n = removed - nl_new;
-            std.mem.copyForwards(usize, ls.items[lo..], ls.items[lo + n ..]);
-            ls.items.len -= n;
-        }
-        var k = lo;
-        for (new, 0..) |b, i| {
-            if (b == '\n') {
-                ls.items[k] = start + i + 1;
-                k += 1;
-            }
-        }
-        const delta: isize = @as(isize, @intCast(new.len)) - @as(isize, @intCast(end - start));
-        for (ls.items[lo + nl_new ..]) |*e| e.* = @intCast(@as(isize, @intCast(e.*)) + delta);
-
-        if (self.edits.items.items.len >= EditLog.cap) self.edits.markLost();
-        const new_end = start + new.len;
-        self.edits.items.appendAssumeCapacity(.{
-            .start = start,
-            .old_end = end,
-            .new_end = new_end,
-            .start_pt = start_pt,
-            .old_end_pt = old_end_pt,
-            .new_end_pt = self.pointAt(new_end),
-            .seq = self.edits.next_seq,
-        });
-        self.edits.next_seq += 1;
+        try self.doc.spliceBy(start, end, new, self);
     }
 
-    /// `(row, byte column)` of byte `b` — the shape tree-sitter positions
-    /// take. Infallible: the line index is always current.
     pub fn pointAt(self: *const Editor, b: usize) Point {
-        const row = self.lineOfByte(@min(b, self.text.items.len));
-        return .{ .row = @intCast(row), .col = @intCast(@min(b, self.text.items.len) - self.lineStart(row)) };
+        return self.doc.pointAt(b);
     }
 
-    /// Full rescan — `init`, `setText`, and the property test that checks
-    /// `splice` against it.
     pub fn rebuildLineIndex(self: *Editor) Allocator.Error!void {
-        self.line_starts.clearRetainingCapacity();
-        try self.line_starts.append(self.gpa, 0);
-        for (self.text.items, 0..) |b, i| {
-            if (b == '\n') try self.line_starts.append(self.gpa, i + 1);
-        }
+        return self.doc.rebuildLineIndex();
     }
 
-    fn firstGreater(items: []const usize, v: usize) usize {
-        var lo: usize = 0;
-        var hi: usize = items.len;
-        while (lo < hi) {
-            const mid = lo + (hi - lo) / 2;
-            if (items[mid] <= v) lo = mid + 1 else hi = mid;
+    // ─── another view edited the document ───────────────────────────
+
+    fn shiftOpt(sp: Splice, p: ?usize) ?usize {
+        return if (p) |v| sp.shift(v) else null;
+    }
+
+    /// Move every position this view keeps across a splice it did not
+    /// make, so the cursor stays on the same text. Folds move by rows;
+    /// a fold the edit ate closes up or goes.
+    pub fn onForeignSplice(self: *Editor, sp: Splice) void {
+        const before = self.cursor;
+        self.cursor = sp.shift(self.cursor);
+        if (self.cursor != before) self.goal_col = null;
+        self.anchor = shiftOpt(sp, self.anchor);
+        self.block_anchor = shiftOpt(sp, self.block_anchor);
+        if (self.last_selection) |ls| self.last_selection = .{ sp.shift(ls[0]), sp.shift(ls[1]) };
+        for (self.extra_cursors.items) |*c| c.* = sp.shift(c.*);
+        for (self.extra_anchors.items) |*a| a.* = shiftOpt(sp, a.*);
+        if (self.extra_cursors.items.len != 0) self.normalizeExtras();
+        const row_delta = sp.rowDelta();
+        if (row_delta == 0) return;
+        const start_row: usize = sp.start_pt.row;
+        const old_end_row: usize = sp.old_end_pt.row;
+        var i: usize = 0;
+        while (i < self.folds.count()) {
+            const s = self.folds.keys()[i];
+            const e = self.folds.values()[i];
+            if (s > old_end_row) {
+                self.folds.keys()[i] = @intCast(@as(isize, @intCast(s)) + row_delta);
+                self.folds.values()[i] = @intCast(@as(isize, @intCast(e)) + row_delta);
+                i += 1;
+            } else if (e >= start_row) {
+                const ne: isize = @as(isize, @intCast(e)) + row_delta;
+                if (ne <= @as(isize, @intCast(s))) {
+                    self.folds.orderedRemoveAt(i);
+                    continue;
+                }
+                self.folds.values()[i] = @intCast(ne);
+                i += 1;
+            } else i += 1;
         }
-        return lo;
+        self.folds.reIndex(self.gpa) catch {};
+        self.line_shifts.append(self.gpa, .{ .row = start_row, .delta = row_delta }) catch {};
+    }
+
+    /// The document was replaced wholesale by another view (its undo, a
+    /// reload): nothing maps, so every position clamps into the new text.
+    pub fn onDocumentReplaced(self: *Editor) void {
+        self.cursor = self.snapBoundary(self.cursor);
+        if (self.anchor) |a| self.anchor = self.snapBoundary(a);
+        if (self.block_anchor) |a| self.block_anchor = self.snapBoundary(a);
+        if (self.last_selection) |ls| self.last_selection = .{ self.snapBoundary(ls[0]), self.snapBoundary(ls[1]) };
+        if (self.extra_cursors.items.len != 0) self.normalizeExtras();
+        const lines = self.lineCount();
+        var i: usize = 0;
+        while (i < self.folds.count()) {
+            if (self.folds.values()[i] >= lines) self.folds.orderedRemoveAt(i) else i += 1;
+        }
+        self.folds.reIndex(self.gpa) catch {};
+        self.in_insert_run = false;
+    }
+
+    /// The row shifts since the last call, oldest first. Frame arena.
+    pub fn takeLineShifts(self: *Editor, arena: Allocator) Allocator.Error![]const LineShift {
+        if (self.line_shifts.items.len == 0) return &.{};
+        const out = try arena.dupe(LineShift, self.line_shifts.items);
+        self.line_shifts.clearRetainingCapacity();
+        return out;
     }
 
     // ─── char boundaries ────────────────────────────────────────────
 
     pub fn isBoundary(self: *const Editor, b: usize) bool {
-        if (b >= self.text.items.len) return true;
-        return (self.text.items[b] & 0xC0) != 0x80;
+        return self.doc.isBoundary(b);
     }
 
     pub fn prevBoundary(self: *const Editor, b: usize) usize {
-        if (b == 0) return 0;
-        var i = @min(b, self.text.items.len) - 1;
-        while (i > 0 and !self.isBoundary(i)) i -= 1;
-        return i;
+        return self.doc.prevBoundary(b);
     }
 
     pub fn nextBoundary(self: *const Editor, b: usize) usize {
-        const n = self.text.items.len;
-        if (b >= n) return n;
-        var i = b + 1;
-        while (i < n and !self.isBoundary(i)) i += 1;
-        return i;
+        return self.doc.nextBoundary(b);
     }
 
     /// Snap `b` down to the nearest boundary (and into range).
     pub fn snapBoundary(self: *const Editor, b: usize) usize {
-        var i = @min(b, self.text.items.len);
-        while (i > 0 and !self.isBoundary(i)) i -= 1;
-        return i;
+        return self.doc.snapBoundary(b);
     }
 
     pub fn charAt(self: *const Editor, b: usize) ?u21 {
-        const t = self.text.items;
-        if (b >= t.len) return null;
-        const n = std.unicode.utf8ByteSequenceLength(t[b]) catch return t[b];
-        if (b + n > t.len) return t[b];
-        return std.unicode.utf8Decode(t[b .. b + n]) catch t[b];
+        return self.doc.charAt(b);
     }
 
     pub fn charBefore(self: *const Editor, b: usize) ?u21 {
-        if (b == 0) return null;
-        return self.charAt(self.prevBoundary(b));
+        return self.doc.charBefore(b);
     }
 
     /// Clamp + snap, then move the cursor. Every cursor write funnels here
@@ -366,67 +291,40 @@ pub const Editor = struct {
 
     // ─── lines ──────────────────────────────────────────────────────
 
-    /// Lines as every editor counts them: a trailing `\n` terminates the
-    /// last line rather than opening an empty one (`"a\nb\n"` is 2).
-    /// The index still holds the phantom start so a cursor at EOF has a
-    /// line (`lineOfByte` may return `lineCount()`).
     pub fn lineCount(self: *const Editor) usize {
-        const nl = self.line_starts.items.len - 1;
-        if (nl == 0) return 1;
-        if (self.text.items[self.text.items.len - 1] == '\n') return nl;
-        return nl + 1;
+        return self.doc.lineCount();
     }
 
-    /// Byte offset of line `line`'s first char (clamped to the last line).
     pub fn lineStart(self: *const Editor, line: usize) usize {
-        const ls = self.line_starts.items;
-        return ls[@min(line, ls.len - 1)];
+        return self.doc.lineStart(line);
     }
 
-    /// Byte offset of line `line`'s `\n` (or EOF on the last line).
     pub fn lineEnd(self: *const Editor, line: usize) usize {
-        const ls = self.line_starts.items;
-        const l = @min(line, ls.len - 1);
-        if (l + 1 < ls.len) return ls[l + 1] - 1;
-        return self.text.items.len;
+        return self.doc.lineEnd(line);
     }
 
     pub fn lineOfByte(self: *const Editor, b: usize) usize {
-        const v = @min(b, self.text.items.len);
-        return firstGreater(self.line_starts.items, v) - 1;
+        return self.doc.lineOfByte(b);
     }
 
     pub fn currentLine(self: *const Editor) usize {
-        return self.lineOfByte(self.cursor);
+        return self.doc.lineOfByte(self.cursor);
     }
 
     pub fn lineSlice(self: *const Editor, line: usize) []const u8 {
-        return self.text.items[self.lineStart(line)..self.lineEnd(line)];
+        return self.doc.lineSlice(line);
     }
 
     pub fn lineIsBlank(self: *const Editor, line: usize) bool {
-        for (self.lineSlice(line)) |b| if (!std.ascii.isWhitespace(b)) return false;
-        return true;
+        return self.doc.lineIsBlank(line);
     }
 
-    /// Byte of char column `col` on `line`, clamped to the line end.
     pub fn byteAtCol(self: *const Editor, line: usize, col: usize) usize {
-        const start = self.lineStart(line);
-        const end = self.lineEnd(line);
-        var b = start;
-        var c: usize = 0;
-        while (b < end and c < col) : (c += 1) b = self.nextBoundary(b);
-        return b;
+        return self.doc.byteAtCol(line, col);
     }
 
-    /// Char column of `b` within its line (`b` is clamped to the text).
     pub fn colAtByte(self: *const Editor, b_in: usize) usize {
-        const b = @min(b_in, self.text.items.len);
-        const line = self.lineOfByte(b);
-        var i = self.lineStart(line);
-        var c: usize = 0;
-        while (i < b) : (c += 1) i = self.nextBoundary(i);
-        return c;
+        return self.doc.colAtByte(b_in);
     }
 
     pub fn rowCol(self: *const Editor) Pos {
@@ -434,7 +332,7 @@ pub const Editor = struct {
     }
 
     pub fn rowColAt(self: *const Editor, b: usize) Pos {
-        return .{ .row = self.lineOfByte(b), .col = self.colAtByte(b) };
+        return self.doc.rowColAt(b);
     }
 
     pub fn placeCursor(self: *Editor, row: usize, col: usize) void {
@@ -449,28 +347,12 @@ pub const Editor = struct {
         return c;
     }
 
-    /// Byte offset of the first non-whitespace char on `line` (line end
-    /// when blank).
     pub fn firstNonWs(self: *const Editor, line: usize) usize {
-        const start = self.lineStart(line);
-        const end = self.lineEnd(line);
-        var b = start;
-        while (b < end) {
-            const c = self.charAt(b) orelse break;
-            if (!isSpace(c)) break;
-            b = self.nextBoundary(b);
-        }
-        return b;
+        return self.doc.firstNonWs(line);
     }
 
-    /// Leading `' '` / `'\t'` of `line`, optionally only up to `limit`.
     pub fn leadingIndent(self: *const Editor, line: usize, limit: ?usize) []const u8 {
-        const start = self.lineStart(line);
-        var end = self.lineEnd(line);
-        if (limit) |l| end = @min(end, l);
-        var b = start;
-        while (b < end and (self.text.items[b] == ' ' or self.text.items[b] == '\t')) b += 1;
-        return self.text.items[start..b];
+        return self.doc.leadingIndent(line, limit);
     }
 
     // ─── selection ──────────────────────────────────────────────────
@@ -487,7 +369,7 @@ pub const Editor = struct {
 
     pub fn selectedText(self: *const Editor) []const u8 {
         const s = self.selection() orelse return "";
-        return self.text.items[s[0]..s[1]];
+        return self.doc.text.items[s[0]..s[1]];
     }
 
     pub fn rememberSelection(self: *Editor) void {
@@ -502,39 +384,41 @@ pub const Editor = struct {
     }
 
     pub fn isAtLineEnd(self: *const Editor) bool {
-        return self.cursor >= self.text.items.len or self.text.items[self.cursor] == '\n';
+        return self.cursor >= self.doc.text.items.len or self.doc.text.items[self.cursor] == '\n';
     }
 
-    // ─── undo plumbing ──────────────────────────────────────────────
+    // ─── undo plumbing (the document's history, this view's cursor) ─
 
     /// Begin a fresh undo group for a mutation about to happen.
     pub fn checkpoint(self: *Editor) Allocator.Error!void {
-        self.history.clearRedo();
+        self.doc.history.clearRedo();
         self.in_insert_run = false;
         try self.pushUndo();
     }
 
-    /// Begin / continue the coalescing group for typed characters.
+    /// Begin / continue the coalescing group for typed characters. A run
+    /// another view opened is not this view's to continue.
     pub fn checkpointInsertRun(self: *Editor) Allocator.Error!void {
-        self.history.clearRedo();
-        if (!self.in_insert_run) {
+        self.doc.history.clearRedo();
+        if (!self.in_insert_run or self.doc.insert_run_owner != self) {
             try self.pushUndo();
             self.in_insert_run = true;
+            self.doc.insert_run_owner = self;
         }
     }
 
     pub fn pushUndo(self: *Editor) Allocator.Error!void {
-        try self.history.pushUndo(self.snapshot());
+        try self.doc.history.pushUndo(self.snapshot());
     }
 
     /// Drop the most recent checkpoint — a "mutation" that turned out to be
     /// a no-op.
     pub fn popCheckpoint(self: *Editor) void {
-        if (self.history.popUndo()) |s| self.history.freeSnapshot(s);
+        if (self.doc.history.popUndo()) |s| self.doc.history.freeSnapshot(s);
     }
 
     fn snapshot(self: *const Editor) undo.SnapshotSource {
-        return .{ .text = self.text.items, .cursor = self.cursor, .anchor = self.anchor };
+        return .{ .text = self.doc.text.items, .cursor = self.cursor, .anchor = self.anchor };
     }
 
     pub fn restore(self: *Editor, s: undo.Snapshot) Allocator.Error!void {
@@ -548,15 +432,15 @@ pub const Editor = struct {
     pub const AtomicToken = struct { target_len: usize };
 
     pub fn beginAtomic(self: *Editor) Allocator.Error!AtomicToken {
-        self.history.clearRedo();
+        self.doc.history.clearRedo();
         self.in_insert_run = false;
-        const before = self.history.undoLen();
+        const before = self.doc.history.undoLen();
         try self.pushUndo();
         return .{ .target_len = before + 1 };
     }
 
     pub fn endAtomic(self: *Editor, tok: AtomicToken) void {
-        self.history.truncateUndo(tok.target_len);
+        self.doc.history.truncateUndo(tok.target_len);
         self.in_insert_run = false;
     }
 
@@ -569,7 +453,7 @@ pub const Editor = struct {
     }
 
     pub fn canUndo(self: *const Editor) bool {
-        return self.history.undoLen() > 0;
+        return self.doc.history.undoLen() > 0;
     }
 
     /// An op that did not fan out (a page motion, `dd`, undo) can leave
@@ -591,15 +475,16 @@ pub const Editor = struct {
 
     fn recordChange(self: *Editor) Allocator.Error!void {
         const pos = self.rowCol();
-        if (self.change_list.items.len > 0) {
-            const last = &self.change_list.items[self.change_list.items.len - 1];
+        const list = &self.doc.change_list;
+        if (list.items.len > 0) {
+            const last = &list.items[list.items.len - 1];
             if (last.row == pos.row) {
                 last.* = pos;
                 return;
             }
         }
-        try self.change_list.append(self.gpa, pos);
-        if (self.change_list.items.len > change_list_max) _ = self.change_list.orderedRemove(0);
+        try list.append(self.gpa, pos);
+        if (list.items.len > change_list_max) _ = list.orderedRemove(0);
     }
 
     // ─── the interpreter ────────────────────────────────────────────
@@ -608,7 +493,7 @@ pub const Editor = struct {
     /// `text_edits` (frame lifetime).
     pub fn apply(self: *Editor, op: EditOp, viewport_rows: usize, clip: *Clipboard, arena: Allocator) Error!EditOutcome {
         const before_cursor = self.cursor;
-        const before_len = self.text.items.len;
+        const before_len = self.doc.text.items.len;
         const had_multi = self.extra_cursors.items.len != 0;
         const replace_range_info: ?[3]usize = switch (op) {
             .replace_range => |r| .{ r.start, r.end, r.text.len },
@@ -622,7 +507,7 @@ pub const Editor = struct {
         try apply_mod.applyOne(self, op, viewport_rows, clip, &out);
         assert(self.isBoundary(self.cursor));
         out.cursor_moved = out.cursor_moved or self.cursor != before_cursor;
-        out.buffer_changed = out.buffer_changed or self.text.items.len != before_len;
+        out.buffer_changed = out.buffer_changed or self.doc.text.items.len != before_len;
         // A mutation under a live anchor (Replace mode, `~`, `D`) can leave
         // it past the end or mid-char; keep the selection invariant too.
         if (out.buffer_changed) {
@@ -635,11 +520,11 @@ pub const Editor = struct {
 
         if (out.buffer_changed and !had_multi and self.extra_cursors.items.len == 0 and out.text_edits.len == 0) {
             const edit: ?TextEdit = if (replace_range_info) |r| blk: {
-                const n = self.text.items.len;
+                const n = self.doc.text.items.len;
                 const s = @min(r[0], n);
                 const e = @max(@min(r[1], n), s);
                 break :blk .{ .start_byte = s, .old_end_byte = e, .new_end_byte = s + r[2] };
-            } else inferSingleEdit(before_len, self.text.items.len, before_cursor, self.cursor);
+            } else inferSingleEdit(before_len, self.doc.text.items.len, before_cursor, self.cursor);
             if (edit) |e| out.text_edits = try arena.dupe(TextEdit, &.{e});
         }
         return out;
@@ -666,9 +551,9 @@ fn inferSingleEdit(before_len: usize, after_len: usize, before_cursor: usize, af
 
 test "line index after init and splice matches a full rebuild" {
     const gpa = std.testing.allocator;
-    var ed = try Editor.init(gpa, "ab\ncd\n\nef");
+    const ed = try Editor.init(gpa, "ab\ncd\n\nef");
     defer ed.deinit();
-    try std.testing.expectEqualSlices(usize, &.{ 0, 3, 6, 7 }, ed.line_starts.items);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 3, 6, 7 }, ed.doc.line_starts.items);
     try std.testing.expectEqual(@as(usize, 4), ed.lineCount());
     try ed.splice(9, 9, "\n");
     try std.testing.expectEqual(@as(usize, 4), ed.lineCount()); // trailing newline terminates
@@ -678,21 +563,21 @@ test "line index after init and splice matches a full rebuild" {
     try std.testing.expectEqual(@as(usize, 2), ed.lineOfByte(6));
     // Insert two newlines mid-buffer.
     try ed.splice(1, 1, "x\ny\n");
-    try std.testing.expectEqualStrings("ax\ny\nb\ncd\n\nef", ed.text.items);
+    try std.testing.expectEqualStrings("ax\ny\nb\ncd\n\nef", ed.doc.text.items);
     var expect = std.ArrayList(usize).empty;
     defer expect.deinit(gpa);
     try expect.append(gpa, 0);
-    for (ed.text.items, 0..) |b, i| if (b == '\n') try expect.append(gpa, i + 1);
-    try std.testing.expectEqualSlices(usize, expect.items, ed.line_starts.items);
+    for (ed.doc.text.items, 0..) |b, i| if (b == '\n') try expect.append(gpa, i + 1);
+    try std.testing.expectEqualSlices(usize, expect.items, ed.doc.line_starts.items);
     // Remove a span containing newlines.
     try ed.splice(2, 8, "");
-    try std.testing.expectEqualStrings("axd\n\nef", ed.text.items);
-    try std.testing.expectEqualSlices(usize, &.{ 0, 4, 5 }, ed.line_starts.items);
+    try std.testing.expectEqualStrings("axd\n\nef", ed.doc.text.items);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 4, 5 }, ed.doc.line_starts.items);
 }
 
 test "splice line index property: random edits equal a rebuild" {
     const gpa = std.testing.allocator;
-    var ed = try Editor.init(gpa, "");
+    const ed = try Editor.init(gpa, "");
     defer ed.deinit();
     var prng = std.Random.DefaultPrng.init(7);
     const rnd = prng.random();
@@ -701,7 +586,7 @@ test "splice line index property: random edits equal a rebuild" {
     var check = std.ArrayList(usize).empty;
     defer check.deinit(gpa);
     for (0..400) |_| {
-        const n = ed.text.items.len;
+        const n = ed.doc.text.items.len;
         const s = if (n == 0) 0 else rnd.uintLessThan(usize, n + 1);
         const e = if (n == s) s else s + rnd.uintLessThan(usize, n - s + 1);
         const k = rnd.uintLessThan(usize, scratch.len);
@@ -709,13 +594,13 @@ test "splice line index property: random edits equal a rebuild" {
         try ed.splice(s, e, scratch[0..k]);
         check.clearRetainingCapacity();
         try check.append(gpa, 0);
-        for (ed.text.items, 0..) |b, i| if (b == '\n') try check.append(gpa, i + 1);
-        try std.testing.expectEqualSlices(usize, check.items, ed.line_starts.items);
+        for (ed.doc.text.items, 0..) |b, i| if (b == '\n') try check.append(gpa, i + 1);
+        try std.testing.expectEqualSlices(usize, check.items, ed.doc.line_starts.items);
     }
 }
 
 test "boundaries, columns and rows on multibyte text" {
-    var ed = try Editor.init(std.testing.allocator, "héllo\n世界x");
+    const ed = try Editor.init(std.testing.allocator, "héllo\n世界x");
     defer ed.deinit();
     try std.testing.expect(ed.isBoundary(1));
     try std.testing.expect(!ed.isBoundary(2));
@@ -733,7 +618,7 @@ test "boundaries, columns and rows on multibyte text" {
 }
 
 test "colAtByte past EOF terminates; a stale block anchor is snapped after a shrink" {
-    var ed = try Editor.init(std.testing.allocator, "ab\ncd");
+    const ed = try Editor.init(std.testing.allocator, "ab\ncd");
     defer ed.deinit();
     try std.testing.expectEqual(@as(usize, 2), ed.colAtByte(99));
     var clip = Clipboard.init(std.testing.allocator);
@@ -756,23 +641,85 @@ test "inferSingleEdit covers insert, backspace, forward delete" {
 }
 
 test "the edit log records every splice with points, marks wholesale replacements lost, and trims" {
-    var ed = try Editor.init(std.testing.allocator, "ab\ncd");
+    const ed = try Editor.init(std.testing.allocator, "ab\ncd");
     defer ed.deinit();
     try ed.splice(1, 1, "X\nY");
     try ed.splice(0, 2, "");
-    const recs = ed.edits.since(0);
+    const recs = ed.doc.edits.since(0);
     try std.testing.expectEqual(@as(usize, 2), recs.len);
     try std.testing.expectEqual(Point{ .row = 0, .col = 1 }, recs[0].start_pt);
     try std.testing.expectEqual(Point{ .row = 0, .col = 1 }, recs[0].old_end_pt);
     try std.testing.expectEqual(Point{ .row = 1, .col = 1 }, recs[0].new_end_pt);
     try std.testing.expectEqual(@as(usize, 4), recs[0].new_end);
-    try std.testing.expectEqual(@as(u64, 2), ed.edits.head());
-    try std.testing.expectEqual(@as(usize, 1), ed.edits.since(1).len);
-    try std.testing.expect(!ed.edits.lostSince(0));
-    ed.edits.trim(1);
-    try std.testing.expectEqual(@as(usize, 1), ed.edits.items.items.len);
+    try std.testing.expectEqual(@as(u64, 2), ed.doc.edits.head());
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.edits.since(1).len);
+    try std.testing.expect(!ed.doc.edits.lostSince(0));
+    ed.doc.edits.trim(1);
+    try std.testing.expectEqual(@as(usize, 1), ed.doc.edits.items.items.len);
     try ed.setText("fresh");
-    try std.testing.expect(ed.edits.lostSince(2));
-    try std.testing.expect(!ed.edits.lostSince(ed.edits.head()));
-    try std.testing.expectEqual(@as(usize, 0), ed.edits.since(0).len);
+    try std.testing.expect(ed.doc.edits.lostSince(2));
+    try std.testing.expect(!ed.doc.edits.lostSince(ed.doc.edits.head()));
+    try std.testing.expectEqual(@as(usize, 0), ed.doc.edits.since(0).len);
+}
+
+test "a splice through one view moves the other view's cursor, anchor, extras and folds; a replace clamps" {
+    const gpa = std.testing.allocator;
+    const a = try Editor.init(gpa, "one\ntwo\nthree\nfour\n");
+    defer a.deinit();
+    const b = try Editor.initOn(gpa, a.doc);
+    defer b.deinit();
+    b.setCursor(9); // "three"
+    b.anchor = 4; // "two"
+    try b.extra_cursors.append(gpa, 14); // "four"
+    try b.extra_anchors.append(gpa, null);
+    try b.folds.put(gpa, 2, 3);
+    // A inserts a line at the top: everything in B moves down one row.
+    try a.splice(0, 0, "zero\n");
+    try std.testing.expectEqual(@as(usize, 14), b.cursor);
+    try std.testing.expectEqual(@as(?usize, 9), b.anchor);
+    try std.testing.expectEqual(@as(usize, 19), b.extra_cursors.items[0]);
+    try std.testing.expectEqual(@as(?usize, 4), b.folds.get(3));
+    try std.testing.expectEqual(@as(usize, 1), b.line_shifts.items.len);
+    try std.testing.expectEqual(@as(isize, 1), b.line_shifts.items[0].delta);
+    // An edit after B's cursor leaves it alone; the fold containing the
+    // deleted row shrinks.
+    try a.splice(19, 24, "");
+    try std.testing.expectEqual(@as(usize, 14), b.cursor);
+    try std.testing.expectEqual(@as(usize, 19), b.extra_cursors.items[0]);
+    try std.testing.expectEqual(@as(usize, 0), b.folds.count());
+    // A deletes the text under B's cursor: B lands on the edit's start.
+    try a.splice(13, 19, "");
+    try std.testing.expectEqual(@as(usize, 13), b.cursor);
+    try std.testing.expectEqual(@as(usize, 0), b.extra_cursors.items.len);
+    // A replaces the document wholesale: B clamps into it.
+    try a.setText("ab");
+    try std.testing.expectEqual(@as(usize, 2), b.cursor);
+    try std.testing.expectEqual(@as(usize, 0), b.folds.count());
+    try std.testing.expectEqualStrings("ab", b.bytes());
+}
+
+test "a typed run in one view does not join another view's undo group" {
+    const gpa = std.testing.allocator;
+    const a = try Editor.init(gpa, "");
+    defer a.deinit();
+    const b = try Editor.initOn(gpa, a.doc);
+    defer b.deinit();
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    _ = try a.apply(.{ .insert_char = 'x' }, 10, &clip, arena);
+    _ = try a.apply(.{ .insert_char = 'y' }, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 1), a.doc.history.undoLen());
+    b.setCursor(2);
+    _ = try b.apply(.{ .insert_char = 'z' }, 10, &clip, arena);
+    try std.testing.expectEqual(@as(usize, 2), a.doc.history.undoLen());
+    try std.testing.expectEqualStrings("xyz", a.bytes());
+    // B undoes A's group after its own: the cursor follows the change.
+    _ = try b.apply(.undo, 10, &clip, arena);
+    try std.testing.expectEqualStrings("xy", b.bytes());
+    _ = try b.apply(.undo, 10, &clip, arena);
+    try std.testing.expectEqualStrings("", b.bytes());
+    try std.testing.expectEqual(@as(usize, 0), a.cursor);
 }

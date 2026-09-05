@@ -613,7 +613,7 @@ pub fn openItem(app: *App, it: Item) CommandError!void {
         else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
     };
     if (app.panes.editor(id)) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         ed.anchor = null;
         ed.placeCursor(@min(@as(usize, line) -| 1, ed.lineCount() -| 1), 0);
         // Centre the line; `render` clamps the scroll.

@@ -455,111 +455,111 @@ fn sel(ed: *const Editor) []const u8 {
 }
 
 test "iw aw iW on a line with punctuation" {
-    var ed = try Editor.init(std.testing.allocator, "foo.bar baz  qux");
+    const ed = try Editor.init(std.testing.allocator, "foo.bar baz  qux");
     defer ed.deinit();
     ed.cursor = 5;
-    innerWord(&ed);
-    try std.testing.expectEqualStrings("bar", sel(&ed));
+    innerWord(ed);
+    try std.testing.expectEqualStrings("bar", sel(ed));
     ed.cursor = 5;
-    aroundWord(&ed, false);
-    try std.testing.expectEqualStrings("bar ", sel(&ed));
+    aroundWord(ed, false);
+    try std.testing.expectEqualStrings("bar ", sel(ed));
     ed.cursor = 1;
-    innerBigWord(&ed);
-    try std.testing.expectEqualStrings("foo.bar", sel(&ed));
+    innerBigWord(ed);
+    try std.testing.expectEqualStrings("foo.bar", sel(ed));
     ed.cursor = 14;
-    aroundWord(&ed, false);
-    try std.testing.expectEqualStrings("  qux", sel(&ed));
+    aroundWord(ed, false);
+    try std.testing.expectEqualStrings("  qux", sel(ed));
 }
 
 test "quotes and brackets: inner / around, nested" {
-    var ed = try Editor.init(std.testing.allocator, "f(a, (b, \"c d\"), e)");
+    const ed = try Editor.init(std.testing.allocator, "f(a, (b, \"c d\"), e)");
     defer ed.deinit();
     ed.cursor = 10; // inside "c d"
-    quote(&ed, '"', false);
-    try std.testing.expectEqualStrings("c d", sel(&ed));
-    quote(&ed, '"', true);
-    try std.testing.expectEqualStrings("\"c d\"", sel(&ed));
+    quote(ed, '"', false);
+    try std.testing.expectEqualStrings("c d", sel(ed));
+    quote(ed, '"', true);
+    try std.testing.expectEqualStrings("\"c d\"", sel(ed));
     ed.cursor = 10;
     ed.anchor = null;
-    bracket(&ed, '(', false);
-    try std.testing.expectEqualStrings("b, \"c d\"", sel(&ed));
+    bracket(ed, '(', false);
+    try std.testing.expectEqualStrings("b, \"c d\"", sel(ed));
     ed.cursor = 2;
     ed.anchor = null;
-    bracket(&ed, '(', true);
-    try std.testing.expectEqualStrings("(a, (b, \"c d\"), e)", sel(&ed));
+    bracket(ed, '(', true);
+    try std.testing.expectEqualStrings("(a, (b, \"c d\"), e)", sel(ed));
     ed.cursor = 0;
     ed.anchor = null;
-    bracket(&ed, '(', true);
+    bracket(ed, '(', true);
     try std.testing.expect(ed.anchor == null);
 }
 
 test "paragraphs and tags" {
-    var ed = try Editor.init(std.testing.allocator, "p1a\np1b\n\n\np2\n");
+    const ed = try Editor.init(std.testing.allocator, "p1a\np1b\n\n\np2\n");
     defer ed.deinit();
     ed.cursor = 5;
-    paragraph(&ed, false);
-    try std.testing.expectEqualStrings("p1a\np1b", sel(&ed));
-    paragraph(&ed, true);
-    try std.testing.expectEqualStrings("p1a\np1b\n\n\n", sel(&ed));
-    var ed2 = try Editor.init(std.testing.allocator, "<div><p class=x>hi <b>there</b></p><br/></div>");
+    paragraph(ed, false);
+    try std.testing.expectEqualStrings("p1a\np1b", sel(ed));
+    paragraph(ed, true);
+    try std.testing.expectEqualStrings("p1a\np1b\n\n\n", sel(ed));
+    const ed2 = try Editor.init(std.testing.allocator, "<div><p class=x>hi <b>there</b></p><br/></div>");
     defer ed2.deinit();
     ed2.cursor = 17;
-    tag(&ed2, false);
-    try std.testing.expectEqualStrings("hi <b>there</b>", sel(&ed2));
-    tag(&ed2, true);
-    try std.testing.expectEqualStrings("<p class=x>hi <b>there</b></p>", sel(&ed2));
+    tag(ed2, false);
+    try std.testing.expectEqualStrings("hi <b>there</b>", sel(ed2));
+    tag(ed2, true);
+    try std.testing.expectEqualStrings("<p class=x>hi <b>there</b></p>", sel(ed2));
     ed2.cursor = 23;
     ed2.anchor = null;
-    tag(&ed2, false);
-    try std.testing.expectEqualStrings("there", sel(&ed2));
+    tag(ed2, false);
+    try std.testing.expectEqualStrings("there", sel(ed2));
 }
 
 test "line-to-end, inclusive, linewise normalize, swap, gv" {
-    var ed = try Editor.init(std.testing.allocator, "ab\ncd\nef");
+    const ed = try Editor.init(std.testing.allocator, "ab\ncd\nef");
     defer ed.deinit();
     ed.cursor = 1;
-    selectLineToEnd(&ed);
-    try std.testing.expectEqualStrings("ab\n", sel(&ed));
-    selectLineToEnd(&ed);
-    try std.testing.expectEqualStrings("ab\ncd\n", sel(&ed));
-    selectClear(&ed);
+    selectLineToEnd(ed);
+    try std.testing.expectEqualStrings("ab\n", sel(ed));
+    selectLineToEnd(ed);
+    try std.testing.expectEqualStrings("ab\ncd\n", sel(ed));
+    selectClear(ed);
     try std.testing.expect(ed.anchor == null);
-    restoreLastSelection(&ed);
-    try std.testing.expectEqualStrings("ab\ncd\n", sel(&ed));
+    restoreLastSelection(ed);
+    try std.testing.expectEqualStrings("ab\ncd\n", sel(ed));
     ed.anchor = 3;
     ed.cursor = 4;
-    makeSelectionInclusive(&ed);
-    try std.testing.expectEqualStrings("cd", sel(&ed));
-    makeSelectionInclusive(&ed); // never past the newline
-    try std.testing.expectEqualStrings("cd", sel(&ed));
+    makeSelectionInclusive(ed);
+    try std.testing.expectEqualStrings("cd", sel(ed));
+    makeSelectionInclusive(ed); // never past the newline
+    try std.testing.expectEqualStrings("cd", sel(ed));
     ed.anchor = 7;
     ed.cursor = 1;
-    normalizeLinewiseSelection(&ed);
-    try std.testing.expectEqualStrings("ab\ncd\nef", sel(&ed));
-    swapAnchorCursor(&ed);
+    normalizeLinewiseSelection(ed);
+    try std.testing.expectEqualStrings("ab\ncd\nef", sel(ed));
+    swapAnchorCursor(ed);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
-    moveCursorToSelectionStart(&ed);
+    moveCursorToSelectionStart(ed);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
 }
 
 test "argument object: inner trims, around takes the trailing comma, the last arg takes the leading one" {
-    var ed = try Editor.init(std.testing.allocator, "let r = call(foo, bar, baz);\n");
+    const ed = try Editor.init(std.testing.allocator, "let r = call(foo, bar, baz);\n");
     defer ed.deinit();
     const text = ed.bytes();
     ed.cursor = std.mem.indexOf(u8, text, "bar").?;
-    try std.testing.expectEqualSlices(usize, &.{ 18, 21 }, &argumentBounds(&ed, false).?);
-    try std.testing.expectEqualSlices(usize, &.{ 18, 23 }, &argumentBounds(&ed, true).?);
+    try std.testing.expectEqualSlices(usize, &.{ 18, 21 }, &argumentBounds(ed, false).?);
+    try std.testing.expectEqualSlices(usize, &.{ 18, 23 }, &argumentBounds(ed, true).?);
     ed.cursor = std.mem.indexOf(u8, text, "baz").?;
-    try std.testing.expectEqualSlices(usize, &.{ 21, 26 }, &argumentBounds(&ed, true).?);
+    try std.testing.expectEqualSlices(usize, &.{ 21, 26 }, &argumentBounds(ed, true).?);
     ed.cursor = 0;
-    try std.testing.expect(argumentBounds(&ed, false) == null);
+    try std.testing.expect(argumentBounds(ed, false) == null);
 }
 
 test "function / class objects go through the installed provider; none installed is a no-op" {
-    var ed = try Editor.init(std.testing.allocator, "fn a() { x }");
+    const ed = try Editor.init(std.testing.allocator, "fn a() { x }");
     defer ed.deinit();
     ed.cursor = 9;
-    object(&ed, .function, false);
+    object(ed, .function, false);
     try std.testing.expect(ed.anchor == null);
     const Fake = struct {
         fn lookup(_: *anyopaque, _: *const Editor, kind: editor.ObjectKind, _: usize, around: bool) ?[2]usize {
@@ -569,9 +569,9 @@ test "function / class objects go through the installed provider; none installed
     };
     var dummy: u8 = 0;
     ed.objects = .{ .ctx = &dummy, .lookup = &Fake.lookup };
-    object(&ed, .function, false);
+    object(ed, .function, false);
     try std.testing.expectEqual(@as(?usize, 8), ed.anchor);
     try std.testing.expectEqual(@as(usize, 11), ed.cursor);
-    object(&ed, .class, true);
+    object(ed, .class, true);
     try std.testing.expectEqual(@as(?usize, 8), ed.anchor); // unchanged: no class
 }

@@ -57,8 +57,8 @@ pub fn indent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const pos = ed.rowCol();
     const range = selectedLineRange(ed);
     var pad_buf: [64]u8 = undefined;
-    const pad: []const u8 = if (ed.use_tabs) "\t" else blk: {
-        const p = pad_buf[0..@min(ed.tab_width, pad_buf.len)];
+    const pad: []const u8 = if (ed.doc.use_tabs) "\t" else blk: {
+        const p = pad_buf[0..@min(ed.doc.tab_width, pad_buf.len)];
         @memset(p, ' ');
         break :blk p;
     };
@@ -84,7 +84,7 @@ pub fn outdent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
         const eol = ed.lineEnd(line);
         var remove: usize = 0;
         var i = bol;
-        while (i < eol and remove < ed.tab_width) : (i += 1) {
+        while (i < eol and remove < ed.doc.tab_width) : (i += 1) {
             if (ed.bytes()[i] == ' ') {
                 remove += 1;
             } else if (ed.bytes()[i] == '\t') {
@@ -149,7 +149,7 @@ pub fn reindent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 
 /// The indent column `line` should have, from the non-blank line above.
 fn targetIndent(ed: *const Editor, line: usize) usize {
-    const unit = @max(ed.tab_width, 1);
+    const unit = @max(ed.doc.tab_width, 1);
     var p = line;
     const prev: ?usize = while (p > 0) {
         p -= 1;
@@ -169,7 +169,7 @@ fn targetIndent(ed: *const Editor, line: usize) usize {
 /// The display column of `line`'s first non-blank (tabs at `tab_width`).
 fn indentColumns(ed: *const Editor, line: usize) usize {
     var cols: usize = 0;
-    for (ed.leadingIndent(line, null)) |b| cols += if (b == '\t') @max(ed.tab_width, 1) else 1;
+    for (ed.leadingIndent(line, null)) |b| cols += if (b == '\t') @max(ed.doc.tab_width, 1) else 1;
     return cols;
 }
 
@@ -178,8 +178,8 @@ fn indentColumns(ed: *const Editor, line: usize) usize {
 fn indentText(ed: *const Editor, cols: usize, buf: *[256]u8) []const u8 {
     var n: usize = 0;
     var left = cols;
-    if (ed.use_tabs) {
-        const tw = @max(ed.tab_width, 1);
+    if (ed.doc.use_tabs) {
+        const tw = @max(ed.doc.tab_width, 1);
         while (left >= tw and n < buf.len) : (left -= tw) {
             buf[n] = '\t';
             n += 1;
@@ -278,9 +278,9 @@ pub fn toggleCaseChar(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 /// styles), or strip it when the first line already carries one. Blank
 /// lines are skipped; an empty token makes this a no-op.
 pub fn toggleLineComment(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
-    const token = ed.comment_token;
+    const token = ed.doc.comment_token;
     if (std.mem.trim(u8, token, " \t").len == 0) return;
-    const close = ed.comment_token_close;
+    const close = ed.doc.comment_token_close;
     const trimmed = std.mem.trimEnd(u8, token, " \t");
     const close_trimmed = std.mem.trimStart(u8, close, " \t");
     const range = selectedLineRange(ed);
@@ -467,198 +467,198 @@ pub fn alignSelection(ed: *Editor, on_char: u21, out: *EditOutcome) Allocator.Er
 // ─── tests ──────────────────────────────────────────────────────────────
 
 test "reindent follows the braces above, empties blank lines, and is a no-op on tidy text" {
-    var ed = try Editor.init(std.testing.allocator, "fn f() {\nx;\n   \n  if (a) {\ny;\n}\n}\n");
+    const ed = try Editor.init(std.testing.allocator, "fn f() {\nx;\n   \n  if (a) {\ny;\n}\n}\n");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.anchor = 0;
     ed.cursor = ed.len();
-    try reindent(&ed, &out);
-    try std.testing.expectEqualStrings("fn f() {\n    x;\n\n    if (a) {\n        y;\n    }\n}\n", ed.text.items);
+    try reindent(ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    x;\n\n    if (a) {\n        y;\n    }\n}\n", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
     try std.testing.expect(out.buffer_changed and ed.anchor == null);
     // A second pass changes nothing and leaves no undo entry behind.
-    const undo_len = ed.history.undoLen();
+    const undo_len = ed.doc.history.undoLen();
     out = .{};
     ed.anchor = 0;
     ed.cursor = ed.len();
-    try reindent(&ed, &out);
+    try reindent(ed, &out);
     try std.testing.expect(!out.buffer_changed);
-    try std.testing.expectEqual(undo_len, ed.history.undoLen());
+    try std.testing.expectEqual(undo_len, ed.doc.history.undoLen());
     // One line: the cursor's, from the line above it; tabs under use_tabs.
-    ed.use_tabs = true;
+    ed.doc.use_tabs = true;
     ed.cursor = ed.lineStart(4);
-    try reindent(&ed, &out);
-    try std.testing.expectEqualStrings("fn f() {\n    x;\n\n    if (a) {\n\t\ty;\n    }\n}\n", ed.text.items);
+    try reindent(ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    x;\n\n    if (a) {\n\t\ty;\n    }\n}\n", ed.doc.text.items);
 }
 
 test "toggle comment: line and block styles, indent kept, blank lines skipped, empty token no-op" {
-    var ed = try Editor.init(std.testing.allocator, "  a\n\nb");
+    const ed = try Editor.init(std.testing.allocator, "  a\n\nb");
     defer ed.deinit();
     var out: EditOutcome = .{};
-    try toggleLineComment(&ed, &out); // no token yet
-    try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
-    try std.testing.expectEqual(@as(usize, 0), ed.history.undoLen());
-    ed.comment_token = "// ";
+    try toggleLineComment(ed, &out); // no token yet
+    try std.testing.expectEqualStrings("  a\n\nb", ed.doc.text.items);
+    try std.testing.expectEqual(@as(usize, 0), ed.doc.history.undoLen());
+    ed.doc.comment_token = "// ";
     ed.anchor = 0;
     ed.cursor = 7;
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("  // a\n\n// b", ed.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("  // a\n\n// b", ed.doc.text.items);
     // The selection stays, each end at its (row, col): the same range
     // again puts the text back.
     try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
     try std.testing.expectEqual(ed.byteAtCol(2, 1), ed.cursor);
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("  a\n\nb", ed.doc.text.items);
     try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
     try std.testing.expectEqual(ed.len(), ed.cursor);
     ed.anchor = null;
-    ed.comment_token = "<!-- ";
-    ed.comment_token_close = " -->";
+    ed.doc.comment_token = "<!-- ";
+    ed.doc.comment_token_close = " -->";
     ed.cursor = 0;
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("  <!-- a -->\n\nb", ed.text.items);
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("  a\n\nb", ed.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("  <!-- a -->\n\nb", ed.doc.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("  a\n\nb", ed.doc.text.items);
 }
 
 test "toggle comment keeps a multi-line selection: Ctrl+/ twice is a no-op" {
-    var ed = try Editor.init(std.testing.allocator, "fn a() {\n    return 1;\n}\n");
+    const ed = try Editor.init(std.testing.allocator, "fn a() {\n    return 1;\n}\n");
     defer ed.deinit();
-    ed.comment_token = "// ";
+    ed.doc.comment_token = "// ";
     var out: EditOutcome = .{};
     // Anchor at the top of line 0, cursor at the top of line 2: line 2
     // is outside the range, as VS Code reads a selection ending at col 0.
     ed.anchor = 0;
     ed.cursor = ed.lineStart(2);
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("// fn a() {\n    // return 1;\n}\n", ed.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("// fn a() {\n    // return 1;\n}\n", ed.doc.text.items);
     try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
     try std.testing.expectEqual(ed.lineStart(2), ed.cursor);
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("fn a() {\n    return 1;\n}\n", ed.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("fn a() {\n    return 1;\n}\n", ed.doc.text.items);
     try std.testing.expectEqual(@as(?usize, 0), ed.anchor);
     try std.testing.expectEqual(ed.lineStart(2), ed.cursor);
     // Without a selection the cursor keeps its column (Rust mnml parity).
     ed.anchor = null;
     ed.cursor = ed.byteAtCol(1, 6);
-    try toggleLineComment(&ed, &out);
-    try std.testing.expectEqualStrings("fn a() {\n    // return 1;\n}\n", ed.text.items);
+    try toggleLineComment(ed, &out);
+    try std.testing.expectEqualStrings("fn a() {\n    // return 1;\n}\n", ed.doc.text.items);
     try std.testing.expectEqual(ed.byteAtCol(1, 6), ed.cursor);
     try std.testing.expect(ed.anchor == null);
 }
 
 test "change number: under or after the cursor, a free minus, counts, saturation, cursor on the last digit" {
-    var ed = try Editor.init(std.testing.allocator, "value = 41 x-1 y -1");
+    const ed = try Editor.init(std.testing.allocator, "value = 41 x-1 y -1");
     defer ed.deinit();
     var out: EditOutcome = .{};
-    try changeNumberAtCursor(&ed, 1, &out);
-    try std.testing.expectEqualStrings("value = 42 x-1 y -1", ed.text.items);
+    try changeNumberAtCursor(ed, 1, &out);
+    try std.testing.expectEqualStrings("value = 42 x-1 y -1", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 9), ed.cursor);
-    try changeNumberAtCursor(&ed, -3, &out);
-    try std.testing.expectEqualStrings("value = 39 x-1 y -1", ed.text.items);
+    try changeNumberAtCursor(ed, -3, &out);
+    try std.testing.expectEqualStrings("value = 39 x-1 y -1", ed.doc.text.items);
     ed.cursor = 12; // on `-` glued to `x`: the number is `1`
-    try changeNumberAtCursor(&ed, 1, &out);
-    try std.testing.expectEqualStrings("value = 39 x-2 y -1", ed.text.items);
+    try changeNumberAtCursor(ed, 1, &out);
+    try std.testing.expectEqualStrings("value = 39 x-2 y -1", ed.doc.text.items);
     ed.cursor = 16; // `-1` stands alone
-    try changeNumberAtCursor(&ed, -1, &out);
-    try std.testing.expectEqualStrings("value = 39 x-2 y -2", ed.text.items);
-    try changeNumberAtCursor(&ed, 2, &out);
-    try std.testing.expectEqualStrings("value = 39 x-2 y 0", ed.text.items);
+    try changeNumberAtCursor(ed, -1, &out);
+    try std.testing.expectEqualStrings("value = 39 x-2 y -2", ed.doc.text.items);
+    try changeNumberAtCursor(ed, 2, &out);
+    try std.testing.expectEqualStrings("value = 39 x-2 y 0", ed.doc.text.items);
     try ed.setText("no digits");
     ed.cursor = 0;
-    try changeNumberAtCursor(&ed, 1, &out);
-    try std.testing.expectEqualStrings("no digits", ed.text.items);
+    try changeNumberAtCursor(ed, 1, &out);
+    try std.testing.expectEqualStrings("no digits", ed.doc.text.items);
     try ed.setText("9223372036854775807");
     ed.cursor = 0;
-    try changeNumberAtCursor(&ed, 1, &out); // saturates: nothing to change
-    try std.testing.expectEqualStrings("9223372036854775807", ed.text.items);
+    try changeNumberAtCursor(ed, 1, &out); // saturates: nothing to change
+    try std.testing.expectEqualStrings("9223372036854775807", ed.doc.text.items);
 }
 
 test "reflow wraps greedily at the width, keeps the indent, leaves a short paragraph alone" {
-    var ed = try Editor.init(std.testing.allocator, "  aaa bbb\n  ccc ddd eee\n\nnext");
+    const ed = try Editor.init(std.testing.allocator, "  aaa bbb\n  ccc ddd eee\n\nnext");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 3;
-    try reflowParagraph(&ed, 12, &out);
-    try std.testing.expectEqualStrings("  aaa bbb\n  ccc ddd\n  eee\n\nnext", ed.text.items);
+    try reflowParagraph(ed, 12, &out);
+    try std.testing.expectEqualStrings("  aaa bbb\n  ccc ddd\n  eee\n\nnext", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
-    try reflowParagraph(&ed, 80, &out);
-    try std.testing.expectEqualStrings("  aaa bbb ccc ddd eee\n\nnext", ed.text.items);
+    try reflowParagraph(ed, 80, &out);
+    try std.testing.expectEqualStrings("  aaa bbb ccc ddd eee\n\nnext", ed.doc.text.items);
     ed.cursor = ed.len();
-    const undo_len = ed.history.undoLen();
-    try reflowParagraph(&ed, 80, &out); // already flowed
-    try std.testing.expectEqual(undo_len, ed.history.undoLen());
+    const undo_len = ed.doc.history.undoLen();
+    try reflowParagraph(ed, 80, &out); // already flowed
+    try std.testing.expectEqual(undo_len, ed.doc.history.undoLen());
 }
 
 test "align pads before the first char per line; lines without it are untouched; aligned range just deselects" {
-    var ed = try Editor.init(std.testing.allocator, "let a = 1\nlet bb = 2\nnone\nlet ccc = 3\n");
+    const ed = try Editor.init(std.testing.allocator, "let a = 1\nlet bb = 2\nnone\nlet ccc = 3\n");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.anchor = 0;
     ed.cursor = ed.len();
-    try alignSelection(&ed, '=', &out);
-    try std.testing.expectEqualStrings("let a   = 1\nlet bb  = 2\nnone\nlet ccc = 3\n", ed.text.items);
+    try alignSelection(ed, '=', &out);
+    try std.testing.expectEqualStrings("let a   = 1\nlet bb  = 2\nnone\nlet ccc = 3\n", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
     try std.testing.expect(ed.anchor == null);
     ed.anchor = 0;
     ed.cursor = ed.len();
-    const undo_len = ed.history.undoLen();
-    try alignSelection(&ed, '=', &out);
-    try std.testing.expectEqual(undo_len, ed.history.undoLen());
+    const undo_len = ed.doc.history.undoLen();
+    try alignSelection(ed, '=', &out);
+    try std.testing.expectEqual(undo_len, ed.doc.history.undoLen());
     try std.testing.expect(ed.anchor == null);
 }
 
 test "J trims and inserts one space; gJ keeps whitespace" {
-    var ed = try Editor.init(std.testing.allocator, "ab  \n   cd\nef");
+    const ed = try Editor.init(std.testing.allocator, "ab  \n   cd\nef");
     defer ed.deinit();
     var out: EditOutcome = .{};
-    try joinLines(&ed, true, &out);
-    try std.testing.expectEqualStrings("ab cd\nef", ed.text.items);
+    try joinLines(ed, true, &out);
+    try std.testing.expectEqualStrings("ab cd\nef", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
-    try joinLines(&ed, false, &out);
-    try std.testing.expectEqualStrings("ab cdef", ed.text.items);
-    try joinLines(&ed, true, &out); // last line: no-op
-    try std.testing.expectEqualStrings("ab cdef", ed.text.items);
+    try joinLines(ed, false, &out);
+    try std.testing.expectEqualStrings("ab cdef", ed.doc.text.items);
+    try joinLines(ed, true, &out); // last line: no-op
+    try std.testing.expectEqualStrings("ab cdef", ed.doc.text.items);
 }
 
 test "indent / outdent over a selection keep the cursor column" {
-    var ed = try Editor.init(std.testing.allocator, "a\nb\nc");
+    const ed = try Editor.init(std.testing.allocator, "a\nb\nc");
     defer ed.deinit();
-    ed.tab_width = 2;
+    ed.doc.tab_width = 2;
     var out: EditOutcome = .{};
     ed.anchor = 0;
     ed.cursor = 4; // start of line 2 → only lines 0-1
-    try indent(&ed, &out);
-    try std.testing.expectEqualStrings("  a\n  b\nc", ed.text.items);
+    try indent(ed, &out);
+    try std.testing.expectEqualStrings("  a\n  b\nc", ed.doc.text.items);
     try std.testing.expect(ed.anchor == null);
     ed.cursor = 3;
-    try outdent(&ed, &out);
-    try std.testing.expectEqualStrings("a\n  b\nc", ed.text.items);
+    try outdent(ed, &out);
+    try std.testing.expectEqualStrings("a\n  b\nc", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
     ed.cursor = 0;
-    try outdent(&ed, &out); // nothing to remove → no undo entry
-    try std.testing.expectEqual(@as(usize, 2), ed.history.undoLen());
+    try outdent(ed, &out); // nothing to remove → no undo entry
+    try std.testing.expectEqual(@as(usize, 2), ed.doc.history.undoLen());
 }
 
 test "duplicate, move line, case ops" {
-    var ed = try Editor.init(std.testing.allocator, "ab\ncd");
+    const ed = try Editor.init(std.testing.allocator, "ab\ncd");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 1;
-    try duplicateLine(&ed, &out);
-    try std.testing.expectEqualStrings("ab\nab\ncd", ed.text.items);
+    try duplicateLine(ed, &out);
+    try std.testing.expectEqualStrings("ab\nab\ncd", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 4), ed.cursor);
-    try moveLine(&ed, 1, &out);
-    try std.testing.expectEqualStrings("ab\ncd\nab", ed.text.items);
+    try moveLine(ed, 1, &out);
+    try std.testing.expectEqualStrings("ab\ncd\nab", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 7), ed.cursor);
-    try moveLine(&ed, 1, &out);
-    try std.testing.expectEqualStrings("ab\ncd\nab", ed.text.items);
+    try moveLine(ed, 1, &out);
+    try std.testing.expectEqualStrings("ab\ncd\nab", ed.doc.text.items);
     ed.anchor = 0;
     ed.cursor = 5;
-    try transformSelectionCase(&ed, .upper, &out);
-    try std.testing.expectEqualStrings("AB\nCD\nab", ed.text.items);
+    try transformSelectionCase(ed, .upper, &out);
+    try std.testing.expectEqualStrings("AB\nCD\nab", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
-    try toggleCaseChar(&ed, &out);
-    try std.testing.expectEqualStrings("aB\nCD\nab", ed.text.items);
+    try toggleCaseChar(ed, &out);
+    try std.testing.expectEqualStrings("aB\nCD\nab", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
 }

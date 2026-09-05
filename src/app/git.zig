@@ -2056,7 +2056,7 @@ fn openDiffLine(app: *App, dp: *DiffPane) CommandError!void {
         else => return app.diag.fail(arena, "open {s}: {s}", .{ rel, @errorName(err) }),
     };
     if (line) |ln| if (app.panes.editor(id)) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         ed.anchor = null;
         ed.placeCursor(@min(@as(usize, ln) -| 1, ed.lineCount() -| 1), 0);
         e.view.scroll_line = @intCast(ed.currentLine() -| app.pane_rows / 2);

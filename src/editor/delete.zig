@@ -57,7 +57,7 @@ pub fn backspace(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     try ed.checkpoint();
     const prev = ed.prevBoundary(ed.cursor);
     // Smart pair-backspace: `(|)` → empty in one keystroke.
-    if (ed.auto_pair) {
+    if (ed.doc.auto_pair) {
         const before = ed.charAt(prev);
         if (before != null) {
             if (@import("insert.zig").autoPairClose(before.?)) |closer| {
@@ -159,7 +159,7 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
     const line = ed.currentLine();
     const start = ed.lineStart(line);
     const end = ed.lineEnd(line);
-    const yanked = try std.mem.concat(ed.gpa, u8, &.{ ed.text.items[start..end], "\n" });
+    const yanked = try std.mem.concat(ed.gpa, u8, &.{ ed.doc.text.items[start..end], "\n" });
     defer ed.gpa.free(yanked);
     try clip.pushDelete(yanked, true);
     out.clipboard_set = clip.lastWritten();
@@ -194,7 +194,7 @@ pub fn deleteSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocat
     }
     if (ed.selection()) |s| {
         if (s[1] > s[0]) {
-            try clip.pushDelete(ed.text.items[s[0]..s[1]], false);
+            try clip.pushDelete(ed.doc.text.items[s[0]..s[1]], false);
             out.clipboard_set = clip.lastWritten();
         }
     }
@@ -240,7 +240,7 @@ pub fn replaceCharAtCursor(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Err
         defer new.deinit(ed.gpa);
         var i = sel[0];
         while (i < sel[1]) : (i = ed.nextBoundary(i)) {
-            if (ed.text.items[i] == '\n') try new.append(ed.gpa, '\n') else try new.appendSlice(ed.gpa, s);
+            if (ed.doc.text.items[i] == '\n') try new.append(ed.gpa, '\n') else try new.appendSlice(ed.gpa, s);
         }
         try ed.splice(sel[0], sel[1], new.items);
         ed.cursor = sel[0];
@@ -270,7 +270,7 @@ pub fn replaceRange(ed: *Editor, start_in: usize, end_in: usize, text: []const u
 
 pub fn cutSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
     const sel = ed.selection() orelse return;
-    try clip.pushDelete(ed.text.items[sel[0]..sel[1]], false);
+    try clip.pushDelete(ed.doc.text.items[sel[0]..sel[1]], false);
     out.clipboard_set = clip.lastWritten();
     try ed.checkpoint();
     try ed.splice(sel[0], sel[1], "");
@@ -282,65 +282,65 @@ pub fn cutSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.
 // ─── tests ──────────────────────────────────────────────────────────────
 
 test "backspace / delete forward / word deletes across a multibyte char" {
-    var ed = try Editor.init(std.testing.allocator, "aé bc");
+    const ed = try Editor.init(std.testing.allocator, "aé bc");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 3;
-    try backspace(&ed, &out);
-    try std.testing.expectEqualStrings("a bc", ed.text.items);
+    try backspace(ed, &out);
+    try std.testing.expectEqualStrings("a bc", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 1), ed.cursor);
-    try deleteForward(&ed, &out);
-    try std.testing.expectEqualStrings("abc", ed.text.items);
+    try deleteForward(ed, &out);
+    try std.testing.expectEqualStrings("abc", ed.doc.text.items);
     ed.cursor = 3;
-    try deleteWordLeft(&ed, &out);
-    try std.testing.expectEqualStrings("", ed.text.items);
-    try std.testing.expectEqual(@as(usize, 3), ed.history.undoLen());
+    try deleteWordLeft(ed, &out);
+    try std.testing.expectEqualStrings("", ed.doc.text.items);
+    try std.testing.expectEqual(@as(usize, 3), ed.doc.history.undoLen());
 }
 
 test "dd on middle, last and only line" {
     var clip = Clipboard.init(std.testing.allocator);
     defer clip.deinit();
-    var ed = try Editor.init(std.testing.allocator, "a\nb\nc");
+    const ed = try Editor.init(std.testing.allocator, "a\nb\nc");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.cursor = 2;
-    try deleteLine(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("a\nc", ed.text.items);
+    try deleteLine(ed, &clip, &out);
+    try std.testing.expectEqualStrings("a\nc", ed.doc.text.items);
     try std.testing.expectEqualStrings("b\n", out.clipboard_set.?);
     try std.testing.expect(out.clipboard_linewise);
     ed.cursor = 2;
-    try deleteLine(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("a", ed.text.items);
+    try deleteLine(ed, &clip, &out);
+    try std.testing.expectEqualStrings("a", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
-    try deleteLine(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("", ed.text.items);
+    try deleteLine(ed, &clip, &out);
+    try std.testing.expectEqualStrings("", ed.doc.text.items);
     try std.testing.expectEqualStrings("a\n", clip.text());
 }
 
 test "selection delete yanks, replace/cut/replace_range" {
     var clip = Clipboard.init(std.testing.allocator);
     defer clip.deinit();
-    var ed = try Editor.init(std.testing.allocator, "hello world");
+    const ed = try Editor.init(std.testing.allocator, "hello world");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.anchor = 0;
     ed.cursor = 6;
-    try deleteSelection(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("world", ed.text.items);
+    try deleteSelection(ed, &clip, &out);
+    try std.testing.expectEqualStrings("world", ed.doc.text.items);
     try std.testing.expectEqualStrings("hello ", clip.text());
     ed.anchor = 0;
     ed.cursor = 5;
-    try replaceSelection(&ed, "W", &out);
-    try std.testing.expectEqualStrings("W", ed.text.items);
-    try replaceRange(&ed, 0, 1, "xyz", &out);
-    try std.testing.expectEqualStrings("xyz", ed.text.items);
+    try replaceSelection(ed, "W", &out);
+    try std.testing.expectEqualStrings("W", ed.doc.text.items);
+    try replaceRange(ed, 0, 1, "xyz", &out);
+    try std.testing.expectEqualStrings("xyz", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 3), ed.cursor);
     ed.anchor = 1;
     ed.cursor = 3;
-    try cutSelection(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("x", ed.text.items);
+    try cutSelection(ed, &clip, &out);
+    try std.testing.expectEqualStrings("x", ed.doc.text.items);
     try std.testing.expectEqualStrings("yz", clip.text());
     ed.cursor = 0;
-    try replaceCharAtCursor(&ed, 'Q', &out);
-    try std.testing.expectEqualStrings("Q", ed.text.items);
+    try replaceCharAtCursor(ed, 'Q', &out);
+    try std.testing.expectEqualStrings("Q", ed.doc.text.items);
 }

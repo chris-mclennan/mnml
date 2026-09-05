@@ -297,7 +297,7 @@ fn fileStats(app: *App) CommandError!void {
 /// The codepoint under the cursor, `ga` style.
 fn charInfo(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     if (ed.cursor >= text.len) return app.diag.fail(app.frame.allocator(), "char info: end of buffer", .{});
     const n = std.unicode.utf8ByteSequenceLength(text[ed.cursor]) catch 1;
@@ -308,7 +308,7 @@ fn charInfo(app: *App) CommandError!void {
 
 fn charUtf8(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     if (ed.cursor >= text.len) return app.diag.fail(app.frame.allocator(), "char info: end of buffer", .{});
     const n = std.unicode.utf8ByteSequenceLength(text[ed.cursor]) catch 1;
@@ -326,7 +326,7 @@ fn hexBytes(arena: Allocator, bytes: []const u8) Allocator.Error![]const u8 {
 fn toggleAutoPair(app: *App) CommandError!void {
     app.cfg.editor.auto_pair = !app.cfg.editor.auto_pair;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| e.buf.editor.auto_pair = app.cfg.editor.auto_pair,
+        .editor => |*e| e.buf.editor.doc.auto_pair = app.cfg.editor.auto_pair,
         else => {},
     };
     app.toast("auto-pair {s}", .{if (app.cfg.editor.auto_pair) "on" else "off"});
@@ -344,10 +344,10 @@ fn foldPrev(app: *App) CommandError!void {
 
 fn foldStep(app: *App, forward: bool) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = ed.rowCol().row;
     var best: ?usize = null;
-    for (e.buf.folds.keys()) |start| {
+    for (e.buf.editor.folds.keys()) |start| {
         if (forward and start > row and (best == null or start < best.?)) best = start;
         if (!forward and start < row and (best == null or start > best.?)) best = start;
     }
@@ -360,12 +360,12 @@ fn foldStep(app: *App, forward: bool) CommandError!void {
 /// `zf` over the selection: the rows it spans become one closed fold.
 fn foldSelection(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const sel = ed.selection() orelse return app.diag.fail(app.frame.allocator(), "fold: nothing selected", .{});
     const start = ed.rowColAt(sel[0]).row;
     const end_row = ed.rowColAt(if (sel[1] > sel[0]) sel[1] - 1 else sel[1]).row;
     if (end_row <= start) return app.diag.fail(app.frame.allocator(), "fold: the selection is one line", .{});
-    try e.buf.folds.put(app.gpa, start, end_row);
+    try e.buf.editor.folds.put(app.gpa, start, end_row);
     ed.setCursor(ed.firstNonWs(start));
     ed.anchor = null;
     app.needs_render = true;
@@ -725,8 +725,8 @@ test "small commands: recent jumps, scratch from the register, fold navigation, 
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"file.open_recent_9" }));
     // Folds: two closed folds, zj / zk walk them.
     const e = app.activeEditor().?;
-    try e.buf.folds.put(t.allocator, 1, 2);
-    try e.buf.folds.put(t.allocator, 3, 4);
+    try e.buf.editor.folds.put(t.allocator, 1, 2);
+    try e.buf.editor.folds.put(t.allocator, 3, 4);
     e.buf.editor.setCursor(0);
     try command.run(&app, .{ .static = .@"editor.fold_next" });
     try t.expectEqual(@as(usize, 1), e.buf.editor.rowCol().row);

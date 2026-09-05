@@ -114,14 +114,14 @@ pub const Syntax = struct {
     /// cached spans. Returns true when the log was lost and only a full
     /// reparse can catch up.
     pub fn absorb(self: *Syntax, ed: *const Editor) bool {
-        if (ed.edits.lostSince(self.seen_seq)) {
+        if (ed.doc.edits.lostSince(self.seen_seq)) {
             self.hl.invalidate();
             self.hl.spans.clearRetainingCapacity();
-            self.seen_seq = ed.edits.head();
+            self.seen_seq = ed.doc.edits.head();
             self.parsed_seq = null;
             return true;
         }
-        for (ed.edits.since(self.seen_seq)) |sp| {
+        for (ed.doc.edits.since(self.seen_seq)) |sp| {
             self.hl.edit(.{
                 .start_byte = @intCast(sp.start),
                 .old_end_byte = @intCast(sp.old_end),
@@ -132,7 +132,7 @@ pub const Syntax = struct {
             });
             self.hl.shiftSpans(sp.start, sp.old_end, sp.new_end);
         }
-        self.seen_seq = ed.edits.head();
+        self.seen_seq = ed.doc.edits.head();
         return false;
     }
 
@@ -214,53 +214,53 @@ test "language detection: filename, extension (tsx is tsx), shebang" {
 
 test "spans follow the text through the edit log: shifted at once, reparsed on refresh" {
     const gpa = testing.allocator;
-    var ed = try Editor.init(gpa, "fn a() {}\nfn b() {}\n");
+    const ed = try Editor.init(gpa, "fn a() {}\nfn b() {}\n");
     defer ed.deinit();
     var s = Syntax.init(gpa);
     defer s.deinit();
     s.setLanguage("/ws/x.rs", ed.bytes());
-    try s.refresh(&ed);
+    try s.refresh(ed);
     const before = s.hl.spans.items.len;
     try testing.expect(before >= 4);
     // Type a line at the top; the old spans slide down without a parse.
     try ed.splice(0, 0, "fn z() {}\n");
-    try testing.expect(!s.absorb(&ed));
+    try testing.expect(!s.absorb(ed));
     try testing.expectEqual(before, s.hl.spans.items.len);
     try testing.expectEqual(@as(u32, 10), s.hl.spans.items[0].start);
     // The reparse is incremental (the tree was told) and picks up `z`.
-    try s.refresh(&ed);
+    try s.refresh(ed);
     try testing.expect(s.hl.spans.items.len > before);
     try testing.expectEqual(@as(u32, 0), s.hl.spans.items[0].start);
     // A wholesale replacement is reported as lost.
     try ed.setText("struct S;\n");
-    try testing.expect(s.absorb(&ed));
+    try testing.expect(s.absorb(ed));
     try testing.expectEqual(@as(usize, 0), s.hl.spans.items.len);
-    try s.refresh(&ed);
+    try s.refresh(ed);
     try testing.expect(s.hl.spans.items.len > 0);
 }
 
 test "structural queries refresh the tree themselves" {
     const gpa = testing.allocator;
-    var ed = try Editor.init(gpa, "fn first() {\n    one;\n}\n");
+    const ed = try Editor.init(gpa, "fn first() {\n    one;\n}\n");
     defer ed.deinit();
     var s = Syntax.init(gpa);
     defer s.deinit();
     s.setLanguage("/ws/fn.rs", ed.bytes());
-    const r = s.objectRange(&ed, .function, 17, false).?;
+    const r = s.objectRange(ed, .function, 17, false).?;
     try testing.expectEqualStrings("\n    one;\n", ed.bytes()[r[0]..r[1]]);
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const syms = (try s.symbols(&ed, arena.allocator())).?;
+    const syms = (try s.symbols(ed, arena.allocator())).?;
     try testing.expectEqual(@as(usize, 1), syms.len);
     try testing.expectEqualStrings("first", syms[0].name);
-    try testing.expectEqualSlices(u32, &.{0}, try s.scopeChain(&ed, arena.allocator(), 1));
+    try testing.expectEqualSlices(u32, &.{0}, try s.scopeChain(ed, arena.allocator(), 1));
     // An edit, then the same query: the answer tracks the text.
     try ed.splice(0, 0, "\n");
-    const r2 = s.objectRange(&ed, .function, 18, false).?;
+    const r2 = s.objectRange(ed, .function, 18, false).?;
     try testing.expectEqualStrings("\n    one;\n", ed.bytes()[r2[0]..r2[1]]);
     var plain = Syntax.init(gpa);
     defer plain.deinit();
     plain.setLanguage("/ws/notes.txt", "");
-    try testing.expect(plain.objectRange(&ed, .function, 0, false) == null);
-    try testing.expect((try plain.symbols(&ed, arena.allocator())) == null);
+    try testing.expect(plain.objectRange(ed, .function, 0, false) == null);
+    try testing.expect((try plain.symbols(ed, arena.allocator())) == null);
 }

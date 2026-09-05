@@ -491,7 +491,7 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     const s = (try ensureServer(app, path)) orelse return;
     const was_open = s.isOpen(path);
     s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
-    try app.lsp.synced.put(app.gpa, pane, e.buf.editor.edits.head());
+    try app.lsp.synced.put(app.gpa, pane, e.buf.editor.doc.edits.head());
     if (!was_open) {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });
         if (s.ready) requestSymbols(app, s, path);
@@ -544,15 +544,15 @@ pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
 /// Called from the frame, so every mutation path is covered.
 pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
     const path = e.buf.path orelse return;
-    const ed = &e.buf.editor;
-    const head = ed.edits.head();
+    const ed = e.buf.editor;
+    const head = ed.doc.edits.head();
     const seen = app.lsp.synced.get(pane) orelse return;
     if (seen == head) return;
     const s = serverFor(app, path) orelse return;
     if (!s.isOpen(path)) return;
     const text = ed.bytes();
-    var full = ed.edits.lostSince(seen) or !s.caps.incremental;
-    const splices = ed.edits.since(seen);
+    var full = ed.doc.edits.lostSince(seen) or !s.caps.incremental;
+    const splices = ed.doc.edits.since(seen);
     if (!full and splices.len == 1) {
         const sp = splices[0];
         const insertion = sp.old_end == sp.start;
@@ -1421,7 +1421,7 @@ fn requestCompletion(app: *App, t: Target, manual: bool, trigger: ?u8) CommandEr
     const arena = app.frame.allocator();
     if (app.lsp.completion_req) |r| r.server.cancel(r.id);
     app.lsp.completion_req = null;
-    const ed = &t.e.buf.editor;
+    const ed = t.e.buf.editor;
     const w = snippets.wordBefore(ed.bytes(), ed.cursor);
     const pos = try docPosAt(t, arena, ed.cursor);
     const Context = struct { triggerKind: u8, triggerCharacter: ?[]const u8 = null };
@@ -1449,7 +1449,7 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!
         return;
     };
     if (!s.caps.completion) return;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const w = snippets.wordBefore(ed.bytes(), ed.cursor);
     const is_trigger = c < 128 and std.mem.indexOfScalar(u8, s.caps.trigger_chars, @intCast(c)) != null;
     const is_word = c < 128 and isIdent(@intCast(c)) and w.word.len >= 2;
@@ -1615,7 +1615,7 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
     const comp = &(app.lsp.completion orelse return);
     const e = app.panes.editor(comp.pane) orelse return closeCompletion(app);
     const item = comp.items[idx];
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text = ed.bytes();
     var start = comp.start;
     var end = ed.cursor;
@@ -1656,7 +1656,7 @@ fn acceptCompletion(app: *App, idx: u32) Allocator.Error!void {
         if (parsed.stops.len > 1) {
             const stops = try gpa.alloc(snippets.Stop, parsed.stops.len);
             for (parsed.stops, 0..) |s, i| stops[i] = .{ .pos = start + s.pos, .default_len = s.default_len, .exit = if (i == 0 and s.default_len > 0) start + s.pos + s.default_len else null };
-            app.snippets.session = .{ .pane = pane, .stops = stops, .current = 0, .seen_seq = ed.edits.head() };
+            app.snippets.session = .{ .pane = pane, .stops = stops, .current = 0, .seen_seq = ed.doc.edits.head() };
         }
     } else {
         try app.splice(e, start, end, insert);
@@ -1753,7 +1753,7 @@ pub fn applyEditsToPane(app: *App, e: *EditorPane, edits_in: []const types.TextE
             return a.range.start.character > b.range.start.character;
         }
     }.lt);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const cursor = ed.cursor;
     for (edits) |te| {
         const text = ed.bytes();
@@ -1834,7 +1834,7 @@ const action_first: u32 = 1;
 
 fn requestActions(app: *App, t: Target, only: ?[]const u8, mode: u32) CommandError!void {
     const arena = app.frame.allocator();
-    const ed = &t.e.buf.editor;
+    const ed = t.e.buf.editor;
     const text = ed.bytes();
     const line = ed.currentLine();
     const start = types.positionOf(text, ed.lineStart(line), t.server.encoding);
@@ -2295,7 +2295,7 @@ fn applyFolds(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
         const start: usize = @intCast(@max(jsonrpc.getInt(it, "startLine") orelse continue, 0));
         const end: usize = @intCast(@max(jsonrpc.getInt(it, "endLine") orelse continue, 0));
         if (end <= start or end >= lines) continue;
-        try e.buf.folds.put(app.gpa, start, end);
+        try e.buf.editor.folds.put(app.gpa, start, end);
         n += 1;
     }
     if (n == 0) app.toast("no fold ranges returned", .{}) else app.toast("folded {d} range(s)", .{n});

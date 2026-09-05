@@ -227,7 +227,7 @@ fn copyMove(app: *App, range: ?Range, args: []const u8, move: bool) CommandError
     const arena = app.frame.allocator();
     const label: []const u8 = if (move) ":m" else ":t";
     const e = try editor(app, label);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const count = ed.lineCount();
     const src = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
     const first = @min(src.first, count - 1);
@@ -472,7 +472,7 @@ fn writeToCommand(app: *App, e: *EditorPane, range: ?Range, cmd_in: []const u8) 
     const arena = app.frame.allocator();
     const cmd = std.mem.trim(u8, cmd_in, " \t");
     if (cmd.len == 0) return app.diag.fail(arena, ":w ! — command required", .{});
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const text: []const u8 = if (range) |r| blk: {
         const first = @min(r.first, ed.lineCount() - 1);
         const last = @min(r.last, ed.lineCount() - 1);
@@ -573,7 +573,7 @@ pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) Comma
     const arena = app.frame.allocator();
     const label: []const u8 = if (whole) ":%s" else ":s";
     const e = try editor(app, label);
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     if (spec.len == 0) return app.diag.fail(arena, "{s} — usage: {s}/old/new/[g]", .{ label, label });
     const delim = spec[0];
     var parts: [3][]const u8 = .{ "", "", "" };
@@ -675,7 +675,7 @@ pub fn unescapeDelim(arena: Allocator, s: []const u8, delim: u8) Allocator.Error
 fn sort(app: *App, range: ?Range, flags: []const u8, bang: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":sort");
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     var unique = false;
     var reverse = bang;
     var icase = false;
@@ -753,8 +753,8 @@ fn sort(app: *App, range: ?Range, flags: []const u8, bang: bool) CommandError!vo
 fn retab(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":retab");
-    const ed = &e.buf.editor;
-    const tw: usize = @max(ed.tab_width, 1);
+    const ed = e.buf.editor;
+    const tw: usize = @max(ed.doc.tab_width, 1);
     const text = ed.bytes();
     var out: std.ArrayListUnmanaged(u8) = .empty;
     var col: usize = 0;
@@ -791,7 +791,7 @@ fn retab(app: *App) CommandError!void {
 fn deleteLines(app: *App, range: ?Range) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":d");
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
@@ -977,7 +977,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
             const n = std.fmt.parseInt(u8, v, 10) catch return app.diag.fail(arena, ":set {s} — not a number: {s}", .{ name, v });
             app.cfg.editor.tab_width = @max(n, 1);
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| e.buf.editor.tab_width = @max(n, 1),
+                .editor => |*e| e.buf.editor.doc.tab_width = @max(n, 1),
                 else => {},
             };
             app.toast(":set {s}={d}", .{ name, n });

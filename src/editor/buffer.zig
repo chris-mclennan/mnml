@@ -15,6 +15,7 @@ const editorconfig = @import("editorconfig.zig");
 const Io = std.Io;
 const editor_mod = @import("editor.zig");
 const Editor = editor_mod.Editor;
+const Document = editor_mod.Document;
 const Pos = editor_mod.Pos;
 pub const Clipboard = editor_mod.Clipboard;
 const edit_op = @import("edit_op.zig");
@@ -47,7 +48,10 @@ pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
 
 pub const Buffer = struct {
     gpa: Allocator,
-    editor: Editor,
+    /// This window's view. A heap box, owned here.
+    editor: *Editor,
+    /// `editor.doc` — the shared text, here so `buf.doc.path` reads short.
+    doc: *Document,
     input: InputHandler,
     /// Owned. Null for a scratch buffer.
     path: ?[]u8 = null,
@@ -56,8 +60,6 @@ pub const Buffer = struct {
     saved_text: []u8,
     /// `m<letter>` positions.
     marks: std.AutoHashMapUnmanaged(u8, Pos) = .empty,
-    /// Closed folds: start line → end line.
-    folds: std.AutoArrayHashMapUnmanaged(usize, usize) = .empty,
     /// File extension used for language-specific behaviour. Owned.
     language: ?[]u8 = null,
     read_only: bool = false,
@@ -108,14 +110,15 @@ pub const Buffer = struct {
     pub const max_replay_depth = 8;
 
     pub fn init(gpa: Allocator, text: []const u8, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
-        var ed = try Editor.init(gpa, text);
+        const ed = try Editor.init(gpa, text);
         errdefer ed.deinit();
-        ed.tab_width = @max(cfg.tab_width, 1);
+        ed.doc.tab_width = @max(cfg.tab_width, 1);
         const saved = try gpa.dupe(u8, text);
         errdefer gpa.free(saved);
         return .{
             .gpa = gpa,
             .editor = ed,
+            .doc = ed.doc,
             .input = InputHandler.init(gpa, style, cfg),
             .saved_text = saved,
             .indent_unit = @max(cfg.tab_width, 1),
@@ -129,7 +132,6 @@ pub const Buffer = struct {
         if (self.path) |p| gpa.free(p);
         gpa.free(self.saved_text);
         self.marks.deinit(gpa);
-        self.folds.deinit(gpa);
         if (self.language) |l| gpa.free(l);
         if (self.dot) |d| freeOps(gpa, d);
         for (self.dot_pending.items) |o| o.free(gpa);
@@ -204,8 +206,8 @@ pub const Buffer = struct {
         const ext = std.fs.path.extension(path);
         if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
         const tok = commentTokenFor(self.language);
-        self.editor.comment_token = tok[0];
-        self.editor.comment_token_close = tok[1];
+        self.editor.doc.comment_token = tok[0];
+        self.editor.doc.comment_token_close = tok[1];
     }
 
     pub const SaveError = Allocator.Error || Io.Dir.WriteFileError || error{NoPath};
@@ -261,8 +263,8 @@ pub const Buffer = struct {
     /// The indent unit and the tab display width, for the editor and
     /// the handler both.
     pub fn setIndent(self: *Buffer, tab_display: usize, indent_unit: usize, use_tabs: bool) void {
-        self.editor.tab_width = @max(tab_display, 1);
-        self.editor.use_tabs = use_tabs;
+        self.editor.doc.tab_width = @max(tab_display, 1);
+        self.editor.doc.use_tabs = use_tabs;
         self.indent_unit = @max(indent_unit, 1);
         self.input.configure(.{ .tab_width = self.indent_unit, .text_width = self.textWidth(), .use_tabs = use_tabs });
     }
@@ -278,9 +280,9 @@ pub const Buffer = struct {
     /// defaults already on the buffer. Unset keys leave things alone.
     pub fn applyEditorconfig(self: *Buffer, r: editorconfig.Resolved) void {
         if (r.indent_style != null or r.indentUnit() != null) {
-            const use_tabs = if (r.indent_style) |s| s == .tab else self.editor.use_tabs;
-            const unit = r.indentUnit() orelse self.editor.tab_width;
-            const display = r.tabDisplayWidth() orelse self.editor.tab_width;
+            const use_tabs = if (r.indent_style) |s| s == .tab else self.editor.doc.use_tabs;
+            const unit = r.indentUnit() orelse self.editor.doc.tab_width;
+            const display = r.tabDisplayWidth() orelse self.editor.doc.tab_width;
             self.setIndent(display, unit, use_tabs);
         }
         if (r.end_of_line) |e| self.eol = e;
@@ -318,14 +320,14 @@ pub const Buffer = struct {
         self.input.deinit();
         self.input = InputHandler.init(self.gpa, style, cfg);
         // The file's indent (a `.editorconfig`) outlives the handler.
-        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = cfg.text_width, .use_tabs = self.editor.use_tabs });
+        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = cfg.text_width, .use_tabs = self.editor.doc.use_tabs });
         self.editor.anchor = null;
     }
 
     // ─── the seam ───
 
     pub fn makeCtx(self: *const Buffer, wrap_width: ?usize) EditCtx {
-        const ed = &self.editor;
+        const ed = self.editor;
         const line = ed.currentLine();
         const ls = ed.lineStart(line);
         const le = ed.lineEnd(line);
@@ -357,7 +359,7 @@ pub const Buffer = struct {
         const visual: ?VisualShape = if (self.input.mode().isVisual()) self.visualShape() else null;
         // A session the app ended without a key (a blur) closes before
         // this key's own snapshot lands.
-        const undo_before = self.editor.history.undoLen();
+        const undo_before = self.editor.doc.history.undoLen();
         self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
@@ -381,7 +383,7 @@ pub const Buffer = struct {
     /// key: the first snapshot pushed past it is the session's — the
     /// `cw` that entered Insert and the text typed after undo together.
     fn syncInsertSession(self: *Buffer, undo_before: usize) void {
-        const ed = &self.editor;
+        const ed = self.editor;
         const typing = switch (self.input.mode()) {
             .insert, .replace => true,
             else => false,
@@ -391,10 +393,10 @@ pub const Buffer = struct {
                 self.insert_session = true;
                 self.insert_undo_target = null;
             }
-            if (self.insert_undo_target == null and ed.history.undoLen() > undo_before) self.insert_undo_target = undo_before + 1;
+            if (self.insert_undo_target == null and ed.doc.history.undoLen() > undo_before) self.insert_undo_target = undo_before + 1;
         } else if (self.insert_session) {
             self.insert_session = false;
-            if (self.insert_undo_target) |t| ed.history.truncateUndo(t);
+            if (self.insert_undo_target) |t| ed.doc.history.truncateUndo(t);
             self.insert_undo_target = null;
             ed.in_insert_run = false;
         }
@@ -430,30 +432,30 @@ pub const Buffer = struct {
         // Mutate the entry arrays in place, then rebuild the index; the
         // entry count never grows here.
         var i: usize = 0;
-        while (i < self.folds.count()) {
-            const start = self.folds.keys()[i];
+        while (i < self.editor.folds.count()) {
+            const start = self.editor.folds.keys()[i];
             if (start <= line) {
                 i += 1;
                 continue;
             }
             const ns: isize = @as(isize, @intCast(start)) + delta;
-            const ne: isize = @as(isize, @intCast(self.folds.values()[i])) + delta;
+            const ne: isize = @as(isize, @intCast(self.editor.folds.values()[i])) + delta;
             if (ns < 0 or ne < ns) {
-                self.folds.orderedRemoveAt(i);
+                self.editor.folds.orderedRemoveAt(i);
                 continue;
             }
-            self.folds.keys()[i] = @intCast(ns);
-            self.folds.values()[i] = @intCast(ne);
+            self.editor.folds.keys()[i] = @intCast(ns);
+            self.editor.folds.values()[i] = @intCast(ne);
             i += 1;
         }
-        try self.folds.reIndex(self.gpa);
+        try self.editor.folds.reIndex(self.gpa);
     }
 
     // ─── folds ───
 
     /// The closed fold holding `row`, as `(start, end)`.
     pub fn foldAt(self: *const Buffer, row: usize) ?[2]usize {
-        for (self.folds.keys(), self.folds.values()) |s, e| if (row >= s and row <= e and e > s) return .{ s, e };
+        for (self.editor.folds.keys(), self.editor.folds.values()) |s, e| if (row >= s and row <= e and e > s) return .{ s, e };
         return null;
     }
 
@@ -469,8 +471,8 @@ pub const Buffer = struct {
     /// it. The handler's list is rewritten before it is applied; a list
     /// no fold touches comes back as it was. Frame arena.
     fn foldAwareOps(self: *Buffer, list: []const EditOp, arena: Allocator) Allocator.Error![]const EditOp {
-        if (self.folds.count() == 0 or list.len == 0) return list;
-        const ed = &self.editor;
+        if (self.editor.folds.count() == 0 or list.len == 0) return list;
+        const ed = self.editor;
         const cur = ed.currentLine();
         const count = ed.lineCount();
         // A `"x` prefix stays in front.
@@ -552,11 +554,11 @@ pub const Buffer = struct {
                 // The folds going with the lines go first; `applyOps`
                 // shifts the ones after.
                 var i: usize = 0;
-                while (i < self.folds.count()) {
-                    const start = self.folds.keys()[i];
-                    if (start >= first and start <= last) self.folds.orderedRemoveAt(i) else i += 1;
+                while (i < self.editor.folds.count()) {
+                    const start = self.editor.folds.keys()[i];
+                    if (start >= first and start <= last) self.editor.folds.orderedRemoveAt(i) else i += 1;
                 }
-                try self.folds.reIndex(self.gpa);
+                try self.editor.folds.reIndex(self.gpa);
                 const ptr = try arena.create(EditOp);
                 ptr.* = .delete_line;
                 try out.append(arena, .{ .repeat = .{ .count = covered, .inner = ptr } });
@@ -1227,8 +1229,8 @@ test "closed folds are one line to j / k and to dd / yy" {
     const gpa = testing.allocator;
     var h = try Harness.init(gpa, .vim, "|fn a() {\n  1\n  2\n}\nfn b() {\n  3\n}\nend");
     defer h.deinit();
-    try h.buf.folds.put(gpa, 0, 3);
-    try h.buf.folds.put(gpa, 4, 6);
+    try h.buf.editor.folds.put(gpa, 0, 3);
+    try h.buf.editor.folds.put(gpa, 4, 6);
     // `j` from a fold header lands after the fold; `k` from below lands on it.
     try h.feed("j");
     try testing.expectEqual(@as(usize, 4), h.buf.editor.currentLine());
@@ -1249,13 +1251,13 @@ test "closed folds are one line to j / k and to dd / yy" {
     // `dd` on a fold removes the fold with its lines; the next fold shifts up.
     try h.feed("dd");
     try testing.expectEqualStrings("fn b() {\n  3\n}\nend", h.buf.editor.bytes());
-    try testing.expectEqual(@as(usize, 1), h.buf.folds.count());
-    try testing.expectEqual(@as(usize, 0), h.buf.folds.keys()[0]);
-    try testing.expectEqual(@as(usize, 2), h.buf.folds.values()[0]);
+    try testing.expectEqual(@as(usize, 1), h.buf.editor.folds.count());
+    try testing.expectEqual(@as(usize, 0), h.buf.editor.folds.keys()[0]);
+    try testing.expectEqual(@as(usize, 2), h.buf.editor.folds.values()[0]);
     // `dj` from a fold takes the fold and the line after it.
     try h.feed("dj");
     try testing.expectEqualStrings("", h.buf.editor.bytes());
-    try testing.expectEqual(@as(usize, 0), h.buf.folds.count());
+    try testing.expectEqual(@as(usize, 0), h.buf.editor.folds.count());
 }
 
 test "vim marks, macros and visual mode" {
@@ -1495,7 +1497,7 @@ test "vim comment toggle uses the buffer's token; a commentless buffer is a no-o
     defer h.deinit();
     try h.feed("gcc");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
-    h.buf.editor.comment_token = "// ";
+    h.buf.editor.doc.comment_token = "// ";
     try h.feed("gcc");
     try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
     try h.feed("gcj");
@@ -1680,14 +1682,14 @@ test "standard: ctrl+s escalates save, unknown chords are unhandled, dirty track
 test "buffer: unsupported ops are skipped and named; folds shift with edits" {
     var h = try Harness.init(testing.allocator, .vim, "|a\nb\nc\nd");
     defer h.deinit();
-    try h.buf.folds.put(testing.allocator, 2, 3);
+    try h.buf.editor.folds.put(testing.allocator, 2, 3);
     try h.feed("diq");
     try testing.expectEqualStrings("select_inner_smart_quote", h.buf.last_unsupported.?);
     try h.feed("O!<esc>");
-    try testing.expectEqual(@as(usize, 3), h.buf.folds.keys()[0]);
-    try testing.expectEqual(@as(usize, 4), h.buf.folds.values()[0]);
+    try testing.expectEqual(@as(usize, 3), h.buf.editor.folds.keys()[0]);
+    try testing.expectEqual(@as(usize, 4), h.buf.editor.folds.values()[0]);
     try h.feed("dd");
-    try testing.expectEqual(@as(usize, 2), h.buf.folds.keys()[0]);
+    try testing.expectEqual(@as(usize, 2), h.buf.editor.folds.keys()[0]);
 }
 
 test "buffer: save adds the trailing newline and parks the cursor after it (Rust parity: R then A<esc>R! appends)" {
@@ -1784,8 +1786,8 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     buf.editor.setCursor(6); // on "two"
     // A `.editorconfig` says: trim, LF, tabs 8 wide, indent with tabs.
     buf.applyEditorconfig(.{ .indent_style = .tab, .tab_width = 8, .end_of_line = .lf, .trim_trailing_whitespace = true, .insert_final_newline = false });
-    try testing.expectEqual(@as(usize, 8), buf.editor.tab_width);
-    try testing.expect(buf.editor.use_tabs);
+    try testing.expectEqual(@as(usize, 8), buf.editor.doc.tab_width);
+    try testing.expect(buf.editor.doc.use_tabs);
     try testing.expectEqual(@as(usize, 8), buf.input.vim.tab_width);
     try testing.expect(buf.input.vim.use_tabs);
     try buf.save(testing.io);
@@ -1809,15 +1811,15 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     try testing.expectEqualStrings("\tone\n\ttwo\n  three\n", buf.editor.bytes());
     // `indent_size` alone sets the unit; the display width follows it.
     buf.applyEditorconfig(.{ .indent_style = .space, .indent_size = 2 });
-    try testing.expect(!buf.editor.use_tabs);
-    try testing.expectEqual(@as(usize, 2), buf.editor.tab_width);
+    try testing.expect(!buf.editor.doc.use_tabs);
+    try testing.expectEqual(@as(usize, 2), buf.editor.doc.tab_width);
     try testing.expectEqual(@as(usize, 2), buf.input.vim.tab_width);
     // `indent_size = tab` with a tab_width: the unit is the width.
     buf.applyEditorconfig(.{ .indent_size_is_tab = true, .tab_width = 3 });
     try testing.expectEqual(@as(usize, 3), buf.input.vim.tab_width);
     // An empty resolution changes nothing.
     buf.applyEditorconfig(.{});
-    try testing.expectEqual(@as(usize, 3), buf.editor.tab_width);
+    try testing.expectEqual(@as(usize, 3), buf.editor.doc.tab_width);
     try testing.expect(buf.trim_trailing_ws_on_save);
     // A handler rebuilt for the other style keeps the file's indent.
     buf.applyEditorconfig(.{ .indent_style = .tab, .indent_size = 6 });

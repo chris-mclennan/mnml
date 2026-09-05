@@ -138,7 +138,7 @@ pub const RequestPane = struct {
     response_tab: ResponseTab = .body,
     resp_view: editor_view.ViewState = .{},
     /// The response body as an editor, for the highlighter.
-    resp_editor: ?editor_mod.Editor = null,
+    resp_editor: ?*editor_mod.Editor = null,
     resp_syntax: syntax.Syntax,
     body_wrap: bool = false,
     /// Edited since it was loaded or saved.
@@ -182,7 +182,7 @@ pub const RequestPane = struct {
         for (self.tests.items) |t| gpa.free(t);
         self.tests.deinit(gpa);
         if (self.draft) |*d| d.deinit(gpa);
-        if (self.resp_editor) |*e| e.deinit();
+        if (self.resp_editor) |e| e.deinit();
         self.resp_syntax.deinit();
     }
 
@@ -353,7 +353,7 @@ pub const RequestPane = struct {
 
     fn highlightResponse(self: *RequestPane) Allocator.Error!void {
         const resp = self.response() orelse return;
-        if (self.resp_editor) |*e| e.deinit();
+        if (self.resp_editor) |e| e.deinit();
         self.resp_editor = null;
         self.resp_syntax.deinit();
         self.resp_syntax = syntax.Syntax.init(self.gpa);
@@ -364,20 +364,20 @@ pub const RequestPane = struct {
             .xml => "response.xml",
             .text => return,
         };
-        var ed = try editor_mod.Editor.init(self.gpa, resp.body);
+        const ed = try editor_mod.Editor.init(self.gpa, resp.body);
         errdefer ed.deinit();
         self.resp_syntax.setLanguage(pseudo, resp.body);
         if (!self.resp_syntax.hasLanguage()) {
             ed.deinit();
             return;
         }
-        try self.resp_syntax.refresh(&ed);
+        try self.resp_syntax.refresh(ed);
         self.resp_editor = ed;
     }
 
     /// Spans for the body viewer, on the frame arena.
     pub fn responseSpans(self: *RequestPane, arena: Allocator, theme: *const @import("../ui/theme.zig")) Allocator.Error![]editor_view.Span {
-        const ed = &(self.resp_editor orelse return &.{});
+        const ed = self.resp_editor orelse return &.{};
         return self.resp_syntax.styledSpans(arena, theme, 0, ed.len());
     }
 

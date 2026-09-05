@@ -29,7 +29,7 @@ pub fn headerLines(app: *App, e: *EditorPane, arena: Allocator) Allocator.Error!
     if (!app.cfg.ui.sticky_context) return &.{};
     const first = e.view.scroll_line;
     if (first == 0) return &.{};
-    const chain = try e.syntax.scopeChain(&e.buf.editor, arena, first);
+    const chain = try e.syntax.scopeChain(e.buf.editor, arena, first);
     if (chain.len <= max_rows) return chain;
     return chain[chain.len - max_rows ..];
 }
@@ -38,7 +38,7 @@ pub fn headerLines(app: *App, e: *EditorPane, arena: Allocator) Allocator.Error!
 /// given). `text_x` is where the editor's text column starts.
 pub fn draw(ui: Ui, pane: PaneId, e: *const EditorPane, area: Rect, lines: []const u32, line_numbers: bool) void {
     const t = ui.theme;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const total: u32 = @intCast(ed.lineCount());
     const gutter_w: u16 = if (line_numbers) blk: {
         var digits: u16 = 1;
@@ -58,7 +58,7 @@ pub fn draw(ui: Ui, pane: PaneId, e: *const EditorPane, area: Rect, lines: []con
             _ = ui.putStrRight(area.x + gutter_w - 1, y, gutter_w - 2, num, Theme.withFg(style, t.gutter.fg));
         }
         const text = ed.bytes()[ed.lineStart(line)..ed.lineEnd(line)];
-        const cells = editor_view.layoutLine(ui, text, @intCast(ed.tab_width)) catch &.{};
+        const cells = editor_view.layoutLine(ui, text, @intCast(ed.doc.tab_width)) catch &.{};
         var x = area.x + gutter_w;
         for (cells) |c| {
             if (x + c.w > area.right()) break;

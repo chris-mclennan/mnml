@@ -87,7 +87,7 @@ pub fn reload(app: *App, id: PaneId) ReloadError!void {
     const e = app.panes.editor(id) orelse return error.NoPath;
     const path = e.buf.path orelse return error.NoPath;
     const text = try Io.Dir.cwd().readFileAlloc(app.io, path, app.frame.allocator(), .limited(1 << 30));
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = ed.currentLine();
     const scroll = e.view.scroll_line;
     try app.splice(e, 0, ed.len(), text);

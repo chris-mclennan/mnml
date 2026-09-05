@@ -212,7 +212,7 @@ pub const AppDriver = struct {
     fn vHighlightCount(p: *anyopaque) ?usize {
         const app = &cast(p).app;
         const e = app.activeEditor() orelse return null;
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         if (e.hl_dirty) {
             e.syntax.refresh(ed) catch return null;
             e.hl_dirty = false;

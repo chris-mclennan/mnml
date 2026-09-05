@@ -795,7 +795,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         bar = s.rest;
     };
     const focused = app.active == id and app.focus == .pane;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     // The language server hears every edit before the frame paints.
     lsp.syncPane(app, id, e);
     // Highlighting: every frame folds the edits since the last one into
@@ -810,7 +810,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         e.hl_dirty = false;
         e.hl_since_ms = null;
     }
-    ed.edits.trim(e.syntax.seen_seq);
+    ed.doc.edits.trim(e.syntax.seen_seq);
     // Spans for a window around the viewport and the cursor — the view
     // may scroll to the cursor inside `draw`, so both are covered.
     const line_count = ed.lineCount();
@@ -825,8 +825,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     try decor.onFrame(app, id, e, first_vis, last_vis);
     const base_spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
     const spans = try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line);
-    const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());
-    for (e.buf.folds.keys(), e.buf.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
+    const folds = try arena.alloc(editor_view.Fold, e.buf.editor.folds.count());
+    for (e.buf.editor.folds.keys(), e.buf.editor.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
     for (e.find.matches.items, 0..) |m, i| matches[i] = .{ .start = m.start, .end = m.end };
     const mode = e.buf.input.mode();
@@ -956,7 +956,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     };
     var lsp_seg: ?[]const u8 = null;
     if (app.activeEditor()) |e| {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         const mode = e.buf.input.mode();
         info.mode_label = mode.label() orelse "EDIT";
         info.mode_kind = switch (mode) {

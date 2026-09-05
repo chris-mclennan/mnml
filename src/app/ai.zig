@@ -996,7 +996,7 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
 fn actionTarget(app: *App) CommandError!struct { code: []const u8, lang: []const u8, apply: AiPane.ApplyTarget } {
     const id = app.active orelse return error.NoActivePane;
     const e = app.panes.editor(id) orelse return error.NotAnEditor;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const lang = suggest.languageOf(e.buf.path);
     if (ed.selection()) |sel| if (sel[1] > sel[0]) {
         return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()[sel[0]..sel[1]]), .lang = lang, .apply = .{ .pane = id, .start = sel[0], .end = sel[1] } };

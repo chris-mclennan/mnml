@@ -80,7 +80,7 @@ pub fn request(app: *App, s: *Server, pane: PaneId, e: *EditorPane, first: u32, 
     const path = e.buf.path orelse return;
     const arena = app.frame.allocator();
     const uri = types.uriFromPath(arena, path) catch return;
-    const head = e.buf.editor.edits.head();
+    const head = e.buf.editor.doc.edits.head();
     const ctx: Ctx = .{ .pane = pane, .extra = seqLow(head) };
     const held: ?*SemFile = app.lsp.semantic.get(path);
     if (s.caps.semantic_delta and held != null and held.?.result_id != null and !held.?.partial) {
@@ -88,7 +88,7 @@ pub fn request(app: *App, s: *Server, pane: PaneId, e: *EditorPane, first: u32, 
     } else if (s.caps.semantic_full) {
         _ = s.request(.semantic_full, "textDocument/semanticTokens/full", .{ .textDocument = .{ .uri = uri } }, ctx) catch {};
     } else if (s.caps.semantic_range) {
-        const ed = &e.buf.editor;
+        const ed = e.buf.editor;
         const lo: u32 = first -| (last -| first + 1);
         const hi: u32 = @intCast(@min(last + (last -| first + 1), ed.lineCount() - 1));
         const range: types.Range = .{ .start = .{ .line = lo, .character = 0 }, .end = types.positionOf(ed.bytes(), ed.lineEnd(hi), s.encoding) };
@@ -107,7 +107,7 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
         f.seq = 0;
         return;
     };
-    const head = e.buf.editor.edits.head();
+    const head = e.buf.editor.doc.edits.head();
     const fresh = seqLow(head) == ctx.extra;
     if (kind == .semantic_delta and jsonrpc.getField(r, "edits") != null) {
         const arena = app.frame.allocator();
@@ -151,8 +151,8 @@ pub fn spansFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme
     if (!app.cfg.editor.semantic_tokens) return &.{};
     const path = e.buf.path orelse return &.{};
     const f = app.lsp.semantic.get(path) orelse return &.{};
-    const ed = &e.buf.editor;
-    if (f.seq == 0 or f.seq != ed.edits.head()) return &.{};
+    const ed = e.buf.editor;
+    if (f.seq == 0 or f.seq != ed.doc.edits.head()) return &.{};
     const s = lsp.serverFor(app, path) orelse return &.{};
     const text = ed.bytes();
     const lines = ed.lineCount();

@@ -81,7 +81,7 @@ pub fn jump(app: *App, letter: u8, exact: bool) Allocator.Error!void {
         };
     }
     const e = app.activeEditor() orelse return;
-    const ed = &e.buf.editor;
+    const ed = e.buf.editor;
     const row = @min(m.row, ed.lineCount() - 1);
     if (exact) ed.placeCursor(row, m.col) else {
         ed.cursor = ed.firstNonWs(row);

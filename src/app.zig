@@ -1036,7 +1036,7 @@ pub const App = struct {
     pub fn applyBufferPrefs(self: *App, buf: *Buffer) Allocator.Error!void {
         buf.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
         buf.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
-        buf.editor.auto_indent = self.cfg.editor.auto_indent;
+        buf.editor.doc.auto_indent = self.cfg.editor.auto_indent;
         const path = buf.path orelse return;
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
@@ -1358,7 +1358,7 @@ pub const App = struct {
     /// open buffer follows.
     pub fn syncAutoIndent(self: *App) void {
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.buf.editor.auto_indent = self.cfg.editor.auto_indent,
+            .editor => |*e| e.buf.editor.doc.auto_indent = self.cfg.editor.auto_indent,
             else => {},
         };
     }
@@ -1622,7 +1622,7 @@ pub const App = struct {
     fn objectLookup(ctx: *anyopaque, ed: *const edit_op_editor.Editor, kind: edit_op_editor.ObjectKind, byte: usize, around: bool) ?[2]usize {
         const self: *App = @ptrCast(@alignCast(ctx));
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| if (&e.buf.editor == ed) return e.syntax.objectRange(ed, kind, byte, around),
+            .editor => |*e| if (e.buf.editor == ed) return e.syntax.objectRange(ed, kind, byte, around),
             else => {},
         };
         return null;
@@ -2177,7 +2177,7 @@ test "config → App: every behaviour-changing field flipped once" {
     try t.expectEqual(input.Style.vim, app.activeBuffer().?.input.style());
     try t.expectEqualStrings("NORMAL", app.activeBuffer().?.input.mode().label().?);
     // tab_width / text_width reach the editor
-    try t.expectEqual(@as(usize, 2), app.activeBuffer().?.editor.tab_width);
+    try t.expectEqual(@as(usize, 2), app.activeBuffer().?.editor.doc.tab_width);
     try t.expectEqual(@as(usize, 40), app.editorConfig().text_width);
     // chord timeout is the deadline the chain waits for
     try t.expectEqual(@as(u16, 900), app.cfg.editor.chord_timeout_ms);
@@ -2266,8 +2266,8 @@ test "editorconfig reaches an opened buffer; a scratch takes the config's save p
     defer t.allocator.free(mk);
     _ = try app.openEditor(mk);
     const e = app.activeEditor().?;
-    try t.expect(e.buf.editor.use_tabs);
-    try t.expectEqual(@as(usize, 8), e.buf.editor.tab_width);
+    try t.expect(e.buf.editor.doc.use_tabs);
+    try t.expectEqual(@as(usize, 8), e.buf.editor.doc.tab_width);
     try t.expectEqual(@as(usize, 8), e.buf.input.vim.tab_width);
     try t.expect(e.buf.trim_trailing_ws_on_save);
     try t.expect(!e.buf.ensure_trailing_newline);
@@ -2286,8 +2286,8 @@ test "editorconfig reaches an opened buffer; a scratch takes the config's save p
     defer t.allocator.free(txt);
     _ = try app.openEditor(txt);
     const e2 = app.activeEditor().?;
-    try t.expect(!e2.buf.editor.use_tabs);
-    try t.expectEqual(@as(usize, 2), e2.buf.editor.tab_width);
+    try t.expect(!e2.buf.editor.doc.use_tabs);
+    try t.expectEqual(@as(usize, 2), e2.buf.editor.doc.tab_width);
     try t.expect(e2.buf.trim_trailing_ws_on_save);
     try t.expect(e2.buf.ensure_trailing_newline);
     try @import("app/cmd_file.zig").saveCurrent(&app);

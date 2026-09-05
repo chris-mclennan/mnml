@@ -177,43 +177,43 @@ pub fn paste(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!v
 test "yy then p opens a line below; P above; on the last line no phantom line" {
     var clip = Clipboard.init(std.testing.allocator);
     defer clip.deinit();
-    var ed = try Editor.init(std.testing.allocator, "a\nb");
+    const ed = try Editor.init(std.testing.allocator, "a\nb");
     defer ed.deinit();
     var out: EditOutcome = .{};
-    try yankLine(&ed, &clip, &out);
+    try yankLine(ed, &clip, &out);
     try std.testing.expectEqualStrings("a\n", out.clipboard_set.?);
     try std.testing.expectEqual([2]usize{ 0, 2 }, out.yanked_range.?);
-    try pasteAfter(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("a\na\nb", ed.text.items);
+    try pasteAfter(ed, &clip, &out);
+    try std.testing.expectEqualStrings("a\na\nb", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 2), ed.cursor);
     ed.cursor = 4; // on `b`, the last line
-    try pasteAfter(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("a\na\nb\na", ed.text.items);
+    try pasteAfter(ed, &clip, &out);
+    try std.testing.expectEqualStrings("a\na\nb\na", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
-    try pasteBefore(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("a\na\nb\na\na", ed.text.items);
+    try pasteBefore(ed, &clip, &out);
+    try std.testing.expectEqualStrings("a\na\nb\na\na", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 6), ed.cursor);
 }
 
 test "charwise yank/put and modeless paste over a selection" {
     var clip = Clipboard.init(std.testing.allocator);
     defer clip.deinit();
-    var ed = try Editor.init(std.testing.allocator, "hello");
+    const ed = try Editor.init(std.testing.allocator, "hello");
     defer ed.deinit();
     var out: EditOutcome = .{};
     ed.anchor = 0;
     ed.cursor = 2;
-    try yankSelection(&ed, &clip, &out);
+    try yankSelection(ed, &clip, &out);
     try std.testing.expectEqualStrings("he", out.clipboard_set.?);
     ed.anchor = null;
     ed.cursor = 4;
-    try pasteAfter(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("hellohe", ed.text.items);
+    try pasteAfter(ed, &clip, &out);
+    try std.testing.expectEqualStrings("hellohe", ed.doc.text.items);
     try std.testing.expectEqual(@as(usize, 7), ed.cursor);
     ed.anchor = 0;
     ed.cursor = 5;
-    try paste(&ed, &clip, &out);
-    try std.testing.expectEqualStrings("hehe", ed.text.items);
-    try yankLinesCount(&ed, 3, &clip, &out);
+    try paste(ed, &clip, &out);
+    try std.testing.expectEqualStrings("hehe", ed.doc.text.items);
+    try yankLinesCount(ed, 3, &clip, &out);
     try std.testing.expectEqualStrings("hehe\n", clip.text());
 }
