@@ -19,6 +19,7 @@ const command = @import("../core/command.zig");
 const marks_store = @import("marks_store.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
+const regex = @import("../regex/regex.zig");
 const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
@@ -427,7 +428,10 @@ fn alternate(app: *App) CommandError!void {
 
 /// `s/pat/rep/[g][i][I]` over `range` (default: the cursor's line).
 /// `ex_verbs.substituteEntry` is the way in: it remembers the spec for
-/// `:&` and takes the `c` flag.
+/// `:&` and takes the `c` flag. `pat` is a vim pattern (`src/regex/`);
+/// `rep` takes `&`, `\\0`–`\\9`, `\\n`, `\\t`, `\\u` `\\l` `\\U` `\\L` `\\E`.
+/// Each line is matched on its own, so `^` / `$` are the line's ends
+/// and a match never spans lines.
 pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) CommandError!void {
     const arena = app.frame.allocator();
     const label: []const u8 = if (whole) ":%s" else ":s";
@@ -447,10 +451,11 @@ pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) Comma
         }
     }
     if (n_parts == 0 or parts[0].len == 0) return app.diag.fail(arena, "{s} — empty pattern", .{label});
-    var pat_buf: [256]u8 = undefined;
-    const needle = find_mod.unescape(parts[0], &pat_buf);
-    var rep_buf: [256]u8 = undefined;
-    const replacement = find_mod.unescape(parts[1], &rep_buf);
+    // ── regex (search track) ──
+    // The escaped delimiter is the delimiter itself; every other escape
+    // is the pattern's (or the replacement's) to read.
+    const pattern = try unescapeDelim(arena, parts[0], delim);
+    const replacement = try unescapeDelim(arena, parts[1], delim);
     var global = false;
     var case: ?bool = null;
     for (parts[2]) |f| switch (f) {
@@ -459,7 +464,9 @@ pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) Comma
         'I' => case = true,
         else => {},
     };
-    const case_sensitive = case orelse app.search_case orelse find_mod.hasUpper(needle);
+    const case_sensitive = case orelse app.search_case orelse find_mod.hasUpper(pattern);
+    var re = try compilePattern(app, label, pattern, case_sensitive);
+    defer re.deinit();
 
     const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
     const first = @min(r.first, ed.lineCount() - 1);
@@ -469,33 +476,62 @@ pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) Comma
     var row = first;
     while (row <= last) : (row += 1) {
         const line = ed.lineSlice(row);
-        var i: usize = 0;
-        var replaced_here = false;
-        while (i < line.len) {
-            if (needle.len > 0 and i + needle.len <= line.len and (!replaced_here or global)) {
-                const hay = line[i .. i + needle.len];
-                const hit = if (case_sensitive) std.mem.eql(u8, hay, needle) else std.ascii.eqlIgnoreCase(hay, needle);
-                if (hit) {
-                    try out.appendSlice(arena, replacement);
-                    i += needle.len;
-                    count += 1;
-                    replaced_here = true;
-                    continue;
-                }
+        var from: usize = 0;
+        var copied: usize = 0;
+        while (from <= line.len) {
+            const m = re.find(line, from) orelse break;
+            try out.appendSlice(arena, line[copied..m.start]);
+            try regex.expandReplacement(arena, &out, replacement, line, m);
+            copied = m.end;
+            count += 1;
+            if (!global) break;
+            if (m.end > m.start) {
+                from = m.end;
+            } else {
+                // An empty match: keep the char under it and move on.
+                if (m.end < line.len) try out.append(arena, line[m.end]);
+                copied = @min(m.end + 1, line.len);
+                from = m.end + 1;
             }
-            try out.append(arena, line[i]);
-            i += 1;
         }
+        try out.appendSlice(arena, line[copied..]);
         if (row < last) try out.append(arena, '\n');
     }
+    // ── end regex (search track) ──
     if (count == 0) {
-        app.toast("{s} — no match for \"{s}\"", .{ label, needle });
+        app.toast("{s} — no match for \"{s}\"", .{ label, pattern });
         return;
     }
     try app.splice(e, ed.lineStart(first), ed.lineEnd(last), out.items);
     ed.setCursor(ed.firstNonWs(@min(last, ed.lineCount() - 1)));
     ed.goal_col = null;
     app.toast("{s} — {d} replacement(s)", .{ label, count });
+}
+
+/// A vim pattern compiled for an ex verb; the failure names the verb
+/// and says what was wrong with the pattern.
+pub fn compilePattern(app: *App, label: []const u8, pattern: []const u8, case_sensitive: bool) CommandError!regex.Regex {
+    const arena = app.frame.allocator();
+    return regex.Regex.compile(pattern, .{ .ignore_case = !case_sensitive }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidPattern => return app.diag.fail(arena, "{s} — invalid pattern \"{s}\"", .{ label, pattern }),
+        error.Unsupported => return app.diag.fail(arena, "{s} — pattern item not supported in this build: \"{s}\"", .{ label, pattern }),
+        error.TooLong => return app.diag.fail(arena, "{s} — pattern too long", .{label}),
+    };
+}
+
+/// `\\/` → `/` (for whatever the delimiter is); everything else stays.
+pub fn unescapeDelim(arena: Allocator, s: []const u8, delim: u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, s, '\\') == null) return s;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < s.len) : (i += 1) {
+        if (s[i] == '\\' and i + 1 < s.len and s[i + 1] == delim) {
+            try out.append(arena, delim);
+            i += 1;
+        } else try out.append(arena, s[i]);
+    }
+    return out.items;
 }
 
 /// `:sort [u] [r] [i] [n]`; `:sort!` reverses.
@@ -1057,6 +1093,23 @@ test "ex: substitute honours range, g and i flags and escapes" {
     try testing.expect(std.mem.indexOf(u8, f.text(), "z Q Q") != null);
     try f.ex("%s/nothing/x/");
     try testing.expectEqualStrings(":%s — no match for \"nothing\"", f.app.lastToast().?);
+}
+
+test "ex: substitute is a vim pattern — groups, &, \\<\\>, \\v, a bad pattern" {
+    var f = try Fixture.init("foo1 bar22\nis this\nkey=value");
+    defer f.deinit();
+    try f.ex("1s/\\(\\a\\+\\)\\(\\d\\+\\)/\\2-\\1/g");
+    try testing.expectEqualStrings("1-foo 22-bar\nis this\nkey=value", f.text());
+    try f.ex("2s/\\<is\\>/[&]/g");
+    try testing.expectEqualStrings("1-foo 22-bar\n[is] this\nkey=value", f.text());
+    try f.ex("3s/\\v(\\w+)\\=(\\w+)/\\u\\2: \\U\\1/");
+    try testing.expectEqualStrings("1-foo 22-bar\n[is] this\nValue: KEY", f.text());
+    try f.ex("%s/^/> /");
+    try testing.expectEqualStrings("> 1-foo 22-bar\n> [is] this\n> Value: KEY", f.text());
+    try f.ex("%s#\\#\\|>#|#g");
+    try testing.expectEqualStrings("| 1-foo 22-bar\n| [is] this\n| Value: KEY", f.text());
+    try testing.expectError(error.Failed, f.ex("%s/\\(x/y/"));
+    try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "invalid pattern") != null);
 }
 
 test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {

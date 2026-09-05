@@ -16,6 +16,7 @@ const FindBar = app_mod.FindBar;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
+const regex = @import("../regex/regex.zig");
 const EditOp = @import("../editor/edit_op.zig").EditOp;
 
 pub const table = .{
@@ -57,7 +58,9 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
         app.closeFindBar(false);
     }
     const snap = e.find.clone() catch return error.OutOfMemory;
-    const fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = e.buf.editor.cursor, .reverse = reverse };
+    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = e.buf.editor.cursor, .reverse = reverse };
+    // The regex chip is sticky per pane (`find.toggle_regex`).
+    fb.state.regex = e.find.regex;
     // The live preview starts from a blank slate; Esc restores the snapshot.
     e.find.clear();
     app.find_bar = fb;
@@ -70,6 +73,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     const fb = &(app.find_bar orelse return);
     const e = app.panes.editor(fb.pane) orelse return;
     const q = fb.state.query.items;
+    e.find.regex = fb.state.regex;
     if (q.len == 0) {
         e.find.clear();
     } else {
@@ -77,6 +81,28 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
         e.find.current = if (fb.reverse) e.find.indexBefore(e.buf.editor.cursor) else e.find.indexAtOrAfter(e.buf.editor.cursor);
     }
     app.needs_render = true;
+}
+
+/// A click on the bar's `.*` / `Aa` chip (`find_bar.hit_regex` /
+/// `hit_case`): the same toggle as ctrl+r / ctrl+c.
+pub fn chipClick(app: *App, id: u32) Allocator.Error!void {
+    const fb = &(app.find_bar orelse return);
+    switch (id) {
+        FindBar.hit_regex => fb.state.regex = !fb.state.regex,
+        FindBar.hit_case => fb.state.match_case = !fb.state.match_case,
+        else => return,
+    }
+    try liveUpdate(app);
+}
+
+/// The reason a regex query matched nothing, for a toast.
+fn patternProblem(err: regex.Error) []const u8 {
+    return switch (err) {
+        error.InvalidPattern => "invalid pattern",
+        error.Unsupported => "pattern uses an item this build does not support (\\&, \\%V…)",
+        error.TooLong => "pattern too long",
+        error.OutOfMemory => "out of memory",
+    };
 }
 
 /// Enter in the bar: land on the match and close (or chain to replace).
@@ -94,9 +120,10 @@ pub fn acceptFromBar(app: *App) Allocator.Error!void {
         app.closeFindBar(true);
         return;
     }
+    e.find.regex = fb.state.regex;
     try e.find.setQuery(q, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
     if (e.find.matches.items.len == 0) {
-        app.toast("no matches for \"{s}\"", .{q});
+        if (e.find.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), q }) else app.toast("no matches for \"{s}\"", .{q});
         app.closeFindBar(false);
         return;
     }
@@ -189,11 +216,22 @@ pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
     }
     const arena = app.frame.allocator();
     var ops: std.ArrayListUnmanaged(EditOp) = .empty;
+    // In regex mode the replacement may name groups (`\1`, `&`), so
+    // each match is found again for its groups and expanded.
+    var re: ?regex.Regex = if (e.find.regex) regex.Regex.compile(e.find.query.items, .{ .ignore_case = !e.find.case_sensitive }) catch null else null;
+    defer if (re) |*r| r.deinit();
+    const text = e.buf.editor.bytes();
     var i = n;
     while (i > 0) {
         i -= 1;
         const m = e.find.matches.items[i];
-        try ops.append(arena, .{ .replace_range = .{ .start = m.start, .end = m.end, .text = replacement } });
+        var rep: []const u8 = replacement;
+        if (re) |*r| if (r.find(text, m.start)) |full| {
+            var out: std.ArrayListUnmanaged(u8) = .empty;
+            try regex.expandReplacement(arena, &out, replacement, text, full);
+            rep = out.items;
+        };
+        try ops.append(arena, .{ .replace_range = .{ .start = m.start, .end = m.end, .text = rep } });
     }
     const atomic: EditOp = .{ .atomic = ops.items };
     _ = try app.applyOps(e, &.{atomic});
@@ -240,7 +278,13 @@ fn clearAndDeselect(app: *App) CommandError!void {
 fn toggleRegex(app: *App) CommandError!void {
     const e = try app.requireEditor();
     e.find.regex = !e.find.regex;
-    app.toast("find: regex {s} (literal matching only in this build)", .{if (e.find.regex) "on" else "off"});
+    if (app.find_bar) |*fb| if (fb.pane == app.active.?) {
+        fb.state.regex = e.find.regex;
+        try liveUpdate(app);
+    };
+    if (e.find.isActive()) try e.find.recompute(e.buf.editor.bytes());
+    app.toast("find: regex {s}", .{if (e.find.regex) "on (vim patterns)" else "off"});
+    app.needs_render = true;
 }
 
 /// `*` / `#`: the identifier under the cursor becomes the query.
@@ -390,6 +434,35 @@ test "find: type → live matches, Enter lands on match 1/3, next/prev wrap, no-
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("no matches for \"zzz\"", app.lastToast().?);
     try t.expectEqual(@as(usize, 0), e.find.matches.items.len);
+}
+
+test "find: ctrl+r turns the query into a vim pattern; replace expands groups; a bad pattern says so" {
+    var app = try appWith("foo1 bar22 baz333\n");
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("\\d\\+") |c| try app.handle(.{ .key = Key.char(c) });
+    const e = app.activeEditor().?;
+    try t.expectEqual(@as(usize, 0), e.find.matches.items.len);
+    try app.handle(.{ .key = Key.ctrl('r') });
+    try t.expect(e.find.regex);
+    try t.expectEqual(@as(usize, 3), e.find.matches.items.len);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("match 1/3", app.lastToast().?);
+    // The chip is sticky: reopening the bar keeps regex on.
+    try command.run(&app, .{ .static = .@"find.find" });
+    try t.expect(app.find_bar.?.state.regex);
+    for ("\\(\\a\\+\\)\\(\\d\\+\\)") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try command.run(&app, .{ .static = .@"find.replace" });
+    for ("\\2-\\1") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("1-foo 22-bar 333-baz\n", e.buf.editor.bytes());
+    try command.run(&app, .{ .static = .@"find.find" });
+    for ("\\(x") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqualStrings("invalid pattern: \"\\(x\"", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"find.toggle_regex" });
+    try t.expect(!e.find.regex);
 }
 
 test "find: Esc restores the previous find state; replace prompts and splices every match" {

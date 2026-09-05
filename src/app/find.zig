@@ -1,12 +1,15 @@
 //! Find state for one editor pane: the query, every match, and which
-//! one is current. Literal matching with smart case; the `\x` escapes a
-//! vim user types (`\[`, `\.`, `\/`) fold to their literal char, so the
-//! common `:%s` shapes work without a regex engine. TODO(find-regex).
+//! one is current. Literal matching with smart case by default; with
+//! `regex` on, the query is a vim pattern compiled by `src/regex/`. In
+//! literal mode the `\x` escapes a vim user types (`\[`, `\.`, `\/`)
+//! fold to their literal char.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const regex = @import("../regex/regex.zig");
 
-pub const Range = struct { start: usize, end: usize };
+/// The engine's own range type, so `findAll` can fill `matches` directly.
+pub const Range = regex.Range;
 
 pub const FindState = struct {
     gpa: Allocator,
@@ -15,6 +18,8 @@ pub const FindState = struct {
     current: ?usize = null,
     regex: bool = false,
     case_sensitive: bool = false,
+    /// The last regex query did not compile; `matches` is empty.
+    bad_pattern: ?regex.Error = null,
 
     pub fn init(gpa: Allocator) FindState {
         return .{ .gpa = gpa };
@@ -33,6 +38,7 @@ pub const FindState = struct {
         out.current = self.current;
         out.regex = self.regex;
         out.case_sensitive = self.case_sensitive;
+        out.bad_pattern = self.bad_pattern;
         return out;
     }
 
@@ -59,7 +65,20 @@ pub const FindState = struct {
     pub fn recompute(self: *FindState, text: []const u8) Allocator.Error!void {
         self.matches.clearRetainingCapacity();
         self.current = null;
+        self.bad_pattern = null;
         if (self.query.items.len == 0) return;
+        if (self.regex) {
+            var re = regex.Regex.compile(self.query.items, .{ .ignore_case = !self.case_sensitive }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    self.bad_pattern = err;
+                    return;
+                },
+            };
+            defer re.deinit();
+            try re.findAll(self.gpa, &self.matches, text);
+            return;
+        }
         var needle_buf: [256]u8 = undefined;
         const needle = unescape(self.query.items, &needle_buf);
         if (needle.len == 0) return;
@@ -167,4 +186,22 @@ test "find: smart case, escapes, wrap-around stepping" {
     try std.testing.expectEqual(@as(usize, 5), f.matches.items[0].start);
     try std.testing.expectEqual(@as(usize, 6), wordAt("hello world", 8).?.start);
     try std.testing.expect(wordAt("a b", 1) == null);
+}
+
+test "find: regex mode compiles a vim pattern; a bad one reports and matches nothing" {
+    const gpa = std.testing.allocator;
+    var f = FindState.init(gpa);
+    defer f.deinit();
+    f.regex = true;
+    try f.setQuery("\\<a\\w*", "alpha beta\nabc", null);
+    try std.testing.expectEqual(@as(usize, 2), f.matches.items.len);
+    try std.testing.expectEqual(@as(usize, 11), f.matches.items[1].start);
+    try std.testing.expect(f.bad_pattern == null);
+    try f.setQuery("\\(x", "x", null);
+    try std.testing.expectEqual(@as(usize, 0), f.matches.items.len);
+    try std.testing.expectEqual(regex.Error.InvalidPattern, f.bad_pattern.?);
+    // Literal mode keeps its own escapes.
+    f.regex = false;
+    try f.setQuery("\\(x", "(x", null);
+    try std.testing.expectEqual(@as(usize, 1), f.matches.items.len);
 }

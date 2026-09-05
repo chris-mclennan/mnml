@@ -27,6 +27,7 @@ const CommandError = command.CommandError;
 const ex = @import("ex.zig");
 const Range = ex.Range;
 const find_mod = @import("find.zig");
+const regex = @import("../regex/regex.zig");
 const buffer_mod = @import("../editor/buffer.zig");
 const Editor = @import("../editor/editor.zig").Editor;
 const hooks = @import("../core/hooks.zig");
@@ -57,15 +58,8 @@ fn caseFor(app: *App, needle: []const u8) bool {
     return app.search_case orelse find_mod.hasUpper(needle);
 }
 
-fn lineHas(line: []const u8, needle: []const u8, case_sensitive: bool) bool {
-    if (needle.len == 0) return true;
-    if (case_sensitive) return std.mem.indexOf(u8, line, needle) != null;
-    if (line.len < needle.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= line.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(line[i .. i + needle.len], needle)) return true;
-    }
-    return false;
+fn lineHas(line: []const u8, re: *regex.Regex) bool {
+    return re.find(line, 0) != null;
 }
 
 /// Split `/pat/cmd` at the first unescaped delimiter (`spec[0]`, any
@@ -101,9 +95,9 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     const parts = splitDelimited(spec) orelse return app.diag.fail(arena, "{s} — usage: {s}/pattern/command", .{ label, label });
     if (parts.pattern.len == 0) return app.diag.fail(arena, "{s} — E35: no pattern", .{label});
     if (app.in_global) return app.diag.fail(arena, "{s} — E147: cannot do :global recursive", .{label});
-    var pat_buf: [256]u8 = undefined;
-    const needle = find_mod.unescape(parts.pattern, &pat_buf);
-    const case_sensitive = caseFor(app, needle);
+    const needle = try ex.unescapeDelim(arena, parts.pattern, spec[0]);
+    var re = try ex.compilePattern(app, label, needle, caseFor(app, needle));
+    defer re.deinit();
     var cmd = std.mem.trim(u8, parts.tail, " \t");
     if (cmd.len == 0) cmd = "p";
 
@@ -115,7 +109,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     var targets: std.ArrayListUnmanaged(?usize) = .empty;
     var row = first;
     while (row <= last) : (row += 1) {
-        if (lineHas(ed.lineSlice(row), needle, case_sensitive) != invert) try targets.append(arena, ed.lineStart(row));
+        if (lineHas(ed.lineSlice(row), &re) != invert) try targets.append(arena, ed.lineStart(row));
     }
     if (targets.items.len == 0) return app.diag.fail(arena, "{s} — E486: pattern not found: {s}", .{ label, needle });
     const total = targets.items.len;
@@ -744,6 +738,10 @@ pub const ReplaceConfirm = struct {
     needle: []u8,
     replacement: []u8,
     matches: [][2]usize,
+    /// Per match, `replacement` with its group references expanded
+    /// against the original line — decided at scan time, so a `\\1`
+    /// under `c` means what it meant when the match was found.
+    expansions: [][]u8,
     idx: usize = 0,
     applied: usize = 0,
     delta: isize = 0,
@@ -752,6 +750,8 @@ pub const ReplaceConfirm = struct {
         gpa.free(c.needle);
         gpa.free(c.replacement);
         gpa.free(c.matches);
+        for (c.expansions) |x| gpa.free(x);
+        gpa.free(c.expansions);
     }
 
     fn current(c: *const ReplaceConfirm) [2]usize {
@@ -776,10 +776,8 @@ fn substituteConfirm(app: *App, range: ?Range, parts: SubParts, whole: bool) Com
     const e = try editor(app, label);
     const pane_id = app.active.?;
     const ed = &e.buf.editor;
-    var pat_buf: [256]u8 = undefined;
-    const needle = find_mod.unescape(parts.pattern, &pat_buf);
-    var rep_buf: [256]u8 = undefined;
-    const replacement = find_mod.unescape(parts.replacement, &rep_buf);
+    const needle = try ex.unescapeDelim(arena, parts.pattern, parts.delim);
+    const replacement = try ex.unescapeDelim(arena, parts.replacement, parts.delim);
     if (needle.len == 0) return app.diag.fail(arena, "{s} — empty pattern", .{label});
     var global_flag = false;
     var case: ?bool = null;
@@ -789,10 +787,16 @@ fn substituteConfirm(app: *App, range: ?Range, parts: SubParts, whole: bool) Com
         'I' => case = true,
         else => {},
     };
-    const case_sensitive = case orelse caseFor(app, needle);
+    var re = try ex.compilePattern(app, label, needle, case orelse caseFor(app, needle));
+    defer re.deinit();
     var matches: std.ArrayListUnmanaged([2]usize) = .empty;
     errdefer matches.deinit(app.gpa);
-    _ = try scanMatches(app.gpa, ed, range, needle, case_sensitive, global_flag, &matches);
+    var expansions: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (expansions.items) |x| app.gpa.free(x);
+        expansions.deinit(app.gpa);
+    }
+    _ = try scanMatches(app.gpa, ed, range, &re, global_flag, &matches, .{ .replacement = replacement, .out = &expansions });
     if (matches.items.len == 0) {
         app.toast("{s} — no match for \"{s}\"", .{ label, needle });
         return;
@@ -803,15 +807,21 @@ fn substituteConfirm(app: *App, range: ?Range, parts: SubParts, whole: bool) Com
     errdefer app.gpa.free(needle_owned);
     const rep_owned = try app.gpa.dupe(u8, replacement);
     errdefer app.gpa.free(rep_owned);
-    app.replace_confirm = .{ .pane = pane_id, .needle = needle_owned, .replacement = rep_owned, .matches = try matches.toOwnedSlice(app.gpa) };
+    const matches_owned = try matches.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(matches_owned);
+    app.replace_confirm = .{ .pane = pane_id, .needle = needle_owned, .replacement = rep_owned, .matches = matches_owned, .expansions = try expansions.toOwnedSlice(app.gpa) };
     try showNext(app);
 }
 
-/// The matches of `needle` in `range` (default: the cursor's line) as
-/// byte ranges, appended to `out`; the first per line unless `all`.
-/// Returns how many lines had one. TODO(regex): plain substring until
-/// the search track's engine lands.
-fn scanMatches(gpa: Allocator, ed: *const Editor, range: ?Range, needle: []const u8, case_sensitive: bool, all: bool, out: *std.ArrayListUnmanaged([2]usize)) Allocator.Error!usize {
+/// The replacement to pre-expand per match (`:s///c`), and where the
+/// gpa-owned expansions go — one per appended range.
+const Expand = struct { replacement: []const u8, out: *std.ArrayListUnmanaged([]u8) };
+
+/// The matches of `re` in `range` (default: the cursor's line) as byte
+/// ranges, appended to `out`; the first per line unless `all`. Each
+/// line is matched on its own, as `ex.substitute` does. Returns how
+/// many lines had one.
+fn scanMatches(gpa: Allocator, ed: *const Editor, range: ?Range, re: *regex.Regex, all: bool, out: *std.ArrayListUnmanaged([2]usize), expand: ?Expand) Allocator.Error!usize {
     const r = range orelse Range{ .first = ed.currentLine(), .last = ed.currentLine() };
     const first = @min(r.first, ed.lineCount() - 1);
     const last = @min(r.last, ed.lineCount() - 1);
@@ -820,17 +830,22 @@ fn scanMatches(gpa: Allocator, ed: *const Editor, range: ?Range, needle: []const
     while (row <= last) : (row += 1) {
         const line = ed.lineSlice(row);
         const base = ed.lineStart(row);
-        var i: usize = 0;
+        var from: usize = 0;
         var hit_line = false;
-        while (i + needle.len <= line.len) {
-            const hay = line[i .. i + needle.len];
-            const hit = if (case_sensitive) std.mem.eql(u8, hay, needle) else std.ascii.eqlIgnoreCase(hay, needle);
-            if (hit) {
-                try out.append(gpa, .{ base + i, base + i + needle.len });
-                hit_line = true;
-                i += needle.len;
-                if (!all) break;
-            } else i += 1;
+        while (from <= line.len) {
+            const m = re.find(line, from) orelse break;
+            try out.append(gpa, .{ base + m.start, base + m.end });
+            errdefer _ = out.pop();
+            if (expand) |x| {
+                var exp: std.ArrayListUnmanaged(u8) = .empty;
+                errdefer exp.deinit(gpa);
+                try regex.expandReplacement(gpa, &exp, x.replacement, line, m);
+                try x.out.append(gpa, try exp.toOwnedSlice(gpa));
+            }
+            hit_line = true;
+            if (!all) break;
+            // An empty match must not be found again in place.
+            from = if (m.end > m.start) m.end else m.end + 1;
         }
         if (hit_line) lines += 1;
     }
@@ -844,8 +859,7 @@ fn substituteCount(app: *App, range: ?Range, parts: SubParts, whole: bool) Comma
     const label: []const u8 = if (whole) ":%s" else ":s";
     const e = try editor(app, label);
     const ed = &e.buf.editor;
-    var pat_buf: [256]u8 = undefined;
-    const needle = find_mod.unescape(parts.pattern, &pat_buf);
+    const needle = try ex.unescapeDelim(arena, parts.pattern, parts.delim);
     if (needle.len == 0) return app.diag.fail(arena, "{s} — empty pattern", .{label});
     var all = false;
     var case: ?bool = null;
@@ -855,8 +869,10 @@ fn substituteCount(app: *App, range: ?Range, parts: SubParts, whole: bool) Comma
         'I' => case = true,
         else => {},
     };
+    var re = try ex.compilePattern(app, label, needle, case orelse caseFor(app, needle));
+    defer re.deinit();
     var matches: std.ArrayListUnmanaged([2]usize) = .empty;
-    const lines = try scanMatches(arena, ed, range, needle, case orelse caseFor(app, needle), all, &matches);
+    const lines = try scanMatches(arena, ed, range, &re, all, &matches, null);
     if (matches.items.len == 0) return app.diag.fail(arena, "{s} — E486: pattern not found: {s}", .{ label, needle });
     app.toast("{d} match{s} on {d} line{s}", .{ matches.items.len, if (matches.items.len == 1) "" else "es", lines, if (lines == 1) "" else "s" });
 }
@@ -889,8 +905,9 @@ fn applyCurrent(app: *App, c: *ReplaceConfirm) Allocator.Error!void {
     const m = c.current();
     if (m[1] > e.buf.editor.len()) return;
     e.buf.editor.anchor = null;
-    try app.splice(e, m[0], m[1], c.replacement);
-    c.delta += @as(isize, @intCast(c.replacement.len)) - @as(isize, @intCast(m[1] - m[0]));
+    const rep = c.expansions[c.idx];
+    try app.splice(e, m[0], m[1], rep);
+    c.delta += @as(isize, @intCast(rep.len)) - @as(isize, @intCast(m[1] - m[0]));
     c.applied += 1;
 }
 
@@ -1171,6 +1188,31 @@ test "ex: :& repeats the last substitute, :&& keeps its flags, :s alone repeats,
     try f.ex("2&&");
     try testing.expectEqualStrings("bb bb\nbb Yc_\nbb bb", f.text());
     try testing.expectError(error.Failed, f.ex("%s/zzz/-/n"));
+}
+
+test "ex: :g, :s///n and :s///c take vim patterns — word bounds, a group reference under c, a bad pattern" {
+    var f = try Fixture.init("foo bar\nfoobar\nbar foo\nab12 cd34");
+    defer f.deinit();
+    // `\<foo\>` is the word, not the prefix of `foobar`.
+    try f.ex("g/\\<foo\\>/d");
+    try testing.expectEqualStrings("foobar\nab12 cd34", f.text());
+    try testing.expectEqualStrings(":g — ran on 2 line(s)", f.app.lastToast().?);
+    // `n` counts pattern matches.
+    try f.ex("%s/\\d\\+/N/gn");
+    try testing.expectEqualStrings("2 matches on 1 line", f.app.lastToast().?);
+    try testing.expectEqualStrings("foobar\nab12 cd34", f.text());
+    // Under `c`, each match's `\2-\1` is its own groups.
+    try f.ex("%s/\\v(\\a+)(\\d+)/\\2-\\1/gc");
+    try testing.expect(f.app.overlay == .confirm);
+    try f.key(Key.char('y'));
+    try testing.expectEqualStrings("foobar\n12-ab cd34", f.text());
+    try f.key(Key.char('a'));
+    try testing.expectEqualStrings("foobar\n12-ab 34-cd", f.text());
+    try testing.expect(f.app.replace_confirm == null);
+    // A bad pattern fails the verb and says so.
+    try testing.expectError(error.Failed, f.ex("g/\\(x/d"));
+    try testing.expectError(error.Failed, f.ex("%s/\\(x/-/c"));
+    try testing.expectEqualStrings("foobar\n12-ab 34-cd", f.text());
 }
 
 test "ex: :s///c asks per match — y/n/a/q/l and Esc" {

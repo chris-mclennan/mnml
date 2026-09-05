@@ -902,7 +902,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
 fn findBarKey(app: *App, k: Key) Allocator.Error!void {
     const fb = &app.find_bar.?;
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
-        .consumed, .toggle_regex, .toggle_case, .focus_toggle => {},
+        .consumed, .focus_toggle => {},
+        .toggle_regex, .toggle_case => try cmd_find.liveUpdate(app),
         .cancel => app.closeFindBar(true),
         .changed => try cmd_find.liveUpdate(app),
         .submit => try cmd_find.acceptFromBar(app),
@@ -1177,9 +1178,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .settings => try settings_app.click(app, i),
                 .wizard => first_launch.click(app, i),
-                // The completion popup and the rename preview register
-                // their rows here with no overlay up.
-                else => if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
+                // The find bar's chips, the rename preview and the completion
+                // popup register their rows here with no overlay up.
+                else => if (app.find_bar != null) try cmd_find.chipClick(app, i) else if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
             }
         },
         .pane => |id| {
