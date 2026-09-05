@@ -116,7 +116,8 @@ pub fn build(b: *std.Build) void {
     // ── tests ──
     const test_step = b.step("test", "Run unit tests");
     const tests = b.addTest(.{ .root_module = exe.root_module });
-    test_step.dependOn(&b.addRunArtifact(tests).step);
+    const tests_run = b.addRunArtifact(tests);
+    test_step.dependOn(&tests_run.step);
 
     // src/ui is reached through its barrel (`src/ui/ui.zig`) from main.zig's
     // `test {}` block, so every component's tests run under `zig build test`
@@ -227,6 +228,39 @@ pub fn build(b: *std.Build) void {
     canvas_demo_run.step.dependOn(&canvas_demo_install.step);
     const canvas_demo_step = b.step("canvas-demo", "Run the canvas demo (Term + Canvas on the real terminal)");
     canvas_demo_step.dependOn(&canvas_demo_run.step);
+
+    // ── sdk ──
+    // `sdk/mnml-sdk` is the package an integration depends on; the host
+    // imports the same module so the wire (`wire.zig`) and the manifest
+    // schema (`manifest.zig`) have one definition. Its unit tests run
+    // under `zig build test` through `src/bridge/wire.zig`'s test block.
+    // `mnml-hello` is the sample integration: `zig build sdk-example`
+    // installs it, and the host's integration test spawns it through a
+    // real mount socket (the path travels as a build option).
+    const sdk_mod = b.createModule(.{
+        .root_source_file = b.path("sdk/mnml-sdk/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    root_module.addImport("mnml_sdk", sdk_mod);
+    const hello_mod = b.createModule(.{
+        .root_source_file = b.path("sdk/examples/hello/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "mnml_sdk", .module = sdk_mod }},
+    });
+    const hello = b.addExecutable(.{ .name = "mnml-hello", .root_module = hello_mod });
+    const hello_install = b.addInstallArtifact(hello, .{});
+    b.getInstallStep().dependOn(&hello_install.step);
+    const sdk_example_step = b.step("sdk-example", "Build the sample integration (zig-out/bin/mnml-hello)");
+    sdk_example_step.dependOn(&hello_install.step);
+    build_options.addOption([]const u8, "sdk_example_exe", b.getInstallPath(.bin, if (target.result.os.tag == .windows) "mnml-hello.exe" else "mnml-hello"));
+    tests_run.step.dependOn(&hello_install.step);
+    gate_step.dependOn(&b.addInstallArtifact(hello, .{
+        .dest_dir = .{ .override = gate_dir },
+        .dest_sub_path = b.fmt("mnml-hello{s}", .{if (target.result.os.tag == .windows) ".exe" else ""}),
+    }).step);
+    // ── end sdk ──
 }
 
 // ── tree-sitter ──────────────────────────────────────────────────────────────
