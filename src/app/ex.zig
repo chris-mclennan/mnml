@@ -89,9 +89,9 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // A bare `:s [flags]` repeats the last substitute.
     if (eqAny(verb, &.{ "s", "su", "substitute" })) return ex_verbs.ampersand(app, range, args, p.saw_percent);
 
-    if (eqAny(verb, &.{ "w", "write" })) return write(app, args, false);
+    if (eqAny(verb, &.{ "w", "write" })) return write(app, range, args, false);
     if (eqAny(verb, &.{ "wa", "wall" })) return saveAll(app);
-    if (eqAny(verb, &.{ "wq", "x", "xit", "exit" })) return write(app, args, true);
+    if (eqAny(verb, &.{ "wq", "x", "xit", "exit" })) return write(app, range, args, true);
     if (eqAny(verb, &.{ "wqa", "wqall", "xa", "xall" })) {
         try saveAll(app);
         app.quit = true;
@@ -330,9 +330,13 @@ const Parser = struct {
 
 // ─── files ──────────────────────────────────────────────────────────────
 
-fn write(app: *App, path_arg: []const u8, then_close: bool) CommandError!void {
+fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":w");
+    // `:w !cmd` / `:[range]w !cmd` pipe the text to `cmd` and show its
+    // output (`:help :w_c`); nothing is written, least of all a file
+    // called `!cmd`.
+    if (path_arg.len > 0 and path_arg[0] == '!') return writeToCommand(app, e, range, path_arg[1..]);
     if (path_arg.len > 0) {
         const abs = try app.absPath(path_arg);
         e.buf.setPath(abs) catch return error.OutOfMemory;
@@ -349,6 +353,26 @@ fn write(app: *App, path_arg: []const u8, then_close: bool) CommandError!void {
         try app.forceClosePane(app.active.?);
         if (app.panes.count() == 0) app.quit = true;
     }
+}
+
+fn writeToCommand(app: *App, e: *EditorPane, range: ?Range, cmd_in: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const cmd = std.mem.trim(u8, cmd_in, " \t");
+    if (cmd.len == 0) return app.diag.fail(arena, ":w ! — command required", .{});
+    const ed = &e.buf.editor;
+    const text: []const u8 = if (range) |r| blk: {
+        const first = @min(r.first, ed.lineCount() - 1);
+        const last = @min(r.last, ed.lineCount() - 1);
+        break :blk try std.mem.concat(arena, u8, &.{ ed.bytes()[ed.lineStart(first)..ed.lineEnd(last)], "\n" });
+    } else ed.bytes();
+    const res = ex_verbs.runShell(app, arena, cmd, text, true) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Spawn => return app.diag.fail(arena, ":w !{s} — could not start the shell", .{cmd}),
+    };
+    try ex_verbs.showOutput(app, cmd, res.stdout);
+    if (res.code) |c| {
+        if (c == 0) app.toast(":w !{s} — done", .{cmd}) else app.toast(":w !{s} — exit {d}", .{ cmd, c });
+    } else app.toast(":w !{s} — killed", .{cmd});
 }
 
 fn saveAll(app: *App) CommandError!void {

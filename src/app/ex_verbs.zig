@@ -495,7 +495,7 @@ pub fn shell(app: *App, range: ?Range, args_in: []const u8) CommandError!void {
 }
 
 /// The `:!` output pane: a scratch buffer kept for the next run.
-fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!void {
+pub fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!void {
     const gpa = app.gpa;
     const body = try std.mem.concat(app.frame.allocator(), u8, &.{ "$ ", cmd, "\n", text });
     const id: PaneId = blk: {
