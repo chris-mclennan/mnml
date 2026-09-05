@@ -791,6 +791,9 @@ pub const Vim = struct {
             },
             .comment => {
                 try b.push(.toggle_line_comment);
+                // The toggle keeps the range selected; `gcip` ends on
+                // its first line.
+                try b.push(.move_cursor_to_selection_start);
                 try b.push(.select_clear);
             },
             .surround_add => {
@@ -892,7 +895,7 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 self.resetPending();
-                if (motion(key.code)) |m| return ops(arena, &.{ .select_start, m, .toggle_line_comment, .select_clear });
+                if (motion(key.code)) |m| return ops(arena, &.{ .select_start, m, .toggle_line_comment, .move_cursor_to_selection_start, .select_clear });
                 return .consumed;
             },
             .gq => {
@@ -1774,6 +1777,13 @@ pub const Vim = struct {
                         const r = (if (forward) ctx.next_find_match else ctx.prev_find_match) orelse
                             return runCmd(if (forward) .@"find.select_match_forward" else .@"find.select_match_backward");
                         return ops(arena, &.{.{ .set_cursor_byte = if (forward) r[1] else r[0] }});
+                    },
+                    // Neovim's `gc` in Visual: every selected line toggles,
+                    // NORMAL resumes at the range's start (`'<`).
+                    'c' => {
+                        self.enterNormal();
+                        const widen: EditOp = if (linewise) .normalize_linewise_selection else .make_selection_inclusive;
+                        return ops(arena, &.{ widen, .toggle_line_comment, .move_cursor_to_selection_start, .select_clear });
                     },
                     else => return .consumed,
                 }

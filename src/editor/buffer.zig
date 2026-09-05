@@ -1500,12 +1500,21 @@ test "vim comment toggle uses the buffer's token; a commentless buffer is a no-o
     try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
     try h.feed("gcj");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 0), h.buf.editor.cursor); // `gc{motion}` ends on the first line
+    try testing.expect(h.buf.editor.anchor == null);
     try h.feed("gcip");
     try testing.expectEqualStrings("// a\n  // b\n// c", h.buf.editor.bytes());
     try h.feed("j.");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes()); // `.` replays the whole-paragraph toggle
     try h.feed("<c-/>"); // the paragraph toggle left the cursor on its first line
     try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
+    try h.feed("u");
+    try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
+    // Visual `gc` leaves NORMAL on the range's first line, no selection.
+    try h.feed("jVjgc");
+    try testing.expectEqualStrings("a\n  // b\n// c", h.buf.editor.bytes());
+    try testing.expect(h.buf.editor.anchor == null);
+    try testing.expectEqual(h.buf.editor.lineStart(1), h.buf.editor.cursor);
     try h.feed("u");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
     try testing.expectEqualStrings("// ", commentTokenFor("zig")[0]);
