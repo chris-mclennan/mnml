@@ -725,12 +725,12 @@ pub const Buffer = struct {
             // Uppercase marks are the app's (a file + position).
             .set_mark => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                try self.doc.marks.put(self.gpa, c, self.editor.rowCol());
+                try self.doc.marks.put(self.gpa, c, self.editor.cursor);
                 return .redraw;
             },
             .jump_to_mark_line => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                const p = self.doc.marks.get(c) orelse return .noop;
+                const p = self.doc.markPos(c) orelse return .noop;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
                 self.editor.goal_col = null;
@@ -738,7 +738,7 @@ pub const Buffer = struct {
             },
             .jump_to_mark_exact => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                const p = self.doc.marks.get(c) orelse return .noop;
+                const p = self.doc.markPos(c) orelse return .noop;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },

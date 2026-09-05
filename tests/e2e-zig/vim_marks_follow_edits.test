@@ -1,0 +1,23 @@
+# zig-only
+# Marks move with the text (`:help mark-motions`): two lines opened
+# above `'a` push it two lines down; deleting a line above pulls it back
+# up; an edit on the mark's own line, before the mark, shifts its column.
+write a.txt "l1\nl2\nl3\nl4 x\nl5\n"
+open a.txt
+command editor.use_vim
+
+type 4G
+type wma
+type gg
+type 2Onew
+key esc
+type 'a
+expect screen contains "Ln 6/7"
+type ggdd
+type 'a
+expect screen contains "Ln 5/6"
+type 0iXY
+key esc
+type `a
+expect screen contains "Ln 5/6"
+expect screen contains "Col 6 "

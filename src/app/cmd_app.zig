@@ -568,7 +568,7 @@ fn pickMarks(app: *App) CommandError!void {
         details.deinit(gpa);
     }
     for (letters.items) |c| {
-        const pos = e.buf.doc.marks.get(c).?;
+        const pos = e.buf.doc.markPos(c).?;
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{c}  Ln {d}, Col {d}", .{ c, pos.row + 1, pos.col + 1 }));
         const row = @min(pos.row, e.buf.editor.lineCount() -| 1);
         const ls = e.buf.editor.lineStart(row);
@@ -587,7 +587,7 @@ fn pickMarks(app: *App) CommandError!void {
 fn acceptMark(app: *App, _: usize, label: []const u8) Allocator.Error!void {
     if (marks_store.isGlobal(label[0])) return marks_store.jump(app, label[0], true);
     const e = app.activeEditor() orelse return;
-    const pos = e.buf.doc.marks.get(label[0]) orelse return;
+    const pos = e.buf.doc.markPos(label[0]) orelse return;
     e.buf.editor.placeCursor(pos.row, pos.col);
     app.needs_render = true;
 }

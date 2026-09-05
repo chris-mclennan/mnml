@@ -422,7 +422,7 @@ const Parser = struct {
                     break :blk if (hi > 0 and hi == ed.buf.editor.lineStart(row) and row > ed.buf.editor.lineOfByte(@min(s[0], s[1]))) row - 1 else row;
                 } else return app.diag.fail(arena, "E20: mark '> not set", .{}),
                 'A'...'Z' => marks_store.rowIn(app, m, ed.buf.doc.path) orelse return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
-                else => if (ed.buf.doc.marks.get(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
+                else => if (ed.buf.doc.markPos(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
             };
         } else if (c == '+' or c == '-') {
             base = if (e) |ed| ed.buf.editor.currentLine() else 0;
@@ -906,7 +906,7 @@ fn marks(app: *App) CommandError!void {
     std.mem.sort(u8, names.items, {}, std.sort.asc(u8));
     var parts: std.ArrayListUnmanaged(u8) = .empty;
     for (names.items, 0..) |c, i| {
-        const pos = e.buf.doc.marks.get(c).?;
+        const pos = e.buf.doc.markPos(c).?;
         try parts.print(arena, "{s}'{c}@{d}:{d}", .{ if (i > 0) "  " else "", c, pos.row + 1, pos.col + 1 });
     }
     for (globals) |c| {
@@ -1289,8 +1289,8 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try f.ex("sort!");
     try testing.expectEqualStrings("charlie\nbravo\nalpha", f.text());
     const e = f.app.activeEditor().?;
-    try e.buf.doc.marks.put(testing.allocator, 'a', .{ .row = 0, .col = 0 });
-    try e.buf.doc.marks.put(testing.allocator, 'b', .{ .row = 1, .col = 0 });
+    try e.buf.doc.setMarkPos('a', .{ .row = 0, .col = 0 });
+    try e.buf.doc.setMarkPos('b', .{ .row = 1, .col = 0 });
     try f.ex("'a,'bd");
     try testing.expectEqualStrings("alpha", f.text());
     try e.buf.editor.setText("\tfoo\nx\ty");
