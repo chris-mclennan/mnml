@@ -546,6 +546,14 @@ pub const MenuItem = struct {
     action: MenuAction,
     checked: bool = false,
     separator_before: bool = false,
+    /// // changed (ui-polish): a glyph override for the row; null draws
+    /// the command group's glyph (`ui/menu_glyph.zig`).
+    icon: ?[]const u8 = null,
+    /// The one-character twin `icon` paints under `ui.ascii_icons`.
+    icon_ascii: ?[]const u8 = null,
+    /// // changed (ui-polish): rows this one opens to the right (`▸`);
+    /// a literal slice — the open menu copies what it shows onto the gpa.
+    submenu: []const MenuItem = &.{},
 };
 
 // ─── tests ──────────────────────────────────────────────────────────────

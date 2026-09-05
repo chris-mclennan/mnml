@@ -41,6 +41,8 @@ const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const Style = vaxis.Style;
+const menu_glyph = @import("../ui/menu_glyph.zig");
+const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
@@ -1043,25 +1045,59 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 
 /// A context menu anchored at the click, pulled inside `screen` when it
 /// would run off the edge. Every row registers `.menu_item{0, idx}`; a
-/// separator paints a rule and registers nothing.
-fn drawMenu(ui: Ui, screen: Rect, m: *const app_mod.MenuState) void {
-    const th = ui.theme;
-    var widest: u16 = ui.width(m.title) + 2;
+/// separator paints a rule and registers nothing. A row with a submenu
+/// ends in `▸`; the open child (`m.sub`) paints beside its parent row
+/// with `.menu_item{1, idx}` hits. In a curatable menu the focused leaf
+/// row ends in a kebab (`.menu_item{2, idx}` / `{3, idx}` in the child)
+/// that opens the pin / hide / copy-id submenu.
+fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
+    const size = menuSize(ui, m.title, m.items);
+    const w: u16 = @min(size.w, screen.w);
+    const h: u16 = @min(size.h, screen.h);
+    const x = @min(m.x, (screen.x + screen.w) -| w);
+    const y = @min(m.y, (screen.y + screen.h) -| h);
+    const frame = Rect.init(x, y, w, h);
+    const inner = overlay_mod.frame(ui, frame, m.title);
+    if (inner.isEmpty()) return;
+    const parent_row = paintMenuRows(ui, inner, m.items, m.cursor, 0, m.curatable and m.sub == null, m.sub != null);
+    const sub = &(m.sub orelse return);
+    // The child: beside the parent row, to the right when it fits.
+    const child = menuSize(ui, null, sub.items);
+    const cw: u16 = @min(child.w, screen.w);
+    const ch: u16 = @min(child.h, screen.h);
+    const anchor_y = inner.y + (parent_row.get(sub.parent) orelse 0);
+    const cx: u16 = if (frame.right() + cw <= screen.right()) frame.right() else frame.x -| cw;
+    const cy = @min(anchor_y -| 1, (screen.y + screen.h) -| ch);
+    const crect = Rect.init(cx, cy, cw, ch);
+    const cinner = overlay_mod.frame(ui, crect, null);
+    sub.rect = crect;
+    if (cinner.isEmpty()) return;
+    _ = paintMenuRows(ui, cinner, sub.items, sub.cursor, 1, m.curatable, false);
+}
+
+const MenuSize = struct { w: u16, h: u16 };
+
+/// Frame + ✓ column + glyph column + label + marker column.
+fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem) MenuSize {
+    var widest: u16 = if (title) |tt| ui.width(tt) + 2 else 4;
     var rows: u16 = 0;
-    for (m.items) |it| {
+    for (items) |it| {
         widest = @max(widest, ui.width(it.label));
         rows += 1;
         if (it.separator_before) rows += 1;
     }
-    // ✓ column + label + a cell of air each side, inside the frame.
-    const w: u16 = @min(widest + 2 + 2 + 2, screen.w);
-    const h: u16 = @min(rows + 2, screen.h);
-    const x = @min(m.x, (screen.x + screen.w) -| w);
-    const y = @min(m.y, (screen.y + screen.h) -| h);
-    const inner = overlay_mod.frame(ui, Rect.init(x, y, w, h), m.title);
-    if (inner.isEmpty()) return;
+    return .{ .w = widest + 2 + 2 + menu_glyph.width + 2 + 2, .h = rows + 2 };
+}
+
+/// Paints `items` into `inner`, registering `.menu_item{menu_id, i}`,
+/// and returns each item's row offset (for anchoring a child). `kebab`
+/// paints the curation kebab on the focused leaf row; `dim_cursor`
+/// paints the cursor row without the highlight (a child is open).
+fn paintMenuRows(ui: Ui, inner: Rect, items: []const command.MenuItem, cursor: usize, menu_id: u32, kebab: bool, dim_cursor: bool) std.AutoHashMapUnmanaged(usize, u16) {
+    const th = ui.theme;
+    var offsets: std.AutoHashMapUnmanaged(usize, u16) = .empty;
     var row: u16 = 0;
-    for (m.items, 0..) |it, i| {
+    for (items, 0..) |it, i| {
         if (it.separator_before and row < inner.h) {
             const r = inner.row(row);
             var xx: u16 = r.x;
@@ -1070,15 +1106,30 @@ fn drawMenu(ui: Ui, screen: Rect, m: *const app_mod.MenuState) void {
         }
         if (row >= inner.h) break;
         const r = inner.row(row);
-        const selected = i == m.cursor;
-        const style = if (selected) Theme.onBg(th.overlay_bg, th.cursor_line.bg) else th.overlay_bg;
+        offsets.put(ui.arena, i, row) catch {};
+        const selected = i == cursor;
+        const style = if (selected and !dim_cursor) Theme.onBg(th.overlay_bg, th.cursor_line.bg) else th.overlay_bg;
         ui.fill(r, style);
         var xx = r.x + 1;
         xx += ui.putStr(xx, r.y, r.right() -| xx, if (it.checked) (if (ui.ascii) "* " else "✓ ") else "  ", Theme.withFg(style, th.accent.fg));
-        _ = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(it.label, r.right() -| xx), Theme.onBg(th.fg, style.bg));
-        ui.hit(r, .{ .menu_item = .{ .menu = 0, .idx = @intCast(i) } });
+        _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), Theme.withFg(style, th.muted.fg));
+        xx += menu_glyph.width;
+        const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else th.fg.fg;
+        _ = ui.putStr(xx, r.y, r.right() -| (xx + 2), ui.clipStr(it.label, r.right() -| (xx + 2)), Theme.withFg(style, label_fg));
+        if (it.submenu.len > 0) {
+            _ = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ">" else "▸", Theme.withFg(style, th.accent.fg));
+        } else if (kebab and selected and it.action == .command) {
+            const kx = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
+            ui.hit(Rect.init(kx, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+        }
+        // The kebab's own hit was registered last, so it wins the cell.
+        ui.hit(Rect.init(r.x, r.y, r.w -| 1, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
+        if (kebab and selected and it.action == .command and it.submenu.len == 0) {
+            ui.hit(Rect.init(r.right() -| 1, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+        }
         row += 1;
     }
+    return offsets;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -1150,7 +1201,6 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"view.split_right" });
     try app.render();
     try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(60, 0).?.button);
@@ -1171,7 +1221,6 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
     app.tree.visible = false;
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("alpha beta alpha");
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"find.find" });
     for ("alpha") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
     const with_bar = try screenText(&app);
@@ -1263,7 +1312,6 @@ test "ui toggles: expand_indicator and workspace dots change the tree rail" {
     try t.expect(std.mem.indexOf(u8, tri, "▾ sub") != null);
     try t.expect(std.mem.indexOf(u8, tri, "●") == null);
     // the toggle runners flip the fields
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"view.toggle_workspace_dots" });
     try t.expect(app.cfg.ui.show_workspace_dots);
     try command.run(&app, .{ .static = .@"view.toggle_relative_numbers" });

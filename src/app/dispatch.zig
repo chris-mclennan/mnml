@@ -563,6 +563,42 @@ fn closeOverlay(app: *App) void {
     } else restoreFocus(app);
 }
 
+/// Enter on a menu row: a parent opens its child, a leaf runs.
+fn menuEnter(app: *App, idx: usize) Allocator.Error!void {
+    const m = &app.overlay.menu;
+    if (idx >= m.items.len) return;
+    if (m.items[idx].submenu.len > 0) return context_menus.openSubmenu(app, idx);
+    try runMenuAction(app, m.items[idx].action);
+}
+
+/// → / l on a menu row: a parent opens its child; in a curatable menu a
+/// leaf opens the pin / hide / copy-id list.
+fn menuOpenRight(app: *App, idx: usize) Allocator.Error!void {
+    const m = &app.overlay.menu;
+    if (idx >= m.items.len) return;
+    if (m.items[idx].submenu.len > 0) return context_menus.openSubmenu(app, idx);
+    if (m.curatable) try context_menus.openCuration(app, idx, m.items[idx]);
+}
+
+/// → / l inside a child: in a curatable menu a command row opens its
+/// pin / hide / copy-id list; elsewhere it runs the row.
+fn subOpenRight(app: *App) Allocator.Error!void {
+    const m = &app.overlay.menu;
+    const sub = &(m.sub orelse return);
+    if (sub.cursor >= sub.items.len) return;
+    const item = sub.items[sub.cursor];
+    if (m.curatable and item.action == .command and !isCuration(item)) return context_menus.openCuration(app, sub.parent, item);
+    try runMenuAction(app, item.action);
+}
+
+/// The curation list's own rows must run, not re-open themselves.
+fn isCuration(item: command.MenuItem) bool {
+    return switch (item.action) {
+        .command => |id| id == .@"menu.pin_row" or id == .@"menu.unpin_row" or id == .@"menu.hide_row" or id == .@"menu.copy_id",
+        else => false,
+    };
+}
+
 /// A menu row was chosen: close the menu, then act.
 fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // The `{{VAR}}` a quick-fix menu was opened on rides through the
@@ -658,10 +694,38 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         .wizard => try first_launch.key(app, k),
         .info => closeOverlay(app),
         .menu => |*m| {
+            // The child owns the keys while it is open: ← / h step back
+            // out of it, Enter / → / l run its row.
+            if (m.sub) |*sub| {
+                const slast = sub.items.len -| 1;
+                switch (k.code) {
+                    .esc => closeOverlay(app),
+                    .left => m.closeSub(gpa),
+                    .enter => if (sub.items.len > 0) try runMenuAction(app, sub.items[sub.cursor].action),
+                    .right => try subOpenRight(app),
+                    .up => sub.cursor -|= 1,
+                    .down => sub.cursor = @min(sub.cursor + 1, slast),
+                    .home => sub.cursor = 0,
+                    .end => sub.cursor = slast,
+                    .char => |c| switch (c) {
+                        'h' => m.closeSub(gpa),
+                        'l' => try subOpenRight(app),
+                        'k' => sub.cursor -|= 1,
+                        'j' => sub.cursor = @min(sub.cursor + 1, slast),
+                        'q' => closeOverlay(app),
+                        else => {},
+                    },
+                    else => {},
+                }
+                return;
+            }
             const last = m.items.len -| 1;
             switch (k.code) {
                 .esc => closeOverlay(app),
-                .enter => if (m.items.len > 0) try runMenuAction(app, m.items[m.cursor].action),
+                // Enter on a parent row opens it rather than firing —
+                // the row has no action of its own.
+                .enter => try menuEnter(app, m.cursor),
+                .right => try menuOpenRight(app, m.cursor),
                 .up => m.cursor -|= 1,
                 .down => m.cursor = @min(m.cursor + 1, last),
                 .home => m.cursor = 0,
@@ -669,6 +733,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
                 .char => |c| switch (c) {
                     'k' => m.cursor -|= 1,
                     'j' => m.cursor = @min(m.cursor + 1, last),
+                    'l' => try menuOpenRight(app, m.cursor),
                     'q' => closeOverlay(app),
                     else => {},
                 },
@@ -969,9 +1034,33 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
-            const items = app.overlay.menu.items;
-            if (mi.idx >= items.len) return;
-            try runMenuAction(app, items[mi.idx].action);
+            const menu = &app.overlay.menu;
+            switch (mi.menu) {
+                // A parent row opens its child; a leaf runs.
+                0 => {
+                    if (mi.idx >= menu.items.len) return;
+                    menu.cursor = mi.idx;
+                    try menuEnter(app, mi.idx);
+                },
+                // A child row.
+                1 => if (menu.sub) |*sub| {
+                    if (mi.idx >= sub.items.len) return;
+                    try runMenuAction(app, sub.items[mi.idx].action);
+                },
+                // The kebab on a top-level row / on a child row.
+                2 => {
+                    if (mi.idx >= menu.items.len) return;
+                    menu.cursor = mi.idx;
+                    try context_menus.openCuration(app, mi.idx, menu.items[mi.idx]);
+                },
+                3 => if (menu.sub) |*sub| {
+                    if (mi.idx >= sub.items.len) return;
+                    const parent = sub.parent;
+                    const item = sub.items[mi.idx];
+                    try context_menus.openCuration(app, parent, item);
+                },
+                else => {},
+            }
         },
         .editor_cell => |cell| {
             if (wheel) return wheelOnPane(app, cell.pane, m, count);
