@@ -160,7 +160,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "sp", "split" })) return splitOpen(app, .vertical, args);
     if (eqAny(verb, &.{ "vs", "vsplit" })) return splitOpen(app, .horizontal, args);
     if (eqAny(verb, &.{ "cex", "cexpr", "cgetexpr" })) return cexpr(app, args);
-    if (eqAny(verb, &.{ "on", "only" })) return command.run(app, .{ .static = .@"view.close_others" });
+    if (eqAny(verb, &.{ "on", "only" })) return command.run(app, .{ .static = .@"view.only" });
     if (eqAny(verb, &.{ "tabnew", "tabe", "tabedit" })) return command.run(app, .{ .static = .@"tab.new" });
     if (eqAny(verb, &.{ "tabn", "tabnext" })) return command.run(app, .{ .static = .@"tab.next" });
     if (eqAny(verb, &.{ "tabp", "tabprev", "tabprevious", "tabN", "tabNext" })) return command.run(app, .{ .static = .@"tab.prev" });

@@ -12,6 +12,9 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const cmd_picker = @import("cmd_picker.zig");
 
+/// One `tab N/M` toast at a time: every page move replaces the last.
+const tab_toast = "tab";
+
 pub const table = .{
     .@"tab.new" = &tabNew,
     .@"tab.next" = &tabNext,
@@ -41,7 +44,7 @@ fn tabNew(app: *App) CommandError!void {
     app.setActive(null);
     ls.active = ls.layouts.items.len - 1;
     _ = app.openScratch() catch return error.OutOfMemory;
-    app.toast("tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
+    app.toastReplace(tab_toast, "tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
 }
 
 /// Show page `idx`; the page's first leaf's active pane takes focus.
@@ -53,7 +56,18 @@ pub fn switchTab(app: *App, idx: usize) void {
     const layout = ls.current();
     const first: ?PaneId = if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
     app.setActive(first);
-    app.toast("tab {d}/{d}", .{ idx + 1, ls.layouts.items.len });
+    app.toastReplace(tab_toast, "tab {d}/{d}", .{ idx + 1, ls.layouts.items.len });
+}
+
+/// `{count}gt`: page `count`, or the last page when there are fewer
+/// (`:help gt`); `{count}gT`: `count` pages back, wrapping.
+pub fn gotoPage(app: *App, count: u32, back: bool) void {
+    const n = app.layouts.layouts.items.len;
+    if (n == 0 or count == 0) return;
+    if (back) {
+        const steps: usize = @intCast(count % n);
+        switchTab(app, (app.layouts.active + n - steps) % n);
+    } else switchTab(app, @min(@as(usize, count), n) - 1);
 }
 
 fn tabNext(app: *App) CommandError!void {
@@ -108,7 +122,7 @@ fn tabClose(app: *App) CommandError!void {
     const layout = ls.current();
     const first: ?PaneId = if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
     app.setActive(first);
-    app.toast("tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
+    app.toastReplace(tab_toast, "tab {d}/{d}", .{ ls.active + 1, ls.layouts.items.len });
 }
 
 fn tabOnly(app: *App) CommandError!void {
@@ -126,7 +140,7 @@ fn tabOnly(app: *App) CommandError!void {
         try retirePage(app, &gone, ls.current());
     }
     if (keep) |k| if (app.panes.get(k) != null) app.setActive(k);
-    app.toast("tab 1/1", .{});
+    app.toastReplace(tab_toast, "tab 1/1", .{});
 }
 
 /// The page's name: its first leaf's active pane title.
@@ -171,7 +185,7 @@ fn moveBy(app: *App, delta: i32) CommandError!void {
     const to: usize = @intCast(to_i);
     std.mem.swap(Layout, &ls.layouts.items[ls.active], &ls.layouts.items[to]);
     ls.active = to;
-    app.toast("tab {d}/{d}", .{ to + 1, n });
+    app.toastReplace(tab_toast, "tab {d}/{d}", .{ to + 1, n });
     app.needs_render = true;
 }
 
@@ -220,6 +234,48 @@ fn goto9(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "page moves replace one `tab N/M` toast rather than stacking, and it expires" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"tab.new" });
+    try command.run(&app, .{ .static = .@"tab.new" });
+    try command.run(&app, .{ .static = .@"tab.prev" });
+    try command.run(&app, .{ .static = .@"tab.prev" });
+    try t.expectEqual(@as(usize, 1), app.toasts.items.len);
+    try t.expectEqualStrings("tab 1/3", app.toasts.items[0].text);
+    // An unrelated toast is not replaced by the next move.
+    app.toast("hello", .{});
+    try command.run(&app, .{ .static = .@"tab.next" });
+    try t.expectEqual(@as(usize, 2), app.toasts.items.len);
+    try t.expectEqualStrings("tab 2/3", app.toasts.items[1].text);
+    try app.tick(app.now_ms + app_mod.toast_ttl_ms + 1);
+    try t.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+test "gotoPage: a count names the page, past the end is the last page; back counts pages with wrap" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"tab.new" });
+    const c = app.active.?;
+    gotoPage(&app, 2, false);
+    try t.expectEqual(b, app.active.?);
+    gotoPage(&app, 9, false);
+    try t.expectEqual(c, app.active.?);
+    gotoPage(&app, 1, false);
+    try t.expectEqual(a, app.active.?);
+    // 2gT from page 1 wraps to page 2; 3gT is a full turn.
+    gotoPage(&app, 2, true);
+    try t.expectEqual(b, app.active.?);
+    gotoPage(&app, 3, true);
+    try t.expectEqual(b, app.active.?);
+    gotoPage(&app, 1, true);
+    try t.expectEqual(a, app.active.?);
+}
 
 test "tab pages: new / goto / move / close re-homes a dirty pane and closes a clean one" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });

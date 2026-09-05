@@ -100,6 +100,9 @@ There is no third option, and no handler may stash the raw pointer to
   `alt+…`) and the bare leader `space` go through the chord chain
   first. A `Keys.vim` entry like `g d` is therefore documentation for
   which-key / the cheatsheet; the handler emits the same command itself.
+- A pending chord owns the next key outright, plain or not: once `space`
+  is armed the `e` of `<leader>e` goes to the chain, never to the
+  handler as a motion. Esc on a pending chord cancels it — no fallback.
 - The `:` line takes every key while open; Insert / Replace keep every
   unmodified key; an operator-pending state keeps every unmodified key.
 

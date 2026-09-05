@@ -1,0 +1,45 @@
+# zig-only
+# NvChad treats nvim-tree as a window: from the leftmost split, `Ctrl-H`
+# (and `Ctrl-W h`, and `Ctrl-W w` when there is only one split) moves
+# focus into the file tree, where `j` / `k` / `Enter` browse; `Ctrl-L`
+# from the tree comes back to the split. The tree gets a refresh first so
+# its rows exist (the files were written after the workspace was
+# scanned). `i` → INSERT → Esc proves the editor owns the keys before
+# each inbound move: focus is not visible on its own.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open a.txt
+command editor.use_vim
+command view.focus_tree
+key r
+command view.focus_pane
+key i
+expect screen contains " INSERT "
+key esc
+key ctrl+h
+key j
+key j
+key enter
+expect pane b.txt
+command view.focus_pane
+key i
+expect screen contains " INSERT "
+key esc
+key ctrl+w
+key h
+key k
+key enter
+expect pane a.txt
+command view.focus_pane
+key i
+expect screen contains " INSERT "
+key esc
+key ctrl+w
+key w
+key j
+key enter
+expect pane b.txt
+key ctrl+l
+key i
+expect screen contains " INSERT "
+key esc

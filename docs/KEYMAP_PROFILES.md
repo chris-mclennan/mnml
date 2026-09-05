@@ -12,7 +12,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 
 ## Rules
 
-1. **vim reserves** `ctrl+w g d u e y r n h j t f` — each has an insert- or
+1. **vim reserves** `ctrl+w g d u e y r n h j t f b o` — each has an insert- or
    normal-mode meaning the editor must receive. Any default chord starting
    with one of these is `standard` only.
 2. **`ctrl+k …` menus are the standard leader.** NvChad uses `ctrl+k` for
@@ -59,9 +59,10 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `view.focus_up` | `ctrl+k ctrl+up` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `view.focus_down` | `ctrl+k ctrl+down` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `editor.indent_line` | `ctrl+]` | (new) | standard | VS Code indent |
+| `view.toggle_tree` | `ctrl+b` | both | standard | vim: `Ctrl-B` is page-back (the pair of `Ctrl-F`); it was toggling the sidebar |
 | `editor.outdent_line` | `ctrl+[` | (new) | standard | VS Code outdent |
 | `picker.files` | `space f f` | both | both | NvChad <leader>ff (already the Rust default) |
-| `picker.files` | `ctrl+o` | both | standard | vim: `ctrl+o` is the jumplist (`nav.back`, with `ctrl+i` forward) — the chord chain runs before the vim handler, so a `both` binding would shadow it |
+| `picker.files` | `ctrl+o` | both | standard | vim: `ctrl+o` is the jumplist (`nav.back`, with `ctrl+i` forward) in NORMAL and one-shot normal in INSERT (`:help i_CTRL-O`) — the chord chain runs before the vim handler, so a `both` binding shadowed both: the picker opened over insert mode and ate the next keys. `ctrl+p` stays in both |
 | `find.grep` | `space f w` | (new) | vim | NvChad <leader>fw |
 | `picker.buffers` | `space f b` | both | both | NvChad <leader>fb (already the Rust default) |
 | `view.toggle_tree` | `ctrl+n` | (new) | vim | NvChad <C-n> |
@@ -71,7 +72,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `term.shell_right` | `space v` | (new) | vim | NvChad <leader>v vertical term |
 | `buffer.next` | `tab` | (new) | vim | NvChad <Tab> bufferline |
 | `buffer.prev` | `shift+tab` | (new) | vim | NvChad <S-Tab> bufferline |
-| `view.focus_left` | `ctrl+h` | (new) | vim | NvChad <C-h> |
+| `view.focus_left` | `ctrl+h` | (new) | vim | NvChad <C-h> — from the leftmost split it enters the sidebar (nvim-tree is a window); `ctrl+l` from the sidebar returns; `Ctrl-W w` past the last split lands there too |
 | `view.focus_down` | `ctrl+j` | (new) | vim | NvChad <C-j> |
 | `view.focus_up` | `ctrl+k` | (new) | vim | NvChad <C-k> |
 | `view.focus_right` | `ctrl+l` | (new) | vim | NvChad <C-l> |
@@ -87,6 +88,18 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `lsp.next_diagnostic` | `] d` | (new) | vim | Neovim ]d |
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.cut` / `file.paste` | `y y` / `d d` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot move a file (the property `ctrl+v` lacks); a stray key between the two cancels. `D` duplicates in both profiles |
+
+## Ctrl-O / Ctrl-I / Tab in the vim profile
+
+- **NORMAL `Ctrl-O`** is the jumplist (`nav.back`); **INSERT `Ctrl-O`** is
+  one-shot normal (`:help i_CTRL-O`). The file picker's `ctrl+o` is
+  `standard` only for that reason.
+- **`Tab` / `S-Tab`** are NvChad's bufferline (`buffer.next` / `buffer.prev`),
+  not Neovim's jumplist-forward. `Ctrl-I` and `Tab` are one byte on a
+  terminal without the kitty keyboard protocol, so the bufferline wins
+  there; under kitty `ctrl+i` still reaches `nav.forward` (the handler's
+  ctrl table), and `ctrl+tab` does on every terminal. The choice follows
+  NvChad because that is what a vim user's hands expect on `Tab`.
 
 ## Known tension to resolve in Phase 1
 

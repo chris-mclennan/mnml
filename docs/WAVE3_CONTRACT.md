@@ -1825,3 +1825,33 @@ is the contract-level list of what moved.
 - Not done, by design: a grep pane per query (one pane is re-used);
   `\&`, `\%V` and the cursor-relative vim items; rg's own `--type`
   filters.
+## Vim profile parity (2026-09-05, branch `vim-profile`) — `// changed:` notes
+
+- `// changed (keymap):` D4b's reserved list grows to
+  `ctrl+w/g/d/u/e/y/r/n/h/j/t/f/b/o` — `view.toggle_tree`'s `ctrl+b` and
+  `picker.files`' `ctrl+o` were still `both`, so the chord chain took a
+  page-back and an insert-mode `i_CTRL-O` away from the handler. Both are
+  `standard` only; the profile isolation test pins them.
+- `// changed (dispatch):` a pending chord owns the next key in every
+  editor state (`editor_first` requires `app.chord.len == 0`, the rule
+  `ptyKey` already had). Without it `<leader>e` typed at speed ran `e` as
+  a motion. Esc on a pending chord cancels it without its fallback.
+  CONVENTIONS' "keys reach the editor first" paragraph carries the rule.
+- `// changed (view):` the sidebar is the leftmost window for
+  `view.focus_left` / `focus_right` / `focus_next_split` — NvChad's
+  `<C-h>` into nvim-tree and `<C-l>` back. Before, `ctrl+l` from the tree
+  was a no-op too (no neighbour → return), contrary to the finding's note.
+- `// changed (view):` `view.only` (spec pin 902): `:only` / `Ctrl-W o`
+  close the other leaves and re-home their panes as background tabs of
+  the kept leaf; a clean duplicate of a file this leaf shows is dropped.
+  `view.close_others` stays the standard profile's `ctrl+k w`.
+- `// changed (input):` `AppCommand.tab_page{count, back}` (23 fields) —
+  `{count}gt` / `{count}gT`; `cmd_tab.gotoPage` resolves it (past the end
+  ⇒ the last page, `:help gt`).
+- `// changed (app):` `App.toastReplace(id, …)` — an id'd toast with a
+  normal TTL that replaces its predecessor; the expiry sweep no longer
+  skips id'd toasts (persistent ones sit at maxInt). Tab-page moves use
+  it, so `tab N/M` never stacks.
+- Deferred, by design: `:vsplit` opening a second buffer. Rust does the
+  same (from disk); a shared-buffer window model needs `Editor` split
+  into document + view — see the finding for the design and estimate.

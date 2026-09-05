@@ -1,0 +1,28 @@
+# zig-only
+# `Ctrl-W o` is `:only`: every other split closes and the current window
+# stays; buffers are untouched. b.txt is dirty in the background when
+# a.txt is split, so the old behaviour (close the other *buffers*) would
+# keep b.txt with a "kept 1 buffer(s)" toast and leave the split. With
+# the sidebar off, `│   1 alpha` can only be the split divider in front
+# of the right-hand copy.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+open b.txt
+command editor.use_vim
+command view.toggle_tree
+key A
+type " x"
+key esc
+expect dirty true
+open a.txt
+ex vsplit
+expect screen contains "│   1 alpha"
+key ctrl+w
+key o
+expect screen lacks "│   1 alpha"
+expect pane a.txt
+expect screen lacks "kept 1 buffer"
+expect screen contains "b.txt ●"
+ex only
+expect pane a.txt
+expect screen lacks "unknown command"

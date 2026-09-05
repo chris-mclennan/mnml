@@ -26,6 +26,7 @@ const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
+const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
@@ -294,7 +295,10 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // key; and in vim's modal states every plain key is a vim key —
     // `g`, `d`, `z`… are the handler's prefixes, never chord prefixes
     // (the keymap's `g d` is the same command the handler emits).
-    const editor_first = ed != null and (cmdline_open or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
+    // A pending chord owns the next key outright: `space` is armed, so
+    // the `e` of `<leader>e` is the chain's, not the end-of-word motion
+    // (the same rule `ptyKey` applies).
+    const editor_first = app.chord.len == 0 and ed != null and (cmdline_open or (bare_space and (!modal or op_pending)) or (typing_mode and plain) or (op_pending and plain) or (modal and plain and !bare_space));
     if (!editor_first and app.chord.len == 0 and ed == null) {
         // No pane: only chords do anything.
         _ = try chordChain(app, k);
@@ -488,6 +492,12 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             app.chord.fallback = null;
             const was_first = app.chord.len == 1;
             app.chord.clear(app.gpa);
+            // Esc on a pending chord cancels it: no fallback (a leader
+            // popup on Esc is the opposite of what was asked), no retry.
+            if (!was_first and k.code == .esc) {
+                if (fallback) |fb| freeTarget(app, fb);
+                return true;
+            }
             var fired = false;
             if (fallback) |fb| {
                 defer freeTarget(app, fb);
@@ -1871,6 +1881,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .cmdline_insert_cursor_word => |big| try cmdlineInsertWord(app, e, big),
         .cmdline_paste_from_clipboard => try cmdlineInsert(app, e, app.clipboard.text()),
         .flash_start => |f| try flash.start(app, pane_id, e, f.a, f.b),
+        .tab_page => |tp| cmd_tab.gotoPage(app, tp.count, tp.back),
     }
 }
 
@@ -2329,6 +2340,41 @@ test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring o
     try key(&app, Key.char('s'));
     try std.testing.expectEqualStrings("s", app.overlay.which_key.slice());
     try key(&app, Key.named(.esc));
+    try std.testing.expect(app.overlay == .none);
+}
+
+test "leader chain: the second key of `space e` is the chord's, not the editor's; esc cancels a pending leader silently" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("const std = @import(\"std\");\n");
+    e.buf.editor.setCursor(0);
+    const was = app.tree.visible;
+    try key(&app, Key.char(' '));
+    try std.testing.expect(app.chord.len == 1);
+    try key(&app, Key.char('e'));
+    try std.testing.expect(app.tree.visible != was);
+    try std.testing.expect(app.chord.len == 0);
+    try std.testing.expect(app.overlay == .none);
+    // `e` did not run as a motion.
+    try std.testing.expectEqual(@as(usize, 0), e.buf.editor.cursor);
+    // `space f f` reaches the file picker with nothing in between.
+    try key(&app, Key.char(' '));
+    try key(&app, Key.char('f'));
+    try std.testing.expect(app.chord.len == 2);
+    try key(&app, Key.char('f'));
+    try std.testing.expect(app.overlay == .picker);
+    try key(&app, Key.named(.esc));
+    try std.testing.expect(app.overlay == .none);
+    // Esc on a pending leader drops it without the which-key fallback.
+    try key(&app, Key.char(' '));
+    try key(&app, Key.named(.esc));
+    try std.testing.expect(app.chord.len == 0);
+    try std.testing.expect(app.chord.fallback == null);
+    try std.testing.expect(app.overlay == .none);
+    try expireChords(&app);
     try std.testing.expect(app.overlay == .none);
 }
 
