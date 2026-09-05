@@ -1935,3 +1935,58 @@ NvChad-exact; these are the places the editor was not, and what moved.
   `tools/break-check.sh "vim undo, redo, dot-repeat" src/editor/buffer.zig
   's/if (countedOp(d)) |n| n\.\* = count else times = count;/times = count;/'`
   — both fail with the break in place.
+
+## Git graph, tree and prompts (2026-09-05, branch `fix-git-tree`) — `// changed:` notes
+
+Six findings from the VS Code-persona hunt; each `.test` was watched
+failing on the unfixed tree first.
+
+- `// changed (clip):` `clipCells` marks a cut with "…", which can make
+  the clipped form longer in bytes than its source — a caller slicing
+  the original by that length walks off its end (the commit detail
+  panel panicked on a body line one cell wider than itself). The wrap
+  primitive is `clip.fitCells(s, max_cells, method)`: the byte length
+  of the longest grapheme prefix that fits, no ellipsis, never past the
+  text. `git_graph_view.wrapTake` uses it and cuts back to the last
+  space when the line continues. `clipStr` stays the display primitive
+  — it is for painting, not for slicing.
+- `// changed (launch):` `ensureWorkspaceGitignore` treats any rule
+  whose first path segment is the state directory as the user's
+  decision about it — `.mnml/*`, `.mnml/ipc/`, `!.mnml/findings/`,
+  `**/.mnml/` — and leaves the file alone. Appending a trailing
+  `.mnml/` after `.mnml/*` + `!.mnml/findings/` stopped git from
+  re-including the carve-out. The writer runs from `Channel.init`,
+  which the `.test` runner's in-process driver does not construct, so
+  its regression lives in the unit test only.
+- `// changed (tree keys):` the file clipboard's Ctrl+X/C/V/D are plain
+  Ctrl; a shifted form falls through to the chord chain (`ctrl+shift+d`
+  is Activity: Debug in both profiles — its runner is still missing
+  and toasts, a separate concern). F2 with the tree focused runs
+  `file.rename` from `Tree.handleKey` — that is how a tree-focused key
+  beats the global `lsp.rename` chord; the spec keeps `f2` on
+  `lsp.rename`, whose title now says which F2 it is.
+- `// changed (prompt):` `Prompt.State.select_all` + `Prompt.seed`: a
+  pre-filled line as a selection (typing or a paste replaces it,
+  backspace / delete clear it, a motion drops it, enter keeps it),
+  painted on `theme.selection`. NOTES and FINDINGS `n` seed with it;
+  `setText` is unchanged and a rename still continues its path. Both
+  accept paths append `.md` to a bare name (`notes.withMdExt`) so a
+  typed-over seed lands where the panel lists it. The picker's Ctrl+A
+  (home, not select-all) is not touched.
+- `// changed (trash):` the delete confirm's default is the action
+  (`selected = 0`) in both forms — to the trash, or the permanent
+  delete inside the trash — so Enter does what every other confirm's
+  Enter does and toasts; Esc is the silent way out. The earlier Cancel
+  default made right-click → Delete… → Enter a silent no-op. `Empty
+  trash` keeps Cancel focused.
+- `// changed (tests):` `tests/e2e-zig/git_graph_detail_wrap.test`,
+  `tree_ctrl_shift_keys.test`, `tree_f2_rename.test`,
+  `notes_new_prefill_replaced.test`, `tree_delete_enter.test`; unit
+  rows in `clip`, `git_graph_view`, `channel`, `tree`, `prompt`,
+  `notes`, `trash`. Break-checks run and failing with the break in
+  place: `tools/break-check.sh "wrapTake" src/ui/clip.zig
+  's/if (used + w > max_cells) break;/if (used + w > max_cells + 2) break;/'`
+  and `tools/break-check.sh "seeded line" src/ui/prompt.zig
+  's/if (!typed and !erase) return false;/if (typed or erase) return false;/'`
+  (plus one each for the gitignore, the shift guard, F2 and the delete
+  default, quoted in their commits).
