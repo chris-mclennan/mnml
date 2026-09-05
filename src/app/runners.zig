@@ -19,6 +19,7 @@ const PaneId = app_mod.PaneId;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const pty_pane = @import("pty_pane.zig");
+const pty = @import("pty");
 const cmd_picker = @import("cmd_picker.zig");
 const Prompt = app_mod.Prompt;
 
@@ -74,7 +75,12 @@ pub const State = struct {
 // ─── detection ──────────────────────────────────────────────────────────
 
 fn exists(io: Io, dir: []const u8, name: []const u8, buf: []u8) bool {
-    const p = std.fmt.bufPrint(buf, "{s}/{s}", .{ dir, name }) catch return false;
+    return existsExt(io, dir, name, "", buf);
+}
+
+/// `<dir>/<name><ext>` is a file (or anything stat-able).
+fn existsExt(io: Io, dir: []const u8, name: []const u8, ext: []const u8, buf: []u8) bool {
+    const p = std.fmt.bufPrint(buf, "{s}{c}{s}{s}", .{ dir, std.fs.path.sep, name, ext }) catch return false;
     _ = Io.Dir.cwd().statFile(io, p, .{}) catch return false;
     return true;
 }
@@ -105,26 +111,44 @@ pub fn startDir(app: *App) []const u8 {
 
 /// Is `bin` on the child's PATH?
 pub fn onPath(app: *App, bin: []const u8) bool {
-    if (std.mem.indexOfScalar(u8, bin, '/') != null) {
-        _ = Io.Dir.cwd().statFile(app.io, bin, .{}) catch return false;
+    return findOnPath(app.io, &app.env, bin);
+}
+
+/// The PATH walk behind `onPath`. A name with a directory in it is
+/// checked as given. Otherwise every PATH entry is tried — split on the
+/// platform's delimiter — first as the bare name, then, when `PATHEXT`
+/// is set (Windows: `.COM;.EXE;.BAT;.CMD…`), with each of those
+/// extensions, the way `CreateProcessW` and `cmd.exe` resolve `git`
+/// to `git.exe` and `npm` to `npm.cmd`.
+pub fn findOnPath(io: Io, env: *const std.process.Environ.Map, bin: []const u8) bool {
+    if (std.fs.path.dirname(bin) != null) {
+        _ = Io.Dir.cwd().statFile(io, bin, .{}) catch return false;
         return true;
     }
-    const path = app.env.get("PATH") orelse return false;
+    const path = env.get("PATH") orelse return false;
+    const pathext = env.get("PATHEXT") orelse "";
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    var it = std.mem.splitScalar(u8, path, ':');
+    var it = std.mem.splitScalar(u8, path, std.fs.path.delimiter);
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
-        if (exists(app.io, dir, bin, &buf)) return true;
+        if (exists(io, dir, bin, &buf)) return true;
+        var exts = std.mem.splitScalar(u8, pathext, ';');
+        while (exts.next()) |ext| {
+            if (ext.len == 0) continue;
+            if (existsExt(io, dir, bin, ext, &buf)) return true;
+        }
     }
     return false;
 }
 
 // ─── running ────────────────────────────────────────────────────────────
 
-/// Run `cmdline` through the shell in a pane below, at `cwd`.
+/// Run `cmdline` through the platform's shell (`sh -c`, or `cmd /d /c`)
+/// in a pane below, at `cwd`.
 pub fn spawn(app: *App, label: []const u8, cmdline: []const u8, cwd: []const u8, kind: pty_pane.Kind) CommandError!PaneId {
+    var shell_buf: [4][]const u8 = undefined;
     const id = try pty_pane.open(app, .{
-        .argv = &.{ "/bin/sh", "-c", cmdline },
+        .argv = pty.shellArgv(&shell_buf, &app.env, cmdline),
         .cwd = cwd,
         .label = label,
         .placement = .below,
@@ -848,4 +872,32 @@ test "tools: the picker lists every known tool with a kind chip; a missing tool 
     try installAccept(&f.app, toolByBin("go").?, 1);
     try t.expect(std.mem.startsWith(u8, f.toast(), "copied: "));
     try t.expectEqualStrings(known_tools[toolByBin("go").?].install(), f.app.clipboard.text());
+}
+
+test "findOnPath: the platform delimiter splits PATH; PATHEXT adds the Windows extensions" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "plain", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "tool.cmd", .data = "" });
+
+    var env: std.process.Environ.Map = .init(t.allocator);
+    defer env.deinit();
+    // An empty entry and a missing directory ahead of the real one.
+    const path = try std.fmt.allocPrint(t.allocator, "{c}{s}{c}{s}", .{ std.fs.path.delimiter, "/nonexistent-mnml", std.fs.path.delimiter, root });
+    defer t.allocator.free(path);
+    try env.put("PATH", path);
+    try t.expect(findOnPath(t.io, &env, "plain"));
+    try t.expect(!findOnPath(t.io, &env, "nope"));
+    // No PATHEXT: `tool` is not `tool.cmd`.
+    try t.expect(!findOnPath(t.io, &env, "tool"));
+    try env.put("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+    try t.expect(findOnPath(t.io, &env, "tool"));
+    try t.expect(!findOnPath(t.io, &env, "nope"));
+    // A path with a directory in it is checked as given, PATH or not.
+    const abs = try std.fs.path.join(t.allocator, &.{ root, "plain" });
+    defer t.allocator.free(abs);
+    try t.expect(findOnPath(t.io, &env, abs));
 }
