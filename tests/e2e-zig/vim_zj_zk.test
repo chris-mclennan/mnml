@@ -1,0 +1,26 @@
+# zig-only
+# `zj` moves to the start of the next fold and `zk` to the end of the
+# previous one (`:help zj`); a closed fold is one line, so `zj` from a
+# closed fold's header lands on the fold after it, never on a line the
+# fold hides. Open folds count too.
+write long.zig "pub fn one() void {\n    a();\n    if (x) {\n        b();\n    }\n}\n\npub fn two() void {\n    c();\n    d();\n}\n\npub fn three() void {\n    e();\n}\n"
+open long.zig
+command editor.use_vim
+
+type zM
+type gg
+type zj
+expect screen contains "Ln 8/15"
+type zj
+expect screen contains "Ln 13/15"
+type zR
+type 2G
+type zj
+expect screen contains "Ln 3/15"
+type 10G
+type zk
+expect screen contains "Ln 6/15"
+type zj
+expect screen contains "Ln 8/15"
+type zj
+expect screen contains "Ln 13/15"

@@ -381,6 +381,29 @@ fn foldAllBrackets(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+/// Every bracket block spanning more than one line — `{}`, `[]`, `()`
+/// — as `(first row, last row)`, innermost pairs included; what `zj` /
+/// `zk` step between and `zM` closes. Frame arena.
+pub fn allFoldRanges(ed: *const Editor, arena: std.mem.Allocator) std.mem.Allocator.Error![]const [2]usize {
+    const text = ed.bytes();
+    var stack: std.ArrayListUnmanaged(usize) = .empty;
+    var out: std.ArrayListUnmanaged([2]usize) = .empty;
+    for ([_][2]u8{ .{ '{', '}' }, .{ '[', ']' }, .{ '(', ')' } }) |pr| {
+        stack.clearRetainingCapacity();
+        for (text, 0..) |ch, i| {
+            if (ch == pr[0]) {
+                try stack.append(arena, i);
+            } else if (ch == pr[1]) {
+                const o = stack.pop() orelse continue;
+                const lo = ed.lineOfByte(o);
+                const hi = ed.lineOfByte(i);
+                if (hi > lo) try out.append(arena, .{ lo, hi });
+            }
+        }
+    }
+    return out.items;
+}
+
 fn unfoldAll(app: *App) CommandError!void {
     const e = try app.requireEditor();
     const n = e.buf.editor.folds.count();

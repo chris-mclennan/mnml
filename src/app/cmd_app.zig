@@ -342,19 +342,37 @@ fn foldPrev(app: *App) CommandError!void {
     return foldStep(app, false);
 }
 
+/// `zj` / `zk` (`:help zj`): to the start of the next fold, or the end
+/// of the previous one — open bracket blocks and closed folds alike. A
+/// closed fold is one line: the step leaves from its edges and never
+/// lands on a line a closed fold hides.
 fn foldStep(app: *App, forward: bool) CommandError!void {
     const e = try app.requireEditor();
     const ed = e.buf.editor;
     const row = ed.rowCol().row;
+    const here = e.buf.foldAt(row);
+    const from_start = if (here) |f| f[0] else row;
+    const from_end = if (here) |f| f[1] else row;
     var best: ?usize = null;
-    for (e.buf.editor.folds.keys()) |start| {
-        if (forward and start > row and (best == null or start < best.?)) best = start;
-        if (!forward and start < row and (best == null or start > best.?)) best = start;
-    }
-    const target = best orelse return app.diag.fail(app.frame.allocator(), "no fold {s}", .{if (forward) "below" else "above"});
+    const ranges = try @import("cmd_editor.zig").allFoldRanges(ed, app.frame.allocator());
+    for (ranges) |r| consider(e, r, forward, from_start, from_end, &best);
+    for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |st, en| consider(e, .{ st, en }, forward, from_start, from_end, &best);
+    var target = best orelse return app.diag.fail(app.frame.allocator(), "no fold {s}", .{if (forward) "below" else "above"});
+    // A fold end inside a closed fold shows as that fold's header.
+    if (e.buf.foldAt(target)) |f| target = f[0];
     ed.setCursor(ed.firstNonWs(target));
     ed.goal_col = null;
     app.needs_render = true;
+}
+
+fn consider(e: *const EditorPane, r: [2]usize, forward: bool, from_start: usize, from_end: usize, best: *?usize) void {
+    // A fold whose start a closed fold hides is not on screen to reach.
+    if (e.buf.foldAt(r[0])) |f| if (f[0] != r[0]) return;
+    if (forward) {
+        if (r[0] > from_end and (best.* == null or r[0] < best.*.?)) best.* = r[0];
+    } else {
+        if (r[1] < from_start and (best.* == null or r[1] > best.*.?)) best.* = r[1];
+    }
 }
 
 /// `zf` over the selection: the rows it spans become one closed fold.
