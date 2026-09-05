@@ -84,6 +84,8 @@ const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
+const grep = @import("grep.zig");
+const jumplist = @import("jumplist.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const files_pane = @import("files_pane.zig");
@@ -93,7 +95,15 @@ const flash = @import("flash.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
+/// One key. The cursor is snapshotted around it so a big jump lands on
+/// the jumplist (`jumplist.afterKey`).
 pub fn key(app: *App, k: Key) Allocator.Error!void {
+    const before = try jumplist.snapshot(app);
+    try keyInner(app, k);
+    try jumplist.afterKey(app, before);
+}
+
+fn keyInner(app: *App, k: Key) Allocator.Error!void {
     app.needs_render = true;
     switch (app.overlay) {
         .none => {},
@@ -190,6 +200,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .spend_report => |*s| {
             if (try spend.handleKey(app, id, s, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .grep => |*g| {
+            if (try grep.handleKey(app, id, g, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -644,17 +659,24 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
     const gpa = app.gpa;
     switch (app.overlay) {
         .none => {},
-        .prompt => |*p| switch (try Prompt.handleKey(&p.state, gpa, k)) {
-            .consumed => {},
-            .cancel => closeOverlay(app),
-            .submit => {
-                const text = try app.frame.allocator().dupe(u8, p.state.buf.items);
-                const purpose = p.purpose;
-                p.purpose = .goto_line; // ownership moved here
-                closeOverlay(app);
-                defer purpose.deinit(app.gpa);
-                try acceptPrompt(app, purpose, text);
-            },
+        .prompt => |*p| {
+            // A path prompt completes on Tab; any other key ends the cycle.
+            if (p.purpose == .add_workspace) {
+                if (k.code == .tab) return promptPathComplete(app, &p.state);
+                dropComplete(app);
+            }
+            switch (try Prompt.handleKey(&p.state, gpa, k)) {
+                .consumed => {},
+                .cancel => closeOverlay(app),
+                .submit => {
+                    const text = try app.frame.allocator().dupe(u8, p.state.buf.items);
+                    const purpose = p.purpose;
+                    p.purpose = .goto_line; // ownership moved here
+                    closeOverlay(app);
+                    defer purpose.deinit(app.gpa);
+                    try acceptPrompt(app, purpose, text);
+                },
+            }
         },
         .confirm => |*c| switch (Confirm.handleKey(&c.state, k)) {
             .consumed => {},
@@ -818,6 +840,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
         .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
         .term_rename => |id| try toastOnFail(app, cmd_term.renameAccept(app, id, text)),
+        .grep_query => try grep.acceptQuery(app, text),
+        .grep_replace => try grep.acceptReplace(app, text),
+        .add_workspace => try tree_mod.acceptAddWorkspace(app, text),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),
@@ -902,7 +927,8 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
 fn findBarKey(app: *App, k: Key) Allocator.Error!void {
     const fb = &app.find_bar.?;
     switch (try FindBar.handleKey(&fb.state, app.gpa, k)) {
-        .consumed, .toggle_regex, .toggle_case, .focus_toggle => {},
+        .consumed, .focus_toggle => {},
+        .toggle_regex, .toggle_case => try cmd_find.liveUpdate(app),
         .cancel => app.closeFindBar(true),
         .changed => try cmd_find.liveUpdate(app),
         .submit => try cmd_find.acceptFromBar(app),
@@ -1177,9 +1203,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .settings => try settings_app.click(app, i),
                 .wizard => first_launch.click(app, i),
-                // The completion popup and the rename preview register
-                // their rows here with no overlay up.
-                else => if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
+                // The find bar's chips, the rename preview and the completion
+                // popup register their rows here with no overlay up.
+                else => if (app.find_bar != null) try cmd_find.chipClick(app, i) else if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
             }
         },
         .pane => |id| {
@@ -1234,6 +1260,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git_graph => |*g| try git_app.graphClick(app, sh.pane, g, sh.id, m),
                 .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
+                .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
                 .websocket => {},
@@ -1518,6 +1545,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .grep => |*g| grep.scrollBy(g, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
@@ -2145,26 +2173,13 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
             is_path_cmd = true;
         };
         if (!is_path_cmd) return;
-        const dir_rel = std.fs.path.dirname(partial) orelse "";
-        const stem = std.fs.path.basename(partial);
-        const dir_abs = try app.absPath(if (dir_rel.len == 0) "." else dir_rel);
-        var dir = std.Io.Dir.cwd().openDir(app.io, dir_abs, .{ .iterate = true }) catch return;
-        defer dir.close(app.io);
-        var it = dir.iterate();
-        while (it.next(app.io) catch null) |entry| {
-            if (!std.mem.startsWith(u8, entry.name, stem)) continue;
-            if (entry.name[0] == '.' and (stem.len == 0 or stem[0] != '.')) continue;
-            const rel = if (dir_rel.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ dir_rel, entry.name });
-            errdefer gpa.free(rel);
-            const full = try std.mem.concat(gpa, u8, &.{ head, " ", rel, if (entry.kind == .directory) "/" else "" });
-            gpa.free(rel);
-            try cands.append(gpa, full);
+        var paths: std.ArrayListUnmanaged([]u8) = .empty;
+        defer {
+            for (paths.items) |c| gpa.free(c);
+            paths.deinit(gpa);
         }
-        std.mem.sort([]u8, cands.items, {}, struct {
-            fn lt(_: void, a: []u8, b: []u8) bool {
-                return std.mem.lessThan(u8, a, b);
-            }
-        }.lt);
+        try pathCandidates(app, gpa, partial, false, &paths);
+        for (paths.items) |rel| try cands.append(gpa, try std.mem.concat(gpa, u8, &.{ head, " ", rel }));
     } else {
         const Scored = struct { name: []const u8, score: u32 };
         var scored: std.ArrayListUnmanaged(Scored) = .empty;
@@ -2194,6 +2209,75 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
     errdefer gpa.free(prefix);
     app.cmd_complete = .{ .prefix = prefix, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
     try e.buf.input.cmdlineSet(app.cmd_complete.?.candidates[0]);
+}
+
+/// Every entry whose name starts with the last segment of `partial`,
+/// spelled the way the user typed the rest (`~/pro` → `~/projects/`,
+/// `src/ma` → `src/main.zig`), sorted; a directory ends in `/`. A
+/// relative path is under the workspace. Dot entries stay hidden
+/// unless the segment asks for them. `dirs_only` drops files.
+fn pathCandidates(app: *App, gpa: Allocator, partial: []const u8, dirs_only: bool, out: *std.ArrayListUnmanaged([]u8)) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const cut = if (std.mem.lastIndexOfScalar(u8, partial, '/')) |i| i + 1 else 0;
+    const typed_dir = partial[0..cut];
+    const stem = partial[cut..];
+    const dir_abs: []const u8 = if (typed_dir.len == 0)
+        app.workspace
+    else if (typed_dir[0] == '~')
+        try std.fs.path.join(arena, &.{ app.homeDir() orelse return, std.mem.trimStart(u8, typed_dir[1..], "/") })
+    else
+        try app.absPath(typed_dir);
+    var dir = std.Io.Dir.cwd().openDir(app.io, dir_abs, .{ .iterate = true }) catch return;
+    defer dir.close(app.io);
+    var it = dir.iterate();
+    while (it.next(app.io) catch null) |entry| {
+        if (!std.mem.startsWith(u8, entry.name, stem)) continue;
+        if (entry.name[0] == '.' and (stem.len == 0 or stem[0] != '.')) continue;
+        const is_dir = entry.kind == .directory;
+        if (dirs_only and !is_dir) continue;
+        const full = try std.mem.concat(gpa, u8, &.{ typed_dir, entry.name, if (is_dir) "/" else "" });
+        errdefer gpa.free(full);
+        try out.append(gpa, full);
+    }
+    std.mem.sort([]u8, out.items, {}, struct {
+        fn lt(_: void, a: []u8, b: []u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+}
+
+fn dropComplete(app: *App) void {
+    if (app.cmd_complete) |*c| c.deinit(app.gpa);
+    app.cmd_complete = null;
+}
+
+/// Tab in a path prompt: the first directory the text could be, then
+/// each next one on repeated Tabs (`app.cmd_complete` keeps the ring,
+/// as the `:` line's completion does).
+pub fn promptPathComplete(app: *App, st: *Prompt.State) Allocator.Error!void {
+    const gpa = app.gpa;
+    const line = st.buf.items;
+    if (app.cmd_complete) |*c| {
+        if (c.candidates.len > 0 and (std.mem.eql(u8, c.prefix, line) or std.mem.eql(u8, c.candidates[c.idx], line))) {
+            c.idx = (c.idx + 1) % c.candidates.len;
+            try st.setText(gpa, c.candidates[c.idx]);
+            app.needs_render = true;
+            return;
+        }
+        dropComplete(app);
+    }
+    var cands: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (cands.items) |c| gpa.free(c);
+        cands.deinit(gpa);
+    }
+    try pathCandidates(app, gpa, line, true, &cands);
+    if (cands.items.len == 0) return;
+    const prefix = try gpa.dupe(u8, line);
+    errdefer gpa.free(prefix);
+    app.cmd_complete = .{ .prefix = prefix, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
+    try st.setText(gpa, app.cmd_complete.?.candidates[0]);
+    app.needs_render = true;
 }
 
 fn cmdlineCycle(app: *App, e: *EditorPane, delta: i8) Allocator.Error!void {

@@ -26,12 +26,13 @@ const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
 const marketplace = @import("../app/marketplace.zig");
 const transfers = @import("../app/transfers.zig");
+const grep = @import("../app/grep.zig");
 
 pub const PtyId = u32;
 
 /// Who produced an `.err`. Workers never toast; they post this and the
 /// UI thread decides how to surface it.
-pub const Source = enum { todos, notes, findings, sessions, dock, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer };
+pub const Source = enum { todos, notes, findings, sessions, dock, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer, grep };
 
 // Payloads for subsystems that do not exist yet. Each is an opaque
 // placeholder so the union has its final shape today; the subsystem
@@ -146,6 +147,8 @@ pub const AppEvent = union(enum) {
     tests: *tests_pane.Result,
     /// A file transfer's totals / progress / end. Owned; `transfers.handle` destroys it.
     transfer: *transfers.Event,
+    /// A batch of grep hits (the last one says `done`). Owned; `grep.handle` copies and destroys it.
+    grep: *grep.Result,
 
     /// A worker failed. `msg` is gpa-owned and freed by the handler.
     err: struct { source: Source, msg: []u8 },
@@ -171,6 +174,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .agents => |r| r.destroy(gpa),
         .spend => |r| r.destroy(gpa),
         .tests => |r| r.destroy(gpa),
+        .grep => |r| r.destroy(gpa),
         .ai => |a| freeAiMsg(gpa, a.msg),
         .lsp => |l| l.msg.destroy(gpa),
         .dap => |d| d.msg.destroy(gpa),

@@ -1,0 +1,39 @@
+# zig-only
+# The jumplist (src/app/jumplist.zig): a big jump and a file switch push,
+# nav.back / nav.forward walk them. Multi-root workspaces (src/app/tree.zig):
+# view.add_workspace's prompt completes a directory on Tab and the root
+# lands as a collapsed section; view.switch_workspace opens one section.
+write a.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n"
+write b.txt "b1\nb2\n"
+write extra/lib/c.txt "c\n"
+open a.txt
+command editor.goto_line
+type 8
+key enter
+expect screen contains "Ln 8/"
+open b.txt
+expect pane b.txt
+command nav.back
+expect pane a.txt
+expect screen contains "Ln 8/"
+command nav.back
+expect screen contains "Ln 1/"
+command nav.forward
+expect screen contains "Ln 8/"
+command nav.forward
+expect pane b.txt
+command nav.forward
+expect screen contains "nothing to go forward to"
+# A second root: `ext` + Tab completes to `extra/`; enter adds it, folded.
+command view.add_workspace
+type ext
+key tab
+key enter
+expect screen contains "workspace added: extra"
+expect screen contains " extra"
+expect screen lacks " lib"
+command view.switch_workspace
+type extra
+key enter
+expect screen contains " extra"
+expect screen contains " lib"

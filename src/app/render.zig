@@ -78,6 +78,7 @@ const tests_pane = @import("tests_pane.zig");
 const tests_view = @import("../ui/tests_view.zig");
 const flaky = @import("flaky.zig");
 const flaky_view = @import("../ui/flaky_view.zig");
+const grep_view = @import("../ui/grep_view.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
@@ -393,7 +394,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
-        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return 0;
@@ -498,6 +499,10 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .spend_report => |*s| {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
                 spend_view.draw(ui, pr.pane, rect, s, app.active == pr.pane and app.focus == .pane);
+            },
+            .grep => |*g| {
+                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
+                grep_view.draw(ui, pr.pane, rect, g, app.active == pr.pane and app.focus == .pane);
             },
             .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
             .dap_repl => |*r| try dap.drawRepl(app, ui, pr.pane, r, rect),

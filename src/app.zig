@@ -77,6 +77,8 @@ const spend = @import("app/spend.zig");
 const tests_pane = @import("app/tests_pane.zig");
 const flaky = @import("app/flaky.zig");
 const ipc = @import("ipc/root.zig");
+const grep = @import("app/grep.zig");
+const jumplist = @import("app/jumplist.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const http_app = @import("app/http.zig");
@@ -234,6 +236,11 @@ pub const PromptPurpose = union(enum) {
     mount_open,
     /// `term.rename`: the new tab label for this pty pane.
     term_rename: PaneId,
+    /// Workspace grep: the query; the replacement for every enabled hit.
+    grep_query,
+    grep_replace,
+    /// `view.add_workspace`: a folder (Tab completes path segments).
+    add_workspace,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -753,6 +760,8 @@ pub const App = struct {
     file_clipboard: file_clipboard.State = .{},
     /// The workspace trash's prune clock and bounds.
     trash: trash.State = .{},
+    /// `nav.back` / `nav.forward`: where the cursor was before big jumps.
+    jumplist: jumplist.State = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -1014,6 +1023,7 @@ pub const App = struct {
         self.messages.deinit(gpa);
         self.harpoon.deinit(gpa);
         self.file_clipboard.deinit(gpa);
+        self.jumplist.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
         var it = self.abbrevs.iterator();
@@ -1264,6 +1274,8 @@ pub const App = struct {
     /// Open `path` (absolute) in an editor pane and focus it. An already
     /// open file is revealed instead. A missing file is a new buffer.
     pub fn openEditor(self: *App, path: []const u8) !PaneId {
+        // Leaving another file is a jump `nav.back` can undo.
+        if (!self.jumplist.in_jump) if (try jumplist.current(self)) |here| if (!std.mem.eql(u8, here.path, path)) try jumplist.record(self, here);
         if (self.panes.findPath(path)) |id| {
             self.showPane(id);
             return id;
@@ -1606,6 +1618,7 @@ pub const App = struct {
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
+            .grep => |result| try grep.handle(self, result),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -1864,6 +1877,9 @@ test {
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");
     _ = @import("app/spend.zig");
+    _ = @import("app/grep.zig");
+    _ = @import("app/jumplist.zig");
+    _ = @import("app/gitignore.zig");
     _ = @import("ai/suggest.zig");
     _ = @import("ai/transcript.zig");
     _ = @import("ai/api_client.zig");

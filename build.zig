@@ -73,6 +73,24 @@ pub fn build(b: *std.Build) void {
     // outside `src/scripting/` imports `zlua`.
     const zlua_mod = addLua(b, target, optimize);
 
+    // ── regex ──
+    // Oniguruma, through ghostty's `pkg/oniguruma` package (the bindings
+    // and the C build are ghostty's; the C source is its lazy `oniguruma`
+    // dependency). Reached as a sub-dependency of the ghostty dependency
+    // already fetched for the terminal core, so there is no second copy
+    // and no new hash in build.zig.zon. `src/regex/` is the only importer:
+    // it translates vim patterns (`\v`, `\<`, `\c`, `\{n,m}`) into
+    // Oniguruma's syntax, so the find bar, `:s` and the grep filter never
+    // see the C API. The static library is linked on the root module,
+    // which the unit-test binary shares.
+    const onig_dep = ghostty_dep.builder.lazyDependency("oniguruma", .{
+        .target = target,
+        .optimize = optimize,
+    }) orelse @panic("ghostty no longer vendors pkg/oniguruma; update the regex wiring");
+    const onig_mod = onig_dep.module("oniguruma");
+    const onig_lib = onig_dep.artifact("oniguruma");
+    // ── end regex ──
+
     // ── themes ──
     // `themes/root.zig` imports every `themes/*.zon` at comptime, so a
     // malformed palette fails the build. It is its own module because the
@@ -114,9 +132,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "highlight", .module = ts.highlight },
             .{ .name = "themes", .module = themes_mod },
             .{ .name = "zlua", .module = zlua_mod },
+            .{ .name = "oniguruma", .module = onig_mod },
         },
     });
     root_module.addOptions("build_options", build_options);
+    root_module.linkLibrary(onig_lib);
     const exe = b.addExecutable(.{ .name = "mnml-zig", .root_module = root_module });
     b.installArtifact(exe);
 

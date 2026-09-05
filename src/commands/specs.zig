@@ -305,7 +305,7 @@ pub const specs = [_]Spec{
     .{ .id = "file.open_recent_8", .title = "Open recent file #9", .group = "file" },
     .{ .id = "file.open_recent_9", .title = "Open recent file #10", .group = "file" },
     .{ .id = "noop", .title = "(no-op — placeholder for disabled menu items)", .group = "file" },
-    .{ .id = "picker.files", .title = "Open file…", .group = "go", .keys = .{ .both = &.{ "ctrl+p", "ctrl+o", "space f f" } } },
+    .{ .id = "picker.files", .title = "Open file…", .group = "go", .keys = .{ .both = &.{ "ctrl+p", "space f f" }, .standard = &.{"ctrl+o"} } },
     .{ .id = "picker.buffers", .title = "Switch buffer…", .group = "go", .keys = .{ .both = &.{"space f b"} } },
     .{ .id = "palette", .title = "Command palette", .group = "go", .keys = .{ .both = &.{"ctrl+shift+p"} } },
     .{ .id = "buffer.close", .title = "Close tab (close active buffer)", .group = "buffer", .keys = .{ .vim = &.{"space x"}, .standard = &.{"ctrl+w"} } },

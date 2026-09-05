@@ -61,6 +61,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `editor.indent_line` | `ctrl+]` | (new) | standard | VS Code indent |
 | `editor.outdent_line` | `ctrl+[` | (new) | standard | VS Code outdent |
 | `picker.files` | `space f f` | both | both | NvChad <leader>ff (already the Rust default) |
+| `picker.files` | `ctrl+o` | both | standard | vim: `ctrl+o` is the jumplist (`nav.back`, with `ctrl+i` forward) — the chord chain runs before the vim handler, so a `both` binding would shadow it |
 | `find.grep` | `space f w` | (new) | vim | NvChad <leader>fw |
 | `picker.buffers` | `space f b` | both | both | NvChad <leader>fb (already the Rust default) |
 | `view.toggle_tree` | `ctrl+n` | (new) | vim | NvChad <C-n> |
