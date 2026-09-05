@@ -678,10 +678,11 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
     switch (app.overlay) {
         .none => {},
         .prompt => |*p| {
-            // A path prompt completes on Tab; any other key ends the cycle.
-            // The worktree prompt is `<path> [branch]`: its path is the
-            // first word.
-            const path_prompt: ?bool = if (p.purpose == .add_workspace) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
+            // A path prompt — a workspace to add, a rename / move-to
+            // destination — completes folders on Tab; any other key ends
+            // the cycle. The worktree prompt is `<path> [branch]`: its
+            // path is the first word.
+            const path_prompt: ?bool = if (p.purpose == .add_workspace or p.purpose == .rename or p.purpose == .move_paths) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
             if (path_prompt) |first_word| {
                 if (k.code == .tab) return promptPathComplete(app, &p.state, first_word);
                 dropComplete(app);
@@ -934,7 +935,9 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
             notes.onPathRemoved(app, rel);
             findings.onPathRemoved(app, rel);
         },
-        .move_path => |mv| if (choice == 0) try tree_mod.acceptMove(app, mv.from, mv.into),
+        .move_path => |mv| if (choice == 0) {
+            if (mv.copy) try tree_mod.acceptCopy(app, mv.from, mv.into) else try tree_mod.acceptMove(app, mv.from, mv.into);
+        },
         .delete_session => |path| if (choice == 0) try sessions.acceptDelete(app, path),
         .install_tool => |idx| try toastOnFail(app, runners.installAccept(app, idx, choice)),
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
@@ -1340,7 +1343,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                             try app.tree.activate(app, idx);
                         } else {
                             // A file opens on release, so a hold becomes a drag.
-                            app.drag = .{ .tree = .{ .idx = idx } };
+                            app.drag = .{ .tree = .{ .idx = idx, .copy = m.mods.alt } };
                         }
                     },
                     else => app.tree.cursor = idx,
@@ -1716,9 +1719,10 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             }
             const idx = tr.idx;
             const moved = tr.moved;
+            const copy = tr.copy or m.mods.alt;
             app.drag = null;
             if (!moved) return app.tree.activate(app, idx);
-            return dropTreeFile(app, idx, m.x, m.y);
+            return dropTreeFile(app, idx, m.x, m.y, copy);
         },
     }
     if (m.kind == .release) app.drag = null;
@@ -1816,11 +1820,13 @@ fn stripTabs(app: *App, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocat
 
 /// A tree file released: on a folder row → confirm a move; on a pane →
 /// open it there (a zone splits); elsewhere → open it.
-fn dropTreeFile(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
+/// A tree row released: on a directory row → the move (an Alt-drag:
+/// copy) confirm; on a pane → the file opens there.
+fn dropTreeFile(app: *App, idx: usize, x: u16, y: u16, copy: bool) Allocator.Error!void {
     if (idx >= app.tree.rows.items.len) return;
     if (app.hits.at(x, y)) |h| switch (h) {
         .tree_node => |into| {
-            if (into < app.tree.rows.items.len and app.tree.rows.items[into].is_dir) return tree_mod.confirmMove(app, idx, into);
+            if (into < app.tree.rows.items.len and app.tree.rows.items[into].is_dir) return tree_mod.confirmMove(app, idx, into, copy);
             return;
         },
         else => {},
@@ -2536,6 +2542,56 @@ test "editor clicks: one places the cursor, two select the word, three the line;
     try release(&app, 11, 3);
     try std.testing.expectEqualStrings("beta gamma\nsecond", e.buf.editor.selectedText());
     try std.testing.expect(app.drag == null);
+}
+
+test "an Alt-press on a tree row dragged onto a folder asks to copy; Tab on the move-to prompt completes folders" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    try tmp.dir.createDirPath(std.testing.io, "lib");
+    try tmp.dir.createDirPath(std.testing.io, "src");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "zz.txt", .data = "z" });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = buf[0..n], .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    try app.render();
+    const zz = app.tree.rowOf("zz.txt").?;
+    const lib = app.tree.rowOf("lib").?;
+    // Where the rows paint.
+    var zz_y: ?u16 = null;
+    var lib_y: ?u16 = null;
+    var y: u16 = 0;
+    while (y < 40) : (y += 1) {
+        const h = app.hits.at(5, y) orelse continue;
+        if (h == .tree_node and h.tree_node == zz) zz_y = y;
+        if (h == .tree_node and h.tree_node == lib) lib_y = y;
+    }
+    try app.handle(.{ .mouse = .{ .x = 5, .y = zz_y.?, .kind = .press, .button = .left, .mods = .{ .alt = true } } });
+    try std.testing.expect(app.drag.?.tree.copy);
+    try dragTo(&app, 5, lib_y.?);
+    try release(&app, 5, lib_y.?);
+    try std.testing.expect(app.overlay == .confirm);
+    try std.testing.expectEqualStrings("Copy to folder", app.overlay.confirm.state.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // Without Alt the same gesture asks to move.
+    try app.render();
+    try press(&app, 5, zz_y.?, .left);
+    try dragTo(&app, 5, lib_y.?);
+    try release(&app, 5, lib_y.?);
+    try std.testing.expectEqualStrings("Move to folder", app.overlay.confirm.state.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // move_to: Tab completes the folders of the workspace, in order.
+    app.focus = .tree;
+    app.tree.cursor = zz;
+    try command.run(&app, .{ .static = .@"file.move_to" });
+    try std.testing.expect(app.overlay == .prompt);
+    try app.handle(.{ .key = Key.named(.tab) });
+    try std.testing.expectEqualStrings("lib/", app.overlay.prompt.state.text());
+    try app.handle(.{ .key = Key.named(.tab) });
+    try std.testing.expectEqualStrings("src/", app.overlay.prompt.state.text());
+    try app.handle(.{ .key = Key.named(.enter) });
+    try tmp.dir.access(std.testing.io, "src/zz.txt", .{});
 }
 
 test "gestures: a divider drag resizes with the minimum kept, a tab drag reorders, the + opens a scratch" {

@@ -687,6 +687,9 @@ fn delete(app: *App) CommandError!void {
 }
 
 /// `Move to…`: a prompt for the destination folder.
+/// `file.move_to`: a prompt seeded with the row's folder — Tab
+/// completes folders, `~` is home — that moves the row into the typed
+/// folder (`acceptRename` joins the name when the target is a folder).
 fn moveTo(app: *App) CommandError!void {
     if (files_pane.focused(app) != null) return files_pane.moveToCmd(app);
     const row = try app.tree.selected(app);
@@ -695,13 +698,19 @@ fn moveTo(app: *App) CommandError!void {
     app.overlay.deinit(app.gpa);
     const title = try std.fmt.allocPrint(app.gpa, "Move {s} to folder", .{row.name()});
     errdefer app.gpa.free(title);
-    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, title), .purpose = .{ .rename = rel }, .title_owned = title } };
+    var state = app_mod.Prompt.init(app.gpa, title);
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    if (std.fs.path.dirname(row.rel)) |parent| try state.setText(app.gpa, try std.fmt.allocPrint(app.frame.allocator(), "{s}/", .{parent}));
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .title_owned = title } };
     app.focus = .overlay;
     app.needs_render = true;
 }
 
+pub const copy_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'y', .label = "Copy" }, .{ .key = 'c', .label = "Cancel" } };
+
 /// A drag of row `from` released on directory row `into`: ask first.
-pub fn confirmMove(app: *App, from_idx: usize, into_idx: usize) Allocator.Error!void {
+/// An Alt-drag (`copy`) copies instead of moving.
+pub fn confirmMove(app: *App, from_idx: usize, into_idx: usize, copy: bool) Allocator.Error!void {
     if (from_idx >= app.tree.rows.items.len or into_idx >= app.tree.rows.items.len) return;
     const from = app.tree.rows.items[from_idx];
     const into = app.tree.rows.items[into_idx];
@@ -711,12 +720,12 @@ pub fn confirmMove(app: *App, from_idx: usize, into_idx: usize) Allocator.Error!
     errdefer app.gpa.free(from_rel);
     const into_rel = try app.gpa.dupe(u8, into.rel);
     errdefer app.gpa.free(into_rel);
-    const msg = try std.fmt.allocPrint(app.gpa, "  Move {s} into {s}/?", .{ from.name(), into.rel });
+    const msg = try std.fmt.allocPrint(app.gpa, "  {s} {s} into {s}/?", .{ if (copy) "Copy" else "Move", from.name(), into.rel });
     errdefer app.gpa.free(msg);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .confirm = .{
-        .state = .{ .title = "Move to folder", .message = msg, .choices = &move_choices },
-        .purpose = .{ .move_path = .{ .from = from_rel, .into = into_rel } },
+        .state = .{ .title = if (copy) "Copy to folder" else "Move to folder", .message = msg, .choices = if (copy) &copy_choices else &move_choices },
+        .purpose = .{ .move_path = .{ .from = from_rel, .into = into_rel, .copy = copy } },
         .message = msg,
     } };
     app.focus = .overlay;
@@ -725,10 +734,19 @@ pub fn confirmMove(app: *App, from_idx: usize, into_idx: usize) Allocator.Error!
 
 // ─── the file verbs, once confirmed ─────────────────────────────────────
 
+/// The typed target as a workspace-relative path: `~` is home, an
+/// absolute path under the workspace is made relative, one outside it
+/// stays absolute. Slashes at the ends go; empty is null.
 fn cleanRel(app: *App, text: []const u8) ?[]const u8 {
-    const trimmed = std.mem.trim(u8, text, " \t/");
+    const expanded = app.expandTilde(std.mem.trim(u8, text, " \t")) catch text;
+    // Before any slash trimming: a POSIX absolute path IS its leading slash.
+    const rel = if (std.fs.path.isAbsolute(expanded)) app.relPath(expanded) else expanded;
+    if (std.fs.path.isAbsolute(rel)) {
+        const outside = std.mem.trimEnd(u8, rel, "/");
+        return if (outside.len == 0) null else outside;
+    }
+    const trimmed = std.mem.trim(u8, rel, " \t/");
     if (trimmed.len == 0) return null;
-    if (std.fs.path.isAbsolute(trimmed)) return app.relPath(trimmed);
     return trimmed;
 }
 
@@ -783,6 +801,31 @@ pub fn acceptRename(app: *App, from: []const u8, text: []const u8) Allocator.Err
 pub fn acceptMove(app: *App, from: []const u8, into: []const u8) Allocator.Error!void {
     const to = try std.fs.path.join(app.frame.allocator(), &.{ into, std.fs.path.basename(from) });
     try movePath(app, from, to);
+}
+
+/// An Alt-drag confirmed: `from` is copied into `into` on the transfer
+/// worker (a directory recursively), the original untouched.
+pub fn acceptCopy(app: *App, from: []const u8, into: []const u8) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const transfers = @import("transfers.zig");
+    const src = try app.absPath(from);
+    const dst = try std.fs.path.join(arena, &.{ try app.absPath(into), std.fs.path.basename(from) });
+    if (std.Io.Dir.cwd().access(app.io, dst, .{})) {
+        app.toast("already exists: {s}", .{app.relPath(dst)});
+        return;
+    } else |_| {}
+    const items = [_]transfers.Item{.{ .src = src, .dst = dst }};
+    if (transfers.clash(app, &items)) |busy| {
+        app.toast("already writing {s} — wait for it to finish", .{app.relPath(busy)});
+        return;
+    }
+    _ = transfers.start(app, .copy, &items) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            if (app.diag.msg) |m| app.toast("{s}", .{m});
+            app.diag.clear();
+        },
+    };
 }
 
 fn movePath(app: *App, from: []const u8, to: []const u8) Allocator.Error!void {
@@ -939,7 +982,7 @@ test "tree file verbs: new file, new folder, rename into a folder, move by drag-
     // A drag-confirm moves bb.txt into lib/; the open buffer follows.
     const bb = app.tree.rowOf("bb.txt").?;
     const lib = app.tree.rowOf("lib").?;
-    try confirmMove(&app, bb, lib);
+    try confirmMove(&app, bb, lib, false);
     try t.expect(app.overlay == .confirm);
     try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.title, "Move to") != null);
     try app.handle(.{ .key = Key.named(.enter) });
@@ -1166,4 +1209,56 @@ test "multi-root: view.add_workspace prompts, Tab completes a directory segment 
     try t.expect(app.tree.roots.items[1].expanded);
     try t.expect(!app.tree.roots.items[0].expanded);
     try t.expect(!app.tree.primary_expanded);
+}
+
+fn settleTransfers(app: *App) !void {
+    const transfers = @import("transfers.zig");
+    var i: usize = 0;
+    while (transfers.running(app) > 0 and i < 4000) : (i += 1) {
+        try app.tick(app.now_ms + 5);
+        std.Io.sleep(app.io, .fromMilliseconds(2), .awake) catch {};
+    }
+    try t.expectEqual(@as(usize, 0), transfers.running(app));
+}
+
+test "an Alt-drag confirm copies the file into the folder, the original stays; `~` in a move-to destination is home" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "lib");
+    try tmp.dir.createDirPath(t.io, "home/inbox");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "aa.txt", .data = "aa" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bb.txt", .data = "bb" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    try app.env.put("HOME", home);
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    const aa = app.tree.rowOf("aa.txt").?;
+    const lib = app.tree.rowOf("lib").?;
+    try confirmMove(&app, aa, lib, true);
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqualStrings("Copy to folder", app.overlay.confirm.state.title);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "Copy aa.txt into lib/?") != null);
+    try t.expect(app.overlay.confirm.purpose.move_path.copy);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try settleTransfers(&app);
+    try tmp.dir.access(t.io, "lib/aa.txt", .{});
+    try tmp.dir.access(t.io, "aa.txt", .{});
+    // A move-to destination under `~` lands in the home directory.
+    try acceptRename(&app, "bb.txt", "~/inbox");
+    try tmp.dir.access(t.io, "home/inbox/bb.txt", .{});
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "bb.txt", .{}));
+    // The move-to prompt is seeded with the row's folder.
+    try app.tree.setExpanded("lib", true);
+    try app.tree.refresh(&app);
+    app.tree.cursor = app.tree.rowOf("lib/aa.txt").?;
+    try command.run(&app, .{ .static = .@"file.move_to" });
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("lib/", app.overlay.prompt.state.text());
 }

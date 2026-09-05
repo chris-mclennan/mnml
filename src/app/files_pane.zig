@@ -795,7 +795,7 @@ pub fn moveToCmd(app: *App) CommandError!void {
 /// destination is skipped with a toast, a path already there is a no-op.
 pub fn acceptMoveTo(app: *App, paths: []const []const u8, text: []const u8) Allocator.Error!void {
     const arena = app.frame.allocator();
-    const typed = std.mem.trim(u8, text, " \t");
+    const typed = try app.expandTilde(std.mem.trim(u8, text, " \t"));
     const dir = try arena.dupe(u8, std.mem.trimEnd(u8, try app.absPath(if (typed.len == 0) "" else typed), "/"));
     const dir_ok = if (Io.Dir.cwd().statFile(app.io, if (dir.len == 0) "/" else dir, .{})) |st| st.kind == .directory else |_| false;
     if (!dir_ok) {

@@ -279,7 +279,8 @@ pub const ConfirmPurpose = union(enum) {
     /// `files.empty_trash`.
     empty_trash,
     /// Move `from` into directory `into` (both workspace-relative, owned).
-    move_path: struct { from: []u8, into: []u8 },
+    /// `copy`: an Alt-drag — the file is copied into the folder.
+    move_path: struct { from: []u8, into: []u8, copy: bool = false },
     /// An AI job's write_file waits on this box (the job id).
     ai_tool: u64,
     /// SIGTERM these sessions (owned).
@@ -529,7 +530,8 @@ pub const Drag = union(enum) {
     tab: struct { pane: PaneId, x: u16, y: u16, moved: bool = false },
     /// A tree row: a file opens in the pane it is released over, or
     /// moves into the folder it is released on.
-    tree: struct { idx: usize, moved: bool = false },
+    /// `copy`: the press carried Alt — the drop copies instead of moving.
+    tree: struct { idx: usize, moved: bool = false, copy: bool = false },
     /// A text selection: char / word / line granularity from the click
     /// count, anchored where the press landed.
     select: struct { pane: PaneId, unit: SelectUnit, anchor: usize },
@@ -1618,6 +1620,15 @@ pub const App = struct {
     pub fn absPath(self: *App, rel: []const u8) Allocator.Error![]const u8 {
         if (std.fs.path.isAbsolute(rel)) return rel;
         return std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+    }
+
+    /// `~` / `~/…` → the home directory (the config's `HOME`, else the
+    /// process's); anything else unchanged. Frame arena.
+    pub fn expandTilde(self: *App, text: []const u8) Allocator.Error![]const u8 {
+        if (text.len == 0 or text[0] != '~' or (text.len > 1 and text[1] != '/')) return text;
+        const home = self.homeDir() orelse self.env.get("HOME") orelse return text;
+        if (text.len == 1) return home;
+        return std.fs.path.join(self.frame.allocator(), &.{ home, text[2..] });
     }
 
     // ─── text mutation helpers every subsystem goes through ───

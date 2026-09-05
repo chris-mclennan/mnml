@@ -544,11 +544,11 @@ the tree. Nothing left is larger than M.
 | Indent guides | done | `src/ui/editor_view.zig` | |
 | Sticky scope context | done | `src/app/sticky.zig` | |
 | `file.cut` / `copy` / `paste` / `duplicate` | done | `src/app/file_clipboard.zig` | from the tree or a Files pane's marks |
-| `file.move_to` with prompt | partial | `moveTo` in `tree.zig`, `moveToCmd` in `files_pane.zig` (acts on the marks, one background move) | autocomplete / `~` unverified |
+| `file.move_to` with prompt | done | `moveTo` in `tree.zig` (seeded with the row's folder), `moveToCmd` in `files_pane.zig` (acts on the marks, one background move); Tab → `promptPathComplete` in `dispatch.zig`; `App.expandTilde` | Tab cycles the folders under the typed prefix (`~/` too); `~` is the config's `HOME`, else the process's; tests in `tree.zig` / `dispatch.zig` |
 | Ctrl+X/C/V/D chords + menu rows | done | `file_clipboard.zig` | fire in both profiles; vim adds `yy` / `dd` / `P` |
 | `-copy` / `-copy-N` bump | done | `copyName` in `file_clipboard.zig` | |
 | Tree drag → "Move to X?" | done | `dropTreeFile` in `dispatch.zig` | |
-| `Alt`-drag copies | missing | no modifier branch | |
+| `Alt`-drag copies | done | `Drag.tree.copy` (the press's Alt, or the release's) in `dispatch.zig`; `confirmMove(…, copy)` / `acceptCopy` in `tree.zig` | *Copy to folder* confirm; the copy runs on the transfer worker, the original stays |
 | Right side panel — toggle, `Ctrl+Shift+B` | done | `view.toggle_right_panel` | |
 | Right panel — drag grip | done | `dispatch.zig`, `right_divider_id` | |
 | Right panel — persisted visible + width | done | `ui.right_panel_visible` / `ui.right_panel_width` read in `initWith` (`src/app.zig`), number rows in `settings.zig` | `// changed:` the default width is 40, not 32 — 32 drops the sort chip to its icon; a session restore still overrides |
