@@ -42,6 +42,7 @@ const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const Style = vaxis.Style;
 const menu_glyph = @import("../ui/menu_glyph.zig");
+const discovery = @import("discovery.zig");
 const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
@@ -177,6 +178,12 @@ pub fn zenRects(full: Rect) FrameRects {
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
+    // The info box reads the previous frame's hits: they are what the
+    // pointer is resting on until this frame replaces them.
+    const help_tip: ?discovery.Tip = if (app.cfg.ui.hover_help and app.tree.visible) blk: {
+        const tip = discovery.hoverTip(app, app.frame.allocator()) catch null;
+        break :blk if (tip) |tp| .{ .title = try app.frame.allocator().dupe(u8, tp.title), .detail = if (tp.detail) |d| try app.frame.allocator().dupe(u8, d) else null } else null;
+    } else null;
     app.hits.reset();
     const arena = app.frame.allocator();
     const ui: Ui = .{
@@ -198,12 +205,20 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     const fr = if (app.zen) zenRects(full) else frameRects(full);
     try drawPaletteBar(app, ui, fr.bar);
     // The tree takes its width plus a one-cell divider (Rust `ui/mod.rs`).
+    // `ui.hover_help`: while the pointer rests on something with a
+    // description, the rail's bottom rows are its info box.
     var panes_area = fr.upper;
     if (!app.zen and app.tree.visible and panes_area.w > 12) {
         const w: u16 = @max(@min(app.tree.width, panes_area.w -| 21), 8);
         const cols = panes_area.splitLeft(w);
         const div = cols.rest.splitLeft(1);
-        try app.tree.draw(app, ui, cols.left);
+        var rail = cols.left;
+        if (help_tip) |tip| if (app.cfg.ui.hover_help and rail.h > app.cfg.ui.hover_help_height + 4) {
+            const parts = rail.splitBottom(app.cfg.ui.hover_help_height);
+            rail = parts.top;
+            discovery.drawHelpBox(ui, parts.rest, tip);
+        };
+        try app.tree.draw(app, ui, rail);
         drawDivider(app, ui, div.left, tree_divider_id);
         panes_area = div.rest;
     }
@@ -234,6 +249,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         toast_area.h -|= 1;
     }
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
+    try discovery.drawTooltip(app, ui, full);
 }
 
 /// `[≡]` toggles the tree, the centred chip opens the palette, `[▤]`
@@ -1039,7 +1055,10 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             const full = ui.canvas.full();
             wizard_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &w.ui, first_launch.model(app));
         },
-        .info => |kind| cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
+        .info => |kind| switch (kind) {
+            .discovery => discovery.drawOverlay(app, ui, ui.canvas.full()),
+            else => cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
+        },
     }
 }
 

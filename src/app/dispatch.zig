@@ -60,6 +60,7 @@ const launch_profiles = @import("launch_profiles.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const toast_mod = @import("../ui/toast.zig");
+const discovery = @import("discovery.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
@@ -946,12 +947,19 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
 pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
+    app.hover_live = m.kind == .motion or m.kind == .drag;
     if (m.kind == .drag or m.kind == .release) {
         if (app.drag != null) return continueDrag(app, m);
     }
     if (m.kind == .motion) return;
     // A press anywhere puts flash's labels away.
     if (m.kind == .press) flash.cancel(app);
+    // The click-discovery overlay: the press explains its target.
+    if (m.kind == .press and app.overlay == .info and app.overlay.info == .discovery) {
+        const under = app.hits.at(m.x, m.y);
+        closeOverlay(app);
+        return discovery.explain(app, under);
+    }
     const target = app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;

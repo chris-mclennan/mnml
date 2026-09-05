@@ -638,6 +638,9 @@ pub const App = struct {
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
     hover: ?struct { x: u16, y: u16 } = null,
+    /// The pointer got here by moving, not by a press: the hover
+    /// tooltip and the rail's info box read this (`discovery.zig`).
+    hover_live: bool = false,
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
     last_click: ?LastClick = null,
