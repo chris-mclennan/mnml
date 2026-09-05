@@ -56,6 +56,7 @@ pub(crate) mod clipboard;
 pub mod command;
 pub(crate) mod completion;
 pub mod config;
+pub mod config_zon_export;
 pub(crate) mod context_menu;
 pub mod coverage;
 pub(crate) mod dap;
