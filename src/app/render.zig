@@ -40,6 +40,7 @@ const whichkey = @import("whichkey.zig");
 const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
+const Style = vaxis.Style;
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
@@ -118,6 +119,26 @@ pub const Button = enum(u32) {
         const base = @intFromEnum(Button.new_tab_base);
         if (id < base or id >= toast_mod.button_base) return null;
         return id - base;
+    }
+};
+
+/// The right-hand statusline segments the app builds, by hit id
+/// (`statusline.seg_app_base` and up). `dispatch.mouse` routes a click
+/// on each; `discovery.describe` explains each.
+pub const SegId = enum(u32) {
+    branch = statusline.seg_app_base,
+    diagnostics,
+    ai_meter,
+    bell,
+    stress,
+    indent,
+    encoding,
+    transfer,
+    _,
+
+    pub fn of(id: u32) ?SegId {
+        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.transfer)) return null;
+        return @enumFromInt(id);
     }
 };
 
@@ -204,7 +225,13 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
     try lsp.drawPopups(app, ui, panes_area);
-    toast_mod.draw(ui, panes_area, try app.visibleToasts(arena));
+    // The Undo chip takes the toasts' spacer row; the stack sits above it.
+    var toast_area = panes_area;
+    if (app.undo_chip) |u| {
+        toast_mod.drawUndo(ui, panes_area, u.label);
+        toast_area.h -|= 1;
+    }
+    toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
 }
 
 /// `[≡]` toggles the tree, the centred chip opens the palette, `[▤]`
@@ -891,22 +918,40 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     // bar (`:messages`, `ui.stress_meter`), nearest the input style.
     const lua_left = try app.script().segmentTexts(ui.arena, .left);
     const lua_right = try app.script().segmentTexts(ui.arena, .right);
-    const bell_seg = try messages.bellSegment(app, ui.arena, ui.ascii);
+    // The bell is always drawn: quiet (`○`) when nothing is unread, the
+    // count in yellow or red otherwise (`messages.bellSegment`).
+    const th = ui.theme;
+    const bell_text = try messages.bellSegment(app, ui.arena, ui.ascii);
+    const bell_style: ?Style = if (bell_text == null) Theme.onBg(th.muted, th.statusline.bg) else if (std.mem.startsWith(u8, bell_text.?, if (ui.ascii) "x" else "✗")) Theme.onBg(th.error_fg, th.statusline.bg) else Theme.onBg(th.warn_fg, th.statusline.bg);
+    const bell_seg: statusline.Seg = .{ .text = bell_text orelse (if (ui.ascii) "o" else "○"), .id = @intFromEnum(SegId.bell), .style = bell_style, .low = bell_text == null };
     const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
     // A host's `statusline-set-segment` chips, packed by priority into
     // what is left beside the built-ins (`ipc/effects.zig`).
     const budget: usize = area.w -| 40;
     info.dyn_left = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .left, budget / 2, ui.ascii));
     info.dyn_right = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .right, budget / 2, ui.ascii));
-    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, transfer_seg, bell_seg, stress_seg };
+    // The indent and encoding chips only make sense on a text buffer.
+    const editor_chips = app.activeEditor() != null;
+    const indent_seg: ?statusline.Seg = if (editor_chips) .{ .text = ui.fmt("{s} {d}", .{ if (ui.ascii) "tab" else "⇥", app.cfg.editor.tab_width }), .id = @intFromEnum(SegId.indent), .low = true } else null;
+    const encoding_seg: ?statusline.Seg = if (editor_chips) .{ .text = "utf-8", .id = @intFromEnum(SegId.encoding), .low = true } else null;
+    const maybes = [_]?statusline.Seg{
+        if (branch_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.branch) } else null,
+        if (lsp_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.diagnostics) } else null,
+        if (meter_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.ai_meter) } else null,
+        if (transfer_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.transfer) } else null,
+        bell_seg,
+        if (stress_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.stress) } else null,
+        indent_seg,
+        encoding_seg,
+    };
     var extra: usize = lua_left.len + lua_right.len;
     for (maybes) |m| extra += @intFromBool(m != null);
     if (extra > 0) {
-        const segs = try ui.arena.alloc([]const u8, info.right.len + extra);
+        const segs = try ui.arena.alloc(statusline.Seg, info.right.len + extra);
         @memcpy(segs[0..info.right.len], info.right);
         var n = info.right.len;
         for (lua_left) |seg| {
-            segs[n] = seg;
+            segs[n] = .{ .text = seg };
             n += 1;
         }
         for (maybes) |maybe| if (maybe) |seg| {
@@ -914,11 +959,12 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             n += 1;
         };
         for (lua_right) |seg| {
-            segs[n] = seg;
+            segs[n] = .{ .text = seg };
             n += 1;
         }
         info.right = segs;
     }
+    info.restricted = app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null;
     statusline.draw(ui, area, info);
 }
 

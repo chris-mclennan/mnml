@@ -157,6 +157,8 @@ pub const toast_ttl_ms: i64 = 4000;
 
 pub const PromptPurpose = union(enum) {
     goto_line,
+    /// The statusline indent chip: a new `editor.tab_width`.
+    tab_width,
     replace,
     filter_shell,
     new_todo,
@@ -249,6 +251,8 @@ pub const ConfirmPurpose = union(enum) {
     quit,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
+    /// `workspace.review_trust` on a trusted workspace: Keep / Forget.
+    review_trust,
     /// Install the missing tool (`runners.zig`); the payload indexes the installer table.
     install_tool: u16,
     /// A git yes/no; `git.State.confirm` holds the payload.
@@ -514,6 +518,22 @@ pub const Toast = struct {
     id: ?[]u8 = null,
 };
 
+/// How long the Undo chip stays offered.
+pub const undo_chip_ttl_ms: i64 = 10_000;
+
+/// The Undo chip: what a click puts back.
+pub const UndoChip = struct {
+    /// Owned: `closed 3 tabs`.
+    label: []u8,
+    action: Action,
+    expires_ms: i64,
+
+    pub const Action = union(enum) {
+        /// `buffer.reopen` this many times.
+        reopen: usize,
+    };
+};
+
 /// Tab-completion state on the `:` line: the candidates for the prefix
 /// typed, and which one is showing.
 pub const CmdComplete = struct {
@@ -617,6 +637,12 @@ pub const App = struct {
     keymap: keymap.Keymap,
     chord: ChordChain = .{},
     toasts: std.ArrayListUnmanaged(Toast) = .empty,
+    /// The toast a right-click menu was opened on (an index into
+    /// `toasts`); `toast.dismiss_clicked` / `copy_clicked` read it.
+    toast_ctx: ?usize = null,
+    /// The Undo chip beside the toast stack (`armUndo`): one click puts
+    /// a destructive action back, a right-click drops the offer.
+    undo_chip: ?UndoChip = null,
     overlay: Overlay = .none,
     find_bar: ?FindBarState = null,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
@@ -931,6 +957,7 @@ pub const App = struct {
         }
         for (self.toasts.items) |t| freeToast(gpa, t);
         self.toasts.deinit(gpa);
+        if (self.undo_chip) |u| gpa.free(u.label);
         self.messages.deinit(gpa);
         self.harpoon.deinit(gpa);
         self.file_clipboard.deinit(gpa);
@@ -1074,6 +1101,41 @@ pub const App = struct {
     pub fn dismissToasts(self: *App) void {
         for (self.toasts.items) |t| freeToast(self.gpa, t);
         self.toasts.clearRetainingCapacity();
+    }
+
+    // ─── the Undo chip ───
+
+    /// Offer to put a destructive action back for `undo_chip_ttl_ms`.
+    /// A newer offer replaces an older one.
+    pub fn armUndo(self: *App, action: UndoChip.Action, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+        const label = try std.fmt.allocPrint(self.gpa, fmt, args);
+        errdefer self.gpa.free(label);
+        self.dropUndo();
+        self.undo_chip = .{ .label = label, .action = action, .expires_ms = self.now_ms + undo_chip_ttl_ms };
+        self.needs_render = true;
+    }
+
+    pub fn dropUndo(self: *App) void {
+        if (self.undo_chip) |u| self.gpa.free(u.label);
+        self.undo_chip = null;
+        self.needs_render = true;
+    }
+
+    /// The chip was clicked: run the action, then drop the chip.
+    pub fn takeUndo(self: *App) Allocator.Error!void {
+        const chip = self.undo_chip orelse return;
+        const action = chip.action;
+        self.dropUndo();
+        switch (action) {
+            .reopen => |n| {
+                var i: usize = 0;
+                while (i < n) : (i += 1) command.run(self, .{ .static = .@"buffer.reopen" }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => break,
+                };
+                self.toast("reopened {d} tab(s)", .{i});
+            },
+        }
     }
 
     // ─── the ex bridge the dyn registry uses ───
@@ -1559,6 +1621,7 @@ pub const App = struct {
                 self.needs_render = true;
             } else i += 1;
         }
+        if (self.undo_chip) |u| if (now >= u.expires_ms) self.dropUndo();
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
@@ -1605,6 +1668,7 @@ pub const App = struct {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
         }
+        if (self.undo_chip) |u| next = @min(next orelse std.math.maxInt(i64), u.expires_ms);
         return next;
     }
 

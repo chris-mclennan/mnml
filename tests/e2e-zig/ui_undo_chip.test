@@ -1,0 +1,17 @@
+# zig-only
+# Closing the other tabs arms the Undo chip beside the toast stack for
+# ten seconds; a click on it reopens what was closed.
+write a.txt alpha
+write b.txt beta
+open a.txt
+open b.txt
+expect screen contains "a.txt"
+expect screen contains "b.txt"
+command buffer.close_others
+expect screen lacks " a.txt "
+expect screen contains "Undo · closed 1 tab(s)"
+# The chip sits on the toasts' spacer row, right-aligned: row 37.
+click 110 37
+expect screen contains "reopened 1 tab(s)"
+expect screen contains "a.txt"
+expect screen lacks "Undo ·"

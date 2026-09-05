@@ -837,7 +837,7 @@ fn drawEditor(uictx: Ui, area: Rect, g: *Gallery, matches: ?[]const ui.editor_vi
         .input_style = "vim",
         .selection_chars = sel,
         .pending = if (g.screen == .which_key) "space" else null,
-        .right = &.{ "utf-8", "zig" },
+        .right = &.{ .{ .text = "utf-8" }, .{ .text = "zig" } },
     });
     return caret;
 }
