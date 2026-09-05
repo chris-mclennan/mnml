@@ -1,0 +1,11 @@
+# zig-only
+# `editor.format_external` with nothing in `.formatters` falls back to
+# the builtin table (`src/lsp/tools.zig`): a `.zig` buffer goes through
+# `zig fmt --stdin` — on PATH wherever this suite runs — and the tool's
+# stdout replaces the text as one edit, so the buffer turns dirty.
+write a.zig "const  x=1;\n"
+open a.zig
+command editor.format_external
+expect screen contains "formatted a.zig with zig"
+expect screen contains "const x = 1;"
+expect dirty true

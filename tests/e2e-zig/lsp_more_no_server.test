@@ -1,0 +1,20 @@
+# zig-only
+# The lsp-more commands without a language server attached: each one
+# refuses with a reason instead of doing nothing, and the inlay-hint
+# toggle flips live (`src/app/lsp_decor.zig`, `src/app/lsp_format.zig`).
+write a.txt "see https://example.com/x now\n"
+open a.txt
+command lsp.inlay_hints_toggle
+expect screen contains "inlay hints: off"
+command lsp.inlay_hints_toggle
+expect screen contains "inlay hints: on"
+command lsp.code_lens_run
+expect screen contains "no code lens on this line"
+command lsp.format_selection
+expect screen contains "no language server for this file (format selection)"
+command editor.open_url_at_cursor
+expect screen contains "no link under cursor"
+command editor.format_external
+expect screen contains "no formatter for .txt"
+command editor.lint_external
+expect screen contains "no linter for .txt"
