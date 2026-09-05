@@ -1,0 +1,17 @@
+# zig-only
+# Switching tab pages says where you landed once: `gT` / `gt` / `:tabnew`
+# replace the previous `tab N/M` toast instead of stacking a new one, so
+# after four moves only the last is on screen and there is no `+N more`.
+write a.txt "alpha\n"
+open a.txt
+command editor.use_vim
+ex tabnew
+key g
+key T
+key g
+key t
+key g
+key T
+expect screen contains "tab 1/2"
+expect screen lacks "tab 2/2"
+expect screen lacks "more…"

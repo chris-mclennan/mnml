@@ -1124,6 +1124,28 @@ pub const App = struct {
         self.needs_render = true;
     }
 
+    /// A toast that replaces its predecessor of the same `id` instead of
+    /// stacking on it, and expires like any other — for a message that
+    /// repeats on every keystroke of a navigation (`tab 2/3`) so the
+    /// column never fills with its history.
+    pub fn toastReplace(self: *App, id: []const u8, comptime fmt: []const u8, args: anytype) void {
+        self.dismissToast(id);
+        const s = std.fmt.allocPrint(self.gpa, fmt, args) catch return;
+        errdefer self.gpa.free(s);
+        const owned_id = self.gpa.dupe(u8, id) catch {
+            self.gpa.free(s);
+            return;
+        };
+        self.messages.record(self.gpa, s, .info, self.now_ms) catch {};
+        if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
+        self.toasts.append(self.gpa, .{ .text = s, .level = .info, .expires_ms = self.now_ms + toast_ttl_ms, .id = owned_id }) catch {
+            self.gpa.free(s);
+            self.gpa.free(owned_id);
+            return;
+        };
+        self.needs_render = true;
+    }
+
     /// A toast that stays until `dismissToast(id)`; a repeat with the
     /// same id replaces the text.
     pub fn toastPersistent(self: *App, id: []const u8, text: []const u8, level: ToastLevel) Allocator.Error!void {
@@ -1694,7 +1716,8 @@ pub const App = struct {
         var i: usize = 0;
         while (i < self.toasts.items.len) {
             const t = self.toasts.items[i];
-            if (t.id == null and now >= t.expires_ms) {
+            // A persistent toast sits at maxInt and never gets here.
+            if (now >= t.expires_ms) {
                 freeToast(self.gpa, self.toasts.orderedRemove(i));
                 self.needs_render = true;
             } else i += 1;
@@ -1743,7 +1766,7 @@ pub const App = struct {
             next = @min(next orelse std.math.maxInt(i64), d);
         };
         for (self.toasts.items) |t| {
-            if (t.id != null) continue;
+            if (t.expires_ms == std.math.maxInt(i64)) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
         }
         if (self.undo_chip) |u| next = @min(next orelse std.math.maxInt(i64), u.expires_ms);
