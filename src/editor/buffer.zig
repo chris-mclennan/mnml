@@ -424,7 +424,10 @@ pub const Buffer = struct {
         for (list) |o| {
             if (o.isMutation() and !o.isUndoOrRedo()) mutates = true;
         }
-        if (!mutates) return;
+        // The key that entered Insert is part of the change even when it
+        // only moved (`A` is `move_line_end` + the typed text): vim's `.`
+        // after `A!<Esc>` appends, it does not insert at the cursor.
+        if (!mutates and !in_insert) return;
         for (self.dot_pending.items) |o| o.free(self.gpa);
         self.dot_pending.clearRetainingCapacity();
         try self.appendDot(list);
@@ -449,18 +452,37 @@ pub const Buffer = struct {
         self.dot = try self.dot_pending.toOwnedSlice(self.gpa);
     }
 
+    /// `.` (`count` = 0) or `{count}.`: a count replaces the count of
+    /// the recorded change — the first `repeat` in the record, where the
+    /// handler put the operator's motion — and sticks for the next bare
+    /// `.` (`:help .`). A record with no counted op (`A!<Esc>`, `oX<Esc>`)
+    /// is replayed `count` times, which is what `3A!` / `3oX` do anyway.
+    /// The replay is one undo step whatever it contains.
     fn dotRepeat(self: *Buffer, count: u32, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
         const d = self.dot orelse return .noop;
         self.replaying_dot = true;
         defer self.replaying_dot = false;
+        var times: u32 = 1;
+        if (count > 0) {
+            if (countedOp(d)) |n| n.* = count else times = count;
+        }
+        const tok = try self.editor.beginAtomic();
         var changed = false;
-        for (0..@max(count, 1)) |_| {
+        for (0..times) |_| {
             if (try self.applyOps(d, clip, viewport_rows, arena)) changed = true;
         }
+        self.editor.endAtomic(tok);
+        if (!changed) self.editor.popCheckpoint();
         // A replayed change that entered insert mode leaves the handler
         // there; the replay already typed the text, so drop back.
         if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
         return if (changed) .edited else .redraw;
+    }
+
+    /// The count in a recorded change: the first counted op's.
+    fn countedOp(list: []EditOp) ?*u32 {
+        for (list) |*o| if (o.countPtr()) |n| return n;
+        return null;
     }
 
     // ─── macros ───
@@ -872,6 +894,11 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("di[", "[|a]", "[|]");
     try vim("cwfoo<esc>", "|hello world", "fo|o world");
     try vim("cefoo<esc>", "|hello world", "fo|o world");
+    try vim("cwX<esc>", "hell|o world", "hell|X world"); // on the last char: just that char
+    try vim("2cwX<esc>", "|a b c", "|X c");
+    try vim("c2wX<esc>", "|a.b c", "|Xb c"); // `.` is its own word
+    try vim("cwX<esc>", "a| b", "a|Xb"); // on a blank: the blanks
+    try vim("cWX<esc>", "|a.b c", "|X c");
     try vim("ccx<esc>", "|abc\nd", "|x\nd");
     try vim("Sx<esc>", "ab|c\nd", "|x\nd");
     try vim("Cx<esc>", "a|bc\nd", "a|x\nd");
@@ -941,6 +968,14 @@ test "vim undo, redo, dot-repeat" {
     try vim("A!<esc>j.", "|a\nb", "a!\nb|!");
     try vim("x3.", "|abcdef", "|ef");
     try vim("x.u", "|abcd", "|bcd");
+    // A count replaces the change's count and sticks: `3.` after `cw` is `3cw`.
+    try vim("cwX<esc>j03.", "|a b\nc d e f", "X b\n|X f");
+    try vim("cwX<esc>j03.j0.", "|a b\nc d e f\ng h i j", "X b\nX f\n|X j");
+    try vim("dw2.", "|a b c d e", "|d e");
+    try vim("2dd3.", "|a\nb\nc\nd\ne\nf", "|f");
+    try vim("A!<esc>j2.", "|a\nb", "a!\nb!|!");
+    // `.` with an insert is one undo step.
+    try vim("cwX<esc>j0.u", "|a b\nc d", "X b\n|c d");
     try vim("p.", "|a", "|a"); // empty register: nothing to repeat
 }
 

@@ -76,6 +76,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             motion.wordEnd(ed);
             try mc.moveExtras(ed, motion.wordEnd);
         },
+        .move_word_end_cw => |n| motion.wordEndCw(ed, n, false),
+        .move_big_word_end_cw => |n| motion.wordEndCw(ed, n, true),
         .move_word_end_back => motion.wordEndBack(ed),
         .move_big_word_right => motion.bigWordRight(ed),
         .move_big_word_right_no_cross_line => motion.bigWordRightNoCrossLine(ed),

@@ -1286,8 +1286,11 @@ pub const Vim = struct {
                         return repeated(arena, .toggle_case_char, n);
                     },
                     '.' => {
+                        // A count replaces the last change's count
+                        // (`:help .`); 0 = repeat as recorded.
+                        const explicit = self.count orelse 0;
                         self.resetPending();
-                        return .{ .app = .{ .dot_repeat = n } };
+                        return .{ .app = .{ .dot_repeat = explicit } };
                     },
                     '&' => {
                         self.resetPending();
@@ -1649,12 +1652,17 @@ pub const Vim = struct {
                 return .consumed;
             }
         }
-        // `cw` behaves like `ce`.
-        var code = key.code;
-        if (op == .change) {
-            if (ch == 'w') code = .{ .char = 'e' };
-            if (ch == 'W') code = .{ .char = 'E' };
+        // `cw` is `ce`-shaped (`:help cw`): the current word's end, even
+        // when the cursor is already on it, then `e` for the rest of a
+        // count — one op carrying the count so `{count}.` can replace it.
+        if (op == .change and (ch == 'w' or ch == 'W')) {
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            try b.push(if (ch == 'w') .{ .move_word_end_cw = n } else .{ .move_big_word_end_cw = n });
+            try b.push(.move_right);
+            return self.finishOperator(&b, op, ctx, false);
         }
+        const code = key.code;
         const vertical: ?i2 = switch (code) {
             .char => |c| switch (c) {
                 'j', '+' => 1,
@@ -1719,11 +1727,8 @@ pub const Vim = struct {
             }
             var b = Builder.init(arena);
             try b.push(.select_start);
-            if (n > 1) {
-                const inner = try arena.create(EditOp);
-                inner.* = m;
-                try b.push(.{ .repeat = .{ .count = n, .inner = inner } });
-            } else try b.push(m);
+            // Always a `repeat`, so `3.` can replace the count of `dw`.
+            try b.pushRepeated(m, n);
             if (inclusive) try b.push(.move_right);
             return self.finishOperator(&b, op, ctx, false);
         }
