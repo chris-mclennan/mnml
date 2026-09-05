@@ -214,7 +214,50 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
+pub const PickerKind = enum {
+    buffers,
+    files,
+    recent,
+    commands,
+    tabs,
+    themes,
+    go_run_cmd,
+    tools,
+    tasks,
+    git,
+    ai_suggest_backend,
+    ai_session,
+    dap_remove_watch,
+    dap_exceptions,
+    dap_threads,
+    lsp_locations,
+    lsp_code_actions,
+    lsp_symbols,
+    http_env_vars,
+    http_env_delete,
+    http_env_pick,
+    http_history,
+    http_captured,
+    http_chains,
+    auth_presets,
+    cookies_show,
+    cookies_delete,
+    http_insert_header,
+    http_copy_as,
+    http_lookup_file,
+    http_lookup_item,
+    ws_history,
+    browser_device,
+    browser_throttle,
+    browser_url_history,
+    /// A picker whose accept is the opener's own function
+    /// (`Overlay.picker.on_accept`): messages, harpoon, the startup picker.
+    custom,
+};
+
+/// The accept of a `.custom` picker: the row's unfiltered index and its
+/// label (a frame copy — the overlay is already gone when this runs).
+pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Allocator.Error!void;
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -251,6 +294,8 @@ pub const Overlay = union(enum) {
         /// The themes picker previews as the cursor moves; Esc puts
         /// this one back.
         restore_theme: ?*const theme_mod = null,
+        /// `.custom` only.
+        on_accept: ?PickerAccept = null,
     },
     /// A context menu (a panel row's kebab, a chip's right-click).
     menu: MenuState,
