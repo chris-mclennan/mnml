@@ -343,6 +343,13 @@ pub const Tree = struct {
             .esc => {
                 if (app.active) |a| app.focus = .{ .pane = a };
             },
+            // F2 renames the row (VS Code's Explorer chord). The global
+            // `lsp.rename` on F2 is an editor's; taking it here is how a
+            // tree-focused key wins over the chord chain.
+            .f => |fn_key| {
+                if (fn_key != 2) return false;
+                try runCmd(app, .@"file.rename");
+            },
             .char => |c| switch (c) {
                 'j' => self.cursor = @min(self.cursor + 1, n -| 1),
                 'k' => self.cursor -|= 1,
@@ -969,6 +976,28 @@ test "tree: Ctrl+Shift+X/C/V/D are not the clipboard chords — the tree decline
     // The plain chord is still the clipboard's.
     try t.expect(try app.tree.handleKey(&app, Key.ctrl('x')));
     try t.expectEqual(@as(usize, 1), app.file_clipboard.paths.items.len);
+}
+
+test "tree: F2 opens the rename prompt seeded with the row; other function keys go to the chain" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "aa" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rows.items.len - 1;
+    try t.expect(!try app.tree.handleKey(&app, Key{ .code = .{ .f = 3 }, .mods = .{} }));
+    try t.expect(app.overlay == .none);
+    try t.expect(try app.tree.handleKey(&app, Key{ .code = .{ .f = 2 }, .mods = .{} }));
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("Rename to (workspace-relative)", app.overlay.prompt.state.title);
+    try t.expectEqualStrings("a.txt", app.overlay.prompt.state.text());
+    try t.expect(app.focus == .overlay);
 }
 
 test "tree: artifact directories stay out of the rows without a .gitignore; H shows them" {

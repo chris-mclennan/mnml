@@ -577,7 +577,7 @@ pub const specs = [_]Spec{
     .{ .id = "lsp.signature_help", .title = "LSP: signature help (param info popup at cursor)", .group = "lsp", .keys = .{ .both = &.{"ctrl+shift+space"} } },
     .{ .id = "lsp.signature_next", .title = "LSP: next signature (overload)", .group = "lsp" },
     .{ .id = "lsp.signature_prev", .title = "LSP: previous signature (overload)", .group = "lsp" },
-    .{ .id = "lsp.rename", .title = "LSP: rename symbol", .group = "lsp", .keys = .{ .both = &.{"f2"} } },
+    .{ .id = "lsp.rename", .title = "LSP: rename symbol (F2 in an editor; the tree's F2 renames the file)", .group = "lsp", .keys = .{ .both = &.{"f2"} } },
     .{ .id = "lsp.format", .title = "LSP: format document", .group = "lsp", .keys = .{ .vim = &.{"space f m"}, .both = &.{"ctrl+shift+i"} } },
     .{ .id = "lsp.format_selection", .title = "LSP: format selection (range formatting)", .group = "lsp" },
     .{ .id = "lsp.code_lens_run", .title = "LSP: run the code lens above the cursor's line", .group = "lsp" },

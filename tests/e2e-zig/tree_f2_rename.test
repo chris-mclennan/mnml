@@ -1,0 +1,18 @@
+# zig-only
+# F2 with the tree focused renames the selected row (VS Code's Explorer
+# chord); the global `lsp.rename` binding on F2 only applies to an
+# editor. The prompt is seeded with the row's path.
+write a.txt "aa"
+command view.focus_tree
+key r
+key end
+key f2
+expect screen contains "Rename to (workspace-relative)"
+expect screen lacks "no language server"
+key ctrl+u
+type b.txt
+key enter
+wait 300
+expect file b.txt contains "aa"
+expect screen contains "b.txt"
+expect screen contains "moved a.txt → b.txt"
