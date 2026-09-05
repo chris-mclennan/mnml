@@ -28,6 +28,7 @@ pub const PendingOp = enum {
     yank,
     indent,
     outdent,
+    reindent,
     reflow,
     lower,
     upper,
@@ -44,6 +45,7 @@ pub const PendingOp = enum {
             .yank => "y",
             .indent => ">",
             .outdent => "<",
+            .reindent => "=",
             .reflow => "gq",
             .lower => "gu",
             .upper => "gU",
@@ -767,6 +769,10 @@ pub const Vim = struct {
                 try b.push(.outdent);
                 try b.push(.select_clear);
             },
+            .reindent => {
+                try b.push(.reindent);
+                try b.push(.select_clear);
+            },
             .reflow => {
                 b.list.clearRetainingCapacity();
                 try b.push(.{ .reflow_paragraph = .{ .width = self.text_width } });
@@ -1327,13 +1333,14 @@ pub const Vim = struct {
                         self.resetPending();
                         return repeated(arena, .undo, n);
                     },
-                    'd', 'c', 'y', '>', '<', '!' => {
+                    'd', 'c', 'y', '>', '<', '=', '!' => {
                         self.op = switch (c) {
                             'd' => .delete,
                             'c' => .change,
                             'y' => .yank,
                             '>' => .indent,
                             '<' => .outdent,
+                            '=' => .reindent,
                             else => .filter,
                         };
                         self.count = if (n > 1) n else null;
@@ -1452,14 +1459,21 @@ pub const Vim = struct {
         if (key.mods.ctrl and c == 'g') return runCmd(.@"editor.file_stats");
         switch (c) {
             'g' => {
+                const go: EditOp = if (count_explicit) .{ .move_to_line = n } else .move_buffer_start;
                 if (pending_op) |op| {
                     if (op == .delete or op == .yank) {
                         const target: ?u32 = if (count_explicit) n else 0;
                         return .{ .app = .{ .operator_linewise_to = .{ .op = if (op == .delete) 'd' else 'y', .target = target } } };
                     }
+                    // `=gg`, `>gg`, `cgg`: linewise back to the top — the
+                    // cursor's line counts whole.
+                    var b = Builder.init(arena);
+                    try b.push(.move_line_end);
+                    try b.push(.select_start);
+                    try b.push(go);
+                    return self.finishOperator(&b, op, ctx, false);
                 }
-                if (count_explicit) return ops(arena, &.{.{ .move_to_line = n }});
-                return ops(arena, &.{.move_buffer_start});
+                return ops(arena, &.{go});
             },
             'd' => return runCmd(.@"lsp.goto_definition"),
             'D' => return runCmd(.@"lsp.goto_declaration"),
@@ -1563,6 +1577,7 @@ pub const Vim = struct {
             .yank => c == 'y',
             .indent => c == '>',
             .outdent => c == '<',
+            .reindent => c == '=',
             .lower => c == 'u',
             .upper => c == 'U',
             .toggle_case => c == '~',
@@ -1591,12 +1606,16 @@ pub const Vim = struct {
                     try b.push(.continue_insert_run);
                     return b.finish();
                 },
-                .indent, .outdent => {
+                .indent, .outdent, .reindent => {
                     var b = Builder.init(arena);
                     try b.push(.select_start);
                     for (1..n) |_| try b.push(.move_down);
                     try b.push(.move_line_end);
-                    try b.push(if (op == .indent) .indent else .outdent);
+                    try b.push(switch (op) {
+                        .indent => .indent,
+                        .outdent => .outdent,
+                        else => .reindent,
+                    });
                     try b.push(.select_clear);
                     return b.finish();
                 },
@@ -1679,16 +1698,13 @@ pub const Vim = struct {
             // `>j` / `<k`: one line op over a selection spanning the lines
             // (a per-line op without a selection would hit the cursor
             // line every time).
-            if (op == .indent or op == .outdent or op == .@"align") {
+            if (op == .indent or op == .outdent or op == .reindent or op == .@"align") {
                 try b.push(.select_start);
                 for (0..n) |_| try b.push(if (dir < 0) .move_up else .move_down);
                 // Park at the last line's end so a selection ending on a
                 // line start does not exclude that line.
                 try b.push(.move_line_end);
-                if (op == .@"align") return self.finishOperator(&b, op, ctx, false);
-                try b.push(if (op == .indent) .indent else .outdent);
-                try b.push(.select_clear);
-                return b.finish();
+                return self.finishOperator(&b, op, ctx, false);
             }
             if (dir < 0) for (0..n) |_| try b.push(.move_up);
             switch (op) {
@@ -1730,6 +1746,8 @@ pub const Vim = struct {
             // Always a `repeat`, so `3.` can replace the count of `dw`.
             try b.pushRepeated(m, n);
             if (inclusive) try b.push(.move_right);
+            // `G` is linewise: the last line counts whole.
+            if (ch == 'G') try b.push(.move_line_end);
             return self.finishOperator(&b, op, ctx, false);
         }
         return .consumed;
@@ -1875,9 +1893,13 @@ pub const Vim = struct {
                 return ops(arena, &.{ widen, .yank_selection, .move_cursor_to_selection_start, .select_clear });
             },
             'o' => return ops(arena, &.{.swap_anchor_cursor}),
-            '>', '<' => {
+            '>', '<', '=' => {
                 self.enterNormal();
-                const op: EditOp = if (c == '>') .indent else .outdent;
+                const op: EditOp = switch (c) {
+                    '>' => .indent,
+                    '<' => .outdent,
+                    else => .reindent,
+                };
                 if (linewise) return ops(arena, &.{ .normalize_linewise_selection, op, .select_clear });
                 return ops(arena, &.{ op, .select_clear });
             },

@@ -1,5 +1,5 @@
 //! `EditOp` — every text-editing intent an input handler can express
-//! (D4). 136 tags. The editor applies them through one exhaustive
+//! (D4). 137 tags. The editor applies them through one exhaustive
 //! switch in `apply.zig`; nothing else mutates buffer text.
 //!
 //! Payload slices (`insert_str`, `replace_selection`, `replace_range.text`)
@@ -147,6 +147,9 @@ pub const EditOp = union(enum) {
     // ── line ops ──
     indent,
     outdent,
+    /// `=`: the selected lines (or the cursor's) re-indented by the
+    /// buffer's brace rules.
+    reindent,
     toggle_line_comment,
     move_line_up,
     move_line_down,
@@ -178,7 +181,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 136);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 137);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).

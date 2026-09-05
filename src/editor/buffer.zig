@@ -1139,6 +1139,13 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("2>>", "|a\nb\nc", "    a\n |   b\nc");
     try vim("<j", "    |a\n    b\nc", "a\nb|\nc");
     try vim("<k", "    a\n    |b\nc", "a|\nb\nc");
+    // `=` re-indents by the braces above: one line, a motion, the file, a selection.
+    try vim("==", "f() {\n|x;\n}", "f() {\n    |x;\n}");
+    try vim("gg=G", "f() {\nx;\n  if (a) {\n  y;\n}\n|}", "|f() {\n    x;\n    if (a) {\n        y;\n    }\n}");
+    try vim("=j", "f() {\n|x;\n  y;\n}", "f() {\n    |x;\n    y;\n}");
+    try vim("Vj=", "f() {\n|x;\n  y;\n}", "f() {\n    |x;\n    y;\n}");
+    try vim("G=gg", "|f() {\n  x;\n}\n", "|f() {\n    x;\n}\n");
+    try vim("==", "|f() {\nx;\n}", "|f() {\nx;\n}"); // nothing to change: no edit
 }
 
 test "vim registers, yank and put" {

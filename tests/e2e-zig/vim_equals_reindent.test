@@ -1,0 +1,44 @@
+# zig-only
+# `=` re-indents by the buffer's brace rules: `==` fixes one line,
+# `gg=G` the whole file, `=` in Visual the selection.
+write b.zig "const std = @import(\"std\");\n\npub fn add(a: i32, b: i32) i32 {\n    return a + b;\n}\n\npub fn main() void {\n    if (x > 2) {\n        big();\n    }\n}\n"
+open b.zig
+command editor.use_vim
+
+type ":4"
+key enter
+key <
+key <
+command file.save
+expect file b.zig contains "i32 {\nreturn a + b;\n}"
+key =
+key =
+command file.save
+expect file b.zig contains "i32 {\n    return a + b;\n}"
+
+# Flatten everything, then `gg=G` restores it.
+type ":%<"
+key enter
+type ":%<"
+key enter
+command file.save
+expect file b.zig contains "{\nbig();\n}"
+key g
+key g
+key =
+key G
+command file.save
+expect file b.zig contains "pub fn main() void {\n    if (x > 2) {\n        big();\n    }\n}\n"
+expect file b.zig contains "i32 {\n    return a + b;\n}"
+
+# Visual `=` over a range.
+type ":8,10<"
+key enter
+type ":8"
+key enter
+key V
+key 2
+key j
+key =
+command file.save
+expect file b.zig contains "    if (x > 2) {\n        big();\n    }\n"

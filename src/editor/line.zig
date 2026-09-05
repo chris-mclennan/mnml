@@ -106,6 +106,92 @@ pub fn outdent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     }
 }
 
+/// `=`: each line of the range gets the indent the lines above call
+/// for — vim's `=` without an `indentexpr`, reduced to the brace rules
+/// that fit every C-shaped language: a line takes the indent of the
+/// nearest non-blank line above it (as just re-indented), one unit more
+/// when that line ends in `{` `(` `[`, one unit less when the line
+/// itself opens with `}` `)` `]`. Blank lines are emptied. The unit is
+/// the tab width, a tab under `use_tabs`. The cursor lands on the first
+/// line's first non-blank.
+pub fn reindent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
+    try ed.checkpoint();
+    const range = selectedLineRange(ed);
+    var changed = false;
+    var line = range[0];
+    while (line <= range[1]) : (line += 1) {
+        const bol = ed.lineStart(line);
+        const eol = ed.lineEnd(line);
+        if (ed.lineIsBlank(line)) {
+            if (eol > bol) {
+                try ed.splice(bol, eol, "");
+                changed = true;
+            }
+            continue;
+        }
+        const want = targetIndent(ed, line);
+        const have = ed.leadingIndent(line, null);
+        var buf: [256]u8 = undefined;
+        const text = indentText(ed, want, &buf);
+        if (std.mem.eql(u8, have, text)) continue;
+        try ed.splice(bol, bol + have.len, text);
+        changed = true;
+    }
+    ed.anchor = null;
+    ed.cursor = ed.firstNonWs(@min(range[0], ed.lineCount() - 1));
+    ed.goal_col = null;
+    if (!changed) {
+        ed.popCheckpoint();
+        return;
+    }
+    out.buffer_changed = true;
+}
+
+/// The indent column `line` should have, from the non-blank line above.
+fn targetIndent(ed: *const Editor, line: usize) usize {
+    const unit = @max(ed.tab_width, 1);
+    var p = line;
+    const prev: ?usize = while (p > 0) {
+        p -= 1;
+        if (!ed.lineIsBlank(p)) break p;
+    } else null;
+    var want: usize = 0;
+    if (prev) |pl| {
+        want = indentColumns(ed, pl);
+        const ps = std.mem.trimEnd(u8, ed.lineSlice(pl), " \t");
+        if (ps.len > 0 and (ps[ps.len - 1] == '{' or ps[ps.len - 1] == '(' or ps[ps.len - 1] == '[')) want += unit;
+    }
+    const ls = std.mem.trimStart(u8, ed.lineSlice(line), " \t");
+    if (ls.len > 0 and (ls[0] == '}' or ls[0] == ')' or ls[0] == ']')) want -|= unit;
+    return want;
+}
+
+/// The display column of `line`'s first non-blank (tabs at `tab_width`).
+fn indentColumns(ed: *const Editor, line: usize) usize {
+    var cols: usize = 0;
+    for (ed.leadingIndent(line, null)) |b| cols += if (b == '\t') @max(ed.tab_width, 1) else 1;
+    return cols;
+}
+
+/// `cols` of indent as text: tabs (plus spaces for a remainder) under
+/// `use_tabs`, else spaces. Cut at `buf.len`.
+fn indentText(ed: *const Editor, cols: usize, buf: *[256]u8) []const u8 {
+    var n: usize = 0;
+    var left = cols;
+    if (ed.use_tabs) {
+        const tw = @max(ed.tab_width, 1);
+        while (left >= tw and n < buf.len) : (left -= tw) {
+            buf[n] = '\t';
+            n += 1;
+        }
+    }
+    while (left > 0 and n < buf.len) : (left -= 1) {
+        buf[n] = ' ';
+        n += 1;
+    }
+    return buf[0..n];
+}
+
 /// Copy the current line below itself; cursor moves to the copy.
 pub fn duplicateLine(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     try ed.checkpoint();
@@ -369,6 +455,31 @@ pub fn alignSelection(ed: *Editor, on_char: u21, out: *EditOutcome) Allocator.Er
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
+
+test "reindent follows the braces above, empties blank lines, and is a no-op on tidy text" {
+    var ed = try Editor.init(std.testing.allocator, "fn f() {\nx;\n   \n  if (a) {\ny;\n}\n}\n");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    ed.anchor = 0;
+    ed.cursor = ed.len();
+    try reindent(&ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    x;\n\n    if (a) {\n        y;\n    }\n}\n", ed.text.items);
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    try std.testing.expect(out.buffer_changed and ed.anchor == null);
+    // A second pass changes nothing and leaves no undo entry behind.
+    const undo_len = ed.history.undoLen();
+    out = .{};
+    ed.anchor = 0;
+    ed.cursor = ed.len();
+    try reindent(&ed, &out);
+    try std.testing.expect(!out.buffer_changed);
+    try std.testing.expectEqual(undo_len, ed.history.undoLen());
+    // One line: the cursor's, from the line above it; tabs under use_tabs.
+    ed.use_tabs = true;
+    ed.cursor = ed.lineStart(4);
+    try reindent(&ed, &out);
+    try std.testing.expectEqualStrings("fn f() {\n    x;\n\n    if (a) {\n\t\ty;\n    }\n}\n", ed.text.items);
+}
 
 test "toggle comment: line and block styles, indent kept, blank lines skipped, empty token no-op" {
     var ed = try Editor.init(std.testing.allocator, "  a\n\nb");
