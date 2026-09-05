@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `F2` with the tree focused runs `lsp.rename` (toast: no language server), not `file.rename` — though `docs/commands.md` says F2 renames the tree file
 
@@ -24,3 +24,7 @@ No `Rename` prompt. In the first session, typing the new name after this went st
 **Actual**: the global `f2` → `lsp.rename` binding wins regardless of focus; the tree's `handleKey` has no `f2` case (it only handles `r` = refresh). Rename is reachable only via the right-click menu.
 
 **Source pointer**: `src/app/tree.zig:306` `handleKey` (no `.f` branch); `src/commands/specs.zig` `lsp.rename` keys `f2` in both profiles; `file.rename` keys empty.
+
+## Fix
+
+`563ed4c` on branch `fix-git-tree` — tree: F2 renames the selected row (`Tree.handleKey` answers it ahead of the chord chain); `lsp.rename` keeps F2 for editors and its title says so. Regression: `tests/e2e-zig/tree_f2_rename.test`, unit row in `src/app/tree.zig`; break-checked.

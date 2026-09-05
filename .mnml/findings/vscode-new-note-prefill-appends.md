@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # NOTES `n`: the prompt's prefilled `note-1.md` is not selected, so typing appends — the note is saved without `.md` and never appears in the panel
 
@@ -28,3 +28,7 @@ After Enter: `ls .mnml/notes/` → `note-1.mdmy note`; the panel header still re
 **Actual**: the caret sits at the end of the prefill, the typed text is concatenated, the file lacks `.md`, and NOTES filters it out — from the user's side the note "vanished". The same "prefill is not a selection" idiom bites the `Ctrl+P` picker: `ctrl+a` moves the caret to the start instead of selecting all, so re-typing yields `vscdoechrlie`.
 
 **Source pointer**: the notes `n` prompt in `src/app/notes*.zig` / `Prompt` prefill handling in `src/ui/prompt.zig` (`text_field` has no initial-selection state).
+
+## Fix
+
+`d00d837` on branch `fix-git-tree` — prompt: a seeded name is a selection (`Prompt.seed`: typing / paste replaces it, backspace clears it, enter keeps it, painted on the selection ground) for NOTES and FINDINGS `n`; both accept paths append `.md` to a bare name (`notes.withMdExt`). Regression: `tests/e2e-zig/notes_new_prefill_replaced.test`, unit rows in `src/ui/prompt.zig` and `src/notes.zig`; break-checked. The picker's Ctrl+A aside is a separate concern, not addressed here.

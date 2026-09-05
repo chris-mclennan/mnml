@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl+Shift+D` with the tree focused duplicates the selected file/folder on disk (shift is ignored; `ctrl+shift+c/x/v` misfire the same way)
 
@@ -25,3 +25,7 @@ status: open
 **Actual**: the tree's clipboard shortcut table matches on `ctrl` + the char and ignores `shift`, so `ctrl+shift+{x,c,v,d}` become `file.cut/copy/paste/duplicate` — silently, since the toast is small and the user asked for a different view.
 
 **Source pointer**: `src/app/tree.zig:313-324` (`if (k.mods.ctrl and !k.mods.alt and !k.mods.super and k.code == .char)` — no `!k.mods.shift`). Secondary: `view.activity_debug` is bound (`src/commands/specs.zig`) but has no runner, so even with pane focus the chord only toasts.
+
+## Fix
+
+`dc6f584` on branch `fix-git-tree` — tree: the clipboard chords are plain Ctrl; a shifted one goes to the chord chain. Regression: `tests/e2e-zig/tree_ctrl_shift_keys.test`, unit row in `src/app/tree.zig`; break-checked. The secondary note (`view.activity_debug` has no runner) is untouched.
