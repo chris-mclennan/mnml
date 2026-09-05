@@ -355,7 +355,9 @@ pub fn pasteDistribute(ed: *Editor, parts: []const []const u8, after: bool) Allo
     // `order` is highest-first, so the visual rank of `order[k]` is `n-1-k`.
     const n = order.len;
     for (order, 0..) |i, k| {
-        const at = if (after) @min(ed.nextBoundary(set.cursors[i]), ed.len()) else @min(set.cursors[i], ed.len());
+        const c = @min(set.cursors[i], ed.len());
+        const on_newline = c >= ed.len() or ed.bytes()[c] == '\n';
+        const at = if (after and !on_newline) @min(ed.nextBoundary(c), ed.len()) else c;
         const payload = parts[n - 1 - k];
         try ed.splice(at, at, payload);
         set.shiftAfterInsert(i, at, payload.len);

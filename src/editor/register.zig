@@ -113,7 +113,11 @@ fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcom
             ed.cursor = if (land == .start) bol else bol + s.len;
         }
     } else {
-        const at = if (where == .after) @min(ed.nextBoundary(ed.cursor), ed.len()) else ed.cursor;
+        // `p` puts after the char under the cursor; on an empty line (or
+        // past the end) there is none, and vim puts at the cursor — not
+        // after the `\n`, onto the next line.
+        const on_newline = ed.cursor >= ed.len() or ed.bytes()[ed.cursor] == '\n';
+        const at = if (where == .after and !on_newline) @min(ed.nextBoundary(ed.cursor), ed.len()) else ed.cursor;
         try ed.splice(at, at, s);
         ed.cursor = at + s.len;
     }

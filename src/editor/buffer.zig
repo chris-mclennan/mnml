@@ -1181,6 +1181,8 @@ test "vim registers, yank and put" {
     try vim("yyp", "|a\nb", "a\n|a\nb");
     try vim("yyP", "|a\nb", "|a\na\nb");
     try vim("yyjp", "|a\nb", "a\nb\n|a");
+    try vim("yljp", "|ab\n\nc", "ab\na|\nc"); // charwise p on an empty line puts on that line
+    try vim("yljP", "|ab\n\nc", "ab\na|\nc");
     try vim("2yyGp", "|a\nb\nc", "a\nb\nc\n|a\nb");
     try vim("ywP", "|ab cd", "ab |ab cd");
     try vim("yw$p", "|ab cd", "ab cdab |");

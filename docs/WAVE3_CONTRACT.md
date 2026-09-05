@@ -2198,6 +2198,17 @@ goal.
   unfixed tree), a save test for an Insert cursor at EOF and a
   standard-mode selection, vim rows for `A<esc>` / `i<esc>` / `o<esc>` /
   `O<esc>` / `A<cr><esc>` / `RX<esc>` / `R<cr><esc>`.
+- `// changed (put):` charwise `p` on an empty line (or with the cursor
+  past the end) puts at the cursor, on that line; it stepped past the
+  `\n` onto the next line. The Esc fix unmasked it:
+  `tests/e2e-zig/vim_macro_register.test`'s `o<Esc>"ap` had only landed
+  on the opened line because Esc crossed back onto the line above and
+  `p` then jumped forward over its `\n`. Vim's `p` on an empty line
+  puts there; the test asserts that, the code was wrong. The
+  multi-cursor distribute put follows the same rule. Row: `yljp`
+  "|ab\n\nc" → "ab\na|\nc". Break-check:
+  `tools/break-check.sh "vim registers, yank and put" src/editor/register.zig
+  's/where == \.after and !on_newline/where == .after or on_newline/'`.
 - **Open — the Rust oracle asserts the deviation.**
   `tests/e2e/vim_replace_mode.test:26` expects `XYZdef!` after
   `RXYZ<Esc>`, save, `A<Esc>R!<Esc>`, save on `abcdef`. Its comment
