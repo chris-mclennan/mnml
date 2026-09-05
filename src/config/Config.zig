@@ -81,6 +81,13 @@ pub const Editor = struct {
     chord_timeout_ms: u16 = 500,
     wheel_moves_cursor: WheelMovesCursor = .auto,
     scroll_accel: ScrollAccel = .normal,
+    // changed: the Rust config had no switch for persistent undo (it was
+    // always on, `.mnml/undo/<hash>.json`). mnml-zig keeps the history
+    // under the data root and behind a flag, off by default: a history
+    // file per edited file is a surprise for a first launch.
+    /// Keep each file's undo + redo stacks in `<data root>/undo/` across
+    /// launches (`undo_store.zig`).
+    persistent_undo: bool = false,
 };
 
 // ─── ui ──────────────────────────────────────────────────────────────────
@@ -139,6 +146,11 @@ pub const Ui = struct {
     highlight_trailing_ws: bool = false,
     clock: bool = true,
     stress_meter: bool = false,
+    // changed: Rust's `[ui] check_updates` was missing from the schema;
+    // the update check (`app/update.zig`) reads it.
+    /// Ask GitHub for the newest release once per launch and toast when
+    /// it is newer than this build. `MNML_NO_UPDATE_CHECK=1` also skips it.
+    check_updates: bool = true,
     activity_bar_pinned_integrations: []const []const u8 = &.{},
     plus_menu_pinned: []const []const u8 = &.{},
     plus_menu_hidden: []const []const u8 = &.{},
@@ -491,6 +503,8 @@ test "defaults are the shipped values" {
     try std.testing.expect(!c.ui.integration_icons[1].enabled);
     // the rest
     try std.testing.expect(c.session.restore);
+    try std.testing.expect(!c.editor.persistent_undo);
+    try std.testing.expect(c.ui.check_updates);
     try std.testing.expect(!c.ipc.write_screen);
     try std.testing.expectEqual(CollectionRoot.hidden, c.http.collection_root);
     try std.testing.expect(c.http.auto_format_body);
