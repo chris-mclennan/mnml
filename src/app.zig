@@ -77,6 +77,7 @@ const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
 const update = @import("app/update.zig");
+const session = @import("app/session.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -544,6 +545,7 @@ pub const App = struct {
     /// Render durations for the statusline stress meter.
     stress: stress.Meter = .{},
     update: update.State = .{},
+    session: session.State = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -610,7 +612,11 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        // The session comes back before anything else the startup hook
+        // does, so the update toast and the picker land on the restored frame.
+        try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
         try app.hooks.subscribe(.startup, .{ .zig = &update.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
         try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
         app.now_ms = nowMs(io);
@@ -1329,6 +1335,7 @@ pub const App = struct {
         try git_app.tick(self, now);
         try ai_app.tick(self);
         try update.tick(self);
+        session.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1505,6 +1512,8 @@ test {
     _ = @import("app/stress.zig");
     _ = @import("app/undo_store.zig");
     _ = @import("app/update.zig");
+    _ = @import("app/session.zig");
+    _ = @import("app/cmd_session.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

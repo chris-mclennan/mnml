@@ -123,6 +123,7 @@ const runner_tables = .{
     @import("../app/cmd_harpoon.zig"),
     @import("../app/stress.zig"),
     @import("../app/update.zig"),
+    @import("../app/cmd_session.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
