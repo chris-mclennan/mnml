@@ -122,6 +122,7 @@ const runner_tables = .{
     @import("../app/zen.zig"),
     @import("../app/cmd_harpoon.zig"),
     @import("../app/stress.zig"),
+    @import("../app/update.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
