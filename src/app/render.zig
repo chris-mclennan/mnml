@@ -254,6 +254,10 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         toast_area.h -|= 1;
     }
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
+    // A context menu is the topmost layer — over the toasts too, whose
+    // own menu it is — and it stays above the statusline and the `:`
+    // line, whatever it was anchored in.
+    if (app.overlay == .menu) drawMenu(ui, Rect.init(full.x, full.y, full.w, fr.upper.bottom() -| full.y), &app.overlay.menu);
     try discovery.drawTooltip(app, ui, full);
 }
 
@@ -1051,9 +1055,8 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             }
             which_key.draw(ui, body, title, entries);
         },
-        // A menu is anchored where the click was, which may be in the
-        // tree or the right panel: it clamps against the whole screen.
-        .menu => |*m| drawMenu(ui, ui.canvas.full(), m),
+        // A menu paints last of all, after the toasts (`render`).
+        .menu => {},
         .settings => |*s| {
             const items = try settings_app.items(app, ui.arena);
             const sub = try settings_app.footer(app, ui.arena, items);
@@ -1073,8 +1076,9 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     }
 }
 
-/// A context menu anchored at the click, pulled inside `screen` when it
-/// would run off the edge. Every row registers `.menu_item{0, idx}`; a
+/// A context menu anchored at the click: below the pointer when it
+/// fits, else above it (the frame's bottom row on the pointer's row),
+/// and pulled inside `screen` either way. Every row registers `.menu_item{0, idx}`; a
 /// separator paints a rule and registers nothing. A row with a submenu
 /// ends in `▸`; the open child (`m.sub`) paints beside its parent row
 /// with `.menu_item{1, idx}` hits. In a curatable menu the focused leaf
@@ -1085,7 +1089,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
     const w: u16 = @min(size.w, screen.w);
     const h: u16 = @min(size.h, screen.h);
     const x = @min(m.x, (screen.x + screen.w) -| w);
-    const y = @min(m.y, (screen.y + screen.h) -| h);
+    const y = menuTop(screen, m.y, h);
     const frame = Rect.init(x, y, w, h);
     const inner = overlay_mod.frame(ui, frame, m.title);
     if (inner.isEmpty()) return;
@@ -1103,6 +1107,15 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
     sub.rect = crect;
     if (cinner.isEmpty()) return;
     _ = paintMenuRows(ui, cinner, sub.items, sub.cursor, 1, m.curatable, false);
+}
+
+/// The top row of an `h`-row menu anchored at `anchor_y`: the anchor
+/// when the menu fits below it, the row that puts the menu's bottom on
+/// the anchor when it only fits above, else as low as `screen` allows.
+pub fn menuTop(screen: Rect, anchor_y: u16, h: u16) u16 {
+    if (anchor_y + h <= screen.bottom()) return @max(anchor_y, screen.y);
+    if (anchor_y + 1 >= screen.y + h) return anchor_y + 1 - h;
+    return @max(screen.bottom() -| h, screen.y);
 }
 
 const MenuSize = struct { w: u16, h: u16 };
@@ -1271,6 +1284,52 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
         found = true;
     };
     try t.expect(found);
+}
+
+test "a toast's menu opens above the pointer, over the toast, and never on the statusline" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.toast("hello toast", .{});
+    try app.render();
+    // The toast's dismiss button sits in the bottom-right corner.
+    var toast_rect: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .button and h.target.button == toast_mod.button_base) {
+        toast_rect = h.rect;
+    };
+    const tr = toast_rect.?;
+    try t.expect(tr.bottom() > 30);
+    try app.handle(.{ .mouse = .{ .x = tr.x + 4, .y = tr.y + 1, .kind = .press, .button = .right } });
+    try app.handle(.{ .mouse = .{ .x = tr.x + 4, .y = tr.y + 1, .kind = .release, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    const text = try screenText(&app);
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, "Copy text") != null);
+    try t.expect(std.mem.indexOf(u8, text, "Dismiss all") != null);
+    const fr = frameRects(Rect.init(0, 0, app.screen.width, app.screen.height));
+    var rows: usize = 0;
+    for (app.hits.items.items) |h| if (h.target == .menu_item) {
+        rows += 1;
+        // Above the statusline, and the topmost layer: the cell resolves to the menu row.
+        try t.expect(h.rect.bottom() <= fr.status.y);
+        try t.expect(app.hits.at(h.rect.x, h.rect.y).? == .menu_item);
+        // Flipped: the whole menu sits at or above the pointer's row.
+        try t.expect(h.rect.y <= tr.y + 1);
+    };
+    try t.expectEqual(@as(usize, 3), rows);
+    // The statusline is intact under it.
+    try t.expect(std.mem.indexOf(u8, text, "standard") != null);
+}
+
+test "menuTop: below when it fits, flipped onto the pointer when it does not, clamped otherwise" {
+    const screen = Rect.init(0, 0, 80, 30);
+    try t.expectEqual(@as(u16, 10), menuTop(screen, 10, 6));
+    try t.expectEqual(@as(u16, 24), menuTop(screen, 24, 6));
+    try t.expectEqual(@as(u16, 20), menuTop(screen, 25, 6));
+    try t.expectEqual(@as(u16, 24), menuTop(screen, 29, 6));
+    // Too tall to flip: as low as the screen allows.
+    try t.expectEqual(@as(u16, 0), menuTop(Rect.init(0, 0, 80, 5), 4, 6));
+    try t.expectEqual(@as(u16, 2), menuTop(Rect.init(0, 0, 80, 8), 3, 6));
 }
 
 // ── ui toggles: the frame-level ones, one cell each ──
