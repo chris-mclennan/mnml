@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Settings overlay clips the option list on wider rows at 120 columns (`[newest] / oldest / name /`)
 
@@ -23,3 +23,7 @@ The overlay box is 71 cells wide (`overlay_item:1048575` x=24 w=71); `ListSort` 
 **Actual**: `ui.settings` draws options until `x + ow > r.right()` and silently `break`s (`src/ui/settings.zig:297`), so a keyboard user cycles through invisible values and a mouse user cannot reach them at all (see the chip-click finding).
 
 **Source pointer**: `src/ui/settings.zig:294-303`.
+
+## Fix
+
+`566b5af` — settings: a row's choices window around the active one instead of clipping. `choiceWindow` grows from the active value outward while the row fits and marks each hidden side with `‹` / `›`, a hit on the nearest hidden choice; the bracketed value is never dropped. The box keeps its 60 % width. Pinned by `tests/e2e-zig/settings_row_window.test` and a `choiceWindow` unit test; holds at 80 columns.
