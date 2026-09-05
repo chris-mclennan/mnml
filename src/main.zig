@@ -14,13 +14,9 @@ const http_cli = @import("http/cli.zig");
 pub const version = "0.3.0-dev";
 
 /// A crash prints its trace on a readable terminal, not inside the alt
-/// screen with the mouse still reporting. The terminal session is POSIX
-/// until ConPTY lands, so on Windows the root keeps std's handler —
-/// naming `Term` here would pull the whole session into analysis.
-pub const panic = if (@import("builtin").os.tag == .windows)
-    std.debug.FullPanic(std.debug.defaultPanic)
-else
-    Term.Panic;
+/// screen with the mouse still reporting — on Windows, with the console
+/// modes put back too.
+pub const panic = Term.Panic;
 
 /// The application's driver factory: the same App the terminal runs,
 /// behind the `e2e.Driver` vtable for `test` and `--headless`.
@@ -149,14 +145,6 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
             continue;
         };
         if (st.kind == .directory and workspace == null) workspace = a else try files.append(arena, a);
-    }
-    // The interactive loop is POSIX until ConPTY lands (Phase 8): termios,
-    // a SIGWINCH self-pipe, openpty. `test` and `--headless` need none of
-    // that and work everywhere. Returning before `loop.Options` is even
-    // named keeps the loop out of analysis on Windows, which is what lets
-    // the same source build there.
-    if (@import("builtin").os.tag == .windows) {
-        return usage(w, "the interactive terminal is not available on Windows yet (use --headless or test)");
     }
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
     const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, "workspace is not a directory");
@@ -438,7 +426,7 @@ test {
     _ = @import("http/yaml.zig");
     _ = @import("http/discover.zig");
     _ = @import("http/sources.zig");
-    if (@import("builtin").os.tag != .windows) _ = @import("tui/loop.zig");
+    _ = @import("tui/loop.zig");
     _ = @import("ui/ui.zig");
 }
 

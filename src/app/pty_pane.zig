@@ -11,9 +11,8 @@
 //! The chord chain in `dispatch.zig` decides which modified chords the
 //! app keeps; everything that reaches `feedKey` goes to the child.
 //!
-//! Windows: the pty module is POSIX (openpty / fork). `supported` gates
-//! every reference to it so the pane type still exists there — every
-//! operation is a no-op and `open` fails with `Unsupported`.
+//! The pty module picks its backend by target (openpty / fork on POSIX,
+//! ConPTY on Windows); this file never names either.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -30,13 +29,14 @@ const layout_mod = @import("layout.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 
-pub const supported = builtin.os.tag != .windows;
+/// Every target has a pty backend now (openpty on POSIX, ConPTY on
+/// Windows — `src/pty/root.zig`); the flag stays for the callers that
+/// grew up gating on it.
+pub const supported = true;
 const pty = @import("pty");
 
-pub const Session = if (supported) pty.Session else void;
-pub const Grid = if (supported) pty.Grid else struct {
-    pub fn deinit(_: *@This(), _: Allocator) void {}
-};
+pub const Session = pty.Session;
+pub const Grid = pty.Grid;
 
 /// How the child ended.
 pub const Exit = union(enum) {
@@ -249,7 +249,9 @@ fn labelFor(app: *App, opts: OpenOptions) Allocator.Error![]u8 {
     const gpa = app.gpa;
     if (opts.label) |l| return gpa.dupe(u8, l);
     if (opts.argv.len == 0) {
-        const shell = app.env.get("SHELL") orelse "sh";
+        // The same choice the session makes: `$SHELL` on POSIX, `%COMSPEC%`
+        // on Windows (where `$SHELL`, if set at all, is Git Bash's fiction).
+        const shell = if (pty.is_windows) pty.win_cmdline.defaultShell(&app.env) else app.env.get("SHELL") orelse "sh";
         return gpa.dupe(u8, std.fs.path.basename(shell));
     }
     return std.mem.join(gpa, " ", opts.argv);
@@ -715,6 +717,8 @@ pub fn tickUntilScreen(app: *App, needle: []const u8, ms: u32) !bool {
 }
 
 test "a scripted child's coloured line reaches the cells, the exit is noticed, a key then closes the pane" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
@@ -754,6 +758,8 @@ test "a scripted child's coloured line reaches the cells, the exit is noticed, a
 }
 
 test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
@@ -770,6 +776,8 @@ test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
 }
 
 test "paste is bracketed only when the child asked; a newline becomes a carriage return otherwise" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
