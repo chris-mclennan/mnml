@@ -796,6 +796,14 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     };
     const focused = app.active == id and app.focus == .pane;
     const ed = e.buf.editor;
+    // Another window's edit above this one's viewport moved the lines
+    // under it: the scroll follows so the same text stays in view.
+    for (try ed.takeLineShifts(app.frame.allocator())) |sh| {
+        if (e.view.scroll_line > sh.row) {
+            const moved = @as(isize, @intCast(e.view.scroll_line)) + sh.delta;
+            e.view.scroll_line = @intCast(@max(moved, @as(isize, @intCast(sh.row))));
+        }
+    }
     // The language server hears every edit before the frame paints.
     lsp.syncPane(app, id, e);
     // Highlighting: every frame folds the edits since the last one into

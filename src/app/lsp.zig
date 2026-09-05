@@ -228,8 +228,6 @@ pub const State = struct {
     picker_actions: ?ActionSet = null,
     picker_symbols: ?SymbolPick = null,
     ladder: ?Ladder = null,
-    /// The edit-log seq each pane was synced at.
-    synced: std.AutoHashMapUnmanaged(PaneId, u64) = .empty,
     /// The completion request in flight; a newer one cancels it.
     completion_req: ?struct { server: *Server, id: i64 } = null,
     /// A command that asked a server still answering `initialize`. It
@@ -276,7 +274,6 @@ pub const State = struct {
         if (self.picker_symbols) |*s| s.arena.deinit();
         if (self.ladder) |l| gpa.free(l.ranges);
         self.panel.deinit(gpa);
-        self.synced.deinit(gpa);
         var dc = self.decor.iterator();
         while (dc.next()) |e| {
             gpa.free(e.key_ptr.*);
@@ -491,7 +488,7 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
     const s = (try ensureServer(app, path)) orelse return;
     const was_open = s.isOpen(path);
     s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
-    try app.lsp.synced.put(app.gpa, pane, e.buf.doc.edits.head());
+    e.buf.doc.lsp_seen = e.buf.doc.edits.head();
     if (!was_open) {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });
         if (s.ready) requestSymbols(app, s, path);
@@ -527,7 +524,6 @@ pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
 /// The last editor on `path` closed: `didClose`, and the diagnostics
 /// for it go too (a reopen republishes).
 pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
-    _ = app.lsp.synced.remove(pane);
     decor.forgetPane(app, pane);
     if (app.lsp.completion) |c| if (c.pane == pane) closeCompletion(app);
     if (app.lsp.hover) |h| if (h.pane == pane) closeHover(app);
@@ -541,12 +537,14 @@ pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
 /// Push the edits since the last sync as `didChange`: one splice on an
 /// incremental server (and a pure insertion, or utf-8, so the range
 /// converts exactly) goes as a range; anything else is the full text.
-/// Called from the frame, so every mutation path is covered.
+/// Called from the frame, so every mutation path is covered. The sync
+/// point is the document's: two windows on a file send its edits once.
 pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
+    _ = pane;
     const path = e.buf.doc.path orelse return;
     const ed = e.buf.editor;
     const head = ed.doc.edits.head();
-    const seen = app.lsp.synced.get(pane) orelse return;
+    const seen = ed.doc.lsp_seen orelse return;
     if (seen == head) return;
     const s = serverFor(app, path) orelse return;
     if (!s.isOpen(path)) return;
@@ -561,14 +559,14 @@ pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
             const end: types.Position = if (insertion) start else .{ .line = sp.old_end_pt.row, .character = sp.old_end_pt.col };
             const new_text = text[@min(sp.start, text.len)..@min(sp.new_end, text.len)];
             s.didChange(path, &.{.{ .range = .{ .start = start, .end = end }, .text = new_text }}) catch {};
-            app.lsp.synced.put(app.gpa, pane, head) catch {};
+            ed.doc.lsp_seen = head;
             return;
         }
     } else if (!full and splices.len == 0) {
         full = true;
     }
     s.didChange(path, &.{.{ .range = null, .text = text }}) catch {};
-    app.lsp.synced.put(app.gpa, pane, head) catch {};
+    ed.doc.lsp_seen = head;
 }
 
 // ─── events (D1: adopt or free, on every path) ──────────────────────────

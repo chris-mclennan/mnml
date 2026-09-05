@@ -90,9 +90,15 @@ pub fn reload(app: *App, id: PaneId) ReloadError!void {
     const ed = e.buf.editor;
     const row = ed.currentLine();
     const scroll = e.view.scroll_line;
+    // The other windows on the document keep their row too; the splice
+    // would land them on byte 0.
+    const others = e.buf.doc.views.items;
+    const rows = try app.frame.allocator().alloc(usize, others.len);
+    for (others, 0..) |v, i| rows[i] = v.currentLine();
     try app.splice(e, 0, ed.len(), text);
     try e.buf.markSaved();
     const last = ed.lineCount() -| 1;
+    for (others, 0..) |v, i| if (v != ed) v.placeCursor(@min(rows[i], last), 0);
     ed.placeCursor(@min(row, last), 0);
     e.view.scroll_line = @intCast(@min(@as(usize, scroll), last));
     e.syntax.dirty = true;
