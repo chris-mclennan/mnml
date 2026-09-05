@@ -75,6 +75,7 @@ const http_parse = @import("http/parse.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
+const undo_store = @import("app/undo_store.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -607,6 +608,8 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
+        try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
@@ -1495,6 +1498,7 @@ test {
     _ = @import("app/harpoon.zig");
     _ = @import("app/cmd_harpoon.zig");
     _ = @import("app/stress.zig");
+    _ = @import("app/undo_store.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
