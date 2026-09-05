@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Every `gt` / `gT` / `:tabnew` spawns a persistent `tab N/M` toast; they stack until `+6 more…`
 
@@ -26,3 +26,7 @@ With more activity the stack collapses to `│ +6 more… │` and hides newer, 
 **Expected**: vim shows nothing on a tab switch (the tabline already changes); at most a transient statusline message. A toast per navigation keystroke is noise for a keyboard-driven user and crowds out real errors.
 
 **Actual**: one long-lived toast per switch. Seen in every session with tab pages.
+
+## Fix
+
+`5063074` — `App.toastReplace(id, …)`: every tab-page move replaces the previous `tab N/M` toast (id `"tab"`) and the toast expires normally, so at most one is ever on screen. Kept rather than removed because the chrome has no tab-page strip — the toast is the only cue. Pinned by `tests/e2e-zig/vim_tab_switch_toast.test` and a `cmd_tab.zig` unit test.

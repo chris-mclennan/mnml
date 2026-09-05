@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl-W o` closes other *buffers* (clean tabs in the leaf) instead of other *windows*
 
@@ -24,3 +24,7 @@ status: open
 **Actual**: the split stays; the clean tabs in the *other* leaf are closed (dirty ones "kept"). Reproduced twice. `:only` / `:on` are additionally "unknown command", so there is no keyboard way to collapse splits to one except `Ctrl-W c` per window.
 
 **Source pointer**: `src/input/vim.zig` `.window` `'o'` → `view.close_others` (tab-strip semantics) rather than a layout-level "only".
+
+## Fix
+
+`1479f4f` — new `view.only` (vim `:only`): closes every other leaf, keeps this window and its tabs; the other leaves' panes are re-homed as background tabs of the kept leaf (a clean duplicate of a file already shown here is dropped). `Ctrl-W o` and `:on` / `:only` both target it. Pinned by `tests/e2e-zig/vim_ctrl_w_o_only_window.test`, a `cmd_view.zig` unit test and the `Ctrl-W` table test in `vim.zig`.

@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl-B` toggles the file tree instead of paging back (vim profile)
 
@@ -24,3 +24,7 @@ status: open
 **Actual**: the sidebar toggles; the view does not move. Reproduced from two fresh launches.
 
 **Source pointer**: `docs/KEYMAP_PROFILES.md` rule 1 reserves `ctrl+w g d u e y r n h j t f` for vim — `ctrl+b` is missing from that list, so the `both` default survives into the vim profile. `src/commands/specs.zig` `view.toggle_tree` keys.
+
+## Fix
+
+`5c1f525` — `ctrl+b` moved from `both` to `standard` on `view.toggle_tree`; vim gets the handler's `page_up`. Pinned by `tests/e2e-zig/vim_ctrl_b_pages_back.test` and the profile isolation test in `src/core/keymap.zig`.

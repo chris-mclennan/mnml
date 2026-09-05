@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `{count}gt` ignores the count and just goes to the next tab page
 
@@ -24,3 +24,7 @@ status: open
 **Actual**: the count is dropped; every `Ngt` is a plain `gt`. Reproduced in two launches. `gt`/`gT` without a count and `:tabs`/`:tabonly`/`:tabclose` are correct.
 
 **Source pointer**: `src/input/vim.zig` `g t` emits `tab.next` without passing the pending count; `src/app/cmd_tab.zig` has `switchTab(idx)` that could take it.
+
+## Fix
+
+`4dc6f23` — `{count}gt` / `{count}gT` emit `AppCommand.tab_page{count, back}`; `cmd_tab.gotoPage` goes to page N (past the end ⇒ last page) or N pages back with wrap. Pinned by `tests/e2e-zig/vim_count_gt.test`, a `vim.zig` handler test and a `cmd_tab.zig` unit test.

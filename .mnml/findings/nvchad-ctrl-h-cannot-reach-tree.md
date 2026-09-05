@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # No NvChad-style keyboard path into the file tree: `Ctrl-H` / `Ctrl-W h` from the leftmost split stay in the editor
 
@@ -23,3 +23,7 @@ status: open
 **Actual**: the only bindings that focus the tree are `F6`, `Ctrl+0`, `Ctrl+Shift+E` — none in the NvChad vocabulary; a vim user's reflexes leave them stuck in the editor.
 
 **Source pointer**: `src/app/cmd_view.zig` `view.focus_left` — treats the tree as outside the split tree; `src/input/vim.zig` `.window` `h`/`w`.
+
+## Fix
+
+`fe9676b` — `view.focus_left` with no neighbour focuses the sidebar when open (`Ctrl-H` and `Ctrl-W h` both route there); `view.focus_next_split` (`Ctrl-W w`) cycles past the last leaf into it; `view.focus_right` from the sidebar returns to the split. Note: `ctrl+l` from the tree did *not* actually return focus before this change either (no neighbour → no-op) — it does now. Pinned by `tests/e2e-zig/vim_ctrl_h_into_tree.test` and a `cmd_view.zig` unit test.

@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl-O` is bound to `picker.files` in the vim profile — insert-mode one-shot normal is gone and the picker swallows the next keys
 
@@ -34,3 +34,7 @@ In a longer session this is how a user ends up typing ex commands into the buffe
 **Actual**: the file picker opens over insert mode; the next keys are typed into its filter; the first `Esc` only dismisses the picker.
 
 **Source pointer**: `src/commands/specs.zig` `picker.files` keys (`ctrl+o` not moved to `standard`); `docs/KEYMAP_PROFILES.md` rule 1 list lacks `ctrl+o`.
+
+## Fix
+
+`16ce092` — `ctrl+o` moved from `both` to `standard` on `picker.files`; the vim handler's `i_CTRL-O` one-shot and normal-mode `nav.back` now receive it. Pinned by `tests/e2e-zig/vim_ctrl_o_oneshot_normal.test` and the profile isolation test.

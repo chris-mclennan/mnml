@@ -2,3 +2,7 @@
 zig-out/
 zig-pkg/
 .DS_Store
+
+# Workspace state stays local; the hunt findings are the record.
+.mnml/*
+!.mnml/findings/

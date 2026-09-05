@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `<leader>` chord's second key is executed as a vim motion when typed within the chord timeout
 
@@ -30,3 +30,7 @@ After `space` `w`: cursor 1→7 (`w` motion), nothing saved. After `space` `f` `
 **Source pointer**: `src/app/dispatch.zig` `key()` — `editor_first = … or (modal and plain and !bare_space)` sends every plain key in vim NORMAL to `feedEditor` first without checking `app.chord.len > 0` (compare `ptyKey`, which does `if (app.chord.len > 0) chordChain(...)`). `chordChain` arms `space` as `pending_with_fallback` but the continuation key never reaches `resolveSeq`.
 
 **Notes**: this also explains why `space x` on a dirty buffer earlier looked like "nothing happened" and later keystrokes went to the wrong place. NvChad parity: `<leader>ff`, `<leader>e`, `<leader>x`, `<leader>/` are muscle memory; all of them are affected.
+
+## Fix
+
+`155f734` — `dispatch.key()` sends every key to the chord chain while a chord is pending (`editor_first` requires `app.chord.len == 0`), and Esc on a pending chord cancels it without the which-key fallback. Pinned by `tests/e2e-zig/vim_leader_second_key.test` (typed as one `type` step, since the runner expires chords after each `key` line) and a `dispatch.zig` unit test.
