@@ -294,7 +294,7 @@ pub const Buffer = struct {
 
     // ─── the seam ───
 
-    pub fn makeCtx(self: *const Buffer, wrap_width: ?usize) EditCtx {
+    pub fn makeCtx(self: *const Buffer, wrap_width: ?usize, clip: *Clipboard) EditCtx {
         const ed = self.editor;
         const line = ed.currentLine();
         const ls = ed.lineStart(line);
@@ -312,6 +312,7 @@ pub const Buffer = struct {
             .next_find_match = self.find_next,
             .prev_find_match = self.find_prev,
             .wrap_width = wrap_width,
+            .register_empty = clip.text().len == 0,
         };
     }
 
@@ -321,7 +322,7 @@ pub const Buffer = struct {
     pub fn feedKey(self: *Buffer, key: Key, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         if (self.doc.read_only) return .{ .unhandled = key };
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
-        const ctx = self.makeCtx(wrap_width);
+        const ctx = self.makeCtx(wrap_width, clip);
         // What a visual operator would act on, before the key resolves —
         // the shape `.` re-applies (`:help visual-repeat`).
         const visual: ?VisualShape = if (self.input.mode().isVisual()) self.visualShape() else null;
@@ -758,8 +759,8 @@ pub const Buffer = struct {
     /// motion, so folds, `.` and the registers see the usual shape. A
     /// mark that is not set does nothing (Vim: E20).
     fn operatorToMark(self: *Buffer, op: u8, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
-        const ed = &self.editor;
-        const mark_byte = @min(ed.marks.get(mark) orelse return .noop, ed.len());
+        const ed = self.editor;
+        const mark_byte = @min(self.doc.marks.get(mark) orelse return .noop, ed.len());
         const row = ed.lineOfByte(mark_byte);
         var list: std.ArrayList(EditOp) = .empty;
         if (exact) {
@@ -1317,7 +1318,7 @@ test "vim marks, macros and visual mode" {
     try vim("v<esc>x", "|abc", "|bc");
     try vim("vjJ", "|a\nb", "a| b");
     try vim("vlrX", "|abc", "|XXc");
-    try vim("vlp", "|abc", "|c"); // empty register: selection deleted
+    try vim("vlp", "|abc", "a|bc"); // nothing to put: nothing deleted (Vim: E353); Rust dropped the selection
     try vim("ylvlp", "|abc", "a|c");
     try vim("vVd", "a\n|b\nc", "a\n|c");
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");

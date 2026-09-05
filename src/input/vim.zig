@@ -1977,6 +1977,8 @@ pub const Vim = struct {
             },
             'p', 'P' => {
                 self.enterNormal();
+                // Nothing to put: nothing is deleted either (Vim: E353).
+                if (ctx.register_empty and self.pending_register == null) return ops(arena, &.{.select_clear});
                 return ops(arena, &.{ widen, .{ .replace_selection = "" }, .paste_before });
             },
             '\'', '`' => {

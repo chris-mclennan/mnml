@@ -112,7 +112,9 @@ pub const InputResult = union(enum) {
 };
 
 /// Read-only buffer facts a handler may consult. Intentionally tiny.
-/// // changed: D4 counted 13 scalars; the Rust struct has 12.
+/// // changed: D4 counted 13 scalars; the Rust struct has 12 — and
+/// `register_empty` makes 13 again (a Visual `p` must know before it
+/// deletes the selection).
 pub const EditCtx = struct {
     cursor: usize = 0,
     line_len: usize = 0,
@@ -129,6 +131,8 @@ pub const EditCtx = struct {
     prev_find_match: ?[2]usize = null,
     /// Text width when `[ui] wrap` is on; null aliases `gj` to `j`.
     wrap_width: ?usize = null,
+    /// The unnamed register has nothing to put (Vim's E353).
+    register_empty: bool = false,
 };
 
 /// What `Buffer.feedKey` reports back to the loop.

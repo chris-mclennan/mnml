@@ -1,0 +1,17 @@
+# zig-only
+# `p` over a Visual selection with nothing in the register deletes
+# nothing (Vim: E353) — a fresh-session `Vp` reflex must not silently
+# drop three lines. With something yanked it replaces the selection.
+write a.txt "l1\nl2\nl3\nl4\n"
+open a.txt
+command editor.use_vim
+
+type Vjjp
+expect screen contains "NORMAL"
+expect screen contains "Ln 3/4"
+command file.save
+expect file a.txt contains "l1\nl2\nl3\nl4\n"
+type Gyy
+type ggVjp
+command file.save
+expect file a.txt contains "l4\nl3\nl4\n"
