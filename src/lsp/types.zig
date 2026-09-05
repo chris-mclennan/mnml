@@ -97,6 +97,34 @@ pub const CodeAction = struct {
     raw: Value,
 };
 
+pub const HintKind = enum(u8) { other = 0, type = 1, parameter = 2 };
+
+/// An inlay hint: virtual text the view paints at `position`.
+pub const InlayHint = struct {
+    position: Position,
+    /// The label parts joined. Borrowed.
+    label: []const u8,
+    kind: HintKind,
+    pad_left: bool,
+    pad_right: bool,
+};
+
+/// A code lens: a title above `range.start.line` that runs `command`
+/// (a raw `Command`, or null until `codeLens/resolve` fills it).
+pub const CodeLens = struct {
+    range: Range,
+    title: ?[]const u8,
+    /// The raw lens, for `resolve` and for `command`. Borrowed.
+    raw: Value,
+};
+
+/// A colour literal: `range` and its sRGB value.
+pub const ColorInfo = struct { range: Range, r: u8, g: u8, b: u8 };
+
+/// A link inside the document: `range` opens `target` (null when the
+/// server wants a `documentLink/resolve` mnml does not ask for).
+pub const DocumentLink = struct { range: Range, target: ?[]const u8 };
+
 // ─── positions ──────────────────────────────────────────────────────────
 
 /// Byte offset → position. `text` is the whole document.
@@ -122,18 +150,23 @@ pub fn byteOf(text: []const u8, pos: Position, enc: Encoding) usize {
         line += 1;
     }
     const end = std.mem.indexOfScalarPos(u8, text, start, '\n') orelse text.len;
-    const slice = text[start..end];
+    return start + byteInLine(text[start..end], pos.character, enc);
+}
+
+/// `character` units into one line → the byte offset within it
+/// (clamped to the line's length).
+pub fn byteInLine(line: []const u8, character: u32, enc: Encoding) usize {
     var i: usize = 0;
     var u: u32 = 0;
-    while (i < slice.len and u < pos.character) {
-        const n = std.unicode.utf8ByteSequenceLength(slice[i]) catch 1;
+    while (i < line.len and u < character) {
+        const n = std.unicode.utf8ByteSequenceLength(line[i]) catch 1;
         u += switch (enc) {
             .utf8 => @as(u32, @intCast(n)),
             .utf16 => if (n == 4) 2 else 1,
         };
         i += n;
     }
-    return start + @min(i, slice.len);
+    return @min(i, line.len);
 }
 
 /// The `character` count of `s` (one line, or a prefix of one).
@@ -368,6 +401,122 @@ pub fn readCodeActions(arena: Allocator, v: ?Value) Allocator.Error![]CodeAction
     return out.items;
 }
 
+/// `InlayHint[]` (or null). A label given as parts is joined on the arena.
+pub fn readInlayHints(arena: Allocator, v: ?Value) Allocator.Error![]InlayHint {
+    var out: std.ArrayListUnmanaged(InlayHint) = .empty;
+    const val = v orelse return out.items;
+    const items: []const Value = switch (val) {
+        .array => |a| a.items,
+        else => &.{},
+    };
+    for (items) |it| {
+        const pos = readPosition(jsonrpc.getObj(it, "position") orelse continue) orelse continue;
+        const label_v = jsonrpc.getField(it, "label") orelse continue;
+        const label: []const u8 = switch (label_v) {
+            .string => |s| s,
+            .array => |parts| blk: {
+                var joined: std.ArrayListUnmanaged(u8) = .empty;
+                for (parts.items) |p| try joined.appendSlice(arena, jsonrpc.getStr(p, "value") orelse "");
+                break :blk joined.items;
+            },
+            else => continue,
+        };
+        if (label.len == 0) continue;
+        try out.append(arena, .{
+            .position = pos,
+            .label = label,
+            .kind = switch (jsonrpc.getInt(it, "kind") orelse 0) {
+                1 => .type,
+                2 => .parameter,
+                else => .other,
+            },
+            .pad_left = jsonrpc.getBool(it, "paddingLeft") orelse false,
+            .pad_right = jsonrpc.getBool(it, "paddingRight") orelse false,
+        });
+    }
+    std.mem.sort(InlayHint, out.items, {}, struct {
+        fn lt(_: void, a: InlayHint, b: InlayHint) bool {
+            if (a.position.line != b.position.line) return a.position.line < b.position.line;
+            return a.position.character < b.position.character;
+        }
+    }.lt);
+    return out.items;
+}
+
+/// `CodeLens[]` (or null), in document order.
+pub fn readCodeLenses(arena: Allocator, v: ?Value) Allocator.Error![]CodeLens {
+    var out: std.ArrayListUnmanaged(CodeLens) = .empty;
+    const val = v orelse return out.items;
+    const items: []const Value = switch (val) {
+        .array => |a| a.items,
+        else => &.{},
+    };
+    for (items) |it| {
+        const range = readRange(jsonrpc.getObj(it, "range") orelse continue) orelse continue;
+        const title: ?[]const u8 = if (jsonrpc.getObj(it, "command")) |c| jsonrpc.getStr(c, "title") else null;
+        try out.append(arena, .{ .range = range, .title = title, .raw = it });
+    }
+    std.mem.sort(CodeLens, out.items, {}, struct {
+        fn lt(_: void, a: CodeLens, b: CodeLens) bool {
+            if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
+            return a.range.start.character < b.range.start.character;
+        }
+    }.lt);
+    return out.items;
+}
+
+/// `ColorInformation[]` (or null); the spec's 0..1 floats become bytes.
+pub fn readColors(arena: Allocator, v: ?Value) Allocator.Error![]ColorInfo {
+    var out: std.ArrayListUnmanaged(ColorInfo) = .empty;
+    const val = v orelse return out.items;
+    const items: []const Value = switch (val) {
+        .array => |a| a.items,
+        else => &.{},
+    };
+    for (items) |it| {
+        const range = readRange(jsonrpc.getObj(it, "range") orelse continue) orelse continue;
+        const c = jsonrpc.getObj(it, "color") orelse continue;
+        try out.append(arena, .{ .range = range, .r = channel(c, "red"), .g = channel(c, "green"), .b = channel(c, "blue") });
+    }
+    std.mem.sort(ColorInfo, out.items, {}, struct {
+        fn lt(_: void, a: ColorInfo, b: ColorInfo) bool {
+            if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
+            return a.range.start.character < b.range.start.character;
+        }
+    }.lt);
+    return out.items;
+}
+
+fn channel(c: Value, key: []const u8) u8 {
+    const f: f64 = switch (jsonrpc.getField(c, key) orelse return 0) {
+        .float => |x| x,
+        .integer => |i| @floatFromInt(i),
+        else => return 0,
+    };
+    return @intFromFloat(std.math.clamp(f, 0, 1) * 255 + 0.5);
+}
+
+/// `DocumentLink[]` (or null).
+pub fn readDocumentLinks(arena: Allocator, v: ?Value) Allocator.Error![]DocumentLink {
+    var out: std.ArrayListUnmanaged(DocumentLink) = .empty;
+    const val = v orelse return out.items;
+    const items: []const Value = switch (val) {
+        .array => |a| a.items,
+        else => &.{},
+    };
+    for (items) |it| {
+        const range = readRange(jsonrpc.getObj(it, "range") orelse continue) orelse continue;
+        try out.append(arena, .{ .range = range, .target = jsonrpc.getStr(it, "target") });
+    }
+    std.mem.sort(DocumentLink, out.items, {}, struct {
+        fn lt(_: void, a: DocumentLink, b: DocumentLink) bool {
+            if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
+            return a.range.start.character < b.range.start.character;
+        }
+    }.lt);
+    return out.items;
+}
+
 /// LSP `SymbolKind` → the outline's short label.
 pub fn symbolKindLabel(kind: u8) []const u8 {
     return switch (kind) {
@@ -459,6 +608,41 @@ test "uri ↔ path, with percent-encoding" {
     try testing.expectEqualStrings("file:///ws/a%20b/c.rs", try uriFromPath(a, "/ws/a b/c.rs"));
     try testing.expectEqualStrings("/ws/a b/c.rs", (try pathFromUri(a, "file:///ws/a%20b/c.rs")).?);
     try testing.expect((try pathFromUri(a, "untitled:one")) == null);
+}
+
+test "readers: inlay hints (parts joined, sorted), code lenses, colours as bytes, links" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var h = try std.json.parseFromSlice(Value, a, "[{\"position\":{\"line\":2,\"character\":1},\"label\":[{\"value\":\": \"},{\"value\":\"u32\"}],\"kind\":1,\"paddingLeft\":true},{\"position\":{\"line\":0,\"character\":7},\"label\":\"x:\",\"kind\":2,\"paddingRight\":true},{\"position\":{\"line\":1,\"character\":0},\"label\":\"\"}]", .{});
+    defer h.deinit();
+    const hints = try readInlayHints(a, h.value);
+    try testing.expectEqual(@as(usize, 2), hints.len);
+    try testing.expectEqualStrings("x:", hints[0].label);
+    try testing.expectEqual(HintKind.parameter, hints[0].kind);
+    try testing.expect(hints[0].pad_right and !hints[0].pad_left);
+    try testing.expectEqualStrings(": u32", hints[1].label);
+    try testing.expectEqual(HintKind.type, hints[1].kind);
+    var l = try std.json.parseFromSlice(Value, a, "[{\"range\":{\"start\":{\"line\":4,\"character\":0},\"end\":{\"line\":4,\"character\":3}},\"data\":1},{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":2}},\"command\":{\"title\":\"3 references\",\"command\":\"refs\"}}]", .{});
+    defer l.deinit();
+    const lenses = try readCodeLenses(a, l.value);
+    try testing.expectEqual(@as(usize, 2), lenses.len);
+    try testing.expectEqualStrings("3 references", lenses[0].title.?);
+    try testing.expect(lenses[1].title == null);
+    var c = try std.json.parseFromSlice(Value, a, "[{\"range\":{\"start\":{\"line\":0,\"character\":5},\"end\":{\"line\":0,\"character\":12}},\"color\":{\"red\":1,\"green\":0.5,\"blue\":0,\"alpha\":1}}]", .{});
+    defer c.deinit();
+    const colors = try readColors(a, c.value);
+    try testing.expectEqual(@as(usize, 1), colors.len);
+    try testing.expectEqual(@as(u8, 255), colors[0].r);
+    try testing.expectEqual(@as(u8, 128), colors[0].g);
+    try testing.expectEqual(@as(u8, 0), colors[0].b);
+    var d = try std.json.parseFromSlice(Value, a, "[{\"range\":{\"start\":{\"line\":3,\"character\":2},\"end\":{\"line\":3,\"character\":20}},\"target\":\"https://ziglang.org\"},{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":1}}}]", .{});
+    defer d.deinit();
+    const links = try readDocumentLinks(a, d.value);
+    try testing.expectEqual(@as(usize, 2), links.len);
+    try testing.expect(links[0].target == null);
+    try testing.expectEqualStrings("https://ziglang.org", links[1].target.?);
+    try testing.expectEqual(@as(usize, 0), (try readInlayHints(a, null)).len);
 }
 
 test "readers: diagnostics, completion items, hover shapes, nested symbols" {
