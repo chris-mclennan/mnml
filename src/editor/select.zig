@@ -101,8 +101,11 @@ pub fn aroundWord(ed: *Editor, big: bool) void {
     ed.cursor = hi;
 }
 
-/// The Nth pair of `q` on the cursor's line that contains the cursor.
-/// Backslash-escaped quotes do not count.
+/// The pair of `q` on the cursor's line that contains the cursor, or —
+/// with the cursor before any quote — the first pair after it (`:help
+/// i"`: "when the cursor is not inside a quoted string, the first one
+/// after it on the line is used"). Pairs are counted from the line
+/// start; backslash-escaped quotes do not count.
 pub fn enclosingQuotePairOnLine(ed: *const Editor, q: u21) ?[2]usize {
     const line = ed.currentLine();
     const ls = ed.lineStart(line);
