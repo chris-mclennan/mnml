@@ -1523,6 +1523,21 @@ test "vim comment toggle uses the buffer's token; a commentless buffer is a no-o
     try testing.expectEqualStrings("", commentTokenFor(null)[0]);
 }
 
+test "vim Vc keeps an empty line where the lines were" {
+    // `V…c` is `cc` over the range: the lines go, one empty line stays,
+    // Insert opens on it (`:help v_c`); `R` from any Visual is the same.
+    try vim("Vc", "a\n|b\nc", "a\n|\nc");
+    try vim("Vjc", "a\n|b\nc\nd", "a\n|\nd");
+    try vim("Vkc", "a\nb\n|c\nd", "a\n|\nd");
+    try vim("Vcx", "|a\nb", "x|\nb");
+    try vim("Vc", "a\n|b", "a\n|");
+    try vim("vjR", "a\n|b\nc\nd", "a\n|\nd");
+    try vim("vR", "a\n|b\nc", "a\n|\nc");
+    try vim("Vc<esc>u", "a\n|b\nc", "a\n|b\nc");
+    // Charwise `c` still takes exactly the selection.
+    try vim("vjc", "a\n|b\nc", "a\n|");
+}
+
 test "vim replace mode and cmdline" {
     try vim("RXY<esc>", "|abc", "X|Yc");
     try vim("RXYZW<esc>", "|abc", "XYZ|W");

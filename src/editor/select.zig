@@ -432,6 +432,18 @@ pub fn normalizeLinewiseSelection(ed: *Editor) void {
     ed.goal_col = null;
 }
 
+/// `V…c` / `V…S`: anchor at the first line's start, cursor at the last
+/// line's end with its `\n` left out, so a replace keeps one empty
+/// line where the lines were — the shape `cc` builds (`:help v_c`).
+pub fn normalizeLinewiseSelectionInner(ed: *Editor) void {
+    const a = ed.anchor orelse return;
+    const lo_line = ed.lineOfByte(@min(a, ed.cursor));
+    const hi_line = ed.lineOfByte(@max(a, ed.cursor));
+    ed.anchor = ed.lineStart(lo_line);
+    ed.cursor = ed.lineEnd(hi_line);
+    ed.goal_col = null;
+}
+
 pub fn continueInsertRun(ed: *Editor) void {
     ed.in_insert_run = true;
 }

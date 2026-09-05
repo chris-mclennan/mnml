@@ -1892,9 +1892,13 @@ pub const Vim = struct {
                 self.enterNormal();
                 return ops(arena, &.{ widen, .delete_selection });
             },
-            'c', 's' => {
+            'c', 's', 'R' => {
                 self.vmode = .insert;
                 self.resetPending();
+                // Linewise (`V…c`, and `R` from any Visual — `S` is
+                // surround's here): the lines go, one empty line stays
+                // (`:help v_c`, `v_R`).
+                if (linewise or c == 'R') return ops(arena, &.{ .normalize_linewise_selection_inner, .{ .replace_selection = "" }, .continue_insert_run });
                 return ops(arena, &.{ widen, .{ .replace_selection = "" }, .continue_insert_run });
             },
             'y' => {
