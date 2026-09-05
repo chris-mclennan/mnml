@@ -1060,7 +1060,8 @@ pub const Vim = struct {
                     self.is_recording_macro = true;
                     return .{ .app = .{ .macro_record_into = '@' } };
                 }
-                if (c >= 'a' and c <= 'z') {
+                // `qA` appends to `a` (`:help q`); the buffer folds the case.
+                if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
                     self.is_recording_macro = true;
                     return .{ .app = .{ .macro_record_into = @intCast(c) } };
                 }

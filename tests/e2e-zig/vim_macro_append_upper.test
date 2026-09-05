@@ -1,0 +1,23 @@
+# zig-only
+# `q{A-Z}` appends to the lowercase register (`:help q`): after `qaI- <Esc>q`
+# and `qAA!<Esc>q`, `@a` prefixes AND suffixes a line; the pending `q`
+# never turns the next `:` into `q:`.
+write a.txt "one\ntwo\nthree\n"
+open a.txt
+command editor.use_vim
+
+type "qaI- "
+key esc
+type q
+type qAA!
+key esc
+type q
+type j@a
+command file.save
+expect file a.txt contains "- one!\n- two!\nthree\n"
+type j@A
+command file.save
+expect file a.txt contains "- three!\n"
+type ":reg a"
+key enter
+expect screen lacks "cmdline history"

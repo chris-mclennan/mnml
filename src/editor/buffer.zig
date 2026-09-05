@@ -30,7 +30,8 @@ pub const EditCtx = input.EditCtx;
 pub const Key = input.Key;
 pub const KeyCode = input.KeyCode;
 
-pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
+/// `append`: `qA` — the keys go after what register `a` already holds.
+pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty, append: bool = false };
 
 pub const commentTokenFor = @import("document.zig").commentTokenFor;
 pub const DiskStamp = @import("document.zig").DiskStamp;
@@ -680,15 +681,21 @@ pub const Buffer = struct {
             _ = r.keys.pop();
             const spec = try keysToSpec(self.gpa, r.keys.items);
             defer self.gpa.free(spec);
-            try clip.putMacro(r.reg, spec);
+            if (r.append and clip.macro(r.reg) != null) {
+                const joined = try std.mem.concat(self.gpa, u8, &.{ clip.macro(r.reg).?, spec });
+                defer self.gpa.free(joined);
+                try clip.putMacro(r.reg, joined);
+            } else try clip.putMacro(r.reg, spec);
             clip.last_macro = r.reg;
             r.keys.deinit(self.gpa);
             self.recording = null;
             return .redraw;
         }
         // `q<reg>` arrived before recording started, so neither key is in
-        // the register.
-        self.recording = .{ .reg = reg };
+        // the register. An uppercase name appends to the lowercase
+        // register (`:help q`).
+        const upper = reg >= 'A' and reg <= 'Z';
+        self.recording = .{ .reg = if (upper) reg + ('a' - 'A') else reg, .append = upper };
         return .redraw;
     }
 
