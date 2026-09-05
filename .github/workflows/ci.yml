@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Checkout and build only; the token needs nothing but read.
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  # ubuntu (x86_64) · macos (arm64) · windows (x86_64, -gnu) each run the
+  # whole thing: fmt, the unit suite in both optimize modes that matter
+  # (Debug, and ReleaseSafe — what ships), the .test gate at three sizes.
+  check:
+    name: fmt · test · gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout mnml-zig
+        uses: actions/checkout@v7
+
+      # tests/e2e is a symlink into the Rust repo — the shared .test corpus
+      # lives there until Rust freezes (DESIGN.md, side-by-side mechanics).
+      # A runner has no sibling checkout, so fetch just that directory and
+      # put a real copy where the symlink was. A copy, not a relink: on
+      # Windows the symlink checks out as a plain file, and cp works there
+      # too.
+      - name: Checkout the .test corpus (chris-mclennan/mnml tests/e2e)
+        uses: actions/checkout@v7
+        with:
+          repository: chris-mclennan/mnml
+          path: _corpus/mnml
+          sparse-checkout: tests/e2e
+          sparse-checkout-cone-mode: true
+      - name: Place the corpus at tests/e2e
+        shell: bash
+        run: |
+          rm -rf tests/e2e
+          cp -R _corpus/mnml/tests/e2e tests/e2e
+          echo "$(ls tests/e2e/*.test | wc -l) .test files"
+
+      # setup-zig caches the global cache dir (~/.cache/zig on Linux/macOS,
+      # %LOCALAPPDATA%\zig on Windows) itself — that is what `use-cache`
+      # (default on) does — so there is no separate actions/cache step.
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ${{ matrix.os }}
+
+      - name: zig fmt --check
+        shell: bash
+        run: zig fmt --check build.zig build.zig.zon src themes tools
+
+      # Leak = FAIL: every unit test runs on std.testing.allocator. Windows
+      # runs the same command; the POSIX-gated pty / tui suites are simply
+      # not in its graph (build.zig, `pty_supported`).
+      - name: zig build test (Debug)
+        shell: bash
+        run: zig build test -Doptimize=Debug --summary failures
+
+      - name: zig build test (ReleaseSafe — what ships)
+        shell: bash
+        run: zig build test -Doptimize=ReleaseSafe --summary failures
+
+      - name: zig build
+        shell: bash
+        run: zig build --summary failures
+
+      # The Phase-0 gate (tools/gate.txt) at three sizes: content asserts at
+      # 120x40; 80x24 and 200x60 assert no panic, no leak, no rect outside
+      # its parent. Each file runs on a DebugAllocator with safety on.
+      - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
+        shell: bash
+        env:
+          MNML_E2E_ALLOW_SHELL: "1"
+        run: ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
+
+      - name: mnml-zig --version
+        shell: bash
+        run: ./zig-out/bin/mnml-zig --version
+
+  # Cross-compile the exe and every test binary for each shipped target
+  # (E7): Zig only analyses target-gated code when that target is built, so
+  # a `builtin.os.tag == .windows` branch that does not compile is invisible
+  # until someone builds Windows. ReleaseSafe, not Debug — Zig 0.16.0's Debug
+  # codegen hits a `writeToPackedMemory` TODO when cross-compiling the test
+  # binaries for x86_64, and ReleaseSafe is the mode that ships anyway.
+  cross:
+    name: gate-build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - x86_64-windows-gnu
+          - x86_64-macos
+          - aarch64-macos
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: cross-${{ matrix.target }}
+      - name: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+        run: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
+      - name: What was built
+        run: ls -la zig-out/gate/
