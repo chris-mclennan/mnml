@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl+S` does nothing — no save, no feedback — while the find bar or the command palette has focus
 
@@ -29,3 +29,7 @@ status: open
 **Actual**: the find bar's `text_field.handleKey` and the picker's input consume the chord; the buffer stays dirty and nothing tells the user. (`Ctrl+S` with multi-cursor active does save.)
 
 **Source pointer**: `src/app/dispatch.zig:937` `findBarKey` → `src/ui/find_bar.zig:82` `handleKey` (ctrl-char table has `r c n p` only; everything else goes to the text field); the picker overlay branch in `dispatch.zig` likewise. Neither falls back to the global keymap for unclaimed ctrl chords.
+
+## Fix
+
+`e75e0b7` on branch `fix-editor` — dispatch: Ctrl+S saves from the find bar and the palette, and the widget stays. Any modified chord the widget's field does not claim now resolves through the keymap as a single chord (leader prefixes stay with the widget). Regression: `tests/e2e-zig/vscode_ctrl_s_in_widgets.test`, plus a unit row in `src/app/cmd_picker.zig`.
