@@ -59,6 +59,8 @@ const spend = @import("spend.zig");
 const ai_view = @import("../ui/ai_view.zig");
 const agents_view = @import("../ui/agents_view.zig");
 const spend_view = @import("../ui/spend_view.zig");
+const dap = @import("dap.zig");
+const lsp = @import("lsp.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -156,6 +158,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
+    try lsp.drawPopups(app, ui, panes_area);
     toast_mod.draw(ui, panes_area, try app.visibleToasts(arena));
 }
 
@@ -215,6 +218,7 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
     switch (which) {
         .todos => try todos.draw(app, ui, area),
         .git => try git_app.draw(app, ui, area),
+        .diagnostics => try lsp.drawPanel(app, ui, area),
         .notes, .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
             const caps = ui.fmt(" {s}", .{@tagName(which)});
@@ -246,7 +250,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -310,6 +314,8 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
                 spend_view.draw(ui, pr.pane, rect, s, app.active == pr.pane and app.focus == .pane);
             },
+            .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
+            .dap_repl => |*r| try dap.drawRepl(app, ui, pr.pane, r, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -420,6 +426,21 @@ fn drawGhost(ui: Ui, rect: Rect, cursor: editor_view.Cursor, ed: *const @import(
     }
 }
 
+/// The gutter's marks, in priority order: the debugger's signs first (a
+/// breakpoint, the ▶ of a stop), then a diagnostic's dot on the lines
+/// they leave, then git's change bars — the view paints the first sign
+/// and the first change mark it finds for a line (one column each; in
+/// a one-cell gutter the sign wins).
+fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
+    const d = try dap.marksFor(app, arena, e.buf.path, &app.theme, ascii);
+    const l = try lsp.marksFor(app, arena, e.buf.path, &app.theme, ascii);
+    const g: []const editor_view.GutterMark = if (e.buf.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
+    if (l.len == 0 and g.len == 0) return d;
+    if (d.len == 0 and g.len == 0) return l;
+    if (d.len == 0 and l.len == 0) return g;
+    return std.mem.concat(arena, editor_view.GutterMark, &.{ d, l, g });
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
@@ -433,6 +454,8 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     };
     const focused = app.active == id and app.focus == .pane;
     const ed = &e.buf.editor;
+    // The language server hears every edit before the frame paints.
+    lsp.syncPane(app, id, e);
     // Highlighting: every frame folds the edits since the last one into
     // the tree and slides the cached spans along, so what is painted
     // lines up with the text; the reparse itself waits for the idle
@@ -479,8 +502,9 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .focused = focused,
         .visual_block = mode == .visual_block,
         .scrollbar = app.cfg.ui.scrollbar,
-        .gutter_marks = if (e.buf.path) |p| try git_app.viewMarks(app, p, arena) else &.{},
+        .gutter_marks = try gutterMarks(app, arena, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
+        .underlines = try lsp.underlinesFor(app, arena, e, &app.theme),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     if (ed.ghost_suggestion) |ghost| if (cursor) |c| {
@@ -554,6 +578,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .total_lines = 0,
         .input_style = @tagName(app.input_style),
     };
+    var lsp_seg: ?[]const u8 = null;
     if (app.activeEditor()) |e| {
         const ed = &e.buf.editor;
         const mode = e.buf.input.mode();
@@ -576,6 +601,7 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.pending = try e.buf.input.pendingDisplay(ui.arena);
         if (e.buf.recording) |r| info.macro_recording = r.reg;
+        lsp_seg = try lsp.statusSegment(app, ui.arena, e, ui.ascii);
     } else if (app.active) |id| if (app.panes.pty(id)) |p| {
         info.mode_label = if (p.exit == null) "TERM" else "EXITED";
         info.mode_kind = .edit;
@@ -587,23 +613,19 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         info.total_lines = p.rows;
     };
-    // The branch segment (`main ↑2 ↓1 ●3`) then the AI meter, before the
-    // input style.
+    // The branch segment (`main ↑2 ↓1 ●3`), the diagnostics chip
+    // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.
     const branch_seg = try git_app.statusSegment(app, ui.arena);
     const meter_seg = try ai_app.meterSegment(app, ui.arena);
-    const extra: usize = @as(usize, @intFromBool(branch_seg != null)) + @intFromBool(meter_seg != null);
+    const extra: usize = @as(usize, @intFromBool(branch_seg != null)) + @intFromBool(lsp_seg != null) + @intFromBool(meter_seg != null);
     if (extra > 0) {
         const segs = try ui.arena.alloc([]const u8, info.right.len + extra);
         @memcpy(segs[0..info.right.len], info.right);
         var n = info.right.len;
-        if (branch_seg) |seg| {
+        for ([_]?[]const u8{ branch_seg, lsp_seg, meter_seg }) |maybe| if (maybe) |seg| {
             segs[n] = seg;
             n += 1;
-        }
-        if (meter_seg) |seg| {
-            segs[n] = seg;
-            n += 1;
-        }
+        };
         info.right = segs;
     }
     statusline.draw(ui, area, info);

@@ -45,6 +45,10 @@ pub const Fold = struct { first_line: u32, last_line: u32 };
 
 pub const CursorShape = enum { block, bar, underline };
 
+/// A byte range underlined over the syntax style — a diagnostic. The
+/// style's `fg` colours the line; `ul_style` picks its shape.
+pub const Underline = struct { start: usize, end: usize, style: Style };
+
 pub const Doc = struct {
     text: []const u8,
     /// Byte offset.
@@ -69,18 +73,36 @@ pub const Doc = struct {
     /// A vertical scrollbar in the last column when the text outgrows
     /// the pane.
     scrollbar: bool = false,
-    /// Git change marks, sorted by line: a coloured bar in the gutter's
-    /// last cell. Empty when there are none (or no repo).
+    /// The gutter's marks in priority order (`GutterMark`): git's change
+    /// bars in the gutter's last cell, the sign column's glyphs in its
+    /// first. Empty when there are none.
     gutter_marks: []const GutterMark = &.{},
     /// Blame mode: one label per line (`<sha7> <author> <age>`) painted
     /// INSTEAD of the line number; empty when blame is off. A line past
     /// the slice paints blank.
     blame: []const []const u8 = &.{},
+    /// Sorted by `start`, non-overlapping.
+    underlines: []const Underline = &.{},
 };
 
-pub const MarkKind = enum { added, modified, deleted };
-/// A changed line, 0-based; `deleted` sits on the line after the run.
-pub const GutterMark = struct { line: u32, kind: MarkKind };
+/// `added` / `modified` / `deleted` are git's change marks — a coloured
+/// bar in the gutter's LAST cell (`deleted` sits on the line after the
+/// run). `sign` is a one-cell glyph in the gutter's FIRST cell: a
+/// breakpoint, the debugger's ▶, a diagnostic's severity dot.
+pub const MarkKind = enum { added, modified, deleted, sign };
+/// A mark on `line` (0-based). A change mark needs only `kind`; a
+/// `.sign` carries its `glyph` and `style` (the fg is used).
+/// // changed (merge git ⨯ lsp-dap): one struct for both shapes. The
+/// list is in priority order, not necessarily sorted — per column the
+/// view paints the first match on a line. With line numbers off the
+/// gutter is one cell while marks exist, both columns coincide, and the
+/// sign wins over the change mark.
+pub const GutterMark = struct {
+    line: u32,
+    kind: MarkKind,
+    glyph: []const u8 = "",
+    style: Style = .{},
+};
 /// The widest blame label the gutter will show.
 pub const blame_max_w: u16 = 32;
 
@@ -334,12 +356,15 @@ fn gutterWidth(doc: Doc, total: u32) u16 {
     return @max(digits, 3) + 2;
 }
 
-/// The mark on `line`, if any (marks are sorted).
-fn markAt(marks: []const GutterMark, line: u32) ?MarkKind {
-    for (marks) |m| {
-        if (m.line == line) return m.kind;
-        if (m.line > line) return null;
-    }
+/// The first change mark on `line`, if any.
+fn changeMarkAt(marks: []const GutterMark, line: u32) ?MarkKind {
+    for (marks) |m| if (m.line == line and m.kind != .sign) return m.kind;
+    return null;
+}
+
+/// The first sign on `line`, if any.
+fn signAt(marks: []const GutterMark, line: u32) ?GutterMark {
+    for (marks) |m| if (m.line == line and m.kind == .sign) return m;
     return null;
 }
 
@@ -348,6 +373,7 @@ pub fn markStyle(t: *const Theme, kind: MarkKind, base: Style) Style {
         .added => t.syntax.string.fg,
         .modified => t.warn_fg.fg,
         .deleted => t.error_fg.fg,
+        .sign => t.fg.fg,
     });
 }
 
@@ -499,6 +525,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         const row_style: Style = if (is_cursor_line) t.cursor_line else t.bg;
         var spans = RangeCursor(Span).init(doc.spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
+        var underlines = RangeCursor(Underline).init(doc.underlines, line_start);
 
         for (rows, 0..) |row, ri| {
             if (y >= area.bottom()) break;
@@ -518,18 +545,23 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                         _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
                     }
                 }
-                // The change mark takes the gutter's last cell.
-                if (ri == 0) if (markAt(doc.gutter_marks, line)) |kind| {
-                    const mark_glyph: []const u8 = if (ui.ascii) (switch (kind) {
-                        .added => "+",
-                        .modified => "~",
-                        .deleted => "_",
-                    }) else (switch (kind) {
-                        .added, .modified => "▎",
-                        .deleted => "▁",
-                    });
-                    _ = ui.putStr(area.x + gutter_w - 1, y, 1, mark_glyph, markStyle(t, kind, row_style));
-                };
+                // The change mark takes the gutter's last cell, the sign
+                // its first; a one-cell gutter gives the cell to the sign.
+                if (ri == 0) {
+                    const sign = signAt(doc.gutter_marks, line);
+                    if (changeMarkAt(doc.gutter_marks, line)) |kind| if (sign == null or gutter_w > 1) {
+                        const mark_glyph: []const u8 = if (ui.ascii) (switch (kind) {
+                            .added => "+",
+                            .modified => "~",
+                            .deleted, .sign => "_",
+                        }) else (switch (kind) {
+                            .added, .modified => "▎",
+                            .deleted, .sign => "▁",
+                        });
+                        _ = ui.putStr(area.x + gutter_w - 1, y, 1, mark_glyph, markStyle(t, kind, row_style));
+                    };
+                    if (sign) |m| _ = ui.putStr(area.x, y, 1, m.glyph, Theme.onBg(m.style, row_style.bg));
+                }
                 ui.hit(gr, .{ .editor_cell = .{ .pane = pane, .line = line, .col = 0 } });
             }
 
@@ -565,6 +597,11 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     style.ul_style = s.ul_style;
                     style.strikethrough = s.strikethrough;
                     if (s.bg != .default) style.bg = s.bg;
+                }
+                if (underlines.at(off)) |ui_idx| {
+                    const u = doc.underlines[ui_idx].style;
+                    style.ul = u.fg;
+                    style.ul_style = if (u.ul_style == .off) .curly else u.ul_style;
                 }
                 if (matches.at(off)) |mi| {
                     const ms = if (doc.current_match == mi) t.current_match else t.match;

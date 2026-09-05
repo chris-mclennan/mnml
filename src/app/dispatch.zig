@@ -56,6 +56,8 @@ const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
+const dap = @import("dap.zig");
+const lsp = @import("lsp.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -66,6 +68,16 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         else => return overlayKey(app, k),
     }
     if (app.find_bar != null) return findBarKey(app, k);
+    // The completion / hover / peek popups take their keys first: an
+    // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
+    // accept that edited the text leaves any ghost stale — drop it.
+    const seq_before: ?u64 = if (app.activeEditor()) |e| e.buf.editor.edits.head() else null;
+    if (try lsp.interceptKey(app, k)) {
+        if (seq_before) |before| if (app.activeEditor()) |e| {
+            if (e.buf.editor.edits.head() != before and e.buf.editor.ghost_suggestion != null) try e.buf.editor.setGhostSuggestion(null);
+        };
+        return;
+    }
     if (app.focus == .tree and app.tree.visible) {
         if (try app.tree.handleKey(app, k)) return;
         _ = try chordChain(app, k);
@@ -75,6 +87,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         const took = switch (app.focus.panel) {
             .todos => try todos.handleKey(app, k),
             .git => try git_app.handleKey(app, k),
+            .diagnostics => try lsp.panelKey(app, k),
             .notes, .findings, .sessions => false,
         };
         if (took) return;
@@ -133,6 +146,16 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .spend_report => |*s| {
             if (try spend.handleKey(app, id, s, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .debug => |*d| {
+            if (try dap.debugKey(app, id, d, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .dap_repl => |*r| {
+            if (try dap.replKey(app, id, r, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -246,6 +269,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
             if (trigger) try expandAbbreviation(app, e);
+            try lsp.onTyped(app, pane_id, e, k);
         },
         .app => |cmd| try handleAppCommand(app, pane_id, e, cmd),
     }
@@ -451,7 +475,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
-            .notes, .findings, .sessions, .git => {},
+            .notes, .findings, .sessions, .git, .diagnostics => {},
         },
         .none => {},
     }
@@ -596,6 +620,12 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
+        .dap_add_watch => try dap.acceptWatch(app, text),
+        .dap_bp_condition => |b| try dap.acceptCondition(app, b.path, b.line, text),
+        .dap_hit_count => |b| try dap.acceptHitCount(app, b.path, b.line, text),
+        .dap_set_variable => |sv| try dap.acceptSetVariable(app, sv.parent_ref, sv.name, text),
+        .lsp_rename => try lsp.acceptRename(app, text),
+        .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
     }
 }
 
@@ -730,27 +760,31 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .row => |pr| switch (pr.panel) {
             .todos => try todos.rowMouse(app, pr.idx, m),
             .git => try git_app.rowMouse(app, pr.idx, m),
+            .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .notes, .findings, .sessions => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
             .git => try git_app.kebabMouse(app, pr.idx, m),
-            .notes, .findings, .sessions => {},
+            .notes, .findings, .sessions, .diagnostics => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
             .git => try git_app.chipMouse(app, c.kind, m),
+            .diagnostics => try lsp.chipMouse(app, m),
             .notes, .findings, .sessions => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
             .git => git_app.filterMouse(app, m),
+            .diagnostics => lsp.filterMouse(app, m),
             .notes, .findings, .sessions => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
             .panel => |p| switch (p) {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
                 .git => if (hitRect(app, m.x, m.y)) |r| git_app.scrollbarMouse(app, r, m),
+                .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .notes, .findings, .sessions => {},
             },
             .pane => |id| {
@@ -854,7 +888,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .settings => try settings_app.click(app, i),
                 .wizard => first_launch.click(app, i),
-                else => {},
+                // The completion popup registers its rows here with no overlay up.
+                else => if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
             }
         },
         .pane => |id| {
@@ -906,6 +941,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
+                .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
                 .editor, .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1142,6 +1178,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
     }
 }
 

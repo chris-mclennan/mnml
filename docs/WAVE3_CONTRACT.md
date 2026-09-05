@@ -489,3 +489,107 @@ that the oldest slot reads `+K more…`.
 - Cloud agents (`cloud_agents.*`) are registered and say "not in this build";
   `ai.canary`, `ai.claude_rename_account`, `ai.show_last_response`,
   `agents.new_from_pr` likewise.
+
+---
+
+## LSP + DAP (Phase 5) — `// changed:` notes (2026-09-04)
+
+- `// changed (ui):` `editor_view.Doc` gains two slices the app fills per
+  frame: `marks: []const GutterMark` (`{ line, glyph, style }` — one sign
+  painted in the gutter's first column on that line; the app resolves
+  priority by ordering the list, the view paints the first match) and
+  `underlines: []const Underline` (`{ start, end, style }` — byte ranges
+  drawn over the syntax style with the style's `fg` as the underline
+  colour and its `ul_style`, `.curly` when unset). The debugger's
+  breakpoints (`● ◆ ◈`) and the stop arrow (`▶`) are marks; a diagnostic's
+  severity dot is a mark on the lines the debugger leaves; a diagnostic's
+  range is an underline.
+- `// changed (core):` `PanelId` gains `diagnostics` — the LSP problems
+  list is a `ListPanel(DiagRow)` in the right slot like TODOS
+  (`lsp.diagnostics` shows it; `lsp.diagnostics_filter` cycles the
+  severity chip; Enter opens the row). `cmd_view.showRightPanel` is pub
+  so a command can route a panel there.
+- `// changed (app):` `Pane` gains `debug: dap.DebugPane` and
+  `dap_repl: dap.DapReplPane` (`src/app/dap.zig`), painted by
+  `ui/dap_view.zig` and `ui/dap_repl_view.zig`; their rows register
+  `.script_hit{ pane, id }` (a frame is its index, a variable row is
+  `vars_base + i`, a watch is `watch_base + i`, the REPL's input row is
+  `input_hit`). Both open beside the active pane and are singletons.
+- `// changed (app):` `PromptPurpose` gains `dap_add_watch`,
+  `dap_bp_condition` / `dap_hit_count` (`BpTarget{ path, line }`),
+  `dap_set_variable`, `lsp_rename`, `lsp_workspace_symbol`; `PickerKind`
+  gains `dap_remove_watch`, `dap_exceptions`, `dap_threads`,
+  `lsp_locations`, `lsp_code_actions`, `lsp_symbols`.
+- `// changed (app):` the completion popup, the hover / signature box and
+  the peek overlay are `app.lsp` state, not `Overlay` variants — the
+  popup coexists with typing. Their rows register `.overlay_item(i)` with
+  no overlay up; `dispatch` routes those to the popup. `lsp.interceptKey`
+  runs after the find bar and before any pane routing.
+- `// changed (app):` document sync reads `Editor.edits` (the `EditLog`
+  the highlighter and the snippet session already read), not
+  `EditOutcome.text_edits`: one splice on an incremental server goes as
+  a range when it converts exactly (an insertion, or utf-8 positions),
+  anything else as the full text. It runs from the frame (`drawEditor`),
+  so every mutation path — ops, `setText`, undo — is covered.
+- `// changed (app):` a language server is spawned only when a root
+  marker is found for it (or its spec has none); the missing-binary toast
+  (`LSP: <cmd> not installed — \`<hint>\``, once per server per session)
+  is decided by a PATH probe independent of the root, so a marker-less
+  temp workspace never launches a server it would only confuse. The
+  `.open` / `save_pre` / `save_post` hooks carry attach, format-on-save
+  and `didSave`; `forceClosePane` sends `didClose` for the last editor on
+  a file.
+- `// changed (app):` the outline prefers a server's `documentSymbol`
+  list (`lsp.symbolsFor`) to the tree-sitter walk when one has landed;
+  `lsp.highlight_symbol` lands in the pane's find matches (same paint);
+  `lsp.fold_all` fills `Buffer.folds`.
+- `// changed (spec):` `dap.attach` is a launch body with
+  `.request = "attach"` (no process picker); `lsp.inlay_hints_toggle`
+  flips the config flag and says painting is a later slice.
+
+---
+
+## Merge notes — lsp-dap ⨯ (git + ai) (2026-09-04)
+
+- `// changed (ui):` git's `gutter_marks: []const GutterMark` and
+  lsp-dap's `marks: []const GutterMark` were the same concept — a per-line
+  mark the view paints in the gutter — with two struct shapes, so `Doc`
+  keeps ONE field, git's `gutter_marks`, and `GutterMark` is the union of
+  both: `{ line, kind: MarkKind, glyph = "", style = .{} }` with
+  `MarkKind = { added, modified, deleted, sign }`. A change mark carries
+  only `kind`; a `.sign` (a breakpoint `● ◆ ◈`, the stop's `▶`, a
+  diagnostic's dot) carries its `glyph` + `style`. The two paint in
+  different cells — the change bar in the gutter's LAST cell, the sign in
+  its FIRST — so with line numbers on both show on the same line. The
+  list is in priority order, not necessarily sorted (`render.gutterMarks`
+  concatenates dap, lsp, git): per column the view paints the first match
+  on a line. With line numbers off the gutter is one cell while marks
+  exist (git's rule, now covering signs), the two columns coincide, and
+  the sign wins — a diagnostics dot beats a change mark. lsp-dap's
+  writers (`lsp.marksFor`, `dap.marksFor`) say `.kind = .sign`;
+  `git.viewMarks` is unchanged. `blame` and `underlines` stay as each
+  side wrote them.
+- `// changed (app):` `Pane` is 14 variants — the six git / ai ones and
+  `debug` / `dap_repl`; every exhaustive switch names all of them.
+  `Pane.deinit(gpa, io)` / `PaneStore.init(gpa, io)` are main's (the
+  agents / spend panes need the io); `dap.openSingleton`'s errdefer was
+  the one lsp-dap call on the old shape. `PanelId` is `todos notes
+  findings sessions git diagnostics`; `AppEvent` keeps `.git .ai .agents
+  .spend` and has `.lsp .dap` real; `PromptPurpose` / `PickerKind` are
+  the unions; the runner tables list git, ai, agents, spend, dap and lsp.
+  The count pin stays 812 — lsp-dap added no Zig-only ids.
+- `// changed (app):` key routing in `dispatch.key`: overlay → find bar →
+  `lsp.interceptKey` (completion / hover / peek) → the tree and the
+  right panel → the non-editor pane blocks → the ghost's accept keys →
+  the chord chain → the buffer. An open completion popup therefore owns
+  Tab / Enter ahead of a ghost's Tab; with no popup the ghost keeps Tab /
+  ctrl+→ / ctrl+↓. A completion accept that edited the text leaves the
+  ghost stale, so the dispatcher drops it when `Editor.edits.head()`
+  moved under a consumed key.
+- `// changed (app):` the statusline's right segments are git's branch
+  segment, then lsp's `✗ N  ⚠ M` chip, then ai's meter, then the input
+  style. `App.tick` runs git's TTL and ai's timers; lsp / dap have no
+  pump — their reader tasks post `.lsp` / `.dap` events and `App.handle`
+  is their only entry — so `nextDeadlineMs` folds git and ai only.
+- `// changed (app):` `App.deinit` retires the workers first, in this
+  order: ai, todos, git, dap, lsp — then the rest as before.

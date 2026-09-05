@@ -18,6 +18,8 @@ const cmd_tab = @import("cmd_tab.zig");
 const runners = @import("runners.zig");
 const tasks = @import("tasks.zig");
 const ai_app = @import("ai.zig");
+const dap = @import("dap.zig");
+const lsp = @import("lsp.zig");
 
 pub const table = .{
     .@"picker.buffers" = &buffers,
@@ -270,6 +272,18 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {},
             };
+        },
+        .lsp_locations, .lsp_code_actions, .lsp_symbols => |kind| {
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try lsp.pickerAccept(app, kind, i);
+        },
+        .dap_remove_watch, .dap_exceptions, .dap_threads => |kind| {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            const detail = try app.frame.allocator().dupe(u8, if (i < p.details.len) p.details[i] else "");
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try dap.pickerAccept(app, kind, label, detail);
         },
         .git => {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);

@@ -23,6 +23,7 @@ const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
+const dap = @import("dap.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -118,6 +119,10 @@ pub const Pane = union(enum) {
     claude_agents: agents.AgentsPane,
     /// The AI spend report (one at a time).
     spend_report: spend.SpendPane,
+    /// The debugger: call stack, variables + watches, output.
+    debug: dap.DebugPane,
+    /// The debugger's REPL.
+    dap_repl: dap.DapReplPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -134,6 +139,8 @@ pub const Pane = union(enum) {
             .ai => |*a| a.deinit(),
             .claude_agents => |*a| a.deinit(io),
             .spend_report => |*s| s.deinit(io),
+            .debug => {},
+            .dap_repl => |*r| r.deinit(),
         }
     }
 
@@ -154,13 +161,15 @@ pub const Pane = union(enum) {
             .ai => |*a| return a.title,
             .claude_agents => return "Claude Agents",
             .spend_report => return "AI spend (24h)",
+            .debug => return "Debug",
+            .dap_repl => return "DAP REPL",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl => false,
         };
     }
 
