@@ -497,7 +497,17 @@ fn chordChain(app: *App, k: Key) Allocator.Error!bool {
             const fallback = app.chord.fallback;
             app.chord.fallback = null;
             const was_first = app.chord.len == 1;
+            // A leader chain the keymap does not know may still be an
+            // entry of the which-key menu itself (`space n`, `space s v`):
+            // the popup owns every key under an armed leader, however
+            // fast it was typed.
+            const menu = if (!was_first and k.code != .esc) leaderLookup(app.chord.seq[0..app.chord.len]) else null;
             app.chord.clear(app.gpa);
+            if (menu) |hit| {
+                if (fallback) |fb| freeTarget(app, fb);
+                try runLeaderHit(app, hit);
+                return true;
+            }
             // Esc on a pending chord cancels it: no fallback (a leader
             // popup on Esc is the opposite of what was asked), no retry.
             if (!was_first and k.code == .esc) {
@@ -568,14 +578,58 @@ fn runTarget(app: *App, t: keymap.Target) Allocator.Error!void {
 }
 
 /// A pending chord chain times out: fire its fallback, drop the prefix.
+/// A leader chain with no fallback of its own — `space w`, a prefix of
+/// `space w K` — resolves to the which-key entry it names, as
+/// `timeoutlen` picks the shorter mapping.
 pub fn expireChords(app: *App) Allocator.Error!void {
     if (app.chord.deadline_ms == null) return;
     const fallback = app.chord.fallback;
     app.chord.fallback = null;
+    const menu = if (fallback == null) leaderLookup(app.chord.seq[0..app.chord.len]) else null;
     app.chord.clear(app.gpa);
     if (fallback) |fb| {
         defer freeTarget(app, fb);
         try runTarget(app, fb);
+    } else if (menu) |hit| try runLeaderHit(app, hit);
+    app.needs_render = true;
+}
+
+const LeaderHit = struct { node: *const whichkey.Node, path: [whichkey.max_depth]u8, len: usize };
+
+/// The which-key node a chord chain names: `seq[0]` the bare leader and
+/// every later chord a plain char (shifted letters are the uppercase
+/// entries — `space T`).
+fn leaderLookup(seq: []const Chord) ?LeaderHit {
+    if (seq.len < 2 or seq.len - 1 > whichkey.max_depth) return null;
+    if (!seq[0].eql(Chord.of(Key.char(' ')))) return null;
+    var hit: LeaderHit = .{ .node = undefined, .path = undefined, .len = seq.len - 1 };
+    for (seq[1..], 0..) |c, i| {
+        const ch = switch (c.code) {
+            .char => |v| v,
+            else => return null,
+        };
+        if (c.mods.ctrl or c.mods.alt or c.mods.super or ch >= 128) return null;
+        hit.path[i] = if (c.mods.shift and ch >= 'a' and ch <= 'z') @intCast(ch - ('a' - 'A')) else @intCast(ch);
+    }
+    hit.node = whichkey.lookup(hit.path[0..hit.len]) orelse return null;
+    return hit;
+}
+
+/// A leaf runs; a group opens the popup at that path.
+fn runLeaderHit(app: *App, hit: LeaderHit) Allocator.Error!void {
+    switch (hit.node.*) {
+        .cmd => |c| command.run(app, .{ .static = c.id }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
+        .group => {
+            app.overlay.deinit(app.gpa);
+            var state: whichkey.State = .{};
+            @memcpy(state.path[0..hit.len], hit.path[0..hit.len]);
+            state.len = hit.len;
+            app.overlay = .{ .which_key = state };
+            app.focus = .overlay;
+        },
     }
     app.needs_render = true;
 }
