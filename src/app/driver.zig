@@ -234,7 +234,6 @@ pub const AppDriver = struct {
                 .@"error" => .err,
             }),
             .toast_dismiss => |id| app.dismissToast(id),
-            .notify => |n| try app.toastLevel(.info, "{s}: {s}", .{ n.title, n.body }),
             .register_command => |r| {
                 _ = app.dyn_commands.register(.{ .id = r.id, .title = r.title, .group = r.group, .keys = r.keys, .owner = .ipc }) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
@@ -248,7 +247,8 @@ pub const AppDriver = struct {
             .progress_start => |pr| try app.toastPersistent(pr.id, pr.label, .info),
             .progress_update => |pr| if (pr.label) |label| try app.toastPersistent(pr.id, label, .info),
             .progress_end => |pr| app.dismissToast(pr.id),
-            else => app.toast("ipc {s}: not in this build", .{@tagName(cmd.*)}), // TODO(ipc-tier2)
+            // The segment / badge / pty / native-notify family.
+            else => if (!try ipc.effects.apply(app, cmd)) app.toast("ipc {s}: not in this build", .{@tagName(cmd.*)}),
         }
     }
 

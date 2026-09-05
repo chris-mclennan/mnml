@@ -1,0 +1,10 @@
+{"event":"statusline_set_segment","id":"jira","text":"JIRA 3"}
+{"event":"statusline_set_segment","id":"ci","text":"CI green"}
+{"event":"statusline_clear_segment","id":"ci"}
+{"event":"set_activity_badge","section":"agents","count":"3"}
+{"event":"set_activity_badge","section":"cloud_agents","count":"0"}
+{"event":"notify","title":"build","body":"done"}
+{"event":"notify","title":"mnml","body":"no title"}
+{"event":"open_pty","exe":"ls"}
+{"event":"unknown","raw":"{\"cmd\":\"open-pty\",\"command\":[]}"}
+{"event":"quit"}

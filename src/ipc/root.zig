@@ -4,6 +4,7 @@
 pub const command = @import("command.zig");
 pub const channel = @import("channel.zig");
 pub const screen = @import("screen.zig");
+pub const effects = @import("effects.zig");
 
 pub const Command = command.Command;
 pub const Channel = channel.Channel;
@@ -13,4 +14,5 @@ test {
     _ = command;
     _ = channel;
     _ = screen;
+    _ = effects;
 }

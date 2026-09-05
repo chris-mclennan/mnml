@@ -63,6 +63,7 @@ const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
 const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
+const ipc = @import("../ipc/root.zig");
 const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
@@ -1087,7 +1088,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 statusline.seg_mode => if (m.button == .right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
                 statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
                 statusline.seg_file => if (m.button == .right) try runCmd(app, .@"file.copy_path"),
-                else => {},
+                // A host's segment: its `click_command`, on a left click.
+                else => if (seg >= statusline.seg_dyn_base and m.button == .left) try ipc.effects.clickSegment(app, seg - statusline.seg_dyn_base),
             }
         },
         .button => |id| {

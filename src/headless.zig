@@ -525,3 +525,53 @@ test "restart is reported through the exit line and the return value" {
     defer t.allocator.free(events);
     try t.expect(std.mem.endsWith(u8, events, "{\"event\":\"restart\"}\n{\"event\":\"exit\",\"restart\":true}\n"));
 }
+
+test "tier-2 golden: the Rust event shapes for segments, badges, notify and open-pty, through the real App" {
+    const app_driver = @import("app/driver.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const data_root = try std.fs.path.join(t.allocator, &.{ ws, "data" });
+    defer t.allocator.free(data_root);
+
+    const drv = try app_driver.AppDriver.create(t.allocator, t.io, .{ .workspace = ws, .data_root = data_root, .cols = 100, .rows = 12 }, null);
+    defer drv.driver().deinit();
+
+    const cmd_path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "ipc-zig", "command" });
+    defer t.allocator.free(cmd_path);
+    var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 150, .lines = @embedFile("ipc/golden/tier2.commands.jsonl") };
+    const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
+    const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 100, .rows = 12 }, .ipc = .{ .subdir = "ipc-zig" } });
+    th.join();
+    try t.expect(!restart);
+
+    // The state the commands left behind: one segment (`ci` cleared), the
+    // badge, a pinned-nothing (warn is ephemeral), no notifier spawned.
+    const app = &drv.app;
+    try t.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
+    try t.expectEqualStrings("jira", app.ipc_fx.segments.items[0].id);
+    try t.expectEqual(@as(u32, 3), app.ipc_fx.badge("agents"));
+    try t.expectEqual(@as(u32, 0), app.ipc_fx.badge("cloud_agents"));
+    try t.expect(!app.native_notify);
+    var saw_pty = false;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .pty => |*pt| saw_pty = saw_pty or std.mem.eql(u8, pt.label, "ls"),
+        else => {},
+    };
+    try t.expect(saw_pty);
+    // The segment is on the statusline of the last frame (the loop frames
+    // after the batch, so an in-band `expect_screen` would run too early).
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "  JIRA 3 ") != null);
+
+    // The acks, minus the start and exit lines the loop adds, are the
+    // Rust host's `json_event` shapes byte for byte.
+    const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/events.jsonl", t.allocator, .unlimited);
+    defer t.allocator.free(events);
+    const first_nl = std.mem.indexOfScalar(u8, events, '\n').?;
+    const body = events[first_nl + 1 ..];
+    const exit_at = std.mem.lastIndexOf(u8, body, "{\"event\":\"exit\"}").?;
+    try t.expectEqualStrings(@embedFile("ipc/golden/tier2.events.jsonl"), body[0..exit_at]);
+}

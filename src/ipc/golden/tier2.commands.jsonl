@@ -1,0 +1,10 @@
+{"cmd":"statusline-set-segment","id":"jira","text":"JIRA 3","side":"left","color":"cyan","click_command":"app.quit","priority":150,"min_width":3,"max_width":12}
+{"cmd":"statusline-set-segment","id":"ci","text":"CI green"}
+{"cmd":"statusline-clear-segment","id":"ci"}
+{"cmd":"set-activity-badge","section":"agents","count":3}
+{"cmd":"set-activity-badge","section":"cloud_agents","count":0}
+{"cmd":"notify","text":"done","title":"build","level":"warn","sound":true,"source":"ci"}
+{"cmd":"notify","text":"no title"}
+{"cmd":"open-pty","command":["ls","-la"],"cwd":"/tmp"}
+{"cmd":"open-pty","command":[]}
+{"cmd":"quit"}

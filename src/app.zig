@@ -65,6 +65,7 @@ const git_app = @import("app/git.zig");
 const ai_app = @import("app/ai.zig");
 const agents = @import("app/agents.zig");
 const spend = @import("app/spend.zig");
+const ipc = @import("ipc/root.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const http_app = @import("app/http.zig");
@@ -130,6 +131,10 @@ pub const InitOptions = struct {
     /// from `loaded` (the trust store); the `.test` runner sets it for
     /// the temp workspace it made itself.
     workspace_trusted: ?bool = null,
+    /// Whether an IPC `notify` may also reach the OS (`osascript` /
+    /// `notify-send` / PowerShell). The terminal loop says yes; headless
+    /// and the tests never spawn a notifier.
+    native_notify: bool = false,
 };
 
 /// How long an ordinary toast stays.
@@ -513,6 +518,9 @@ pub const App = struct {
     http_panel: http_panel.State,
     integrations: integrations.State,
     marketplace: marketplace.State = .{},
+    /// A host's statusline segments and activity badges (`ipc/effects.zig`).
+    ipc_fx: ipc.effects.State = .{},
+    native_notify: bool = false,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -639,6 +647,7 @@ pub const App = struct {
         errdefer app.hooks.deinit();
         opts.loaded = null; // owned by `app` from here
         app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
+        app.native_notify = opts.native_notify;
         app.lua = try scripting.Lua.create(gpa, io, &app);
         errdefer app.lua.?.destroy();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
@@ -780,6 +789,7 @@ pub const App = struct {
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
         self.marketplace.deinit(gpa, self.io);
+        self.ipc_fx.deinit(gpa);
         self.dap.deinit(gpa);
         // Panes go before the manifests their mount runners borrow.
         self.panes.deinit();

@@ -75,6 +75,7 @@ const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
 const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
+const ipc = @import("../ipc/root.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -203,12 +204,22 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
         ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
         // The git badge: changed files in the active repo, Rust's
-        // `set_activity_badge("git", n)`.
-        const badge = app.git.badge();
+        // `set_activity_badge("git", n)` — a host's own `git` badge
+        // replaces it. Then every other section's badge, summed, as
+        // `•N` in the accent (`set-activity-badge` over IPC).
+        var bx = rx;
+        const host_git = app.ipc_fx.badge("git");
+        const badge = if (host_git > 0) host_git else app.git.badge();
         if (badge > 0) {
             const label = ui.fmt("{d}", .{badge});
             const bw = ui.width(label);
-            if (rx > w0 + bw + 2) _ = ui.putStrRight(rx, y, bw, label, Theme.onBg(th.warn_fg, bg.bg));
+            if (bx > w0 + bw + 2) bx = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.warn_fg, bg.bg));
+        }
+        const others = app.ipc_fx.badgeTotal("git");
+        if (others > 0) {
+            const label = ui.fmt("{s}{d} ", .{ @as([]const u8, if (ui.ascii) "*" else "•"), others });
+            const bw = ui.width(label);
+            if (bx > w0 + bw + 2) _ = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.accent, bg.bg));
         }
     }
     const label: []const u8 = if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ";
@@ -700,6 +711,11 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const lua_right = try app.script().segmentTexts(ui.arena, .right);
     const bell_seg = try messages.bellSegment(app, ui.arena, ui.ascii);
     const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
+    // A host's `statusline-set-segment` chips, packed by priority into
+    // what is left beside the built-ins (`ipc/effects.zig`).
+    const budget: usize = area.w -| 40;
+    info.dyn_left = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .left, budget / 2, ui.ascii));
+    info.dyn_right = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .right, budget / 2, ui.ascii));
     const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, bell_seg, stress_seg };
     var extra: usize = lua_left.len + lua_right.len;
     for (maybes) |m| extra += @intFromBool(m != null);
@@ -722,6 +738,17 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         info.right = segs;
     }
     statusline.draw(ui, area, info);
+}
+
+/// The packed host segments with their colour names resolved.
+fn dynSegs(ui: Ui, packed_segs: []const ipc.effects.Rendered) Allocator.Error![]statusline.DynSeg {
+    const out = try ui.arena.alloc(statusline.DynSeg, packed_segs.len);
+    for (packed_segs, 0..) |r, i| out[i] = .{
+        .text = r.text,
+        .fg = if (r.color) |c| integrations_view.paletteColor(ui.theme, c) else null,
+        .index = r.index,
+    };
+    return out;
 }
 
 /// The `:` line while it is open; blank otherwise (vim's cmdline row).
