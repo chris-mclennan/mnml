@@ -221,6 +221,9 @@ pub const Server = struct {
     root: []u8,
     /// `initialize` replied and `initialized` went out.
     ready: bool = false,
+    /// `$/progress` begins without their end — the server is loading
+    /// or indexing, and answers it gives meanwhile are partial.
+    progress_open: u32 = 0,
     encoding: Encoding = .utf16,
     caps: Caps = .{},
     /// Open documents by absolute path (owned keys).

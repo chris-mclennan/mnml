@@ -475,6 +475,9 @@ pub fn resolve(app: *const App, id: []const u8) ?CommandRef {
 /// (Canceled is silent) and returns the error so callers can see it.
 pub fn run(app: *App, ref: CommandRef) CommandError!void {
     app.diag.clear();
+    const outer = app.running_cmd;
+    app.running_cmd = ref;
+    defer app.running_cmd = outer;
     const result: CommandError!void = switch (ref) {
         .static => |id| if (runners.get(id)) |f| f(app) else app.diag.fail(app.frame.allocator(), "{s}: not implemented yet", .{name(id)}),
         .dyn => |slot| runDyn(app, slot),
