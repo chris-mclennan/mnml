@@ -39,9 +39,18 @@ pub fn selectStart(ed: *Editor) void {
 }
 
 pub fn selectClear(ed: *Editor) void {
+    remember(ed);
     ed.block_anchor = null;
     ed.anchor = null;
     ed.block_eol = false;
+}
+
+/// `gv` brings the rectangle back (`:help gv`) — taken before an
+/// operator parks the cursor at the top-left corner.
+fn remember(ed: *Editor) void {
+    if (ed.block_anchor) |a| {
+        if (a != ed.cursor) ed.last_selection = .{ a, ed.cursor };
+    }
 }
 
 fn joined(ed: *const Editor, rs: []const [2]usize) Allocator.Error![]u8 {
@@ -57,6 +66,7 @@ fn joined(ed: *const Editor, rs: []const [2]usize) Allocator.Error![]u8 {
 /// `y` on a block: the rows joined by `\n`, charwise.
 pub fn yankBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
     const r = rect(ed) orelse return;
+    remember(ed);
     const rs = try ranges(ed, r, ed.gpa);
     defer ed.gpa.free(rs);
     const text = try joined(ed, rs);
@@ -72,6 +82,7 @@ pub fn yankBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Err
 /// parks at the rectangle's top-left.
 pub fn deleteBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
     const r = rect(ed) orelse return;
+    remember(ed);
     const rs = try ranges(ed, r, ed.gpa);
     defer ed.gpa.free(rs);
     const text = try joined(ed, rs);

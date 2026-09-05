@@ -156,7 +156,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_inner_argument => select.argument(ed, false),
         .select_around_argument => select.argument(ed, true),
         .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block => return error.Unsupported, // TODO(vim-slice: text-objects) ii / ai / aI
-        .restore_last_selection => select.restoreLastSelection(ed),
+        .restore_last_selection => |shape| select.restoreLastSelection(ed, shape),
         .swap_anchor_cursor => select.swapAnchorCursor(ed),
         .move_cursor_to_selection_start => select.moveCursorToSelectionStart(ed),
         .normalize_linewise_selection => select.normalizeLinewiseSelection(ed),
@@ -331,7 +331,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .select_all,                                                            .select_word,                                           .select_inner_word,                                                                                              .select_around_word,
         .select_inner_big_word,                                                 .select_around_big_word,                                .{ .select_inner_quote = '"' },                                                                                  .{ .select_around_quote = '"' },
         .{ .select_inner_bracket = '(' },                                       .{ .select_around_bracket = '(' },                      .select_inner_paragraph,                                                                                         .select_around_paragraph,
-        .select_inner_tag,                                                      .select_around_tag,                                     .restore_last_selection,                                                                                         .swap_anchor_cursor,
+        .select_inner_tag,                                                      .select_around_tag,                                     .{ .restore_last_selection = .charwise },                                                                        .swap_anchor_cursor,
         .move_cursor_to_selection_start,                                        .normalize_linewise_selection,                          .normalize_linewise_selection_inner,                                                                             .make_selection_inclusive,
         .{ .insert_char = 'é' },
         .{ .insert_char = '\n' },

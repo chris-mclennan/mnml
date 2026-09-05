@@ -422,7 +422,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // / `r` app commands, which arrive after the handler has already
     // left V-BLOCK.
     const after_mode = still.buf.input.mode();
-    if (after_mode == .visual_block and before_mode != .visual_block) still.block_anchor = still.buf.editor.cursor;
+    if (after_mode == .visual_block and before_mode != .visual_block) still.block_anchor = still.buf.editor.block_anchor orelse still.buf.editor.cursor;
     if (after_mode != .visual_block) still.block_anchor = null;
     try finishDeferredInserts(app);
     return true;

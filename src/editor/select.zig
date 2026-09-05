@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const editor = @import("editor.zig");
+const edit_op = @import("edit_op.zig");
 const Editor = editor.Editor;
 const classOf = editor.classOf;
 const isSpace = editor.isSpace;
@@ -386,10 +387,27 @@ pub fn tag(ed: *Editor, around: bool) void {
     }
 }
 
-pub fn restoreLastSelection(ed: *Editor) void {
+/// `gv`: the remembered range back, in the shape it was made (`:help
+/// gv`). A linewise range closed one past its last line's `\n`, so the
+/// cursor steps back onto that line; a block range sets the block
+/// anchor rather than the charwise one.
+pub fn restoreLastSelection(ed: *Editor, shape: edit_op.SelectionShape) void {
     const s = ed.last_selection orelse return;
-    ed.anchor = ed.snapBoundary(s[0]);
-    ed.cursor = ed.snapBoundary(s[1]);
+    const a = ed.snapBoundary(s[0]);
+    var c = ed.snapBoundary(s[1]);
+    switch (shape) {
+        .charwise => {},
+        .linewise => if (c > a and c == ed.lineStart(ed.lineOfByte(c))) {
+            c = ed.prevBoundary(c);
+        },
+        .block => {
+            ed.block_anchor = a;
+            ed.block_eol = false;
+        },
+    }
+    ed.anchor = a;
+    ed.cursor = c;
+    ed.goal_col = null;
 }
 
 pub fn swapAnchorCursor(ed: *Editor) void {
@@ -546,8 +564,15 @@ test "line-to-end, inclusive, linewise normalize, swap, gv" {
     try std.testing.expectEqualStrings("ab\ncd\n", sel(ed));
     selectClear(ed);
     try std.testing.expect(ed.anchor == null);
-    restoreLastSelection(ed);
+    restoreLastSelection(ed, .charwise);
     try std.testing.expectEqualStrings("ab\ncd\n", sel(ed));
+    // Linewise: the cursor comes back on the last selected line, not on
+    // the line after it; block: the block anchor is set.
+    restoreLastSelection(ed, .linewise);
+    try std.testing.expectEqual(@as(usize, 1), ed.lineOfByte(ed.cursor));
+    restoreLastSelection(ed, .block);
+    try std.testing.expectEqual(@as(?usize, 0), ed.block_anchor);
+    ed.block_anchor = null;
     ed.anchor = 3;
     ed.cursor = 4;
     makeSelectionInclusive(ed);

@@ -12,6 +12,10 @@ const Allocator = std.mem.Allocator;
 
 pub const CaseTransform = enum { lower, upper, toggle };
 
+/// How `gv` re-selects the remembered range: the Visual mode it was
+/// made in (`:help gv`).
+pub const SelectionShape = enum { charwise, linewise, block };
+
 pub const EditOp = union(enum) {
     // ── motion ──
     move_left,
@@ -99,7 +103,7 @@ pub const EditOp = union(enum) {
     select_inner_indent_block,
     select_around_indent_block,
     select_outer_indent_block,
-    restore_last_selection,
+    restore_last_selection: SelectionShape,
     swap_anchor_cursor,
     move_cursor_to_selection_start,
     normalize_linewise_selection,

@@ -154,6 +154,9 @@ pub const Vim = struct {
     /// A visual text object just set the selection to its exact range —
     /// the next operator must not widen it. Any other visual key clears it.
     visual_exact: bool = false,
+    /// The Visual mode the last selection was made in — what `gv`
+    /// comes back to (`:help gv`).
+    last_visual: VimMode = .visual,
 
     pub fn init(gpa: Allocator, cfg: input.Config) Vim {
         return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8), .use_tabs = cfg.use_tabs };
@@ -426,6 +429,10 @@ pub const Vim = struct {
         };
     }
 
+    fn isVisual(m: VimMode) bool {
+        return m == .visual or m == .visual_line or m == .visual_block;
+    }
+
     fn isCtrlChar(key: Key, c: u21) bool {
         if (!key.mods.ctrl) return false;
         const k = charOf(key) orelse return false;
@@ -436,6 +443,7 @@ pub const Vim = struct {
 
     pub fn handleKey(self: *Vim, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         if (self.cmdline_open) return self.handleCmdline(key, arena);
+        const before = self.vmode;
         const result = switch (self.vmode) {
             .insert => try self.handleInsert(key, arena),
             .replace => try self.handleReplace(key, arena),
@@ -443,6 +451,7 @@ pub const Vim = struct {
             .visual, .visual_line => try self.handleVisual(key, ctx, arena),
             .visual_block => try self.handleVisualBlock(key, arena),
         };
+        if (isVisual(before) and !isVisual(self.vmode)) self.last_visual = before;
         // A pending `"x` routes the next register-touching op list.
         if (result == .ops and self.pending_register != null) {
             var touches = false;
@@ -1518,10 +1527,16 @@ pub const Vim = struct {
                 return .consumed;
             },
             'v' => {
-                self.vmode = .visual;
+                // Back in the mode the selection was made in (`:help gv`).
+                self.vmode = self.last_visual;
+                const shape: @import("../editor/edit_op.zig").SelectionShape = switch (self.last_visual) {
+                    .visual_line => .linewise,
+                    .visual_block => .block,
+                    else => .charwise,
+                };
                 // The remembered range was already widened when it closed.
                 self.visual_exact = true;
-                return ops(arena, &.{.restore_last_selection});
+                return ops(arena, &.{.{ .restore_last_selection = shape }});
             },
             ';' => return runCmd(.@"editor.jump_prev_edit"),
             ',' => return runCmd(.@"editor.jump_next_edit"),
