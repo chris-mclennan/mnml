@@ -28,6 +28,9 @@ const request_pane = @import("request_pane.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const script_pane = @import("script_pane.zig");
+const mount_pane = @import("mount_pane.zig");
+const integrations = @import("integrations.zig");
+const marketplace = @import("marketplace.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -35,6 +38,7 @@ pub const PtyPane = pty_pane.PtyPane;
 pub const RequestPane = request_pane.RequestPane;
 pub const WebsocketPane = ws_pane.WebsocketPane;
 pub const BrowserPane = browser_pane.BrowserPane;
+pub const MountPane = mount_pane.MountPane;
 
 /// What the file watcher last saw on disk for an editor's file.
 pub const DiskStamp = struct { mtime_ns: i128, size: u64 };
@@ -138,6 +142,12 @@ pub const Pane = union(enum) {
     browser: BrowserPane,
     /// A pane a script renders (`mnml.pane.open`).
     script: script_pane.ScriptPane,
+    /// An integration hosted over a mount socket (`mount.open`, a manifest command).
+    mount: MountPane,
+    /// The installed integrations (one at a time).
+    integrations: integrations.IntegrationsPane,
+    /// What can be installed (one at a time).
+    marketplace: marketplace.MarketplacePane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -146,6 +156,8 @@ pub const Pane = union(enum) {
             .websocket => |*w| w.deinit(gpa),
             .browser => |*b| b.deinit(gpa),
             .script => |*s| s.deinit(gpa),
+            .mount => |*m| m.deinit(gpa),
+            .integrations, .marketplace => {},
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -186,13 +198,16 @@ pub const Pane = union(enum) {
             .websocket => |*w| return w.title(),
             .browser => |*b| return b.title(),
             .script => |*s| return s.title,
+            .mount => |*m| return m.title(),
+            .integrations => return "Integrations",
+            .marketplace => return "Marketplace",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace => false,
         };
     }
 
@@ -234,6 +249,13 @@ pub const Pane = union(enum) {
     pub fn asBrowser(self: *Pane) ?*BrowserPane {
         return switch (self.*) {
             .browser => |*b| b,
+            else => null,
+        };
+    }
+
+    pub fn asMount(self: *Pane) ?*MountPane {
+        return switch (self.*) {
+            .mount => |*m| m,
             else => null,
         };
     }

@@ -29,6 +29,7 @@ const input = @import("../input/mod.zig");
 const Theme = @import("../ui/theme.zig");
 const ui_settings = @import("../ui/settings.zig");
 const Item = ui_settings.Item;
+const integrations = @import("integrations.zig");
 
 pub const Scope = enum { home, workspace };
 
@@ -138,6 +139,9 @@ pub const rows = [_]RowSpec{
 pub const reset_label = "Reset all to defaults";
 /// The action row's hit id, past every row.
 pub const reset_id: u32 = rows.len;
+/// Rows from installed manifests' `settings[]` start here, in
+/// `integrations.settingRefs` order.
+pub const integ_base: u32 = reset_id + 1;
 
 const bool_options = [_][]const u8{ "off", "on" };
 
@@ -303,6 +307,21 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
                 .id = i,
             } });
         };
+        if (section == .integrations) {
+            // What the installed manifests declare, after the built-ins.
+            const refs = try integrations.settingRefs(app, arena);
+            for (refs, 0..) |ref, k| {
+                const inst = &app.integrations.list[ref.installed];
+                const s = inst.manifest.settings[ref.setting];
+                try out.append(arena, .{ .row = .{
+                    .label = try std.fmt.allocPrint(arena, "{s}: {s}", .{ inst.manifest.label, s.label }),
+                    .options = s.options,
+                    .current = integrations.settingIndex(app, ref),
+                    .modified = integrations.settingIndex(app, ref) != integrations.settingDefaultIndex(app, ref),
+                    .id = integ_base + @as(u32, @intCast(k)),
+                } });
+            }
+        }
     }
     try out.append(arena, .{ .section = "Reset" });
     try out.append(arena, .{ .action = .{ .label = reset_label, .id = reset_id } });
@@ -318,6 +337,7 @@ pub fn footer(app: *App, arena: Allocator, list: []const Item) Allocator.Error!?
         .row => |r| r,
         else => return null,
     };
+    if (row.id >= integ_base) return try std.fmt.allocPrint(arena, "→ {s}/{s}", .{ app.data_root, integrations.settings_file });
     const scope = rows[row.id].scope;
     const path = (try configPath(app, scope)) orelse return "no config file to write";
     return try std.fmt.allocPrint(arena, "→ {s}", .{if (scope == .workspace) app.relPath(path) else path});
@@ -367,6 +387,16 @@ fn itemIndexOf(list: []const Item, id: u32) ?usize {
 /// Move row `id` by `delta` choices, wrapping.
 pub fn adjust(app: *App, id: u32, delta: i8) Allocator.Error!void {
     @setEvalBranchQuota(200_000);
+    if (id >= integ_base) {
+        const refs = try integrations.settingRefs(app, app.frame.allocator());
+        const k = id - integ_base;
+        if (k >= refs.len) return;
+        const n = app.integrations.list[refs[k].installed].manifest.settings[refs[k].setting].options.len;
+        if (n == 0) return;
+        const cur = integrations.settingIndex(app, refs[k]);
+        const next = if (delta < 0) (cur + n - 1) % n else (cur + 1) % n;
+        return setRow(app, id, next);
+    }
     inline for (rows, 0..) |r, i| if (i == id) {
         const n = options(r.path).len;
         const cur = currentIndex(&app.cfg, r.path);
@@ -379,6 +409,14 @@ pub fn adjust(app: *App, id: u32, delta: i8) Allocator.Error!void {
 /// state, and the row's file.
 pub fn setRow(app: *App, id: u32, idx: usize) Allocator.Error!void {
     @setEvalBranchQuota(200_000);
+    if (id >= integ_base) {
+        const refs = try integrations.settingRefs(app, app.frame.allocator());
+        const k = id - integ_base;
+        if (k >= refs.len) return;
+        try integrations.setSetting(app, refs[k], idx);
+        app.needs_render = true;
+        return;
+    }
     inline for (rows, 0..) |r, i| if (i == id) {
         setIndex(&app.cfg, r.path, idx);
         try applyDerived(app, r.path);
@@ -390,6 +428,12 @@ pub fn setRow(app: *App, id: u32, idx: usize) Allocator.Error!void {
 
 fn resetRow(app: *App, id: u32) Allocator.Error!void {
     @setEvalBranchQuota(200_000);
+    if (id >= integ_base) {
+        const refs = try integrations.settingRefs(app, app.frame.allocator());
+        const k = id - integ_base;
+        if (k >= refs.len) return;
+        return setRow(app, id, integrations.settingDefaultIndex(app, refs[k]));
+    }
     inline for (rows, 0..) |r, i| if (i == id) return setRow(app, id, comptime defaultIndex(r.path));
 }
 

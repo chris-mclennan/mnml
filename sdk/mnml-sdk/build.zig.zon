@@ -1,0 +1,7 @@
+.{
+    .name = .mnml_sdk,
+    .version = "0.1.0",
+    .fingerprint = 0x3c504fd6a662195,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}

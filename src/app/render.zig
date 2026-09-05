@@ -67,6 +67,10 @@ const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
+const mount_pane = @import("mount_pane.zig");
+const integrations = @import("integrations.zig");
+const marketplace = @import("marketplace.zig");
+const integrations_view = @import("../ui/integrations_view.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -148,7 +152,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // Zen: the panes fill everything above the `:` line — no bar, no
     // tree, no right panel, no strips, no statusline (`zen.zig`).
     const fr = if (app.zen) zenRects(full) else frameRects(full);
-    drawPaletteBar(app, ui, fr.bar);
+    try drawPaletteBar(app, ui, fr.bar);
     // The tree takes its width plus a one-cell divider (Rust `ui/mod.rs`).
     var panes_area = fr.upper;
     if (!app.zen and app.tree.visible and panes_area.w > 12) {
@@ -179,7 +183,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
 
 /// `[≡]` toggles the tree, the centred chip opens the palette, `[▤]`
 /// toggles the right panel — VS Code's title row, one line tall.
-fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) void {
+fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     if (bar.isEmpty()) return;
     const th = ui.theme;
     const bg = th.bufferline;
@@ -205,12 +209,19 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) void {
     }
     const label: []const u8 = if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ";
     const lw = @min(ui.width(label), bar.w -| (w0 + rw + 2));
+    var chip_right = bar.right() -| (rw + 1);
     if (lw >= 8) {
         const x = bar.x + (bar.w - lw) / 2;
         const chip = Rect.init(x, y, lw, 1);
         ui.fill(chip, th.chip);
         _ = ui.putStr(x, y, lw, ui.clipStr(label, lw), Theme.onBg(th.muted, th.chip.bg));
         ui.hit(chip, .{ .button = @intFromEnum(Button.palette) });
+        // The integration chips sit between the palette chip and the
+        // right-panel toggle; whatever does not fit is dropped whole.
+        const strip = try integrations.chips(app, ui.arena);
+        const props = try ui.arena.alloc(integrations_view.ChipProps, @min(strip.len, integrations_view.max_chips));
+        for (props, 0..) |*cp, i| cp.* = .{ .glyph = strip[i].glyph, .fallback = strip[i].fallback, .color = strip[i].color, .enabled = strip[i].enabled };
+        chip_right = integrations_view.drawChips(ui, chip_right, y, x + lw + 1, bg, props);
     }
 }
 
@@ -265,7 +276,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -335,6 +346,9 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
             .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
             .script => |*s| try script_pane.draw(app, ui, pr.pane, s, rect),
+            .mount => |*mp| try mount_pane.draw(app, ui, pr.pane, mp, rect),
+            .integrations => |*ip| try integrations.draw(app, ui, pr.pane, ip, rect),
+            .marketplace => |*mk| try marketplace.draw(app, ui, pr.pane, mk, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }

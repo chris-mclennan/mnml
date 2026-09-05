@@ -71,6 +71,9 @@ const http_app = @import("app/http.zig");
 const request_pane = @import("app/request_pane.zig");
 const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
+const mount_pane = @import("app/mount_pane.zig");
+const integrations = @import("app/integrations.zig");
+const marketplace = @import("app/marketplace.zig");
 const http_parse = @import("http/parse.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
@@ -185,6 +188,8 @@ pub const PromptPurpose = union(enum) {
     browser_eval,
     browser_add_cookie,
     browser_add_storage,
+    /// `mount.open`: the binary and args to host.
+    mount_open,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -214,10 +219,12 @@ pub const ConfirmPurpose = union(enum) {
     ai_tool: u64,
     /// SIGTERM these sessions (owned).
     kill_pids: []u32,
+    /// `integrations.remove`: the manifest id to delete (owned).
+    remove_integration: []u8,
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path => |s| gpa.free(s),
+            .delete_path, .remove_integration => |s| gpa.free(s),
             .kill_pids => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
@@ -228,6 +235,11 @@ pub const ConfirmPurpose = union(enum) {
     }
 };
 pub const PickerKind = enum {
+    integrations_details,
+    integrations_manifest,
+    integrations_toggle,
+    integrations_remove,
+    integrations_copy_id,
     buffers,
     files,
     recent,
@@ -492,6 +504,8 @@ pub const App = struct {
     runners: runners.State = .{},
     tasks: tasks_mod.State = .{},
     http: http_app.State,
+    integrations: integrations.State,
+    marketplace: marketplace.State = .{},
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -607,6 +621,7 @@ pub const App = struct {
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
+            .integrations = integrations.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -636,10 +651,13 @@ pub const App = struct {
         try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
         try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
+        // Installed integrations are scanned once the app is up.
+        try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
+        try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();
         try trust_app.promptIfNeeded(&app);
@@ -752,7 +770,11 @@ pub const App = struct {
         self.todos.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.git.deinit(gpa, self.io);
+        self.marketplace.deinit(gpa, self.io);
         self.dap.deinit(gpa);
+        // Panes go before the manifests their mount runners borrow.
+        self.panes.deinit();
+        self.integrations.deinit(gpa);
         self.lsp.deinit(gpa);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
@@ -788,8 +810,8 @@ pub const App = struct {
         self.clipboard.deinit();
         self.layouts.deinit();
         self.tree.deinit();
-        // Script panes unref into the state; the state closes after them.
-        self.panes.deinit();
+        // Script panes unref'd into the state when the pane store went
+        // (above, before the manifests); the state closes after them.
         if (self.lua) |l| l.destroy();
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
@@ -1297,6 +1319,8 @@ pub const App = struct {
             .http => |result| try http_app.handle(self, result),
             .ws => |wev| try ws_pane.handle(self, wev),
             .cdp => |cev| try browser_pane.handle(self, cev),
+            .mount => |mev| try mount_pane.handle(self, mev),
+            .marketplace => |r| try marketplace.handle(self, r),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1389,7 +1413,7 @@ pub const App = struct {
             else => {},
         };
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -1479,6 +1503,15 @@ test {
     _ = @import("app/context_menus.zig");
     _ = @import("app/cheatsheet.zig");
     _ = @import("app/cmd_term.zig");
+    _ = @import("app/mount_pane.zig");
+    _ = @import("app/integrations.zig");
+    _ = @import("ui/marketplace_view.zig");
+    _ = @import("ui/integrations_view.zig");
+    _ = @import("bridge/manifest.zig");
+    _ = @import("app/marketplace.zig");
+    _ = @import("ui/mount_view.zig");
+    _ = @import("bridge/wire.zig");
+    _ = @import("bridge/host.zig");
     _ = @import("app/pty_pane.zig");
     _ = @import("app/http.zig");
     _ = @import("app/cmd_http.zig");

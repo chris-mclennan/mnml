@@ -740,3 +740,64 @@ that the oldest slot reads `+K more…`.
   `docs/examples/init.lua` the reference script (run by a unit test);
   `tests/e2e-zig/lua_init.test` the e2e. Corpus 226/227 — the one
   failure is main's `settings_persist_to_workspace.test`.
+## Bridge v2 (Phase 8) — `// changed:` notes (2026-09-04, branch `bridge`)
+
+- `// changed (core):` `AppEvent.mount` is `*bridge.host.Event` (connected /
+  frame / title / cursor / command / toast / bye / closed) and
+  `AppEvent.marketplace` is `*app.marketplace.Result` (a listing with its
+  arena, an install outcome, a failure); the `MarketResult` placeholder is
+  gone. `freeEvent` destroys both. `Source` gains `.mount`.
+- `// changed (core):` `DynRunner` gains `.mount: MountRun{ binary, args,
+  pty, label }` — what a manifest command opens; `DynInit.Runner` is now a
+  named union with the same variant. `runDyn` routes it to
+  `integrations.runMount`, which resolves a bare binary through
+  `<data root>/bin/` (the marketplace's links) before PATH.
+- `// changed (app):` `Pane` is 20 variants: `mount: MountPane`
+  (`app/mount_pane.zig`, painted by `ui/mount_view.zig`), `integrations:
+  IntegrationsPane` (`app/integrations.zig` + `ui/integrations_view.zig`),
+  `marketplace: MarketplacePane` (`app/marketplace.zig` +
+  `ui/marketplace_view.zig`). Every exhaustive switch names them. The
+  mount registers one `.script_hit{ pane, id = row }` per row so a click
+  is turned back into pane-relative cells from the hit's rect; the wheel
+  and pointer motion are forwarded through the same prong.
+- `// changed (app):` `App.integrations: integrations.State` (the manifest
+  snapshot arena, the dyn slots, the `<id>.<key>` settings map read from
+  `<data root>/integration-settings.zon`) and `App.marketplace:
+  marketplace.State` (one `Io.Group` of fetch / install workers).
+  `App.deinit` retires panes before `integrations` — a mount runner
+  borrows the manifest arena. The `.startup` hook runs the first
+  manifest scan (`integrations.onStartup`); tests call `refresh`.
+- `// changed (app):` `PromptPurpose.mount_open`, `ConfirmPurpose.remove_integration`
+  (owned id), five `PickerKind.integrations_*` kinds routed to
+  `integrations.acceptPicker`.
+- `// changed (ui):` the palette bar paints the integration chips
+  (`integrations_view.drawChips`) between the search chip and the
+  right-panel toggle, right-to-left, dropping whole chips that do not
+  fit; hits are `.button = chip_base + i` with `chip_base = 0x10` — kept
+  under `render.Button.new_tab_base` (0x100), which `newTabLeaf` treats as
+  everything above it. `dispatch` routes them to `integrations.chipClick`
+  (left runs the first command, right opens the row menu).
+- `// changed (settings):` the overlay's *Integrations* section appends one
+  discrete-choice row per installed manifest `settings[]` entry
+  (`settings.integ_base + k`); adjust / set / reset branch on the id and
+  write `integration-settings.zon`, not the config.
+- `// changed (build):` a delimited `// ── sdk ──` block: `sdk/mnml-sdk`
+  is imported by the host as `mnml_sdk` (one definition of the wire and
+  the manifest), `zig build sdk-example` installs `mnml-hello`, and the
+  unit-test step depends on it — `build_options.sdk_example_exe` is the
+  path the host's integration test spawns (the test skips when the file
+  is absent or the platform has no Unix sockets).
+- Manifests are ZON at `~/.config/mnml/integrations/<id>.zon` (and
+  `<ws>/.mnml/integrations/`); the shape is the SDK's `Manifest`
+  (`docs/SDK.md`). Enable / disable rewrites `chip.enabled` through
+  `manifest.render`; remove deletes the file after a confirm.
+- The marketplace's `crates_keyword` source is accepted and reported as
+  "not searched"; `github_launcher_folder` lists `*.zon` manifests
+  (install = write the file), `github_monorepo_apps` lists directories
+  (install = clone + `zig build --prefix` + link into `<data root>/bin` +
+  `--install`, on a worker). `MNML_MARKETPLACE_API` overrides
+  `https://api.github.com` for the fake-server test.
+- Known: `zig build gate-build -Dtarget=x86_64-linux-gnu` trips a Zig
+  0.16.0 compiler TODO (`writeToPackedMemory`) on this branch's base
+  commit too (checked on a scratch worktree of 76ccf5b); the Windows
+  gate builds. Not introduced here.

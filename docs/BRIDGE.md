@@ -1,0 +1,191 @@
+# Bridge v2 — the mount wire
+
+How an integration and mnml talk once mnml has opened it as a pane.
+This is the contract an integration author codes against; the Zig
+SDK (`docs/SDK.md`) speaks it for you, but nothing here needs the SDK.
+
+Source of truth: `sdk/mnml-sdk/src/wire.zig` (the host imports the same
+file as `src/bridge/wire.zig`). Every example below is what
+`std.json` writes for those types.
+
+## Lifecycle
+
+1. mnml binds a Unix socket at `<ipc dir>/mounts/<pid>-<n>.sock`
+   (`/tmp/mnml-mount-<pid>-<n>.sock` when the workspace path would not
+   fit a `sockaddr_un`) and spawns the integration binary with:
+
+   | variable | value |
+   |---|---|
+   | `MNML_MOUNT_SOCKET` | the socket path |
+   | `MNML_PROTOCOL` | `2` |
+   | `MNML_WORKSPACE` | the workspace, absolute |
+   | `MNML_THEME` | the theme's name (`onedark`) |
+   | `MNML_IPC_DIR` | the file-IPC channel (tier 2, see below) |
+   | `MNML_SETTING_<KEY>` | one per `settings[]` entry in the manifest, upper-cased |
+
+   stdin / stdout / stderr are `/dev/null`: paint through the socket.
+2. The integration connects. mnml sends `hello`, then `focus`.
+3. The integration sends `title` (optional) and a `frame`. From then on
+   both sides send whenever they like; the socket is full-duplex.
+4. Either side ends it: mnml sends `goodbye` (the tab closed, mnml is
+   quitting) and gives the integration 200 ms before it kills the
+   process; the integration sends `bye` and exits. EOF without `bye`
+   is treated as a crash — the pane shows `[connection closed]`.
+
+Unix sockets are used on Windows too (`std.Io.net.has_unix_sockets`,
+Windows 10 1803+).
+
+## Framing
+
+Each message is a 4-byte **little-endian** length followed by that many
+bytes of UTF-8 JSON. One message per frame. A length above
+**16 MiB** (`16 * 1024 * 1024`) is refused and the connection dropped —
+a 200×60 full frame is ~300 KB, so this is not a limit you meet.
+
+```
+00 00 00 0b  {"bye":{}}
+```
+
+## Encoding — one rule
+
+**Every union is externally tagged**: `{"<tag>": payload}`. A payload
+that carries nothing is `{}`. There is no sniffing by shape anywhere —
+v1's `RgbOrIndex` (a bare integer or an array) is gone; a colour is
+`{"index":4}` or `{"rgb":[r,g,b]}` and nothing else.
+
+Unknown **fields** inside a payload are ignored, so a newer peer may add
+fields. An unknown **tag** is an error.
+
+## Host → integration (`HostMessage`)
+
+| tag | payload | when |
+|---|---|---|
+| `hello` | `{protocol, geometry, theme, workspace, capabilities}` | once, first |
+| `resize` | `{geometry}` | the pane's body changed size |
+| `input` | `{event}` | the user did something (below) |
+| `focus` | `true` / `false` | the pane gained / lost the keyboard |
+| `goodbye` | `{}` | leave now |
+
+```json
+{"hello":{"protocol":2,"geometry":{"cols":80,"rows":24},"theme":"onedark",
+          "workspace":"/Users/me/proj","capabilities":{"rgb":true,"nerd_font":true,"ascii":false}}}
+{"resize":{"geometry":{"cols":100,"rows":30}}}
+{"focus":true}
+{"goodbye":{}}
+```
+
+`hello.protocol` is the version; refuse anything but `2`.
+`capabilities.rgb=false` means the terminal has no truecolor — mnml
+folds rgb onto the 256-cube for you either way, but an integration that
+cares can pick indices itself. `nerd_font=false` / `ascii=true` say to
+use plain glyphs.
+
+`geometry` is the pane's **body** in cells: the tab strip is not yours.
+
+### `InputEvent`
+
+| tag | payload | notes |
+|---|---|---|
+| `key` | `{spec}` | mnml's key grammar: `a`, `A`, `enter`, `esc`, `ctrl+p`, `shift+f5`, `alt+left`, `space` |
+| `click` | `{col, row, button}` | pane-relative cells; `button` ∈ `left`, `middle`, `right` |
+| `scroll` | `{col, row, dy}` | one notch; `dy > 0` is up. mnml folds a burst into one event |
+| `hover` | `{col, row}` | the pointer moved over the pane |
+| `paste` | `{text}` | a bracketed paste |
+
+```json
+{"input":{"event":{"key":{"spec":"ctrl+k"}}}}
+{"input":{"event":{"click":{"col":3,"row":4,"button":"left"}}}}
+{"input":{"event":{"scroll":{"col":0,"row":0,"dy":-3}}}}
+```
+
+Which keys reach you: everything unmodified, and every modified chord
+the user has not bound in mnml. `ctrl+c` / `ctrl+d` / `ctrl+z` /
+`ctrl+l` are always yours. mnml's own chords (`ctrl+p`, the leader…)
+are mnml's — the same rule as a terminal pane.
+
+## Integration → host (`SiblingMessage`)
+
+| tag | payload | notes |
+|---|---|---|
+| `frame` | `{cells: [[Cell]]}` | a whole screen: rows of cells; short rows are padded |
+| `frame_dirty` | `{rows: [{y, cells}]}` | only the rows that changed since the last frame |
+| `title` | string | the tab label |
+| `cursor` | `{x, y}` or `null` | where the terminal cursor goes while focused; `null` hides it |
+| `command` | `{id}` | run an mnml command by id (a built-in, or one you registered) |
+| `toast` | `{level, text}` | `level` ∈ `info`, `warn`, `error` |
+| `bye` | `{}` | a clean exit |
+
+```json
+{"title":"Jira · TE-12"}
+{"cursor":{"x":4,"y":1}}
+{"command":{"id":"file.save"}}
+{"toast":{"level":"warn","text":"token expires in 2 days"}}
+```
+
+### `Cell`
+
+```json
+{"symbol":"a","fg":{"index":4},"bg":{"rgb":[30,30,46]},"mods":9}
+```
+
+* `symbol` — one grapheme. An **empty** symbol is a wide glyph's tail
+  (or "leave this cell alone" in a dirty row): the host paints nothing
+  there. Default `" "`.
+* `fg` / `bg` — a `Color`, or absent for the theme's default.
+* `mods` — a bit set, ratatui's `Modifier` layout so old numbers still
+  mean the same: bold 1, dim 2, italic 4, underline 8, slow_blink 16,
+  rapid_blink 32, reverse 64, hidden 128, strikethrough 256. Absent = 0.
+
+Only what differs from the default needs to be on the wire; a blank
+cell is `{"symbol":" "}`.
+
+### Frames and backpressure
+
+mnml keeps one grid per mount. A `frame` replaces it (and its size — the
+grid takes the frame's shape, clipped to the pane at paint time); a
+`frame_dirty` patches rows in place. The reader paints every message
+into that grid as it arrives and asks for one repaint; nothing is
+queued per frame, so an integration that streams faster than the
+terminal paints simply has its frames coalesced — a dirty row is never
+lost under a dropped frame, because nothing is dropped.
+
+Send a full `frame` after `hello` and after every `resize`; send
+`frame_dirty` for everything else. The SDK's `Frame` does this for you.
+
+## Tier 2 — the file-IPC channel
+
+`MNML_IPC_DIR` names the channel every mnml-spawned process may write
+to, mount or not: append one JSON line to `<dir>/command`. The shapes
+are mnml's `src/ipc/command.zig`; the ones an integration uses:
+
+```json
+{"cmd":"register-command","id":"jira.pick","title":"Jira: pick a ticket","group":"integrations","keys":["ctrl+k j"]}
+{"cmd":"toast","text":"synced","level":"info"}
+{"cmd":"toast-persistent","id":"jira-sync","text":"syncing…","level":"info"}
+{"cmd":"toast-dismiss","id":"jira-sync"}
+{"cmd":"progress-start","id":"p1","text":"Fetching"}   {"cmd":"progress-update","id":"p1","count":40}   {"cmd":"progress-end","id":"p1","text":"success"}
+{"cmd":"statusline-set-segment","id":"jira","side":"right","text":"TE-12","priority":100,"min_width":4,"max_width":30}
+{"cmd":"set-activity-badge","section":"integrations","count":3}
+{"cmd":"notify","title":"Jira","text":"assigned to you","level":"info","sound":false}
+```
+
+A `register-command` id resolves in the palette, `.keys` and `.test`
+scripts; when it runs, mnml writes a `plugin-command` line to
+`<dir>/events.jsonl` — the integration tails that file. Over a mount
+the same thing is `{"command":{"id":…}}` on the socket, which needs no
+file.
+
+## What changed from v1 (Rust `mnml-bridge` 0.8)
+
+* Colours are externally tagged (`{"index":n}` / `{"rgb":[…]}`), never
+  a bare integer or an array.
+* `hello.protocol` exists; `hello.capabilities` and `hello.workspace`
+  are new; `MNML_PROTOCOL=2` is in the environment.
+* `frame_dirty`, `cursor`, `command`, `toast` are new messages;
+  `focus` and `hover` are new host messages.
+* `mods` keeps ratatui's bit layout.
+* The manifest is ZON, not TOML (`docs/SDK.md`).
+
+The Rust crate stays published for 0.2.x hosts; a v1 integration does
+not connect to a v2 host (the first message's `protocol` says so) and
+must be rebuilt on the SDK.
