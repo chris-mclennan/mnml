@@ -54,6 +54,7 @@ otherwise. Copy what you need; leave the rest out.
         .chord_timeout_ms = 500, // vim's timeoutlen; clamped to 100..5000
         .wheel_moves_cursor = .auto, // .auto | .always | .never
         .scroll_accel = .normal, // .off | .gentle | .normal | .fast
+        .clipboard = .auto, // .auto | .os | .internal — what `"+` / `"*` / Ctrl+C reach
     },
 
     // ── ui ─────────────────────────────────────────────────────────────

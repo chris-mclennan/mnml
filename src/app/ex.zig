@@ -1119,6 +1119,15 @@ test "ex: set reaches every discrete config field — dotted, bare, no/!/?/=, al
     try f.ex("set cursor_line=true");
     try testing.expect(f.app.cfg.ui.cursor_line);
     try testing.expectError(error.Failed, f.ex("set editor.scroll_accel=warp"));
+    // `editor.clipboard` is a plain enum field, so the generic path
+    // reaches it: bare name, `=`, `?`.
+    try f.ex("set clipboard=os");
+    try testing.expectEqual(app_mod.Config.Clipboard.os, f.app.cfg.editor.clipboard);
+    try f.ex("set editor.clipboard?");
+    try testing.expectEqualStrings("editor.clipboard=os", f.app.lastToast().?);
+    try f.ex("set clipboard=internal");
+    try testing.expectEqual(app_mod.Config.Clipboard.internal, f.app.cfg.editor.clipboard);
+    try testing.expectError(error.Failed, f.ex("set clipboard=unnamedplus"));
     try testing.expectError(error.Failed, f.ex("set editor.scroll_accel!"));
     try testing.expectError(error.Failed, f.ex("set enabled"));
     try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "more than one section") != null);
