@@ -2178,3 +2178,63 @@ moved.
   scripts moved six rows down; the clock chip (`ui.clock = true`, as in
   Rust) sits in the statusline's right cluster, so the input-style chip
   is at column 92, not 100.
+
+## Shared-buffer windows (2026-09-05, branch `split-buffers`) — `// changed:` notes
+
+The finding `nvchad-vsplit-clones-buffer` (`:vsplit` opened a second
+copy of the file): vim's one buffer, N windows.
+
+```zig
+// src/editor/document.zig — NEW
+pub const Document = struct {
+    text, line_starts, history: undo.History, change_list, edits: EditLog,   // the text and its record
+    path: ?[]u8, dirty, saved_text, marks, language, read_only,             // the file (moved off Buffer)
+    eol, ensure_trailing_newline, trim_trailing_ws_on_save, indent_unit,     // save settings (moved off Buffer)
+    disk: ?DiskStamp,          // the watcher's stamp (moved off EditorPane)
+    lsp_seen: ?u64,            // the language server's sync point (was App.lsp.synced per pane)
+    views: []*Editor, refs: u32, owner: ?Owner,                             // refcounted by its views
+    pub fn spliceBy(self, start, end, new, by: ?*const Editor) — THE mutation chokepoint; tells every other view
+    pub fn setTextBy(self, text, by)                                        — wholesale; the other views clamp
+    pub fn hasOtherView(self, me: *const Editor) bool
+};
+// src/editor/editor.zig
+pub const Editor = struct {        // one window's view; a heap box (`init` / `initOn` return *Editor)
+    doc: *Document, cursor, anchor, goal_col, last_selection, block_anchor, block_eol,
+    extra_cursors, extra_anchors, replace_stack, ghost_suggestion,
+    folds: AutoArrayHashMap(usize, usize),        // moved off Buffer: a window's, in vim
+    pub fn onForeignSplice(self, sp: Splice)      // cursor/anchors/extras/folds shift; row delta queued
+    pub fn takeLineShifts(self, arena) []LineShift  // the frame moves the pane's scroll by it
+};
+// src/editor/buffer.zig
+pub const Buffer = struct { editor: *Editor, doc: *Document, input: InputHandler, dot…, recording… };
+pub fn initOn(gpa, doc: *Document, style, cfg) Buffer;   // the split's window
+// src/app/doc_store.zig — NEW, `App.docs: *DocStore` (a heap box: the owner callback survives the App moving)
+pub const DocStore = struct { entries: []*Entry,  pub const Entry = struct { doc: *Document, syntax: Syntax } };
+pub fn adopt(self, doc) *Entry;   pub fn find(self, path) ?*Entry;   // the last view's release drops the entry
+// src/app/pane.zig
+pub const EditorPane = struct { buf: Buffer, view, find, wrap, syntax: *Syntax, … };  // syntax shared per document
+// src/app/syntax.zig
+pub const Syntax = struct { dirty: bool, since_ms: ?i64, … };   // was EditorPane.hl_dirty / hl_since_ms
+```
+
+// changed: `Editor` is a view, not the text. `buf.editor.cursor` sites are
+// unchanged; the text-and-file sites read `buf.doc.*` (`path`, `dirty`,
+// `marks`, `eol`, …). `Editor.apply` runs on the view and splices through
+// `Document.spliceBy`, which pushes the byte delta to every other view.
+// changed: `App.duplicatePane` no longer copies the text into a fresh
+// `Buffer`; it makes a second window on the same document (cursor, scroll
+// and folds copied). `hasTwin` is `Document.hasOtherView` — a twin window
+// closes on `view.close_split` / `view.only` dirty or not, since the
+// document stays. `App.closePane` on a shared view skips the unsaved box;
+// `App.closeDocument` (`:bd`) closes every window. `:q` refuses a dirty
+// buffer only from its last window.
+// changed: the bufferline strip lists documents — a second window on a file
+// already in the strip folds into that tab (active when either is).
+// changed: `session.openSaved` gets the ids restored so far; a path already
+// among them comes back as a second window (`duplicatePane`), not a reveal.
+// changed: `watch.reload` keeps every window's row, not only the reloading one.
+// changed: `lsp.syncPane` keys on `Document.lsp_seen`; `App.lsp.synced` is gone.
+// changed: the highlight reparse is per document: `Syntax.dirty` / `since_ms`
+// live on the shared state; `EditorPane` no longer deinit's its syntax — the
+// `DocStore` does, after the pane's buffer releases the document.
+
