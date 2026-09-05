@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 Rust ids plus 8 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 797 Rust ids plus 21 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -860,10 +860,19 @@ pub const specs = [_]Spec{
     .{ .id = "git.discard", .title = "Git: discard changes to the selected file (confirm)", .group = "git" },
     .{ .id = "git.open_file", .title = "Git: open the selected file in an editor", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
+    // ─── Zig-only ids (cutover prep) ───
+    .{ .id = "session.save", .title = "Session: save the open panes, layout and history to .mnml/session.zon now", .group = "session" },
+    .{ .id = "session.restore", .title = "Session: restore .mnml/session.zon", .group = "session" },
+    .{ .id = "session.clear", .title = "Session: delete .mnml/session.zon (the next launch starts clean)", .group = "session" },
+    .{ .id = "view.zen", .title = "Zen mode — hide the tree, the tab strips and the statusline (view.fullscreen)", .group = "view" },
+    .{ .id = "app.check_updates", .title = "Check GitHub for a newer mnml release now", .group = "app" },
+    .{ .id = "app.startup_picker", .title = "Startup picker — new file / open file / recent files / workspaces", .group = "app" },
+    .{ .id = "messages.clear", .title = "Messages: clear the toast history", .group = "view" },
+    .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "812 specs, unique ids" {
+test "820 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands.
-    try std.testing.expectEqual(@as(usize, 812), specs.len);
+    try std.testing.expectEqual(@as(usize, 820), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
