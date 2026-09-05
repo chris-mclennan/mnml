@@ -77,6 +77,8 @@ const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
+const decor = @import("lsp_decor.zig");
+const semantic_app = @import("lsp_semantic.zig");
 const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
@@ -588,7 +590,13 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     const cur_line = ed.currentLine();
     const lo_line = @min(@min(e.view.scroll_line -| rows, cur_line -| rows), line_count - 1);
     const hi_line = @min(@max(e.view.scroll_line + 2 * rows, cur_line + rows), line_count - 1);
-    const spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
+    // The server's decorations for the visible lines (idle-debounced),
+    // and its semantic tokens laid over the grammar's spans.
+    const first_vis: u32 = @intCast(@min(e.view.scroll_line, line_count - 1));
+    const last_vis: u32 = @intCast(@min(e.view.scroll_line + rows, line_count) -| 1);
+    try decor.onFrame(app, id, e, first_vis, last_vis);
+    const base_spans = try e.syntax.styledSpans(arena, &app.theme, ed.lineStart(lo_line), ed.lineEnd(hi_line));
+    const spans = try semantic_app.layer(app, arena, e, &app.theme, base_spans, lo_line, hi_line);
     const folds = try arena.alloc(editor_view.Fold, e.buf.folds.count());
     for (e.buf.folds.keys(), e.buf.folds.values(), 0..) |s, en, i| folds[i] = .{ .first_line = @intCast(s), .last_line = @intCast(en) };
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
@@ -624,9 +632,11 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .scrollbar = app.cfg.ui.scrollbar,
         .gutter_marks = try gutterMarks(app, arena, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
-        .underlines = try lsp.underlinesFor(app, arena, e, &app.theme),
+        .underlines = try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme)),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
+        .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
+        .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);

@@ -1247,3 +1247,128 @@ is the contract-level list of what moved.
 - `// changed (tools):` `tools/break-check.sh` with a filter that starts
   with `:` matches nothing and prints "still passes" — the tool is not
   in this branch's file list; use a colon-free substring.
+
+---
+
+## LSP, more (Phase 5 follow-up) — `// changed:` notes (2026-09-05, branch `lsp-more`)
+
+- `// changed (ui):` `editor_view.Doc` gains `virtual_text:
+  []const VirtualText` (`{ byte, text, style }` — cells painted BEFORE
+  the grapheme at `byte`, taking columns but no bytes; `byte == line
+  end` paints after the last grapheme; a click on them lands on `byte`)
+  and `virtual_lines: []const VirtualLine` (`{ line, segments }` — a row
+  painted ABOVE `line`, counted in the scroll math and the
+  keep-cursor-visible pass; a segment with a `hit` registers
+  `.script_hit{ pane, hit }`). One delimited block; the view knows
+  nothing of hints or lenses.
+- `// changed (highlight):` `engine.layerSpans(T, arena, base, over)` is
+  the one merge for two sorted span lists: `over` wins where it covers,
+  `base` keeps every byte `over` leaves alone. Semantic tokens paint
+  OVER the grammar, never instead of it; `lsp_decor.mergeUnderlines`
+  uses the same function to let a diagnostic's squiggle win a link.
+- `// changed (app):` `App.lsp` gains `decor` (`FileDecor` per absolute
+  path: four replace-wholesale sets — hints, lenses, colours, links —
+  each tagged with the edit-log seq its reply describes; a set whose seq
+  no longer matches the buffer is NOT painted, stale hints beside moved
+  text being worse than none), `decor_track` (per pane: the seq last
+  asked for, the debounce clock, the hint window), `semantic` (`SemFile`
+  per path: raw `data[]`, `resultId`, decoded tokens, seq), `lint_group`
+  and `rename`. `lsp_decor.onFrame` runs from `render.drawEditor` after
+  `syncPane`: every set refreshes once the buffer has been idle 250 ms,
+  the hints also when the view leaves their window (visible lines ±1
+  screen). Requests carry the seq's low word in `Ctx.extra`.
+- `// changed (app):` a code lens row's segments register
+  `.script_hit{ pane, lens_hit_base + index }` (`0x4C45_0000`, far above
+  http's `var_hit_base`); `dispatch`'s editor `.script_hit` arm splits
+  on it. Enter in vim's Normal mode on a line that carries a lens runs
+  it (`decor.interceptKey`, reached from `lsp.interceptKey` when no popup
+  is up); Insert / standard-mode Enter stays a newline — the lens is a
+  click or `lsp.code_lens_run` there. A lens without a `command` goes
+  through `codeLens/resolve` first; the resolved title lands on the set.
+- `// changed (app):` `gx` / `editor.open_url_at_cursor` answers with
+  the server's document link under the cursor, else a `scheme://` token
+  on the line (`decor.urlAt`); the OS opener is `open` / `xdg-open` /
+  `cmd /c start`.
+- `// changed (app):` semantic tokens ask `full/delta` when a `resultId`
+  is held and the server takes deltas, `full` otherwise, `range` (the
+  visible lines ±1 screen) when that is all it offers — a range reply
+  marks the cache `partial` so the next ask is not a delta. The legend
+  is decoded once at `initialize` into `Caps.token_types: []Role` /
+  `token_modifiers: []Modifier` (owned by `Caps`, which now has a
+  `deinit`). No theme names modifier styles, so the mapping is fixed:
+  `declaration` bold, `static` italic, `deprecated` struck through,
+  `documentation` in the comment colour. `editor.semantic_tokens` is a
+  new master switch (the Rust config had only
+  `semantic_tokens_viewport`, which stays parsed and unused).
+- `// changed (app):` `willSaveWaitUntil` cannot hold the write: the
+  `save_pre` hook is fire-and-forget and no server is ever awaited (D3).
+  Behind `editor.will_save_wait_until` the request goes out before the
+  write; the reply's edits are applied and the buffer written again, so
+  the disk is right within a round-trip. On-type formatting runs behind
+  `editor.format_on_type` on the server's trigger characters
+  (`Caps.on_type_triggers`, owned). `lsp.format_selection` is range
+  formatting on the visual selection.
+- `// changed (app):` `lsp.format` (and `editor.format`, which aliases
+  it) prefers the attached server and falls back to the external tool
+  (`lsp_format.formatDocument`); `editor.format_external` is always the
+  tool; format-on-save uses the tool when no server formats. The tool
+  table is `src/lsp/tools.zig`: `.formatters.<ext>` / `.linters.<ext>`
+  override a builtin list (rustfmt, prettier, ruff, gofmt, shfmt,
+  stylua, `zig fmt --stdin`, nixfmt; eslint, ruff, shellcheck). `{file}`
+  in an argument becomes the workspace-relative path. `Formatter.in_place`
+  is new (the Rust formatter was stdin → stdout only): the buffer is
+  written, the tool runs on `{file}`, the result is read back. A run is
+  synchronous so a save-time format lands before the write; the whole
+  text is one splice trimmed to the changed middle (`replaceWhole`), one
+  undo step, cursor kept.
+- `// changed (app):` external linters run on a worker in
+  `app.lsp.lint_group` on open and on save (`lintOnHook`; a builtin tool
+  that is not on PATH is skipped without a spawn) and on
+  `editor.lint_external` (refuses a dirty buffer). The worker posts its
+  findings as a `textDocument/publishDiagnostics` notification on the
+  `.lsp` lane with `server = 0` (`linter_server_id`; real servers start
+  at 1) — workers never touch app state (D3). `FileDiags` keeps two
+  sources (`server_items` on `arena`, `lint_items` on `lint_arena`),
+  each replaced wholesale by its own next delivery, merged sorted into
+  `items` for every reader. `Linter.parser = .pattern` with
+  `Linter.pattern` (a template of `{file} {line} {col} {severity}
+  {message} {_}` placeholders matched literally between them) replaces
+  the Rust `regex` option — Zig's std has no regex, and a linter's line
+  format is fields in a fixed order.
+- `// changed (app):` the rename preview (`src/app/lsp_rename.zig`) is
+  `app.lsp.rename` state like the peek overlay, not an `Overlay`
+  variant: its rows register `.overlay_item(row)` while no overlay is
+  up (`dispatch` routes those to `rename_app.click` before the
+  completion popup), and `lsp.interceptKey` gives it the keys first.
+  `handleResponse(.rename)` opens it when the `WorkspaceEdit` touches
+  more than one file (`rename_app.fileCount`); one file still applies at
+  once. Space / `x` toggles the row's file, `a` all, `j`/`k` move,
+  Enter applies, Esc / `q` cancels. Applying: an open buffer takes its
+  edits through `lsp.applyEditsToPane` (one undo step, dirty, synced on
+  the next frame); a closed file is read, spliced last-first and written
+  back, refused with a toast when its end line is gone or its end column
+  is past the line as it now reads on disk. Not done, by design: the
+  Rust overlay that repaints every whole-word occurrence while the
+  prompt is open — the box's hunk rows show `Lnn  before → after`.
+- `// changed (spec):` `lsp.format_selection` and `lsp.code_lens_run`
+  are new ids (the pin is 883); `editor.format_external`,
+  `editor.lint_external` and `editor.open_url_at_cursor` had specs and
+  no runner (a `-Dpartial` build let them through) and are runners now,
+  all in `cmd_lsp.zig`'s table. `lsp.inlay_hints_toggle` moved to
+  `lsp_decor.zig` and paints.
+- `// changed (test):` `lsp.TestRig` wires the scripted server into an
+  `App` for the app-side modules' tests (`start` / `stop` / `openFile`
+  / `pump`, which ticks AND renders — the decorations are asked for
+  from the frame, so a wait that never paints never asks); the fake
+  server answers every request of this tier and announces a
+  `workspace/executeCommand` as a `window/showMessage` warning so the
+  toast proves it ran. A rename whose new name starts `multi` also
+  touches `/tmp/mnml-zig-fake-lsp-other.ts`.
+- `// changed (test):` a file's tests reach `-Dtest-filter` (and so
+  `tools/break-check.sh`) only when a `test {}` block references the
+  file; a file-scope `@import` puts them in the full suite but not in
+  front of the filter, and a break-check against such a file reports
+  "still passes" while running nothing. `src/app/lsp.zig` ends with a
+  `test {}` naming the four `lsp_*.zig` modules, `lsp/semantic.zig` and
+  `lsp/tools.zig`. A new module with tests needs the same line
+  somewhere on the `test {}` chain from `main.zig`.

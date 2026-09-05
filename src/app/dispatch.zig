@@ -65,6 +65,8 @@ const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
+const decor = @import("lsp_decor.zig");
+const rename_app = @import("lsp_rename.zig");
 const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
@@ -1068,8 +1070,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 .settings => try settings_app.click(app, i),
                 .wizard => first_launch.click(app, i),
-                // The completion popup registers its rows here with no overlay up.
-                else => if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
+                // The completion popup and the rename preview register
+                // their rows here with no overlay up.
+                else => if (app.lsp.rename.preview != null) rename_app.click(app, i) else if (app.lsp.completion != null) try lsp.clickCompletion(app, i),
             }
         },
         .pane => |id| {
@@ -1135,7 +1138,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
-                .editor => |*e| try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
+                // A code lens segment sits above `lens_hit_base`; the
+                // `{{VAR}}` spans below it.
+                .editor => |*e| if (sh.id >= decor.lens_hit_base) {
+                    if (m.button == .left) try decor.scriptHit(app, sh.pane, sh.id);
+                } else try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
                 .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),

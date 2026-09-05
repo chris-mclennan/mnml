@@ -570,6 +570,8 @@ pub const specs = [_]Spec{
     .{ .id = "lsp.signature_prev", .title = "LSP: previous signature (overload)", .group = "lsp" },
     .{ .id = "lsp.rename", .title = "LSP: rename symbol", .group = "lsp", .keys = .{ .both = &.{"f2"} } },
     .{ .id = "lsp.format", .title = "LSP: format document", .group = "lsp", .keys = .{ .vim = &.{"space f m"}, .both = &.{"ctrl+shift+i"} } },
+    .{ .id = "lsp.format_selection", .title = "LSP: format selection (range formatting)", .group = "lsp" },
+    .{ .id = "lsp.code_lens_run", .title = "LSP: run the code lens above the cursor's line", .group = "lsp" },
     .{ .id = "editor.format_external", .title = "Format buffer with external formatter (prettier / rustfmt / gofmt / ruff / …)", .group = "editor" },
     .{ .id = "editor.format", .title = "Format buffer (LSP if attached, else external formatter)", .group = "editor" },
     .{ .id = "editor.lint_external", .title = "Lint buffer with external linter (eslint / tsc / ruff / shellcheck / …)", .group = "editor" },
@@ -936,13 +938,13 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "881 specs, unique ids" {
+test "883 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
     // + eighteen file-manager commands + four TODOS row commands
     // + three NOTES row commands + four FINDINGS row commands + ten
-    // SESSIONS commands + six dock commands.
-    try std.testing.expectEqual(@as(usize, 881), specs.len);
+    // SESSIONS commands + six dock commands + two lsp-more commands.
+    try std.testing.expectEqual(@as(usize, 883), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

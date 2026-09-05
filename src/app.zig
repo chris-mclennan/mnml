@@ -914,7 +914,7 @@ pub const App = struct {
         // Panes go before the manifests their mount runners borrow.
         self.panes.deinit();
         self.integrations.deinit(gpa);
-        self.lsp.deinit(gpa);
+        self.lsp.deinit(gpa, self.io);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {

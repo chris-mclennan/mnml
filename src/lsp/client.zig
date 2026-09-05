@@ -17,6 +17,7 @@ const Transport = jsonrpc.Transport;
 const Value = jsonrpc.Value;
 const event = @import("../core/event.zig");
 const types = @import("types.zig");
+const semantic = @import("semantic.zig");
 
 pub const Encoding = types.Encoding;
 
@@ -49,6 +50,17 @@ pub const ReqKind = enum(u16) {
     document_highlight,
     selection_range,
     folding_range,
+    inlay_hint,
+    code_lens,
+    code_lens_resolve,
+    semantic_full,
+    semantic_delta,
+    semantic_range,
+    document_color,
+    document_link,
+    on_type_formatting,
+    will_save_wait_until,
+    range_formatting,
 };
 
 /// The word of context a request carries: the pane it was made for and
@@ -93,6 +105,39 @@ pub const Caps = struct {
     completion_resolve: bool = false,
     /// `textDocumentSync.change == 2`.
     incremental: bool = false,
+    inlay_hint: bool = false,
+    code_lens: bool = false,
+    /// `codeLensProvider.resolveProvider`: a lens without a command asks.
+    code_lens_resolve: bool = false,
+    document_color: bool = false,
+    document_link: bool = false,
+    range_formatting: bool = false,
+    /// `textDocumentSync.willSaveWaitUntil`.
+    will_save_wait_until: bool = false,
+    /// Owned; each byte an on-type formatting trigger (multi-byte ones
+    /// dropped). Empty when the server does not format as you type.
+    on_type_triggers: []u8 = &.{},
+    /// `semanticTokensProvider`: which request shapes the server takes
+    /// and its legend, decoded once into mnml's roles.
+    semantic_full: bool = false,
+    semantic_delta: bool = false,
+    semantic_range: bool = false,
+    /// Owned: the legend's `tokenTypes` as `semantic.Role` values and
+    /// `tokenModifiers` as `semantic.Modifier` values, by index.
+    token_types: []semantic.Role = &.{},
+    token_modifiers: []semantic.Modifier = &.{},
+
+    pub fn deinit(c: *Caps, gpa: Allocator) void {
+        gpa.free(c.trigger_chars);
+        gpa.free(c.on_type_triggers);
+        gpa.free(c.token_types);
+        gpa.free(c.token_modifiers);
+        c.* = .{};
+    }
+
+    pub fn semanticTokens(c: *const Caps) bool {
+        return c.semantic_full or c.semantic_delta or c.semantic_range;
+    }
 };
 
 /// A builtin server: what mnml starts for an extension unless
@@ -241,7 +286,7 @@ pub const Server = struct {
         self.docs.deinit(gpa);
         for (self.queued.items) |q| freeQueued(gpa, q);
         self.queued.deinit(gpa);
-        gpa.free(self.caps.trigger_chars);
+        self.caps.deinit(gpa);
         gpa.free(self.init_options);
         gpa.free(self.settings);
         gpa.free(self.root);
@@ -353,7 +398,7 @@ pub const Server = struct {
             .workspace = .{ .applyEdit = true, .workspaceEdit = .{ .documentChanges = true }, .configuration = true, .workspaceFolders = true, .didChangeConfiguration = .{ .dynamicRegistration = false } },
             .window = .{ .workDoneProgress = true },
             .textDocument = .{
-                .synchronization = .{ .didSave = true, .willSave = false, .willSaveWaitUntil = false },
+                .synchronization = .{ .didSave = true, .willSave = false, .willSaveWaitUntil = true },
                 .publishDiagnostics = .{ .relatedInformation = false, .versionSupport = false },
                 .completion = .{ .completionItem = .{ .snippetSupport = true, .documentationFormat = &[_][]const u8{ "plaintext", "markdown" }, .resolveSupport = .{ .properties = &[_][]const u8{ "documentation", "detail", "additionalTextEdits" } } }, .contextSupport = true },
                 .hover = .{ .contentFormat = &[_][]const u8{ "plaintext", "markdown" } },
@@ -367,11 +412,25 @@ pub const Server = struct {
                 .codeAction = .{ .codeActionLiteralSupport = .{ .codeActionKind = .{ .valueSet = &[_][]const u8{ "quickfix", "refactor", "source", "source.organizeImports" } } }, .resolveSupport = .{ .properties = &[_][]const u8{"edit"} } },
                 .rename = .{ .prepareSupport = false },
                 .formatting = .{},
+                .rangeFormatting = .{},
+                .onTypeFormatting = .{ .dynamicRegistration = false },
                 .documentHighlight = .{},
                 .selectionRange = .{},
                 .foldingRange = .{},
                 .callHierarchy = .{},
                 .typeHierarchy = .{},
+                .inlayHint = .{ .dynamicRegistration = false },
+                .codeLens = .{ .dynamicRegistration = false },
+                .colorProvider = .{},
+                .documentLink = .{ .tooltipSupport = false },
+                .semanticTokens = .{
+                    .requests = .{ .full = .{ .delta = true }, .range = true },
+                    .tokenTypes = &semantic.token_type_names,
+                    .tokenModifiers = &semantic.modifier_names,
+                    .formats = &[_][]const u8{"relative"},
+                    .multilineTokenSupport = false,
+                    .overlappingTokenSupport = false,
+                },
             },
         });
         try js.objectField("initializationOptions");
@@ -419,6 +478,44 @@ pub const Server = struct {
         caps.document_highlight = provided(c, "documentHighlightProvider");
         caps.selection_range = provided(c, "selectionRangeProvider");
         caps.folding_range = provided(c, "foldingRangeProvider");
+        caps.inlay_hint = provided(c, "inlayHintProvider");
+        caps.document_color = provided(c, "colorProvider");
+        caps.document_link = provided(c, "documentLinkProvider");
+        caps.range_formatting = provided(c, "documentRangeFormattingProvider");
+        errdefer caps.deinit(self.gpa);
+        if (jsonrpc.getObj(c, "codeLensProvider")) |lp| {
+            caps.code_lens = true;
+            caps.code_lens_resolve = jsonrpc.getBool(lp, "resolveProvider") orelse false;
+        }
+        if (jsonrpc.getObj(c, "documentOnTypeFormattingProvider")) |ot| {
+            var chars: std.ArrayListUnmanaged(u8) = .empty;
+            errdefer chars.deinit(self.gpa);
+            if (jsonrpc.getStr(ot, "firstTriggerCharacter")) |s| if (s.len == 1) try chars.append(self.gpa, s[0]);
+            if (jsonrpc.getArr(ot, "moreTriggerCharacter")) |arr| for (arr) |t| {
+                const s = jsonrpc.asStr(t) orelse continue;
+                if (s.len == 1) try chars.append(self.gpa, s[0]);
+            };
+            caps.on_type_triggers = try chars.toOwnedSlice(self.gpa);
+        }
+        if (jsonrpc.getObj(c, "semanticTokensProvider")) |sp| {
+            if (jsonrpc.getField(sp, "full")) |full| switch (full) {
+                .bool => |b| caps.semantic_full = b,
+                .object => {
+                    caps.semantic_full = true;
+                    caps.semantic_delta = jsonrpc.getBool(full, "delta") orelse false;
+                },
+                else => {},
+            };
+            if (jsonrpc.getField(sp, "range")) |range| caps.semantic_range = switch (range) {
+                .bool => |b| b,
+                .object => true,
+                else => false,
+            };
+            if (jsonrpc.getObj(sp, "legend")) |legend| {
+                caps.token_types = try semantic.readTypes(self.gpa, jsonrpc.getArr(legend, "tokenTypes") orelse &.{});
+                caps.token_modifiers = try semantic.readModifiers(self.gpa, jsonrpc.getArr(legend, "tokenModifiers") orelse &.{});
+            }
+        }
         if (jsonrpc.getObj(c, "completionProvider")) |cp| {
             caps.completion = true;
             var chars: std.ArrayListUnmanaged(u8) = .empty;
@@ -430,13 +527,16 @@ pub const Server = struct {
             caps.trigger_chars = try chars.toOwnedSlice(self.gpa);
             caps.completion_resolve = jsonrpc.getBool(cp, "resolveProvider") orelse false;
         }
-        if (jsonrpc.getField(c, "textDocumentSync")) |sync| caps.incremental = switch (sync) {
-            .integer => |i| i == 2,
-            .object => (jsonrpc.getInt(sync, "change") orelse 0) == 2,
-            else => false,
+        if (jsonrpc.getField(c, "textDocumentSync")) |sync| switch (sync) {
+            .integer => |i| caps.incremental = i == 2,
+            .object => {
+                caps.incremental = (jsonrpc.getInt(sync, "change") orelse 0) == 2;
+                caps.will_save_wait_until = jsonrpc.getBool(sync, "willSaveWaitUntil") orelse false;
+            },
+            else => {},
         };
         if (jsonrpc.getStr(c, "positionEncoding")) |enc| self.encoding = if (std.mem.eql(u8, enc, "utf-8")) .utf8 else .utf16;
-        self.gpa.free(self.caps.trigger_chars);
+        self.caps.deinit(self.gpa);
         self.caps = caps;
     }
 
