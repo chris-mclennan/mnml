@@ -170,7 +170,7 @@ fn previewCmd(app: *App) CommandError!void {
     switch (pane.*) {
         .md_preview => {},
         .editor => |*e| {
-            const path = e.buf.path orelse return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
+            const path = e.buf.doc.path orelse return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
             if (!isMarkdownPath(path)) return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
             // Asked for by name: a permanent tab, in this leaf.
             const id = try open(app, path, .beside, active);
@@ -289,7 +289,7 @@ test "a .md opens rendered; typing swaps the editor in and lands; edit_raw / pre
     try app.handle(.{ .key = Key.char('Z') });
     const e = app.activeEditor().?;
     try testing.expect(std.mem.startsWith(u8, e.buf.editor.bytes(), "Z# Title"));
-    try testing.expect(e.buf.dirty);
+    try testing.expect(e.buf.doc.dirty);
     try testing.expect(app.panes.get(pid) == null);
     // Back to a preview: the editor's unsaved text is what renders.
     try command.run(&app, .{ .static = .@"markdown.preview" });

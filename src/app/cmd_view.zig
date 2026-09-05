@@ -360,11 +360,11 @@ fn focusNextSplit(app: *App) CommandError!void {
 /// split's duplicate and can go without losing anything.
 fn hasTwin(app: *App, id: PaneId) bool {
     const e = app.panes.editor(id) orelse return false;
-    const path = e.buf.path orelse return false;
+    const path = e.buf.doc.path orelse return false;
     for (app.panes.slots.items, 0..) |*slot, i| {
         if (i == id or slot.* == null) continue;
         const other = slot.*.?.asEditor() orelse continue;
-        if (other.buf.path) |p| if (std.mem.eql(u8, p, path)) return true;
+        if (other.buf.doc.path) |p| if (std.mem.eql(u8, p, path)) return true;
     }
     return false;
 }
@@ -895,7 +895,7 @@ test "view.only keeps this window and its tabs; the other leaves' panes become b
     defer app.deinit();
     const a = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("dirty");
-    app.activeEditor().?.buf.dirty = true;
+    app.activeEditor().?.buf.doc.dirty = true;
     try command.run(&app, .{ .static = .@"view.split_right" });
     const b = app.active.?;
     try t.expect(b != a);
@@ -943,7 +943,7 @@ test "a split duplicates the file; closing the split drops the clean duplicate" 
     try t.expect(dup != a);
     try t.expectEqualStrings("alpha.txt", app.panes.get(dup).?.title());
     try t.expectEqualStrings("the alpha file", app.activeEditor().?.buf.editor.bytes());
-    try t.expect(!app.activeEditor().?.buf.dirty);
+    try t.expect(!app.activeEditor().?.buf.doc.dirty);
     try command.run(&app, .{ .static = .@"view.close_split" });
     try t.expectEqual(a, app.active.?);
     try t.expectEqual(@as(usize, 1), app.panes.count());
@@ -1308,7 +1308,7 @@ test "view.close_split on the last window closes its buffer: the layout goes emp
     try t.expectEqual(@as(usize, 0), (try app.layouts.current().leaves(app.frame.allocator())).len);
     // Unsaved: the close asks, nothing goes until it is answered.
     _ = try app.openScratch();
-    app.activeEditor().?.buf.dirty = true;
+    app.activeEditor().?.buf.doc.dirty = true;
     try command.run(&app, .{ .static = .@"view.close_split" });
     try t.expect(app.overlay == .confirm);
     try t.expectEqual(@as(usize, 1), app.panes.count());

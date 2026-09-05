@@ -103,7 +103,7 @@ fn notInBuild(app: *App) CommandError!void {
 /// The active editor's path, repo-relative, or the reason there is none.
 fn activeRel(app: *App, repo: *client.Repo) CommandError![]const u8 {
     const e = app.activeEditor() orelse return app.diag.fail(arena(app), "git: not an editor", .{});
-    const p = e.buf.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
+    const p = e.buf.doc.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
     return git.relToRepo(repo, p);
 }
 
@@ -144,7 +144,7 @@ fn diffAll(app: *App) CommandError!void {
 fn diffOrig(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     const e = app.activeEditor() orelse return app.diag.fail(arena(app), "git: not an editor", .{});
-    const p = e.buf.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
+    const p = e.buf.doc.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
     _ = try git.openDiff(app, repo, .orig, git.relToRepo(repo, p), null, e.buf.editor.bytes());
 }
 
@@ -209,7 +209,7 @@ fn peekChange(app: *App) CommandError!void {
 /// `]c` / `[c` in the editor: the next / previous gutter mark.
 fn jumpChange(app: *App, forward: bool) CommandError!void {
     const e = app.activeEditor() orelse return app.diag.fail(arena(app), "git: not an editor", .{});
-    const p = e.buf.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
+    const p = e.buf.doc.path orelse return app.diag.fail(arena(app), "git: the buffer has no file", .{});
     _ = try git.requireRepo(app);
     const marks = git.marksFor(app, p);
     if (marks.len == 0) return app.diag.fail(arena(app), "no changes in this file (vs HEAD)", .{});
@@ -256,7 +256,7 @@ fn blameToggle(app: *App) CommandError!void {
         app.needs_render = true;
         return;
     }
-    const p = e.buf.path orelse return app.diag.fail(arena(app), "blame needs a saved file", .{});
+    const p = e.buf.doc.path orelse return app.diag.fail(arena(app), "blame needs a saved file", .{});
     try git.requestBlame(app, id, p);
     app.toast("computing blame…", .{});
 }

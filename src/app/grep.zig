@@ -1124,7 +1124,7 @@ pub fn replaceAll(app: *App, id: PaneId, p: *GrepPane, replacement: []const u8) 
         if (enabled.items.len == 0) continue;
         if (app.panes.findPath(path)) |eid| {
             const e = app.panes.editor(eid) orelse continue;
-            if (e.buf.dirty) {
+            if (e.buf.doc.dirty) {
                 report.skipped_dirty += 1;
                 continue;
             }
@@ -1440,7 +1440,7 @@ test "find.grep opens the pane beside the editor; hits land grouped by file; n s
     const first_line = p.hits.items[0].line;
     try app.handle(.{ .key = Key.char('n') });
     const e = app.activeEditor().?;
-    try t.expect(std.mem.endsWith(u8, e.buf.path.?, first_rel));
+    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, first_rel));
     try t.expectEqual(@as(usize, first_line - 1), e.buf.editor.currentLine());
     // The store may have moved when the editor was added: fetch the pane again.
     const p2 = &app.panes.get(id).?.grep;
@@ -1487,7 +1487,7 @@ test "grep replace: open clean buffer through EditOps and saved, closed file on 
     {
         const notes = app.panes.editor(notes_id).?;
         try notes.buf.editor.setText("# alpha (edited)\n");
-        notes.buf.dirty = true;
+        notes.buf.doc.dirty = true;
     }
     app.setActive(a_id);
     try runGrep(app, "alpha");
@@ -1511,7 +1511,7 @@ test "grep replace: open clean buffer through EditOps and saved, closed file on 
     try t.expect(std.mem.indexOf(u8, toast, "1 unsaved buffer skipped") != null);
     const a = app.panes.editor(a_id).?;
     try t.expectEqualStrings("const omega = 1;\nconst beta = omega + alpha;\n", a.buf.editor.bytes());
-    try t.expect(!a.buf.dirty);
+    try t.expect(!a.buf.doc.dirty);
     const a_disk = try f.read("src/a.zig");
     defer t.allocator.free(a_disk);
     try t.expectEqualStrings("const omega = 1;\nconst beta = omega + alpha;\n", a_disk);

@@ -37,6 +37,7 @@ const ai_apply = @import("ai_apply.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const files_pane = @import("files_pane.zig");
+const DocStore = @import("doc_store.zig").DocStore;
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -48,7 +49,7 @@ pub const MountPane = mount_pane.MountPane;
 pub const FilesPane = files_pane.FilesPane;
 
 /// What the file watcher last saw on disk for an editor's file.
-pub const DiskStamp = struct { mtime_ns: i128, size: u64 };
+pub const DiskStamp = buffer_mod.DiskStamp;
 
 pub const EditorPane = struct {
     buf: Buffer,
@@ -56,19 +57,14 @@ pub const EditorPane = struct {
     find: find.FindState,
     /// Per-pane wrap; null follows the config default.
     wrap: ?bool = null,
-    syntax: syntax.Syntax,
-    /// Set by every path that mutates the text; the syntax cache
-    /// re-parses once `syntax.idle_ms` have passed since the frame that
-    /// first saw it (`hl_since_ms`), so a burst of typing costs one parse.
-    hl_dirty: bool = true,
-    hl_since_ms: ?i64 = null,
+    /// The document's syntax state, owned by the app's `DocStore` and
+    /// shared with every other pane on the same document; it goes when
+    /// the document does, after this pane's buffer has let go.
+    syntax: *syntax.Syntax,
     /// Where the visual block started (byte). The app records it when
     /// the handler enters V-BLOCK so `I` / `A` / `c` / `r` know their
     /// rectangle; the editor's own block ops are a later slice.
     block_anchor: ?usize = null,
-    /// The file's mtime + size when it was last read or written; the
-    /// watcher compares against it every 2 s. Null for a scratch buffer.
-    disk: ?DiskStamp = null,
     /// The location list (vim's per-window quickfix, `src/app/loclist.zig`):
     /// entries own their text and path on the buffer's gpa. `loc_idx` is
     /// the entry the last `:lnext` / `:lprev` landed on, null after a fill.
@@ -82,9 +78,9 @@ pub const EditorPane = struct {
     pub fn deinit(self: *EditorPane) void {
         ListPane.freeEntries(self.buf.gpa, self.loclist.items);
         self.loclist.deinit(self.buf.gpa);
-        self.buf.deinit();
         self.find.deinit();
-        self.syntax.deinit();
+        // Last: the document (and the syntax state with it) may go here.
+        self.buf.deinit();
     }
 };
 
@@ -224,7 +220,7 @@ pub const Pane = union(enum) {
     /// is its label.
     pub fn title(self: *const Pane) []const u8 {
         switch (self.*) {
-            .editor => |*e| return if (e.buf.path) |p| std.fs.path.basename(p) else "[scratch]",
+            .editor => |*e| return if (e.buf.doc.path) |p| std.fs.path.basename(p) else "[scratch]",
             .outline => |*o| return o.title,
             .md_preview => |*m| return std.fs.path.basename(m.path),
             .image => |*im| return im.tab_title,
@@ -256,7 +252,7 @@ pub const Pane = union(enum) {
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
-            .editor => |*e| e.buf.dirty,
+            .editor => |*e| e.buf.doc.dirty,
             .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => false,
         };
     }
@@ -410,7 +406,7 @@ pub const PaneStore = struct {
     pub fn findPath(self: *PaneStore, path: []const u8) ?PaneId {
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| if (e.buf.path) |bp| {
+                .editor => |*e| if (e.buf.doc.path) |bp| {
                     if (std.mem.eql(u8, bp, path)) return @intCast(i);
                 },
                 else => {},
@@ -474,19 +470,22 @@ pub const PaneStore = struct {
 
 test "pane store: stable ids, free-list reuse, path lookup" {
     const gpa = std.testing.allocator;
+    const docs = try DocStore.create(gpa);
+    defer docs.destroy();
     var store = PaneStore.init(gpa, std.testing.io);
     defer store.deinit();
     const mk = struct {
-        fn pane(g: Allocator, path: []const u8) !Pane {
+        fn pane(g: Allocator, ds: *DocStore, path: []const u8) !Pane {
             var buf = try Buffer.init(g, "x", .standard, .{});
             errdefer buf.deinit();
             try buf.setPath(path);
-            return .{ .editor = .{ .buf = buf, .find = find.FindState.init(g), .syntax = syntax.Syntax.init(g) } };
+            const entry = try ds.adopt(buf.doc);
+            return .{ .editor = .{ .buf = buf, .find = find.FindState.init(g), .syntax = &entry.syntax } };
         }
     };
     try std.testing.expectEqual(@as(PaneId, 0), store.peekId());
-    const a = try store.add(try mk.pane(gpa, "/ws/a.txt"));
-    const b = try store.add(try mk.pane(gpa, "/ws/b.txt"));
+    const a = try store.add(try mk.pane(gpa, docs, "/ws/a.txt"));
+    const b = try store.add(try mk.pane(gpa, docs, "/ws/b.txt"));
     try std.testing.expectEqual(@as(PaneId, 0), a);
     try std.testing.expectEqual(@as(PaneId, 1), b);
     try std.testing.expectEqualStrings("b.txt", store.get(b).?.title());
@@ -495,7 +494,7 @@ test "pane store: stable ids, free-list reuse, path lookup" {
     try std.testing.expect(store.get(a) == null);
     try std.testing.expectEqual(@as(usize, 1), store.count());
     try std.testing.expectEqual(a, store.peekId());
-    const c = try store.add(try mk.pane(gpa, "/ws/c.txt"));
+    const c = try store.add(try mk.pane(gpa, docs, "/ws/c.txt"));
     try std.testing.expectEqual(a, c);
     try std.testing.expectEqual(@as(usize, 2), store.count());
 }

@@ -499,7 +499,7 @@ pub fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!voi
     const gpa = app.gpa;
     const body = try std.mem.concat(app.frame.allocator(), u8, &.{ "$ ", cmd, "\n", text });
     const id: PaneId = blk: {
-        if (app.shell_pane) |id| if (app.panes.editor(id)) |e| if (e.buf.path == null) {
+        if (app.shell_pane) |id| if (app.panes.editor(id)) |e| if (e.buf.doc.path == null) {
             app.showPane(id);
             break :blk id;
         };
@@ -510,11 +510,11 @@ pub fn showOutput(app: *App, cmd: []const u8, text: []const u8) CommandError!voi
     const e = app.panes.editor(id).?;
     try e.buf.editor.setText(body);
     const saved = try gpa.dupe(u8, body);
-    gpa.free(e.buf.saved_text);
-    e.buf.saved_text = saved;
-    e.buf.dirty = false;
+    gpa.free(e.buf.doc.saved_text);
+    e.buf.doc.saved_text = saved;
+    e.buf.doc.dirty = false;
     e.buf.editor.setCursor(0);
-    e.hl_dirty = true;
+    e.syntax.dirty = true;
     app.needs_render = true;
 }
 
@@ -1116,7 +1116,7 @@ test "ex: :! shows output in a scratch pane, :!! repeats, :range! filters, :r an
     try f.ex("!printf 'hi there'");
     try testing.expectEqualStrings("[scratch]", f.app.panes.get(f.app.active.?).?.title());
     try testing.expectEqualStrings("$ printf 'hi there'\nhi there", f.text());
-    try testing.expect(!f.app.activeEditor().?.buf.dirty);
+    try testing.expect(!f.app.activeEditor().?.buf.doc.dirty);
     try testing.expectEqualStrings("!printf 'hi there' — done", f.app.lastToast().?);
     try f.ex("!!");
     try testing.expectEqualStrings("$ printf 'hi there'\nhi there", f.text());

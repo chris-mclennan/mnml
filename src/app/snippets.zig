@@ -209,7 +209,7 @@ pub fn expand(app: *App, pane_id: PaneId, e: *EditorPane) Allocator.Error!bool {
     const ed = e.buf.editor;
     const w = wordBefore(ed.bytes(), ed.cursor);
     var scope_buf: [32]u8 = undefined;
-    const scope = scopeFor(e.buf.path, &scope_buf);
+    const scope = scopeFor(e.buf.doc.path, &scope_buf);
     const body = (if (w.word.len > 0) app.snippets.lookup(scope, w.word) else null) orelse {
         app.toast("no snippet matches \"{s}\"", .{w.word});
         return false;
@@ -261,7 +261,7 @@ fn pickAllCmd(app: *App) CommandError!void {
 fn openPicker(app: *App, all: bool) CommandError!void {
     const e = try app.requireEditor();
     var scope_buf: [32]u8 = undefined;
-    const scope = scopeFor(e.buf.path, &scope_buf);
+    const scope = scopeFor(e.buf.doc.path, &scope_buf);
     const gpa = app.gpa;
     const arena = app.frame.allocator();
     // Scopes sorted, then triggers sorted: the list reads the same each time.
@@ -412,7 +412,7 @@ pub fn interceptKey(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocato
     const w = wordBefore(ed.bytes(), ed.cursor);
     if (w.word.len == 0) return false;
     var scope_buf: [32]u8 = undefined;
-    if (app.snippets.lookup(scopeFor(e.buf.path, &scope_buf), w.word) == null) return false;
+    if (app.snippets.lookup(scopeFor(e.buf.doc.path, &scope_buf), w.word) == null) return false;
     return expand(app, pane_id, e);
 }
 

@@ -463,7 +463,7 @@ fn inlineVarCmd(app: *App) CommandError!void {
     const text = e.buf.editor.bytes();
     const fresh = try env_mod.expand(scratch.allocator(), app.io, text, &set);
     e.buf.editor.setText(fresh) catch return error.OutOfMemory;
-    e.hl_dirty = true;
+    e.syntax.dirty = true;
     app.toast("inlined the {{{{VAR}}}}s of the buffer", .{});
 }
 
@@ -491,7 +491,7 @@ pub fn editorVarSpans(app: *App, arena: Allocator, e: *app_mod.EditorPane) Alloc
 }
 
 pub fn isRequestBuffer(e: *app_mod.EditorPane) bool {
-    if (e.buf.path) |p| return parse.isRequestPath(p);
+    if (e.buf.doc.path) |p| return parse.isRequestPath(p);
     return parse.looksLikeHttpFile(e.buf.editor.bytes());
 }
 
@@ -731,7 +731,7 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
         return .{ .req = try rp.request.clone(gpa), .source_path = rp.source_path, .block_name = rp.block_name, .summary = rp.summary, .pane = app.active };
     }
     const e = app.activeEditor() orelse return app.diag.fail(app.frame.allocator(), "http: no active .http/.curl/.rest editor or Request pane", .{});
-    const path = e.buf.path;
+    const path = e.buf.doc.path;
     const text = e.buf.editor.bytes();
     if (path != null and !parse.isRequestPath(path.?) and !parse.looksLikeHttpFile(text) and std.mem.indexOf(u8, text, "curl") == null) {
         return app.diag.fail(app.frame.allocator(), "http: {s} is not a .http/.curl/.rest file", .{app.relPath(path.?)});
@@ -1393,7 +1393,7 @@ fn diffLastTwoCmd(app: *App) CommandError!void {
     const e = app.panes.editor(id).?;
     e.buf.editor.setText(aw.written()) catch return error.OutOfMemory;
     e.buf.markSaved() catch return error.OutOfMemory;
-    e.hl_dirty = true;
+    e.syntax.dirty = true;
     app.toast("http.diff: {d} → {d}", .{ prev.status, cur.?.status });
 }
 
@@ -1930,7 +1930,7 @@ test "vars: tokens classify against the env, a secret masks in the tip, the jump
     // the end of the file with a hint.
     try jumpToVarDef(&app, "TOKEN");
     const e = app.activeEditor().?;
-    try testing.expect(std.mem.endsWith(u8, e.buf.path.?, ".mnml/env/dev.env"));
+    try testing.expect(std.mem.endsWith(u8, e.buf.doc.path.?, ".mnml/env/dev.env"));
     try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
     try jumpToVarDef(&app, "NOPE");
     try testing.expectEqual(e.buf.editor.lineCount() - 1, app.activeEditor().?.buf.editor.currentLine());
@@ -1970,6 +1970,6 @@ test "vars: the editor hook paints a request buffer's tokens and gd on one jumps
     _ = try app.openEditor(path);
     app.activeEditor().?.buf.editor.placeCursor(0, 6);
     try testing.expect(try jumpVarAtCursor(&app));
-    try testing.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.path.?, "dev.env"));
+    try testing.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.doc.path.?, "dev.env"));
     try testing.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
 }

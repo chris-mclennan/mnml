@@ -1,7 +1,9 @@
-//! `Buffer` — an `Editor` plus the handler that drives it, the file it
-//! came from, marks, folds, the dot-repeat holder and the macro
-//! recording in flight. `feedKey` is THE seam: the only place an
-//! `InputResult` is destructured.
+//! `Buffer` — one window on a `Document`: the `Editor` view, the
+//! handler that drives it, the dot-repeat holder and the macro recording
+//! in flight. The file — its path, dirty flag, marks, save settings —
+//! is the document's, shared with every other window on it (`initOn`).
+//! `feedKey` is THE seam: the only place an `InputResult` is
+//! destructured.
 //!
 //! Buffer-local `AppCommand`s (lowercase marks, dot-repeat, macros) are
 //! handled here and come back as `.edited` / `.redraw`; everything else
@@ -30,59 +32,20 @@ pub const KeyCode = input.KeyCode;
 
 pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
 
-/// `(open, close)` comment tokens for a file extension; both empty for a
-/// commentless file so a toggle is a no-op instead of a stray literal.
-pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
-    const e = ext orelse return .{ "", "" };
-    const slash = [_][]const u8{ "zig", "rs", "ts", "tsx", "js", "jsx", "cjs", "mjs", "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "swift", "php", "scss", "less" };
-    const hash = [_][]const u8{ "py", "rb", "sh", "bash", "zsh", "toml", "yaml", "yml", "ini", "conf" };
-    const dash = [_][]const u8{ "lua", "sql" };
-    const angle = [_][]const u8{ "html", "htm", "xml", "vue", "svelte", "astro", "md", "markdown" };
-    for (slash) |x| if (std.mem.eql(u8, e, x)) return .{ "// ", "" };
-    for (hash) |x| if (std.mem.eql(u8, e, x)) return .{ "# ", "" };
-    for (dash) |x| if (std.mem.eql(u8, e, x)) return .{ "-- ", "" };
-    for (angle) |x| if (std.mem.eql(u8, e, x)) return .{ "<!-- ", " -->" };
-    if (std.mem.eql(u8, e, "css")) return .{ "/* ", " */" };
-    return .{ "", "" };
-}
+pub const commentTokenFor = @import("document.zig").commentTokenFor;
+pub const DiskStamp = @import("document.zig").DiskStamp;
 
 pub const Buffer = struct {
     gpa: Allocator,
     /// This window's view. A heap box, owned here.
     editor: *Editor,
-    /// `editor.doc` — the shared text, here so `buf.doc.path` reads short.
+    /// `editor.doc` — the shared text and file, here so `buf.doc.path`
+    /// reads short. Retained by the editor for as long as it exists.
     doc: *Document,
     input: InputHandler,
-    /// Owned. Null for a scratch buffer.
-    path: ?[]u8 = null,
-    dirty: bool = false,
-    /// The text as of the last load / save — `dirty` is a comparison.
-    saved_text: []u8,
-    /// `m<letter>` positions.
-    marks: std.AutoHashMapUnmanaged(u8, Pos) = .empty,
-    /// File extension used for language-specific behaviour. Owned.
-    language: ?[]u8 = null,
-    read_only: bool = false,
     /// `@tagName` of the last op the editor refused with `Unsupported`,
     /// for the app to toast. Static string.
     last_unsupported: ?[]const u8 = null,
-    /// Rust mnml's `[editor] ensure_trailing_newline`: a file gets its
-    /// terminating newline on save. It goes through `apply` so undo can
-    /// take it back — and, like any `replace_range`, leaves the cursor
-    /// after the inserted text.
-    ensure_trailing_newline: bool = true,
-    /// `[editor] trim_trailing_ws_on_save` / `.editorconfig`
-    /// `trim_trailing_whitespace`: line ends are stripped on save, in
-    /// one undo step, the cursor kept.
-    trim_trailing_ws_on_save: bool = false,
-    /// What a save writes between lines. The text is LF in memory
-    /// whatever the file had (`load` normalises and remembers); a
-    /// `.editorconfig` `end_of_line` overrides what was found.
-    eol: editorconfig.Eol = .lf,
-    /// The indent unit the handler types on Tab — kept here so a handler
-    /// rebuilt by `setInputStyle` gets the file's value back, not the
-    /// config's.
-    indent_unit: usize = 4,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -109,19 +72,30 @@ pub const Buffer = struct {
 
     pub const max_replay_depth = 8;
 
+    /// A window on a fresh document holding `text`; the config's tab
+    /// width is the document's indent until a `.editorconfig` says
+    /// otherwise.
     pub fn init(gpa: Allocator, text: []const u8, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
-        const ed = try Editor.init(gpa, text);
+        const doc = try Document.create(gpa, text);
+        errdefer doc.destroy();
+        doc.tab_width = @max(cfg.tab_width, 1);
+        doc.indent_unit = @max(cfg.tab_width, 1);
+        return initOn(gpa, doc, style, cfg);
+    }
+
+    /// A second window on `doc` (vim's `:split`): its own cursor and
+    /// handler, the document's indent settings. The document is retained
+    /// until `deinit`.
+    pub fn initOn(gpa: Allocator, doc: *Document, style: input.Style, cfg: input.Config) Allocator.Error!Buffer {
+        const ed = try Editor.initOn(gpa, doc);
         errdefer ed.deinit();
-        ed.doc.tab_width = @max(cfg.tab_width, 1);
-        const saved = try gpa.dupe(u8, text);
-        errdefer gpa.free(saved);
+        var handler = InputHandler.init(gpa, style, cfg);
+        handler.configure(.{ .tab_width = doc.indent_unit, .text_width = cfg.text_width, .use_tabs = doc.use_tabs });
         return .{
             .gpa = gpa,
             .editor = ed,
-            .doc = ed.doc,
-            .input = InputHandler.init(gpa, style, cfg),
-            .saved_text = saved,
-            .indent_unit = @max(cfg.tab_width, 1),
+            .doc = doc,
+            .input = handler,
         };
     }
 
@@ -129,10 +103,6 @@ pub const Buffer = struct {
         const gpa = self.gpa;
         self.editor.deinit();
         self.input.deinit();
-        if (self.path) |p| gpa.free(p);
-        gpa.free(self.saved_text);
-        self.marks.deinit(gpa);
-        if (self.language) |l| gpa.free(l);
         if (self.dot) |d| freeOps(gpa, d);
         for (self.dot_pending.items) |o| o.free(gpa);
         self.dot_pending.deinit(gpa);
@@ -158,7 +128,7 @@ pub const Buffer = struct {
         defer if (eol != .lf) gpa.free(text);
         var buf = try init(gpa, text, style, cfg);
         errdefer buf.deinit();
-        buf.eol = eol;
+        buf.doc.eol = eol;
         try buf.setPath(path);
         return buf;
     }
@@ -198,25 +168,17 @@ pub const Buffer = struct {
     }
 
     pub fn setPath(self: *Buffer, path: []const u8) Allocator.Error!void {
-        const copy = try self.gpa.dupe(u8, path);
-        if (self.path) |p| self.gpa.free(p);
-        self.path = copy;
-        if (self.language) |l| self.gpa.free(l);
-        self.language = null;
-        const ext = std.fs.path.extension(path);
-        if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
-        const tok = commentTokenFor(self.language);
-        self.editor.doc.comment_token = tok[0];
-        self.editor.doc.comment_token_close = tok[1];
+        return self.doc.setPath(path);
     }
 
     pub const SaveError = Allocator.Error || Io.Dir.WriteFileError || error{NoPath};
 
+    /// Write the document; every window on it is clean afterwards.
     pub fn save(self: *Buffer, io: Io) SaveError!void {
-        const path = self.path orelse return error.NoPath;
-        if (self.trim_trailing_ws_on_save) try self.trimTrailingWhitespace();
-        if (self.ensure_trailing_newline) try self.fixTrailingNewline();
-        const data = try withEol(self.gpa, self.editor.bytes(), self.eol);
+        const path = self.doc.path orelse return error.NoPath;
+        if (self.doc.trim_trailing_ws_on_save) try self.trimTrailingWhitespace();
+        if (self.doc.ensure_trailing_newline) try self.fixTrailingNewline();
+        const data = try withEol(self.gpa, self.editor.bytes(), self.doc.eol);
         defer self.gpa.free(data);
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
         try self.markSaved();
@@ -263,10 +225,10 @@ pub const Buffer = struct {
     /// The indent unit and the tab display width, for the editor and
     /// the handler both.
     pub fn setIndent(self: *Buffer, tab_display: usize, indent_unit: usize, use_tabs: bool) void {
-        self.editor.doc.tab_width = @max(tab_display, 1);
-        self.editor.doc.use_tabs = use_tabs;
-        self.indent_unit = @max(indent_unit, 1);
-        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = self.textWidth(), .use_tabs = use_tabs });
+        self.doc.tab_width = @max(tab_display, 1);
+        self.doc.use_tabs = use_tabs;
+        self.doc.indent_unit = @max(indent_unit, 1);
+        self.input.configure(.{ .tab_width = self.doc.indent_unit, .text_width = self.textWidth(), .use_tabs = use_tabs });
     }
 
     fn textWidth(self: *const Buffer) usize {
@@ -280,14 +242,14 @@ pub const Buffer = struct {
     /// defaults already on the buffer. Unset keys leave things alone.
     pub fn applyEditorconfig(self: *Buffer, r: editorconfig.Resolved) void {
         if (r.indent_style != null or r.indentUnit() != null) {
-            const use_tabs = if (r.indent_style) |s| s == .tab else self.editor.doc.use_tabs;
-            const unit = r.indentUnit() orelse self.editor.doc.tab_width;
-            const display = r.tabDisplayWidth() orelse self.editor.doc.tab_width;
+            const use_tabs = if (r.indent_style) |s| s == .tab else self.doc.use_tabs;
+            const unit = r.indentUnit() orelse self.doc.tab_width;
+            const display = r.tabDisplayWidth() orelse self.doc.tab_width;
             self.setIndent(display, unit, use_tabs);
         }
-        if (r.end_of_line) |e| self.eol = e;
-        if (r.trim_trailing_whitespace) |v| self.trim_trailing_ws_on_save = v;
-        if (r.insert_final_newline) |v| self.ensure_trailing_newline = v;
+        if (r.end_of_line) |e| self.doc.eol = e;
+        if (r.trim_trailing_whitespace) |v| self.doc.trim_trailing_ws_on_save = v;
+        if (r.insert_final_newline) |v| self.doc.ensure_trailing_newline = v;
     }
 
     fn fixTrailingNewline(self: *Buffer) Allocator.Error!void {
@@ -305,14 +267,7 @@ pub const Buffer = struct {
 
     /// Record the current text as the on-disk text.
     pub fn markSaved(self: *Buffer) Allocator.Error!void {
-        const copy = try self.gpa.dupe(u8, self.editor.bytes());
-        self.gpa.free(self.saved_text);
-        self.saved_text = copy;
-        self.dirty = false;
-    }
-
-    fn recomputeDirty(self: *Buffer) void {
-        self.dirty = !std.mem.eql(u8, self.editor.bytes(), self.saved_text);
+        return self.doc.markSaved();
     }
 
     pub fn setInputStyle(self: *Buffer, style: input.Style, cfg: input.Config) void {
@@ -320,7 +275,7 @@ pub const Buffer = struct {
         self.input.deinit();
         self.input = InputHandler.init(self.gpa, style, cfg);
         // The file's indent (a `.editorconfig`) outlives the handler.
-        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = cfg.text_width, .use_tabs = self.editor.doc.use_tabs });
+        self.input.configure(.{ .tab_width = self.doc.indent_unit, .text_width = cfg.text_width, .use_tabs = self.doc.use_tabs });
         self.editor.anchor = null;
     }
 
@@ -351,7 +306,7 @@ pub const Buffer = struct {
     /// page motions; `wrap_width` is non-null when `[ui] wrap` is on.
     /// `arena` is the frame arena.
     pub fn feedKey(self: *Buffer, key: Key, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
-        if (self.read_only) return .{ .unhandled = key };
+        if (self.doc.read_only) return .{ .unhandled = key };
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
         const ctx = self.makeCtx(wrap_width);
         // What a visual operator would act on, before the key resolves —
@@ -406,7 +361,7 @@ pub const Buffer = struct {
     /// Returns whether the text changed. An op the editor refuses is
     /// recorded in `last_unsupported` and skipped.
     pub fn applyOps(self: *Buffer, list: []const EditOp, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!bool {
-        if (self.read_only) return false;
+        if (self.doc.read_only) return false;
         var changed = false;
         for (list) |op| {
             const cursor_line_before = self.editor.currentLine();
@@ -424,7 +379,7 @@ pub const Buffer = struct {
                 changed = true;
             }
         }
-        if (changed) self.recomputeDirty();
+        if (changed) self.doc.recomputeDirty();
         return changed;
     }
 
@@ -757,12 +712,12 @@ pub const Buffer = struct {
             // Uppercase marks are the app's (a file + position).
             .set_mark => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                try self.marks.put(self.gpa, c, self.editor.rowCol());
+                try self.doc.marks.put(self.gpa, c, self.editor.rowCol());
                 return .redraw;
             },
             .jump_to_mark_line => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                const p = self.marks.get(c) orelse return .noop;
+                const p = self.doc.marks.get(c) orelse return .noop;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
                 self.editor.goal_col = null;
@@ -770,7 +725,7 @@ pub const Buffer = struct {
             },
             .jump_to_mark_exact => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                const p = self.marks.get(c) orelse return .noop;
+                const p = self.doc.marks.get(c) orelse return .noop;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },
@@ -1497,7 +1452,7 @@ test "vim comment toggle uses the buffer's token; a commentless buffer is a no-o
     defer h.deinit();
     try h.feed("gcc");
     try testing.expectEqualStrings("a\n  b\nc", h.buf.editor.bytes());
-    h.buf.editor.doc.comment_token = "// ";
+    h.buf.doc.comment_token = "// ";
     try h.feed("gcc");
     try testing.expectEqualStrings("// a\n  b\nc", h.buf.editor.bytes());
     try h.feed("gcj");
@@ -1656,15 +1611,15 @@ test "standard: ctrl+s escalates save, unknown chords are unhandled, dirty track
     var h = try Harness.init(testing.allocator, .standard, "|abc");
     defer h.deinit();
     try h.feed("x");
-    try testing.expect(h.buf.dirty);
+    try testing.expect(h.buf.doc.dirty);
     try h.feed("<c-s>");
     try testing.expectEqual(AppCommand.save, h.last_app.?);
     try h.buf.markSaved();
-    try testing.expect(!h.buf.dirty);
+    try testing.expect(!h.buf.doc.dirty);
     try h.feed("<c-z>");
-    try testing.expect(h.buf.dirty);
+    try testing.expect(h.buf.doc.dirty);
     try h.feed("<c-y>");
-    try testing.expect(!h.buf.dirty);
+    try testing.expect(!h.buf.doc.dirty);
     try h.feed("<c-p>");
     try testing.expectEqual(@as(usize, 1), h.unhandled);
     try testing.expectEqual(input.EditingMode.none, h.buf.input.mode());
@@ -1719,14 +1674,14 @@ test "buffer: save adds the trailing newline and parks the cursor after it (Rust
     try buf.save(io);
     try testing.expectEqualStrings("XYZdef\n", buf.editor.bytes());
     try testing.expectEqual(buf.editor.len(), buf.editor.cursor);
-    try testing.expect(!buf.dirty);
+    try testing.expect(!buf.doc.dirty);
     try feed(&buf, &clip, arena.allocator(), "A<esc>R!<esc>");
     try buf.save(io);
     const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
     defer gpa.free(back);
     try testing.expectEqualStrings("XYZdef!\n", back);
     // Off, the buffer is written verbatim.
-    buf.ensure_trailing_newline = false;
+    buf.doc.ensure_trailing_newline = false;
     try feed(&buf, &clip, arena.allocator(), "GA<del><esc>");
     try buf.save(io);
     try testing.expectEqualStrings("XYZdef!", buf.editor.bytes());
@@ -1747,8 +1702,8 @@ test "buffer: load and save round-trip through the file system" {
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = "hello\n" });
     var buf = try Buffer.load(gpa, io, file, .vim, .{});
     defer buf.deinit();
-    try testing.expectEqualStrings("md", buf.language.?);
-    try testing.expect(!buf.dirty);
+    try testing.expectEqualStrings("md", buf.doc.language.?);
+    try testing.expect(!buf.doc.dirty);
     var clip = Clipboard.init(gpa);
     defer clip.deinit();
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1756,9 +1711,9 @@ test "buffer: load and save round-trip through the file system" {
     const keys = try parseKeys(gpa, "A!<esc>");
     defer gpa.free(keys);
     for (keys) |k| _ = try buf.feedKey(k, &clip, 10, null, arena.allocator());
-    try testing.expect(buf.dirty);
+    try testing.expect(buf.doc.dirty);
     try buf.save(io);
-    try testing.expect(!buf.dirty);
+    try testing.expect(!buf.doc.dirty);
     const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
     defer gpa.free(back);
     try testing.expectEqualStrings("hello!\n", back);
@@ -1776,8 +1731,8 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     var buf = try Buffer.load(gpa, testing.io, path, .vim, .{ .tab_width = 4 });
     defer buf.deinit();
     try testing.expectEqualStrings("one  \ntwo\t\n  three", buf.editor.bytes());
-    try testing.expectEqual(editorconfig.Eol.crlf, buf.eol);
-    try testing.expect(!buf.dirty);
+    try testing.expectEqual(editorconfig.Eol.crlf, buf.doc.eol);
+    try testing.expect(!buf.doc.dirty);
     // The defaults: nothing trimmed, a final newline added, CRLF kept.
     try buf.save(testing.io);
     const first = try tmp.dir.readFileAlloc(testing.io, "win.txt", gpa, .limited(256));
@@ -1786,8 +1741,8 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     buf.editor.setCursor(6); // on "two"
     // A `.editorconfig` says: trim, LF, tabs 8 wide, indent with tabs.
     buf.applyEditorconfig(.{ .indent_style = .tab, .tab_width = 8, .end_of_line = .lf, .trim_trailing_whitespace = true, .insert_final_newline = false });
-    try testing.expectEqual(@as(usize, 8), buf.editor.doc.tab_width);
-    try testing.expect(buf.editor.doc.use_tabs);
+    try testing.expectEqual(@as(usize, 8), buf.doc.tab_width);
+    try testing.expect(buf.doc.use_tabs);
     try testing.expectEqual(@as(usize, 8), buf.input.vim.tab_width);
     try testing.expect(buf.input.vim.use_tabs);
     try buf.save(testing.io);
@@ -1811,16 +1766,16 @@ test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; tri
     try testing.expectEqualStrings("\tone\n\ttwo\n  three\n", buf.editor.bytes());
     // `indent_size` alone sets the unit; the display width follows it.
     buf.applyEditorconfig(.{ .indent_style = .space, .indent_size = 2 });
-    try testing.expect(!buf.editor.doc.use_tabs);
-    try testing.expectEqual(@as(usize, 2), buf.editor.doc.tab_width);
+    try testing.expect(!buf.doc.use_tabs);
+    try testing.expectEqual(@as(usize, 2), buf.doc.tab_width);
     try testing.expectEqual(@as(usize, 2), buf.input.vim.tab_width);
     // `indent_size = tab` with a tab_width: the unit is the width.
     buf.applyEditorconfig(.{ .indent_size_is_tab = true, .tab_width = 3 });
     try testing.expectEqual(@as(usize, 3), buf.input.vim.tab_width);
     // An empty resolution changes nothing.
     buf.applyEditorconfig(.{});
-    try testing.expectEqual(@as(usize, 3), buf.editor.doc.tab_width);
-    try testing.expect(buf.trim_trailing_ws_on_save);
+    try testing.expectEqual(@as(usize, 3), buf.doc.tab_width);
+    try testing.expect(buf.doc.trim_trailing_ws_on_save);
     // A handler rebuilt for the other style keeps the file's indent.
     buf.applyEditorconfig(.{ .indent_style = .tab, .indent_size = 6 });
     buf.setInputStyle(.standard, .{ .tab_width = 4 });

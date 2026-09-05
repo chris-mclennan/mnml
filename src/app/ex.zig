@@ -136,7 +136,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "m", "mo", "move" })) return copyMove(app, range, args, true);
     if (eqAny(verb, &.{ "up", "update" })) {
         const e = try editor(app, ":update");
-        if (!e.buf.dirty) return;
+        if (!e.buf.doc.dirty) return;
         return write(app, null, "", false);
     }
     if (eqAny(verb, &.{ "sav", "saveas" })) {
@@ -421,8 +421,8 @@ const Parser = struct {
                     const row = ed.buf.editor.lineOfByte(hi);
                     break :blk if (hi > 0 and hi == ed.buf.editor.lineStart(row) and row > ed.buf.editor.lineOfByte(@min(s[0], s[1]))) row - 1 else row;
                 } else return app.diag.fail(arena, "E20: mark '> not set", .{}),
-                'A'...'Z' => marks_store.rowIn(app, m, ed.buf.path) orelse return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
-                else => if (ed.buf.marks.get(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
+                'A'...'Z' => marks_store.rowIn(app, m, ed.buf.doc.path) orelse return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
+                else => if (ed.buf.doc.marks.get(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
             };
         } else if (c == '+' or c == '-') {
             base = if (e) |ed| ed.buf.editor.currentLine() else 0;
@@ -454,9 +454,9 @@ fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool) Comma
         const abs = try app.absPath(path_arg);
         e.buf.setPath(abs) catch return error.OutOfMemory;
         e.syntax.setLanguage(abs, e.buf.editor.bytes());
-        e.hl_dirty = true;
+        e.syntax.dirty = true;
     }
-    const path = e.buf.path orelse return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, ":w — no file name (use :w <path>)", .{});
     const rel = app.relPath(path);
     app.hooks.emit(app, .{ .save_pre = .{ .path = rel, .pane = app.active.? } });
     e.buf.save(app.io) catch |err| return app.diag.fail(arena, ":w — {s}: {s}", .{ rel, @errorName(err) });
@@ -491,8 +491,8 @@ fn writeToCommand(app: *App, e: *EditorPane, range: ?Range, cmd_in: []const u8) 
 fn saveAll(app: *App) CommandError!void {
     var n: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| if (e.buf.dirty and e.buf.path != null) {
-            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}", .{ app.relPath(e.buf.path.?), @errorName(err) });
+        .editor => |*e| if (e.buf.doc.dirty and e.buf.doc.path != null) {
+            e.buf.save(app.io) catch |err| return app.diag.fail(app.frame.allocator(), ":wa — {s}: {s}", .{ app.relPath(e.buf.doc.path.?), @errorName(err) });
             n += 1;
         },
         else => {},
@@ -518,8 +518,8 @@ fn edit(app: *App, arg: []const u8, bang: bool) CommandError!void {
     if (arg.len == 0 or std.mem.eql(u8, arg, "%")) {
         // Reload from disk; `:e!` discards unsaved changes.
         const e = try editor(app, ":e");
-        const path = e.buf.path orelse return app.diag.fail(arena, ":e — no file name", .{});
-        if (e.buf.dirty and !bang) return app.diag.fail(arena, ":e — unsaved changes (use :e! to discard)", .{});
+        const path = e.buf.doc.path orelse return app.diag.fail(arena, ":e — no file name", .{});
+        if (e.buf.doc.dirty and !bang) return app.diag.fail(arena, ":e — unsaved changes (use :e! to discard)", .{});
         @import("watch.zig").reload(app, app.active.?) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return app.diag.fail(arena, ":e — {s}", .{@errorName(err)}),
@@ -535,7 +535,7 @@ fn edit(app: *App, arg: []const u8, bang: bool) CommandError!void {
 fn alternate(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":A");
-    const path = e.buf.path orelse return app.diag.fail(arena, ":A — no active file", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, ":A — no active file", .{});
     const dir = std.fs.path.dirname(path) orelse "";
     const base = std.fs.path.basename(path);
     const ext = std.fs.path.extension(base);
@@ -894,7 +894,7 @@ fn marks(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":marks");
     var names: std.ArrayListUnmanaged(u8) = .empty;
-    var it = e.buf.marks.keyIterator();
+    var it = e.buf.doc.marks.keyIterator();
     while (it.next()) |k| try names.append(arena, k.*);
     const globals = try marks_store.letters(app, arena);
     if (names.items.len == 0 and globals.len == 0) {
@@ -904,7 +904,7 @@ fn marks(app: *App) CommandError!void {
     std.mem.sort(u8, names.items, {}, std.sort.asc(u8));
     var parts: std.ArrayListUnmanaged(u8) = .empty;
     for (names.items, 0..) |c, i| {
-        const pos = e.buf.marks.get(c).?;
+        const pos = e.buf.doc.marks.get(c).?;
         try parts.print(arena, "{s}'{c}@{d}:{d}", .{ if (i > 0) "  " else "", c, pos.row + 1, pos.col + 1 });
     }
     for (globals) |c| {
@@ -917,8 +917,8 @@ fn marks(app: *App) CommandError!void {
 fn delmarks(app: *App, args: []const u8, bang: bool) CommandError!void {
     const e = try editor(app, ":delmarks");
     if (bang) {
-        const n = e.buf.marks.count();
-        e.buf.marks.clearRetainingCapacity();
+        const n = e.buf.doc.marks.count();
+        e.buf.doc.marks.clearRetainingCapacity();
         app.toast(":delmarks! — cleared {d} local mark(s)", .{n});
         return;
     }
@@ -927,7 +927,7 @@ fn delmarks(app: *App, args: []const u8, bang: bool) CommandError!void {
         if (c == ' ') continue;
         if (marks_store.isGlobal(c)) {
             if (marks_store.remove(app, c)) n += 1;
-        } else if (e.buf.marks.remove(c)) n += 1;
+        } else if (e.buf.doc.marks.remove(c)) n += 1;
     }
     if (args.len == 0) return app.diag.fail(app.frame.allocator(), ":delmarks — usage: `:delmarks <letters>` or `:delmarks!`", .{});
     app.toast(":delmarks — cleared {d} mark(s)", .{n});
@@ -977,7 +977,7 @@ fn set(app: *App, args: []const u8) CommandError!void {
             const n = std.fmt.parseInt(u8, v, 10) catch return app.diag.fail(arena, ":set {s} — not a number: {s}", .{ name, v });
             app.cfg.editor.tab_width = @max(n, 1);
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| e.buf.editor.doc.tab_width = @max(n, 1),
+                .editor => |*e| e.buf.doc.tab_width = @max(n, 1),
                 else => {},
             };
             app.toast(":set {s}={d}", .{ name, n });
@@ -1287,8 +1287,8 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try f.ex("sort!");
     try testing.expectEqualStrings("charlie\nbravo\nalpha", f.text());
     const e = f.app.activeEditor().?;
-    try e.buf.marks.put(testing.allocator, 'a', .{ .row = 0, .col = 0 });
-    try e.buf.marks.put(testing.allocator, 'b', .{ .row = 1, .col = 0 });
+    try e.buf.doc.marks.put(testing.allocator, 'a', .{ .row = 0, .col = 0 });
+    try e.buf.doc.marks.put(testing.allocator, 'b', .{ .row = 1, .col = 0 });
     try f.ex("'a,'bd");
     try testing.expectEqualStrings("alpha", f.text());
     try e.buf.editor.setText("\tfoo\nx\ty");
@@ -1463,7 +1463,7 @@ test "ex: q refuses a dirty buffer, q! discards, the last close quits" {
     defer f.deinit();
     const e = f.app.activeEditor().?;
     try e.buf.editor.setText("dirty");
-    e.buf.dirty = true;
+    e.buf.doc.dirty = true;
     try testing.expectError(error.Failed, f.ex("q"));
     try testing.expect(std.mem.startsWith(u8, f.app.diag.msg.?, "unsaved changes in doc.txt"));
     try f.ex("q!");

@@ -77,6 +77,13 @@ pub fn keyForPath(path: []const u8) ?[]const u8 {
 
 pub const Syntax = struct {
     hl: highlight.Highlighter,
+    /// Set by every path that mutates the text (and a theme change); the
+    /// tree re-parses once `idle_ms` have passed since the frame that
+    /// first saw it (`since_ms`), so a burst of typing costs one parse.
+    /// One flag per document: the first window to paint clears it for
+    /// all of them.
+    dirty: bool = true,
+    since_ms: ?i64 = null,
     /// The last edit-log seq folded into the tree and the spans.
     seen_seq: u64 = 0,
     /// The seq the kept tree was parsed at; a structural query reparses

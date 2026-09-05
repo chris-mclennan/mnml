@@ -355,7 +355,7 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
         },
         .claude_code, .claude_api => {},
     }
-    if (e.buf.path) |p| if (suggest.isSecretBearing(p)) return st.debounce.cancel();
+    if (e.buf.doc.path) |p| if (suggest.isSecretBearing(p)) return st.debounce.cancel();
     const ctx = suggest.context(e.buf.editor.bytes(), e.buf.editor.cursor);
     if (ctx.prefix.len == 0 and ctx.suffix.len == 0) return st.debounce.cancel();
     var h = std.hash.Wyhash.init(0);
@@ -373,7 +373,7 @@ fn fireSuggestion(app: *App) Allocator.Error!void {
     }) else "";
     st.last_context_hash = hash;
     const gpa = app.gpa;
-    const lang = suggest.languageOf(e.buf.path);
+    const lang = suggest.languageOf(e.buf.doc.path);
     const user = try suggest.userPrompt(app.frame.allocator(), lang, ctx);
     const prompt = if (backend == .claude_code) try std.mem.concat(gpa, u8, &.{ suggest.system_prompt, "\n\n", user }) else try gpa.dupe(u8, user);
     errdefer gpa.free(prompt);
@@ -978,8 +978,8 @@ pub fn chatAccept(app: *App, text: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     var prompt: std.ArrayListUnmanaged(u8) = .empty;
     if (app.activeEditor()) |e| {
-        const path = if (e.buf.path) |p| app.relPath(p) else "[scratch]";
-        const lang = suggest.languageOf(e.buf.path);
+        const path = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
+        const lang = suggest.languageOf(e.buf.doc.path);
         if (e.buf.editor.selection()) |sel| if (sel[1] > sel[0]) {
             try prompt.print(arena, "Selection from {s}:\n\n```{s}\n{s}\n```\n\n", .{ path, lang, e.buf.editor.bytes()[sel[0]..sel[1]] });
         };
@@ -997,7 +997,7 @@ fn actionTarget(app: *App) CommandError!struct { code: []const u8, lang: []const
     const id = app.active orelse return error.NoActivePane;
     const e = app.panes.editor(id) orelse return error.NotAnEditor;
     const ed = e.buf.editor;
-    const lang = suggest.languageOf(e.buf.path);
+    const lang = suggest.languageOf(e.buf.doc.path);
     if (ed.selection()) |sel| if (sel[1] > sel[0]) {
         return .{ .code = try app.frame.allocator().dupe(u8, ed.bytes()[sel[0]..sel[1]]), .lang = lang, .apply = .{ .pane = id, .start = sel[0], .end = sel[1] } };
     };
@@ -1621,7 +1621,7 @@ test "ghost text: Tab accepts at the cursor, ctrl+right a word, ctrl+down a line
     try app.handle(.{ .key = Key.named(.tab) });
     try t.expectEqualStrings("GHOSTXhello", e.buf.editor.bytes());
     try t.expect(e.buf.editor.ghost_suggestion == null);
-    try t.expect(e.buf.dirty);
+    try t.expect(e.buf.doc.dirty);
     try t.expectEqual(@as(u32, 1), app.ai.accepted);
     // Dismiss: the key goes on to the editor (cursor moved right).
     try e.buf.editor.setGhostSuggestion("DISMISSZ");

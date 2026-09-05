@@ -485,13 +485,13 @@ pub fn onOpen(app: *App, args: hooks.HookArgs) void {
 }
 
 pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     // The external linter does not need a server.
     format_app.lintOnHook(app, path);
     const s = (try ensureServer(app, path)) orelse return;
     const was_open = s.isOpen(path);
     s.didOpen(path, client.languageIdFor(path), e.buf.editor.bytes()) catch return;
-    try app.lsp.synced.put(app.gpa, pane, e.buf.editor.doc.edits.head());
+    try app.lsp.synced.put(app.gpa, pane, e.buf.doc.edits.head());
     if (!was_open) {
         app.hooks.emit(app, .{ .lsp_attach = .{ .server = s.name, .pane = pane } });
         if (s.ready) requestSymbols(app, s, path);
@@ -504,7 +504,7 @@ pub fn attach(app: *App, pane: PaneId, e: *EditorPane) Allocator.Error!void {
 pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
     const pane = args.save_pre.pane;
     const e = app.panes.editor(pane) orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const s = serverFor(app, path);
     if (s != null) syncPane(app, pane, e);
     format_app.onSavePre(app, pane, e, s);
@@ -516,7 +516,7 @@ pub fn onSavePre(app: *App, args: hooks.HookArgs) void {
 
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     const e = app.panes.editor(args.save_post.pane) orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     format_app.lintOnHook(app, path);
     const s = serverFor(app, path) orelse return;
     syncPane(app, args.save_post.pane, e);
@@ -543,7 +543,7 @@ pub fn onClose(app: *App, pane: PaneId, path: []const u8) void {
 /// converts exactly) goes as a range; anything else is the full text.
 /// Called from the frame, so every mutation path is covered.
 pub fn syncPane(app: *App, pane: PaneId, e: *EditorPane) void {
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const ed = e.buf.editor;
     const head = ed.doc.edits.head();
     const seen = app.lsp.synced.get(pane) orelse return;
@@ -720,7 +720,7 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
             // Documents opened while the server was starting are on the
             // wire now; symbols for the ones showing can follow.
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| if (e.buf.path) |path| if (s.isOpen(path)) requestSymbols(app, s, path),
+                .editor => |*e| if (e.buf.doc.path) |path| if (s.isOpen(path)) requestSymbols(app, s, path),
                 else => {},
             };
             // The request that arrived while this server was starting
@@ -850,7 +850,7 @@ fn severityStyle(t: *const Theme, s: types.Severity) Style {
 /// The squiggles for an editor: the file's diagnostics as byte ranges
 /// on the current text. Frame arena.
 pub fn underlinesFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme) Allocator.Error![]editor_view.Underline {
-    const path = e.buf.path orelse return &.{};
+    const path = e.buf.doc.path orelse return &.{};
     const list = diagnosticsFor(app, path);
     if (list.len == 0) return &.{};
     const enc = if (serverFor(app, path)) |s| s.encoding else .utf16;
@@ -890,7 +890,7 @@ pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Th
 
 /// `✗ 2  ⚠ 1` for the active file, or null.
 pub fn statusSegment(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error!?[]const u8 {
-    const path = e.buf.path orelse return null;
+    const path = e.buf.doc.path orelse return null;
     var errors: usize = 0;
     var warnings: usize = 0;
     for (diagnosticsFor(app, path)) |d| switch (d.severity) {
@@ -907,7 +907,7 @@ pub fn statusSegment(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) A
 pub fn gotoDiagnostic(app: *App, forward: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = app.activeEditor() orelse return app.diag.fail(arena, "no active editor", .{});
-    const path = e.buf.path orelse return app.diag.fail(arena, "no diagnostics in this file", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "no diagnostics in this file", .{});
     const list = diagnosticsFor(app, path);
     if (list.len == 0) return app.diag.fail(arena, "no diagnostics in this file", .{});
     const enc = if (serverFor(app, path)) |s| s.encoding else .utf16;
@@ -1099,7 +1099,7 @@ pub fn requireServer(app: *App, what: []const u8) CommandError!Target {
     const arena = app.frame.allocator();
     const pane = app.active orelse return app.diag.fail(arena, "no active editor", .{});
     const e = app.panes.editor(pane) orelse return app.diag.fail(arena, "no active editor", .{});
-    const path = e.buf.path orelse return app.diag.fail(arena, "LSP needs a saved file", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "LSP needs a saved file", .{});
     const s = serverFor(app, path) orelse return app.diag.fail(arena, "no language server for this file ({s})", .{what});
     if (!s.ready) {
         // A server answers `initialize` a second or two after its spawn
@@ -1437,7 +1437,7 @@ const manual_flag: u32 = 0x8000_0000;
 /// An on-type formatting trigger asks the server for its edits.
 pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, k: Key) Allocator.Error!void {
     const c = k.typed() orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const s = serverFor(app, path) orelse return;
     if (!s.ready) return;
     if (s.caps.on_type_triggers.len > 0) {
@@ -1681,7 +1681,7 @@ fn acceptResolved(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
     const edits = try types.readTextEdits(app.frame.allocator(), jsonrpc.getField(r, "additionalTextEdits"));
     if (edits.len == 0) return;
     const e = app.panes.editor(ctx.pane) orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const enc = if (serverFor(app, path)) |s| s.encoding else .utf16;
     try applyEditsToPane(app, e, edits, enc);
 }
@@ -1727,7 +1727,7 @@ const format_save_flag: u32 = 1;
 
 fn requestFormatting(app: *App, s: *Server, pane: PaneId, e: *EditorPane, then_save: bool) CommandError!void {
     const arena = app.frame.allocator();
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const uri = try types.uriFromPath(arena, path);
     _ = s.request(.formatting, "textDocument/formatting", .{ .textDocument = .{ .uri = uri }, .options = .{ .tabSize = app.cfg.editor.tab_width, .insertSpaces = true, .trimTrailingWhitespace = true } }, .{ .pane = pane, .extra = if (then_save) format_save_flag else 0 }) catch |err| return app.diag.fail(arena, "LSP format: {s}", .{@errorName(err)});
 }
@@ -1739,7 +1739,7 @@ fn applyFormatting(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Er
     try applyEditsToPane(app, e, edits, s.encoding);
     if (ctx.extra & format_save_flag != 0) {
         e.buf.save(app.io) catch {};
-    } else if (e.buf.path) |p| app.toast("formatted {s}", .{app.relPath(p)});
+    } else if (e.buf.doc.path) |p| app.toast("formatted {s}", .{app.relPath(p)});
 }
 
 /// Apply `edits` to one pane, last first so earlier offsets stay valid.
@@ -1978,7 +1978,7 @@ const symbols_pick: u32 = 1;
 fn storeSymbols(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
     if (ctx.extra == symbols_pick) return symbolsPicker(app, ctx, result, false);
     const e = app.panes.editor(ctx.pane) orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const gpa = app.gpa;
     const gop = try app.lsp.symbols.getOrPut(gpa, path);
     if (!gop.found_existing) {
@@ -1999,8 +1999,8 @@ fn storeSymbols(app: *App, ctx: Ctx, result: ?Value) Allocator.Error!void {
     set.items = syms;
     // The outline watching this file repaints from the new list.
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*ed| if (ed.buf.path) |pp| if (std.mem.eql(u8, pp, path)) {
-            ed.hl_dirty = true;
+        .editor => |*ed| if (ed.buf.doc.path) |pp| if (std.mem.eql(u8, pp, path)) {
+            ed.syntax.dirty = true;
         },
         else => {},
     };
@@ -2093,7 +2093,7 @@ pub fn pickerAccept(app: *App, kind: app_mod.PickerKind, idx: usize) Allocator.E
             const pick = app.lsp.picker_symbols orelse return;
             if (idx >= pick.items.len) return;
             const s = pick.items[idx];
-            const path: []const u8 = s.path orelse (if (app.panes.editor(pick.pane)) |e| (e.buf.path orelse return) else return);
+            const path: []const u8 = s.path orelse (if (app.panes.editor(pick.pane)) |e| (e.buf.doc.path orelse return) else return);
             try jumpTo(app, .{ .path = path, .range = .{ .start = .{ .line = s.line, .character = s.character }, .end = .{ .line = s.line, .character = s.character } } }, false);
             dropSymbolPick(app);
         },

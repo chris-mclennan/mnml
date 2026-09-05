@@ -209,7 +209,7 @@ fn fileInfo(app: *App) CommandError!void {
     const row = ed.currentLine() + 1;
     const total = ed.lineCount();
     const pct = if (total == 0) 0 else row * 100 / total;
-    app.toast("{s}{s} · Ln {d}/{d} · {d}%", .{ if (e.buf.path) |p| app.relPath(p) else "[scratch]", if (e.buf.dirty) " [+]" else "", row, total, pct });
+    app.toast("{s}{s} · Ln {d}/{d} · {d}%", .{ if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]", if (e.buf.doc.dirty) " [+]" else "", row, total, pct });
 }
 
 // ─── folds (Rust `fold_methods.rs`) ─────────────────────────────────────
@@ -424,7 +424,7 @@ fn bracketKind(c: u8, pairs: []const [2]u8) ?struct { idx: usize, open: bool } {
 
 fn jumpPrevEdit(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const list = e.buf.editor.doc.change_list.items;
+    const list = e.buf.doc.change_list.items;
     if (list.len == 0) {
         app.toast("no earlier edit", .{});
         return;
@@ -446,7 +446,7 @@ fn jumpPrevEdit(app: *App) CommandError!void {
 
 fn jumpNextEdit(app: *App) CommandError!void {
     const e = try app.requireEditor();
-    const list = e.buf.editor.doc.change_list.items;
+    const list = e.buf.doc.change_list.items;
     const nav = app.change_nav orelse {
         app.toast("at newest edit", .{});
         return;

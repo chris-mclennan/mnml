@@ -66,7 +66,7 @@ fn pushBuffer(app: *App, labels: *std.ArrayListUnmanaged([]u8), panes: *std.Arra
     const gpa = app.gpa;
     const p = app.panes.get(id) orelse return;
     const label = switch (p.*) {
-        .editor => |*e| try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (e.buf.path) |path| app.relPath(path) else "[scratch]", if (e.buf.dirty) " ●" else "" }),
+        .editor => |*e| try std.fmt.allocPrint(gpa, "{s}{s}", .{ if (e.buf.doc.path) |path| app.relPath(path) else "[scratch]", if (e.buf.doc.dirty) " ●" else "" }),
         .outline => |*o| try std.fmt.allocPrint(gpa, "outline: {s}", .{o.title}),
         .md_preview => |*m| try std.fmt.allocPrint(gpa, "{s} (preview)", .{app.relPath(m.path)}),
         .pty => |*term| try std.fmt.allocPrint(gpa, "{s} [term]", .{term.label}),
@@ -147,7 +147,7 @@ fn recent(app: *App) CommandError!void {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
     }
-    const active_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.path else null;
+    const active_path: ?[]const u8 = if (app.activeEditor()) |e| e.buf.doc.path else null;
     var i = app.recent.items.len;
     while (i > 0) {
         i -= 1;
@@ -464,17 +464,17 @@ test "Ctrl+S saves from the palette and from the find bar; both stay open" {
     _ = try app.openPath(path);
     const e = app.activeEditor().?;
     _ = try app.applyOps(e, &.{.{ .insert_str = "x" }});
-    try t.expect(e.buf.dirty);
+    try t.expect(e.buf.doc.dirty);
     try command.run(&app, .{ .static = .palette });
     try app.handle(.{ .key = Key.ctrl('s') });
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
     try t.expect(app.overlay == .picker);
     try app.handle(.{ .key = Key.named(.esc) });
     _ = try app.applyOps(e, &.{.{ .insert_str = "y" }});
     try command.run(&app, .{ .static = .@"find.find" });
     try app.handle(.{ .key = Key.char('a') });
     try app.handle(.{ .key = Key.ctrl('s') });
-    try t.expect(!e.buf.dirty);
+    try t.expect(!e.buf.doc.dirty);
     try t.expect(app.find_bar != null);
     try t.expectEqualStrings("a", app.find_bar.?.state.queryText());
     // A leader prefix stays with the widget: nothing pends, nothing opens.

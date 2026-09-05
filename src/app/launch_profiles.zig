@@ -187,7 +187,7 @@ pub fn launch(app: *App, arena: Allocator, product: Product, name: []const u8) C
         .file_dir => blk: {
             const id = app.last_editor orelse break :blk null;
             const e = app.panes.editor(id) orelse break :blk null;
-            const path = e.buf.path orelse break :blk null;
+            const path = e.buf.doc.path orelse break :blk null;
             break :blk std.fs.path.dirname(path);
         },
     };

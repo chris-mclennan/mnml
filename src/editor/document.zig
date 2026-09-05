@@ -117,6 +117,22 @@ pub const Owner = struct {
 /// Cap for `change_list` — vim's `:changes` shows the last ~100.
 pub const change_list_max = 100;
 
+/// `(open, close)` comment tokens for a file extension; both empty for a
+/// commentless file so a toggle is a no-op instead of a stray literal.
+pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
+    const e = ext orelse return .{ "", "" };
+    const slash = [_][]const u8{ "zig", "rs", "ts", "tsx", "js", "jsx", "cjs", "mjs", "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "swift", "php", "scss", "less" };
+    const hash = [_][]const u8{ "py", "rb", "sh", "bash", "zsh", "toml", "yaml", "yml", "ini", "conf" };
+    const dash = [_][]const u8{ "lua", "sql" };
+    const angle = [_][]const u8{ "html", "htm", "xml", "vue", "svelte", "astro", "md", "markdown" };
+    for (slash) |x| if (std.mem.eql(u8, e, x)) return .{ "// ", "" };
+    for (hash) |x| if (std.mem.eql(u8, e, x)) return .{ "# ", "" };
+    for (dash) |x| if (std.mem.eql(u8, e, x)) return .{ "-- ", "" };
+    for (angle) |x| if (std.mem.eql(u8, e, x)) return .{ "<!-- ", " -->" };
+    if (std.mem.eql(u8, e, "css")) return .{ "/* ", " */" };
+    return .{ "", "" };
+}
+
 pub const Document = struct {
     gpa: Allocator,
     text: std.ArrayList(u8) = .empty,
@@ -170,8 +186,9 @@ pub const Document = struct {
     /// The file's mtime + size when it was last read or written; the
     /// watcher compares against it. Null for a scratch document.
     disk: ?DiskStamp = null,
-    /// The edit-log seq the language server has been told about.
-    lsp_seen: u64 = 0,
+    /// The edit-log seq the language server has been told about; null
+    /// until a server has the file open.
+    lsp_seen: ?u64 = null,
 
     // ─── views ───
 
@@ -233,9 +250,16 @@ pub const Document = struct {
         self.release();
     }
 
-    /// Views other than `me`.
+    /// How many `Editor`s show this document.
     pub fn viewCount(self: *const Document) usize {
         return self.views.items.len;
+    }
+
+    /// True when a view other than `me` shows the document — closing
+    /// `me` loses nothing.
+    pub fn hasOtherView(self: *const Document, me: *const Editor) bool {
+        for (self.views.items) |v| if (v != me) return true;
+        return false;
     }
 
     // ─── text access ────────────────────────────────────────────────
@@ -472,6 +496,21 @@ pub const Document = struct {
     }
 
     // ─── the file ───────────────────────────────────────────────────
+
+    /// Name the file: the path, the language (its extension) and the
+    /// comment tokens that go with it.
+    pub fn setPath(self: *Document, path: []const u8) Allocator.Error!void {
+        const copy = try self.gpa.dupe(u8, path);
+        if (self.path) |p| self.gpa.free(p);
+        self.path = copy;
+        if (self.language) |l| self.gpa.free(l);
+        self.language = null;
+        const ext = std.fs.path.extension(path);
+        if (ext.len > 1) self.language = try self.gpa.dupe(u8, ext[1..]);
+        const tok = commentTokenFor(self.language);
+        self.comment_token = tok[0];
+        self.comment_token_close = tok[1];
+    }
 
     /// Record the current text as the on-disk text.
     pub fn markSaved(self: *Document) Allocator.Error!void {

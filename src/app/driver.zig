@@ -182,7 +182,7 @@ pub const AppDriver = struct {
             const pos = e.buf.editor.rowCol();
             st.cursor_line = pos.row + 1;
             st.cursor_col = pos.col + 1;
-            st.active_file = if (e.buf.path) |path| try a.dupe(u8, path) else "";
+            st.active_file = if (e.buf.doc.path) |path| try a.dupe(u8, path) else "";
             st.mode = e.buf.input.mode().label() orelse "none";
         }
         return st;
@@ -197,7 +197,7 @@ pub const AppDriver = struct {
 
     fn vDirty(p: *anyopaque) ?bool {
         const e = cast(p).app.activeEditor() orelse return null;
-        return e.buf.dirty;
+        return e.buf.doc.dirty;
     }
 
     fn vPaneTitle(p: *anyopaque, a: Allocator) Error!?[]u8 {
@@ -213,10 +213,10 @@ pub const AppDriver = struct {
         const app = &cast(p).app;
         const e = app.activeEditor() orelse return null;
         const ed = e.buf.editor;
-        if (e.hl_dirty) {
+        if (e.syntax.dirty) {
             e.syntax.refresh(ed) catch return null;
-            e.hl_dirty = false;
-            e.hl_since_ms = null;
+            e.syntax.dirty = false;
+            e.syntax.since_ms = null;
         }
         const first: usize = e.view.scroll_line;
         const last = @min(first + @max(app.pane_rows, 1), ed.lineCount()) -| 1;

@@ -124,10 +124,10 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // The completion / hover / peek popups take their keys first: an
     // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
     // accept that edited the text leaves any ghost stale — drop it.
-    const seq_before: ?u64 = if (app.activeEditor()) |e| e.buf.editor.doc.edits.head() else null;
+    const seq_before: ?u64 = if (app.activeEditor()) |e| e.buf.doc.edits.head() else null;
     if (try lsp.interceptKey(app, k)) {
         if (seq_before) |before| if (app.activeEditor()) |e| {
-            if (e.buf.editor.doc.edits.head() != before and e.buf.editor.ghost_suggestion != null) try e.buf.editor.setGhostSuggestion(null);
+            if (e.buf.doc.edits.head() != before and e.buf.editor.ghost_suggestion != null) try e.buf.editor.setGhostSuggestion(null);
         };
         return;
     }
@@ -373,7 +373,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const before_mode = e.buf.input.mode();
     const mark = markPrefix(e);
     const mark_key: ?u8 = if (k.typed()) |c| (if (c < 128 and std.ascii.isAlphabetic(@intCast(c))) @as(u8, @intCast(c)) else null) else null;
-    const had_mark: bool = if (mark != null and mark_key != null) e.buf.marks.contains(mark_key.?) else false;
+    const had_mark: bool = if (mark != null and mark_key != null) e.buf.doc.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
     const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
@@ -390,7 +390,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .noop => {},
         .redraw => {},
         .edited => {
-            e.hl_dirty = true;
+            e.syntax.dirty = true;
             flash.cancel(app);
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
@@ -904,7 +904,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;
-                if (e.buf.path == null) {
+                if (e.buf.doc.path == null) {
                     app.toast("can't save a scratch buffer — pick Discard or Cancel", .{});
                     return;
                 }
@@ -1995,7 +1995,7 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
             if (en > s) try ed.splice(s, en, "");
         }
         col = rect.c0;
-        e.hl_dirty = true;
+        e.syntax.dirty = true;
     }
     // `$A`: append at every row's own end.
     const ragged = eol and append and !change;
@@ -2033,8 +2033,8 @@ fn blockReplace(app: *App, e: *EditorPane, ch: u21) Allocator.Error!void {
         }
     }
     ed.setCursor(ed.byteAtCol(rect.r0, rect.c0));
-    e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-    e.hl_dirty = true;
+    e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+    e.syntax.dirty = true;
     _ = app;
 }
 
@@ -2070,8 +2070,8 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
             try ed.splice(at, at, typed);
         }
         ed.setCursor(b.start_byte);
-        e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-        e.hl_dirty = true;
+        e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+        e.syntax.dirty = true;
         app.needs_render = true;
     }
     if (app.repeat_insert) |r| {
@@ -2099,8 +2099,8 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
                 try ed.splice(at, at, with_nl);
             }
         }
-        e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-        e.hl_dirty = true;
+        e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+        e.syntax.dirty = true;
         app.needs_render = true;
     }
 }
@@ -2136,8 +2136,8 @@ fn linewiseOp(app: *App, e: *EditorPane, op: u8, target: ?u32) Allocator.Error!v
             try ed.splice(del_start, del_end, "");
             const row = @min(r0, ed.lineCount() - 1);
             ed.setCursor(ed.firstNonWs(row));
-            e.buf.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.saved_text);
-            e.hl_dirty = true;
+            e.buf.doc.dirty = !std.mem.eql(u8, ed.bytes(), e.buf.doc.saved_text);
+            e.syntax.dirty = true;
         },
         else => {},
     }

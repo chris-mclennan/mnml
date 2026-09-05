@@ -465,7 +465,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
     const pane = app.panes.get(active) orelse return 0;
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
-        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
+        .editor => |*e| if (e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
         .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
     };
     const w = ui.width(label);
@@ -483,7 +483,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
 /// — a clipped path reads as a different file.
 fn drawBreadcrumb(app: *App, ui: Ui, pane: *app_mod.Pane, strip: Rect, reserved: u16) void {
     const path = switch (pane.*) {
-        .editor => |*e| e.buf.path orelse return,
+        .editor => |*e| e.buf.doc.path orelse return,
         .md_preview => |*m| m.path,
         else => return,
     };
@@ -754,9 +754,9 @@ fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
 /// and the first change mark it finds for a line (one column each; in
 /// a one-cell gutter the sign wins).
 fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error![]const editor_view.GutterMark {
-    const d = try dap.marksFor(app, arena, e.buf.path, &app.theme, ascii);
-    const l = try lsp.marksFor(app, arena, e.buf.path, &app.theme, ascii);
-    const g: []const editor_view.GutterMark = if (e.buf.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
+    const d = try dap.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
+    const l = try lsp.marksFor(app, arena, e.buf.doc.path, &app.theme, ascii);
+    const g: []const editor_view.GutterMark = if (e.buf.doc.path) |p| try git_app.viewMarks(app, p, arena) else &.{};
     if (l.len == 0 and g.len == 0) return d;
     if (d.len == 0 and g.len == 0) return l;
     if (d.len == 0 and l.len == 0) return g;
@@ -802,13 +802,13 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     // the tree and slides the cached spans along, so what is painted
     // lines up with the text; the reparse itself waits for the idle
     // gate — or runs at once for a first parse or a lost log.
-    if (e.hl_dirty and e.hl_since_ms == null) e.hl_since_ms = app.now_ms;
+    if (e.syntax.dirty and e.syntax.since_ms == null) e.syntax.since_ms = app.now_ms;
     const lost = e.syntax.absorb(ed);
-    const due = e.hl_dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.hl_since_ms.? >= syntax.idle_ms);
+    const due = e.syntax.dirty and (lost or e.syntax.parsed_seq == null or app.now_ms - e.syntax.since_ms.? >= syntax.idle_ms);
     if (due) {
         try e.syntax.refresh(ed);
-        e.hl_dirty = false;
-        e.hl_since_ms = null;
+        e.syntax.dirty = false;
+        e.syntax.since_ms = null;
     }
     ed.doc.edits.trim(e.syntax.seen_seq);
     // Spans for a window around the viewport and the cursor — the view
@@ -876,7 +876,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .word_matches = if (app.cfg.ui.highlight_word_under_cursor) try wordMatches(arena, ed, ed.lineStart(lo_line), ed.lineEnd(hi_line)) else &.{},
         .todo_keywords = app.cfg.ui.highlight_todo_keywords,
         .color_column = app.cfg.ui.color_column,
-        .render_markdown = app.cfg.ui.render_markdown and e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?),
+        .render_markdown = app.cfg.ui.render_markdown and e.buf.doc.path != null and md_preview.isMarkdownPath(e.buf.doc.path.?),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);
@@ -966,8 +966,8 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             .replace => .replace,
             .visual, .visual_line, .visual_block => .visual,
         };
-        info.file = if (e.buf.path) |p| app.relPath(p) else "[scratch]";
-        info.dirty = e.buf.dirty;
+        info.file = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
+        info.dirty = e.buf.doc.dirty;
         const pos = ed.rowCol();
         info.line = @intCast(pos.row + 1);
         info.col = @intCast(pos.col + 1);

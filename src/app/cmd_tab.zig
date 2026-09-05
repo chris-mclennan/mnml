@@ -105,7 +105,7 @@ fn rememberPage(app: *App, gone: *Layout) CommandError!void {
     for (panes) |id| {
         const p = app.panes.get(id) orelse continue;
         const path: []const u8 = switch (p.*) {
-            .editor => |*e| e.buf.path orelse continue,
+            .editor => |*e| e.buf.doc.path orelse continue,
             .md_preview => |*m| m.path,
             else => continue,
         };
@@ -342,7 +342,7 @@ test "tab pages: new / goto / move / close re-homes a dirty pane and closes a cl
     try command.run(&app, .{ .static = .@"tab.new" });
     const b = app.active.?;
     try app.activeEditor().?.buf.editor.setText("dirty");
-    app.activeEditor().?.buf.dirty = true;
+    app.activeEditor().?.buf.doc.dirty = true;
     try command.run(&app, .{ .static = .@"tab.new" });
     const c = app.active.?;
     try t.expectEqual(@as(usize, 3), app.layouts.layouts.items.len);

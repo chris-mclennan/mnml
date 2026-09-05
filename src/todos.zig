@@ -581,10 +581,10 @@ pub fn appendTodo(app: *App, text_in: []const u8) CommandError!void {
         return app.diag.fail(arena, "todo: write failed: {s}", .{@errorName(err)});
     };
     // A clean buffer showing TODO.md is stale now: give it the new text.
-    if (app.panes.findPath(path)) |id| if (app.panes.editor(id)) |e| if (!e.buf.dirty) {
+    if (app.panes.findPath(path)) |id| if (app.panes.editor(id)) |e| if (!e.buf.doc.dirty) {
         e.buf.editor.setText(out.items) catch return error.OutOfMemory;
         e.buf.markSaved() catch return error.OutOfMemory;
-        e.hl_dirty = true;
+        e.syntax.dirty = true;
     };
     app.toast("todo added to TODO.md", .{});
     try refresh(app);
@@ -645,10 +645,10 @@ fn markDoneCmd(app: *App) CommandError!void {
     Io.Dir.cwd().writeFile(app.io, .{ .sub_path = abs, .data = out }) catch |err| {
         return app.diag.fail(arena, "todos: write {s}: {s}", .{ rel, @errorName(err) });
     };
-    if (app.panes.findPath(abs)) |id| if (app.panes.editor(id)) |e| if (!e.buf.dirty) {
+    if (app.panes.findPath(abs)) |id| if (app.panes.editor(id)) |e| if (!e.buf.doc.dirty) {
         e.buf.editor.setText(out) catch return error.OutOfMemory;
         e.buf.markSaved() catch return error.OutOfMemory;
-        e.hl_dirty = true;
+        e.syntax.dirty = true;
     };
     app.toast("marked done: {s}:{d}", .{ rel, it.line });
     try refresh(app);

@@ -467,7 +467,7 @@ fn closeTabs(app: *App, tabs: []const PaneId, keep: PaneId, after: ?usize) Comma
         }
         // A pinned tab is immune to the bulk closes.
         if (p.pinned()) continue;
-        const is_file = if (p.asEditor()) |e| e.buf.path != null else p.* == .md_preview;
+        const is_file = if (p.asEditor()) |e| e.buf.doc.path != null else p.* == .md_preview;
         if (is_file) {
             reopenable += 1;
             if (i < keep_idx) left_of_keep += 1;
@@ -610,7 +610,7 @@ fn copyPath(app: *App) CommandError!void {
     const rel: []const u8 = blk: {
         if (app.focus == .tree and app.tree.cursor < app.tree.rows.items.len) break :blk app.tree.rows.items[app.tree.cursor].rel;
         const e = try app.requireEditor();
-        break :blk app.relPath(e.buf.path orelse return app.diag.fail(arena, "no file name", .{}));
+        break :blk app.relPath(e.buf.doc.path orelse return app.diag.fail(arena, "no file name", .{}));
     };
     try app.clipboard.set(rel, false);
     app.toast("copied {s}", .{rel});
@@ -644,11 +644,11 @@ test "tab menu: Save leads when dirty; close_others / close_right keep dirty tab
     try t.expect(app.overlay == .menu);
     try t.expectEqual(b, app.active.?);
     try t.expectEqualStrings("Close", app.overlay.menu.items[0].label);
-    app.activeEditor().?.buf.dirty = true;
+    app.activeEditor().?.buf.doc.dirty = true;
     try openTabMenu(&app, b, 3, 1);
     try t.expectEqualStrings("Save", app.overlay.menu.items[0].label);
     app.overlay.deinit(app.gpa);
-    app.panes.editor(d).?.buf.dirty = true;
+    app.panes.editor(d).?.buf.doc.dirty = true;
     try command.run(&app, .{ .static = .@"buffer.close_right" });
     try t.expect(app.panes.get(c) == null);
     try t.expect(app.panes.get(d) != null);

@@ -186,11 +186,11 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
         const p = &(slot.* orelse continue);
         const sp: ?Pane = switch (p.*) {
             .editor => |*e| blk: {
-                const file = e.buf.path orelse break :blk null;
+                const file = e.buf.doc.path orelse break :blk null;
                 var folds: std.ArrayListUnmanaged(Fold) = .empty;
                 for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |s, en| try folds.append(arena, .{ .start = s, .end = en });
                 var marks: std.ArrayListUnmanaged(Mark) = .empty;
-                var it = e.buf.marks.iterator();
+                var it = e.buf.doc.marks.iterator();
                 while (it.next()) |m| try marks.append(arena, .{ .letter = m.key_ptr.*, .row = m.value_ptr.row, .col = m.value_ptr.col });
                 break :blk .{
                     .kind = .editor,
@@ -469,7 +469,7 @@ fn openSaved(app: *App, sp: Pane) OpenError!?PaneId {
                 if (f.start >= lines or f.end >= lines or f.end < f.start) continue;
                 try e.buf.editor.folds.put(app.gpa, f.start, f.end);
             }
-            for (sp.marks) |m| try e.buf.marks.put(app.gpa, m.letter, .{ .row = m.row, .col = m.col });
+            for (sp.marks) |m| try e.buf.doc.marks.put(app.gpa, m.letter, .{ .row = m.row, .col = m.col });
             return id;
         },
         .md_preview => {
@@ -623,7 +623,7 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         e.buf.editor.setCursor(9); // "three"
         e.wrap = true;
         try e.buf.editor.folds.put(t.allocator, 1, 2);
-        try e.buf.marks.put(t.allocator, 'q', .{ .row = 3, .col = 0 });
+        try e.buf.doc.marks.put(t.allocator, 'q', .{ .row = 3, .col = 0 });
         // A second file split to the right, a markdown preview on a second tab page.
         _ = try app.openPath(b);
         try command.run(&app, .{ .static = .@"view.split_right" });
@@ -651,11 +651,11 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         try t.expectEqual(@as(usize, 2), leaves.len);
         // The active pane is a.txt with its cursor, wrap, fold and mark.
         const e = app.activeEditor().?;
-        try t.expectEqualStrings(a, e.buf.path.?);
+        try t.expectEqualStrings(a, e.buf.doc.path.?);
         try t.expectEqual(@as(usize, 9), e.buf.editor.cursor);
         try t.expectEqual(true, e.wrap.?);
         try t.expectEqual(@as(usize, 2), e.buf.editor.folds.get(1).?);
-        try t.expectEqual(@as(usize, 3), e.buf.marks.get('q').?.row);
+        try t.expectEqual(@as(usize, 3), e.buf.doc.marks.get('q').?.row);
         // The preview came back on the second page.
         try t.expect(app.panes.findPreview(c) != null);
         // Chrome and lists.

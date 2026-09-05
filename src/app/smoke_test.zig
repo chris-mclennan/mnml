@@ -71,12 +71,12 @@ test "smoke: open, type under the standard keymap, ctrl+s writes the file" {
     try s.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "first line" });
     try s.open("notes.txt");
     try s.keys("TYPED space");
-    try t.expect(s.app.activeEditor().?.buf.dirty);
+    try t.expect(s.app.activeEditor().?.buf.doc.dirty);
     const txt = try s.screen();
     defer t.allocator.free(txt);
     try t.expect(std.mem.indexOf(u8, txt, "TYPED first line") != null);
     try s.keys("ctrl+s");
-    try t.expect(!s.app.activeEditor().?.buf.dirty);
+    try t.expect(!s.app.activeEditor().?.buf.doc.dirty);
     const back = try s.file("notes.txt");
     defer t.allocator.free(back);
     try t.expectEqualStrings("TYPED first line\n", back); // save adds the terminating newline
@@ -95,7 +95,7 @@ test "smoke: editor.use_vim makes dd delete a line and u undo it" {
     try t.expect(std.mem.indexOf(u8, txt, "NORMAL") != null);
     try s.keys("u");
     try t.expectEqualStrings("one\ntwo\nthree", s.app.activeEditor().?.buf.editor.bytes());
-    try t.expect(!s.app.activeEditor().?.buf.dirty);
+    try t.expect(!s.app.activeEditor().?.buf.doc.dirty);
 }
 
 test "smoke: a second file, :A flips to its test twin and back" {
@@ -131,7 +131,7 @@ test "smoke: app.quit with a dirty buffer raises the confirm overlay; Cancel kee
     try s.keys("c");
     try t.expect(s.app.overlay == .none);
     try t.expect(!s.app.quit);
-    try t.expect(s.app.activeEditor().?.buf.dirty);
+    try t.expect(s.app.activeEditor().?.buf.doc.dirty);
     try t.expect(s.app.focus == .pane);
 }
 

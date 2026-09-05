@@ -46,14 +46,14 @@ pub fn pathFor(arena: Allocator, data_root: []const u8, file: []const u8) Alloca
 pub fn onOpen(app: *App, args: hooks.HookArgs) void {
     if (!app.cfg.editor.persistent_undo or app.data_root.len == 0) return;
     const e = app.panes.editor(args.open.pane) orelse return;
-    const file = e.buf.path orelse return;
+    const file = e.buf.doc.path orelse return;
     _ = load(app, e, file) catch {};
 }
 
 pub fn onSavePost(app: *App, args: hooks.HookArgs) void {
     if (!app.cfg.editor.persistent_undo or app.data_root.len == 0) return;
     const e = app.panes.editor(args.save_post.pane) orelse return;
-    const file = e.buf.path orelse return;
+    const file = e.buf.doc.path orelse return;
     store(app, e, file) catch {};
 }
 
@@ -144,11 +144,11 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
         const e = app.panes.editor(id).?;
         try app.splice(e, 3, 3, " two");
         try app.splice(e, 7, 7, " three");
-        try t.expectEqual(@as(usize, 2), e.buf.editor.doc.history.undoLen());
+        try t.expectEqual(@as(usize, 2), e.buf.doc.history.undoLen());
         // The save's trailing-newline fix is an undo step of its own, so
         // the store holds three.
         try @import("../core/command.zig").run(&app, .{ .static = .@"file.save" });
-        try t.expectEqual(@as(usize, 3), e.buf.editor.doc.history.undoLen());
+        try t.expectEqual(@as(usize, 3), e.buf.doc.history.undoLen());
         const target = try pathFor(t.allocator, data, file);
         defer t.allocator.free(target);
         _ = try Io.Dir.cwd().statFile(t.io, target, .{});
@@ -158,7 +158,7 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
         defer app.deinit();
         const id = try app.openEditor(file);
         const e = app.panes.editor(id).?;
-        try t.expectEqual(@as(usize, 3), e.buf.editor.doc.history.undoLen());
+        try t.expectEqual(@as(usize, 3), e.buf.doc.history.undoLen());
         _ = try app.applyOps(e, &.{.undo});
         try t.expectEqualStrings("one two three", e.buf.editor.bytes());
         _ = try app.applyOps(e, &.{.undo});
@@ -172,7 +172,7 @@ test "persistent undo: a saved file's history comes back on reopen; a file chang
         var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = root, .data_root = data, .cols = 80, .rows = 20 });
         defer app.deinit();
         const id = try app.openEditor(file);
-        try t.expectEqual(@as(usize, 0), app.panes.editor(id).?.buf.editor.doc.history.undoLen());
+        try t.expectEqual(@as(usize, 0), app.panes.editor(id).?.buf.doc.history.undoLen());
     }
     // Off by default: nothing is written.
     {

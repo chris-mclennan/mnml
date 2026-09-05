@@ -60,7 +60,7 @@ fn extOf(path: []const u8, buf: []u8) []const u8 {
 pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void {
     if (!app.cfg.editor.format_on_type or c >= 128) return;
     if (std.mem.indexOfScalar(u8, s.caps.on_type_triggers, @intCast(c)) == null) return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const arena = app.frame.allocator();
     const pos = s.docPos(arena, path, e.buf.editor.bytes(), e.buf.editor.cursor) catch return;
     const ch = [_]u8{@intCast(c)};
@@ -78,7 +78,7 @@ pub fn onTyped(app: *App, pane: PaneId, e: *EditorPane, s: *Server, c: u21) void
 /// `willSaveWaitUntil` edits (applied when they land), and the external
 /// formatter when format-on-save has no server to format with.
 pub fn onSavePre(app: *App, pane: PaneId, e: *EditorPane, s: ?*Server) void {
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     if (s) |srv| if (app.cfg.editor.will_save_wait_until and srv.caps.will_save_wait_until and srv.ready and srv.isOpen(path)) {
         const arena = app.frame.allocator();
         if (types.uriFromPath(arena, path)) |uri| {
@@ -130,7 +130,7 @@ pub fn formatSelection(app: *App) CommandError!void {
 pub fn formatDocument(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try app.requireEditor();
-    const path = e.buf.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
     if (lsp.serverFor(app, path)) |s| if (s.ready and s.caps.formatting) return lsp.format(app);
     try formatExternalPane(app, e, true);
 }
@@ -146,7 +146,7 @@ pub fn formatExternal(app: *App) CommandError!void {
 /// failure to report; a save-time run stays quiet.
 pub fn formatExternalPane(app: *App, e: *EditorPane, explicit: bool) CommandError!void {
     const arena = app.frame.allocator();
-    const path = e.buf.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "format needs a saved file", .{});
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
     const f = tools.formatterFor(&app.cfg, ext) orelse {
@@ -238,8 +238,8 @@ fn runTool(app: *App, arena: Allocator, argv: []const []const u8, stdin: []const
 pub fn lintExternal(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try app.requireEditor();
-    const path = e.buf.path orelse return app.diag.fail(arena, "lint needs a saved file", .{});
-    if (e.buf.dirty) return app.diag.fail(arena, "lint runs on the saved file — save first", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "lint needs a saved file", .{});
+    if (e.buf.doc.dirty) return app.diag.fail(arena, "lint runs on the saved file — save first", .{});
     var buf: [32]u8 = undefined;
     const ext = extOf(path, &buf);
     const l = tools.linterFor(&app.cfg, ext) orelse return app.diag.fail(arena, "no linter for .{s} (nothing in .linters)", .{ext});
@@ -543,10 +543,10 @@ test "an external linter runs on a worker and its findings land in the diagnosti
     try testing.expectEqual(types.Severity.err, list[1].severity);
     try testing.expectEqualStrings("lint", list[1].source.?);
     // The command form: a dirty buffer is refused, a clean one runs.
-    e.buf.dirty = true;
+    e.buf.doc.dirty = true;
     try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"editor.lint_external" }));
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "save first") != null);
-    e.buf.dirty = false;
+    e.buf.doc.dirty = false;
     try command.run(&app, .{ .static = .@"editor.lint_external" });
     try testing.expectEqualStrings("linting mnml-zig-lint-test.txt with sh…", app.lastToast().?);
     try lsp.TestRig.pump(&app, &app, Cond.two, 5000);
@@ -560,16 +560,16 @@ test "replaceWhole splices only the changed middle and keeps the cursor" {
     const e = app.activeEditor().?;
     try e.buf.editor.setText("aaa\nbbb\nccc\n");
     e.buf.editor.setCursor(9);
-    const seq = e.buf.editor.doc.edits.head();
+    const seq = e.buf.doc.edits.head();
     try replaceWhole(&app, e, "aaa\nBBB\nccc\n");
     try testing.expectEqualStrings("aaa\nBBB\nccc\n", e.buf.editor.bytes());
     try testing.expectEqual(@as(usize, 9), e.buf.editor.cursor);
-    const splices = e.buf.editor.doc.edits.since(seq);
+    const splices = e.buf.doc.edits.since(seq);
     try testing.expectEqual(@as(usize, 1), splices.len);
     try testing.expectEqual(@as(usize, 4), splices[0].start);
     try testing.expectEqual(@as(usize, 7), splices[0].old_end);
     // The same bytes change nothing.
-    const seq2 = e.buf.editor.doc.edits.head();
+    const seq2 = e.buf.doc.edits.head();
     try replaceWhole(&app, e, "aaa\nBBB\nccc\n");
-    try testing.expectEqual(seq2, e.buf.editor.doc.edits.head());
+    try testing.expectEqual(seq2, e.buf.doc.edits.head());
 }

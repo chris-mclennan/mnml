@@ -92,7 +92,7 @@ pub fn snapshot(app: *App) Allocator.Error!?Snapshot {
 /// As `snapshot`, without touching `in_jump`.
 pub fn current(app: *App) Allocator.Error!?Snapshot {
     const e = app.activeEditor() orelse return null;
-    const path = e.buf.path orelse return null;
+    const path = e.buf.doc.path orelse return null;
     const pos = e.buf.editor.rowCol();
     return .{ .path = try app.frame.allocator().dupe(u8, path), .row = pos.row, .col = pos.col };
 }
@@ -206,7 +206,7 @@ const Fixture = struct {
     }
 
     fn file(f: *Fixture) []const u8 {
-        return std.fs.path.basename(f.app.activeEditor().?.buf.path.?);
+        return std.fs.path.basename(f.app.activeEditor().?.buf.doc.path.?);
     }
 };
 

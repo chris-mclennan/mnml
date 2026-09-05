@@ -175,7 +175,7 @@ pub fn cancel(app: *App) void {
 /// and its text has not changed since. Anything else disarms.
 pub fn current(app: *App) ?*State {
     const f: *State = if (app.flash) |*f| f else return null;
-    const alive = app.active == f.pane and if (app.panes.editor(f.pane)) |e| e.buf.editor.doc.edits.head() == f.edit_seq else false;
+    const alive = app.active == f.pane and if (app.panes.editor(f.pane)) |e| e.buf.doc.edits.head() == f.edit_seq else false;
     if (!alive) {
         cancel(app);
         return null;

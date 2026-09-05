@@ -92,7 +92,7 @@ fn show(app: *App) CommandError!void {
         return;
     }
     const src = app.panes.editor(source) orelse return error.NotAnEditor;
-    const title: []const u8 = if (src.buf.path) |p| std.fs.path.basename(p) else "[scratch]";
+    const title: []const u8 = if (src.buf.doc.path) |p| std.fs.path.basename(p) else "[scratch]";
     var pane = try OutlinePane.init(app.gpa, source, title);
     errdefer pane.deinit();
     const id = try app.panes.add(.{ .outline = pane });
@@ -113,14 +113,14 @@ pub fn refresh(app: *App, id: PaneId) Allocator.Error!void {
     const a = arena.allocator();
     o.clear();
     // A language server's symbols first; the tree-sitter walk otherwise.
-    const from_server: ?[]const lsp_types.Symbol = if (src.buf.path) |p| lsp.symbolsFor(app, p) else null;
+    const from_server: ?[]const lsp_types.Symbol = if (src.buf.doc.path) |p| lsp.symbolsFor(app, p) else null;
     if (from_server) |syms| {
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = lsp_types.symbolKindLabel(s.kind), .line = s.line, .col = s.character, .depth = s.depth });
     } else if (try src.syntax.symbols(src.buf.editor, a)) |syms| {
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = s.kind.label(), .line = s.line, .col = s.col, .depth = s.depth });
     } else {
         var buf: [32]u8 = undefined;
-        const key = languageKey(src.buf.path, &buf);
+        const key = languageKey(src.buf.doc.path, &buf);
         const syms = try fallback(a, src.buf.editor.bytes(), key);
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = s.kind.label(), .line = s.line, .col = s.col, .depth = s.depth });
     }
@@ -199,7 +199,7 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
 pub fn draw(app: *App, ui: Ui, id: PaneId, o: *OutlinePane, area: Rect) Allocator.Error!void {
     var current: ?usize = null;
     if (app.panes.editor(o.source)) |src| {
-        if (src.hl_dirty or o.items.items.len == 0) try refresh(app, id);
+        if (src.syntax.dirty or o.items.items.len == 0) try refresh(app, id);
         current = o.itemAt(@intCast(src.buf.editor.currentLine()));
         // Follow the source cursor when the outline is not being driven.
         if (app.active != id) if (current) |c| {

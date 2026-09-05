@@ -365,7 +365,7 @@ pub fn open(app: *App, source: PaneId, target: PaneId, start: usize, end: usize,
     const len = e.buf.editor.len();
     const s = @min(start, len);
     const en = @min(@max(end, s), len);
-    const file: []const u8 = if (e.buf.path) |p| app.relPath(p) else "[scratch]";
+    const file: []const u8 = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
     // One review per source: a second `a` replaces it.
     var existing: ?PaneId = null;
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {

@@ -299,7 +299,7 @@ fn closeBuffersUnder(app: *App, path: []const u8, is_dir: bool) Allocator.Error!
     while (i < app.panes.slots.items.len) : (i += 1) {
         const p = &(app.panes.slots.items[i] orelse continue);
         const e = p.asEditor() orelse continue;
-        const bp = e.buf.path orelse continue;
+        const bp = e.buf.doc.path orelse continue;
         if (std.mem.eql(u8, bp, path) or (is_dir and std.mem.startsWith(u8, bp, path) and bp.len > path.len and bp[path.len] == '/')) {
             try app.forceClosePane(@intCast(i));
         }

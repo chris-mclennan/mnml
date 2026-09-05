@@ -77,10 +77,10 @@ fn seqLow(seq: u64) u32 {
 
 /// Ask for the file's tokens in the cheapest shape the server takes.
 pub fn request(app: *App, s: *Server, pane: PaneId, e: *EditorPane, first: u32, last: u32) void {
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const arena = app.frame.allocator();
     const uri = types.uriFromPath(arena, path) catch return;
-    const head = e.buf.editor.doc.edits.head();
+    const head = e.buf.doc.edits.head();
     const ctx: Ctx = .{ .pane = pane, .extra = seqLow(head) };
     const held: ?*SemFile = app.lsp.semantic.get(path);
     if (s.caps.semantic_delta and held != null and held.?.result_id != null and !held.?.partial) {
@@ -99,7 +99,7 @@ pub fn request(app: *App, s: *Server, pane: PaneId, e: *EditorPane, first: u32, 
 pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Error!void {
     const gpa = app.gpa;
     const e = app.panes.editor(ctx.pane) orelse return;
-    const path = e.buf.path orelse return;
+    const path = e.buf.doc.path orelse return;
     const f = (try entry(app, path, true)).?;
     const r = result orelse {
         // `null`: the server has nothing — keep painting nothing.
@@ -107,7 +107,7 @@ pub fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?V
         f.seq = 0;
         return;
     };
-    const head = e.buf.editor.doc.edits.head();
+    const head = e.buf.doc.edits.head();
     const fresh = seqLow(head) == ctx.extra;
     if (kind == .semantic_delta and jsonrpc.getField(r, "edits") != null) {
         const arena = app.frame.allocator();
@@ -149,7 +149,7 @@ fn tokenStyle(theme: *const Theme, tok: semantic.Token, legend: []const semantic
 /// non-overlapping; empty when off, stale or absent. Frame arena.
 pub fn spansFor(app: *App, arena: Allocator, e: *EditorPane, theme: *const Theme, lo_line: usize, hi_line: usize) Allocator.Error![]editor_view.Span {
     if (!app.cfg.editor.semantic_tokens) return &.{};
-    const path = e.buf.path orelse return &.{};
+    const path = e.buf.doc.path orelse return &.{};
     const f = app.lsp.semantic.get(path) orelse return &.{};
     const ed = e.buf.editor;
     if (f.seq == 0 or f.seq != ed.doc.edits.head()) return &.{};

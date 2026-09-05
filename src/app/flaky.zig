@@ -472,7 +472,7 @@ test "flaky.show lists the workspace's wobbly tests from .mnml/flaky.zon; enter 
     try t.expectEqualStrings("flaky ≋", p.title());
     _ = try handleKey(&app, id, p, .{ .code = .enter });
     const e = app.activeEditor().?;
-    try t.expectEqualStrings("a.spec.ts", app.relPath(e.buf.path.?));
+    try t.expectEqualStrings("a.spec.ts", app.relPath(e.buf.doc.path.?));
     try t.expectEqual(@as(usize, 2), e.buf.editor.rowCol().row);
     // A run that passes `one` twice more still leaves it wobbly; the
     // dashboard refreshes and the file is rewritten.
