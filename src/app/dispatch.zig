@@ -41,6 +41,7 @@ const md_preview = @import("md_preview.zig");
 const cmd_view = @import("cmd_view.zig");
 const context_menus = @import("context_menus.zig");
 const cheatsheet = @import("cheatsheet.zig");
+const script_pane = @import("script_pane.zig");
 const render = @import("render.zig");
 const layout_mod = @import("layout.zig");
 const select = @import("../editor/select.zig");
@@ -116,6 +117,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .cheatsheet => |*c| {
             if (try cheatsheet.handleKey(app, c, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .script => |*s| {
+            if (try script_pane.handleKey(app, s, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -956,6 +962,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             const pane = app.panes.get(sh.pane) orelse return;
             switch (pane.*) {
                 .cheatsheet => |*c| if (m.button == .left) try cheatsheet.click(app, c, sh.id),
+                .script => |*s| script_pane.click(app, s, sh.id, m),
                 .list => |*l| if (m.button == .left) {
                     if (sh.id < l.entries.items.len) {
                         if (l.cursor == sh.id) try listPaneEnter(app, sh.pane, l) else l.cursor = sh.id;
@@ -1196,6 +1203,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .cheatsheet => |*c| {
             c.selected = if (down) c.selected + n else c.selected -| n;
         },
+        .script => |*s| script_pane.wheel(app, s, down, n),
         .list => |*l| {
             l.cursor = if (down) @min(l.cursor + n, l.entries.items.len -| 1) else l.cursor -| n;
         },

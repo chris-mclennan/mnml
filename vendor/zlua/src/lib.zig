@@ -3625,9 +3625,9 @@ pub const Lua = opaque {
 
         const enm = @typeInfo(T).@"enum";
 
-        inline for (enm.field_names, enm.field_values) |fname, value| {
-            if (std.mem.eql(u8, fname, name)) {
-                return @enumFromInt(value);
+        inline for (enm.fields) |field| {
+            if (std.mem.eql(u8, field.name, name)) {
+                return @enumFromInt(field.value);
             }
         }
 
@@ -4747,15 +4747,15 @@ pub const Lua = opaque {
             .@"struct" => |info| {
                 lua.createTable(0, 0);
                 if (info.is_tuple) {
-                    inline for (0..info.field_names.len) |i| {
+                    inline for (0..info.fields.len) |i| {
                         try lua.pushAny(i + 1);
                         try lua.pushAny(value[i]);
                         lua.setTable(-3);
                     }
                 } else {
-                    inline for (info.field_names) |name| {
-                        try lua.pushAny(name);
-                        try lua.pushAny(@field(value, name));
+                    inline for (info.fields) |field| {
+                        try lua.pushAny(field.name);
+                        try lua.pushAny(@field(value, field.name));
                         lua.setTable(-3);
                     }
                 }
@@ -4766,9 +4766,9 @@ pub const Lua = opaque {
                 errdefer lua.pop(1);
                 try lua.pushAnyString(@tagName(value));
 
-                inline for (info.field_names) |name| {
-                    if (std.mem.eql(u8, name, @tagName(value))) {
-                        try lua.pushAny(@field(value, name));
+                inline for (info.fields) |field| {
+                    if (std.mem.eql(u8, field.name, @tagName(value))) {
+                        try lua.pushAny(@field(value, field.name));
                     }
                 }
                 lua.setTable(-3);
@@ -4960,9 +4960,9 @@ pub const Lua = opaque {
             },
             .@"enum" => |info| {
                 const string = try lua.toAnyInternal([]const u8, a, allow_alloc, index);
-                inline for (info.field_names) |enum_name| {
-                    if (std.mem.eql(u8, string, enum_name)) {
-                        return @field(T, enum_name);
+                inline for (info.fields) |field| {
+                    if (std.mem.eql(u8, string, field.name)) {
+                        return @field(T, field.name);
                     }
                 }
                 return error.LuaInvalidEnumTagName;
@@ -4984,9 +4984,9 @@ pub const Lua = opaque {
                 if (lua.next(-2)) {
                     defer lua.pop(2);
                     const key = try lua.toAny([]const u8, -2);
-                    inline for (u.field_names, u.field_types) |name, ftype| {
-                        if (std.mem.eql(u8, key, name)) {
-                            return @unionInit(T, name, try lua.toAny(ftype, -1));
+                    inline for (u.fields) |field| {
+                        if (std.mem.eql(u8, key, field.name)) {
+                            return @unionInit(T, field.name, try lua.toAny(field.type, -1));
                         }
                     }
                     return error.LuaInvalidTagName;
@@ -5373,24 +5373,24 @@ pub const Buffer = struct {
 // Helper functions to make the zlua API easier to use
 
 fn TypeOfWrap(comptime function: anytype) type {
-    const params = @typeInfo(@TypeOf(function)).@"fn".param_types;
+    const params = @typeInfo(@TypeOf(function)).@"fn".params;
     if (params.len == 1) {
-        if (params[0].? == *Lua) return CFn;
-        if (params[0].? == *anyopaque) return CUserdataDtorFn;
+        if (params[0].type.? == *Lua) return CFn;
+        if (params[0].type.? == *anyopaque) return CUserdataDtorFn;
     }
     if (params.len == 2) {
-        if (params[0].? == *Lua) {
-            if (params[1].? == i32) return CInterruptCallbackFn;
-            if (params[1].? == []const u8) return CUserAtomCallbackFn;
-            if (params[1].? == *anyopaque) return CReaderFn;
+        if (params[0].type.? == *Lua) {
+            if (params[1].type.? == i32) return CInterruptCallbackFn;
+            if (params[1].type.? == []const u8) return CUserAtomCallbackFn;
+            if (params[1].type.? == *anyopaque) return CReaderFn;
         }
     }
     if (params.len == 3) {
-        if (params[0].? == ?*anyopaque and params[1].? == []const u8 and params[2].? == bool) return CWarnFn;
-        if (params[0].? == *Lua) {
-            if (params[1].? == Event and params[2].? == *DebugInfo) return CHookFn;
-            if (params[1].? == Status and params[2].? == Context) return CContFn;
-            if (params[1].? == []const u8 and params[2].? == *anyopaque) return CWriterFn;
+        if (params[0].type.? == ?*anyopaque and params[1].type.? == []const u8 and params[2].type.? == bool) return CWarnFn;
+        if (params[0].type.? == *Lua) {
+            if (params[1].type.? == Event and params[2].type.? == *DebugInfo) return CHookFn;
+            if (params[1].type.? == Status and params[2].type.? == Context) return CContFn;
+            if (params[1].type.? == []const u8 and params[2].type.? == *anyopaque) return CWriterFn;
         }
     }
     return {

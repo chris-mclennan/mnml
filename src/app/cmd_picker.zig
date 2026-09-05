@@ -315,6 +315,14 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
+        .lua => {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            const lua = app.script();
+            lua.acceptItem(i, label);
+            lua.pickerClosed();
+        },
         .go_run_cmd, .tools, .tasks => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);
@@ -359,6 +367,7 @@ pub fn preview(app: *App) void {
 pub fn cancel(app: *App) void {
     if (app.overlay != .picker) return;
     if (app.overlay.picker.restore_theme) |th| app.setTheme(th);
+    if (app.overlay.picker.kind == .lua) app.script().pickerClosed();
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

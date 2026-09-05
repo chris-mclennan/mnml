@@ -50,6 +50,7 @@ const md_preview = @import("md_preview.zig");
 const layout_mod = @import("layout.zig");
 const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
+const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
@@ -253,7 +254,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -322,6 +323,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
             .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
             .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
+            .script => |*s| try script_pane.draw(app, ui, pr.pane, s, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -636,15 +638,28 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.
     const branch_seg = try git_app.statusSegment(app, ui.arena);
     const meter_seg = try ai_app.meterSegment(app, ui.arena);
-    const extra: usize = @as(usize, @intFromBool(branch_seg != null)) + @intFromBool(lsp_seg != null) + @intFromBool(meter_seg != null);
+    // A script's segments (`mnml.statusline.segment`): the `left` ones
+    // sit at the inner edge of the right cluster, the `right` ones after
+    // the built-in chips.
+    const lua_left = try app.script().segmentTexts(ui.arena, .left);
+    const lua_right = try app.script().segmentTexts(ui.arena, .right);
+    const extra: usize = @as(usize, @intFromBool(branch_seg != null)) + @intFromBool(lsp_seg != null) + @intFromBool(meter_seg != null) + lua_left.len + lua_right.len;
     if (extra > 0) {
         const segs = try ui.arena.alloc([]const u8, info.right.len + extra);
         @memcpy(segs[0..info.right.len], info.right);
         var n = info.right.len;
+        for (lua_left) |seg| {
+            segs[n] = seg;
+            n += 1;
+        }
         for ([_]?[]const u8{ branch_seg, lsp_seg, meter_seg }) |maybe| if (maybe) |seg| {
             segs[n] = seg;
             n += 1;
         };
+        for (lua_right) |seg| {
+            segs[n] = seg;
+            n += 1;
+        }
         info.right = segs;
     }
     statusline.draw(ui, area, info);

@@ -87,7 +87,7 @@ pub const Hooks = struct {
         while (i < self.subs.get(hook).items.len) : (i += 1) {
             switch (self.subs.get(hook).items[i]) {
                 .zig => |f| f(app, args),
-                .lua => {}, // TODO(lua): registry lookup + budgeted protectedCall (D10.2)
+                .lua => |r| app.script().callHook(r, args),
             }
         }
     }

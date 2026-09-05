@@ -37,6 +37,9 @@ pub const budget_ms: i64 = 20;
 /// How often a statusline segment's function is asked again.
 pub const segment_poll_ms: i64 = 250;
 pub const max_init_bytes = 4 * 1024 * 1024;
+/// The script the app runs at startup: `<data root>/init.lua`, then
+/// `<workspace>/.mnml/init.lua` when the workspace is trusted.
+pub const init_file = "init.lua";
 
 pub const Side = enum { left, right };
 
@@ -235,9 +238,10 @@ pub const Lua = struct {
         self.leave();
         L.remove(base);
         result catch {
+            // `toStringEx` pushes the string form; pop it and the error object.
             const msg = L.toStringEx(-1);
             self.last_error = self.app.frame.allocator().dupe(u8, msg) catch "script error";
-            L.pop(1);
+            L.pop(2);
             return error.Failed;
         };
     }
@@ -268,7 +272,7 @@ pub const Lua = struct {
             error.LuaSyntax => {
                 const msg = self.L.toStringEx(-1);
                 self.app.toastLevel(.err, "{s}", .{msg}) catch {};
-                self.L.pop(1);
+                self.L.pop(2);
                 return error.Failed;
             },
         };
@@ -280,16 +284,38 @@ pub const Lua = struct {
         return true;
     }
 
-    /// Run a string as a chunk (the `:lua` line, tests). Errors toast.
+    /// The two `init.lua` files, in order: the user's from the data
+    /// root, then the workspace's — only when the workspace is trusted
+    /// (`trust.zig` lists it as an exec-bearing claim). A failing file
+    /// toasts and the next one still runs.
+    pub fn loadInitFiles(self: *Lua) Allocator.Error!void {
+        const app = self.app;
+        const arena = app.frame.allocator();
+        if (app.data_root.len != 0) {
+            const path = try std.fs.path.join(arena, &.{ app.data_root, init_file });
+            _ = self.loadInit(path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Failed => {},
+            };
+        }
+        if (app.workspace_trusted) {
+            const path = try std.fs.path.join(arena, &.{ app.workspace, ".mnml", init_file });
+            _ = self.loadInit(path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Failed => {},
+            };
+        }
+    }
+
+    /// Run a string as a chunk named `lua` (the `:lua` line, tests).
+    /// Errors toast.
     pub fn runString(self: *Lua, src: []const u8) error{ Failed, OutOfMemory }!void {
-        const z = try self.gpa.dupeZ(u8, src);
-        defer self.gpa.free(z);
-        self.L.loadString(z) catch |err| switch (err) {
+        self.L.loadBuffer(src, "=lua", .text) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.LuaSyntax => {
                 const msg = self.L.toStringEx(-1);
                 self.last_error = self.app.frame.allocator().dupe(u8, msg) catch "syntax error";
-                self.L.pop(1);
+                self.L.pop(2);
                 self.toastError("lua");
                 return error.Failed;
             },
@@ -467,6 +493,7 @@ pub const Lua = struct {
         defer L.pop(1);
         if (L.isNoneOrNil(-1)) return null;
         const s = L.toStringEx(-1);
+        defer L.pop(1);
         return self.app.frame.allocator().dupe(u8, s) catch null;
     }
 
@@ -638,12 +665,12 @@ pub const Lua = struct {
 
 // ── tests ────────────────────────────────────────────────────────────────
 
-const t = std.testing;
+const testing = std.testing;
 
 test "libs: base/string/table/math/utf8 only; dofile/loadfile gone; os/io nil" {
-    var app = try App.init(t.allocator, t.io);
+    var app = try App.init(testing.allocator, testing.io);
     defer app.deinit();
-    const lua = app.lua.?;
+    const lua = app.script();
     try lua.runString(
         \\assert(os == nil and io == nil and package == nil and debug == nil)
         \\assert(dofile == nil and loadfile == nil and require == nil)
@@ -654,32 +681,32 @@ test "libs: base/string/table/math/utf8 only; dofile/loadfile gone; os/io nil" {
 }
 
 test "budget: an infinite loop trips after the deadline and the app survives" {
-    var app = try App.init(t.allocator, t.io);
+    var app = try App.init(testing.allocator, testing.io);
     defer app.deinit();
-    const lua = app.lua.?;
-    try t.expectError(error.Failed, lua.runString("while true do end"));
-    try t.expect(std.mem.indexOf(u8, lua.last_error.?, "script budget exceeded") != null);
-    try t.expect(lua.deadline_ms == null);
-    try t.expectEqual(@as(u32, 0), lua.depth);
+    const lua = app.script();
+    try testing.expectError(error.Failed, lua.runString("while true do end"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "script budget exceeded") != null);
+    try testing.expect(lua.deadline_ms == null);
+    try testing.expectEqual(@as(u32, 0), lua.depth);
     // Still a working state afterwards.
     try lua.runString("x = 41 + 1");
     _ = lua.L.getGlobal("x");
-    try t.expectEqual(@as(zlua.Integer, 42), try lua.L.toInteger(-1));
+    try testing.expectEqual(@as(zlua.Integer, 42), try lua.L.toInteger(-1));
     lua.L.pop(1);
     // The toast said so.
-    try t.expect(app.toasts.items.len >= 1);
-    try t.expect(std.mem.indexOf(u8, app.toasts.items[0].text, "budget") != null);
+    try testing.expect(app.toasts.items.len >= 1);
+    try testing.expect(std.mem.indexOf(u8, app.toasts.items[0].text, "budget") != null);
 }
 
 test "a runtime error carries a traceback and leaves the stack level" {
-    var app = try App.init(t.allocator, t.io);
+    var app = try App.init(testing.allocator, testing.io);
     defer app.deinit();
-    const lua = app.lua.?;
+    const lua = app.script();
     const top = lua.L.getTop();
-    try t.expectError(error.Failed, lua.runString("local function inner() error('boom') end inner()"));
-    try t.expect(std.mem.indexOf(u8, lua.last_error.?, "boom") != null);
-    try t.expect(std.mem.indexOf(u8, lua.last_error.?, "traceback") != null);
-    try t.expectEqual(top, lua.L.getTop());
+    try testing.expectError(error.Failed, lua.runString("local function inner() error('boom') end inner()"));
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "boom") != null);
+    try testing.expect(std.mem.indexOf(u8, lua.last_error.?, "traceback") != null);
+    try testing.expectEqual(top, lua.L.getTop());
 }
 
 fn zigSaveSubs(app: *App) usize {
@@ -691,45 +718,45 @@ fn zigSaveSubs(app: *App) usize {
 }
 
 test "ref/unref round-trips and a reset reopens the state leak-free" {
-    var app = try App.init(t.allocator, t.io);
+    var app = try App.init(testing.allocator, testing.io);
     defer app.deinit();
-    const lua = app.lua.?;
+    const lua = app.script();
     lua.L.pushInteger(7);
     const r = lua.ref();
     lua.pushRef(r);
-    try t.expectEqual(@as(zlua.Integer, 7), try lua.L.toInteger(-1));
+    try testing.expectEqual(@as(zlua.Integer, 7), try lua.L.toInteger(-1));
     lua.L.pop(1);
     lua.unref(r);
     try lua.runString("mnml.on('save_post', function() end); mnml.command{ id = 'x', run = function() end }");
-    try t.expect(app.dyn_commands.get("user.x") != null);
-    try t.expectEqual(@as(usize, 1), app.hooks.count(.save_post) - zigSaveSubs(&app));
+    try testing.expect(app.dyn_commands.get("user.x") != null);
+    try testing.expectEqual(@as(usize, 1), app.hooks.count(.save_post) - zigSaveSubs(&app));
     try lua.reset();
-    try t.expect(app.dyn_commands.get("user.x") == null);
-    try t.expectEqual(@as(usize, 0), app.hooks.count(.save_post) - zigSaveSubs(&app));
+    try testing.expect(app.dyn_commands.get("user.x") == null);
+    try testing.expectEqual(@as(usize, 0), app.hooks.count(.save_post) - zigSaveSubs(&app));
     try lua.runString("assert(type(mnml) == 'table')");
 }
 
 test "loadInit: a missing file is false; a syntax error toasts; a chunk runs" {
-    var tmp = t.tmpDir(.{});
+    var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = try tmp.dir.realPath(t.io, &buf);
+    const n = try tmp.dir.realPath(testing.io, &buf);
     const root = buf[0..n];
-    var app = try App.init(t.allocator, t.io);
+    var app = try App.init(testing.allocator, testing.io);
     defer app.deinit();
-    const lua = app.lua.?;
-    const missing = try std.fs.path.join(t.allocator, &.{ root, "nope.lua" });
-    defer t.allocator.free(missing);
-    try t.expect(!try lua.loadInit(missing));
-    try tmp.dir.writeFile(t.io, .{ .sub_path = "bad.lua", .data = "this is not lua" });
-    const bad = try std.fs.path.join(t.allocator, &.{ root, "bad.lua" });
-    defer t.allocator.free(bad);
-    try t.expectError(error.Failed, lua.loadInit(bad));
-    try t.expectEqual(@as(usize, 1), app.toasts.items.len);
-    try tmp.dir.writeFile(t.io, .{ .sub_path = "ok.lua", .data = "mnml.command{ id = 'from_file', run = function() end }" });
-    const ok = try std.fs.path.join(t.allocator, &.{ root, "ok.lua" });
-    defer t.allocator.free(ok);
-    try t.expect(try lua.loadInit(ok));
-    try t.expect(app.dyn_commands.get("user.from_file") != null);
-    try t.expectEqual(@as(u32, 1), lua.loaded_files);
+    const lua = app.script();
+    const missing = try std.fs.path.join(testing.allocator, &.{ root, "nope.lua" });
+    defer testing.allocator.free(missing);
+    try testing.expect(!try lua.loadInit(missing));
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "bad.lua", .data = "this is not lua" });
+    const bad = try std.fs.path.join(testing.allocator, &.{ root, "bad.lua" });
+    defer testing.allocator.free(bad);
+    try testing.expectError(error.Failed, lua.loadInit(bad));
+    try testing.expectEqual(@as(usize, 1), app.toasts.items.len);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "ok.lua", .data = "mnml.command{ id = 'from_file', run = function() end }" });
+    const ok = try std.fs.path.join(testing.allocator, &.{ root, "ok.lua" });
+    defer testing.allocator.free(ok);
+    try testing.expect(try lua.loadInit(ok));
+    try testing.expect(app.dyn_commands.get("user.from_file") != null);
+    try testing.expectEqual(@as(u32, 1), lua.loaded_files);
 }

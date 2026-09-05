@@ -860,10 +860,13 @@ pub const specs = [_]Spec{
     .{ .id = "git.discard", .title = "Git: discard changes to the selected file (confirm)", .group = "git" },
     .{ .id = "git.open_file", .title = "Git: open the selected file in an editor", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
+    // Zig-only: the Lua layer (D10).
+    .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
+    .{ .id = "script.edit_init", .title = "Lua: open the data root's init.lua", .group = "script" },
 };
 
-test "812 specs, unique ids" {
-    // 797 Rust ids + the eight Zig-only menu commands + seven git row commands.
-    try std.testing.expectEqual(@as(usize, 812), specs.len);
+test "814 specs, unique ids" {
+    // 797 Rust ids + the eight Zig-only menu commands + seven git row commands + two script commands.
+    try std.testing.expectEqual(@as(usize, 814), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
