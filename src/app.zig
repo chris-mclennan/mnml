@@ -97,6 +97,7 @@ const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
 const macros_store = @import("app/macros_store.zig");
+const find_history = @import("app/find_history.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
@@ -489,6 +490,8 @@ pub const FindBarState = struct {
     /// An Enter (or a step) has put the cursor on a match of this
     /// query; the next Enter steps instead of landing again.
     landed: bool = false,
+    /// Where `↑` / `↓` are in `App.find_history`; `len` is the live query.
+    hist_cursor: usize = 0,
 };
 
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
@@ -734,6 +737,8 @@ pub const App = struct {
     image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
     find_bar: ?FindBarState = null,
+    /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
+    find_history: std.ArrayListUnmanaged([]u8) = .empty,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
     abbrevs: std.StringHashMapUnmanaged([]u8) = .empty,
     dyn_commands: command.DynRegistry,
@@ -888,6 +893,8 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &macros_store.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &macros_store.onExit });
+        try app.hooks.subscribe(.startup, .{ .zig = &find_history.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &find_history.onExit });
         try app.hooks.subscribe(.startup, .{ .zig = &marks_store.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &marks_store.onExit });
         // Installed integrations are scanned once the app is up.
@@ -1063,6 +1070,8 @@ pub const App = struct {
         self.jumplist.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
+        for (self.find_history.items) |q| gpa.free(q);
+        self.find_history.deinit(gpa);
         self.pane_mru.deinit(gpa);
         for (self.closed_tabs.items) |*c| c.deinit(gpa);
         self.closed_tabs.deinit(gpa);
@@ -2037,6 +2046,7 @@ test {
     _ = @import("app/stress.zig");
     _ = @import("app/undo_store.zig");
     _ = @import("app/macros_store.zig");
+    _ = @import("app/find_history.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
     _ = @import("app/loclist.zig");

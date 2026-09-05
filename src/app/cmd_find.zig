@@ -61,7 +61,7 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
         app.closeFindBar(false);
     }
     const snap = e.find.clone() catch return error.OutOfMemory;
-    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = e.buf.editor.cursor, .reverse = reverse };
+    var fb: app_mod.FindBarState = .{ .pane = id, .snapshot = snap, .snapshot_cursor = e.buf.editor.cursor, .reverse = reverse, .hist_cursor = app.find_history.items.len };
     // The regex chip is sticky per pane (`find.toggle_regex`).
     fb.state.regex = e.find.regex;
     // The live preview starts from a blank slate; Esc restores the snapshot.
@@ -187,6 +187,8 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
         app.closeFindBar(true);
         return;
     }
+    // Remembered first, so a query that misses is still recallable.
+    try @import("find_history.zig").push(app, q);
     e.find.regex = fb.state.regex;
     try e.find.setQuery(q, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
     if (e.find.matches.items.len == 0) {

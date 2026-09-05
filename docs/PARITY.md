@@ -243,7 +243,7 @@ the tree. Nothing left is larger than M.
 | In-buffer find — literal, smart-case, incremental | done | `src/app/find.zig`, `src/app/cmd_find.zig`, `src/ui/find_bar.zig` | |
 | In-buffer find — regex | done | `src/regex/regex.zig` (Oniguruma via ghostty's `pkg/oniguruma`), `src/regex/vim.zig`, `regex` / `bad_pattern` in `find.zig`, `find.toggle_regex` | vim patterns; `ctrl+r` / the `.*` chip; a bad pattern toasts why |
 | Replace | done | `cmd_find.zig` `replace`, `:%s` | groups expand in the replacement |
-| Find history | missing | — | |
+| Find history | done | `src/app/find_history.zig` (`App.find_history`, `FindBarState.hist_cursor`), `history_prev` / `history_next` in `src/ui/find_bar.zig` | Enter remembers the query (de-duped against the newest, 50 deep, a miss too); `↑` / `↓` on the bar recall, past the newest is empty; `// changed:` persisted at `<data root>/find_history.zon` on every accept, not in the workspace session — a query is not a workspace concern; `tests/e2e-zig/find_history.test` |
 | Workspace grep → results pane | done | `src/app/grep.zig`, `src/ui/grep_view.zig`, `Pane.grep`, `find.grep` / `view.activity_search` | `rg --json` when on PATH, else a gitignore walk over `src/regex/`; batches of 64, cap 5000 |
 | Cross-file replace / per-hit toggle | done | `replaceAll` in `grep.zig`, `find.grep_replace` | Space disables a hit; clean open buffers through `EditOp`s, closed files on disk, dirty buffers refused |
 | Quickfix pane | done | `ListPane.Kind.quickfix` in `src/app/pane.zig`, `:cexpr` | |

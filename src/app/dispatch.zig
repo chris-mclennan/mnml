@@ -22,6 +22,7 @@ const input = @import("../input/mod.zig");
 const edit_op = @import("../editor/edit_op.zig");
 const EditOp = edit_op.EditOp;
 const whichkey = @import("whichkey.zig");
+const find_history = @import("find_history.zig");
 const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
@@ -949,6 +950,8 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
         .submit => try cmd_find.acceptFromBar(app),
         .next => try cmd_find.stepFromBar(app, 1),
         .prev => try cmd_find.stepFromBar(app, -1),
+        .history_prev => try find_history.recall(app, -1),
+        .history_next => try find_history.recall(app, 1),
         .replace_one => try cmd_find.replaceCurrent(app),
         .replace_all => {
             const text = try app.frame.allocator().dupe(u8, fb.state.replace.items);
