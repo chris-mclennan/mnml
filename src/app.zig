@@ -68,6 +68,7 @@ const spend = @import("app/spend.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
 const http_app = @import("app/http.zig");
+const http_panel = @import("app/http_panel.zig");
 const request_pane = @import("app/request_pane.zig");
 const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
@@ -504,6 +505,7 @@ pub const App = struct {
     runners: runners.State = .{},
     tasks: tasks_mod.State = .{},
     http: http_app.State,
+    http_panel: http_panel.State,
     integrations: integrations.State,
     marketplace: marketplace.State = .{},
     hits: hit.HitMap = .{},
@@ -621,6 +623,7 @@ pub const App = struct {
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
+            .http_panel = http_panel.State.init(gpa),
             .integrations = integrations.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
@@ -769,6 +772,7 @@ pub const App = struct {
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
+        self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
         self.marketplace.deinit(gpa, self.io);
         self.dap.deinit(gpa);
@@ -1515,6 +1519,7 @@ test {
     _ = @import("bridge/host.zig");
     _ = @import("app/pty_pane.zig");
     _ = @import("app/http.zig");
+    _ = @import("app/http_panel.zig");
     _ = @import("app/cmd_http.zig");
     _ = @import("app/request_pane.zig");
     _ = @import("ui/request_view.zig");

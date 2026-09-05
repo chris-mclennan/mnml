@@ -692,7 +692,7 @@ fn runChainCmd(app: *App) CommandError!void {
     try cmd_picker.openPickerWith(app, "Run chain", .http_chains, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
 }
 
-fn runChainNamed(app: *App, name: []const u8) CommandError!void {
+pub fn runChainNamed(app: *App, name: []const u8) CommandError!void {
     if (app.http.chain_running) return app.diag.fail(app.frame.allocator(), "http.run_chain: a chain is already running", .{});
     const arena = app.frame.allocator();
     const dir_path = try chainsDir(app, arena);

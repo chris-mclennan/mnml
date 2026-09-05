@@ -66,6 +66,7 @@ const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
+const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
@@ -246,6 +247,7 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
         .todos => try todos.draw(app, ui, area),
         .git => try git_app.draw(app, ui, area),
         .diagnostics => try lsp.drawPanel(app, ui, area),
+        .http => try http_panel.draw(app, ui, area),
         .notes, .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
             const caps = ui.fmt(" {s}", .{@tagName(which)});

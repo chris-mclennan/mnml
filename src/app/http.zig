@@ -190,7 +190,6 @@ pub const table = .{
     .@"http.generate_code" = &copyAsCmd,
     .@"http.toggle_edit_split" = &toggleEditSplitCmd,
     .@"http.toggle_split_orientation" = &toggleSplitOrientationCmd,
-    .@"http.toggle_collapse_all" = &notInThisBuild,
     .@"http.quick_fix" = &quickFixCmd,
     .@"http.define_var" = &defineVarCmd,
     .@"http.inline_var" = &inlineVarCmd,
@@ -1539,10 +1538,6 @@ fn copyAsCmd(app: *App) CommandError!void {
     return @import("cmd_http.zig").copyAsPicker(app);
 }
 
-fn notInThisBuild(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "the HTTP sidebar is not in this build", .{});
-}
-
 fn toggleEditSplitCmd(app: *App) CommandError!void {
     const rp = try requireRequest(app);
     rp.toggleSplit();
@@ -1559,6 +1554,7 @@ fn refreshCmd(app: *App) CommandError!void {
     _ = app.http.picker_arena.reset(.retain_capacity);
     app.http.history_rows = &.{};
     app.http.captured_curls = &.{};
+    try @import("http_panel.zig").refresh(app);
     app.needs_render = true;
     app.toast("http: rescanned", .{});
 }

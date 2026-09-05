@@ -689,6 +689,9 @@ pub const specs = [_]Spec{
     .{ .id = "http.define_var", .title = "HTTP: define the {{VAR}} under the caret in the active env", .group = "http" },
     .{ .id = "http.inline_var", .title = "HTTP: replace the {{VAR}} under the caret with its resolved value", .group = "http" },
     .{ .id = "http.copy_var_name", .title = "HTTP: copy the name of the {{VAR}} under the caret", .group = "http" },
+    .{ .id = "http.panel_open", .title = "HTTP panel: open / apply / run the selected row", .group = "http" },
+    .{ .id = "http.panel_toggle_section", .title = "HTTP panel: collapse / expand the selected section", .group = "http" },
+    .{ .id = "http.panel_copy_path", .title = "HTTP panel: copy the selected row's path / name / value", .group = "http" },
     .{ .id = "http.ai_debug", .title = "HTTP: ask Claude why this request is failing", .group = "http" },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
@@ -879,10 +882,10 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "827 specs, unique ids" {
+test "830 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
-    // commands.
-    try std.testing.expectEqual(@as(usize, 827), specs.len);
+    // commands + three HTTP panel commands.
+    try std.testing.expectEqual(@as(usize, 830), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
