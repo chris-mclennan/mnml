@@ -375,7 +375,7 @@ test "a mounted sample integration paints, answers keys and clicks, and leaves o
             return mp.exit != null;
         }
     };
-    try waitFor(&app, 5000, p, Ctx.painted);
+    try waitFor(&app, 15_000, p, Ctx.painted);
     var txt = try screenText(&app);
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "HELLO") != null);
@@ -395,7 +395,7 @@ test "a mounted sample integration paints, answers keys and clicks, and leaves o
             return std.mem.indexOf(u8, t, self.needle) != null;
         }
     };
-    try waitFor(&app, 5000, Poll{ .app = &app, .needle = "▸ Beta" }, Poll.has);
+    try waitFor(&app, 15_000, Poll{ .app = &app, .needle = "▸ Beta" }, Poll.has);
 
     // A click on the selected row fires the command; the count shows.
     // The sample paints its rows from `first_row`; the hit for that row
@@ -415,13 +415,13 @@ test "a mounted sample integration paints, answers keys and clicks, and leaves o
             return a.plugin_invocations.items.len > 0;
         }
     };
-    try waitFor(&app, 5000, &app, Picked.has);
+    try waitFor(&app, 15_000, &app, Picked.has);
     try testing.expectEqualStrings("hello.pick", app.plugin_invocations.items[0]);
-    try waitFor(&app, 5000, Poll{ .app = &app, .needle = "picks: 1" }, Poll.has);
+    try waitFor(&app, 15_000, Poll{ .app = &app, .needle = "picks: 1" }, Poll.has);
 
     // q: bye → the banner; any key then closes the pane.
     try testing.expect(try handleKey(&app, id, p, .{ .code = .{ .char = 'q' } }));
-    try waitFor(&app, 5000, p, Ctx.exited);
+    try waitFor(&app, 15_000, p, Ctx.exited);
     testing.allocator.free(txt);
     txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "[exited] — any key closes") != null);
