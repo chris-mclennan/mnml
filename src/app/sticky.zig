@@ -104,11 +104,13 @@ test "the enclosing fn header pins to the top once it scrolls off; the toggle to
     const sticky = try screen_mod.toTestText(testing.allocator, &app.screen);
     defer testing.allocator.free(sticky);
     try testing.expect(std.mem.indexOf(u8, sticky, "fn outer()") != null);
-    // The pinned row is the second screen row (row 0 is the bufferline).
+    // The pinned row is the third screen row (row 0 is the palette bar,
+    // which paints from 40 columns; row 1 the bufferline).
     var rows = std.mem.splitScalar(u8, sticky, '\n');
     _ = rows.next();
+    _ = rows.next();
     try testing.expect(std.mem.indexOf(u8, rows.next().?, "fn outer()") != null);
-    try testing.expectEqual(@as(u32, 0), app.hits.at(8, 1).?.editor_cell.line);
+    try testing.expectEqual(@as(u32, 0), app.hits.at(8, 2).?.editor_cell.line);
     // Scrolled back to the top there is nothing to pin.
     e.buf.editor.placeCursor(0, 0);
     try app.render();

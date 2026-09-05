@@ -242,13 +242,18 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
     for (items) |it| switch (it) {
         .row => |r| {
             label_w = @max(label_w, ui.width(r.label));
+            // A choice list wider than the box windows around the active
+            // value (`choiceWindow`), so a row asks only for what that
+            // form needs: the bracketed active value and its two arrows.
+            // The box stays the family's 60 %; it does not grow to fit
+            // the longest list.
             var ow: u16 = 0;
             if (r.number != null) {
                 ow = 12;
             } else if (r.options.len > max_listed_options) {
                 ow = ui.width(r.options[r.current]) + 12;
             } else {
-                for (r.options, 0..) |o, i| ow += ui.width(o) + 2 + @as(u16, if (i > 0) 3 else 0);
+                ow = ui.width(r.options[r.current]) + 8;
             }
             widest = @max(widest, ui.width(r.label) + ow);
         },
@@ -443,7 +448,9 @@ fn sample() [6]Item {
 }
 
 test "rows paint as `▸ Label:  [active] / other  *`, colons aligned, hits per row and option; long lists paint one" {
-    var f = try Fixture.init(90, 12);
+    // 16 rows: the box caps at ~70 % of the screen, and six items plus
+    // the chrome need eleven.
+    var f = try Fixture.init(90, 16);
     defer f.deinit();
     var s: State = .{};
     const items = sample();

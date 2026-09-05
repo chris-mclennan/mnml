@@ -3,7 +3,8 @@
 # go-to-line prompt, the input-style chip toggles the keymap (the mode
 # chip follows), the indent chip prompts for a tab width. At 120x40 the
 # statusline is row 38; the right cluster from the edge is utf-8 (7),
-# the indent chip (5), the idle bell (3), the input style (10), then
+# the indent chip (5), the clock (7), the idle bell (3), the input
+# style (10 as `standard`, 5 as `vim` — column 95 is inside both), then
 # the position chip (15).
 write notes.txt hello world
 open notes.txt
@@ -13,10 +14,10 @@ expect screen contains "utf-8"
 click 85 38
 expect screen contains "Go to line"
 key esc
-click 100 38
+click 95 38
 expect screen contains "NORMAL"
 expect screen contains "vim"
-click 100 38
+click 95 38
 expect screen contains "EDIT"
 click 110 38
 expect screen contains "Tab width"

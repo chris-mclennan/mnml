@@ -136,6 +136,8 @@ otherwise. Copy what you need; leave the rest out.
         .projects_dir = "", // "~/code"; ~ is expanded
         .menu_bar = .always, // .always | .auto | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
+        // The coverage chip reads `.tattle-claude-artifacts` under
+        // `MNML_ARTIFACTS_HOME` when that is set, else your home directory.
         .coverage_chip_mode = .feature, // .both | .feature | .code | .ticker
         .expand_indicator = .chevron, // .chevron | .triangle
         .hover_help_height = 8, // clamped to 3..20

@@ -2150,3 +2150,31 @@ moved.
   `tools/break-check.sh "vim Vc keeps" src/editor/apply.zig '…normalizeLinewiseSelectionInner(ed),/…normalizeLinewiseSelection(ed),/'`,
   `tools/break-check.sh "close others: the Undo" src/app/context_menus.zig
   's/        const id = tabs\[i\];/        const id = tabs[tabs.len - 1 - i];/'`.
+
+## Merging the `remaining` track (2026-09-05, on `main`) — `// changed:` notes
+
+- `// changed (app):` `MenuState.title` is gpa-owned: `openMenu` copies
+  the opener's title and `Overlay.deinit` frees it. The SEARCH row menu
+  titled itself with a frame-arena `path:line`; the next frame's arena
+  reset left the title pointing at reused memory and `@memcpy` aborted
+  the runner on `refresh_chip_row_menus.test`. A title may now come from
+  any arena.
+- `// changed (ui):` the settings box no longer grows to fit the widest
+  choice list — a row asks only for its bracketed active value and the
+  two window arrows, so the box stays the family's 60 % and
+  `choiceWindow` does its job. Number rows and long lists are unchanged.
+- `// changed (app):` `coverage.readJson` resolves `.tattle-claude-artifacts`
+  under `MNML_ARTIFACTS_HOME` when set, else the home directory; the e2e
+  driver sets it to the test's data root, so a developer's real coverage
+  never paints a chip into a test's statusline (it had shifted every
+  hard-coded statusline column in `ui_statusline_clicks.test`).
+- `// changed (app):` `find_history.push` moves the recall cursor past
+  the newest entry on every push — the bar stays open across Enter in
+  the standard profile now, so the cursor set at open went stale.
+- `// changed (tests):` the palette bar paints from 40 columns (the
+  `remaining` track's change), so the 60-column test apps in `flash`,
+  `sticky`, and the render overlay test gained a row or moved a row
+  index; the settings box is centred vertically, so the two settings
+  scripts moved six rows down; the clock chip (`ui.clock = true`, as in
+  Rust) sits in the statusline's right cluster, so the input-style chip
+  is at column 92, not 100.

@@ -417,6 +417,7 @@ pub const Overlay = union(enum) {
             .menu => |*m| {
                 m.closeSub(gpa);
                 gpa.free(m.items);
+                gpa.free(m.title);
             },
             .prompt => |*p| {
                 Prompt.deinit(&p.state, gpa);
@@ -447,7 +448,10 @@ pub const Overlay = union(enum) {
 /// labels), anchored at the cell that was clicked. `MenuAction` names a
 /// static command by enum, so a row cannot point at a missing id.
 pub const MenuState = struct {
-    title: []const u8,
+    /// gpa-owned: `openMenu` copies what the opener passed, so a title
+    /// built in the frame arena (a SEARCH row's `path:line`) or a
+    /// snapshot arena survives the frame and the next rescan.
+    title: []u8,
     items: []command.MenuItem,
     x: u16,
     y: u16,
@@ -1729,9 +1733,11 @@ pub const App = struct {
     /// Open a context menu. Takes ownership of `items` (gpa); the labels
     /// must be literals or otherwise outlive the menu.
     pub fn openMenu(self: *App, title: []const u8, items: []command.MenuItem, x: u16, y: u16) Allocator.Error!void {
+        const owned_title = try self.gpa.dupe(u8, title);
+        errdefer self.gpa.free(owned_title);
         self.overlay.deinit(self.gpa);
         const back: FocusId = if (self.focus == .overlay) (if (self.active) |a| .{ .pane = a } else .tree) else self.focus;
-        self.overlay = .{ .menu = .{ .title = title, .items = items, .x = x, .y = y, .return_focus = back } };
+        self.overlay = .{ .menu = .{ .title = owned_title, .items = items, .x = x, .y = y, .return_focus = back } };
         self.focus = .overlay;
         self.needs_render = true;
     }

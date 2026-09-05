@@ -76,8 +76,17 @@ pub fn codeOverall(f: CodeFile) ?f64 {
     return if (weight > 0) sum / weight else null;
 }
 
+/// The directory holding `.tattle-claude-artifacts`: `MNML_ARTIFACTS_HOME`
+/// when set (the e2e driver points it at the test's own root, so a
+/// developer's real coverage never paints into a test's statusline),
+/// else the home directory.
+fn artifactsHome(app: *App) ?[]const u8 {
+    if (app.env.get("MNML_ARTIFACTS_HOME")) |v| return if (v.len == 0) null else v;
+    return app.homeDir() orelse app.env.get("HOME");
+}
+
 fn readJson(comptime T: type, app: *App, arena: Allocator, rel: []const u8) ?T {
-    const home = app.homeDir() orelse app.env.get("HOME") orelse return null;
+    const home = artifactsHome(app) orelse return null;
     const path = std.fs.path.join(arena, &.{ home, artifacts_dir, rel }) catch return null;
     const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
     const parsed = std.json.parseFromSliceLeaky(T, arena, text, .{ .ignore_unknown_fields = true }) catch return null;

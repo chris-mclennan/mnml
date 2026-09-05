@@ -17,7 +17,7 @@
 //!   src/ui/chip.zig:30  U+F0DC   fa-sort               ascii: "~"
 //!
 //! The fallback is read off the site the way the code spells it: a
-//! `<x>_nerd` / `<x>_glyph` constant with an `<x>_ascii` sibling, a
+//! `<x>_nerd` / `<x>_glyph` (or `<x>_codicon`) constant with an `<x>_ascii` sibling, a
 //! `.fallback = "…"` on the line, or the string an `ascii` branch
 //! yields on the line (`if (ui.ascii) "=" else "\u{…}"`). Assertion
 //! lines (`expect…`) are tests of a glyph, not sites, and are listed
@@ -179,7 +179,7 @@ pub fn fallbackFor(lines: []const []const u8, i: usize) ?[]const u8 {
     if (std.mem.indexOf(u8, line, ".fallback = ")) |at| return stringAt(line[at + ".fallback = ".len ..]);
     // `pub const sort_icon_nerd = "…";` with `sort_icon_ascii` in the file.
     if (constName(line)) |name| {
-        const stem = if (std.mem.endsWith(u8, name, "_nerd")) name[0 .. name.len - "_nerd".len] else if (std.mem.endsWith(u8, name, "_glyph")) name[0 .. name.len - "_glyph".len] else null;
+        const stem = if (std.mem.endsWith(u8, name, "_nerd")) name[0 .. name.len - "_nerd".len] else if (std.mem.endsWith(u8, name, "_glyph")) name[0 .. name.len - "_glyph".len] else if (std.mem.endsWith(u8, name, "_codicon")) name else null;
         if (stem) |s| {
             for (lines) |other| {
                 const oname = constName(other) orelse continue;
@@ -229,6 +229,9 @@ pub fn walk(arena: Allocator, io: Io, root: []const u8) ![]Site {
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+        // The auditor's own files carry glyph literals as test fixtures,
+        // not as painted sites.
+        if (std.mem.eql(u8, entry.basename, "glyph_audit.zig")) continue;
         try files.append(arena, try arena.dupe(u8, entry.path));
     }
     std.mem.sort([]const u8, files.items, {}, struct {

@@ -43,6 +43,12 @@ pub fn onExit(app: *App, _: hooks.HookArgs) void {
 /// An accepted query joins the ring (unless it repeats the newest) and
 /// the file is written. Empty queries are not remembered.
 pub fn push(app: *App, query: []const u8) Allocator.Error!void {
+    // The bar stays open across Enter in the standard profile, so the
+    // recall position moves to "past the newest" on every push, not
+    // only when the bar opens.
+    defer if (app.find_bar) |*fb| {
+        fb.hist_cursor = app.find_history.items.len;
+    };
     if (query.len == 0) return;
     const gpa = app.gpa;
     const items = app.find_history.items;

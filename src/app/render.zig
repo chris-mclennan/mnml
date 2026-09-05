@@ -290,7 +290,7 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     // The sidebar toggles are a matched codicon pair — `layout-sidebar-
     // left-off` / `layout-sidebar-right-off` — with `=` / `#` as their
     // ASCII twins.
-    const tree_glyph: []const u8 = if (ui.ascii) " = " else " " ++ tree_codicon ++ " ";
+    const tree_glyph: []const u8 = if (ui.ascii) " " ++ tree_codicon_ascii ++ " " else " " ++ tree_codicon ++ " ";
     var w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
     ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
     // The menu bar's words, after the sidebar toggle (`app/menu_bar.zig`).
@@ -308,7 +308,7 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         }
         w0 = mx - bar.x;
     }
-    const right_glyph: []const u8 = if (ui.ascii) " # " else " " ++ right_panel_codicon ++ " ";
+    const right_glyph: []const u8 = if (ui.ascii) " " ++ right_panel_codicon_ascii ++ " " else " " ++ right_panel_codicon ++ " ";
     const rw = ui.width(right_glyph);
     const narrow = bar.w < palette_bar_narrow_width;
     var cluster_left = bar.right();
@@ -374,7 +374,7 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         // The add-integration ` + ` (the Marketplace) sits at the right
         // end of the chip strip, then the integration chips between it
         // and the palette chip; whatever does not fit is dropped whole.
-        const plus: []const u8 = if (ui.ascii) " + " else " " ++ add_codicon ++ " ";
+        const plus: []const u8 = if (ui.ascii) " " ++ add_codicon_ascii ++ " " else " " ++ add_codicon ++ " ";
         const pw = ui.width(plus);
         if (chip_right > x + lw + pw + 1) {
             const px = ui.putStrRight(chip_right, y, pw, plus, .{ .fg = th.palette.green, .bg = bg.bg, .bold = true });
@@ -388,10 +388,15 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     }
 }
 
-/// codicon `layout-sidebar-left-off` / `layout-sidebar-right-off` / `add`.
+/// codicon `layout-sidebar-left-off` / `layout-sidebar-right-off` / `add`,
+/// each with the one-char twin `--ascii` paints (the glyph audit pairs
+/// `<x>_codicon` with `<x>_codicon_ascii`).
 pub const tree_codicon = "\u{ec02}";
+pub const tree_codicon_ascii = "=";
 pub const right_panel_codicon = "\u{ec00}";
+pub const right_panel_codicon_ascii = "#";
 pub const add_codicon = "\u{ea7c}";
+pub const add_codicon_ascii = "+";
 
 pub const AiBrand = enum { claude, codex };
 
@@ -1333,7 +1338,9 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
 }
 
 test "overlays paint over the panes and win the hit test; the find bar docks at the pane bottom" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    // 13 rows: the palette bar paints at 60 columns, then strip, 8 text
+    // rows, find bar, statusline, cmdline.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 13 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();

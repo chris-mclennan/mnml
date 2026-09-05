@@ -438,8 +438,10 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
         for (items) |it| t.allocator.free(it.label);
         t.allocator.free(items);
     }
-    try t.expectEqual(@as(usize, 4), items.len);
+    try t.expectEqual(@as(usize, 5), items.len);
     try t.expectEqualStrings("New session: default", items[0].label);
+    try t.expectEqualStrings(legacy_label, items[4].label);
+    try t.expect(items[4].separator_before and items[4].action.ai_profile.index == legacy_index);
     try t.expectEqualStrings("New session: multi-repo", items[1].label);
     try t.expectEqualStrings("Default: default", items[2].label);
     try t.expect(items[2].separator_before and !items[2].checked);
@@ -454,7 +456,7 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
         for (cx) |it| t.allocator.free(it.label);
         t.allocator.free(cx);
     }
-    try t.expectEqual(@as(usize, 4), cx.len);
+    try t.expectEqual(@as(usize, 5), cx.len);
     try t.expectEqualStrings("New session: fast", cx[1].label);
 }
 

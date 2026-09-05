@@ -325,8 +325,8 @@ test "a selected query is replaced by typing, cleared by Backspace, kept by a mo
     try testing.expectEqualStrings("alpha", s.queryText());
     try testing.expect(!s.select_all);
     s.select_all = true;
-    // Enter / ↓ act without touching the selection: typing afterwards still replaces.
-    try testing.expectEqual(Outcome.next, try handleKey(&s, gpa, Key.named(.down)));
+    // ↓ (history) acts without touching the selection: typing afterwards still replaces.
+    try testing.expectEqual(Outcome.history_next, try handleKey(&s, gpa, Key.named(.down)));
     try testing.expect(s.select_all);
     try testing.expectEqual(Outcome.changed, try handleKey(&s, gpa, Key.char('z')));
     try testing.expectEqualStrings("z", s.queryText());

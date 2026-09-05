@@ -1,11 +1,12 @@
 # zig-only
 # A settings row's choice chips are click targets in their own right: a
 # click on `on` sets the row to `on`, not merely focuses it. At 120x40
-# the box spans x=24..94, `Relative line numbers` is row 4, its `[off]`
-# chip starts at x=63 and the `on` chip at x=71.
+# the box spans x=24..95 and is centred vertically: `Relative line
+# numbers` is row 10, its `[off]` chip starts at x=63 and the `on` chip
+# at x=71.
 command view.settings
 expect screen contains "Relative line numbers:             [off] / on"
-click 72 4
+click 72 10
 expect screen contains "Relative line numbers:             off / [on]"
-click 64 4
+click 64 10
 expect screen contains "Relative line numbers:             [off] / on"

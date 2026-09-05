@@ -123,6 +123,8 @@ pub fn acceptFromBar(app: *App) Allocator.Error!void {
     };
     const q = fb.state.query.items;
     if (q.len == 0) return;
+    // Enter remembers the query — a miss too — before the step decides.
+    try @import("find_history.zig").push(app, q);
     // Already on the current match (a previous Enter put us there)?
     // Then this one steps; `setQuery` forgets `current`, so ask first.
     const cursor = e.buf.editor.cursor;

@@ -51,6 +51,10 @@ pub const AppDriver = struct {
             }),
         };
         loaded = null;
+        errdefer self.app.deinit();
+        // A test's statusline must not carry the developer's own
+        // coverage: the artifacts home is the test's data root.
+        try self.app.env.put("MNML_ARTIFACTS_HOME", cfg.data_root);
         return self;
     }
 

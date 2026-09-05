@@ -247,8 +247,9 @@ fn press(app: *App, k: Key) !void {
 }
 
 test "flash: labels go nearest-first in pool order, only in the viewport, capped by the pool" {
-    // 8 rows: strip, 5 text rows, statusline, cmdline. Lines 6+ are off-screen.
-    var app = try vimApp("ab ab\nxx\nab\nxx\nab\nab\nab\nab", 8);
+    // 9 rows: palette bar, strip, 5 text rows, statusline, cmdline. Lines
+    // 6+ are off-screen.
+    var app = try vimApp("ab ab\nxx\nab\nxx\nab\nab\nab\nab", 9);
     defer app.deinit();
     try testing.expectEqual(@as(usize, 5), app.pane_rows);
     const e = app.activeEditor().?;
