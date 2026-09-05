@@ -39,7 +39,8 @@ pub const Item = union(enum) {
 
 pub const Row = struct {
     label: []const u8,
-    /// Every choice, in order; `current` indexes it.
+    /// Every choice, in order; `current` indexes it. Empty for a
+    /// number row, where `current` is the value itself.
     options: []const []const u8,
     current: usize,
     /// Differs from the shipped default — paints the trailing `*`.
@@ -47,6 +48,13 @@ pub const Row = struct {
     /// What `.overlay_item` carries for the row itself; option chips
     /// register `optionHit(id, i)`.
     id: u32,
+    /// // changed: a number row — `‹ [value] ›` stepped by ←→; the two
+    /// arrows register `optionHit(id, 0)` (down) and `optionHit(id, 1)`
+    /// (up). The family convention calls number rows v2; this is the
+    /// minimal step form.
+    number: ?Number = null,
+
+    pub const Number = struct { min: usize, max: usize, step: usize };
 };
 
 pub const Action = struct {
@@ -202,7 +210,9 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
         .row => |r| {
             label_w = @max(label_w, ui.width(r.label));
             var ow: u16 = 0;
-            if (r.options.len > max_listed_options) {
+            if (r.number != null) {
+                ow = 12;
+            } else if (r.options.len > max_listed_options) {
                 ow = ui.width(r.options[r.current]) + 12;
             } else {
                 for (r.options, 0..) |o, i| ow += ui.width(o) + 2 + @as(u16, if (i > 0) 3 else 0);
@@ -251,7 +261,21 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
                 const label = ui.fmt("{s}:", .{row.label});
                 x += ui.putStr(x, y, r.right() -| x, label, Theme.onBg(if (focused) t.fg else t.fg, row_style.bg));
                 x += label_w + 3 - @min(label_w + 3, ui.width(label));
-                if (row.options.len > max_listed_options) {
+                if (row.number) |num| {
+                    // `‹ [32] ›` — the arrows step; the value is the row.
+                    const prev_x = x;
+                    x += ui.putStr(x, y, r.right() -| x, if (ui.ascii) "<" else "‹", Theme.onBg(if (row.current > num.min) t.accent else t.muted, row_style.bg));
+                    ui.hit(Rect.init(prev_x, y, 1, 1), .{ .overlay_item = optionHit(row.id, 0) });
+                    x += 1;
+                    const cur = ui.fmt("[{d}]", .{row.current});
+                    const cw = ui.width(cur);
+                    _ = ui.putStr(x, y, r.right() -| x, cur, t.chip_active);
+                    ui.hit(Rect.init(x, y, cw, 1), .{ .overlay_item = row.id });
+                    x += cw + 1;
+                    const next_x = x;
+                    x += ui.putStr(x, y, r.right() -| x, if (ui.ascii) ">" else "›", Theme.onBg(if (row.current < num.max) t.accent else t.muted, row_style.bg));
+                    ui.hit(Rect.init(next_x, y, 1, 1), .{ .overlay_item = optionHit(row.id, 1) });
+                } else if (row.options.len > max_listed_options) {
                     // `[current] ‹ i/n ›` — the arrows are the neighbours' hits.
                     const n = row.options.len;
                     const cur = ui.fmt("[{s}]", .{row.options[row.current]});
@@ -346,6 +370,30 @@ test "rows paint as `▸ Label:  [active] / other  *`, colons aligned, hits per 
         },
     };
     try testing.expect(saw_row and saw_opt and saw_next);
+}
+
+test "a number row paints ‹ [value] › with a hit on each arrow" {
+    var f = try Fixture.init(60, 6);
+    defer f.deinit();
+    var s: State = .{};
+    const items = [_]Item{
+        .{ .section = "UI" },
+        .{ .row = .{ .label = "Right panel width", .options = &.{}, .current = 32, .id = 4, .number = .{ .min = 8, .max = 120, .step = 2 } } },
+    };
+    draw(f.ui(), f.full(), &s, &items, null);
+    const text = try f.text();
+    try testing.expect(std.mem.indexOf(u8, text, "▸ Right panel width:  ‹ [32] ›") != null);
+    var down = false;
+    var up = false;
+    for (f.hits.items.items) |h| switch (decodeHit(h.target.overlay_item)) {
+        .option => |o| {
+            down = down or (o.id == 4 and o.index == 0);
+            up = up or (o.id == 4 and o.index == 1);
+        },
+        else => {},
+    };
+    try testing.expect(down and up);
+    try testing.expectEqual(@as(i8, 1), handleKey(&s, Key.named(.right), &items).adjust.delta);
 }
 
 test "keys: move skips headers, adjust/reset/save/cancel come back as outcomes" {

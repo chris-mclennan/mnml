@@ -25,6 +25,7 @@ const App = app_mod.App;
 const Key = app_mod.Key;
 const config = @import("../config/root.zig");
 const Config = config.Config;
+const command = @import("../core/command.zig");
 const input = @import("../input/mod.zig");
 const Theme = @import("../ui/theme.zig");
 const ui_settings = @import("../ui/settings.zig");
@@ -32,6 +33,43 @@ const Item = ui_settings.Item;
 const integrations = @import("integrations.zig");
 
 pub const Scope = enum { home, workspace };
+
+/// The `view.toggle_*` runners for the fields the settings rows also
+/// name: flip in memory and say so, like `:set`. The overlay is where a
+/// value is written to disk.
+pub const table = .{
+    .@"view.toggle_relative_numbers" = toggleRunner("ui.relative_line_numbers", "relative numbers"),
+    .@"view.toggle_whitespace" = toggleRunner("ui.show_whitespace", "whitespace"),
+    .@"view.toggle_bracket_rainbow" = toggleRunner("ui.bracket_rainbow", "rainbow brackets"),
+    .@"view.toggle_highlight_trailing_ws" = toggleRunner("ui.highlight_trailing_ws", "trailing whitespace"),
+    .@"view.toggle_highlight_word" = toggleRunner("ui.highlight_word_under_cursor", "word highlight"),
+    .@"view.toggle_todo_highlight" = toggleRunner("ui.highlight_todo_keywords", "todo keywords"),
+    .@"view.toggle_render_markdown" = toggleRunner("ui.render_markdown", "inline markdown"),
+    .@"view.toggle_breadcrumb" = toggleRunner("editor.breadcrumb", "breadcrumb"),
+    .@"view.toggle_click_echo" = toggleRunner("ui.click_echo", "click echo"),
+    .@"view.toggle_hover_help" = toggleRunner("ui.hover_help", "hover help"),
+    .@"view.toggle_hover_tooltip" = toggleRunner("ui.hover_tooltip", "hover tooltips"),
+    .@"view.toggle_workspace_dots" = toggleRunner("ui.show_workspace_dots", "workspace dots"),
+    .@"view.toggle_color_column" = &toggleColorColumn,
+};
+
+fn toggleRunner(comptime path: []const u8, comptime label: []const u8) command.CommandFn {
+    return &struct {
+        fn run(app: *App) command.CommandError!void {
+            const p = fieldPtr(&app.cfg, path);
+            p.* = !p.*;
+            app.toast(label ++ " {s}", .{if (p.*) "on" else "off"});
+            app.needs_render = true;
+        }
+    }.run;
+}
+
+/// `view.toggle_color_column`: off ↔ the editor's `text_width`.
+fn toggleColorColumn(app: *App) command.CommandError!void {
+    app.cfg.ui.color_column = if (app.cfg.ui.color_column == 0) @max(app.cfg.editor.text_width, 1) else 0;
+    if (app.cfg.ui.color_column == 0) app.toast("colour column off", .{}) else app.toast("colour column at {d}", .{app.cfg.ui.color_column});
+    app.needs_render = true;
+}
 
 /// The file a scope writes to, or null when there is no home at all
 /// (no `$HOME`, no data root — nothing to write into).
@@ -86,6 +124,8 @@ const RowSpec = struct {
     label: []const u8,
     section: Section,
     scope: Scope,
+    /// A number row: `←→` step the integer field within `min..max`.
+    number: ?ui_settings.Row.Number = null,
 };
 
 /// v1: discrete-choice rows only. Order within a section is display
@@ -113,6 +153,26 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.picker_position", .label = "Picker position", .section = .ui, .scope = .home },
     .{ .path = "ui.show_workspace_dots", .label = "Workspace dots", .section = .ui, .scope = .home },
     .{ .path = "ui.hover_help", .label = "Hover help", .section = .ui, .scope = .home },
+    .{ .path = "ui.hover_tooltip", .label = "Hover tooltips", .section = .ui, .scope = .home },
+    .{ .path = "ui.click_echo", .label = "Click echo in statusline", .section = .ui, .scope = .home },
+    .{ .path = "ui.highlight_word_under_cursor", .label = "Highlight word under cursor", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.highlight_todo_keywords", .label = "Highlight TODO keywords", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.render_markdown", .label = "Inline-rendered markdown", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.sticky_context", .label = "Sticky scope context", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.markdown_opens_rendered", .label = "Markdown opens rendered", .section = .ui, .scope = .home },
+    .{ .path = "ui.auto_md_preview", .label = "Auto markdown preview", .section = .ui, .scope = .home },
+    .{ .path = "ui.stress_meter", .label = "Stress meter", .section = .ui, .scope = .home },
+    .{ .path = "ui.top_bar_cluster_mode", .label = "Top bar cluster", .section = .ui, .scope = .home },
+    .{ .path = "ui.tab_bar_ai_icon", .label = "AI icon in the bar", .section = .ui, .scope = .home },
+    .{ .path = "ui.ai_layout_mode", .label = "AI session layout", .section = .ui, .scope = .home },
+    .{ .path = "ui.coverage_chip_mode", .label = "Coverage chip", .section = .ui, .scope = .home },
+    .{ .path = "ui.right_panel_visible", .label = "Right panel at start", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.right_panel_width", .label = "Right panel width", .section = .ui, .scope = .workspace, .number = .{ .min = 8, .max = 120, .step = 2 } },
+    .{ .path = "ui.tree_width", .label = "Tree width", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.tree_width_min, .max = config.Config.tree_width_max, .step = 2 } },
+    .{ .path = "ui.color_column", .label = "Colour column (0 = off)", .section = .ui, .scope = .workspace, .number = .{ .min = 0, .max = 240, .step = 4 } },
+    .{ .path = "ui.wheel_lines", .label = "Lines per wheel notch", .section = .ui, .scope = .home, .number = .{ .min = 1, .max = 12, .step = 1 } },
+    .{ .path = "ui.md_image_rows", .label = "Markdown image rows", .section = .ui, .scope = .home, .number = .{ .min = 3, .max = 40, .step = 1 } },
+    .{ .path = "ui.hover_help_height", .label = "Hover help rows", .section = .ui, .scope = .home, .number = .{ .min = config.Config.hover_help_height_min, .max = config.Config.hover_help_height_max, .step = 1 } },
     // ── Editor ──
     .{ .path = "editor.input_style", .label = "Input style", .section = .editor, .scope = .home },
     .{ .path = "editor.auto_pair", .label = "Auto-pair brackets", .section = .editor, .scope = .workspace },
@@ -125,6 +185,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.wheel_moves_cursor", .label = "Mouse wheel moves cursor", .section = .editor, .scope = .home },
     .{ .path = "editor.scroll_accel", .label = "Scroll acceleration", .section = .editor, .scope = .home },
     .{ .path = "editor.clipboard", .label = "System clipboard", .section = .editor, .scope = .home },
+    .{ .path = "editor.tab_width", .label = "Tab width", .section = .editor, .scope = .workspace, .number = .{ .min = 1, .max = 16, .step = 1 } },
+    .{ .path = "editor.text_width", .label = "Text width", .section = .editor, .scope = .workspace, .number = .{ .min = 20, .max = 400, .step = 10 } },
+    .{ .path = "editor.chord_timeout_ms", .label = "Chord timeout (ms)", .section = .editor, .scope = .home, .number = .{ .min = config.Config.chord_timeout_ms_min, .max = config.Config.chord_timeout_ms_max, .step = 100 } },
     // ── Integrations ──
     .{ .path = "ai.inline_suggestions", .label = "AI ghost text", .section = .integrations, .scope = .home },
     .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .integrations, .scope = .home },
@@ -199,8 +262,15 @@ pub fn options(comptime path: []const u8) []const []const u8 {
     return switch (@typeInfo(T)) {
         .bool => &bool_options,
         .@"enum" => comptime std.meta.fieldNames(T),
+        // A number row has no list; `currentIndex` is the value itself.
+        .int => &.{},
         else => @compileError("settings: no discrete options for " ++ path ++ " (" ++ @typeName(T) ++ ")"),
     };
+}
+
+/// True for the integer fields — the rows that step instead of cycle.
+pub fn isNumber(comptime path: []const u8) bool {
+    return @typeInfo(FieldType(path)) == .int;
 }
 
 /// Which option a config holds for a row.
@@ -215,20 +285,26 @@ pub fn currentIndex(cfg: *Config, comptime path: []const u8) usize {
     return switch (@typeInfo(FieldType(path))) {
         .bool => @intFromBool(v),
         .@"enum" => @intFromEnum(v),
+        .int => @intCast(v),
         else => unreachable,
     };
 }
 
-/// Set a row to its `idx`th option (wrapping).
+/// Set a row to its `idx`th option (wrapping); a number row to `idx`
+/// itself, clamped to the field's type.
 pub fn setIndex(cfg: *Config, comptime path: []const u8, idx: usize) void {
     @setEvalBranchQuota(200_000);
+    const T = FieldType(path);
+    if (comptime isNumber(path)) {
+        fieldPtr(cfg, path).* = @intCast(@min(idx, std.math.maxInt(T)));
+        return;
+    }
     const opts = options(path);
     const i = idx % opts.len;
     if (comptime isTheme(path)) {
         cfg.ui.theme = theme_names[i];
         return;
     }
-    const T = FieldType(path);
     fieldPtr(cfg, path).* = switch (@typeInfo(T)) {
         .bool => i == 1,
         .@"enum" => @enumFromInt(i),
@@ -306,6 +382,7 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
                 .current = currentIndex(&app.cfg, r.path),
                 .modified = currentIndex(&app.cfg, r.path) != comptime defaultIndex(r.path),
                 .id = i,
+                .number = r.number,
             } });
         };
         if (section == .integrations) {
@@ -374,6 +451,8 @@ pub fn click(app: *App, hit: u32) Allocator.Error!void {
         },
         .option => |o| {
             st.ui.cursor = itemIndexOf(list, o.id) orelse return;
+            // A number row's arrows: index 0 steps down, 1 up.
+            if (o.id < rows.len and rows[o.id].number != null) return adjust(app, o.id, if (o.index == 0) -1 else 1);
             try setRow(app, o.id, o.index);
         },
     }
@@ -399,8 +478,12 @@ pub fn adjust(app: *App, id: u32, delta: i8) Allocator.Error!void {
         return setRow(app, id, next);
     }
     inline for (rows, 0..) |r, i| if (i == id) {
-        const n = options(r.path).len;
         const cur = currentIndex(&app.cfg, r.path);
+        if (r.number) |num| {
+            const next = if (delta < 0) @max(cur -| num.step, num.min) else @min(cur + num.step, num.max);
+            return setRow(app, id, next);
+        }
+        const n = options(r.path).len;
         const next = if (delta < 0) (cur + n - 1) % n else (cur + 1) % n;
         return setRow(app, id, next);
     };
@@ -456,6 +539,21 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         app.clipboard.selectMode(app.cfg.editor.clipboard);
     } else if (comptime isTheme(path)) {
         try app.applyTheme();
+    } else if (comptime std.mem.eql(u8, path, "ui.tree_width")) {
+        app.tree.width = app.cfg.ui.tree_width;
+    } else if (comptime std.mem.eql(u8, path, "ui.right_panel_width")) {
+        app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
+    } else if (comptime std.mem.eql(u8, path, "ui.right_panel_visible")) {
+        if (app.cfg.ui.right_panel_visible and app.right_panel == null) app.right_panel = .todos;
+        if (!app.cfg.ui.right_panel_visible and app.right_panel != null) {
+            app.right_panel = null;
+            if (app.focus == .panel) app.focus = .overlay;
+        }
+    } else if (comptime std.mem.eql(u8, path, "editor.tab_width")) {
+        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+            .editor => |*e| e.buf.setInputStyle(app.input_style, app.editorConfig()),
+            else => {},
+        };
     }
 }
 
@@ -500,12 +598,21 @@ fn readOrNull(dir: std.testing.TmpDir, rel: []const u8) !?[]u8 {
     };
 }
 
-test "rows: every path is a bool, an enum or the theme; defaults index the shipped values" {
+test "rows: every path is a bool, an enum, a number or the theme; defaults index the shipped values" {
     inline for (rows) |r| {
-        try t.expect(options(r.path).len >= 2);
         var d: Config = .{};
-        try t.expect(currentIndex(&d, r.path) < options(r.path).len);
+        if (r.number) |num| {
+            try t.expect(comptime isNumber(r.path));
+            try t.expect(currentIndex(&d, r.path) >= num.min and currentIndex(&d, r.path) <= num.max);
+        } else {
+            try t.expect(options(r.path).len >= 2);
+            try t.expect(currentIndex(&d, r.path) < options(r.path).len);
+        }
     }
+    var num_cfg: Config = .{};
+    try t.expectEqual(@as(usize, 40), currentIndex(&num_cfg, "ui.right_panel_width"));
+    setIndex(&num_cfg, "ui.right_panel_width", 44);
+    try t.expectEqual(@as(u16, 44), num_cfg.ui.right_panel_width);
     var c: Config = .{};
     try t.expectEqual(@as(usize, 1), currentIndex(&c, "ui.line_numbers"));
     try t.expectEqual(@as(usize, 1), currentIndex(&c, "editor.input_style")); // standard
@@ -537,7 +644,6 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     defer app.deinit();
     _ = try app.openScratch();
 
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"view.settings" });
     try t.expect(app.overlay == .settings);
     try t.expect(app.focus == .overlay);
@@ -628,7 +734,7 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
 }
 
 test "the overlay renders the sections and the footer names the target file" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 70 });
     defer app.deinit();
     try open(&app);
     try app.render();
@@ -642,4 +748,53 @@ test "the overlay renders the sections and the footer names the target file" {
     // click outside closes and keeps
     try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
+}
+
+test "number rows: → steps the right panel width, writes it, and the config seeds the slot" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 60, .cfg = .{ .ui = .{ .right_panel_visible = true, .right_panel_width = 30 } } });
+    defer app.deinit();
+    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    try t.expectEqual(@as(u16, 30), app.right_panel_width);
+    try open(&app);
+    const list = try items(&app, app.frame.allocator());
+    for (list, 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Right panel width")) {
+        app.overlay.settings.ui.cursor = i;
+        try t.expect(it.row.number != null);
+        try t.expectEqual(@as(usize, 30), it.row.current);
+    };
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expectEqual(@as(u16, 32), app.cfg.ui.right_panel_width);
+    try t.expectEqual(@as(u16, 32), app.right_panel_width);
+    try app.handle(.{ .key = Key.named(.left) });
+    try app.handle(.{ .key = Key.named(.left) });
+    try t.expectEqual(@as(u16, 28), app.cfg.ui.right_panel_width);
+    {
+        const text = (try readOrNull(tmp, "ws/.mnml/config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, ".right_panel_width = 28") != null);
+    }
+    // The visible row hides the panel live; Esc puts everything back.
+    for (list, 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Right panel at start")) {
+        app.overlay.settings.ui.cursor = i;
+    };
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expect(app.right_panel == null);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqual(@as(u16, 30), app.cfg.ui.right_panel_width);
+    try t.expect((try readOrNull(tmp, "ws/.mnml/config.zon")) == null);
+    // The rendered row reads `‹ [30] ›`.
+    try open(&app);
+    try app.render();
+    const screen = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(screen);
+    try t.expect(std.mem.indexOf(u8, screen, "Right panel width:") != null);
+    try t.expect(std.mem.indexOf(u8, screen, "‹ [30] ›") != null);
 }

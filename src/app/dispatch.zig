@@ -60,6 +60,8 @@ const launch_profiles = @import("launch_profiles.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const toast_mod = @import("../ui/toast.zig");
+const discovery = @import("discovery.zig");
+const image_pane = @import("image_pane.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
@@ -248,6 +250,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .files => |*f| {
             if (try files_pane.handleKey(app, id, f, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .image => |*im| {
+            if (try image_pane.handleKey(app, id, im, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -563,6 +570,42 @@ fn closeOverlay(app: *App) void {
     } else restoreFocus(app);
 }
 
+/// Enter on a menu row: a parent opens its child, a leaf runs.
+fn menuEnter(app: *App, idx: usize) Allocator.Error!void {
+    const m = &app.overlay.menu;
+    if (idx >= m.items.len) return;
+    if (m.items[idx].submenu.len > 0) return context_menus.openSubmenu(app, idx);
+    try runMenuAction(app, m.items[idx].action);
+}
+
+/// → / l on a menu row: a parent opens its child; in a curatable menu a
+/// leaf opens the pin / hide / copy-id list.
+fn menuOpenRight(app: *App, idx: usize) Allocator.Error!void {
+    const m = &app.overlay.menu;
+    if (idx >= m.items.len) return;
+    if (m.items[idx].submenu.len > 0) return context_menus.openSubmenu(app, idx);
+    if (m.curatable) try context_menus.openCuration(app, idx, m.items[idx]);
+}
+
+/// → / l inside a child: in a curatable menu a command row opens its
+/// pin / hide / copy-id list; elsewhere it runs the row.
+fn subOpenRight(app: *App) Allocator.Error!void {
+    const m = &app.overlay.menu;
+    const sub = &(m.sub orelse return);
+    if (sub.cursor >= sub.items.len) return;
+    const item = sub.items[sub.cursor];
+    if (m.curatable and item.action == .command and !isCuration(item)) return context_menus.openCuration(app, sub.parent, item);
+    try runMenuAction(app, item.action);
+}
+
+/// The curation list's own rows must run, not re-open themselves.
+fn isCuration(item: command.MenuItem) bool {
+    return switch (item.action) {
+        .command => |id| id == .@"menu.pin_row" or id == .@"menu.unpin_row" or id == .@"menu.hide_row" or id == .@"menu.copy_id",
+        else => false,
+    };
+}
+
 /// A menu row was chosen: close the menu, then act.
 fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // The `{{VAR}}` a quick-fix menu was opened on rides through the
@@ -658,10 +701,38 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         .wizard => try first_launch.key(app, k),
         .info => closeOverlay(app),
         .menu => |*m| {
+            // The child owns the keys while it is open: ← / h step back
+            // out of it, Enter / → / l run its row.
+            if (m.sub) |*sub| {
+                const slast = sub.items.len -| 1;
+                switch (k.code) {
+                    .esc => closeOverlay(app),
+                    .left => m.closeSub(gpa),
+                    .enter => if (sub.items.len > 0) try runMenuAction(app, sub.items[sub.cursor].action),
+                    .right => try subOpenRight(app),
+                    .up => sub.cursor -|= 1,
+                    .down => sub.cursor = @min(sub.cursor + 1, slast),
+                    .home => sub.cursor = 0,
+                    .end => sub.cursor = slast,
+                    .char => |c| switch (c) {
+                        'h' => m.closeSub(gpa),
+                        'l' => try subOpenRight(app),
+                        'k' => sub.cursor -|= 1,
+                        'j' => sub.cursor = @min(sub.cursor + 1, slast),
+                        'q' => closeOverlay(app),
+                        else => {},
+                    },
+                    else => {},
+                }
+                return;
+            }
             const last = m.items.len -| 1;
             switch (k.code) {
                 .esc => closeOverlay(app),
-                .enter => if (m.items.len > 0) try runMenuAction(app, m.items[m.cursor].action),
+                // Enter on a parent row opens it rather than firing —
+                // the row has no action of its own.
+                .enter => try menuEnter(app, m.cursor),
+                .right => try menuOpenRight(app, m.cursor),
                 .up => m.cursor -|= 1,
                 .down => m.cursor = @min(m.cursor + 1, last),
                 .home => m.cursor = 0,
@@ -669,6 +740,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
                 .char => |c| switch (c) {
                     'k' => m.cursor -|= 1,
                     'j' => m.cursor = @min(m.cursor + 1, last),
+                    'l' => try menuOpenRight(app, m.cursor),
                     'q' => closeOverlay(app),
                     else => {},
                 },
@@ -718,6 +790,8 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             const e = app.activeEditor() orelse return;
             e.buf.editor.placeCursor(@min(n -| 1, e.buf.editor.lineCount() - 1), col);
         },
+        .tab_width => try context_menus.acceptTabWidth(app, text),
+        .image_open => try image_pane.acceptOpen(app, text),
         .replace => try cmd_find.replaceAll(app, text),
         .filter_shell => try filterThroughShell(app, text),
         .git => try toastOnFail(app, git_app.acceptPrompt(app, text)),
@@ -772,6 +846,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
     switch (purpose) {
         .trust_workspace => try @import("trust.zig").answer(app, choice),
         .replace_confirm => try ex_verbs.answerConfirm(app, choice),
+        .review_trust => try @import("workspace_trust.zig").answerReview(app, choice),
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;
@@ -879,12 +954,19 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
 pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
+    app.hover_live = m.kind == .motion or m.kind == .drag;
     if (m.kind == .drag or m.kind == .release) {
         if (app.drag != null) return continueDrag(app, m);
     }
     if (m.kind == .motion) return;
     // A press anywhere puts flash's labels away.
     if (m.kind == .press) flash.cancel(app);
+    // The click-discovery overlay: the press explains its target.
+    if (m.kind == .press and app.overlay == .info and app.overlay.info == .discovery) {
+        const under = app.hits.at(m.x, m.y);
+        closeOverlay(app);
+        return discovery.explain(app, under);
+    }
     const target = app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;
@@ -967,9 +1049,33 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
-            const items = app.overlay.menu.items;
-            if (mi.idx >= items.len) return;
-            try runMenuAction(app, items[mi.idx].action);
+            const menu = &app.overlay.menu;
+            switch (mi.menu) {
+                // A parent row opens its child; a leaf runs.
+                0 => {
+                    if (mi.idx >= menu.items.len) return;
+                    menu.cursor = mi.idx;
+                    try menuEnter(app, mi.idx);
+                },
+                // A child row.
+                1 => if (menu.sub) |*sub| {
+                    if (mi.idx >= sub.items.len) return;
+                    try runMenuAction(app, sub.items[mi.idx].action);
+                },
+                // The kebab on a top-level row / on a child row.
+                2 => {
+                    if (mi.idx >= menu.items.len) return;
+                    menu.cursor = mi.idx;
+                    try context_menus.openCuration(app, mi.idx, menu.items[mi.idx]);
+                },
+                3 => if (menu.sub) |*sub| {
+                    if (mi.idx >= sub.items.len) return;
+                    const parent = sub.parent;
+                    const item = sub.items[mi.idx];
+                    try context_menus.openCuration(app, parent, item);
+                },
+                else => {},
+            }
         },
         .editor_cell => |cell| {
             if (wheel) return wheelOnPane(app, cell.pane, m, count);
@@ -1144,7 +1250,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .files => |*f| try files_pane.click(app, sh.pane, f, sh.id, m),
-                .outline, .md_preview, .pty, .ai => {},
+                .outline, .md_preview, .image, .pty, .ai => {},
             }
         },
         .tree_node => |idx| switch (m.kind) {
@@ -1181,12 +1287,26 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .statusline_seg => |seg| {
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
+            const right = m.button == .right;
             switch (seg) {
-                statusline.seg_mode => if (m.button == .right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
+                statusline.seg_mode, statusline.seg_input_style => if (right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
                 statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
-                statusline.seg_file => if (m.button == .right) try runCmd(app, .@"file.copy_path"),
-                // A host's segment: its `click_command`, on a left click.
-                else => if (seg >= statusline.seg_dyn_base and m.button == .left) try ipc.effects.clickSegment(app, seg - statusline.seg_dyn_base),
+                statusline.seg_file => if (right) try runCmd(app, .@"file.copy_path"),
+                statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
+                else => if (render.SegId.of(seg)) |id| switch (id) {
+                    .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y) else try runCmd(app, .@"git.status_pane"),
+                    .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.diagnostics"),
+                    .ai_meter => try runCmd(app, .@"ai.spend_today"),
+                    .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
+                    .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
+                    .indent => try runCmd(app, .@"editor.set_tab_width"),
+                    .encoding => app.toast("utf-8 is the only encoding in this build", .{}),
+                    .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
+                    _ => {},
+                } else if (seg >= statusline.seg_dyn_base and !right) {
+                    // A host's segment: its `click_command`, on a left click.
+                    try ipc.effects.clickSegment(app, seg - statusline.seg_dyn_base);
+                },
             }
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
@@ -1195,11 +1315,20 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // The strip's markdown chip (`render.drawMdChip`).
             if (id == md_preview.button_edit) return runCmd(app, .@"markdown.edit_raw");
             if (id == md_preview.button_preview) return runCmd(app, .@"markdown.preview");
+            if (id == toast_mod.undo_button) {
+                // The Undo chip: left commits the undo, right drops the offer.
+                if (m.button == .right) app.dropUndo() else try app.takeUndo();
+                return;
+            }
             if (id >= toast_mod.button_base) {
                 // Toasts: newest first as painted; index i is the i-th from the end.
                 const i = id - toast_mod.button_base;
                 if (i < app.toasts.items.len) {
                     const at = app.toasts.items.len - 1 - i;
+                    if (m.button == .right) {
+                        if (app.overlay != .none) closeOverlay(app);
+                        return context_menus.openToastMenu(app, at, m.x, m.y);
+                    }
                     app.dismissToastAt(at);
                 }
                 return;
@@ -1222,6 +1351,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .palette => try runCmd(app, .palette),
                 .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
                 .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
+                .ai_claude => try runCmd(app, .@"ai.claude_code"),
+                .ai_codex => try runCmd(app, .@"ai.codex"),
                 else => {},
             }
         },
@@ -1400,6 +1531,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .files => |*f| files_pane.scrollBy(f, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .image => {},
     }
 }
 

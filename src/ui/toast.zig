@@ -31,6 +31,8 @@ pub const right_margin: u16 = 1;
 pub const bottom_margin: u16 = 1;
 /// `.button(button_base + i)` dismisses toast `i`.
 pub const button_base: u32 = 0x7000_0000;
+/// The Undo chip's hit: one below the toasts' range.
+pub const undo_button: u32 = button_base - 1;
 
 pub fn borderStyle(t: *const Theme, level: Level) Style {
     const bg = t.overlay_bg.bg;
@@ -79,10 +81,42 @@ pub fn draw(ui: Ui, area: Rect, toasts: []const Toast) void {
     }
 }
 
+/// The Undo chip — `↶ Undo · closed 3 tabs` — on the last row of
+/// `area`, right-aligned, in the accent colour so it reads as the one
+/// thing here that is an offer rather than a report. Registers
+/// `.button(undo_button)`; paints nothing when it does not fit.
+pub fn drawUndo(ui: Ui, area: Rect, label: []const u8) void {
+    if (area.isEmpty()) return;
+    const t = ui.theme;
+    const text = if (ui.ascii) ui.fmt(" < Undo - {s} ", .{label}) else ui.fmt(" ↶ Undo · {s} ", .{label});
+    const w = ui.width(text);
+    if (w + right_margin > area.w) return;
+    const y = area.bottom() - 1;
+    const x = area.right() - right_margin - w;
+    var style = Theme.onBg(t.chip_active, t.chip_active.bg);
+    style.bold = true;
+    _ = ui.putStr(x, y, w, text, style);
+    ui.hit(Rect.init(x, y, w, 1), .{ .button = undo_button });
+}
+
 // ── tests ──
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
+
+test "the Undo chip sits on the last row, right-aligned, with its own hit" {
+    var f = try Fixture.init(50, 6);
+    defer f.deinit();
+    drawUndo(f.ui(), f.full(), "closed 3 tabs");
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, f.row(5, &buf), " "), "↶ Undo · closed 3 tabs"));
+    try testing.expectEqual(undo_button, f.hits.at(40, 5).?.button);
+    try testing.expect(f.hits.at(5, 5) == null);
+    var g = try Fixture.init(12, 2);
+    defer g.deinit();
+    drawUndo(g.ui(), g.full(), "closed 3 tabs");
+    try testing.expectEqual(@as(usize, 0), g.hits.items.items.len);
+}
 
 test "toasts stack from the bottom right, newest lowest, with dismiss hits and level colors" {
     var f = try Fixture.init(60, 12);

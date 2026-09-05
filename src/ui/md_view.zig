@@ -28,7 +28,27 @@ pub const Line = struct {
     segs: []const Segment,
     /// Cells a wrapped continuation row is indented by.
     indent: u16 = 0,
+    /// // changed (ui-polish): a standalone `![alt](src)` line renders as
+    /// a caption carrying `image = src`, followed by `image_rows - 1`
+    /// blank `filler` lines the terminal draws the image over.
+    image: ?[]const u8 = null,
+    filler: bool = false,
 };
+
+/// Where `drawWith` painted an image's rows: the box (below the
+/// caption, clipped to the visible rows) and the source as written.
+pub const Placement = struct {
+    src: []const u8,
+    rect: Rect,
+};
+
+/// The `src` of a line that is only an image, else null.
+pub fn imageLine(trimmed: []const u8) ?struct { src: []const u8, alt: []const u8 } {
+    if (!std.mem.startsWith(u8, trimmed, "![")) return null;
+    const lk = linkParts(trimmed[1..]) orelse return null;
+    if (1 + lk.len != trimmed.len) return null;
+    return .{ .src = lk.url, .alt = lk.label };
+}
 
 const Kind = enum { body, code, quote, heading, rule, list, table, blank };
 
@@ -202,6 +222,12 @@ fn cellWidth(s: []const u8) u16 {
 /// its body painted in code style; a table block is laid out in aligned
 /// columns; a heading gets a blank line above it (except the first).
 pub fn render(arena: Allocator, t: *const Theme, src: []const u8, ascii: bool) Allocator.Error![]Line {
+    return renderWith(arena, t, src, ascii, 0);
+}
+
+/// `render` with `image_rows` reserved per standalone image (0 keeps
+/// the `[image: alt]` caption alone — the text fallback).
+pub fn renderWith(arena: Allocator, t: *const Theme, src: []const u8, ascii: bool, image_rows: u16) Allocator.Error![]Line {
     var out: std.ArrayListUnmanaged(Line) = .empty;
     const body = bodyStyle(t);
     var in_code = false;
@@ -233,6 +259,15 @@ pub fn render(arena: Allocator, t: *const Theme, src: []const u8, ascii: bool) A
             try out.append(arena, .{ .segs = &.{} });
             continue;
         }
+        if (image_rows > 0) if (imageLine(trimmed)) |img| {
+            var cap = t.muted;
+            cap.italic = true;
+            const caption = if (img.alt.len == 0) "[image]" else try std.fmt.allocPrint(arena, "[image: {s}]", .{img.alt});
+            try out.append(arena, .{ .segs = try arena.dupe(Segment, &.{.{ .text = caption, .style = cap }}), .image = img.src });
+            var k: u16 = 1;
+            while (k < image_rows) : (k += 1) try out.append(arena, .{ .segs = &.{}, .filler = true });
+            continue;
+        };
         if (trimmed[0] == '#') {
             var level: usize = 0;
             while (level < trimmed.len and trimmed[level] == '#' and level < 6) level += 1;
@@ -374,6 +409,13 @@ pub fn totalRows(c: Canvas, lines: []const Line, width: u16) usize {
 /// `.editor_cell{pane, line = logical line, col = 0}` so the wheel and a
 /// click route to the pane. Returns the rows the content takes.
 pub fn draw(ui: Ui, pane: PaneId, area: Rect, lines: []const Line, scroll: usize) usize {
+    return drawWith(ui, pane, area, lines, scroll, null);
+}
+
+/// `draw` that also reports where each image's filler rows landed —
+/// the box the terminal paints into, clipped to what is on screen (a
+/// scrolled-off caption still gets its visible rows).
+pub fn drawWith(ui: Ui, pane: PaneId, area: Rect, lines: []const Line, scroll: usize, placements: ?*std.ArrayListUnmanaged(Placement)) usize {
     const t = ui.theme;
     ui.fill(area, t.bg);
     if (area.isEmpty()) return 0;
@@ -384,7 +426,19 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, lines: []const Line, scroll: usize
     const text_w = body.w -| 2;
     var y: u16 = body.y;
     var skip = scroll;
+    // The image whose fillers are being laid out, and its visible box.
+    var cur_src: ?[]const u8 = null;
+    var box: ?Rect = null;
     for (lines, 0..) |l, li| {
+        if (l.image) |src| {
+            flushPlacement(ui, placements, cur_src, box);
+            cur_src = src;
+            box = null;
+        } else if (!l.filler) {
+            flushPlacement(ui, placements, cur_src, box);
+            cur_src = null;
+            box = null;
+        }
         if (y >= body.bottom()) break;
         const rows = @max(1, ui.canvas.measure(l.segs, text_w, .{ .wrap = .word, .trim = true }));
         if (skip >= rows) {
@@ -394,12 +448,27 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, lines: []const Line, scroll: usize
         const r = Rect.init(body.x + 1, y, text_w, body.bottom() - y);
         const painted = if (l.segs.len == 0) 1 else ui.canvas.text(r, l.segs, .{ .wrap = .word, .trim = true, .scroll_y = @intCast(skip) });
         const used: u16 = @max(painted, 1);
+        if (l.filler and cur_src != null) {
+            // Two cells of margin each side, like the caption's indent.
+            const row = Rect.init(body.x + 2, y, text_w -| 2, 1);
+            box = if (box) |b| Rect.init(b.x, b.y, b.w, b.h + 1) else row;
+            ui.fill(row, t.panel_bg);
+        }
         ui.hit(Rect.init(body.x, y, body.w, used), .{ .editor_cell = .{ .pane = pane, .line = @intCast(li), .col = 0 } });
         y += used;
         skip = 0;
     }
+    flushPlacement(ui, placements, cur_src, box);
     if (want_bar) scrollbar.drawVertical(ui, cols.rest, .{ .pane = pane }, total, area.h, scroll);
     return total;
+}
+
+fn flushPlacement(ui: Ui, placements: ?*std.ArrayListUnmanaged(Placement), src: ?[]const u8, box: ?Rect) void {
+    const list = placements orelse return;
+    const s = src orelse return;
+    const b = box orelse return;
+    if (b.isEmpty()) return;
+    list.append(ui.arena, .{ .src = s, .rect = b }) catch {};
 }
 
 // ── tests ──
@@ -458,4 +527,50 @@ test "draw wraps to the width, scrolls in rows and registers a hit per row" {
     _ = draw(f.ui(), 3, f.full(), lines, 2);
     var buf: [64]u8 = undefined;
     try testing.expect(std.mem.startsWith(u8, f.row(0, &buf), " one"));
+}
+
+test "images: a standalone ![alt](src) reserves rows; the placement follows the scroll and clips to the pane" {
+    var f = try Fixture.init(40, 6);
+    defer f.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const src = "intro\n![a cat](cat.png)\nafter ![inline](x.png) text\n";
+    // Without image rows: the caption only, inline images stay inline.
+    // (the trailing newline is a fourth, empty line)
+    const plain = try render(a, &f.theme, src, false);
+    try testing.expectEqual(@as(usize, 4), plain.len);
+    try testing.expectEqualStrings("[image: a cat]", try joined(a, plain[1]));
+    try testing.expect(plain[1].image == null);
+    // With four rows: caption + three fillers; the inline one is untouched.
+    const lines = try renderWith(a, &f.theme, src, false, 4);
+    try testing.expectEqual(@as(usize, 7), lines.len);
+    try testing.expectEqualStrings("cat.png", lines[1].image.?);
+    try testing.expect(lines[2].filler and lines[3].filler and lines[4].filler);
+    try testing.expect(lines[5].image == null);
+    var placements: std.ArrayListUnmanaged(Placement) = .empty;
+    _ = drawWith(f.ui(), 0, f.full(), lines, 0, &placements);
+    try testing.expectEqual(@as(usize, 1), placements.items.len);
+    const p = placements.items[0];
+    try testing.expectEqualStrings("cat.png", p.src);
+    // Rows 2, 3, 4 (the caption is row 1); two cells in from the margin,
+    // and the scrollbar (seven rows on six) takes the last column.
+    try testing.expectEqual(@as(u16, 2), p.rect.y);
+    try testing.expectEqual(@as(u16, 3), p.rect.h);
+    try testing.expectEqual(@as(u16, 2), p.rect.x);
+    try testing.expectEqual(@as(u16, 35), p.rect.w);
+    // Scrolled past the caption and the first filler: two rows left, at the top.
+    placements.clearRetainingCapacity();
+    _ = drawWith(f.ui(), 0, f.full(), lines, 3, &placements);
+    try testing.expectEqual(@as(usize, 1), placements.items.len);
+    try testing.expectEqual(@as(u16, 0), placements.items[0].rect.y);
+    try testing.expectEqual(@as(u16, 2), placements.items[0].rect.h);
+    // A pane too short for all the fillers clips the box to what it shows.
+    var g = try Fixture.init(40, 3);
+    defer g.deinit();
+    placements.clearRetainingCapacity();
+    _ = drawWith(g.ui(), 0, g.full(), lines, 0, &placements);
+    try testing.expectEqual(@as(u16, 1), placements.items[0].rect.h);
+    try testing.expect(imageLine("![x](y.png) tail") == null);
+    try testing.expectEqualStrings("y.png", imageLine("![x](y.png)").?.src);
 }

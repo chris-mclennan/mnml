@@ -9,9 +9,13 @@
 //! rather than dropped: the mode and the file name are what the eye
 //! looks for.
 //!
-//! // changed: the mode chip, the file name and the position chip
-//! register `.statusline_seg` hits (`seg_mode` / `seg_file` /
-//! `seg_position`) — a click on the mode chip toggles the keymap.
+//! // changed: every chip registers a `.statusline_seg` hit — the mode
+//! chip, the file name and the position chip (`seg_mode` / `seg_file` /
+//! `seg_position`), and each right-hand segment with the id its
+//! builder gave it (`Seg.id`), so the app can route a click on the
+//! branch, the diagnostics, the bell, the stress bar… without the
+//! component knowing what any of them mean. The `RESTRICTED` chip
+//! (`Info.restricted`) says the workspace's exec-bearing config is off.
 //! // changed (ipc-tier2): `Info.dyn_left` / `dyn_right` are a host's
 //! `statusline-set-segment` chips — each with its own colour and a
 //! `.statusline_seg = seg_dyn_base + index` hit. The left lane ends
@@ -31,6 +35,14 @@ pub const ModeKind = enum { none, normal, insert, visual, replace, edit };
 pub const seg_mode: u32 = 0;
 pub const seg_file: u32 = 1;
 pub const seg_position: u32 = 2;
+/// The input-style chip (`vim` / `standard`), always last.
+pub const seg_input_style: u32 = 3;
+/// `RESTRICTED` — the workspace's exec-bearing config is stripped.
+pub const seg_restricted: u32 = 4;
+/// Ids the app's builders use for the right-hand segments; anything
+/// at or above `seg_app_base` (and below `seg_dyn_base`) is the app's
+/// to define.
+pub const seg_app_base: u32 = 16;
 /// `seg_dyn_base + i` is `Info.dyn_*[…].index` — the host segment's slot.
 pub const seg_dyn_base: u32 = 0x100;
 
@@ -41,6 +53,19 @@ pub const DynSeg = struct {
     fg: ?vaxis.Color = null,
     /// The hit payload minus `seg_dyn_base`.
     index: u32,
+};
+
+/// One right-aligned segment: its text, the hit it registers (null
+/// registers nothing — a script's segment), and an optional style.
+pub const Seg = struct {
+    text: []const u8,
+    id: ?u32 = null,
+    /// Null paints muted on the statusline ground.
+    style: ?Style = null,
+    /// A low-priority segment sits outside the input-style chip and is
+    /// dropped before it when the row is narrow (the indent and
+    /// encoding chips, the idle bell).
+    low: bool = false,
 };
 
 pub const Info = struct {
@@ -63,7 +88,9 @@ pub const Info = struct {
     /// ` ● rec @q `
     macro_recording: ?u8 = null,
     /// Extra right-aligned segments, painted before the input style.
-    right: []const []const u8 = &.{},
+    right: []const Seg = &.{},
+    /// Paint the `RESTRICTED` chip after the file name.
+    restricted: bool = false,
     /// Host segments: the left lane after the pending chord, the
     /// right lane innermost of the right cluster.
     dyn_left: []const DynSeg = &.{},
@@ -121,6 +148,13 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
             x += ui.putStr(x, y, right_edge - x, chip, Theme.onBg(t.warn_fg, base_bg));
         }
     }
+    if (info.restricted) {
+        var st = Theme.onBg(t.warn_fg, base_bg);
+        st.bold = true;
+        const w = ui.putStr(x, y, right_edge - x, " RESTRICTED ", st);
+        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_restricted });
+        x += w;
+    }
     for (info.dyn_left) |d| {
         const chip = ui.fmt(" {s} ", .{d.text});
         const w = ui.putStr(x, y, right_edge - x, chip, dynStyle(t, d, base_bg));
@@ -130,20 +164,23 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     const left_end = x;
 
     // ── right: collect, then paint what fits from the inside out ──
-    const Seg = struct { text: []const u8, style: Style, hit: ?u32 = null };
-    var segs: std.ArrayListUnmanaged(Seg) = .empty;
+    const Painted = struct { text: []const u8, style: Style, id: ?u32 };
+    var segs: std.ArrayListUnmanaged(Painted) = .empty;
     // Innermost (painted furthest left, dropped last) first.
-    segs.append(ui.arena, .{ .text = positionText(ui, info), .style = t.statusline, .hit = seg_position }) catch return;
+    segs.append(ui.arena, .{ .text = positionText(ui, info), .style = t.statusline, .id = seg_position }) catch return;
     if (info.selection_chars) |n| {
-        segs.append(ui.arena, .{ .text = ui.fmt(" Sel {d} ", .{n}), .style = Theme.onBg(t.warn_fg, base_bg) }) catch return;
+        segs.append(ui.arena, .{ .text = ui.fmt(" Sel {d} ", .{n}), .style = Theme.onBg(t.warn_fg, base_bg), .id = null }) catch return;
     }
     for (info.dyn_right) |d| {
-        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{d.text}), .style = dynStyle(t, d, base_bg), .hit = seg_dyn_base + d.index }) catch return;
+        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{d.text}), .style = dynStyle(t, d, base_bg), .id = seg_dyn_base + d.index }) catch return;
     }
-    for (info.right) |r| {
-        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{r}), .style = Theme.onBg(t.muted, base_bg) }) catch return;
-    }
-    segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{info.input_style}), .style = Theme.onBg(t.chip, base_bg) }) catch return;
+    for (info.right) |r| if (!r.low) {
+        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{r.text}), .style = r.style orelse Theme.onBg(t.muted, base_bg), .id = r.id }) catch return;
+    };
+    segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{info.input_style}), .style = Theme.onBg(t.chip, base_bg), .id = seg_input_style }) catch return;
+    for (info.right) |r| if (r.low) {
+        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{r.text}), .style = r.style orelse Theme.onBg(t.muted, base_bg), .id = r.id }) catch return;
+    };
 
     // Budget from the right edge; a segment that does not fit beside the
     // left side is dropped, and so is everything outside it.
@@ -160,7 +197,7 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     var rx = avail;
     for (segs.items[0..keep]) |s| {
         const w = ui.putStr(rx, y, right_edge - rx, s.text, s.style);
-        if (s.hit) |h| ui.hit(Rect.init(rx, y, w, 1), .{ .statusline_seg = h });
+        if (s.id) |id| ui.hit(Rect.init(rx, y, w, 1), .{ .statusline_seg = id });
         rx += w;
     }
 }
@@ -192,6 +229,7 @@ test "the position chip is exact and the mode chip carries its color" {
     try testing.expectEqual(seg_mode, f.hits.at(3, 0).?.statusline_seg);
     try testing.expectEqual(seg_file, f.hits.at(12, 0).?.statusline_seg);
     try testing.expectEqual(seg_position, f.hits.at(45, 0).?.statusline_seg);
+    try testing.expectEqual(seg_input_style, f.hits.at(57, 0).?.statusline_seg);
     try testing.expect(f.hits.at(25, 0) == null);
     try testing.expect(f.bgEql(1, 0, f.theme.mode_normal));
     try testing.expect(f.bgEql(9, 0, f.theme.statusline));
@@ -239,16 +277,41 @@ test "no mode chip when the label is null; extra right segments appear before th
     var i = sample();
     i.mode_label = null;
     i.mode_kind = .none;
-    i.right = &.{ "utf-8", "LF" };
+    i.right = &.{ .{ .text = "utf-8", .id = seg_app_base + 1 }, .{ .text = "LF" } };
     draw(f.ui(), f.full(), i);
     try f.expectRow(0, " notes.txt                              Ln 3/12 Col 7  utf-8  LF  vim");
+    // The segment with an id is a hit; the one without registers nothing.
+    try testing.expectEqual(seg_app_base + 1, f.hits.at(56, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(63, 0) == null);
+    // A low-priority segment sits outside the input style and drops first.
+    i.right = &.{ .{ .text = "utf-8", .low = true }, .{ .text = "LF" } };
+    draw(f.ui(), f.full(), i);
+    try f.expectRow(0, " notes.txt                              Ln 3/12 Col 7  LF  vim  utf-8");
+    var g = try Fixture.init(40, 1);
+    defer g.deinit();
+    draw(g.ui(), g.full(), i);
+    try g.expectRow(0, " notes.txt       Ln 3/12 Col 7  LF  vim");
+}
+
+test "the RESTRICTED chip follows the file name and is a hit" {
+    var f = try Fixture.init(70, 1);
+    defer f.deinit();
+    var i = sample();
+    i.restricted = true;
+    draw(f.ui(), f.full(), i);
+    try f.expectContains(" notes.txt  RESTRICTED ");
+    try testing.expectEqual(seg_restricted, f.hits.at(22, 0).?.statusline_seg);
+    try testing.expect(f.fgEql(22, 0, f.theme.warn_fg));
+    i.restricted = false;
+    draw(f.ui(), f.full(), i);
+    try f.expectLacks("RESTRICTED");
 }
 
 test "host segments: the left lane ends the left cluster, the right lane sits inside, each with its colour and hit" {
     var f = try Fixture.init(80, 1);
     defer f.deinit();
     var i = sample();
-    i.right = &.{"utf-8"};
+    i.right = &.{.{ .text = "utf-8" }};
     i.dyn_left = &.{.{ .text = "JIRA 3", .fg = f.theme.palette.cyan, .index = 4 }};
     i.dyn_right = &.{ .{ .text = "CI ok", .index = 0 }, .{ .text = "q", .index = 9 } };
     draw(f.ui(), f.full(), i);
@@ -271,7 +334,7 @@ test "right segments drop from the outside in when the row is narrow" {
     var f = try Fixture.init(34, 1);
     defer f.deinit();
     var i = sample();
-    i.right = &.{"utf-8"};
+    i.right = &.{.{ .text = "utf-8" }};
     draw(f.ui(), f.full(), i);
     // 34 cells: " NORMAL " (8) + " notes.txt " (11) = 19; the position
     // chip (15) fits exactly, nothing else does.

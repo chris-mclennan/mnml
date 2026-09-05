@@ -120,6 +120,32 @@ pub const Doc = struct {
     virtual_text: []const VirtualText = &.{},
     /// Sorted by `line`.
     virtual_lines: []const VirtualLine = &.{},
+
+    // ── ui toggles ──
+    // The `ui.*` fields that change what a cell looks like. Every one
+    // defaults to the paint that shipped before it existed, so a Doc that
+    // does not name it is byte for byte the old frame.
+    /// The gutter counts from the cursor line (vim `relativenumber`);
+    /// the cursor line itself keeps its absolute number.
+    relative_numbers: bool = false,
+    /// The cursor line's band (`ui.cursor_line`).
+    cursor_line_band: bool = true,
+    /// Spaces paint `·`, a tab's first cell `→`, in `theme.whitespace`.
+    show_whitespace: bool = false,
+    /// Trailing spaces off the cursor line paint on the error colour.
+    highlight_trailing_ws: bool = false,
+    /// `()[]{}` cycle three colours by nesting depth.
+    bracket_rainbow: bool = false,
+    /// Every occurrence of the word under the cursor, sorted, underlined.
+    word_matches: []const Range = &.{},
+    /// `TODO` / `FIXME` / `XXX` / `HACK` / `NOTE` / `BUG` after a comment
+    /// marker paint bold on the warning (or error) colour.
+    todo_keywords: bool = false,
+    /// 1-based display column painted on the panel ground; 0 = off.
+    color_column: u16 = 0,
+    /// Markdown concealed in place on the lines the cursor is not on:
+    /// heading marks, emphasis and code fences hidden, the text styled.
+    render_markdown: bool = false,
 };
 
 /// `added` / `modified` / `deleted` are git's change marks — a coloured
@@ -255,6 +281,8 @@ pub const CellInfo = struct {
     off: u32,
     w: u8,
     ws: bool,
+    /// One of the cells a tab expanded into.
+    tab: bool = false,
 };
 
 pub fn layoutLine(ui: Ui, line: []const u8, tab_width: u8) Allocator.Error![]CellInfo {
@@ -268,7 +296,7 @@ pub fn layoutLine(ui: Ui, line: []const u8, tab_width: u8) Allocator.Error![]Cel
         if (bytes.len == 1 and bytes[0] == '\t') {
             const n = tw - (x % tw);
             for (0..n) |_| {
-                try out.append(ui.arena, .{ .bytes = " ", .off = off, .w = 1, .ws = true });
+                try out.append(ui.arena, .{ .bytes = " ", .off = off, .w = 1, .ws = true, .tab = true });
                 x += 1;
             }
             continue;
@@ -573,6 +601,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
 
     const fold_word = if (ui.ascii) fold_marker_ascii else fold_marker;
 
+    // ── ui toggles ── the bracket depth at the top of the viewport
+    var rainbow_depth: u32 = if (doc.bracket_rainbow) bracketDepthOver(doc.text, 0, lines.start(view.scroll_line), 0) else 0;
+
     var y: u16 = area.y;
     var line = view.scroll_line;
     while (y < area.bottom() and line < total) : (line = nextVisible(doc.folds, line)) {
@@ -587,7 +618,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             &.{.{ .start = 0, .end = @intCast(cells.len) }};
 
         const is_cursor_line = line == cursor_line;
-        const row_style: Style = if (is_cursor_line) t.cursor_line else t.bg;
+        const row_style: Style = if (is_cursor_line and doc.cursor_line_band) t.cursor_line else t.bg;
         var spans = RangeCursor(Span).init(doc.spans, line_start);
         var var_spans = RangeCursor(VarSpan).init(doc.var_spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
@@ -607,6 +638,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             }
             y += 1;
         }
+        var words = RangeCursor(Range).init(doc.word_matches, line_start);
+        // ── ui toggles ──
+        const toggles = try lineToggles(ui, doc, line_text, cells, is_cursor_line, &rainbow_depth);
 
         for (rows, 0..) |row, ri| {
             if (y >= area.bottom()) break;
@@ -622,7 +656,9 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                         const label = if (line < doc.blame.len) doc.blame[line] else "";
                         _ = ui.putStr(area.x + 1, y, num_w, ui.clipStr(label, num_w), Theme.onBg(t.muted, row_style.bg));
                     } else {
-                        const num = ui.fmt("{d}", .{line + 1});
+                        // ── ui toggles ── relative numbers count from the cursor line
+                        const shown: u32 = if (doc.relative_numbers and !is_cursor_line) (if (line > cursor_line) line - cursor_line else cursor_line - line) else line + 1;
+                        const num = ui.fmt("{d}", .{shown});
                         _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
                     }
                 }
@@ -659,6 +695,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             var i = row.start;
             while (i < row.end) : (i += 1) {
                 const c = cells[i];
+                // ── ui toggles ── a concealed markdown mark takes no cell
+                if (toggles.hidden(i)) continue;
                 const x = abs_x;
                 const rx = rel_x;
                 abs_x += c.w;
@@ -686,6 +724,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 const sx: u16 = text_x + @as(u16, @intCast(cx));
 
                 var style: Style = row_style;
+                // ── ui toggles ── the colour column sits under everything
+                if (doc.color_column != 0 and cx + 1 == doc.color_column) style.bg = t.panel_bg.bg;
                 if (spans.at(off)) |si| {
                     const s = doc.spans[si].style;
                     style.fg = s.fg;
@@ -730,12 +770,36 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     style.fg = t.bg.bg;
                 };
 
+                // ── ui toggles ── word matches, rainbow, todo words, whitespace, trailing ws, markdown
+                var glyph: []const u8 = c.bytes;
+                if (words.at(off)) |_| {
+                    style.ul_style = .single;
+                    style.bold = true;
+                }
+                if (toggles.styleAt(i)) |o| {
+                    if (o.glyph) |g| glyph = g;
+                    if (o.fg) |fg| style.fg = fg;
+                    if (o.bg) |bg| style.bg = bg;
+                    if (o.bold) style.bold = true;
+                    if (o.italic) style.italic = true;
+                    if (o.underline) style.ul_style = .single;
+                    if (o.strike) style.strikethrough = true;
+                }
+                if (doc.show_whitespace and c.ws) {
+                    const first_tab_cell = c.tab and (i == 0 or cells[i - 1].off != c.off);
+                    glyph = if (c.tab) (if (first_tab_cell) (if (ui.ascii) ">" else "→") else " ") else (if (ui.ascii) "." else "·");
+                    style.fg = t.whitespace.fg;
+                }
+                if (doc.highlight_trailing_ws and !is_cursor_line and c.ws and i >= toggles.trail_start) {
+                    style.bg = t.error_fg.fg;
+                }
+
                 const cell_rect = Rect.init(sx, y, c.w, 1);
                 while (label_i < doc.labels.len and doc.labels[label_i].byte < off) label_i += 1;
                 if (label_i < doc.labels.len and doc.labels[label_i].byte == off) {
                     ui.canvas.put(sx, y, .{ .char = .{ .grapheme = doc.labels[label_i].text, .width = 1 }, .style = t.current_match });
                     if (c.w > 1) ui.canvas.put(sx + 1, y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = t.current_match });
-                } else ui.canvas.put(sx, y, .{ .char = .{ .grapheme = c.bytes, .width = c.w }, .style = style });
+                } else ui.canvas.put(sx, y, .{ .char = .{ .grapheme = glyph, .width = c.w }, .style = style });
                 ui.hit(cell_rect, .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
                 if (var_hit) |vh| ui.hit(cell_rect, .{ .script_hit = .{ .pane = pane, .id = vh } }); // {{VAR}} hook
                 painted_x = sx + c.w;
@@ -789,11 +853,18 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     paint_eol = true;
                 };
                 if (paint_eol) ui.canvas.put(eol_x, y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = eol_style });
+                // ── ui toggles ── the colour column past the text
+                if (doc.color_column != 0 and doc.color_column > skip) {
+                    const ccx: u32 = doc.color_column - 1 - skip;
+                    if (ccx < text_w and text_x + ccx >= eol_x) ui.canvas.put(text_x + @as(u16, @intCast(ccx)), y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = Theme.onBg(row_style, t.panel_bg.bg) });
+                }
                 if (is_cursor_line and found == null and cursor_line_real == cursor_line and cursor_off >= eol_off) {
                     found = .{ .x = eol_x, .y = y };
                 }
                 if (fold) |f| {
                     const hidden = f.last_line - f.first_line;
+                    // ── ui toggles ── the brackets inside the fold still nest
+                    if (doc.bracket_rainbow) rainbow_depth = bracketDepthOver(doc.text, line_end, lines.end(f.last_line), rainbow_depth);
                     const marker = ui.fmt("{s}{d}{s}", .{ fold_word, hidden, fold_tail });
                     _ = ui.putStr(eol_x, y, text_x + text_w - eol_x, marker, Theme.onBg(t.fold, row_style.bg));
                     if (is_cursor_line and cursor_line_real != cursor_line) found = .{ .x = eol_x, .y = y };
@@ -809,6 +880,284 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     }
     if (bar) scrollbar.drawVertical(ui, Rect.init(area.right() - scrollbar_w, area.y, scrollbar_w, area.h), .{ .pane = pane }, total, text_h, view.scroll_line);
     return found;
+}
+
+// ── ui toggles ──
+// The per-line work behind `Doc`'s toggle fields: which cells vanish
+// (markdown marks), which cells carry an extra style (a rainbow bracket,
+// a TODO word, a heading), and where the trailing whitespace starts.
+// Everything here is a pure function of one line's text and cells; the
+// paint loop above asks it one cell at a time.
+
+/// What a toggle adds to one cell over the syntax style.
+pub const Override = struct {
+    fg: ?vaxis.Color = null,
+    bg: ?vaxis.Color = null,
+    bold: bool = false,
+    italic: bool = false,
+    underline: bool = false,
+    strike: bool = false,
+    /// A replacement grapheme (a list bullet); the cell's byte stays.
+    glyph: ?[]const u8 = null,
+};
+
+pub const LineToggles = struct {
+    overrides: []?Override = &.{},
+    hide: []bool = &.{},
+    /// Index of the first trailing-whitespace cell; `cells.len` when none.
+    trail_start: usize,
+
+    pub fn hidden(self: LineToggles, i: usize) bool {
+        return i < self.hide.len and self.hide[i];
+    }
+
+    pub fn styleAt(self: LineToggles, i: usize) ?Override {
+        return if (i < self.overrides.len) self.overrides[i] else null;
+    }
+};
+
+/// The nesting depth reached after the brackets in `text[from..to]`,
+/// starting from `depth`. `()[]{}` only; a close below zero stays at zero.
+pub fn bracketDepthOver(text: []const u8, from: usize, to: usize, depth: u32) u32 {
+    var d = depth;
+    const end = @min(to, text.len);
+    var i = @min(from, end);
+    while (i < end) : (i += 1) switch (text[i]) {
+        '(', '[', '{' => d += 1,
+        ')', ']', '}' => d -|= 1,
+        else => {},
+    };
+    return d;
+}
+
+pub const rainbow_levels: usize = 3;
+
+/// The colour of a bracket at nesting `depth` (1-based: the outermost
+/// pair is 1).
+pub fn rainbowColor(t: *const Theme, depth: u32) vaxis.Color {
+    return switch ((depth -| 1) % rainbow_levels) {
+        0 => t.syntax.keyword.fg,
+        1 => t.syntax.function.fg,
+        else => t.syntax.string.fg,
+    };
+}
+
+pub const todo_words = [_][]const u8{ "TODO", "FIXME", "XXX", "HACK", "NOTE", "BUG" };
+const comment_marks = [_][]const u8{ "//", "#", "--", "/*", "*", ";", "<!--" };
+
+/// Byte offset of the first comment marker in `line`, if any.
+fn commentStart(line: []const u8) ?usize {
+    var best: ?usize = null;
+    for (comment_marks) |m| if (std.mem.indexOf(u8, line, m)) |i| {
+        if (best == null or i < best.?) best = i;
+    };
+    return best;
+}
+
+fn isWordByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
+}
+
+fn needOverrides(ui: Ui, tg: *LineToggles, n: usize) Allocator.Error!void {
+    if (tg.overrides.len != 0) return;
+    const o = try ui.arena.alloc(?Override, n);
+    @memset(o, null);
+    tg.overrides = o;
+}
+
+fn needHide(ui: Ui, tg: *LineToggles, n: usize) Allocator.Error!void {
+    if (tg.hide.len != 0) return;
+    const h = try ui.arena.alloc(bool, n);
+    @memset(h, false);
+    tg.hide = h;
+}
+
+/// Merge `o` into every cell whose byte offset is in `[from, to)`.
+fn styleRange(tg: *LineToggles, cells: []const CellInfo, from: usize, to: usize, o: Override) void {
+    for (cells, 0..) |c, i| {
+        if (c.off < from or c.off >= to) continue;
+        var cur = tg.overrides[i] orelse Override{};
+        if (o.fg) |fg| cur.fg = fg;
+        if (o.bg) |bg| cur.bg = bg;
+        if (o.glyph) |g| cur.glyph = g;
+        cur.bold = cur.bold or o.bold;
+        cur.italic = cur.italic or o.italic;
+        cur.underline = cur.underline or o.underline;
+        cur.strike = cur.strike or o.strike;
+        tg.overrides[i] = cur;
+    }
+}
+
+fn hideRange(tg: *LineToggles, cells: []const CellInfo, from: usize, to: usize) void {
+    for (cells, 0..) |c, i| if (c.off >= from and c.off < to) {
+        tg.hide[i] = true;
+    };
+}
+
+/// The toggles' verdict on one line. `depth` is the bracket depth at the
+/// line's start and is advanced past the line.
+pub fn lineToggles(ui: Ui, doc: Doc, line: []const u8, cells: []const CellInfo, is_cursor_line: bool, depth: *u32) Allocator.Error!LineToggles {
+    const t = ui.theme;
+    var tg: LineToggles = .{ .trail_start = cells.len };
+    if (doc.highlight_trailing_ws) {
+        var i = cells.len;
+        while (i > 0 and cells[i - 1].ws) i -= 1;
+        tg.trail_start = i;
+    }
+    if (doc.bracket_rainbow) {
+        try needOverrides(ui, &tg, cells.len);
+        for (cells, 0..) |c, i| {
+            if (c.bytes.len != 1) continue;
+            switch (c.bytes[0]) {
+                '(', '[', '{' => {
+                    depth.* += 1;
+                    tg.overrides[i] = .{ .fg = rainbowColor(t, depth.*) };
+                },
+                ')', ']', '}' => {
+                    tg.overrides[i] = .{ .fg = rainbowColor(t, depth.*) };
+                    depth.* -|= 1;
+                },
+                else => {},
+            }
+        }
+    }
+    if (doc.todo_keywords) if (commentStart(line)) |cs| {
+        var i = cs;
+        while (i < line.len) {
+            if (i > 0 and isWordByte(line[i - 1])) {
+                i += 1;
+                continue;
+            }
+            var hit: ?usize = null;
+            for (todo_words) |w| if (std.mem.startsWith(u8, line[i..], w) and (i + w.len == line.len or !isWordByte(line[i + w.len]))) {
+                hit = w.len;
+                break;
+            };
+            if (hit) |n| {
+                try needOverrides(ui, &tg, cells.len);
+                const urgent = std.mem.startsWith(u8, line[i..], "FIXME") or std.mem.startsWith(u8, line[i..], "BUG");
+                styleRange(&tg, cells, i, i + n, .{ .fg = if (urgent) t.error_fg.fg else t.warn_fg.fg, .bold = true });
+                i += n;
+            } else i += 1;
+        }
+    };
+    if (doc.render_markdown and !is_cursor_line) try concealMarkdown(ui, &tg, line, cells);
+    return tg;
+}
+
+fn headingColor(t: *const Theme, level: usize) vaxis.Color {
+    return switch (level) {
+        1 => t.syntax.function.fg,
+        2 => t.syntax.escape.fg,
+        3 => t.syntax.string.fg,
+        4 => t.syntax.type.fg,
+        else => t.syntax.keyword.fg,
+    };
+}
+
+/// `render_markdown`: the marks are hidden and the text between them
+/// styled, on a line the cursor is not on (the cursor line stays raw so
+/// it can be edited by eye). The grammar is the preview's (`md_view`).
+fn concealMarkdown(ui: Ui, tg: *LineToggles, line: []const u8, cells: []const CellInfo) Allocator.Error!void {
+    const t = ui.theme;
+    try needOverrides(ui, tg, cells.len);
+    try needHide(ui, tg, cells.len);
+    const lead = line.len - std.mem.trimStart(u8, line, " \t").len;
+    const trimmed = line[lead..];
+    var body_from: usize = lead;
+    // A fence line: the marks go, a language name stays muted.
+    if (std.mem.startsWith(u8, trimmed, "```") or std.mem.startsWith(u8, trimmed, "~~~")) {
+        hideRange(tg, cells, lead, lead + 3);
+        styleRange(tg, cells, lead + 3, line.len, .{ .fg = t.muted.fg, .italic = true });
+        return;
+    }
+    // Heading: `## ` hidden, the rest bold in the level's colour.
+    if (trimmed.len > 0 and trimmed[0] == '#') {
+        var level: usize = 0;
+        while (level < trimmed.len and trimmed[level] == '#' and level < 6) level += 1;
+        if (level < trimmed.len and trimmed[level] == ' ') {
+            hideRange(tg, cells, lead, lead + level + 1);
+            styleRange(tg, cells, lead + level + 1, line.len, .{ .fg = headingColor(t, level), .bold = true, .underline = level <= 2 });
+            body_from = lead + level + 1;
+        }
+    } else if (trimmed.len >= 2 and (trimmed[0] == '-' or trimmed[0] == '*' or trimmed[0] == '+') and trimmed[1] == ' ') {
+        // A list marker becomes a bullet; a task box its glyph.
+        styleRange(tg, cells, lead, lead + 1, .{ .fg = t.accent.fg, .glyph = if (ui.ascii) "*" else "•" });
+        body_from = lead + 2;
+        const rest = trimmed[2..];
+        if (std.mem.startsWith(u8, rest, "[ ] ") or std.mem.startsWith(u8, rest, "[x] ") or std.mem.startsWith(u8, rest, "[X] ")) {
+            const done = rest[1] != ' ';
+            hideRange(tg, cells, body_from + 1, body_from + 3);
+            styleRange(tg, cells, body_from, body_from + 1, .{ .fg = t.accent.fg, .glyph = if (ui.ascii) (if (done) "x" else "_") else (if (done) "☑" else "☐") });
+            body_from += 4;
+        }
+    } else if (trimmed.len >= 1 and trimmed[0] == '>') {
+        styleRange(tg, cells, lead, lead + 1, .{ .fg = t.syntax.keyword.fg, .glyph = if (ui.ascii) "|" else "▏" });
+        styleRange(tg, cells, lead + 1, line.len, .{ .fg = t.muted.fg, .italic = true });
+        body_from = lead + 1;
+    }
+    // Inline marks.
+    var i = body_from;
+    while (i < line.len) {
+        const rest = line[i..];
+        if (std.mem.startsWith(u8, rest, "**") or std.mem.startsWith(u8, rest, "~~")) {
+            const mark = rest[0..2];
+            if (std.mem.indexOf(u8, rest[2..], mark)) |end| if (end > 0) {
+                hideRange(tg, cells, i, i + 2);
+                hideRange(tg, cells, i + 2 + end, i + 2 + end + 2);
+                styleRange(tg, cells, i + 2, i + 2 + end, if (mark[0] == '*') .{ .bold = true } else .{ .strike = true });
+                i += 2 + end + 2;
+                continue;
+            };
+        }
+        if (rest[0] == '`') {
+            if (std.mem.indexOfScalar(u8, rest[1..], '`')) |end| if (end > 0) {
+                hideRange(tg, cells, i, i + 1);
+                hideRange(tg, cells, i + 1 + end, i + 1 + end + 1);
+                styleRange(tg, cells, i + 1, i + 1 + end, .{ .fg = t.syntax.string.fg, .bg = t.panel_bg.bg });
+                i += 1 + end + 1;
+                continue;
+            };
+        }
+        if ((rest[0] == '*' or rest[0] == '_') and rest.len > 1 and rest[1] != ' ' and rest[1] != rest[0]) {
+            if (std.mem.indexOfScalar(u8, rest[1..], rest[0])) |end| if (end > 0 and rest[end] != ' ') {
+                hideRange(tg, cells, i, i + 1);
+                hideRange(tg, cells, i + 1 + end, i + 1 + end + 1);
+                styleRange(tg, cells, i + 1, i + 1 + end, .{ .italic = true });
+                i += 1 + end + 1;
+                continue;
+            };
+        }
+        if (rest[0] == '[' or std.mem.startsWith(u8, rest, "![")) {
+            const at = if (rest[0] == '!') i + 1 else i;
+            if (linkAt(line, at)) |lk| {
+                // `[label](url)` → the label alone; `![alt](src)` → the alt, muted.
+                hideRange(tg, cells, i, at + 1);
+                hideRange(tg, cells, lk.label_end, lk.end);
+                if (rest[0] == '!') {
+                    styleRange(tg, cells, at + 1, lk.label_end, .{ .fg = t.muted.fg, .italic = true });
+                } else {
+                    styleRange(tg, cells, at + 1, lk.label_end, .{ .fg = t.accent.fg, .underline = true });
+                }
+                i = lk.end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+const LinkAt = struct { label_end: usize, end: usize };
+
+/// `[label](url)` starting at `at` in `line`: where the label ends and
+/// where the whole link ends.
+fn linkAt(line: []const u8, at: usize) ?LinkAt {
+    const s = line[at..];
+    if (s.len < 4 or s[0] != '[') return null;
+    const rb = std.mem.indexOfScalar(u8, s, ']') orelse return null;
+    if (rb + 1 >= s.len or s[rb + 1] != '(') return null;
+    const rp = std.mem.indexOfScalarPos(u8, s, rb + 2, ')') orelse return null;
+    return .{ .label_end = at + rb, .end = at + rp + 1 };
 }
 
 // ── tests ──
@@ -1154,4 +1503,178 @@ test "a degenerate area never panics" {
     _ = draw(f.ui(), 0, Rect.init(0, 0, 3, 1), &view, mkDoc("abc\ndef"));
     _ = draw(f.ui(), 0, Rect.empty, &view, mkDoc("abc"));
     _ = draw(f.ui(), 0, Rect.init(0, 0, 1, 1), &view, mkDoc("漢"));
+}
+
+// ── ui toggles: one test per toggle, each asserting a cell changed ──
+
+test "relative numbers count from the cursor line, which keeps its own" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a\nb\nc\nd");
+    d.cursor = 4; // line 2
+    d.relative_numbers = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "   2 a", "   1 b", "   3 c", "   1 d" });
+    d.relative_numbers = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRows(&.{ "   1 a", "   2 b", "   3 c", "   4 d" });
+}
+
+test "cursor_line_band off leaves the cursor row on the plain ground" {
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab\ncd");
+    d.cursor = 4;
+    d.cursor_line_band = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.bgEql(9, 1, f.theme.bg));
+    try testing.expect(!f.bgEql(9, 1, f.theme.cursor_line));
+}
+
+test "show_whitespace paints · for spaces and → for a tab's first cell" {
+    var f = try Fixture.init(16, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("a b\tc");
+    d.line_numbers = false;
+    d.show_whitespace = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "a·b→c");
+    try testing.expect(f.fgEql(1, 0, f.theme.whitespace));
+    var e = mkDoc("a\tb");
+    e.line_numbers = false;
+    e.show_whitespace = true;
+    _ = draw(f.ui(), 0, f.full(), &view, e);
+    try f.expectRow(0, "a→  b");
+    f.ascii = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "a.b>c");
+    d.show_whitespace = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "a b c");
+}
+
+test "highlight_trailing_ws tints the trailing run off the cursor line only" {
+    var f = try Fixture.init(12, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab  \ncd  ");
+    d.line_numbers = false;
+    d.cursor = 5; // line 1
+    d.highlight_trailing_ws = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(vaxis.Color.eql(f.style(2, 0).bg, f.theme.error_fg.fg));
+    try testing.expect(vaxis.Color.eql(f.style(3, 0).bg, f.theme.error_fg.fg));
+    try testing.expect(!vaxis.Color.eql(f.style(1, 0).bg, f.theme.error_fg.fg));
+    // the cursor line is left alone while you type
+    try testing.expect(!vaxis.Color.eql(f.style(2, 1).bg, f.theme.error_fg.fg));
+    d.highlight_trailing_ws = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(!vaxis.Color.eql(f.style(2, 0).bg, f.theme.error_fg.fg));
+}
+
+test "bracket_rainbow colours by depth, across lines and through a fold" {
+    var f = try Fixture.init(20, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("f(a[b{c}])\n(\n)");
+    d.line_numbers = false;
+    d.bracket_rainbow = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    const t = &f.theme;
+    try testing.expect(vaxis.Color.eql(f.style(1, 0).fg, rainbowColor(t, 1)));
+    try testing.expect(vaxis.Color.eql(f.style(3, 0).fg, rainbowColor(t, 2)));
+    try testing.expect(vaxis.Color.eql(f.style(5, 0).fg, rainbowColor(t, 3)));
+    try testing.expect(vaxis.Color.eql(f.style(7, 0).fg, rainbowColor(t, 3)));
+    try testing.expect(vaxis.Color.eql(f.style(9, 0).fg, rainbowColor(t, 1)));
+    try testing.expect(!vaxis.Color.eql(f.style(2, 0).fg, rainbowColor(t, 1)));
+    // line 2's `)` closes line 1's `(`: depth 1
+    try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, rainbowColor(t, 1)));
+    try testing.expectEqual(@as(u32, 2), bracketDepthOver("((a)", 0, 4, 1));
+    d.bracket_rainbow = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(!vaxis.Color.eql(f.style(1, 0).fg, rainbowColor(t, 1)) or vaxis.Color.eql(rainbowColor(t, 1), f.theme.bg.fg));
+}
+
+test "word_matches underline every occurrence" {
+    var f = try Fixture.init(20, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("foo bar foo");
+    d.line_numbers = false;
+    d.word_matches = &.{ .{ .start = 0, .end = 3 }, .{ .start = 8, .end = 11 } };
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.style(0, 0).ul_style == .single);
+    try testing.expect(f.style(9, 0).ul_style == .single);
+    try testing.expect(f.style(5, 0).ul_style == .off);
+    d.word_matches = &.{};
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.style(0, 0).ul_style == .off);
+}
+
+test "todo_keywords bold the marker after a comment start; FIXME is urgent" {
+    var f = try Fixture.init(30, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("x = 1; // TODO later\nTODO not a comment");
+    d.line_numbers = false;
+    d.todo_keywords = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.style(10, 0).bold);
+    try testing.expect(vaxis.Color.eql(f.style(10, 0).fg, f.theme.warn_fg.fg));
+    try testing.expect(!f.style(15, 0).bold);
+    try testing.expect(!f.style(0, 1).bold);
+    var e = mkDoc("# FIXME now");
+    e.line_numbers = false;
+    e.todo_keywords = true;
+    _ = draw(f.ui(), 0, f.full(), &view, e);
+    try testing.expect(vaxis.Color.eql(f.style(2, 0).fg, f.theme.error_fg.fg));
+    e.todo_keywords = false;
+    _ = draw(f.ui(), 0, f.full(), &view, e);
+    try testing.expect(!f.style(2, 0).bold);
+}
+
+test "color_column paints the column under and past the text" {
+    var f = try Fixture.init(12, 2);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("abcdef\nab");
+    d.line_numbers = false;
+    d.color_column = 4;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(f.bgEql(3, 0, f.theme.panel_bg));
+    try testing.expect(!f.bgEql(2, 0, f.theme.panel_bg));
+    try testing.expect(f.bgEql(3, 1, f.theme.panel_bg));
+    d.color_column = 0;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try testing.expect(!f.bgEql(3, 0, f.theme.panel_bg));
+}
+
+test "render_markdown conceals the marks off the cursor line and leaves the cursor line raw" {
+    var f = try Fixture.init(30, 5);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("# Title\nsome **bold** and `code`\n- item\n[docs](https://x.y)\n## Cursor");
+    d.line_numbers = false;
+    d.cursor = d.text.len - 1; // on the last line
+    d.render_markdown = true;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "Title");
+    try testing.expect(f.style(0, 0).bold);
+    try f.expectRow(1, "some bold and code");
+    try testing.expect(f.style(5, 1).bold);
+    try testing.expect(!f.style(4, 1).bold);
+    try testing.expect(f.bgEql(14, 1, f.theme.panel_bg));
+    try f.expectRow(2, "• item");
+    try f.expectRow(3, "docs");
+    try testing.expect(f.style(0, 3).ul_style == .single);
+    try f.expectRow(4, "## Cursor");
+    // A click on a concealed row still lands on the right byte.
+    try testing.expectEqual(@as(u32, 7), f.hits.at(5, 1).?.editor_cell.col);
+    d.render_markdown = false;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "# Title");
+    try f.expectRow(1, "some **bold** and `code`");
 }

@@ -46,14 +46,14 @@ pub const specs = [_]Spec{
     .{ .id = "app.choose_data_layout", .title = "Choose data layout — Portable (mnml-data/) or Normal (~/.config/mnml/)", .group = "app" },
     .{ .id = "view.toggle_tree", .title = "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)", .group = "view", .keys = .{ .vim = &.{ "ctrl+n", "space e" }, .both = &.{"ctrl+b"} } },
     .{ .id = "view.reset_tree_width", .title = "Reset file tree width to the config default", .group = "view" },
-    .{ .id = "view.discovery", .title = "Click-discovery overlay (highlight what's clickable)", .group = "view" },
+    .{ .id = "view.discovery", .title = "Click-discovery overlay (highlight what's clickable)", .group = "view", .keys = .{ .both = &.{"f1"} } },
     .{ .id = "view.welcome", .title = "Welcome overlay (shortcuts cheatsheet)", .group = "view" },
     .{ .id = "view.about", .title = "About mnml (version + workspace metadata)", .group = "view" },
     .{ .id = "first_launch.show", .title = "First-launch setup wizard (reopen)", .group = "view" },
     .{ .id = "keys.doctor", .title = "Keyboard doctor (which modifier chords reach mnml?)", .group = "view" },
     .{ .id = "integrations.configure_picker", .title = "Configure integration auth… (pick from installed)", .group = "integrations" },
     .{ .id = "integrations.diag", .title = "Run diagnostics on an integration… (auth + config probe)", .group = "integrations" },
-    .{ .id = "view.help", .title = "Keybindings & help — help overlay (auto-generated keymap reference)", .group = "view", .keys = .{ .both = &.{"f1"} } },
+    .{ .id = "view.help", .title = "Keybindings & help — help overlay (auto-generated keymap reference)", .group = "view" },
     .{ .id = "view.settings", .title = "Settings overlay (keyboard-driven schema editor)", .group = "view", .keys = .{ .both = &.{"ctrl+,"} } },
     .{ .id = "view.toggle_picker_position", .title = "Picker: toggle position (center ⇄ top)", .group = "view" },
     .{ .id = "view.focus_tree", .title = "Focus the file tree (without toggling)", .group = "view", .keys = .{ .both = &.{ "ctrl+shift+e", "ctrl+0" } } },
@@ -315,12 +315,15 @@ pub const specs = [_]Spec{
     .{ .id = "perf.toast_stress", .title = "Perf: toast the current stress numbers", .group = "perf" },
     .{ .id = "perf.hide_stress", .title = "Perf: hide the stress meter chip", .group = "perf" },
     .{ .id = "perf.toggle_stress", .title = "Perf: toggle the stress meter chip", .group = "perf" },
+    .{ .id = "perf.copy_stress", .title = "Perf: copy the stress summary (p50 / p95 / max / n) to the clipboard", .group = "perf" },
     .{ .id = "noop.info", .title = "(info row · no action)", .group = "misc" },
     .{ .id = "files.trash", .title = "Files: open the workspace trash", .group = "files" },
     .{ .id = "files.restore_from_trash", .title = "Files: restore the selected trash entry", .group = "files" },
     .{ .id = "transfer.cancel_all", .title = "Transfers: cancel all running", .group = "transfer" },
     .{ .id = "toast.dismiss_current", .title = "Toast: dismiss the right-clicked toast", .group = "toast" },
     .{ .id = "toast.dismiss_all", .title = "Toast: dismiss every ephemeral toast", .group = "toast" },
+    .{ .id = "toast.dismiss_clicked", .title = "Toast: dismiss the toast the menu was opened on", .group = "toast" },
+    .{ .id = "toast.copy_clicked", .title = "Toast: copy the text of the toast the menu was opened on", .group = "toast" },
     .{ .id = "buffer.pin_toggle", .title = "Pin / Unpin the active tab (sticks to front of strip)", .group = "buffer" },
     .{ .id = "buffer.next", .title = "Next buffer (positional)", .group = "buffer", .keys = .{ .vim = &.{"tab"}, .both = &.{ "ctrl+pagedown", "ctrl+alt+right" } } },
     .{ .id = "buffer.prev", .title = "Previous buffer (positional)", .group = "buffer", .keys = .{ .vim = &.{"shift+tab"}, .both = &.{ "ctrl+pageup", "ctrl+alt+left", "ctrl+shift+tab" } } },
@@ -370,6 +373,7 @@ pub const specs = [_]Spec{
     .{ .id = "editor.use_vim", .title = "Editing: use vim keymap", .group = "editor" },
     .{ .id = "editor.use_standard", .title = "Editing: use standard (VSCode) keymap", .group = "editor" },
     .{ .id = "editor.toggle_keymap", .title = "Editing: toggle vim ⇄ standard keymap", .group = "editor" },
+    .{ .id = "editor.set_tab_width", .title = "Editing: set the tab width (prompt)", .group = "editor" },
     .{ .id = "clock.local", .title = "Clock: show local time", .group = "clock" },
     .{ .id = "clock.utc", .title = "Clock: show UTC", .group = "clock" },
     .{ .id = "clock.hide", .title = "Clock: hide statusline clock chip", .group = "clock" },
@@ -440,6 +444,10 @@ pub const specs = [_]Spec{
     .{ .id = "view.activity_notes", .title = "Activity: show Notes (workspace scratch notes)", .group = "view" },
     .{ .id = "notes.new", .title = "Notes: create a new note in .mnml/notes/", .group = "notes" },
     .{ .id = "menu.glyph_audit", .title = "Menus: write + open the glyph audit (icons and spacing)", .group = "view" },
+    .{ .id = "menu.pin_row", .title = "Menus: pin the focused + menu row to the top", .group = "view" },
+    .{ .id = "menu.unpin_row", .title = "Menus: unpin the focused + menu row", .group = "view" },
+    .{ .id = "menu.hide_row", .title = "Menus: hide the focused + menu row (settings restore it)", .group = "view" },
+    .{ .id = "menu.copy_id", .title = "Menus: copy the focused row's command id", .group = "view" },
     .{ .id = "todos.new", .title = "TODOs: add a TODO to the workspace TODO.md", .group = "todos" },
     .{ .id = "findings.new", .title = "Findings: create a new finding in .mnml/findings/", .group = "findings" },
     .{ .id = "view.activity_todos", .title = "Activity: show TODOs (TODO/FIXME/XXX/HACK/REVIEW markers)", .group = "view" },
@@ -724,6 +732,7 @@ pub const specs = [_]Spec{
     .{ .id = "mount.open", .title = "Mount: open a hosted integration pane (prompts for binary)", .group = "mount" },
     .{ .id = "mounts.refresh", .title = "Mounts: re-scan manifests in .mnml/mounts/ + ~/.config/mnml/mounts/", .group = "mount" },
     .{ .id = "workspace.review_trust", .title = "Workspace: review what this workspace is allowed to run", .group = "workspace" },
+    .{ .id = "trusted.forget", .title = "Workspace: forget this workspace's trust decision (asks again next launch)", .group = "trusted" },
     .{ .id = "integrations.refresh", .title = "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/", .group = "integrations" },
     .{ .id = "integrations.cycle_sort", .title = "Integrations: cycle sort mode (active tab)", .group = "integrations" },
     .{ .id = "marketplace.refresh", .title = "Marketplace: refresh (fetch published apps + community launchers)", .group = "integrations" },
@@ -950,7 +959,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "892 specs, unique ids" {
+test "901 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -958,7 +967,8 @@ test "892 specs, unique ids" {
     // + three NOTES row commands + four FINDINGS row commands + ten
     // SESSIONS commands + six dock commands + two lsp-more commands.
     // SESSIONS commands + six dock commands + two diff-view commands
-    // + three browse commands (file / line / commit on the remote).
-    try std.testing.expectEqual(@as(usize, 892), specs.len);
+    // + three browse commands (file / line / commit on the remote)
+    // + nine ui-polish commands.
+    try std.testing.expectEqual(@as(usize, 901), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

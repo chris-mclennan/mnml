@@ -66,7 +66,7 @@ otherwise. Copy what you need; leave the rest out.
         .ascii_icons = false,
         .tree_width = 30, // clamped to 10..80
         .right_panel_visible = false,
-        .right_panel_width = 32,
+        .right_panel_width = 40, // the Rust default is 32; the Zig panels are tuned to 40
         .auto_hide_narrow_width = 0, // 0 = never auto-hide the tree
         .auto_equalize_splits = false,
         .relative_line_numbers = false,

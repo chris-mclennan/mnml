@@ -21,6 +21,7 @@ const screen_mod = @import("../ipc/screen.zig");
 const build_options = @import("build_options");
 const tasks = @import("../app/tasks.zig");
 const clipboard_os = @import("../core/clipboard_os.zig");
+const image = @import("../image/root.zig");
 
 pub const Options = struct {
     /// The merged config; the App takes ownership.
@@ -70,6 +71,11 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         };
     }
     defer if (screen_dump) |*c| c.deinit();
+    // Images: the probe (kitty graphics) and the environment decide the
+    // transport once; `.none` leaves the text fallback.
+    app.image_transport = image.detect(env, term.caps.kitty_graphics);
+    var painter: image.Painter = .{};
+    defer painter.deinit(gpa);
     // The typed config's tasks + startup list, from the config the App
     // already owns; the `startup` hook below runs the startup names.
     try tasks.installFromConfig(&app, &app.cfg);
@@ -108,6 +114,14 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         if (app.needs_render) {
             try app.renderInto(term.screen());
             term.render() catch {};
+            // The frame's images, over the cells just written.
+            painter.paint(gpa, term.writer(), app.image_transport, app.image_paints.items, .{
+                .cursor_row = term.vx.state.cursor.row,
+                .cursor_col = term.vx.state.cursor.col,
+                .cursor_vis = term.vx.screen.cursor_vis,
+                .cell_w_px = if (term.vx.screen.width > 0) @as(u32, term.vx.screen.width_pix) / term.vx.screen.width else 0,
+                .cell_h_px = if (term.vx.screen.height > 0) @as(u32, term.vx.screen.height_pix) / term.vx.screen.height else 0,
+            }) catch {};
             if (screen_dump) |*c| c.writeScreen(try screen_mod.toScreenTxt(app.frame.allocator(), term.screen()));
         }
     }

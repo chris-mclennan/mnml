@@ -1,0 +1,17 @@
+# zig-only
+# F1 opens the click-discovery overlay: every registered rect is
+# labelled with its hit label, the next click explains its target
+# instead of acting on it, and Esc closes it without a word.
+write notes.txt hello
+open notes.txt
+key f1
+expect screen contains "Click Discovery"
+expect screen contains "tab:0:0"
+key esc
+expect screen lacks "Click Discovery"
+key f1
+# The position chip (row 38): explained, not acted on — no prompt opens.
+click 85 38
+expect screen lacks "Click Discovery"
+expect screen lacks "Go to line"
+expect screen contains "click: go to line"

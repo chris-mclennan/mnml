@@ -1480,3 +1480,215 @@ is the contract-level list of what moved.
   textarea (the prompt line plus the attached body covers the flow);
   the Rust rail's `/`-prefix folder grouping and its stashes / tags
   sections (the pickers cover both).
+
+## LSP, more (Phase 5 follow-up) — `// changed:` notes (2026-09-05, branch `lsp-more`)
+
+- `// changed (ui):` `editor_view.Doc` gains `virtual_text:
+  []const VirtualText` (`{ byte, text, style }` — cells painted BEFORE
+  the grapheme at `byte`, taking columns but no bytes; `byte == line
+  end` paints after the last grapheme; a click on them lands on `byte`)
+  and `virtual_lines: []const VirtualLine` (`{ line, segments }` — a row
+  painted ABOVE `line`, counted in the scroll math and the
+  keep-cursor-visible pass; a segment with a `hit` registers
+  `.script_hit{ pane, hit }`). One delimited block; the view knows
+  nothing of hints or lenses.
+- `// changed (highlight):` `engine.layerSpans(T, arena, base, over)` is
+  the one merge for two sorted span lists: `over` wins where it covers,
+  `base` keeps every byte `over` leaves alone. Semantic tokens paint
+  OVER the grammar, never instead of it; `lsp_decor.mergeUnderlines`
+  uses the same function to let a diagnostic's squiggle win a link.
+- `// changed (app):` `App.lsp` gains `decor` (`FileDecor` per absolute
+  path: four replace-wholesale sets — hints, lenses, colours, links —
+  each tagged with the edit-log seq its reply describes; a set whose seq
+  no longer matches the buffer is NOT painted, stale hints beside moved
+  text being worse than none), `decor_track` (per pane: the seq last
+  asked for, the debounce clock, the hint window), `semantic` (`SemFile`
+  per path: raw `data[]`, `resultId`, decoded tokens, seq), `lint_group`
+  and `rename`. `lsp_decor.onFrame` runs from `render.drawEditor` after
+  `syncPane`: every set refreshes once the buffer has been idle 250 ms,
+  the hints also when the view leaves their window (visible lines ±1
+  screen). Requests carry the seq's low word in `Ctx.extra`.
+- `// changed (app):` a code lens row's segments register
+  `.script_hit{ pane, lens_hit_base + index }` (`0x4C45_0000`, far above
+  http's `var_hit_base`); `dispatch`'s editor `.script_hit` arm splits
+  on it. Enter in vim's Normal mode on a line that carries a lens runs
+  it (`decor.interceptKey`, reached from `lsp.interceptKey` when no popup
+  is up); Insert / standard-mode Enter stays a newline — the lens is a
+  click or `lsp.code_lens_run` there. A lens without a `command` goes
+  through `codeLens/resolve` first; the resolved title lands on the set.
+- `// changed (app):` `gx` / `editor.open_url_at_cursor` answers with
+  the server's document link under the cursor, else a `scheme://` token
+  on the line (`decor.urlAt`); the OS opener is `open` / `xdg-open` /
+  `cmd /c start`.
+- `// changed (app):` semantic tokens ask `full/delta` when a `resultId`
+  is held and the server takes deltas, `full` otherwise, `range` (the
+  visible lines ±1 screen) when that is all it offers — a range reply
+  marks the cache `partial` so the next ask is not a delta. The legend
+  is decoded once at `initialize` into `Caps.token_types: []Role` /
+  `token_modifiers: []Modifier` (owned by `Caps`, which now has a
+  `deinit`). No theme names modifier styles, so the mapping is fixed:
+  `declaration` bold, `static` italic, `deprecated` struck through,
+  `documentation` in the comment colour. `editor.semantic_tokens` is a
+  new master switch (the Rust config had only
+  `semantic_tokens_viewport`, which stays parsed and unused).
+- `// changed (app):` `willSaveWaitUntil` cannot hold the write: the
+  `save_pre` hook is fire-and-forget and no server is ever awaited (D3).
+  Behind `editor.will_save_wait_until` the request goes out before the
+  write; the reply's edits are applied and the buffer written again, so
+  the disk is right within a round-trip. On-type formatting runs behind
+  `editor.format_on_type` on the server's trigger characters
+  (`Caps.on_type_triggers`, owned). `lsp.format_selection` is range
+  formatting on the visual selection.
+- `// changed (app):` `lsp.format` (and `editor.format`, which aliases
+  it) prefers the attached server and falls back to the external tool
+  (`lsp_format.formatDocument`); `editor.format_external` is always the
+  tool; format-on-save uses the tool when no server formats. The tool
+  table is `src/lsp/tools.zig`: `.formatters.<ext>` / `.linters.<ext>`
+  override a builtin list (rustfmt, prettier, ruff, gofmt, shfmt,
+  stylua, `zig fmt --stdin`, nixfmt; eslint, ruff, shellcheck). `{file}`
+  in an argument becomes the workspace-relative path. `Formatter.in_place`
+  is new (the Rust formatter was stdin → stdout only): the buffer is
+  written, the tool runs on `{file}`, the result is read back. A run is
+  synchronous so a save-time format lands before the write; the whole
+  text is one splice trimmed to the changed middle (`replaceWhole`), one
+  undo step, cursor kept.
+- `// changed (app):` external linters run on a worker in
+  `app.lsp.lint_group` on open and on save (`lintOnHook`; a builtin tool
+  that is not on PATH is skipped without a spawn) and on
+  `editor.lint_external` (refuses a dirty buffer). The worker posts its
+  findings as a `textDocument/publishDiagnostics` notification on the
+  `.lsp` lane with `server = 0` (`linter_server_id`; real servers start
+  at 1) — workers never touch app state (D3). `FileDiags` keeps two
+  sources (`server_items` on `arena`, `lint_items` on `lint_arena`),
+  each replaced wholesale by its own next delivery, merged sorted into
+  `items` for every reader. `Linter.parser = .pattern` with
+  `Linter.pattern` (a template of `{file} {line} {col} {severity}
+  {message} {_}` placeholders matched literally between them) replaces
+  the Rust `regex` option — Zig's std has no regex, and a linter's line
+  format is fields in a fixed order.
+- `// changed (app):` the rename preview (`src/app/lsp_rename.zig`) is
+  `app.lsp.rename` state like the peek overlay, not an `Overlay`
+  variant: its rows register `.overlay_item(row)` while no overlay is
+  up (`dispatch` routes those to `rename_app.click` before the
+  completion popup), and `lsp.interceptKey` gives it the keys first.
+  `handleResponse(.rename)` opens it when the `WorkspaceEdit` touches
+  more than one file (`rename_app.fileCount`); one file still applies at
+  once. Space / `x` toggles the row's file, `a` all, `j`/`k` move,
+  Enter applies, Esc / `q` cancels. Applying: an open buffer takes its
+  edits through `lsp.applyEditsToPane` (one undo step, dirty, synced on
+  the next frame); a closed file is read, spliced last-first and written
+  back, refused with a toast when its end line is gone or its end column
+  is past the line as it now reads on disk. Not done, by design: the
+  Rust overlay that repaints every whole-word occurrence while the
+  prompt is open — the box's hunk rows show `Lnn  before → after`.
+- `// changed (spec):` `lsp.format_selection` and `lsp.code_lens_run`
+  are new ids (the pin is 883); `editor.format_external`,
+  `editor.lint_external` and `editor.open_url_at_cursor` had specs and
+  no runner (a `-Dpartial` build let them through) and are runners now,
+  all in `cmd_lsp.zig`'s table. `lsp.inlay_hints_toggle` moved to
+  `lsp_decor.zig` and paints.
+- `// changed (test):` `lsp.TestRig` wires the scripted server into an
+  `App` for the app-side modules' tests (`start` / `stop` / `openFile`
+  / `pump`, which ticks AND renders — the decorations are asked for
+  from the frame, so a wait that never paints never asks); the fake
+  server answers every request of this tier and announces a
+  `workspace/executeCommand` as a `window/showMessage` warning so the
+  toast proves it ran. A rename whose new name starts `multi` also
+  touches `/tmp/mnml-zig-fake-lsp-other.ts`.
+- `// changed (test):` a file's tests reach `-Dtest-filter` (and so
+  `tools/break-check.sh`) only when a `test {}` block references the
+  file; a file-scope `@import` puts them in the full suite but not in
+  front of the filter, and a break-check against such a file reports
+  "still passes" while running nothing. `src/app/lsp.zig` ends with a
+  `test {}` naming the four `lsp_*.zig` modules, `lsp/semantic.zig` and
+  `lsp/tools.zig`. A new module with tests needs the same line
+  somewhere on the `test {}` chain from `main.zig`.
+
+## UI & theming (Phase 8 follow-up) — `// changed:` notes (2026-09-05, branch `ui-polish`)
+
+- `// changed (ui):` `statusline.Info.right` is `[]const Seg` — text,
+  an optional hit id, an optional style and a `low` flag. Every
+  right-hand segment with an id registers `.statusline_seg`; the input
+  style chip has its own (`seg_input_style`); `Info.restricted` paints
+  the `RESTRICTED` chip after the file name (`seg_restricted`). Low
+  segments sit outside the input-style chip and drop before it, so the
+  keymap chip survives at 48 cells with the indent, encoding and idle
+  bell chips present. The app's ids start at `seg_app_base`
+  (`render.SegId`, `transfer` included — a right-click is
+  `transfer.cancel_all`) and end below `seg_dyn_base`, where the
+  `misc` branch's host lanes (`dyn_left` / `dyn_right`) live; both
+  coexist in one `draw`.
+- `// changed (app):` the bell is always drawn — `○` in muted when
+  nothing is unread; `messages.bellSegment` is unchanged. Two chips on
+  a text buffer: indent (`⇥ 4`, click → `editor.set_tab_width`, a
+  prompt) and encoding (`utf-8`).
+- `// changed (app):` `App.toast_ctx` carries the right-clicked toast's
+  index to `toast.dismiss_clicked` / `toast.copy_clicked`; `App.undo_chip`
+  (`armUndo` / `takeUndo` / `dropUndo`, `undo_chip_ttl_ms`) is the Undo
+  offer, painted by `toast.drawUndo` on the toasts' spacer row with the
+  `toast.undo_button` hit; `buffer.close_others` / `close_right` arm it
+  with `.reopen = n` (runs `buffer.reopen` n times).
+- `// changed (app):` `src/app/workspace_trust.zig` — `workspace.review_trust`
+  re-opens the first dialog when untrusted, otherwise a Keep / Forget
+  confirm (`ConfirmPurpose.review_trust`) over the claims re-read from
+  `.mnml/config.zon` via `config.load.parseLayer` + `trust.claimsWith`;
+  `trusted.forget` deletes the store line (`removeEntry`) and
+  `reloadConfig(.ask)`. `RESTRICTED` = `loaded.trust_prompt != null`.
+- `// changed (core):` `MenuItem` gains `icon: ?[]const u8`, its
+  `icon_ascii` twin and `submenu: []const MenuItem` (additive,
+  defaulted). `MenuState` gains `curatable` and `sub: ?SubMenu{ parent,
+  items (gpa copy), cursor, rect }`; `Overlay.deinit` frees the copy.
+  `render.drawMenu` paints the glyph column (`ui/menu_glyph.zig` — one
+  glyph and one ASCII twin per command group, the twin under
+  `ui.ascii_icons`; the glyph audit holds every site to it), `▸` on a
+  parent row, the child beside its parent (`.menu_item{1, i}`), and the
+  ⋯ kebab on the focused leaf of a curatable menu (`.menu_item{2, i}` /
+  `{3, i}`). Keys: → / l / Enter open a parent, ← / h close the child,
+  → on a leaf of a curatable menu opens the curation list.
+- `// changed (app):` `context_menus.plus_sections` is the curated `+`
+  (New / Open / Panels / Tools / Integrations); `App.plus_pinned` /
+  `plus_hidden` are the runtime lists (seeded from `ui.plus_menu_pinned`
+  / `plus_menu_hidden`, re-seeded on reload, written back through
+  `settings.persist` to the home config); `App.menu_ctx` carries the
+  row's command to `menu.pin_row` / `unpin_row` / `hide_row` / `copy_id`.
+- `// changed (app):` `src/app/discovery.zig` — `describe(target)` is the
+  one source of hover / F1 words; `App.hover_live` (set by `.motion` /
+  `.drag`, cleared by a press) gates the hover surfaces so a scripted
+  click never grows a box; the rail's `ui.hover_help` box reads the
+  previous frame's hits (the rows are reserved before the rail paints)
+  and is only reserved while a tip exists. F1 is `view.discovery`
+  (`view.help` keeps the palette); the overlay registers no hits, so
+  the press under it resolves to the real target, which `explain`
+  toasts. Overlay labels live on the frame arena — the cell grid
+  borrows the bytes.
+- `// changed (app):` `src/image/` — `Transport` (`detect(env, kitty_probe)`),
+  `Loaded` (`ensurePng` transcodes through zigimg), `PaintRequest`,
+  `kitty` (transmit-by-id, `q=2`, `C=1`, `delete_placements`), `iterm2`,
+  `sixel` (decode / fit / 6×6×6 / RLE), `Painter` (owned by
+  `tui/loop.zig`, takes the writer — the `tui` module cannot import
+  `src/image`). `App.image_transport` is `.none` until the loop sets
+  it; `App.image_paints` is reset at the top of `render`.
+- `// changed (app):` `Pane.image` (`src/app/image_pane.zig`): a preview
+  tab replaced in place by the next image (`PaneStore.findImagePreview`);
+  `App.openPath` routes image extensions to it; `view.image_open`
+  prompts (`PromptPurpose.image_open`). Header / text-fallback /
+  `cellBox` (1:2 cell aspect).
+- `// changed (ui):` `md_view.Line.image` / `filler`, `renderWith(…, image_rows)`,
+  `drawWith(…, placements)` and `Placement`; `MdPreviewPane.images` caches
+  `Loaded` per resolved path; `md_preview.draw` reserves
+  `ui.md_image_rows` only when a transport exists.
+- `// changed (app):` settings number rows (`RowSpec.number`, `Row.Number`,
+  `‹ [v] ›`, `optionHit(id, 0 / 1)` on the arrows) — nine integer
+  fields; `ui.right_panel_visible` / `ui.right_panel_width` seed the
+  slot at init (the session restore overrides). The config default
+  becomes 40 — what `App` already shipped before the key was read, and
+  what the panels' header chrome is tuned to; the Rust 32 sizes a
+  right panel that never held these panels.
+- Spec: nine ids added (pin 901 over main's 892, 47 groups) — `trusted.forget`,
+  `toast.dismiss_clicked`, `toast.copy_clicked`, `perf.copy_stress`,
+  `menu.pin_row` / `unpin_row` / `hide_row` / `copy_id`,
+  `editor.set_tab_width`; `view.discovery` gets `f1`.
+- Not done, by design: the clock chip (`ui.clock` stays unread), the
+  stress meter's bufferline copy, `menu.glyph_audit`, the encoding
+  chip's prompt (utf-8 is the only encoding; a click says so), the Undo
+  chip for file deletes (the tree is the panels track's).

@@ -1119,7 +1119,9 @@ pub const Product = launch_profiles.Product;
 /// every new session on the active leaf's strip; the default splits.
 fn openSession(app: *App, product: Product, placement: ?pty_pane.Placement) CommandError!PaneId {
     if (route(app, if (product == .claude) .claude else .codex) == .off) return app.diag.fail(app.frame.allocator(), "{s} is routed off in [ai.routing]", .{@tagName(product)});
-    const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else false;
+    // changed (ui-polish): `ui.ai_layout_mode` is the typed field; the
+    // `[ai] layout_mode` extra still overrides it.
+    const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else app.cfg.ui.ai_layout_mode == .tabs;
     const where: pty_pane.Placement = placement orelse (if (tabs) .tab else .right);
     return launch_profiles.openSessionWith(app, product, launch_profiles.defaultName(app, product), where);
 }
@@ -1151,7 +1153,9 @@ fn claudeCodeNew(app: *App) CommandError!void {
 /// N sessions: a grid (split right, then each column split down) or
 /// N tabs, per `ai_layout_mode`.
 fn openBatch(app: *App, product: Product, n: usize) CommandError!void {
-    const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else false;
+    // changed (ui-polish): `ui.ai_layout_mode` is the typed field; the
+    // `[ai] layout_mode` extra still overrides it.
+    const tabs = if (extraString(app, "layout_mode")) |m| std.ascii.eqlIgnoreCase(m, "tabs") else app.cfg.ui.ai_layout_mode == .tabs;
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const placement: pty_pane.Placement = if (tabs) .tab else if (i == 0) .right else if (i % 2 == 1) .below else .right;

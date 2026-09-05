@@ -40,6 +40,11 @@ const whichkey = @import("whichkey.zig");
 const input = @import("../input/mod.zig");
 const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
+const Style = vaxis.Style;
+const menu_glyph = @import("../ui/menu_glyph.zig");
+const discovery = @import("discovery.zig");
+const image_pane = @import("image_pane.zig");
+const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
@@ -103,6 +108,9 @@ pub const Button = enum(u32) {
     palette = 1,
     toggle_tree = 2,
     toggle_right_panel = 3,
+    /// `ui.tab_bar_ai_icon`: the brand chips in the bar's right cluster.
+    ai_claude = 4,
+    ai_codex = 5,
     new_tab_base = 0x100,
     _,
 
@@ -115,6 +123,26 @@ pub const Button = enum(u32) {
         const base = @intFromEnum(Button.new_tab_base);
         if (id < base or id >= toast_mod.button_base) return null;
         return id - base;
+    }
+};
+
+/// The right-hand statusline segments the app builds, by hit id
+/// (`statusline.seg_app_base` and up). `dispatch.mouse` routes a click
+/// on each; `discovery.describe` explains each.
+pub const SegId = enum(u32) {
+    branch = statusline.seg_app_base,
+    diagnostics,
+    ai_meter,
+    bell,
+    stress,
+    indent,
+    encoding,
+    transfer,
+    _,
+
+    pub fn of(id: u32) ?SegId {
+        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.transfer)) return null;
+        return @enumFromInt(id);
     }
 };
 
@@ -151,7 +179,16 @@ pub fn zenRects(full: Rect) FrameRects {
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
+    // The info box reads the previous frame's hits: they are what the
+    // pointer is resting on until this frame replaces them.
+    const help_tip: ?discovery.Tip = if (app.cfg.ui.hover_help and app.tree.visible) blk: {
+        const tip = discovery.hoverTip(app, app.frame.allocator()) catch null;
+        break :blk if (tip) |tp| .{ .title = try app.frame.allocator().dupe(u8, tp.title), .detail = if (tp.detail) |d| try app.frame.allocator().dupe(u8, d) else null } else null;
+    } else null;
     app.hits.reset();
+    // The image paints are the frame's too (`Term.paintImages` reads
+    // them after the cells are out).
+    app.image_paints = .empty;
     const arena = app.frame.allocator();
     const ui: Ui = .{
         .canvas = Canvas.init(screen, .{}),
@@ -172,12 +209,20 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     const fr = if (app.zen) zenRects(full) else frameRects(full);
     try drawPaletteBar(app, ui, fr.bar);
     // The tree takes its width plus a one-cell divider (Rust `ui/mod.rs`).
+    // `ui.hover_help`: while the pointer rests on something with a
+    // description, the rail's bottom rows are its info box.
     var panes_area = fr.upper;
     if (!app.zen and app.tree.visible and panes_area.w > 12) {
         const w: u16 = @max(@min(app.tree.width, panes_area.w -| 21), 8);
         const cols = panes_area.splitLeft(w);
         const div = cols.rest.splitLeft(1);
-        try app.tree.draw(app, ui, cols.left);
+        var rail = cols.left;
+        if (help_tip) |tip| if (app.cfg.ui.hover_help and rail.h > app.cfg.ui.hover_help_height + 4) {
+            const parts = rail.splitBottom(app.cfg.ui.hover_help_height);
+            rail = parts.top;
+            discovery.drawHelpBox(ui, parts.rest, tip);
+        };
+        try app.tree.draw(app, ui, rail);
         drawDivider(app, ui, div.left, tree_divider_id);
         panes_area = div.rest;
     }
@@ -201,7 +246,14 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
     try lsp.drawPopups(app, ui, panes_area);
-    toast_mod.draw(ui, panes_area, try app.visibleToasts(arena));
+    // The Undo chip takes the toasts' spacer row; the stack sits above it.
+    var toast_area = panes_area;
+    if (app.undo_chip) |u| {
+        toast_mod.drawUndo(ui, panes_area, u.label);
+        toast_area.h -|= 1;
+    }
+    toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
+    try discovery.drawTooltip(app, ui, full);
 }
 
 /// `[≡]` toggles the tree, the centred chip opens the palette, `[▤]`
@@ -218,9 +270,11 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
     const right_glyph: []const u8 = if (ui.ascii) " # " else " ▤ ";
     const rw = ui.width(right_glyph);
+    var cluster_left = bar.right();
     if (bar.w > w0 + rw + 4) {
         const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
         ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
+        cluster_left = rx;
         // The git badge: changed files in the active repo, Rust's
         // `set_activity_badge("git", n)` — a host's own `git` badge
         // replaces it. Then every other section's badge, summed, as
@@ -237,13 +291,26 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         if (others > 0) {
             const label = ui.fmt("{s}{d} ", .{ @as([]const u8, if (ui.ascii) "*" else "•"), others });
             const bw = ui.width(label);
-            if (bx > w0 + bw + 2) _ = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.accent, bg.bg));
+            if (bx > w0 + bw + 2) bx = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.accent, bg.bg));
         }
+        cluster_left = bx;
+        // `ui.tab_bar_ai_icon`: the brand chips, a click opens the session.
+        const ai = app.cfg.ui.tab_bar_ai_icon;
+        if (ai == .codex or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .codex);
+        if (ai == .claude_code or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .claude);
     }
-    const label: []const u8 = if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ";
-    const lw = @min(ui.width(label), bar.w -| (w0 + rw + 2));
-    var chip_right = bar.right() -| (rw + 1);
-    if (lw >= 8) {
+    // `ui.top_bar_cluster_mode`: the palette chip's label — the full
+    // hint, or the icon alone; `auto` keeps the hint on a wide bar.
+    const compact = switch (app.cfg.ui.top_bar_cluster_mode) {
+        .compact => true,
+        .expanded => false,
+        .auto => bar.w < 100,
+    };
+    const label: []const u8 = if (compact) (if (ui.ascii) " > " else " ⌘ ") else (if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ");
+    const lw = @min(ui.width(label), bar.w -| (w0 + (bar.right() - cluster_left) + 2));
+    var chip_right = cluster_left -| 1;
+    const min_chip: u16 = if (compact) 3 else 8;
+    if (lw >= min_chip) {
         const x = bar.x + (bar.w - lw) / 2;
         const chip = Rect.init(x, y, lw, 1);
         ui.fill(chip, th.chip);
@@ -256,6 +323,27 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         for (props, 0..) |*cp, i| cp.* = .{ .glyph = strip[i].glyph, .fallback = strip[i].fallback, .color = strip[i].color, .enabled = strip[i].enabled };
         chip_right = integrations_view.drawChips(ui, chip_right, y, x + lw + 1, bg, props);
     }
+}
+
+pub const AiBrand = enum { claude, codex };
+
+/// Claude's asterisk / Codex's prompt glyph (the `default_integration_icons`
+/// fallbacks under `--ascii`), lit when a session is running. Returns
+/// the x it started at.
+fn drawAiChip(app: *App, ui: Ui, right_x: u16, y: u16, brand: AiBrand) u16 {
+    const th = ui.theme;
+    const bg = th.bufferline;
+    const glyph: []const u8 = switch (brand) {
+        .claude => if (ui.ascii) " * " else " \u{2733} ",
+        .codex => if (ui.ascii) " > " else " \u{276F}_ ",
+    };
+    const live = ai_app.findSession(app, if (brand == .claude) .claude else .codex) != null;
+    const style = if (live) Theme.onBg(th.accent, bg.bg) else Theme.onBg(th.muted, bg.bg);
+    const w = ui.width(glyph);
+    if (right_x < w + 4) return right_x;
+    const x = ui.putStrRight(right_x, y, w, glyph, style);
+    ui.hit(Rect.init(x, y, w, 1), .{ .button = @intFromEnum(if (brand == .claude) Button.ai_claude else Button.ai_codex) });
+    return x;
 }
 
 fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
@@ -299,20 +387,59 @@ fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Al
 /// The markdown chip at the right end of the active leaf's strip:
 /// `✏ Edit` on a preview, ` Preview` on a markdown editor. A click is
 /// the command.
-fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
-    const active = app.active orelse return;
-    const pane = app.panes.get(active) orelse return;
+fn drawMdChip(app: *App, ui: Ui, area: Rect) u16 {
+    const active = app.active orelse return 0;
+    const pane = app.panes.get(active) orelse return 0;
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
-        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return,
+        .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return 0,
+        .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return 0,
     };
     const w = ui.width(label);
-    if (area.w < w + 2) return;
+    if (area.w < w + 2) return 0;
     const r = Rect.init(area.right() - w, area.y, w, 1);
     ui.fill(r, app.theme.chip);
     _ = ui.putStr(r.x, r.y, w, label, app.theme.chip);
     ui.hit(r, .{ .button = button });
+    return w;
+}
+
+/// `editor.breadcrumb`: the file's path as `dir › dir › name`, right-
+/// aligned on the active leaf's strip after the tabs, before the
+/// markdown chip. Painted only when the whole crumb fits past the tabs
+/// — a clipped path reads as a different file.
+fn drawBreadcrumb(app: *App, ui: Ui, pane: *app_mod.Pane, strip: Rect, reserved: u16) void {
+    const path = switch (pane.*) {
+        .editor => |*e| e.buf.path orelse return,
+        .md_preview => |*m| m.path,
+        else => return,
+    };
+    const rel = app.relPath(path);
+    const sep: []const u8 = if (ui.ascii) " > " else " › ";
+    var crumb: std.ArrayListUnmanaged(u8) = .empty;
+    var it = std.mem.splitScalar(u8, rel, '/');
+    var first = true;
+    while (it.next()) |part| {
+        if (part.len == 0) continue;
+        if (!first) crumb.appendSlice(ui.arena, sep) catch return;
+        crumb.appendSlice(ui.arena, part) catch return;
+        first = false;
+    }
+    const text = ui.fmt(" {s} ", .{crumb.items});
+    const w = ui.width(text);
+    // The tabs' extent: the right edge of the last `.tab` / `+` hit on this row.
+    var tabs_end: u16 = strip.x;
+    for (app.hits.items.items) |h| {
+        if (h.rect.y != strip.y or h.rect.x < strip.x or h.rect.right() > strip.right()) continue;
+        if (h.target == .tab or (h.target == .button and render_button_is_new_tab(h.target.button))) tabs_end = @max(tabs_end, h.rect.right());
+    }
+    const right = strip.right() - reserved;
+    if (right < tabs_end + w + 1) return;
+    _ = ui.putStrRight(right, strip.y, w, text, Theme.onBg(app.theme.muted, app.theme.bufferline.bg));
+}
+
+fn render_button_is_new_tab(id: u32) bool {
+    return Button.newTabLeaf(id) != null;
 }
 
 fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
@@ -347,7 +474,10 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         if (rect.h >= 2 and !app.zen) {
             const s = rect.splitTop(1);
             bufferline.draw(ui, s.top, try tabsOf(app, ui, layout, pr.leaf), .{ .leaf = @intCast(li), .new_tab = Button.newTab(li) });
-            if (app.active == pr.pane) drawMdChip(app, ui, s.top);
+            if (app.active == pr.pane) {
+                const md_w = drawMdChip(app, ui, s.top);
+                if (app.cfg.editor.breadcrumb) drawBreadcrumb(app, ui, pane, s.top, md_w);
+            }
             rect = s.rest;
         }
         switch (pane.*) {
@@ -385,6 +515,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 flaky_view.draw(ui, pr.pane, rect, fp, app.active == pr.pane and app.focus == .pane);
             },
             .files => |*f| try files_pane.draw(app, ui, pr.pane, f, rect),
+            .image => |*im| try image_pane.draw(app, ui, pr.pane, im, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -555,6 +686,26 @@ fn gutterMarks(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocat
     return std.mem.concat(arena, editor_view.GutterMark, &.{ d, l, g });
 }
 
+/// `ui.highlight_word_under_cursor`: every whole-word occurrence of the
+/// word at the cursor within `[from, to)`, sorted — the view underlines
+/// them. No word under the cursor = nothing.
+fn wordMatches(arena: Allocator, ed: *const @import("../editor/editor.zig").Editor, from: usize, to: usize) Allocator.Error![]const editor_view.Range {
+    const text = ed.bytes();
+    const w = @import("find.zig").wordAt(text, ed.cursor) orelse return &.{};
+    const word = text[w.start..w.end];
+    var out: std.ArrayListUnmanaged(editor_view.Range) = .empty;
+    var i = from;
+    const end = @min(to, text.len);
+    while (i + word.len <= end) {
+        const at = std.mem.indexOfPos(u8, text[0..end], i, word) orelse break;
+        const before_ok = at == 0 or !@import("find.zig").isWord(text[at - 1]);
+        const after_ok = at + word.len >= text.len or !@import("find.zig").isWord(text[at + word.len]);
+        if (before_ok and after_ok) try out.append(arena, .{ .start = at, .end = at + word.len });
+        i = at + 1;
+    }
+    return out.items;
+}
+
 fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
     var rect = rect_in;
@@ -637,6 +788,16 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .labels = labels,
         .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
         .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
+        // ── ui toggles ──
+        .relative_numbers = app.cfg.ui.relative_line_numbers,
+        .cursor_line_band = app.cfg.ui.cursor_line,
+        .show_whitespace = app.cfg.ui.show_whitespace,
+        .highlight_trailing_ws = app.cfg.ui.highlight_trailing_ws,
+        .bracket_rainbow = app.cfg.ui.bracket_rainbow,
+        .word_matches = if (app.cfg.ui.highlight_word_under_cursor) try wordMatches(arena, ed, ed.lineStart(lo_line), ed.lineEnd(hi_line)) else &.{},
+        .todo_keywords = app.cfg.ui.highlight_todo_keywords,
+        .color_column = app.cfg.ui.color_column,
+        .render_markdown = app.cfg.ui.render_markdown and e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);
@@ -780,22 +941,40 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     // bar (`:messages`, `ui.stress_meter`), nearest the input style.
     const lua_left = try app.script().segmentTexts(ui.arena, .left);
     const lua_right = try app.script().segmentTexts(ui.arena, .right);
-    const bell_seg = try messages.bellSegment(app, ui.arena, ui.ascii);
+    // The bell is always drawn: quiet (`○`) when nothing is unread, the
+    // count in yellow or red otherwise (`messages.bellSegment`).
+    const th = ui.theme;
+    const bell_text = try messages.bellSegment(app, ui.arena, ui.ascii);
+    const bell_style: ?Style = if (bell_text == null) Theme.onBg(th.muted, th.statusline.bg) else if (std.mem.startsWith(u8, bell_text.?, if (ui.ascii) "x" else "✗")) Theme.onBg(th.error_fg, th.statusline.bg) else Theme.onBg(th.warn_fg, th.statusline.bg);
+    const bell_seg: statusline.Seg = .{ .text = bell_text orelse (if (ui.ascii) "o" else "○"), .id = @intFromEnum(SegId.bell), .style = bell_style, .low = bell_text == null };
     const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
     // A host's `statusline-set-segment` chips, packed by priority into
     // what is left beside the built-ins (`ipc/effects.zig`).
     const budget: usize = area.w -| 40;
     info.dyn_left = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .left, budget / 2, ui.ascii));
     info.dyn_right = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .right, budget / 2, ui.ascii));
-    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, transfer_seg, bell_seg, stress_seg };
+    // The indent and encoding chips only make sense on a text buffer.
+    const editor_chips = app.activeEditor() != null;
+    const indent_seg: ?statusline.Seg = if (editor_chips) .{ .text = ui.fmt("{s} {d}", .{ if (ui.ascii) "tab" else "⇥", app.cfg.editor.tab_width }), .id = @intFromEnum(SegId.indent), .low = true } else null;
+    const encoding_seg: ?statusline.Seg = if (editor_chips) .{ .text = "utf-8", .id = @intFromEnum(SegId.encoding), .low = true } else null;
+    const maybes = [_]?statusline.Seg{
+        if (branch_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.branch) } else null,
+        if (lsp_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.diagnostics) } else null,
+        if (meter_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.ai_meter) } else null,
+        if (transfer_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.transfer) } else null,
+        bell_seg,
+        if (stress_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.stress) } else null,
+        indent_seg,
+        encoding_seg,
+    };
     var extra: usize = lua_left.len + lua_right.len;
     for (maybes) |m| extra += @intFromBool(m != null);
     if (extra > 0) {
-        const segs = try ui.arena.alloc([]const u8, info.right.len + extra);
+        const segs = try ui.arena.alloc(statusline.Seg, info.right.len + extra);
         @memcpy(segs[0..info.right.len], info.right);
         var n = info.right.len;
         for (lua_left) |seg| {
-            segs[n] = seg;
+            segs[n] = .{ .text = seg };
             n += 1;
         }
         for (maybes) |maybe| if (maybe) |seg| {
@@ -803,11 +982,12 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             n += 1;
         };
         for (lua_right) |seg| {
-            segs[n] = seg;
+            segs[n] = .{ .text = seg };
             n += 1;
         }
         info.right = segs;
     }
+    info.restricted = app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null;
     statusline.draw(ui, area, info);
 }
 
@@ -880,31 +1060,68 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             const full = ui.canvas.full();
             wizard_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &w.ui, first_launch.model(app));
         },
-        .info => |kind| cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
+        .info => |kind| switch (kind) {
+            .discovery => discovery.drawOverlay(app, ui, ui.canvas.full()),
+            else => cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
+        },
     }
 }
 
 /// A context menu anchored at the click, pulled inside `screen` when it
 /// would run off the edge. Every row registers `.menu_item{0, idx}`; a
-/// separator paints a rule and registers nothing.
-fn drawMenu(ui: Ui, screen: Rect, m: *const app_mod.MenuState) void {
-    const th = ui.theme;
-    var widest: u16 = ui.width(m.title) + 2;
+/// separator paints a rule and registers nothing. A row with a submenu
+/// ends in `▸`; the open child (`m.sub`) paints beside its parent row
+/// with `.menu_item{1, idx}` hits. In a curatable menu the focused leaf
+/// row ends in a kebab (`.menu_item{2, idx}` / `{3, idx}` in the child)
+/// that opens the pin / hide / copy-id submenu.
+fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
+    const size = menuSize(ui, m.title, m.items);
+    const w: u16 = @min(size.w, screen.w);
+    const h: u16 = @min(size.h, screen.h);
+    const x = @min(m.x, (screen.x + screen.w) -| w);
+    const y = @min(m.y, (screen.y + screen.h) -| h);
+    const frame = Rect.init(x, y, w, h);
+    const inner = overlay_mod.frame(ui, frame, m.title);
+    if (inner.isEmpty()) return;
+    const parent_row = paintMenuRows(ui, inner, m.items, m.cursor, 0, m.curatable and m.sub == null, m.sub != null);
+    const sub = &(m.sub orelse return);
+    // The child: beside the parent row, to the right when it fits.
+    const child = menuSize(ui, null, sub.items);
+    const cw: u16 = @min(child.w, screen.w);
+    const ch: u16 = @min(child.h, screen.h);
+    const anchor_y = inner.y + (parent_row.get(sub.parent) orelse 0);
+    const cx: u16 = if (frame.right() + cw <= screen.right()) frame.right() else frame.x -| cw;
+    const cy = @min(anchor_y -| 1, (screen.y + screen.h) -| ch);
+    const crect = Rect.init(cx, cy, cw, ch);
+    const cinner = overlay_mod.frame(ui, crect, null);
+    sub.rect = crect;
+    if (cinner.isEmpty()) return;
+    _ = paintMenuRows(ui, cinner, sub.items, sub.cursor, 1, m.curatable, false);
+}
+
+const MenuSize = struct { w: u16, h: u16 };
+
+/// Frame + ✓ column + glyph column + label + marker column.
+fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem) MenuSize {
+    var widest: u16 = if (title) |tt| ui.width(tt) + 2 else 4;
     var rows: u16 = 0;
-    for (m.items) |it| {
+    for (items) |it| {
         widest = @max(widest, ui.width(it.label));
         rows += 1;
         if (it.separator_before) rows += 1;
     }
-    // ✓ column + label + a cell of air each side, inside the frame.
-    const w: u16 = @min(widest + 2 + 2 + 2, screen.w);
-    const h: u16 = @min(rows + 2, screen.h);
-    const x = @min(m.x, (screen.x + screen.w) -| w);
-    const y = @min(m.y, (screen.y + screen.h) -| h);
-    const inner = overlay_mod.frame(ui, Rect.init(x, y, w, h), m.title);
-    if (inner.isEmpty()) return;
+    return .{ .w = widest + 2 + 2 + menu_glyph.width + 2 + 2, .h = rows + 2 };
+}
+
+/// Paints `items` into `inner`, registering `.menu_item{menu_id, i}`,
+/// and returns each item's row offset (for anchoring a child). `kebab`
+/// paints the curation kebab on the focused leaf row; `dim_cursor`
+/// paints the cursor row without the highlight (a child is open).
+fn paintMenuRows(ui: Ui, inner: Rect, items: []const command.MenuItem, cursor: usize, menu_id: u32, kebab: bool, dim_cursor: bool) std.AutoHashMapUnmanaged(usize, u16) {
+    const th = ui.theme;
+    var offsets: std.AutoHashMapUnmanaged(usize, u16) = .empty;
     var row: u16 = 0;
-    for (m.items, 0..) |it, i| {
+    for (items, 0..) |it, i| {
         if (it.separator_before and row < inner.h) {
             const r = inner.row(row);
             var xx: u16 = r.x;
@@ -913,15 +1130,30 @@ fn drawMenu(ui: Ui, screen: Rect, m: *const app_mod.MenuState) void {
         }
         if (row >= inner.h) break;
         const r = inner.row(row);
-        const selected = i == m.cursor;
-        const style = if (selected) Theme.onBg(th.overlay_bg, th.cursor_line.bg) else th.overlay_bg;
+        offsets.put(ui.arena, i, row) catch {};
+        const selected = i == cursor;
+        const style = if (selected and !dim_cursor) Theme.onBg(th.overlay_bg, th.cursor_line.bg) else th.overlay_bg;
         ui.fill(r, style);
         var xx = r.x + 1;
         xx += ui.putStr(xx, r.y, r.right() -| xx, if (it.checked) (if (ui.ascii) "* " else "✓ ") else "  ", Theme.withFg(style, th.accent.fg));
-        _ = ui.putStr(xx, r.y, r.right() -| xx, ui.clipStr(it.label, r.right() -| xx), Theme.onBg(th.fg, style.bg));
-        ui.hit(r, .{ .menu_item = .{ .menu = 0, .idx = @intCast(i) } });
+        _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), Theme.withFg(style, th.muted.fg));
+        xx += menu_glyph.width;
+        const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else th.fg.fg;
+        _ = ui.putStr(xx, r.y, r.right() -| (xx + 2), ui.clipStr(it.label, r.right() -| (xx + 2)), Theme.withFg(style, label_fg));
+        if (it.submenu.len > 0) {
+            _ = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ">" else "▸", Theme.withFg(style, th.accent.fg));
+        } else if (kebab and selected and it.action == .command) {
+            const kx = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
+            ui.hit(Rect.init(kx, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+        }
+        // The kebab's own hit was registered last, so it wins the cell.
+        ui.hit(Rect.init(r.x, r.y, r.w -| 1, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
+        if (kebab and selected and it.action == .command and it.submenu.len == 0) {
+            ui.hit(Rect.init(r.right() -| 1, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+        }
         row += 1;
     }
+    return offsets;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -993,7 +1225,6 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"view.split_right" });
     try app.render();
     try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(60, 0).?.button);
@@ -1014,7 +1245,6 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
     app.tree.visible = false;
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("alpha beta alpha");
-    const command = @import("../core/command.zig");
     try command.run(&app, .{ .static = .@"find.find" });
     for ("alpha") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
     const with_bar = try screenText(&app);
@@ -1035,4 +1265,81 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
         found = true;
     };
     try t.expect(found);
+}
+
+// ── ui toggles: the frame-level ones, one cell each ──
+
+test "ui toggles: cluster mode shrinks the palette chip, the AI icon registers its button" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.cfg.ui.tab_bar_ai_icon = .none;
+    const wide = try screenText(&app);
+    defer t.allocator.free(wide);
+    try t.expect(std.mem.indexOf(u8, wide, "search files · run commands") != null);
+    app.cfg.ui.top_bar_cluster_mode = .compact;
+    const compact = try screenText(&app);
+    defer t.allocator.free(compact);
+    try t.expect(std.mem.indexOf(u8, compact, "search files") == null);
+    try t.expect(std.mem.indexOf(u8, compact, "⌘") != null);
+    // no AI chip while the icon is off
+    for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
+    app.cfg.ui.tab_bar_ai_icon = .both;
+    try app.render();
+    var claude: ?Rect = null;
+    var codex: ?Rect = null;
+    for (app.hits.items.items) |h| if (h.target == .button) {
+        if (h.target.button == @intFromEnum(Button.ai_claude)) claude = h.rect;
+        if (h.target.button == @intFromEnum(Button.ai_codex)) codex = h.rect;
+    };
+    try t.expect(claude != null and codex != null);
+    try t.expect(claude.?.y == 0 and claude.?.right() <= codex.?.x);
+    app.cfg.ui.tab_bar_ai_icon = .codex;
+    try app.render();
+    for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
+}
+
+test "ui toggles: the breadcrumb sits on the strip after the tabs and follows editor.breadcrumb" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .cols = 80, .rows = 10 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.setPath("/tmp/ws/src/app/render.zig");
+    app.cfg.editor.breadcrumb = true;
+    const on = try screenText(&app);
+    defer t.allocator.free(on);
+    try t.expect(std.mem.indexOf(u8, on, "src › app › render.zig") != null);
+    app.cfg.editor.breadcrumb = false;
+    const off = try screenText(&app);
+    defer t.allocator.free(off);
+    try t.expect(std.mem.indexOf(u8, off, "src › app › render.zig") == null);
+}
+
+test "ui toggles: expand_indicator and workspace dots change the tree rail" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    try tmp.dir.createDirPath(t.io, "sub");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "sub/a.txt", .data = "x" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = buf[0..n], .cols = 60, .rows = 10 });
+    defer app.deinit();
+    app.cfg.ui.show_workspace_dots = true;
+    const chev = try screenText(&app);
+    defer t.allocator.free(chev);
+    try t.expect(std.mem.indexOf(u8, chev, "\u{f47c} sub") != null);
+    try t.expect(std.mem.indexOf(u8, chev, "●") != null);
+    app.cfg.ui.expand_indicator = .triangle;
+    app.cfg.ui.show_workspace_dots = false;
+    const tri = try screenText(&app);
+    defer t.allocator.free(tri);
+    try t.expect(std.mem.indexOf(u8, tri, "▾ sub") != null);
+    try t.expect(std.mem.indexOf(u8, tri, "●") == null);
+    // the toggle runners flip the fields
+    try command.run(&app, .{ .static = .@"view.toggle_workspace_dots" });
+    try t.expect(app.cfg.ui.show_workspace_dots);
+    try command.run(&app, .{ .static = .@"view.toggle_relative_numbers" });
+    try t.expect(app.cfg.ui.relative_line_numbers);
+    try command.run(&app, .{ .static = .@"view.toggle_color_column" });
+    try t.expectEqual(@as(u16, 80), app.cfg.ui.color_column);
 }

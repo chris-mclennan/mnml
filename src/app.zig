@@ -36,6 +36,8 @@ const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
 const snippets = @import("app/snippets.zig");
 const md_preview = @import("app/md_preview.zig");
+const image = @import("image/root.zig");
+const image_pane = @import("app/image_pane.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
 const ex = @import("app/ex.zig");
@@ -157,6 +159,10 @@ pub const toast_ttl_ms: i64 = 4000;
 
 pub const PromptPurpose = union(enum) {
     goto_line,
+    /// The statusline indent chip: a new `editor.tab_width`.
+    tab_width,
+    /// `view.image_open`: a path to open as `Pane.image`.
+    image_open,
     replace,
     filter_shell,
     new_todo,
@@ -249,6 +255,8 @@ pub const ConfirmPurpose = union(enum) {
     quit,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
+    /// `workspace.review_trust` on a trusted workspace: Keep / Forget.
+    review_trust,
     /// Install the missing tool (`runners.zig`); the payload indexes the installer table.
     install_tool: u16,
     /// A git yes/no; `git.State.confirm` holds the payload.
@@ -392,7 +400,10 @@ pub const Overlay = union(enum) {
         switch (self.*) {
             .none, .which_key, .info, .wizard => {},
             .settings => |*s| s.deinit(gpa),
-            .menu => |*m| gpa.free(m.items),
+            .menu => |*m| {
+                m.closeSub(gpa);
+                gpa.free(m.items);
+            },
             .prompt => |*p| {
                 Prompt.deinit(&p.state, gpa);
                 if (p.title_owned) |t| gpa.free(t);
@@ -429,6 +440,31 @@ pub const MenuState = struct {
     cursor: usize = 0,
     /// Where the keyboard goes back to when the menu closes.
     return_focus: FocusId,
+    /// The `+` menu: rows can be pinned / hidden (`→` on a leaf row
+    /// opens the curation submenu; the kebab at the row's end too).
+    curatable: bool = false,
+    /// The open child menu, if any — its rows are a gpa copy.
+    sub: ?SubMenu = null,
+
+    pub const SubMenu = struct {
+        /// The parent row it hangs off.
+        parent: usize,
+        items: []command.MenuItem,
+        cursor: usize = 0,
+        /// Where the frame painted it (`drawMenu`), for a click.
+        rect: @import("ui/rect.zig") = .{},
+    };
+
+    pub fn closeSub(m: *MenuState, gpa: Allocator) void {
+        if (m.sub) |sub| gpa.free(sub.items);
+        m.sub = null;
+    }
+
+    /// The row the keyboard is on: the child's when one is open.
+    pub fn focusedItem(m: *const MenuState) ?command.MenuItem {
+        if (m.sub) |sub| return if (sub.cursor < sub.items.len) sub.items[sub.cursor] else null;
+        return if (m.cursor < m.items.len) m.items[m.cursor] else null;
+    }
 };
 
 /// The find bar docked under the active pane while it is open.
@@ -514,6 +550,22 @@ pub const Toast = struct {
     id: ?[]u8 = null,
 };
 
+/// How long the Undo chip stays offered.
+pub const undo_chip_ttl_ms: i64 = 10_000;
+
+/// The Undo chip: what a click puts back.
+pub const UndoChip = struct {
+    /// Owned: `closed 3 tabs`.
+    label: []u8,
+    action: Action,
+    expires_ms: i64,
+
+    pub const Action = union(enum) {
+        /// `buffer.reopen` this many times.
+        reopen: usize,
+    };
+};
+
 /// Tab-completion state on the `:` line: the candidates for the prefix
 /// typed, and which one is showing.
 pub const CmdComplete = struct {
@@ -590,6 +642,9 @@ pub const App = struct {
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
     hover: ?struct { x: u16, y: u16 } = null,
+    /// The pointer got here by moving, not by a press: the hover
+    /// tooltip and the rail's info box read this (`discovery.zig`).
+    hover_live: bool = false,
     /// The mouse gesture in flight, press to release.
     drag: ?Drag = null,
     last_click: ?LastClick = null,
@@ -617,6 +672,24 @@ pub const App = struct {
     keymap: keymap.Keymap,
     chord: ChordChain = .{},
     toasts: std.ArrayListUnmanaged(Toast) = .empty,
+    /// The toast a right-click menu was opened on (an index into
+    /// `toasts`); `toast.dismiss_clicked` / `copy_clicked` read it.
+    toast_ctx: ?usize = null,
+    /// The Undo chip beside the toast stack (`armUndo`): one click puts
+    /// a destructive action back, a right-click drops the offer.
+    undo_chip: ?UndoChip = null,
+    /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /
+    /// `plus_menu_hidden` and written back there (owned ids).
+    plus_pinned: std.ArrayListUnmanaged([]u8) = .empty,
+    plus_hidden: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The command a curation submenu was opened on (`menu.pin_row`…).
+    menu_ctx: ?command.CommandId = null,
+    /// How images reach the terminal (`image.detect`, set by the loop;
+    /// `.none` headless — the text fallback paints instead).
+    image_transport: image.Transport = .none,
+    /// What this frame wants drawn over its cells (frame arena; reset
+    /// at the top of `render`).
+    image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
     find_bar: ?FindBarState = null,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
@@ -778,6 +851,11 @@ pub const App = struct {
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
+        // `ui.right_panel_visible` / `ui.right_panel_width` seed the slot;
+        // a restored session (the `startup` hook) then overrides both.
+        app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
+        if (app.cfg.ui.right_panel_visible) app.right_panel = .todos;
+        try app.seedPlusMenu();
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();
@@ -814,6 +892,7 @@ pub const App = struct {
         const style = styleOf(self.cfg.editor.input_style);
         if (style != self.input_style) try self.setInputStyle(style);
         self.tree.width = self.cfg.ui.tree_width;
+        try self.seedPlusMenu();
         try self.toastConfigDiagnostics();
         try self.applyTheme();
         try script_api.rebind(self);
@@ -927,6 +1006,11 @@ pub const App = struct {
         }
         for (self.toasts.items) |t| freeToast(gpa, t);
         self.toasts.deinit(gpa);
+        if (self.undo_chip) |u| gpa.free(u.label);
+        for (self.plus_pinned.items) |p| gpa.free(p);
+        self.plus_pinned.deinit(gpa);
+        for (self.plus_hidden.items) |p| gpa.free(p);
+        self.plus_hidden.deinit(gpa);
         self.messages.deinit(gpa);
         self.harpoon.deinit(gpa);
         self.file_clipboard.deinit(gpa);
@@ -1072,6 +1156,51 @@ pub const App = struct {
         self.toasts.clearRetainingCapacity();
     }
 
+    /// `ui.plus_menu_pinned` / `plus_menu_hidden` → the runtime lists.
+    pub fn seedPlusMenu(self: *App) Allocator.Error!void {
+        for (self.plus_pinned.items) |p| self.gpa.free(p);
+        self.plus_pinned.clearRetainingCapacity();
+        for (self.plus_hidden.items) |p| self.gpa.free(p);
+        self.plus_hidden.clearRetainingCapacity();
+        for (self.cfg.ui.plus_menu_pinned) |id| try self.plus_pinned.append(self.gpa, try self.gpa.dupe(u8, id));
+        for (self.cfg.ui.plus_menu_hidden) |id| try self.plus_hidden.append(self.gpa, try self.gpa.dupe(u8, id));
+    }
+
+    // ─── the Undo chip ───
+
+    /// Offer to put a destructive action back for `undo_chip_ttl_ms`.
+    /// A newer offer replaces an older one.
+    pub fn armUndo(self: *App, action: UndoChip.Action, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+        const label = try std.fmt.allocPrint(self.gpa, fmt, args);
+        errdefer self.gpa.free(label);
+        self.dropUndo();
+        self.undo_chip = .{ .label = label, .action = action, .expires_ms = self.now_ms + undo_chip_ttl_ms };
+        self.needs_render = true;
+    }
+
+    pub fn dropUndo(self: *App) void {
+        if (self.undo_chip) |u| self.gpa.free(u.label);
+        self.undo_chip = null;
+        self.needs_render = true;
+    }
+
+    /// The chip was clicked: run the action, then drop the chip.
+    pub fn takeUndo(self: *App) Allocator.Error!void {
+        const chip = self.undo_chip orelse return;
+        const action = chip.action;
+        self.dropUndo();
+        switch (action) {
+            .reopen => |n| {
+                var i: usize = 0;
+                while (i < n) : (i += 1) command.run(self, .{ .static = .@"buffer.reopen" }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => break,
+                };
+                self.toast("reopened {d} tab(s)", .{i});
+            },
+        }
+    }
+
     // ─── the ex bridge the dyn registry uses ───
 
     pub fn runEx(self: *App, line: []const u8) command.CommandError!void {
@@ -1118,6 +1247,8 @@ pub const App = struct {
                 else => {},
             }
         }
+        // An image opens in the viewer, replacing the last glanced-at one.
+        if (image.isImagePath(path)) return image_pane.open(self, path);
         const is_md = md_preview.isMarkdownPath(path);
         if (is_md and self.cfg.ui.markdown_opens_rendered and !self.cfg.ui.auto_md_preview and self.panes.findPath(path) == null) {
             return md_preview.open(self, path, .here, null);
@@ -1555,6 +1686,7 @@ pub const App = struct {
                 self.needs_render = true;
             } else i += 1;
         }
+        if (self.undo_chip) |u| if (now >= u.expires_ms) self.dropUndo();
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
@@ -1601,6 +1733,7 @@ pub const App = struct {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
         }
+        if (self.undo_chip) |u| next = @min(next orelse std.math.maxInt(i64), u.expires_ms);
         return next;
     }
 
@@ -1656,6 +1789,16 @@ test {
     _ = @import("app/pane.zig");
     _ = @import("app/outline.zig");
     _ = @import("app/md_preview.zig");
+    _ = @import("app/image_pane.zig");
+    _ = @import("app/discovery.zig");
+    _ = @import("app/workspace_trust.zig");
+    _ = @import("image/root.zig");
+    _ = @import("image/kitty.zig");
+    _ = @import("image/iterm2.zig");
+    _ = @import("image/sixel.zig");
+    _ = @import("image/painter.zig");
+    _ = @import("ui/tooltip.zig");
+    _ = @import("ui/menu_glyph.zig");
     _ = @import("app/snippets.zig");
     _ = @import("app/sticky.zig");
     _ = @import("ui/outline_view.zig");
