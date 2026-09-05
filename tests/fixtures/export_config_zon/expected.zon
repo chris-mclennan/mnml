@@ -1,0 +1,410 @@
+// mnml config — converted from config.toml by `mnml export-config-zon`.
+// Keys that could not be placed are listed at the end under `unmigrated`.
+.{
+    // ── editor ─────────────────────────────────────────────────────────────
+    .editor = .{
+        // .vim | .standard
+        .input_style = .vim,
+        // Spaces per tab stop.
+        .tab_width = 2,
+        // vim's timeoutlen; clamped to 100..5000
+        .chord_timeout_ms = 300,
+        // .auto | .always | .never
+        .wheel_moves_cursor = .always,
+        // .off | .gentle | .normal | .fast
+        .scroll_accel = .gentle,
+    },
+
+    // ── ui ─────────────────────────────────────────────────────────────────
+    .ui = .{
+        // any theme name; an open set
+        .theme = "gruvbox",
+        // clamped to 10..80
+        .tree_width = 34,
+        // .auto | .manual
+        .sessions_sort = .manual,
+        // .newest | .oldest | .name | .name_desc
+        .todos_sort = .name_desc,
+        // .{} = the built-in order
+        .statusline_segment_order = .{ "jira", "clock" },
+        // .center | .top
+        .picker_position = .top,
+        // The activity-bar icon strip. Omit to keep the three built-ins (browser, claude_code, codex); set it to replace them.
+        .integration_icons = .{
+            .{
+                // Integration id.
+                .id = "jira",
+                // Nerd Font glyph.
+                .glyph = "\u{F1B0}",
+                // Show the chip.
+                .enabled = true,
+                // Also show it in the palette bar.
+                .in_palette_bar = false,
+            },
+            .{
+                // Integration id.
+                .id = "codex",
+                // Nerd Font glyph.
+                .glyph = "\u{F1E01}",
+                // Command id the click fires.
+                .command = "ai.codex",
+            },
+        },
+        // .auto | .expanded | .compact
+        .top_bar_cluster_mode = .compact,
+        // .builtin | .glow | .pandoc | .{ .custom = "cmd" } (exec-bearing)
+        .md_preview_engine = .{ .custom = "glow -s dark" },
+    },
+
+    // ── session ────────────────────────────────────────────────────────────
+    .session = .{
+        // Restore the last session's panes on open.
+        .restore = false,
+    },
+
+    // ── ipc ────────────────────────────────────────────────────────────────
+    .ipc = .{
+        // also dump screen.txt every frame
+        .write_screen = true,
+    },
+
+    // ── keys ───────────────────────────────────────────────────────────────
+    // One line per binding: chord → command id. "" / "none" / "unbound" removes a default. .global applies to both profiles; .vim and .standard on top of it.
+    .keys = .{
+        // Bindings for both profiles.
+        .global = .{
+            .@"ctrl+p" = "picker.files",
+            .@"ctrl+shift+p" = "none",
+        },
+        // Bindings on top of .global in the vim profile.
+        .vim = .{
+            .@"g d" = "lsp.definition",
+            .@"space f f" = "picker.files",
+        },
+        // Bindings on top of .global in the standard profile.
+        .standard = .{ .@"ctrl+b" = "tree.toggle" },
+    },
+
+    // ── lsp ────────────────────────────────────────────────────────────────
+    // One entry per server. .cmd/.args are exec-bearing (stripped from an untrusted workspace; .extensions etc. still apply). .settings and .initialization_options are forwarded verbatim as JSON.
+    .lsp = .{
+        .rust = .{
+            // null = mnml's built-in default
+            .cmd = "rust-analyzer",
+            // File extensions this server handles.
+            .extensions = .{ "rs" },
+            // Files that mark a project root.
+            .root_markers = .{ "Cargo.toml" },
+            // Forwarded verbatim as workspace/didChangeConfiguration.
+            .settings = .{
+                .cargo = .{
+                    .allFeatures = true,
+                    .features = .{ "a", "b" },
+                },
+            },
+            // Forwarded verbatim as initialize.initializationOptions.
+            .initialization_options = .{
+                .lens = .{
+                    .enable = false,
+                    .run = 1,
+                },
+            },
+        },
+    },
+
+    // ── ai ─────────────────────────────────────────────────────────────────
+    .ai = .{
+        // legacy; .auto | .api | .sub | .off
+        .backend = .sub,
+        // Per-product backend; wins over .backend.
+        .routing = .{
+            // wins over .backend
+            .claude = .{
+                // .auto | .api | .sub | .off
+                .backend = .api,
+            },
+        },
+        // Inline AI completions in the editor.
+        .inline_suggestions = false,
+        // Show every Claude account on the statusline chip.
+        .claude_show_all_accounts = true,
+        // kept verbatim for the AI subsystems
+        .claude = .{
+            .accounts = .{
+                .{
+                    .active = true,
+                    .name = "work",
+                    .token_path = "work.json",
+                },
+            },
+        },
+        // kept verbatim for the AI subsystems
+        .suggest_backend = "claude-code",
+    },
+
+    // ── tools ──────────────────────────────────────────────────────────────
+    // Forwarded verbatim to integrations; mnml reads nothing here.
+    .tools = .{
+        .gh = .{ .path = "/opt/homebrew/bin/gh" },
+    },
+
+    // ── http ───────────────────────────────────────────────────────────────
+    .http = .{
+        // name of the env in .env files
+        .default_env = "dev",
+        // .hidden (.rqst/) | .workspace
+        .collection_root = .workspace,
+        // Pretty-print a response body.
+        .auto_format_body = false,
+    },
+
+    // ── ws ─────────────────────────────────────────────────────────────────
+    .ws = .{
+        // Sec-WebSocket-Protocol values offered on connect.
+        .subprotocols = .{ "graphql-ws" },
+        // Seconds between keep-alive pings.
+        .ping_interval_secs = 15,
+    },
+
+    // ── sonos ──────────────────────────────────────────────────────────────
+    .sonos = .{
+        // Look for a Sonos system.
+        .enabled = false,
+        // .never | .hover | .always
+        .chip_label = .hover,
+    },
+
+    // ── git_graph ──────────────────────────────────────────────────────────
+    .git_graph = .{
+        // Columns between graph lanes.
+        .lane_spacing = 2,
+    },
+
+    // ── tasks ──────────────────────────────────────────────────────────────
+    .tasks = .{
+        .build = .{
+            // Shell command, run under $SHELL -c.
+            .cmd = "cargo build",
+        },
+        .@"test" = .{
+            // Shell command, run under $SHELL -c.
+            .cmd = "cargo test",
+            // Working directory; null = the workspace.
+            .cwd = "crates/core",
+        },
+    },
+
+    // ── startup ────────────────────────────────────────────────────────────
+    .startup = .{
+        // task names to run on open (exec-bearing)
+        .tasks = .{ "build" },
+        // Panes to open. The first entry needs no .split; every later one does. .kind = .pty runs .cmd under $SHELL -c (exec-bearing).
+        .layout = .{
+            .{
+                // .editor | .pty
+                .kind = .editor,
+                // .editor — the file to open
+                .path = "README.md",
+            },
+            .{
+                // .editor | .pty
+                .kind = .pty,
+                // .pty — the command to run
+                .cmd = "cargo watch",
+                // .right | .down; required after the first entry
+                .split = .right,
+                // percent of the parent, 1..99
+                .ratio = 40,
+            },
+        },
+        // "~/code/mnml"; ~ is expanded
+        .default_workspace = "~/code/mnml",
+    },
+
+    // ── snippets ───────────────────────────────────────────────────────────
+    // Per-scope snippet bodies.
+    .snippets = .{
+        // Scope: a language name, or `all`.
+        .all = .{
+            // Body; $1 … are tab stops, $0 the final cursor.
+            .todo = "// TODO: $0",
+        },
+        // Scope: a language name, or `all`.
+        .rust = .{
+            // Body; $1 … are tab stops, $0 the final cursor.
+            .@"fn" = "fn $1($2) {\n    $0\n}",
+        },
+    },
+
+    // ── abbr ───────────────────────────────────────────────────────────────
+    .abbr = .{
+        // Typed abbreviation → expansion.
+        .teh = "the",
+    },
+
+    // ── formatters ─────────────────────────────────────────────────────────
+    .formatters = .{
+        .rs = .{
+            // argv; {file} becomes the workspace-relative path
+            .cmd = .{ "rustfmt --edition 2024" },
+        },
+        .zig = .{
+            // argv; {file} becomes the workspace-relative path
+            .cmd = .{ "zig", "fmt", "--stdin" },
+        },
+    },
+
+    // ── linters ────────────────────────────────────────────────────────────
+    .linters = .{
+        .py = .{
+            // argv; {file} becomes the workspace-relative path
+            .cmd = .{ "ruff check" },
+        },
+        .sh = .{
+            // argv; {file} becomes the workspace-relative path
+            .cmd = .{ "shellcheck", "-f", "gcc" },
+            // .vimgrep (default, path:line:col: msg) | .eslint | .tsc | .ruff | .shellcheck | .pattern
+            .parser = .shellcheck,
+        },
+    },
+
+    // ── dap ────────────────────────────────────────────────────────────────
+    .dap = .{
+        .lldb = .{
+            // The adapter binary (exec-bearing).
+            .cmd = "lldb-dap",
+            // Arguments for .cmd.
+            .args = .{ "--port", "0" },
+            // verbatim — the launch request arguments
+            .launch = .{
+                .env = .{ .RUST_LOG = "debug" },
+                .program = "${workspaceFolder}/target/debug/mnml",
+                .stopOnEntry = false,
+            },
+        },
+    },
+
+    // ── browser ────────────────────────────────────────────────────────────
+    .browser = .{
+        // Launch Chrome without a window.
+        .headless = true,
+        // .workspace | .shared | .ephemeral
+        .profile_mode = .ephemeral,
+    },
+
+    // ── ci ─────────────────────────────────────────────────────────────────
+    .ci = .{
+        // "codebuild" …
+        .provider = "codebuild",
+        // CI project name.
+        .project = "mnml",
+        // Provider region.
+        .region = "us-east-1",
+    },
+
+    // ── integrations ───────────────────────────────────────────────────────
+    .integrations = .{
+        // Auto-update git-installed integrations.
+        .auto_update_git = true,
+    },
+
+    // ── workspaces ─────────────────────────────────────────────────────────
+    // Workspaces the picker offers.
+    .workspaces = .{
+        .{
+            // Display name.
+            .name = "mnml",
+            // Root directory; ~ is expanded.
+            .path = "~/Projects/mnml",
+            // Picker group label.
+            .group = "personal",
+        },
+        .{
+            // Root directory; ~ is expanded.
+            .path = "~/Projects/other",
+        },
+    },
+
+    // ── marketplace ────────────────────────────────────────────────────────
+    .marketplace = .{
+        // prepend mnml's own sources
+        .use_defaults = false,
+        // Extra catalog sources — a tagged union per entry.
+        .sources = .{
+            .{
+                .crates_keyword = .{
+                    // Source id.
+                    .id = "crates.io",
+                    // crates.io keyword to list.
+                    .keyword = "mnml-integration",
+                },
+            },
+            .{
+                .github_monorepo_apps = .{
+                    // owner/repo on GitHub.
+                    .repo = "me/mono",
+                },
+            },
+        },
+        // Show the Dev tab.
+        .show_dev_tab = true,
+    },
+
+    // ── cloud_run ──────────────────────────────────────────────────────────
+    .cloud_run = .{
+        // Saved defaults for the Cloud Agents quick-fire flow.
+        .defaults = .{
+            // Agent id.
+            .agent_id = "agent-1",
+            // Model id.
+            .model = "claude-sonnet-4",
+        },
+    },
+
+    // ── jira ───────────────────────────────────────────────────────────────
+    .jira = .{
+        // MNML_JIRA_DOMAIN overrides
+        .domain = "example.atlassian.net",
+        // MNML_JIRA_TICKET_PREFIX overrides
+        .ticket_prefix = "TE",
+    },
+
+    // ── cloud_agents ───────────────────────────────────────────────────────
+    .cloud_agents = .{
+        // MNML_CLOUD_AGENTS_REGION overrides
+        .region = "us-east-1",
+        // Enable the managed-agents flow.
+        .managed_agents_enabled = true,
+    },
+}
+
+// unmigrated:
+// note: ui.integration_icon[1]: dropped — "slack" is a retired integration
+// note: ui.coverage_chip_mode: not one of .both | .feature | .code | .ticker
+// note: ai.claude_show_all_accounts = "ticker": became `true`; the 0.2.x display mode has no bool form
+// note: ai.claude_meter_mode: not one of .off | .compact | .ticker
+// note: linters.py.parser: not one of .vimgrep | .eslint | .tsc | .ruff | .shellcheck | .pattern
+// note: marketplace.source[2]: type is not one of crates_keyword | github_launcher_folder | github_monorepo_apps
+// note: marketplace.source[2] = { tag = "mnml", type = "npm_tag" }
+// mode = "standard"
+//
+// [ai]
+// claude_meter_mode = "both"
+//
+// [[github.repos]]
+// owner = "me"
+// repo = "hello"
+//
+// [keys.emacs]
+// "ctrl+x" = "app.quit"
+//
+// [linters.py]
+// parser = "flake8"
+//
+// [playwright.docdb]
+// collection = "TestExecutions"
+// database = "Playwright"
+//
+// [ui]
+// coverage_chip_mode = "sideways"
+// launcher_tooltip = "legacy key"

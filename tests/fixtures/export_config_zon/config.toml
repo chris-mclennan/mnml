@@ -1,0 +1,212 @@
+# Fixture for `mnml export-config-zon` — every section, every transform.
+mode = "standard"
+
+[editor]
+input_style = "vim"
+tab_width = 2
+chord_timeout_ms = 300
+wheel_moves_cursor = "always"
+scroll_accel = "gentle"
+
+[ui]
+theme = "gruvbox"
+tree_width = 34
+todos_sort = "name_desc"
+sessions_sort = "manual"
+statusline_segment_order = ["jira", "clock"]
+picker_position = "top"
+md_preview_engine = "custom:glow -s dark"
+coverage_chip_mode = "sideways"
+top_bar_cluster_mode = "compact"
+launcher_tooltip = "legacy key"
+
+[[ui.integration_icon]]
+id = "jira"
+glyph = "\uF1B0"
+enabled = true
+in_palette_bar = false
+
+[[ui.integration_icon]]
+id = "slack"
+enabled = true
+
+[[ui.integration_icon]]
+id = "codex"
+glyph = "✻"
+command = "ai.codex"
+
+[session]
+restore = false
+
+[ipc]
+write_screen = true
+
+[keys.global]
+"ctrl+p" = "picker.files"
+"ctrl+shift+p" = "none"
+
+[keys.vim]
+"space f f" = "picker.files"
+"g d" = "lsp.definition"
+
+[keys.standard]
+"ctrl+b" = "tree.toggle"
+
+[keys.emacs]
+"ctrl+x" = "app.quit"
+
+[lsp.rust]
+cmd = "rust-analyzer"
+extensions = ["rs"]
+root_markers = ["Cargo.toml"]
+
+[lsp.rust.settings.cargo]
+allFeatures = true
+features = ["a", "b"]
+
+[lsp.rust.initialization_options]
+lens = { enable = false, run = 1 }
+
+[ai]
+backend = "cli"
+inline_suggestions = false
+claude_show_all_accounts = "ticker"
+claude_meter_mode = "both"
+suggest_backend = "claude-code"
+
+[ai.routing.claude]
+backend = "api"
+
+[[ai.claude.accounts]]
+name = "work"
+token_path = "work.json"
+active = true
+
+[tools]
+gh = { path = "/opt/homebrew/bin/gh" }
+
+[http]
+default_env = "dev"
+collection_root = "in_tree"
+auto_format_body = false
+
+[ws]
+subprotocols = ["graphql-ws"]
+ping_interval_secs = 15
+
+[sonos]
+enabled = false
+chip_label = "hover"
+
+[git_graph]
+lane_spacing = 2
+
+[tasks.build]
+cmd = "cargo build"
+
+[tasks.test]
+cmd = "cargo test"
+cwd = "crates/core"
+
+[startup]
+tasks = ["build"]
+default_workspace = "~/code/mnml"
+
+[[startup.layout]]
+kind = "editor"
+path = "README.md"
+
+[[startup.layout]]
+kind = "pty"
+cmd = "cargo watch"
+split = "right"
+ratio = 40
+
+[snippets.rust]
+fn = "fn $1($2) {\n    $0\n}"
+
+[snippets.all]
+"todo" = "// TODO: $0"
+
+[abbr]
+teh = "the"
+
+[formatters.rs]
+cmd = "rustfmt --edition 2024"
+
+[formatters.zig]
+cmd = ["zig", "fmt", "--stdin"]
+
+[linters.sh]
+cmd = ["shellcheck", "-f", "gcc"]
+parser = "shellcheck"
+
+[linters.py]
+cmd = "ruff check"
+parser = "flake8"
+
+[dap.lldb]
+cmd = "lldb-dap"
+args = ["--port", "0"]
+
+[dap.lldb.launch]
+program = "${workspaceFolder}/target/debug/mnml"
+stopOnEntry = false
+env = { RUST_LOG = "debug" }
+
+[browser]
+headless = true
+profile_mode = "ephemeral"
+
+[ci]
+provider = "codebuild"
+project = "mnml"
+region = "us-east-1"
+
+[integrations]
+auto_update_git = true
+
+[[workspaces]]
+name = "mnml"
+path = "~/Projects/mnml"
+group = "personal"
+
+[[workspaces]]
+path = "~/Projects/other"
+
+[marketplace]
+use_defaults = false
+show_dev_tab = true
+
+[[marketplace.source]]
+type = "crates_keyword"
+id = "crates.io"
+keyword = "mnml-integration"
+
+[[marketplace.source]]
+type = "github_monorepo_apps"
+repo = "me/mono"
+
+[[marketplace.source]]
+type = "npm_tag"
+tag = "mnml"
+
+[cloud_run.defaults]
+agent_id = "agent-1"
+model = "claude-sonnet-4"
+
+[jira]
+domain = "example.atlassian.net"
+ticket_prefix = "TE"
+
+[cloud_agents]
+region = "us-east-1"
+managed_agents_enabled = true
+
+[playwright.docdb]
+database = "Playwright"
+collection = "TestExecutions"
+
+[[github.repos]]
+owner = "me"
+repo = "hello"
