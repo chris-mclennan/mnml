@@ -72,6 +72,7 @@ const request_pane = @import("app/request_pane.zig");
 const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
 const http_parse = @import("http/parse.zig");
+const messages = @import("app/messages.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -530,6 +531,8 @@ pub const App = struct {
     last_watch_ms: i64 = 0,
     /// Frames since something changed; the loop skips idle renders.
     needs_render: bool = true,
+    /// The toast history (`:messages`).
+    messages: messages.State = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -704,6 +707,7 @@ pub const App = struct {
         }
         for (self.toasts.items) |t| freeToast(gpa, t);
         self.toasts.deinit(gpa);
+        self.messages.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
         var it = self.abbrevs.iterator();
@@ -793,6 +797,7 @@ pub const App = struct {
     pub fn toastLevel(self: *App, level: ToastLevel, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         const s = try std.fmt.allocPrint(self.gpa, fmt, args);
         errdefer self.gpa.free(s);
+        try self.messages.record(self.gpa, s, level, self.now_ms);
         if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = self.now_ms + toast_ttl_ms });
         self.needs_render = true;
@@ -806,6 +811,7 @@ pub const App = struct {
         errdefer self.gpa.free(s);
         const owned_id = try self.gpa.dupe(u8, id);
         errdefer self.gpa.free(owned_id);
+        try self.messages.record(self.gpa, text, level, self.now_ms);
         if (self.toasts.items.len >= max_toasts) freeToast(self.gpa, self.toasts.orderedRemove(0));
         try self.toasts.append(self.gpa, .{ .text = s, .level = level, .expires_ms = std.math.maxInt(i64), .id = owned_id });
         self.needs_render = true;
@@ -1472,6 +1478,7 @@ test {
     _ = @import("ui/picker.zig");
     _ = @import("ui/fuzzy.zig");
     _ = @import("ui/editor_view.zig");
+    _ = @import("app/messages.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

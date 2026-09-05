@@ -27,6 +27,7 @@ const context = @import("../ui/context.zig");
 const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
+const messages = @import("messages.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const prompt_mod = @import("../ui/prompt.zig");
 const confirm_mod = @import("../ui/confirm.zig");
@@ -636,12 +637,16 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.
     const branch_seg = try git_app.statusSegment(app, ui.arena);
     const meter_seg = try ai_app.meterSegment(app, ui.arena);
-    const extra: usize = @as(usize, @intFromBool(branch_seg != null)) + @intFromBool(lsp_seg != null) + @intFromBool(meter_seg != null);
+    // Then the unread-messages bell (`:messages`), nearest the input style.
+    const bell_seg = try messages.bellSegment(app, ui.arena, ui.ascii);
+    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, bell_seg };
+    var extra: usize = 0;
+    for (maybes) |m| extra += @intFromBool(m != null);
     if (extra > 0) {
         const segs = try ui.arena.alloc([]const u8, info.right.len + extra);
         @memcpy(segs[0..info.right.len], info.right);
         var n = info.right.len;
-        for ([_]?[]const u8{ branch_seg, lsp_seg, meter_seg }) |maybe| if (maybe) |seg| {
+        for (maybes) |maybe| if (maybe) |seg| {
             segs[n] = seg;
             n += 1;
         };
