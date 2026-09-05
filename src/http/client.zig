@@ -126,7 +126,8 @@ pub const Response = struct {
 pub const Outcome = union(enum) {
     ok: Response,
     err: []u8,
-    /// A handler adopted the response; nothing left to free.
+    /// A handler adopted the response; nothing left to free. Also what a
+    /// streamed send returns: the body went to the sink chunk by chunk.
     moved,
 
     pub fn deinit(self: *Outcome, gpa: Allocator) void {
@@ -150,9 +151,35 @@ pub const Outcome = union(enum) {
     }
 };
 
+/// What the response head said, handed to a `Stream` sink before the
+/// body is read so the caller can decide whether to stream it.
+pub const HeadInfo = struct {
+    status: u16,
+    status_text: []const u8,
+    headers: []const Header,
+    /// `content-type: text/event-stream`.
+    is_sse: bool,
+    /// `transfer-encoding: chunked`, or no length at all (read to close).
+    chunked: bool,
+};
+
+/// A progressive reader: the sink sees the head, decides (`onHead`
+/// returns true to stream), gets every chunk as it lands, then the
+/// timing. A streamed send returns `Outcome.moved` — the bytes went to
+/// the sink, not into a `Response`.
+pub const Stream = struct {
+    ctx: *anyopaque,
+    onHead: *const fn (ctx: *anyopaque, head: HeadInfo) bool,
+    onBytes: *const fn (ctx: *anyopaque, bytes: []const u8) void,
+    onDone: *const fn (ctx: *anyopaque, end: StreamEnd) void,
+};
+
+pub const StreamEnd = struct { timing: Timing, bytes: usize, truncated: bool };
+
 pub const SendOptions = struct {
     /// An extra `Cookie` header from the jar, unless the request has one.
     cookie: ?[]const u8 = null,
+    stream: ?Stream = null,
 };
 
 /// Fire `req` and wait for the whole response. Never throws for a
@@ -264,6 +291,11 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
     }
     const final_url = try std.fmt.allocPrint(gpa, "{f}", .{request.uri});
     errdefer gpa.free(final_url);
+    const is_sse = blk: {
+        for (headers.items) |h| if (std.ascii.eqlIgnoreCase(h.name, "content-type") and std.ascii.indexOfIgnoreCase(h.value, "text/event-stream") != null) break :blk true;
+        break :blk false;
+    };
+    const chunked = response.head.transfer_encoding == .chunked or (response.head.transfer_encoding == .none and response.head.content_length == null and response.head.status.class() == .success);
 
     const decompress_buffer: []u8 = switch (response.head.content_encoding) {
         .identity => &.{},
@@ -276,11 +308,53 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Sen
     var decompress: std.http.Decompress = undefined;
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
 
+    if (opts.stream) |st| if (st.onHead(st.ctx, .{ .status = status, .status_text = status_text, .headers = headers.items, .is_sse = is_sse, .chunked = chunked })) {
+        // The sink took the head; every read is handed over as it
+        // lands. `fillMore` is one underlying read, so an idle SSE
+        // socket parks here — cancelation (a signal on Threaded)
+        // is what ends it.
+        var total: usize = 0;
+        var truncated = false;
+        while (true) {
+            reader.fillMore() catch |err| switch (err) {
+                error.EndOfStream => break,
+                error.ReadFailed => return response.bodyErr() orelse error.ReadFailed,
+            };
+            const got = reader.buffered();
+            if (got.len == 0) {
+                try io.checkCancel();
+                continue;
+            }
+            if (total < max_body) {
+                const keep = @min(got.len, max_body - total);
+                st.onBytes(st.ctx, got[0..keep]);
+                if (keep < got.len) truncated = true;
+            } else truncated = true;
+            total += got.len;
+            reader.toss(got.len);
+            try io.checkCancel();
+        }
+        const done_at = nowMs(io);
+        // The head's strings were the sink's to copy; on the error paths
+        // above the errdefers release them.
+        gpa.free(status_text);
+        gpa.free(final_url);
+        for (headers.items) |h| {
+            gpa.free(h.name);
+            gpa.free(h.value);
+        }
+        headers.deinit(gpa);
+        st.onDone(st.ctx, .{ .bytes = total, .truncated = truncated, .timing = .{
+            .wait_ms = @intCast(@max(head_at - started, 0)),
+            .receive_ms = @intCast(@max(done_at - head_at, 0)),
+            .total_ms = @intCast(@max(done_at - started, 0)),
+        } });
+        return .moved;
+    };
+
     var sink: Io.Writer.Allocating = .init(gpa);
     defer sink.deinit();
     var truncated = false;
-    var limited = Io.Writer.Allocating.init(gpa);
-    defer limited.deinit();
     _ = reader.streamRemaining(&sink.writer) catch |err| switch (err) {
         error.ReadFailed => return response.bodyErr() orelse error.ReadFailed,
         error.WriteFailed => return error.WriteFailed,
@@ -353,6 +427,51 @@ pub const JobResult = struct {
             .ok => |r| r.status,
             .err, .moved => null,
         };
+    }
+};
+
+// ─── the streaming payload ──────────────────────────────────────────────
+
+/// One `.sse` event: the head, a run of bytes, or the end of the
+/// stream. Built on the gpa by the worker, owned by the event; the
+/// handler adopts the head's strings and the bytes or destroys the box.
+pub const StreamChunk = struct {
+    job: u64,
+    pane: ?u32,
+    kind: union(enum) {
+        head: struct {
+            status: u16,
+            status_text: []u8,
+            headers: []Header,
+            is_sse: bool,
+            chunked: bool,
+        },
+        bytes: []u8,
+        done: struct { timing: Timing, bytes: usize, truncated: bool },
+        /// A transport error after the head (or a cancel).
+        err: []u8,
+    },
+
+    pub fn create(gpa: Allocator, job: u64, pane: ?u32, kind: @FieldType(StreamChunk, "kind")) Allocator.Error!*StreamChunk {
+        const c = try gpa.create(StreamChunk);
+        c.* = .{ .job = job, .pane = pane, .kind = kind };
+        return c;
+    }
+
+    pub fn destroy(self: *StreamChunk, gpa: Allocator) void {
+        switch (self.kind) {
+            .head => |h| {
+                gpa.free(h.status_text);
+                for (h.headers) |x| {
+                    gpa.free(x.name);
+                    gpa.free(x.value);
+                }
+                gpa.free(h.headers);
+            },
+            .bytes, .err => |b| gpa.free(b),
+            .done => {},
+        }
+        gpa.destroy(self);
     }
 };
 

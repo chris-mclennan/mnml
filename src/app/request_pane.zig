@@ -37,10 +37,32 @@ pub const Block = view.Block;
 pub const Field = view.Field;
 const Buf = std.ArrayListUnmanaged(u8);
 
+/// A send whose body is still arriving: the head has landed, `body`
+/// grows with every `.sse` chunk, and the Response block paints it as
+/// it comes. `finish` turns it into the Done response.
+pub const Streaming = struct {
+    job: u64,
+    /// Status, headers, final url; `body` is empty until `finish`.
+    head: Response,
+    body: std.ArrayListUnmanaged(u8) = .empty,
+    is_sse: bool,
+    chunked: bool,
+    /// Complete SSE events so far (blank-line delimited).
+    events: usize = 0,
+    started_ms: i64,
+
+    pub fn deinit(self: *Streaming, gpa: Allocator) void {
+        self.head.deinit(gpa);
+        self.body.deinit(gpa);
+    }
+};
+
 pub const RunState = union(enum) {
     idle,
     /// The job id the worker will answer with.
     sending: u64,
+    /// The head is in; the body is arriving.
+    streaming: Streaming,
     done: Response,
     /// Owned transport error.
     failed: []u8,
@@ -48,10 +70,20 @@ pub const RunState = union(enum) {
     pub fn deinit(self: *RunState, gpa: Allocator) void {
         switch (self.*) {
             .done => |*r| r.deinit(gpa),
+            .streaming => |*st| st.deinit(gpa),
             .failed => |e| gpa.free(e),
             .idle, .sending => {},
         }
         self.* = .idle;
+    }
+
+    /// The job in flight, sending or streaming.
+    pub fn job(self: *const RunState) ?u64 {
+        return switch (self.*) {
+            .sending => |j| j,
+            .streaming => |st| st.job,
+            else => null,
+        };
     }
 };
 
@@ -217,7 +249,43 @@ pub const RequestPane = struct {
     }
 
     pub fn isSending(self: *const RequestPane) bool {
-        return self.state == .sending;
+        return self.state == .sending or self.state == .streaming;
+    }
+
+    pub fn streaming(self: *RequestPane) ?*Streaming {
+        return switch (self.state) {
+            .streaming => |*st| st,
+            else => null,
+        };
+    }
+
+    /// The head landed for `job`: the pane shows it and follows the body.
+    pub fn beginStream(self: *RequestPane, job: u64, head: Response, is_sse: bool, chunked: bool, now_ms: i64) void {
+        self.keepAsPrev();
+        self.state = .{ .streaming = .{ .job = job, .head = head, .is_sse = is_sse, .chunked = chunked, .started_ms = now_ms } };
+        self.resp_view = .{};
+        self.response_tab = .body;
+        self.block = .response;
+    }
+
+    /// A run of body bytes; the view follows the tail.
+    pub fn appendStream(self: *RequestPane, bytes: []const u8) Allocator.Error!void {
+        const st = self.streaming() orelse return;
+        try st.body.appendSlice(self.gpa, bytes);
+        if (st.is_sse) st.events = countSseEvents(st.body.items);
+        self.resp_view.scroll_line = std.math.maxInt(u32) / 2;
+    }
+
+    /// The stream ended: the accumulated body becomes the Done response.
+    pub fn finishStream(self: *RequestPane, timing: client.Timing, truncated: bool) Allocator.Error!void {
+        const st = self.streaming() orelse return;
+        var resp = st.head;
+        resp.body = try st.body.toOwnedSlice(self.gpa);
+        resp.timing = timing;
+        resp.truncated = truncated;
+        self.state = .idle;
+        try self.setResponse(resp);
+        self.resp_view.scroll_line = 0;
     }
 
     /// A response landed (from the wire or a mock). The previous Done
@@ -556,6 +624,21 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
     }
 }
 
+/// Blank-line-delimited events with at least one `data:` line.
+pub fn countSseEvents(body: []const u8) usize {
+    var n: usize = 0;
+    var has_data = false;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |raw| {
+        const l = std.mem.trimEnd(u8, raw, "\r");
+        if (l.len == 0) {
+            if (has_data) n += 1;
+            has_data = false;
+        } else if (std.mem.startsWith(u8, l, "data")) has_data = true;
+    }
+    return n;
+}
+
 fn lineOf(text: []const u8, at: usize) usize {
     var n: usize = 0;
     for (text[0..@min(at, text.len)]) |c| if (c == '\n') {
@@ -667,7 +750,8 @@ fn responseKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
 }
 
 fn clampScroll(rp: *RequestPane) void {
-    const total: u32 = if (rp.response()) |r| @intCast(std.mem.count(u8, r.body, "\n") + 1) else 0;
+    const body: []const u8 = if (rp.response()) |r| r.body else if (rp.streaming()) |st| st.body.items else "";
+    const total: u32 = @intCast(std.mem.count(u8, body, "\n") + 1);
     if (rp.resp_view.scroll_line >= total) rp.resp_view.scroll_line = total -| 1;
 }
 
@@ -807,6 +891,23 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
     const env_name = try http.envName(app, arena);
     const vars = try http.varRows(app, rp, arena, env_name);
     var resp_model: ?view.ResponseModel = null;
+    var stream_info: ?view.StreamInfo = null;
+    if (rp.streaming()) |st| {
+        const r = &st.head;
+        const hs = try arena.alloc(view.Pair, r.headers.len);
+        for (r.headers, 0..) |h, i| hs[i] = .{ .key = h.name, .value = h.value };
+        stream_info = .{ .bytes = st.body.items.len, .events = st.events, .is_sse = st.is_sse, .elapsed_ms = @intCast(@max(app.now_ms - st.started_ms, 0)) };
+        resp_model = .{
+            .status = r.status,
+            .status_text = r.status_text,
+            .headers = hs,
+            .body = st.body.items,
+            .body_bytes = st.body.items.len,
+            .truncated = false,
+            .timing = .{ .wait_ms = 0, .receive_ms = 0, .total_ms = 0 },
+            .cookies = try r.setCookies(arena),
+        };
+    }
     if (rp.response()) |r| {
         const hs = try arena.alloc(view.Pair, r.headers.len);
         for (r.headers, 0..) |h, i| hs[i] = .{ .key = h.name, .value = h.value };
@@ -849,6 +950,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .sending = rp.isSending(),
         .failed = if (rp.state == .failed) rp.state.failed else null,
         .response = resp_model,
+        .stream = stream_info,
         .sent_line = rp.sent_line,
         .response_tab = rp.response_tab,
         .resp_view = &rp.resp_view,

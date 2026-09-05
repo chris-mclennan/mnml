@@ -633,6 +633,7 @@ pub const specs = [_]Spec{
     .{ .id = "http.params_add", .title = "HTTP: add a query parameter (?key=value) to the active Request URL", .group = "http" },
     .{ .id = "http.params_clear", .title = "HTTP: clear all query parameters from the active Request URL", .group = "http" },
     .{ .id = "http.abort", .title = "HTTP: cancel any in-flight bench / sync work", .group = "http" },
+    .{ .id = "http.cancel", .title = "HTTP: cancel the active pane's send — stops a stream where it is", .group = "http" },
     .{ .id = "http.set_method.get", .title = "HTTP: set method = GET", .group = "http" },
     .{ .id = "http.set_method.post", .title = "HTTP: set method = POST", .group = "http" },
     .{ .id = "http.set_method.put", .title = "HTTP: set method = PUT", .group = "http" },
@@ -874,9 +875,9 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "822 specs, unique ids" {
+test "823 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands.
-    try std.testing.expectEqual(@as(usize, 822), specs.len);
+    try std.testing.expectEqual(@as(usize, 823), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

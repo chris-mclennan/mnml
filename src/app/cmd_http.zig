@@ -168,8 +168,12 @@ fn showSchemaErrorsCmd(app: *App) CommandError!void {
     e.buf.markSaved() catch return error.OutOfMemory;
 }
 
+/// What a finished send tells history, whether it landed whole or
+/// streamed in.
+pub const HistoryFacts = struct { method: []const u8, url: []const u8, status: ?u16, elapsed_ms: u64 };
+
 /// One history line per finished send.
-pub fn recordHistory(app: *App, r: *client.JobResult, rp: *RequestPane) !void {
+pub fn recordHistory(app: *App, r: HistoryFacts, rp: *RequestPane) !void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -184,7 +188,7 @@ pub fn recordHistory(app: *App, r: *client.JobResult, rp: *RequestPane) !void {
     try history.append(app.gpa, app.io, app.workspace, global, .{
         .method = r.method,
         .url = r.url,
-        .status = r.status() orelse (if (resp) |x| x.status else null),
+        .status = r.status orelse (if (resp) |x| x.status else null),
         .duration_ms = r.elapsed_ms,
         .body_bytes = if (resp) |x| x.body.len else null,
         .err = if (rp.state == .failed) rp.state.failed else null,
@@ -767,10 +771,12 @@ fn lookupCmd(app: *App) CommandError!void {
 }
 
 fn sendStreamingCmd(app: *App) CommandError!void {
-    // The blocking client reads the whole stream; the events are parsed
-    // afterwards. A progressive display is a later slice.
+    // `fire` streams an event-stream or chunked body on its own; this
+    // asks for the progressive reader whatever the server says.
+    app.http.force_stream = true;
+    errdefer app.http.force_stream = false;
     try command.run(app, .{ .static = .@"http.send" });
-    app.toast("streaming: the body is read to the end, then :sse.parse_active_response splits it", .{});
+    app.http.force_stream = false;
 }
 
 fn copyAiPromptCmd(app: *App) CommandError!void {

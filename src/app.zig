@@ -1317,6 +1317,7 @@ pub const App = struct {
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
             .http => |result| try http_app.handle(self, result),
+            .sse => |chunk| try http_app.handleStream(self, chunk),
             .ws => |wev| try ws_pane.handle(self, wev),
             .cdp => |cev| try browser_pane.handle(self, cev),
             .mount => |mev| try mount_pane.handle(self, mev),

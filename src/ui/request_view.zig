@@ -115,6 +115,9 @@ pub const VarRow = struct { name: []const u8, value: ?[]const u8 };
 
 pub const Timing = struct { wait_ms: u64, receive_ms: u64, total_ms: u64 };
 
+/// A body still arriving: the live counter on the Response header.
+pub const StreamInfo = struct { bytes: usize, events: usize, is_sse: bool, elapsed_ms: u64 };
+
 pub const ResponseModel = struct {
     status: u16,
     status_text: []const u8,
@@ -157,6 +160,9 @@ pub const Model = struct {
     sending: bool,
     failed: ?[]const u8,
     response: ?ResponseModel,
+    /// Set while the response is streaming in; `response` then holds
+    /// the head and the body so far.
+    stream: ?StreamInfo = null,
     /// `GET https://…` as actually sent.
     sent_line: ?[]const u8,
     response_tab: ResponseTab,
@@ -489,10 +495,13 @@ fn drawResponse(ui: Ui, pane: PaneId, r: Rect, m: Model) void {
     if (m.response) |resp| {
         const chip = ui.fmt(" {d} ", .{resp.status});
         const cw = ui.width(chip);
-        const meta = ui.fmt(" {s} · {d} ms · {s}{s} ", .{ resp.status_text, resp.timing.total_ms, fmtBytes(ui, resp.body_bytes), if (resp.truncated) " (truncated)" else "" });
+        const meta = if (m.stream) |st|
+            (if (st.is_sse) ui.fmt(" streaming · {d} event(s) · {s} · {d} ms ", .{ st.events, fmtBytes(ui, st.bytes), st.elapsed_ms }) else ui.fmt(" streaming · {s} received · {d} ms ", .{ fmtBytes(ui, st.bytes), st.elapsed_ms }))
+        else
+            ui.fmt(" {s} · {d} ms · {s}{s} ", .{ resp.status_text, resp.timing.total_ms, fmtBytes(ui, resp.body_bytes), if (resp.truncated) " (truncated)" else "" });
         const metaw = ui.width(meta);
         if (right > x + cw + metaw + 6) {
-            right = ui.putStrRight(right, head.y, metaw, meta, Theme.onBg(t.muted, t.panel_bg.bg));
+            right = ui.putStrRight(right, head.y, metaw, meta, Theme.onBg(if (m.stream != null) t.warn_fg else t.muted, t.panel_bg.bg));
             const cx = right -| cw;
             _ = ui.putStr(cx, head.y, cw, chip, statusStyle(t, resp.status));
             right = cx -| 1;
