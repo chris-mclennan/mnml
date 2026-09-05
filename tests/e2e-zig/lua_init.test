@@ -1,0 +1,29 @@
+# zig-only
+# Lua (D10): a workspace init.lua — the runner's temp workspace is
+# trusted — registers a command, a hook, a statusline segment and a
+# script pane through the mnml table. `script.reload` re-runs the
+# files after the seed lands.
+write .mnml/init.lua "mnml.command{ id = 'hello', title = 'Say hello', run = function() mnml.toast('hello from init.lua') end }\nmnml.on('save_post', function(a) mnml.toast('saved ' .. a.path) end)\nmnml.statusline.segment{ id = 'seg', fn = function() return 'lua-seg' end }\nmnml.command{ id = 'notes', run = function() mnml.pane.open{ title = 'Notes', render = function(w, h) return { { { text = 'NOTES ' .. w, fg = 'accent' } }, 'first note' } end } end }\n"
+write notes.txt "first line"
+command script.reload
+expect screen contains "1 file(s) loaded"
+command user.hello
+expect screen contains "hello from init.lua"
+# The segment is polled on the next tick.
+wait 300
+expect screen contains "lua-seg"
+# The pane renders the script's rows.
+command user.notes
+expect pane Notes
+expect screen contains "NOTES"
+expect screen contains "first note"
+# The save_post hook fires with the path.
+open notes.txt
+type "!"
+key ctrl+s
+expect screen contains "saved notes.txt"
+# The palette-facing id survives a second reload; the pane does not.
+command script.reload
+expect screen lacks "first note"
+command user.hello
+expect screen contains "hello from init.lua"

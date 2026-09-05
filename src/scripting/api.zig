@@ -961,3 +961,47 @@ test "mnml.config.get walks structs, maps, optionals and Dynamic; mnml.workspace
     );
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
+
+test "docs/examples/init.lua loads and its surfaces are all there" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/init.lua", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(src);
+    const lua = app.script();
+    lua.runString(src) catch |err| {
+        std.debug.print("example: {s}\n", .{lua.last_error orelse "?"});
+        return err;
+    };
+    try testing.expect(app.dyn_commands.get("user.hello") != null);
+    try testing.expect(app.dyn_commands.get("user.notes") != null);
+    try testing.expect(app.dyn_commands.get("user.notes_count") != null);
+    try testing.expectEqual(@as(usize, 1), lua.segments.items.len);
+    try testing.expect(lua.findSource("notes") != null);
+    try command.runNamed(&app, "user.hello");
+    try testing.expectEqualStrings("hello from init.lua", app.lastToast().?);
+    // The pane opens, renders the notes, and `x` (on_key) removes one.
+    try command.runNamed(&app, "user.notes");
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "write the manual") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "cut a release") != null);
+    try app.handle(.{ .key = Key.char('x') });
+    try lua.runString("assert(#notes == 1)");
+    // The picker source lists the notes; Enter runs on_accept.
+    try lua.runString("mnml.picker.open('notes')");
+    try testing.expect(app.overlay == .picker);
+    try testing.expectEqual(app_mod.PickerKind.lua, app.overlay.picker.kind);
+    try testing.expectEqual(@as(usize, 1), app.overlay.picker.labels.len);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expectEqualStrings("picked write the manual", app.lastToast().?);
+    try testing.expectEqual(@as(usize, 0), lua.picker_items.items.len);
+    // The segment polls on tick.
+    try app.tick(app.now_ms + 1000);
+    const segs = try lua.segmentTexts(app.frame.allocator(), .right);
+    try testing.expectEqual(@as(usize, 1), segs.len);
+    try testing.expectEqualStrings("notes 1", segs[0]);
+    try testing.expectEqual(@as(i32, 0), lua.L.getTop());
+}
