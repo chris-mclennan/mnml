@@ -439,6 +439,7 @@ test {
     _ = @import("core/command.zig");
     _ = @import("core/panel.zig");
     _ = @import("core/hooks.zig");
+    _ = @import("core/clipboard_os.zig");
     _ = @import("app.zig");
     _ = @import("ipc/root.zig");
     _ = @import("e2e/root.zig");
