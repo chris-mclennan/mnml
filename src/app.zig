@@ -73,6 +73,7 @@ const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
 const mount_pane = @import("app/mount_pane.zig");
 const integrations = @import("app/integrations.zig");
+const marketplace = @import("app/marketplace.zig");
 const http_parse = @import("http/parse.zig");
 const builtin = @import("builtin");
 
@@ -440,6 +441,7 @@ pub const App = struct {
     tasks: tasks_mod.State = .{},
     http: http_app.State,
     integrations: integrations.State,
+    marketplace: marketplace.State = .{},
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -660,6 +662,7 @@ pub const App = struct {
         self.todos.deinit(gpa, self.io);
         self.http.deinit(gpa, self.io);
         self.git.deinit(gpa, self.io);
+        self.marketplace.deinit(gpa, self.io);
         self.dap.deinit(gpa);
         // Panes go before the manifests their mount runners borrow.
         self.panes.deinit();
@@ -1201,6 +1204,7 @@ pub const App = struct {
             .ws => |wev| try ws_pane.handle(self, wev),
             .cdp => |cev| try browser_pane.handle(self, cev),
             .mount => |mev| try mount_pane.handle(self, mev),
+            .marketplace => |r| try marketplace.handle(self, r),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1290,7 +1294,7 @@ pub const App = struct {
             else => {},
         };
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0 or marketplace.busy(self)) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -1376,6 +1380,7 @@ test {
     _ = @import("app/cmd_term.zig");
     _ = @import("app/mount_pane.zig");
     _ = @import("app/integrations.zig");
+    _ = @import("ui/marketplace_view.zig");
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");

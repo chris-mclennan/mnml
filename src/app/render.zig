@@ -66,6 +66,7 @@ const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
+const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
@@ -263,7 +264,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .mount, .integrations => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .mount, .integrations, .marketplace => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -334,6 +335,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
             .mount => |*mp| try mount_pane.draw(app, ui, pr.pane, mp, rect),
             .integrations => |*ip| try integrations.draw(app, ui, pr.pane, ip, rect),
+            .marketplace => |*mk| try marketplace.draw(app, ui, pr.pane, mk, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }

@@ -19,6 +19,7 @@ const http_client = @import("../http/client.zig");
 const ws_pane = @import("../app/ws_pane.zig");
 const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
+const marketplace = @import("../app/marketplace.zig");
 
 pub const PtyId = u32;
 
@@ -87,7 +88,6 @@ pub fn freeAiMsg(gpa: Allocator, msg: AiMsg) void {
 pub const SonosUpdate = struct { _todo: u8 = 0 }; // TODO(sonos)
 pub const NowPlaying = struct { _todo: u8 = 0 }; // TODO(now_playing)
 pub const StatuslineSegment = struct { _todo: u8 = 0 }; // TODO(statusline)
-pub const MarketResult = struct { _todo: u8 = 0 }; // TODO(marketplace)
 pub const IpcCommand = struct { _todo: u8 = 0 }; // TODO(ipc)
 
 pub const AppEvent = union(enum) {
@@ -114,7 +114,8 @@ pub const AppEvent = union(enum) {
     sonos: SonosUpdate,
     now_playing: *NowPlaying,
     statusline: StatuslineSegment,
-    marketplace: *MarketResult,
+    /// A finished marketplace fetch or install. Owned; `marketplace.handle` adopts it.
+    marketplace: *marketplace.Result,
     ipc: IpcCommand,
     /// A mounted integration spoke (or its stream ended). Owned;
     /// `mount_pane.handle` reads it and `destroy`s it on every path.
@@ -154,7 +155,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .cdp => |p| p.destroy(gpa),
         .ws => |p| p.destroy(gpa),
         .now_playing => |p| gpa.destroy(p),
-        .marketplace => |p| gpa.destroy(p),
+        .marketplace => |p| p.destroy(gpa),
         .mount => |p| p.destroy(gpa),
         .key, .mouse, .winsize, .focus, .sse, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }

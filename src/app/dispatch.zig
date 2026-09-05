@@ -56,6 +56,7 @@ const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
 const integrations = @import("integrations.zig");
+const marketplace = @import("marketplace.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
@@ -189,6 +190,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .integrations => |*ip| {
             if (try integrations.handleKey(app, id, ip, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .marketplace => |*mk| {
+            if (try marketplace.handleKey(app, id, mk, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1000,6 +1006,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
+                .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 .editor, .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1248,6 +1255,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         // mount's rows carry the wheel through `.script_hit`.
         .mount => {},
         .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .marketplace => |*mk| marketplace.scrollBy(app, mk, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 

@@ -120,6 +120,7 @@ const runner_tables = .{
     @import("../app/cmd_browser.zig"),
     @import("../app/mount_pane.zig"),
     @import("../app/integrations.zig"),
+    @import("../app/marketplace.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
