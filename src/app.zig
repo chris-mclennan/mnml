@@ -472,6 +472,10 @@ pub const Drag = union(enum) {
     scrollbar: struct { pane: PaneId, grab: u16 },
     /// A dock widget's title bar; `moved` once the pointer left the cell.
     dock: DockDrag,
+    /// A diff pane's split divider.
+    git_divider: PaneId,
+    /// A graph pane's detail divider.
+    graph_divider: PaneId,
 };
 pub const DockDrag = struct { id: u32, x: u16, y: u16, moved: bool = false };
 pub const SelectUnit = enum { char, word, line };
@@ -1741,6 +1745,8 @@ test {
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");
+    _ = @import("git/intraline.zig");
+    _ = @import("git/remote.zig");
     _ = @import("git/client.zig");
     _ = @import("ui/git_status_view.zig");
     _ = @import("ui/diff_view.zig");

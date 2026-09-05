@@ -904,6 +904,18 @@ pub const specs = [_]Spec{
     .{ .id = "git.unstage_all", .title = "Git: unstage everything", .group = "git" },
     .{ .id = "git.discard", .title = "Git: discard changes to the selected file (confirm)", .group = "git" },
     .{ .id = "git.open_file", .title = "Git: open the selected file in an editor", .group = "git" },
+    // Zig-only: the diff pane's views and filter.
+    .{ .id = "git.diff_toggle_view", .title = "Diff: cycle the view (Hunk → Inline → Split)", .group = "git" },
+    .{ .id = "git.diff_filter", .title = "Diff: filter to the hunks containing a string (/)", .group = "git" },
+    // Zig-only: the graph's detail panel, sort and hash-jump; the branch
+    // rail; browse a file / a line / a commit on the remote.
+    .{ .id = "git.graph_detail", .title = "Graph: open the detail panel for the selected commit (tab focuses it)", .group = "git" },
+    .{ .id = "git.graph_sort", .title = "Graph: sort by the next column (graph → date → author → subject)", .group = "git" },
+    .{ .id = "git.graph_jump_hash", .title = "Graph: jump to a commit by hash prefix…", .group = "git" },
+    .{ .id = "git.branch_rail_toggle", .title = "Git: show / hide the branch rail (branches · worktrees · open PRs)", .group = "git" },
+    .{ .id = "git.browse_line", .title = "Git: open the current line on the remote", .group = "git" },
+    .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
+    .{ .id = "git.browse_commit", .title = "Git: open the selected commit (or HEAD) on the remote", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -938,13 +950,15 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "883 specs, unique ids" {
+test "892 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
     // + eighteen file-manager commands + four TODOS row commands
     // + three NOTES row commands + four FINDINGS row commands + ten
     // SESSIONS commands + six dock commands + two lsp-more commands.
-    try std.testing.expectEqual(@as(usize, 883), specs.len);
+    // SESSIONS commands + six dock commands + two diff-view commands
+    // + three browse commands (file / line / commit on the remote).
+    try std.testing.expectEqual(@as(usize, 892), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

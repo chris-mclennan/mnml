@@ -23,6 +23,8 @@ pub const table = .{
     .@"git.diff" = &diffWorktree,
     .@"git.diff_all" = &diffAll,
     .@"git.diff_orig" = &diffOrig,
+    .@"git.diff_toggle_view" = &diffToggleView,
+    .@"git.diff_filter" = &diffFilter,
     .@"git.diff_next_file" = &diffNextFile,
     .@"git.diff_prev_file" = &diffPrevFile,
     .@"git.peek_change" = &peekChange,
@@ -36,9 +38,10 @@ pub const table = .{
     .@"git.discard" = &discard,
     .@"git.open_file" = &openFile,
     .@"git.commit" = &commit,
-    .@"git.ai_commit" = &notInBuild,
-    .@"git.codex_commit" = &notInBuild,
-    .@"git.ai_recompose" = &notInBuild,
+    .@"git.ai_commit" = &aiCommit,
+    .@"git.codex_commit" = &codexCommit,
+    .@"git.ai_recompose" = &aiRecompose,
+    .@"git.branch_rail_toggle" = &branchRailToggle,
     .@"git.checkout" = &checkout,
     .@"git.recent_branches" = &recentBranches,
     .@"git.new_branch" = &newBranch,
@@ -71,7 +74,13 @@ pub const table = .{
     .@"git.cherry_pick" = &cherryPick,
     .@"git.revert" = &revert,
     .@"git.file_history" = &fileHistory,
-    .@"git.browse" = &browse,
+    .@"git.browse" = &browseLine,
+    .@"git.browse_line" = &browseLine,
+    .@"git.browse_file" = &browseFile,
+    .@"git.browse_commit" = &browseCommit,
+    .@"git.graph_sort" = &graphSort,
+    .@"git.graph_jump_hash" = &graphJumpHash,
+    .@"git.graph_detail" = &graphDetail,
     .@"git.switch_repo" = &switchRepo,
     .@"git.next_repo" = &nextRepo,
     .@"git.prev_repo" = &prevRepo,
@@ -139,6 +148,21 @@ fn diffOrig(app: *App) CommandError!void {
     _ = try git.openDiff(app, repo, .orig, git.relToRepo(repo, p), null, e.buf.editor.bytes());
 }
 
+/// Hunk → Inline → Split → Hunk on the active diff pane.
+fn diffToggleView(app: *App) CommandError!void {
+    const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
+    try git.setDiffMode(app, dp, dp.mode.next());
+}
+
+/// Start typing a `/` filter on the active diff pane.
+fn diffFilter(app: *App) CommandError!void {
+    const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
+    dp.filter_mode = true;
+    dp.filter.clearRetainingCapacity();
+    try git.refilterDiff(app, dp);
+    app.needs_render = true;
+}
+
 fn diffNextFile(app: *App) CommandError!void {
     const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
     git.moveFile(dp, true);
@@ -161,7 +185,18 @@ fn peekChange(app: *App) CommandError!void {
     const id = try git.openDiff(app, repo, .file, rel, null, null);
     const pane = app.panes.get(id) orelse return;
     const dp = &pane.diff;
-    // The rows may already be here (a refresh of an open pane).
+    // The rows may already be here (a refresh of an open pane); the
+    // split view walks its own rows.
+    if (dp.mode == .split) {
+        for (dp.split_rows, 0..) |row, i| if (row == .pair) {
+            const h = dp.files[row.pair.file].hunks[row.pair.hunk];
+            if (h.new_start + h.new_count >= line) {
+                dp.cursor = i;
+                break;
+            }
+        };
+        return;
+    }
     for (dp.rows, 0..) |row, i| if (row == .hunk) {
         const h = dp.files[row.hunk.file].hunks[row.hunk.hunk];
         if (h.new_start + h.new_count >= line) {
@@ -281,6 +316,29 @@ fn unstageAll(app: *App) CommandError!void {
 fn commit(app: *App) CommandError!void {
     _ = try git.requireRepo(app);
     git.openPrompt(app, .commit, "Commit message");
+}
+
+// ─── AI commit messages ─────────────────────────────────────────────────
+
+/// Claude writes the message from the staged diff; the commit prompt
+/// opens with it.
+fn aiCommit(app: *App) CommandError!void {
+    try git.askAi(app, .staged, .claude);
+}
+
+fn codexCommit(app: *App) CommandError!void {
+    try git.askAi(app, .staged, .codex);
+}
+
+/// With the commit prompt open: its message is recomposed from the
+/// staged diff. Otherwise HEAD's message is rewritten (`--amend`).
+fn aiRecompose(app: *App) CommandError!void {
+    const on_commit_prompt = app.overlay == .prompt and app.git.prompt == .commit;
+    try git.askAi(app, if (on_commit_prompt) .staged else .head, .claude);
+}
+
+fn branchRailToggle(app: *App) CommandError!void {
+    try git.toggleRail(app);
 }
 
 // ─── branches ───────────────────────────────────────────────────────────
@@ -502,6 +560,27 @@ fn revert(app: *App) CommandError!void {
     try git.submitOp(app, repo, .{ .revert = try app.gpa.dupe(u8, sha) });
 }
 
+fn graphSort(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    try git.setSort(app, g, .{ .col = g.sort.col.next(), .asc = false });
+}
+
+fn graphJumpHash(app: *App) CommandError!void {
+    _ = try requireGraph(app);
+    git.openPrompt(app, .graph_hash, "Jump to commit (hash prefix)");
+}
+
+fn graphDetail(app: *App) CommandError!void {
+    const g = try requireGraph(app);
+    git.syncWip(app, g);
+    if (g.detail_open and !g.detail_focus) {
+        g.detail_focus = true;
+        app.needs_render = true;
+        return;
+    }
+    try git.openDetail(app, g);
+}
+
 fn fileHistory(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     const rel = try activeRel(app, repo);
@@ -509,12 +588,36 @@ fn fileHistory(app: *App) CommandError!void {
     try git.submit(app, repo, .{ .log = .{ .n = 200, .filter = .{ .path = try app.gpa.dupe(u8, rel) } } });
 }
 
-fn browse(app: *App) CommandError!void {
+// ─── browse on the remote ───────────────────────────────────────────────
+
+fn browseLine(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     const e = app.activeEditor() orelse return app.diag.fail(arena(app), "browse: not an editor", .{});
     const rel = try activeRel(app, repo);
     const line: u32 = @intCast(e.buf.editor.currentLine() + 1);
-    try git.submit(app, repo, .{ .browse = .{ .path = try app.gpa.dupe(u8, rel), .line = line } });
+    try git.submit(app, repo, .{ .browse = .{ .kind = .line, .path = try app.gpa.dupe(u8, rel), .line = line } });
+}
+
+fn browseFile(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    const rel = try activeRel(app, repo);
+    try git.submit(app, repo, .{ .browse = .{ .kind = .file, .path = try app.gpa.dupe(u8, rel) } });
+}
+
+/// The graph's selected commit when a graph pane is active, a diff
+/// pane's commit, else HEAD.
+fn browseCommit(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    var rev: ?[]u8 = null;
+    if (git.activeGraph(app)) |g| {
+        if (g.selected()) |c| rev = try app.gpa.dupe(u8, c.hash);
+    } else if (git.activeDiff(app)) |dp| {
+        if (dp.scope == .commit) if (dp.rev) |r| {
+            rev = try app.gpa.dupe(u8, r);
+        };
+    }
+    errdefer if (rev) |r| app.gpa.free(r);
+    try git.submit(app, repo, .{ .browse = .{ .kind = .commit, .rev = rev } });
 }
 
 // ─── repos ──────────────────────────────────────────────────────────────

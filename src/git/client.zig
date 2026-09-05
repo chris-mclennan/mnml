@@ -17,6 +17,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
+const remote_mod = @import("remote.zig");
 const event = @import("../core/event.zig");
 
 /// What a diff pane shows. `file` and `head` are against HEAD (staged
@@ -52,11 +53,20 @@ pub const LogFilter = struct {
 
 pub const ListKind = enum { stashes, tags, reflog, worktrees };
 
+/// What `browse` opens: the file, the file at a line, or a commit.
+pub const BrowseKind = enum { file, line, commit };
+
+/// What an AI prompt is built from: the staged diff, or HEAD's patch
+/// and message.
+pub const AiContext = enum { staged, head };
+
 /// One unit of work. Strings are gpa-owned by the job (`deinit`).
 pub const Job = union(enum) {
     /// `status --porcelain=v2 -b` plus `diff -U0 HEAD` for the gutter.
     status,
-    diff: struct { scope: DiffScope, path: ?[]u8 = null, rev: ?[]u8 = null, text: ?[]u8 = null },
+    /// `full` asks for every line of the file (the Inline / Split views)
+    /// instead of three lines of context.
+    diff: struct { scope: DiffScope, path: ?[]u8 = null, rev: ?[]u8 = null, text: ?[]u8 = null, full: bool = false },
     blame: []u8,
     log: struct { n: u32, filter: LogFilter },
     branches,
@@ -87,10 +97,20 @@ pub const Job = union(enum) {
     revert: []u8,
     undo,
     redo,
-    browse: struct { path: []u8, line: u32 },
+    browse: struct { kind: BrowseKind, path: ?[]u8 = null, line: u32 = 0, rev: ?[]u8 = null },
     worktree_add: struct { path: []u8, branch: ?[]u8 },
     worktree_remove: []u8,
     head_sha,
+    /// `commit --amend` with a new message (the AI recompose).
+    amend: []u8,
+    /// A commit's full message and the files it touched (the graph's
+    /// detail panel).
+    commit_detail: []u8,
+    /// The text an AI commit-message prompt is built from.
+    ai_context: AiContext,
+    /// The branch rail: branches with tracking counts, worktrees, and
+    /// open PRs through `gh` when the UI found it on PATH.
+    rail: struct { gh: bool },
 
     pub fn deinit(j: Job, gpa: Allocator) void {
         switch (j) {
@@ -104,13 +124,20 @@ pub const Job = union(enum) {
                 gpa.free(a.patch);
                 gpa.free(a.desc);
             },
-            .browse => |b| gpa.free(b.path),
+            .browse => |b| {
+                if (b.path) |p| gpa.free(p);
+                if (b.rev) |v| gpa.free(v);
+            },
             .worktree_add => |w| {
                 gpa.free(w.path);
                 if (w.branch) |b| gpa.free(b);
             },
             .stash => |s| if (s) |m| gpa.free(m),
             .blame, .stage, .unstage, .discard, .commit, .checkout, .new_branch, .delete_branch, .merge, .rebase, .stash_apply, .stash_drop, .tag, .tag_delete, .cherry_pick, .revert, .worktree_remove => |s| gpa.free(s),
+            .commit_detail => |s| gpa.free(s),
+            .amend => |s| gpa.free(s),
+            .ai_context => {},
+            .rail => {},
             .status, .branches, .list, .stage_all, .unstage_all, .fetch, .pull, .push, .push_tags, .stash_pop, .undo, .redo, .head_sha => {},
         }
     }
@@ -125,8 +152,8 @@ pub const Result = struct {
     payload: Payload,
 
     pub const Payload = union(enum) {
-        status: struct { status: parse.Status, signs: []parse.FileDiff },
-        diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff },
+        status: struct { status: parse.Status, signs: []parse.FileDiff, remote: []const u8 = "" },
+        diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff, full: bool = false },
         blame: struct { path: []const u8, lines: []parse.BlameLine },
         log: struct { commits: []parse.Commit, path: ?[]const u8 },
         branches: []parse.Branch,
@@ -136,6 +163,11 @@ pub const Result = struct {
         op: struct { desc: []const u8, ok: bool, msg: []const u8 = "", refresh: bool = true },
         url: []const u8,
         head_sha: []const u8,
+        commit_detail: struct { sha: []const u8, message: []const u8, files: []parse.DetailFile },
+        /// `diff` is empty when there is nothing to summarise; `message`
+        /// is HEAD's current message for `.head`.
+        ai_context: struct { what: AiContext, diff: []const u8, message: []const u8 },
+        rail: struct { branches: []parse.Branch, worktrees: []const []const u8, prs: []parse.Pr, gh: bool },
     };
 
     pub fn create(gpa: Allocator, repo: u32) Allocator.Error!*Result {
@@ -413,36 +445,38 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 const d = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "-U0", "HEAD", "--" }, null);
                 if (d.ok) signs = try parse.parseDiff(arena, d.stdout);
             }
-            r.payload = .{ .status = .{ .status = status, .signs = signs } };
+            const remote = try git(repo, io, arena, &.{ "config", "--get", "remote.origin.url" }, null);
+            r.payload = .{ .status = .{ .status = status, .signs = signs, .remote = if (remote.ok) trimmed(remote.stdout) else "" } };
         },
         .diff => |d| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
+            const ctx: []const u8 = if (d.full) "-U999999" else "-U3";
             switch (d.scope) {
-                .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "HEAD", "--", d.path orelse "" }),
-                .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "HEAD", "--" }),
-                .worktree => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "--" }),
+                .file => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--", d.path orelse "" }),
+                .head => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "HEAD", "--" }),
+                .worktree => try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "--" }),
                 .staged => {
-                    try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", "-U3", "--cached", "--" });
+                    try args.appendSlice(arena, &.{ "diff", "--no-ext-diff", ctx, "--cached", "--" });
                     if (d.path) |p| try args.append(arena, p);
                 },
                 .commit => {
-                    try args.appendSlice(arena, &.{ "show", "--no-ext-diff", "-U3", "--format=", d.rev orelse "HEAD", "--" });
+                    try args.appendSlice(arena, &.{ "show", "--no-ext-diff", ctx, "--format=", d.rev orelse "HEAD", "--" });
                     if (d.path) |p| try args.append(arena, p);
                 },
                 .orig => {
                     // The buffer against the file on disk: `--no-index`
                     // with the buffer piped in as `-`.
-                    try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", "-U3", "--", d.path orelse "", "-" });
+                    try args.appendSlice(arena, &.{ "diff", "--no-index", "--no-ext-diff", ctx, "--", d.path orelse "", "-" });
                 },
             }
             var out = try git(repo, io, arena, args.items, if (d.scope == .orig) (d.text orelse "") else null);
             // `diff HEAD -- untracked` is empty; show the file as new so
             // the pane has something to say.
             if (d.scope == .file and out.ok and trimmed(out.stdout).len == 0) {
-                out = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "-U3", "--no-index", "--", "/dev/null", d.path orelse "" }, null);
+                out = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", ctx, "--no-index", "--", "/dev/null", d.path orelse "" }, null);
             }
             const files = try parse.parseDiff(arena, out.stdout);
-            r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files } };
+            r.payload = .{ .diff = .{ .scope = d.scope, .path = if (d.path) |p| try arena.dupe(u8, p) else null, .rev = if (d.rev) |v| try arena.dupe(u8, v) else null, .files = files, .full = d.full } };
         },
         .blame => |path| {
             const out = try git(repo, io, arena, &.{ "blame", "--porcelain", "--", path }, null);
@@ -462,18 +496,19 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
             const commits: []parse.Commit = if (out.ok) try parse.parseLog(arena, out.stdout) else &.{};
             r.payload = .{ .log = .{ .commits = commits, .path = if (l.filter.path) |p| try arena.dupe(u8, p) else null } };
         },
-        .branches => {
-            const local = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/heads" }, null);
-            const remote = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/remotes" }, null);
-            const ls = try parse.parseBranches(arena, if (local.ok) local.stdout else "");
-            const rs = try parse.parseBranches(arena, if (remote.ok) remote.stdout else "");
-            const all = try arena.alloc(parse.Branch, ls.len + rs.len);
-            @memcpy(all[0..ls.len], ls);
-            for (rs, ls.len..) |b, i| {
-                all[i] = b;
-                all[i].remote = true;
+        .branches => r.payload = .{ .branches = try allBranches(repo, io, arena) },
+        .rail => |opts| {
+            const branches = try allBranches(repo, io, arena);
+            const worktrees = try worktreeList(repo, io, arena);
+            var prs: []parse.Pr = &.{};
+            if (opts.gh) {
+                const out = run(repo, io, arena, &.{ "gh", "pr", "list", "--json", "number,title,headRefName,url", "--limit", "50" }) catch |err| switch (err) {
+                    error.Canceled => return error.Canceled,
+                    error.OutOfMemory => return error.OutOfMemory,
+                };
+                if (out.ok) prs = try parse.parsePrs(arena, out.stdout);
             }
-            r.payload = .{ .branches = all };
+            r.payload = .{ .rail = .{ .branches = branches, .worktrees = worktrees, .prs = prs, .gh = opts.gh } };
         },
         .list => |kind| {
             const out = switch (kind) {
@@ -510,6 +545,35 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 }
             }
             r.payload = .{ .list = .{ .kind = kind, .items = items.items } };
+        },
+        .commit_detail => |sha| {
+            const msg = try git(repo, io, arena, &.{ "show", "-s", "--format=%B", sha }, null);
+            const files = try git(repo, io, arena, &.{ "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-m", "--first-parent", sha }, null);
+            r.payload = .{ .commit_detail = .{
+                .sha = try arena.dupe(u8, sha),
+                .message = if (msg.ok) trimmed(msg.stdout) else msg.reason(),
+                .files = if (files.ok) try parse.parseNameStatus(arena, files.stdout) else &.{},
+            } };
+        },
+        .ai_context => |what| switch (what) {
+            .staged => {
+                const d = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "--cached" }, null);
+                r.payload = .{ .ai_context = .{ .what = what, .diff = if (d.ok) d.stdout else "", .message = "" } };
+            },
+            .head => {
+                const d = try git(repo, io, arena, &.{ "show", "--no-ext-diff", "--format=", "HEAD" }, null);
+                const m = try git(repo, io, arena, &.{ "log", "-1", "--format=%B" }, null);
+                r.payload = .{ .ai_context = .{ .what = what, .diff = if (d.ok) d.stdout else "", .message = if (m.ok) trimmed(m.stdout) else "" } };
+            },
+        },
+        .amend => |msg| {
+            const before = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+            const out = try git(repo, io, arena, &.{ "commit", "-q", "--amend", "-m", msg }, null);
+            if (out.ok) {
+                const after = try git(repo, io, arena, &.{ "rev-parse", "--verify", "-q", "HEAD" }, null);
+                if (before.ok and after.ok) try pushUndo(repo, try std.fmt.allocPrint(arena, "amend {s}", .{firstLine(msg)}), .{ .reset_soft = try gpa.dupe(u8, trimmed(before.stdout)) }, .{ .reset_soft = try gpa.dupe(u8, trimmed(after.stdout)) });
+            }
+            r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
         },
         .stage => |p| try simple(repo, io, r, &.{ "add", "--", p }, try std.fmt.allocPrint(arena, "staged {s}", .{p})),
         .unstage => |p| {
@@ -627,13 +691,23 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .browse => |b| {
             const remote = try git(repo, io, arena, &.{ "config", "--get", "remote.origin.url" }, null);
-            const branch = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
-            const head = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
-            const ref = if (branch.ok and trimmed(branch.stdout).len > 0) trimmed(branch.stdout) else trimmed(head.stdout);
             if (!remote.ok or trimmed(remote.stdout).len == 0) {
                 r.payload = .{ .op = .{ .desc = "browse: no origin remote", .ok = false, .refresh = false } };
-            } else {
-                r.payload = .{ .url = try browseUrl(arena, trimmed(remote.stdout), ref, b.path, b.line) };
+            } else switch (b.kind) {
+                .commit => {
+                    const rev = try git(repo, io, arena, &.{ "rev-parse", b.rev orelse "HEAD" }, null);
+                    if (!rev.ok) {
+                        r.payload = .{ .op = .{ .desc = "browse", .ok = false, .msg = rev.reason(), .refresh = false } };
+                    } else {
+                        r.payload = .{ .url = try remote_mod.commitUrl(arena, trimmed(remote.stdout), trimmed(rev.stdout)) };
+                    }
+                },
+                .file, .line => {
+                    const branch = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
+                    const head = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
+                    const ref = if (branch.ok and trimmed(branch.stdout).len > 0) trimmed(branch.stdout) else trimmed(head.stdout);
+                    r.payload = .{ .url = try remote_mod.fileUrl(arena, trimmed(remote.stdout), ref, b.path orelse "", if (b.kind == .line) b.line else null) };
+                },
             }
         },
         .worktree_add => |w| {
@@ -648,6 +722,70 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
     }
     events.post(io, .{ .git = r });
+}
+
+/// Local branches then remote ones, newest first within each.
+fn allBranches(repo: *Repo, io: Io, arena: Allocator) JobError![]parse.Branch {
+    const local = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/heads" }, null);
+    const remote = try git(repo, io, arena, &.{ "for-each-ref", "--sort=-committerdate", "--format=" ++ parse.ref_format, "refs/remotes" }, null);
+    const ls = try parse.parseBranches(arena, if (local.ok) local.stdout else "");
+    const rs = try parse.parseBranches(arena, if (remote.ok) remote.stdout else "");
+    const all = try arena.alloc(parse.Branch, ls.len + rs.len);
+    @memcpy(all[0..ls.len], ls);
+    for (rs, ls.len..) |b, i| {
+        all[i] = b;
+        all[i].remote = true;
+    }
+    return all;
+}
+
+/// `git worktree list --porcelain` as `<path>\x1f<branch>` items.
+fn worktreeList(repo: *Repo, io: Io, arena: Allocator) JobError![]const []const u8 {
+    const out = try git(repo, io, arena, &.{ "worktree", "list", "--porcelain" }, null);
+    var items: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (!out.ok) return items.items;
+    // `worktree <path>` / `branch refs/heads/x` / blank per entry.
+    var path: ?[]const u8 = null;
+    var it = std.mem.splitScalar(u8, out.stdout, '\n');
+    while (it.next()) |line| {
+        if (std.mem.startsWith(u8, line, "worktree ")) {
+            path = line["worktree ".len..];
+        } else if (std.mem.startsWith(u8, line, "branch ")) {
+            const b = line["branch ".len..];
+            const short = if (std.mem.startsWith(u8, b, "refs/heads/")) b["refs/heads/".len..] else b;
+            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f{s}", .{ path orelse "", short }));
+            path = null;
+        } else if (line.len == 0 and path != null) {
+            try items.append(arena, try std.fmt.allocPrint(arena, "{s}\x1f(detached)", .{path.?}));
+            path = null;
+        }
+    }
+    return items.items;
+}
+
+/// Run a non-git binary (`gh`) in the repo, the same way `git` runs.
+fn run(repo: *Repo, io: Io, arena: Allocator, argv: []const []const u8) JobError!Out {
+    const res = std.process.run(repo.gpa, io, .{
+        .argv = argv,
+        .cwd = .{ .path = repo.path },
+        .environ_map = if (repo.env) |*e| e else null,
+        .stdout_limit = .limited(8 * 1024 * 1024),
+        .stderr_limit = .limited(256 * 1024),
+    }) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .{ .ok = false, .stdout = "", .stderr = try std.fmt.allocPrint(arena, "cannot run {s}: {s}", .{ argv[0], @errorName(err) }) },
+    };
+    defer repo.gpa.free(res.stdout);
+    defer repo.gpa.free(res.stderr);
+    return .{
+        .ok = switch (res.term) {
+            .exited => |c| c == 0,
+            else => false,
+        },
+        .stdout = try arena.dupe(u8, res.stdout),
+        .stderr = try arena.dupe(u8, res.stderr),
+    };
 }
 
 /// Run `args` and post `desc` as the toast on success, git's reason on
@@ -683,54 +821,9 @@ fn firstLine(s: []const u8) []const u8 {
     return t[0..nl];
 }
 
-/// A file's web URL on GitHub / GitLab / Bitbucket / Azure DevOps from
-/// `remote.origin.url`. `git@host:owner/repo.git` and `https://…` both
-/// resolve; an unknown host gets GitHub's shape, which most forges
-/// mirror.
-pub fn browseUrl(arena: Allocator, remote: []const u8, ref: []const u8, path: []const u8, line: u32) Allocator.Error![]const u8 {
-    var host: []const u8 = "";
-    var repo_path: []const u8 = "";
-    if (std.mem.startsWith(u8, remote, "git@")) {
-        const colon = std.mem.indexOfScalar(u8, remote, ':') orelse remote.len;
-        host = remote[4..colon];
-        repo_path = if (colon < remote.len) remote[colon + 1 ..] else "";
-    } else if (std.mem.indexOf(u8, remote, "://")) |i| {
-        var rest = remote[i + 3 ..];
-        if (std.mem.indexOfScalar(u8, rest, '@')) |at| rest = rest[at + 1 ..];
-        const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
-        host = rest[0..slash];
-        repo_path = if (slash < rest.len) rest[slash + 1 ..] else "";
-    } else {
-        return arena.dupe(u8, remote);
-    }
-    if (std.mem.endsWith(u8, repo_path, ".git")) repo_path = repo_path[0 .. repo_path.len - 4];
-    repo_path = std.mem.trimEnd(u8, repo_path, "/");
-    if (std.mem.indexOf(u8, host, "bitbucket") != null) {
-        return std.fmt.allocPrint(arena, "https://{s}/{s}/src/{s}/{s}#lines-{d}", .{ host, repo_path, ref, path, line });
-    }
-    if (std.mem.indexOf(u8, host, "gitlab") != null) {
-        return std.fmt.allocPrint(arena, "https://{s}/{s}/-/blob/{s}/{s}#L{d}", .{ host, repo_path, ref, path, line });
-    }
-    if (std.mem.indexOf(u8, host, "dev.azure.com") != null or std.mem.indexOf(u8, host, "visualstudio.com") != null) {
-        return std.fmt.allocPrint(arena, "https://{s}/{s}?path=/{s}&version=GB{s}&line={d}", .{ host, repo_path, path, ref, line });
-    }
-    return std.fmt.allocPrint(arena, "https://{s}/{s}/blob/{s}/{s}#L{d}", .{ host, repo_path, ref, path, line });
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
-
-test "browseUrl: ssh and https remotes on the four forges" {
-    var a = std.heap.ArenaAllocator.init(testing.allocator);
-    defer a.deinit();
-    const arena = a.allocator();
-    try testing.expectEqualStrings("https://github.com/o/r/blob/main/src/a.zig#L7", try browseUrl(arena, "git@github.com:o/r.git", "main", "src/a.zig", 7));
-    try testing.expectEqualStrings("https://github.com/o/r/blob/main/src/a.zig#L7", try browseUrl(arena, "https://github.com/o/r", "main", "src/a.zig", 7));
-    try testing.expectEqualStrings("https://gitlab.com/g/p/-/blob/dev/x.rs#L1", try browseUrl(arena, "https://user@gitlab.com/g/p.git", "dev", "x.rs", 1));
-    try testing.expectEqualStrings("https://bitbucket.org/w/r/src/main/f#lines-3", try browseUrl(arena, "git@bitbucket.org:w/r.git", "main", "f", 3));
-    try testing.expectEqualStrings("https://dev.azure.com/org/proj/_git/repo?path=/f&version=GBmain&line=2", try browseUrl(arena, "https://dev.azure.com/org/proj/_git/repo", "main", "f", 2));
-}
 
 test "a Repo's queue takes jobs, and destroy frees what was never run" {
     const io = testing.io;

@@ -621,7 +621,9 @@ pub fn parseLog(arena: Allocator, text: []const u8) Allocator.Error![]Commit {
 
 // ─── branches ───────────────────────────────────────────────────────────
 
-pub const ref_format = "%(refname:short)%x1f%(committerdate:unix)%x1f%(HEAD)%x1f%(upstream:short)%x1f%(objectname:short)";
+/// `for-each-ref` spells a hex escape `%1f` (two digits right after the
+/// `%`); `%x1f` is `log`'s spelling and comes out literally here.
+pub const ref_format = "%(refname:short)%1f%(committerdate:unix)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname:short)%1f%(upstream:track,nobracket)";
 
 pub const Branch = struct {
     name: []const u8,
@@ -631,7 +633,34 @@ pub const Branch = struct {
     remote: bool,
     upstream: []const u8 = "",
     sha: []const u8 = "",
+    /// Against the upstream (`%(upstream:track)`); both 0 without one.
+    ahead: u32 = 0,
+    behind: u32 = 0,
+    /// The upstream is gone (`[gone]`).
+    gone: bool = false,
 };
+
+/// `ahead 2, behind 1` / `ahead 3` / `gone` / `` as `for-each-ref`
+/// prints `%(upstream:track,nobracket)`.
+pub const Track = struct { ahead: u32 = 0, behind: u32 = 0, gone: bool = false };
+
+pub fn parseTrack(track: []const u8) Track {
+    var out: Track = .{};
+    if (std.mem.eql(u8, std.mem.trim(u8, track, " "), "gone")) {
+        out.gone = true;
+        return out;
+    }
+    var it = std.mem.splitScalar(u8, track, ',');
+    while (it.next()) |part| {
+        const t = std.mem.trim(u8, part, " ");
+        if (std.mem.startsWith(u8, t, "ahead ")) {
+            out.ahead = std.fmt.parseInt(u32, t["ahead ".len..], 10) catch 0;
+        } else if (std.mem.startsWith(u8, t, "behind ")) {
+            out.behind = std.fmt.parseInt(u32, t["behind ".len..], 10) catch 0;
+        }
+    }
+    return out;
+}
 
 /// `git for-each-ref --format=<ref_format> refs/heads refs/remotes`.
 /// A remote's `HEAD` pointer (`origin/HEAD`) is dropped.
@@ -647,6 +676,7 @@ pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branc
         const head = f.next() orelse "";
         const upstream = f.next() orelse "";
         const sha = f.next() orelse "";
+        const track = parseTrack(f.next() orelse "");
         if (std.mem.endsWith(u8, name, "/HEAD")) continue;
         try out.append(arena, .{
             .name = try arena.dupe(u8, name),
@@ -655,6 +685,9 @@ pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branc
             .remote = std.mem.indexOfScalar(u8, name, '/') != null and !std.mem.eql(u8, head, "*") and isRemoteName(name),
             .upstream = try arena.dupe(u8, upstream),
             .sha = try arena.dupe(u8, sha),
+            .ahead = track.ahead,
+            .behind = track.behind,
+            .gone = track.gone,
         });
     }
     return out.items;
@@ -666,6 +699,78 @@ pub fn parseBranches(arena: Allocator, text: []const u8) Allocator.Error![]Branc
 /// remote rows itself. This is the fallback when it did not.
 fn isRemoteName(name: []const u8) bool {
     return std.mem.startsWith(u8, name, "origin/") or std.mem.startsWith(u8, name, "upstream/");
+}
+
+// ─── pull requests (gh) ─────────────────────────────────────────────────
+
+/// One open PR from `gh pr list --json number,title,headRefName,url`.
+pub const Pr = struct {
+    number: u32,
+    title: []const u8,
+    branch: []const u8,
+    url: []const u8,
+};
+
+pub fn parsePrs(arena: Allocator, json: []const u8) Allocator.Error![]Pr {
+    var out: std.ArrayListUnmanaged(Pr) = .empty;
+    var parsed = std.json.parseFromSlice(std.json.Value, arena, json, .{}) catch return out.items;
+    defer parsed.deinit();
+    const arr = switch (parsed.value) {
+        .array => |a| a,
+        else => return out.items,
+    };
+    for (arr.items) |item| {
+        const obj = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+        const number: u32 = if (obj.get("number")) |n| switch (n) {
+            .integer => |i| if (i >= 0) @intCast(i) else 0,
+            else => 0,
+        } else 0;
+        try out.append(arena, .{
+            .number = number,
+            .title = try arena.dupe(u8, jsonString(obj.get("title"))),
+            .branch = try arena.dupe(u8, jsonString(obj.get("headRefName"))),
+            .url = try arena.dupe(u8, jsonString(obj.get("url"))),
+        });
+    }
+    return out.items;
+}
+
+fn jsonString(v: ?std.json.Value) []const u8 {
+    const val = v orelse return "";
+    return switch (val) {
+        .string => |s| s,
+        else => "",
+    };
+}
+
+// ─── a commit's files ───────────────────────────────────────────────────
+
+/// One line of `git diff-tree --name-status`: the letter and the path
+/// (the new path of a rename).
+pub const DetailFile = struct { status: u8, path: []const u8 };
+
+pub fn parseNameStatus(arena: Allocator, text: []const u8) Allocator.Error![]DetailFile {
+    var out: std.ArrayListUnmanaged(DetailFile) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        var f = std.mem.splitScalar(u8, line, '\t');
+        const code = f.next() orelse continue;
+        var path = f.next() orelse continue;
+        // `R100\told\tnew`: the new path is the last field.
+        if (f.next()) |newer| path = newer;
+        try out.append(arena, .{ .status = if (code.len > 0) code[0] else '?', .path = try arena.dupe(u8, unquotePath(path)) });
+    }
+    return out.items;
+}
+
+fn unquotePath(p: []const u8) []const u8 {
+    if (p.len >= 2 and p[0] == '"' and p[p.len - 1] == '"') return p[1 .. p.len - 1];
+    return p;
 }
 
 // ─── relative age ───────────────────────────────────────────────────────
@@ -923,4 +1028,39 @@ test "relativeAge buckets" {
     try testing.expectEqualStrings("2y", relativeAge(&buf, 1, 1 + 800 * 86_400));
     // Unknown time (an uncommitted blame line) paints nothing.
     try testing.expectEqualStrings("", relativeAge(&buf, 0, 5));
+}
+
+test "parseTrack reads ahead / behind / gone; a branch line carries them" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const t = parseTrack("ahead 2, behind 1");
+    try testing.expectEqual(@as(u32, 2), t.ahead);
+    try testing.expectEqual(@as(u32, 1), t.behind);
+    try testing.expect(!t.gone);
+    try testing.expect(parseTrack("gone").gone);
+    try testing.expectEqual(@as(u32, 0), parseTrack("").ahead);
+    const bs = try parseBranches(a.allocator(), "main\x1f10\x1f*\x1forigin/main\x1fabc\x1fahead 3\n");
+    try testing.expectEqual(@as(u32, 3), bs[0].ahead);
+    try testing.expectEqual(@as(u32, 0), bs[0].behind);
+}
+
+test "parsePrs reads gh's JSON" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const prs = try parsePrs(a.allocator(), "[{\"number\":12,\"title\":\"Fix it\",\"headRefName\":\"fix/it\",\"url\":\"https://x/pull/12\"}]");
+    try testing.expectEqual(@as(usize, 1), prs.len);
+    try testing.expectEqual(@as(u32, 12), prs[0].number);
+    try testing.expectEqualStrings("fix/it", prs[0].branch);
+    try testing.expectEqual(@as(usize, 0), (try parsePrs(a.allocator(), "not json")).len);
+}
+
+test "parseNameStatus keeps the rename's new path and unquotes" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const files = try parseNameStatus(a.allocator(), "M\tsrc/a.zig\nR090\told.zig\tnew.zig\nA\t\"sp ace.txt\"\n");
+    try testing.expectEqual(@as(usize, 3), files.len);
+    try testing.expectEqual(@as(u8, 'M'), files[0].status);
+    try testing.expectEqualStrings("new.zig", files[1].path);
+    try testing.expectEqual(@as(u8, 'R'), files[1].status);
+    try testing.expectEqualStrings("sp ace.txt", files[2].path);
 }

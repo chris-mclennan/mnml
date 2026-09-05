@@ -1372,3 +1372,111 @@ is the contract-level list of what moved.
   `test {}` naming the four `lsp_*.zig` modules, `lsp/semantic.zig` and
   `lsp/tools.zig`. A new module with tests needs the same line
   somewhere on the `test {}` chain from `main.zig`.
+## Git, more (Phase 4 follow-up) — `// changed:` notes (2026-09-05, branch `git-more`)
+
+- `// changed (ui):` `diff_view` has three views. `Doc` gains `shown` /
+  `split_rows` / `split_shown` (the filter's index lists), `mode`,
+  `filter` / `filter_mode`, `ratio` and `intraline`; `draw` returns
+  `Painted{ body, strip_cells }` for the app's drag and strip clicks.
+  `flatten` is unchanged; `pairs` aligns a removed run with the added
+  run after it (the longer tail against a filler); `filterRows` /
+  `filterSplitRows` keep every row of a hunk holding the needle plus its
+  file header; `density` folds row kinds into bands for the strip on
+  the right edge (the visible window is its thumb). Rows register
+  `.script_hit{ pane, id = row }`; the chips, the divider, the filter
+  banner and the strip cells use ids above `special_base`
+  (`chipId`, `divider_id`, `filter_id`, `stripId`). Intraline ranges
+  come from `src/git/intraline.zig` (prefix / suffix peel, then an LCS
+  table capped at 64 K cells; ranges snap to UTF-8 edges) for a lone
+  `-` directly followed by a lone `+`.
+- `// changed (app):` `DiffPane` keeps `mode`, `full` (the loaded diff
+  carries every line — Inline and Split ask the worker for `-U999999`
+  through `Job.diff.full`), `ratio`, the owned `shown` / `split_shown`,
+  the `/` filter buffer and `body` / `strip_cells` from the last frame.
+  `git.setDiffMode` carries the cursor's hunk across the two row lists
+  and refetches when the context depth changes; `stepDiff` / `diffHome`
+  / `moveHunk` / `moveFile` walk the shown rows; `diffClick` routes
+  chips / divider / strip / banner / rows; `Drag.git_divider` drags the
+  split. `git.State.diff_mode` remembers the last view for new panes.
+  Two Zig-only ids: `git.diff_toggle_view`, `git.diff_filter`.
+- `// changed (git):` `src/git/remote.zig` is the pure remote-URL
+  module: `parseRemote`, `providerOf`, `fileUrl(…, line: ?u32)`,
+  `commitUrl`; it replaces `client.browseUrl`. GitHub (and enterprise
+  hosts), GitLab (any host naming it), Bitbucket Cloud and Server
+  (`/scm/PROJ/repo` → `/projects/PROJ/repos/repo`), Azure DevOps
+  (`dev.azure.com`, `*.visualstudio.com`, the `ssh.dev.azure.com:v3/…`
+  form) each get their own shape; an unknown host gets GitHub's.
+  `Job.browse` is `{ kind: file | line | commit, path, line, rev }`.
+  The `.status` payload carries `remote` (`remote.origin.url`), kept in
+  `git.State.remote` / `provider`; the status pane's header paints the
+  badge (`status_view.badge_id`, a click runs `git.browse_commit`) and
+  the rail subtitle names the forge. `git.openExternal` hands a plain
+  http(s) URL to `open` / `xdg-open` / `cmd /c start`; the `.url`
+  result goes through it and is toasted.
+- `// changed (git):` `for-each-ref` spells its hex escape `%1f`; the
+  `%x1f` in `parse.ref_format` was coming out literally, so every branch
+  row was one unsplit field (the picker showed the raw line). Fixed on
+  this branch; `ref_format` also carries `%(upstream:track,nobracket)`,
+  read by `parse.parseTrack` into `Branch.ahead / behind / gone`.
+- `// changed (ui):` `git_graph_view.Doc` walks *virtual* rows: the WIP
+  row first when `has_wip`, then `commits` in `order` (from `sortOrder`
+  under `Sort{ col, asc }`; off git's order the lanes fold to a dot). A
+  column-chip row (`GRAPH / DATE / AUTHOR / SUBJECT`, `sortId`) sits
+  under the title. `Doc.detail: ?DetailDoc` paints the right panel
+  (`detail_w` wide, min 60-column body; a commit's title, its message
+  wrapped, `files (n)` with `detailRowId` hits — or the working tree's
+  entries with the staging buttons); `divider_id` is the drag handle.
+  The WIP row registers its row hit *before* its buttons (`wipButtonId`)
+  so the buttons win the click. `findByHashPrefix` is the prompt's
+  resolver. `draw` returns `Painted{ body, list, detail }`.
+- `// changed (app):` `GraphPane` gains `order`, `sort`, the detail
+  (`detail_arena`, `detail`, `detail_pending / open / focus / cursor /
+  w`), `has_wip` / `wip_known` and `body`. `syncWip` (on every status
+  result, key, click and paint) shows or drops the WIP row and shifts
+  the cursor so it keeps its commit — except the first status a pane
+  sees, which leaves the cursor on the top row. `Job.commit_detail`
+  (`show -s --format=%B` + `diff-tree --root --name-status`) lands in
+  `.commit_detail`; a stale one re-asks for the commit the cursor moved
+  to. Keys: enter opens the detail, tab focuses it (j/k over the files,
+  enter opens that file's diff in the commit, esc / tab back), `d` the
+  commit's diff, `s` cycles the sort, `/` the hash prompt
+  (`PromptKind.graph_hash`); on the WIP row `a` / `A` / `c` stage all /
+  unstage all / commit, elsewhere `c` cherry-picks. `graphClick` routes
+  chips, buttons, divider, detail rows and list rows (right → the
+  commit menu); `Drag.graph_divider`. Three Zig-only ids:
+  `git.graph_detail`, `git.graph_sort`, `git.graph_jump_hash`. The
+  detail width is `[ui] git_graph_detail_col` (default 40) until dragged.
+- `// changed (app):` the branch rail lives in the GIT rail's own list:
+  `status_view.Row` gains `kind` (`status | section | branch | worktree
+  | pr | note`), `detail`, `current`, `remote`, `section`, `folded`;
+  `appendRailRows` adds three folding sections (`▾ Branches (n)`,
+  Worktrees, Pull requests) after the status groups when
+  `State.rail_open`. The data is one `Job.rail{ gh }` → `.rail` result
+  (branches with tracking counts, `worktree list --porcelain`, and `gh
+  pr list --json number,title,headRefName,url` when the UI found `gh`
+  on PATH — otherwise a one-time toast), adopted into
+  `State.rail_snapshot`. Enter on a branch asks before checkout
+  (`Confirm.checkout`), `x` before delete, enter on a PR opens it,
+  `n` prompts a new branch, `b` toggles the rail, `r` refreshes it too;
+  right-click on a rail row opens the Branches menu. One Zig-only id:
+  `git.branch_rail_toggle`.
+- `// changed (app):` AI commit messages go through the AI track's job:
+  `ai.askProduct(app, product, …)` (the one `// ── git ──` block in
+  `src/app/ai.zig`; `ask` is now its `.claude` wrapper) starts a
+  `claude -p` / API / `codex exec` job and its `Pane.ai`. `git.askAi`
+  first asks the worker for the text (`Job.ai_context = .staged |
+  .head` → `.ai_context{ diff, message }`, no git on the UI thread),
+  builds the prompt in `aiContextReady`, and records `State.ai_wait`;
+  `git.tick` → `pollAiWait` watches the pane: `.done` closes it and
+  opens the commit prompt (or the amend prompt, `PromptKind.amend` →
+  `Job.amend` with an undo entry) with the subject line, keeping a body
+  in `State.ai_body` for the accept; `.failed` toasts the AI track's
+  reason and closes it. A missing key / an off route fails fast in
+  `askProduct` with its own message; Codex's `api` route is refused.
+  `git.ai_recompose` on an open commit prompt recomposes from the
+  staged diff instead of amending. `git.overlayClosing` (called from
+  `dispatch.closeOverlay`) drops a body whose prompt was dismissed.
+- Not done, by design: the Rust WIP detail's multi-line commit
+  textarea (the prompt line plus the attached body covers the flow);
+  the Rust rail's `/`-prefix folder grouping and its stashes / tags
+  sections (the pickers cover both).
