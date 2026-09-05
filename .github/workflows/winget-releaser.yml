@@ -1,0 +1,61 @@
+name: Auto-PR to winget-pkgs
+
+# After a release: file a PR against microsoft/winget-pkgs with manifests
+# for the new version's MSI. The identifier stays ChrisMcLennan.mnml — the
+# package is the same mnml; 0.3.0 is its next version.
+#
+# One-time setup (already done for the Rust repo; the fork and the token
+# carry over):
+# 1. microsoft/winget-pkgs forked to chris-mclennan/winget-pkgs — the action
+#    commits to the fork, then opens the PR upstream.
+# 2. A fine-grained PAT with contents: write on the fork, as repo secret
+#    WINGET_TOKEN.
+# 3. The release carries the .msi — release.yml's msi job puts it there.
+
+on:
+  # See bump-homebrew-tap.yml: a GITHUB_TOKEN-created release does not fire
+  # `release: published`; workflow_run on Release does.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish to winget (e.g. 0.3.0, no leading v)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  winget:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
+    runs-on: ubuntu-latest
+    steps:
+      # winget-pkgs takes ~1,000 commits a day; the fork goes stale within
+      # days. komac branches from UPSTREAM's head — a commit a stale fork
+      # does not have — and GitHub refuses the ref with a message that reads
+      # like a permissions problem ("does not have the correct permissions
+      # to execute CreateRef"). `--force` is safe: the fork's master carries
+      # no commits of its own.
+      - name: Sync the winget-pkgs fork with upstream
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          gh repo sync chris-mclennan/winget-pkgs --force \
+            || echo "::warning::fork sync failed — the publish below may hit CreateRef"
+
+      - name: Publish to winget-pkgs
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: ChrisMcLennan.mnml
+          # `version` is unprefixed (the action strips a leading v anyway);
+          # `release-tag` must be the real tag, v included — it is the GitHub
+          # releases API lookup. Under workflow_run, github.ref_name is
+          # `main`, so both are spelled out per trigger.
+          version: ${{ inputs.version || github.event.release.tag_name || github.event.workflow_run.head_branch }}
+          release-tag: ${{ inputs.version && format('v{0}', inputs.version) || github.event.release.tag_name || github.event.workflow_run.head_branch }}
+          installers-regex: '\.msi$'
+          token: ${{ secrets.WINGET_TOKEN }}

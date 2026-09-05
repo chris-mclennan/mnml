@@ -1,0 +1,23 @@
+# nfpm package config — .github/workflows/package-linux.yml builds the .deb
+# and .rpm from the release tarballs with it. ARCH and VERSION come from the
+# environment at nfpm's config-parse time.
+name: mnml
+arch: ${ARCH}
+version: ${VERSION}
+maintainer: Chris McLennan <chrismclennan@mac.com>
+description: |
+  A NvChad-style terminal IDE — vim or standard editing, LSP, git, an
+  embedded HTTP client, terminal and AI panes, a headless test harness.
+homepage: https://mnml.sh
+license: MIT OR Apache-2.0
+section: editors
+priority: optional
+contents:
+  - src: staging/mnml
+    dst: /usr/bin/mnml
+    file_info:
+      mode: 0755
+  - src: LICENSE-MIT
+    dst: /usr/share/doc/mnml/LICENSE-MIT
+  - src: LICENSE-APACHE
+    dst: /usr/share/doc/mnml/LICENSE-APACHE

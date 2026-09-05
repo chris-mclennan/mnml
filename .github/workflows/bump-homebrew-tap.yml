@@ -1,0 +1,110 @@
+name: Bump Homebrew tap formula
+
+# After a release: render dist/homebrew/mnml.rb with the release's version
+# and sha256s, commit it to chris-mclennan/homebrew-tap as Formula/mnml.rb,
+# push. The tap's own scripts/bump.sh is not used — it hard-codes the
+# `mnml-rs-` asset names of the Rust build; the template in this repo
+# carries the names this repo ships, so the tap needs nothing but the file.
+#
+# Requires repo secret HOMEBREW_TAP_TOKEN — a fine-grained PAT with
+# Contents: read and write on chris-mclennan/homebrew-tap.
+
+on:
+  # `release: published` does not fire when GITHUB_TOKEN created the
+  # release inside another workflow (anti-loop protection), and release.yml
+  # creates it with GITHUB_TOKEN. workflow_run on the Release workflow's
+  # completion does fire.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # A release created by hand (gh release create, or the web UI).
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to bump to (no leading v)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    # workflow_run also fires for a workflow_dispatch dry run of Release —
+    # head_branch is then `main`, not a tag. Only a v* head_branch is a
+    # release.
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        # Event values through env, never interpolated into the script.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$EVENT_NAME" in
+            workflow_dispatch) v="$INPUT_VERSION" ;;
+            workflow_run) v="$RUN_BRANCH" ;;
+            *) v="$RELEASE_TAG" ;;
+          esac
+          v="${v#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout mnml-zig (the template)
+        uses: actions/checkout@v7
+        with:
+          path: src
+          persist-credentials: false
+
+      - name: Checkout the tap
+        uses: actions/checkout@v7
+        with:
+          repository: chris-mclennan/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Render the formula
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          base="https://github.com/$REPO/releases/download/v$VERSION"
+          curl -sSL --fail -o sha256.sum "$base/sha256.sum"
+          sha_for() { awk -v f="$1" '$2 == "*" f { print $1; exit }' sha256.sum; }
+          s_arm_mac=$(sha_for mnml-aarch64-apple-darwin.tar.xz)
+          s_x64_mac=$(sha_for mnml-x86_64-apple-darwin.tar.xz)
+          s_arm_linux=$(sha_for mnml-aarch64-unknown-linux-gnu.tar.xz)
+          s_x64_linux=$(sha_for mnml-x86_64-unknown-linux-gnu.tar.xz)
+          for s in "$s_arm_mac" "$s_x64_mac" "$s_arm_linux" "$s_x64_linux"; do
+            [ "${#s}" -eq 64 ] || { echo "::error::sha256.sum is missing an archive"; cat sha256.sum; exit 1; }
+          done
+          sed -e "s|@VERSION@|$VERSION|g" \
+              -e "s|@REPO@|$REPO|g" \
+              -e "s|@SHA_AARCH64_APPLE_DARWIN@|$s_arm_mac|" \
+              -e "s|@SHA_X86_64_APPLE_DARWIN@|$s_x64_mac|" \
+              -e "s|@SHA_AARCH64_UNKNOWN_LINUX_GNU@|$s_arm_linux|" \
+              -e "s|@SHA_X86_64_UNKNOWN_LINUX_GNU@|$s_x64_linux|" \
+              src/dist/homebrew/mnml.rb > tap/Formula/mnml.rb
+          # No slot may survive rendering.
+          ! grep -n '@[A-Z_]*@' tap/Formula/mnml.rb
+          cat tap/Formula/mnml.rb
+
+      - name: Commit + push
+        working-directory: tap
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          git config user.email "chrismclennan@mac.com"
+          git config user.name "release-bot"
+          git add Formula/mnml.rb
+          if git diff --staged --quiet; then
+            echo "No changes (already on v$VERSION)."
+            exit 0
+          fi
+          git commit -m "bump mnml to v$VERSION"
+          git push

@@ -1,0 +1,71 @@
+# The docs site: build + the smoke test (dead internal links, HEAD probes on
+# the releases/latest/download/… URLs) on every push touching site/**.
+#
+# Carried over from the Rust repo unchanged in what it does — the site is a
+# Starlight/Astro project with no knowledge of the language behind the
+# binary — with two adaptations: the manifest that wakes it is
+# build.zig.zon, not Cargo.toml, and there is no release-plz here, so the
+# "skip the download probes on a release commit" branch is gone (the tag
+# push does not touch site/**, so nothing wakes this on a release anyway).
+#
+# The site itself moves into this repo at E8 (DESIGN.md). Until it does,
+# every step after the first is skipped — the workflow is here so the move
+# is a `git mv` and not a workflow rewrite.
+name: site
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "build.zig.zon"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "build.zig.zon"
+      - ".github/workflows/site.yml"
+  # Daily: the download probes catch a release that was deleted or
+  # re-tagged without a site edit.
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Is the site here yet?
+        id: site
+        run: |
+          if [ -f site/package.json ]; then
+            echo "present=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::no site/ in this repo yet (E8) — nothing to build"
+          fi
+      - uses: actions/setup-node@v7
+        if: steps.site.outputs.present == '1'
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: site/package-lock.json
+      - name: Install site deps
+        if: steps.site.outputs.present == '1'
+        working-directory: site
+        run: npm ci --no-audit --no-fund
+      - name: Build site
+        if: steps.site.outputs.present == '1'
+        working-directory: site
+        run: npm run build
+      - name: Smoke — internal links + download HEAD
+        if: steps.site.outputs.present == '1'
+        working-directory: site
+        # PR builds skip the download probes (rate-limit noise on branches);
+        # main and the schedule hit the real URLs.
+        env:
+          SKIP_DOWNLOAD_CHECKS: ${{ github.event_name == 'pull_request' && '1' || '' }}
+        run: npm run smoke

@@ -1,0 +1,99 @@
+name: Package .deb + .rpm
+
+# After a release: download the two Linux tarballs, take the binary out,
+# and build .deb + .rpm for amd64 and arm64 with nfpm (nfpm/mnml.yaml).
+# Uploaded to the same release, as mnml-<triple>.deb / .rpm — versionless,
+# so releases/latest/download/<name> is a stable URL.
+
+on:
+  # See bump-homebrew-tap.yml: a GITHUB_TOKEN-created release does not fire
+  # `release: published`; workflow_run on Release does.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to package (no leading v)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            triple: x86_64-unknown-linux-gnu
+          - arch: arm64
+            triple: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$EVENT_NAME" in
+            workflow_dispatch) v="$INPUT_VERSION" ;;
+            workflow_run) v="$RUN_BRANCH" ;;
+            *) v="$RELEASE_TAG" ;;
+          esac
+          v="${v#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Download the release tarball
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TRIPLE: ${{ matrix.triple }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          base="https://github.com/$REPO/releases/download/v$VERSION"
+          curl -sSL --fail -o tarball.tar.xz "$base/mnml-$TRIPLE.tar.xz"
+          curl -sSL --fail -o tarball.tar.xz.sha256 "$base/mnml-$TRIPLE.tar.xz.sha256"
+          # The sidecar names the asset; we saved it as tarball.tar.xz.
+          echo "$(cut -d' ' -f1 tarball.tar.xz.sha256)  tarball.tar.xz" | sha256sum -c -
+          tar -xJf tarball.tar.xz
+          mkdir -p staging
+          cp "mnml-$TRIPLE/mnml" staging/mnml
+          chmod +x staging/mnml
+          ls -la staging/
+
+      - name: Install nfpm
+        run: |
+          curl -sSL --fail -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v2.40.0/nfpm_2.40.0_Linux_x86_64.tar.gz"
+          mkdir -p .nfpm-bin
+          tar -xzf nfpm.tar.gz -C .nfpm-bin nfpm
+          chmod +x .nfpm-bin/nfpm
+          .nfpm-bin/nfpm --version
+
+      - name: Build .deb + .rpm
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager deb --target "mnml-$TRIPLE.deb"
+          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager rpm --target "mnml-$TRIPLE.rpm"
+          ls -la ./*.deb ./*.rpm
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TRIPLE: ${{ matrix.triple }}
+        run: gh release upload "v$VERSION" "mnml-$TRIPLE.deb" "mnml-$TRIPLE.rpm" --clobber
