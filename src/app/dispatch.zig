@@ -671,8 +671,11 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         .none => {},
         .prompt => |*p| {
             // A path prompt completes on Tab; any other key ends the cycle.
-            if (p.purpose == .add_workspace) {
-                if (k.code == .tab) return promptPathComplete(app, &p.state);
+            // The worktree prompt is `<path> [branch]`: its path is the
+            // first word.
+            const path_prompt: ?bool = if (p.purpose == .add_workspace) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
+            if (path_prompt) |first_word| {
+                if (k.code == .tab) return promptPathComplete(app, &p.state, first_word);
                 dropComplete(app);
             }
             switch (try Prompt.handleKey(&p.state, gpa, k)) {
@@ -2277,14 +2280,20 @@ fn dropComplete(app: *App) void {
 
 /// Tab in a path prompt: the first directory the text could be, then
 /// each next one on repeated Tabs (`app.cmd_complete` keeps the ring,
-/// as the `:` line's completion does).
-pub fn promptPathComplete(app: *App, st: *Prompt.State) Allocator.Error!void {
+/// as the `:` line's completion does). With `first_word` only the text
+/// up to the first space completes; what follows it rides along.
+pub fn promptPathComplete(app: *App, st: *Prompt.State, first_word: bool) Allocator.Error!void {
     const gpa = app.gpa;
-    const line = st.buf.items;
+    const arena = app.frame.allocator();
+    // `setText` rewrites the buffer these slice: copies first.
+    const line = try arena.dupe(u8, st.buf.items);
+    const cut = if (first_word) (std.mem.indexOfScalar(u8, line, ' ') orelse line.len) else line.len;
+    const head = line[0..cut];
+    const tail = line[cut..];
     if (app.cmd_complete) |*c| {
-        if (c.candidates.len > 0 and (std.mem.eql(u8, c.prefix, line) or std.mem.eql(u8, c.candidates[c.idx], line))) {
+        if (c.candidates.len > 0 and (std.mem.eql(u8, c.prefix, head) or std.mem.eql(u8, c.candidates[c.idx], head))) {
             c.idx = (c.idx + 1) % c.candidates.len;
-            try st.setText(gpa, c.candidates[c.idx]);
+            try st.setText(gpa, try std.mem.concat(arena, u8, &.{ c.candidates[c.idx], tail }));
             app.needs_render = true;
             return;
         }
@@ -2295,12 +2304,12 @@ pub fn promptPathComplete(app: *App, st: *Prompt.State) Allocator.Error!void {
         for (cands.items) |c| gpa.free(c);
         cands.deinit(gpa);
     }
-    try pathCandidates(app, gpa, line, true, &cands);
+    try pathCandidates(app, gpa, head, true, &cands);
     if (cands.items.len == 0) return;
-    const prefix = try gpa.dupe(u8, line);
+    const prefix = try gpa.dupe(u8, head);
     errdefer gpa.free(prefix);
     app.cmd_complete = .{ .prefix = prefix, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
-    try st.setText(gpa, app.cmd_complete.?.candidates[0]);
+    try st.setText(gpa, try std.mem.concat(arena, u8, &.{ app.cmd_complete.?.candidates[0], tail }));
     app.needs_render = true;
 }
 
