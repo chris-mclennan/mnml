@@ -8,6 +8,7 @@
 //! is replaced wholesale on reload, while a task list must outlive it.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -159,7 +160,8 @@ test "install registers task.<name> commands; :task and the picker run them; sta
     // Unknown names fail with a reason.
     try t.expectError(error.Failed, runNamed(&app, "nope"));
     try t.expectEqualStrings("unknown task: nope", app.diag.msg.?);
-    if (!pty_pane.supported) return;
+    // The task runs `printf`: POSIX from here on.
+    if (builtin.os.tag == .windows) return;
 
     // The picker lists the names; Enter on the first runs it.
     try command.run(&app, .{ .static = .@"task.run" });

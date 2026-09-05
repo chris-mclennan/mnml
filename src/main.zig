@@ -6,7 +6,7 @@ const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
 const app_driver = @import("app/driver.zig");
 const loop = @import("tui/loop.zig");
-const Term = @import("tui/term.zig");
+const Term = @import("tui/term.zig").Term;
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const http_cli = @import("http/cli.zig");
@@ -16,13 +16,9 @@ const http_cli = @import("http/cli.zig");
 pub const version = build_options.version;
 
 /// A crash prints its trace on a readable terminal, not inside the alt
-/// screen with the mouse still reporting. The terminal session is POSIX
-/// until ConPTY lands, so on Windows the root keeps std's handler —
-/// naming `Term` here would pull the whole session into analysis.
-pub const panic = if (@import("builtin").os.tag == .windows)
-    std.debug.FullPanic(std.debug.defaultPanic)
-else
-    Term.Panic;
+/// screen with the mouse still reporting — on Windows, with the console
+/// modes put back too.
+pub const panic = Term.Panic;
 
 /// The application's driver factory: the same App the terminal runs,
 /// behind the `e2e.Driver` vtable for `test` and `--headless`.
@@ -152,14 +148,6 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
         };
         if (st.kind == .directory and workspace == null) workspace = a else try files.append(arena, a);
     }
-    // The interactive loop is POSIX until ConPTY lands (Phase 8): termios,
-    // a SIGWINCH self-pipe, openpty. `test` and `--headless` need none of
-    // that and work everywhere. Returning before `loop.Options` is even
-    // named keeps the loop out of analysis on Windows, which is what lets
-    // the same source build there.
-    if (@import("builtin").os.tag == .windows) {
-        return usage(w, "the interactive terminal is not available on Windows yet (use --headless or test)");
-    }
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
     const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, "workspace is not a directory");
     const ws_abs = cwd_buf[0..ws_len];
@@ -279,7 +267,8 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     const allow_shell = std.mem.eql(u8, env.get("MNML_E2E_ALLOW_SHELL") orelse "1", "1");
     const network = std.mem.eql(u8, env.get("MNML_E2E_NETWORK") orelse "0", "1");
     const timeout: u64 = if (env.get("MNML_E2E_FILE_TIMEOUT_SECS")) |v| std.fmt.parseInt(u64, v, 10) catch 120 else 120;
-    const tmp_root = env.get("TMPDIR") orelse "/tmp";
+    // `TMPDIR` is the POSIX spelling, `TEMP` / `TMP` Windows's.
+    const tmp_root = env.get("TMPDIR") orelse env.get("TEMP") orelse env.get("TMP") orelse "/tmp";
     const data_root = try e2e.runner.makeTempDir(gpa, io, tmp_root);
     defer {
         Io.Dir.cwd().deleteTree(io, data_root) catch {};
@@ -440,7 +429,7 @@ test {
     _ = @import("http/yaml.zig");
     _ = @import("http/discover.zig");
     _ = @import("http/sources.zig");
-    if (@import("builtin").os.tag != .windows) _ = @import("tui/loop.zig");
+    _ = @import("tui/loop.zig");
     _ = @import("ui/ui.zig");
 }
 

@@ -2,12 +2,14 @@
 //! a command in a pane, paste / clear / restart on the active pty.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const pty_pane = @import("pty_pane.zig");
+const pty = @import("pty");
 
 pub const table = .{
     .@"term.shell" = &shellRight,
@@ -74,12 +76,14 @@ fn restart(app: *App) CommandError!void {
 }
 
 /// `:term` opens a shell below; `:term <cmd…>` runs the line through
-/// `sh -c` with the line as the tab label.
+/// the platform's shell (`sh -c`, `cmd /d /c`) with the line as the tab
+/// label.
 pub fn termEx(app: *App, args: []const u8) CommandError!void {
     const line = std.mem.trim(u8, args, " \t");
     if (line.len == 0) return shell(app, .below);
+    var shell_buf: [4][]const u8 = undefined;
     _ = try pty_pane.open(app, .{
-        .argv = &.{ "/bin/sh", "-c", line },
+        .argv = pty.shellArgv(&shell_buf, &app.env, line),
         .label = line,
         .placement = .below,
         .kind = .command,
@@ -91,7 +95,8 @@ pub fn termEx(app: *App, args: []const u8) CommandError!void {
 const t = std.testing;
 
 test "headless smoke: `:term printf hi` opens a pane below the editor and the grid shows hi" {
-    if (!pty_pane.supported) return error.SkipZigTest;
+    // `printf` and a login shell: POSIX.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
@@ -115,7 +120,8 @@ test "headless smoke: `:term printf hi` opens a pane below the editor and the gr
 }
 
 test "term.shell opens the login shell beside the active pane; focus_or_open_shell finds it again" {
-    if (!pty_pane.supported) return error.SkipZigTest;
+    // `printf` and a login shell: POSIX.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;

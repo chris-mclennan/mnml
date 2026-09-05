@@ -39,6 +39,12 @@ pub const Env = struct {
         const v = env.vars.get(key) orelse return null;
         return if (v.len == 0) null else v;
     }
+
+    /// The user's home: `$HOME`, or `%USERPROFILE%` where that is the
+    /// spelling (Windows sets no `HOME`; MSYS and Git Bash set both).
+    pub fn home(env: Env) ?[]const u8 {
+        return env.get("HOME") orelse env.get("USERPROFILE");
+    }
 };
 
 fn exists(io: Io, path: []const u8) bool {
@@ -84,7 +90,7 @@ pub fn dataRoot(alloc: Allocator, io: Io, env: Env) Allocator.Error![]u8 {
     if (env.get("XDG_CONFIG_HOME")) |xdg| {
         const xdg_path = try std.fs.path.join(alloc, &.{ xdg, "mnml" });
         if (try hasState(alloc, io, xdg_path)) return xdg_path;
-        if (env.get("HOME")) |home| {
+        if (env.home()) |home| {
             const home_path = try std.fs.path.join(alloc, &.{ home, ".config", "mnml" });
             if (try hasState(alloc, io, home_path)) {
                 alloc.free(xdg_path);
@@ -94,7 +100,7 @@ pub fn dataRoot(alloc: Allocator, io: Io, env: Env) Allocator.Error![]u8 {
         }
         return xdg_path;
     }
-    if (env.get("HOME")) |home| return std.fs.path.join(alloc, &.{ home, ".config", "mnml" });
+    if (env.home()) |home| return std.fs.path.join(alloc, &.{ home, ".config", "mnml" });
     return alloc.dupe(u8, "mnml");
 }
 
@@ -112,7 +118,7 @@ pub fn homeConfigPath(alloc: Allocator, io: Io, env: Env) Allocator.Error!?[]u8 
         }
     }
     if (env.get("XDG_CONFIG_HOME")) |xdg| return try std.fs.path.join(alloc, &.{ xdg, "mnml", config_file });
-    if (env.get("HOME")) |home| return try std.fs.path.join(alloc, &.{ home, ".config", "mnml", config_file });
+    if (env.home()) |home| return try std.fs.path.join(alloc, &.{ home, ".config", "mnml", config_file });
     return null;
 }
 
@@ -240,6 +246,23 @@ test "no HOME at all falls back to ./mnml and no config path" {
     defer t.allocator.free(root);
     try t.expectEqualStrings("mnml", root);
     try t.expect((try homeConfigPath(t.allocator, t.io, s.env(null))) == null);
+}
+
+test "USERPROFILE is the home where HOME is not set" {
+    var s = try Sandbox.init();
+    defer s.deinit();
+    try s.vars.put("USERPROFILE", "/Users/x");
+    const root = try dataRoot(t.allocator, t.io, s.env(null));
+    defer t.allocator.free(root);
+    try expectPath(root, "/Users/x", ".config/mnml");
+    const cfg = (try homeConfigPath(t.allocator, t.io, s.env(null))).?;
+    defer t.allocator.free(cfg);
+    try expectPath(cfg, "/Users/x", ".config/mnml/config.zon");
+    // HOME wins when both are set (MSYS, Git Bash).
+    try s.vars.put("HOME", "/home/x");
+    const both = try dataRoot(t.allocator, t.io, s.env(null));
+    defer t.allocator.free(both);
+    try expectPath(both, "/home/x", ".config/mnml");
 }
 
 test "an empty variable counts as unset" {

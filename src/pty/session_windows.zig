@@ -1,0 +1,565 @@
+//! One ConPTY session: a child process behind `CreatePseudoConsole`, a
+//! reader thread that moves its output into a `Ring`, a watcher thread
+//! that notices its exit, and a ghostty-vt `Terminal` the UI thread feeds
+//! from that ring. The public surface is `session_posix.zig`'s.
+//!
+//! The plumbing
+//! ------------
+//! Two anonymous pipes. The child's input is the read end of one; we keep
+//! its write end and `WriteFile` keystrokes there. The child's output is
+//! the write end of the other; the reader thread blocks in `ReadFile` on
+//! its read end. `CreatePseudoConsole` duplicates the two ends it is
+//! given into conhost, so our copies are closed right after — exactly as
+//! Microsoft's sample does. The child gets the pseudoconsole through
+//! `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` on an extended startup info; it
+//! is not told about our pipes at all.
+//!
+//! Threads and ownership
+//! ---------------------
+//! Both threads are *detached*, like the POSIX reader. `ReadFile` on the
+//! output pipe only fails once conhost lets go of its end, and conhost
+//! only does that after `ClosePseudoConsole` — so `Session.deinit` never
+//! joins: it terminates the child, closes the pseudoconsole, marks the
+//! shared block `closing` and drops its reference. The reader keeps
+//! draining (into scratch once closing — `ClosePseudoConsole` is known to
+//! block until every pending byte has been read; a reader that stopped
+//! reading would wedge the UI thread on close), sees the broken pipe,
+//! and drops the last reference. Everything either thread touches lives
+//! in `Shared`; neither dereferences `Session`.
+//!
+//! Exit
+//! ----
+//! A ConPTY child exiting does not end the output pipe — conhost stays
+//! up. So the watcher waits on the process handle (and a stop event
+//! `deinit` sets), records the exit code, and then closes the
+//! pseudoconsole itself; the reader reaches EOF once the last of the
+//! output has drained. That gives `eof()` the POSIX meaning: the child
+//! is gone *and* nothing more is coming. The close is the watcher's and
+//! never the UI thread's on purpose: `ClosePseudoConsole` waits for the
+//! output pipe to drain, and the ring the reader drains into is emptied
+//! only by the UI thread — a UI thread inside `ClosePseudoConsole` with a
+//! full ring would wait on itself. `deinit` closes too, but by then the
+//! reader discards, so nothing waits on the UI.
+//!
+//! Query replies (DSR, DA, …) work as on POSIX: stashed by the
+//! `write_pty` effect mid-parse, written after the drain; the
+//! `@fieldParentPtr` walk is why a `Session` is heap-allocated and never
+//! moved.
+//!
+//! Untested: there is no Windows machine in the loop. This file is held
+//! to "compiles clean for x86_64-windows-gnu"; `win_cmdline.zig` holds
+//! the pieces that run on every host and are tested there.
+
+const std = @import("std");
+const windows = std.os.windows;
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const vt = @import("ghostty-vt");
+const Ring = @import("ring.zig").Ring;
+const common = @import("common.zig");
+const win = @import("win_cmdline.zig");
+
+const log = std.log.scoped(.pty);
+
+pub const Notify = common.Notify;
+pub const Exit = common.Exit;
+
+pub const Options = struct {
+    cols: u16,
+    rows: u16,
+    /// The parent's environment; the child gets a copy with TERM et al.
+    /// overlaid. Not modified.
+    env: *const std.process.Environ.Map,
+    /// Program to run. `null` → `%COMSPEC%` (see `win_cmdline.defaultShell`).
+    argv: ?[]const []const u8 = null,
+    cwd: ?[]const u8 = null,
+    notify: Notify = .none,
+    /// Ring size; must be a power of two.
+    ring_capacity: usize = Ring.default_capacity,
+    /// Accepted for symmetry with the POSIX options; the Windows reader
+    /// blocks in `ReadFile` and needs no poll interval.
+    poll_interval_ms: i32 = 250,
+};
+
+pub const SpawnError = error{
+    PipeFailed,
+    PseudoConsoleFailed,
+    AttributeListFailed,
+    CreateProcessFailed,
+    EventFailed,
+    NoShell,
+    ArgvEmpty,
+    InvalidArg0,
+    InvalidWtf8,
+} || Allocator.Error || std.Thread.SpawnError || Io.Cancelable;
+
+// ── kernel32 ────────────────────────────────────────────────────────
+// Zig 0.16's std reaches the kernel through ntdll and declares almost
+// none of the console / process Win32 surface, so these are our own
+// externs. Signatures follow the SDK headers; `windows.BOOL` compares
+// with `.FALSE` / `.TRUE`.
+
+const HANDLE = windows.HANDLE;
+const DWORD = windows.DWORD;
+const BOOL = windows.BOOL;
+/// `HPCON` — an opaque pseudoconsole handle, not a kernel handle.
+const HPCON = *anyopaque;
+const HRESULT = c_long;
+
+const INFINITE: DWORD = 0xFFFFFFFF;
+const WAIT_OBJECT_0: DWORD = 0;
+const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
+
+const STARTUPINFOEXW = extern struct {
+    StartupInfo: windows.STARTUPINFOW,
+    lpAttributeList: ?*anyopaque,
+};
+
+const kernel32 = struct {
+    extern "kernel32" fn CreatePipe(hReadPipe: *HANDLE, hWritePipe: *HANDLE, lpPipeAttributes: ?*windows.SECURITY_ATTRIBUTES, nSize: DWORD) callconv(.winapi) BOOL;
+    extern "kernel32" fn CreatePseudoConsole(size: windows.COORD, hInput: HANDLE, hOutput: HANDLE, dwFlags: DWORD, phPC: *HPCON) callconv(.winapi) HRESULT;
+    extern "kernel32" fn ResizePseudoConsole(hPC: HPCON, size: windows.COORD) callconv(.winapi) HRESULT;
+    extern "kernel32" fn ClosePseudoConsole(hPC: HPCON) callconv(.winapi) void;
+    extern "kernel32" fn InitializeProcThreadAttributeList(lpAttributeList: ?*anyopaque, dwAttributeCount: DWORD, dwFlags: DWORD, lpSize: *usize) callconv(.winapi) BOOL;
+    extern "kernel32" fn UpdateProcThreadAttribute(lpAttributeList: *anyopaque, dwFlags: DWORD, Attribute: usize, lpValue: ?*anyopaque, cbSize: usize, lpPreviousValue: ?*anyopaque, lpReturnSize: ?*usize) callconv(.winapi) BOOL;
+    extern "kernel32" fn DeleteProcThreadAttributeList(lpAttributeList: *anyopaque) callconv(.winapi) void;
+    extern "kernel32" fn ReadFile(hFile: HANDLE, lpBuffer: [*]u8, nNumberOfBytesToRead: DWORD, lpNumberOfBytesRead: *DWORD, lpOverlapped: ?*anyopaque) callconv(.winapi) BOOL;
+    extern "kernel32" fn WriteFile(hFile: HANDLE, lpBuffer: [*]const u8, nNumberOfBytesToWrite: DWORD, lpNumberOfBytesWritten: *DWORD, lpOverlapped: ?*anyopaque) callconv(.winapi) BOOL;
+    extern "kernel32" fn WaitForMultipleObjects(nCount: DWORD, lpHandles: [*]const HANDLE, bWaitAll: BOOL, dwMilliseconds: DWORD) callconv(.winapi) DWORD;
+    extern "kernel32" fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
+    extern "kernel32" fn TerminateProcess(hProcess: HANDLE, uExitCode: windows.UINT) callconv(.winapi) BOOL;
+    extern "kernel32" fn CreateEventW(lpEventAttributes: ?*windows.SECURITY_ATTRIBUTES, bManualReset: BOOL, bInitialState: BOOL, lpName: ?windows.LPCWSTR) callconv(.winapi) ?HANDLE;
+    extern "kernel32" fn SetEvent(hEvent: HANDLE) callconv(.winapi) BOOL;
+    extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.winapi) void;
+};
+
+/// A test-and-set lock for the two-line critical sections in `Shared`.
+const SpinLock = struct {
+    held: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *SpinLock) void {
+        while (self.held.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *SpinLock) void {
+        self.held.store(false, .release);
+    }
+};
+
+/// State the two threads and the session all reach. Refcounted; see the
+/// module doc for why it is not simply owned by the session.
+const Shared = struct {
+    ring: Ring,
+    /// Our end of the child's output pipe. The reader closes it.
+    out_read: HANDLE,
+    /// The child. Closed with the block.
+    process: HANDLE,
+    /// Manual-reset event `deinit` sets so the watcher stops waiting.
+    stop: HANDLE,
+    /// The pseudoconsole. Closed exactly once (`closePty`) by whoever
+    /// gets there first — the watcher after the child exits, or
+    /// `Session.deinit`. `pcon_lock` covers the flag and every resize,
+    /// so a resize never touches a handle that is being closed.
+    hpc: HPCON,
+    pcon_lock: SpinLock = .{},
+    pcon_closed: bool = false,
+    notify: Notify,
+    /// Guards `notify`: the threads call it under the lock, `Session.deinit`
+    /// clears it under the lock. After `deinit` returns the callback is
+    /// never entered again.
+    notify_lock: SpinLock = .{},
+    /// Set by `Session.deinit`. The reader discards from here on.
+    closing: std.atomic.Value(bool) = .init(false),
+    /// Set by the reader when the output pipe broke.
+    eof: std.atomic.Value(bool) = .init(false),
+    /// Set by the watcher once `exit_code` is valid.
+    exited: std.atomic.Value(bool) = .init(false),
+    exit_code: std.atomic.Value(u32) = .init(0),
+    refs: std.atomic.Value(u32) = .init(3), // the session + the reader + the watcher
+
+    fn release(self: *Shared, gpa: Allocator) void {
+        if (self.refs.fetchSub(1, .acq_rel) != 1) return;
+        self.ring.deinit();
+        windows.CloseHandle(self.process);
+        windows.CloseHandle(self.stop);
+        gpa.destroy(self);
+    }
+
+    fn callNotify(self: *Shared) void {
+        self.notify_lock.lock();
+        defer self.notify_lock.unlock();
+        self.notify.call();
+    }
+
+    fn disarmNotify(self: *Shared) void {
+        self.notify_lock.lock();
+        defer self.notify_lock.unlock();
+        self.notify = .none;
+    }
+
+    /// Close the pseudoconsole unless someone already has. May block
+    /// until the reader has drained what conhost still holds (see the
+    /// module doc), so the caller must not be the thread that empties
+    /// the ring. The lock is dropped before the blocking call: a resize
+    /// racing the close sees the flag and skips.
+    fn closePty(self: *Shared) void {
+        self.pcon_lock.lock();
+        if (self.pcon_closed) {
+            self.pcon_lock.unlock();
+            return;
+        }
+        self.pcon_closed = true;
+        self.pcon_lock.unlock();
+        kernel32.ClosePseudoConsole(self.hpc);
+    }
+
+    fn resizePty(self: *Shared, size: windows.COORD) void {
+        self.pcon_lock.lock();
+        defer self.pcon_lock.unlock();
+        if (self.pcon_closed) return;
+        const hr = kernel32.ResizePseudoConsole(self.hpc, size);
+        if (hr != 0) log.warn("ResizePseudoConsole failed: 0x{x}", .{@as(u32, @bitCast(hr))});
+    }
+};
+
+pub const Session = struct {
+    gpa: Allocator,
+    term: vt.Terminal,
+    /// By value: the write_pty callback recovers `Session` from
+    /// `&stream.handler` via `@fieldParentPtr`. Never move a Session.
+    stream: vt.TerminalStream,
+    /// Query replies stashed by `onWritePty`, flushed at the end of `pump`.
+    responses: std.ArrayList(u8) = .empty,
+    shared: *Shared,
+    /// Our end of the child's input pipe.
+    in_write: HANDLE,
+    exit: ?Exit = null,
+    cols: u16,
+    rows: u16,
+
+    pub fn spawn(gpa: Allocator, io: Io, opts: Options) SpawnError!*Session {
+        // ── strings the kernel wants ──
+        var env = try opts.env.clone(gpa);
+        defer env.deinit();
+        try applyTerm(&env);
+        const env_block = try env.createWindowsBlock(gpa, .{});
+        defer env_block.deinit(gpa);
+
+        var shell_argv: [1][]const u8 = undefined;
+        const argv: []const []const u8 = if (opts.argv) |a| blk: {
+            if (a.len == 0) return error.ArgvEmpty;
+            break :blk a;
+        } else blk: {
+            shell_argv[0] = win.defaultShell(opts.env);
+            if (shell_argv[0].len == 0) return error.NoShell;
+            break :blk &shell_argv;
+        };
+        const cmd_line = try win.commandLine(gpa, argv);
+        defer gpa.free(cmd_line);
+        const cwd_w: ?[:0]u16 = if (opts.cwd) |d| try std.unicode.wtf8ToWtf16LeAllocZ(gpa, d) else null;
+        defer if (cwd_w) |d| gpa.free(d);
+
+        const self = try gpa.create(Session);
+        errdefer gpa.destroy(self);
+        const shared = try gpa.create(Shared);
+        errdefer gpa.destroy(shared);
+        var ring = try Ring.init(opts.ring_capacity);
+        errdefer ring.deinit();
+
+        var term: vt.Terminal = try .init(io, gpa, .{ .cols = opts.cols, .rows = opts.rows });
+        errdefer term.deinit(gpa);
+
+        // ── pipes + pseudoconsole ──
+        var in_read: HANDLE = undefined;
+        var in_write: HANDLE = undefined;
+        if (kernel32.CreatePipe(&in_read, &in_write, null, 0) == .FALSE) return error.PipeFailed;
+        errdefer windows.CloseHandle(in_write);
+        var out_read: HANDLE = undefined;
+        var out_write: HANDLE = undefined;
+        if (kernel32.CreatePipe(&out_read, &out_write, null, 0) == .FALSE) {
+            windows.CloseHandle(in_read);
+            return error.PipeFailed;
+        }
+
+        var hpc: HPCON = undefined;
+        const hr = kernel32.CreatePseudoConsole(coord(opts.cols, opts.rows), in_read, out_write, 0, &hpc);
+        // conhost holds its own duplicates now; ours would only keep the
+        // pipes alive past the child.
+        windows.CloseHandle(in_read);
+        windows.CloseHandle(out_write);
+        if (hr != 0) {
+            windows.CloseHandle(out_read);
+            log.warn("CreatePseudoConsole failed: 0x{x}", .{@as(u32, @bitCast(hr))});
+            return error.PseudoConsoleFailed;
+        }
+        errdefer {
+            // Order matters: with nobody reading the output pipe,
+            // `ClosePseudoConsole` waits for a drain that never comes.
+            // Break the pipe first so conhost's writes fail instead.
+            windows.CloseHandle(out_read);
+            kernel32.ClosePseudoConsole(hpc);
+        }
+
+        // ── the child ──
+        var attr_size: usize = 0;
+        _ = kernel32.InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
+        const attr_list = try gpa.alloc(usize, (attr_size + @sizeOf(usize) - 1) / @sizeOf(usize));
+        defer gpa.free(attr_list);
+        if (kernel32.InitializeProcThreadAttributeList(attr_list.ptr, 1, 0, &attr_size) == .FALSE) return error.AttributeListFailed;
+        defer kernel32.DeleteProcThreadAttributeList(attr_list.ptr);
+        if (kernel32.UpdateProcThreadAttribute(attr_list.ptr, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hpc, @sizeOf(HPCON), null, null) == .FALSE)
+            return error.AttributeListFailed;
+
+        var si: STARTUPINFOEXW = std.mem.zeroes(STARTUPINFOEXW);
+        si.StartupInfo.cb = @sizeOf(STARTUPINFOEXW);
+        si.lpAttributeList = attr_list.ptr;
+        var pi: windows.PROCESS.INFORMATION = undefined;
+        // No application name: `CreateProcessW` resolves the first token
+        // on PATH itself (and appends `.exe`). Handles are not inherited —
+        // the pseudoconsole attribute is the child's whole console.
+        if (windows.kernel32.CreateProcessW(
+            null,
+            cmd_line.ptr,
+            null,
+            null,
+            .FALSE,
+            .{ .extended_startupinfo_present = true, .create_unicode_environment = true },
+            env_block.slice.ptr,
+            if (cwd_w) |d| d.ptr else null,
+            @ptrCast(&si),
+            &pi,
+        ) == .FALSE) {
+            log.warn("CreateProcessW failed: {t}", .{windows.GetLastError()});
+            return error.CreateProcessFailed;
+        }
+        windows.CloseHandle(pi.hThread);
+        errdefer {
+            _ = kernel32.TerminateProcess(pi.hProcess, 1);
+            windows.CloseHandle(pi.hProcess);
+        }
+
+        const stop = kernel32.CreateEventW(null, .TRUE, .FALSE, null) orelse return error.EventFailed;
+        errdefer windows.CloseHandle(stop);
+
+        // ── wire the session ──
+        shared.* = .{
+            .ring = ring,
+            .out_read = out_read,
+            .process = pi.hProcess,
+            .stop = stop,
+            .hpc = hpc,
+            .notify = opts.notify,
+        };
+        self.* = .{
+            .gpa = gpa,
+            .term = term,
+            .stream = undefined,
+            .shared = shared,
+            .in_write = in_write,
+            .cols = opts.cols,
+            .rows = opts.rows,
+        };
+        var handler = self.term.vtHandler();
+        handler.effects = .readonly;
+        handler.effects.write_pty = onWritePty;
+        self.stream = .init(.{ .handler = handler, .allocator = gpa });
+
+        // Watcher first: it only waits, so if the reader then fails to
+        // start it can be stopped and joined, and the errdefers above are
+        // once more the only owners of the block.
+        const watcher = try std.Thread.spawn(.{ .stack_size = 64 * 1024 }, watcherMain, .{ shared, gpa });
+        const reader = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, readerMain, .{ shared, gpa }) catch |err| {
+            _ = kernel32.SetEvent(stop);
+            watcher.join();
+            return err;
+        };
+        watcher.detach();
+        reader.detach();
+        return self;
+    }
+
+    /// Terminate the child, close the pseudoconsole and let go. Returns
+    /// without waiting for either thread (see module doc).
+    pub fn deinit(self: *Session) void {
+        const gpa = self.gpa;
+        self.shared.disarmNotify();
+        self.shared.closing.store(true, .release);
+        // The POSIX side hangs up on the whole process group; Win32 has no
+        // group to signal, so the direct child is terminated. Grandchildren
+        // it started are on their own (a job object would be the fix).
+        if (!self.shared.exited.load(.acquire)) _ = kernel32.TerminateProcess(self.shared.process, 1);
+        // The reader discards from here on, so the drain this may wait
+        // for needs nothing from us.
+        self.shared.closePty();
+        windows.CloseHandle(self.in_write);
+        _ = kernel32.SetEvent(self.shared.stop);
+        self.stream.deinit();
+        self.term.deinit(gpa);
+        self.responses.deinit(gpa);
+        self.shared.release(gpa);
+        self.* = undefined;
+        gpa.destroy(self);
+    }
+
+    /// Feed everything the reader has ringed into the terminal, then send
+    /// any query replies back to the child. Call from the UI thread on
+    /// every `.pty_readable` and once per frame. Returns true when the
+    /// terminal state changed (something to render).
+    pub fn pump(self: *Session) bool {
+        const ring = &self.shared.ring;
+        ring.beginDrain();
+        var fed = false;
+        while (true) {
+            const chunk = ring.readableSlice();
+            if (chunk.len == 0) break;
+            self.stream.nextSlice(chunk);
+            ring.consume(chunk.len);
+            fed = true;
+        }
+        if (self.responses.items.len > 0) {
+            writeAll(self.in_write, self.responses.items);
+            self.responses.clearRetainingCapacity();
+        }
+        self.reap();
+        return fed;
+    }
+
+    /// Bytes from the user (keystrokes, paste) to the child.
+    pub fn write(self: *Session, bytes: []const u8) void {
+        writeAll(self.in_write, bytes);
+    }
+
+    /// Resize both the pseudoconsole (the child sees a window-size event)
+    /// and the terminal grid. No-op when unchanged, so callers may spam it.
+    pub fn resize(self: *Session, cols: u16, rows: u16) !void {
+        if (cols == 0 or rows == 0) return error.InvalidValue;
+        if (cols == self.cols and rows == self.rows) return;
+        // After the child exited the pseudoconsole is closed or closing;
+        // only the grid is left to size.
+        self.shared.resizePty(coord(cols, rows));
+        try self.stream.handler.resize(.{ .cols = cols, .rows = rows });
+        self.cols = cols;
+        self.rows = rows;
+    }
+
+    /// The child's exit, once known. `null` while it is still running.
+    pub fn exited(self: *Session) ?Exit {
+        if (self.exit == null) self.reap();
+        return self.exit;
+    }
+
+    /// True once the output pipe broke: the pseudoconsole was closed and
+    /// everything the child wrote has been ringed.
+    pub fn eof(self: *const Session) bool {
+        return self.shared.eof.load(.acquire);
+    }
+
+    /// The Session's stream is the only writer of `term`; readers of the
+    /// grid (`grid.zig`) go through here.
+    pub fn terminal(self: *Session) *vt.Terminal {
+        return &self.term;
+    }
+
+    fn fromHandler(handler: *vt.TerminalStream.Handler) *Session {
+        const stream: *vt.TerminalStream = @fieldParentPtr("handler", handler);
+        return @alignCast(@fieldParentPtr("stream", stream));
+    }
+
+    fn onWritePty(handler: *vt.TerminalStream.Handler, data: []const u8) void {
+        const self = fromHandler(handler);
+        // Mid-parse: stash only. `pump` flushes after the drain.
+        self.responses.appendSlice(self.gpa, data) catch |err| {
+            log.warn("dropping {d}-byte query reply: {t}", .{ data.len, err });
+        };
+    }
+
+    /// Take the watcher's verdict. The watcher has closed (or is
+    /// closing) the pseudoconsole, so the reader reaches EOF after the
+    /// last output — the POSIX shape, where a dead child closes the pty.
+    fn reap(self: *Session) void {
+        if (self.exit != null) return;
+        if (!self.shared.exited.load(.acquire)) return;
+        self.exit = win.exitFromCode(self.shared.exit_code.load(.acquire));
+    }
+};
+
+// ── threads ─────────────────────────────────────────────────────────
+
+fn readerMain(shared: *Shared, gpa: Allocator) void {
+    defer shared.release(gpa);
+    var scratch: [4096]u8 = undefined;
+    while (true) {
+        // Once the session let go nobody will drain the ring; keep
+        // reading anyway (into scratch) so `ClosePseudoConsole` can finish.
+        var discard = shared.closing.load(.acquire);
+        var dst: []u8 = &scratch;
+        if (!discard) {
+            dst = shared.ring.writable();
+            // Back-pressure: a full ring means the UI is more than 256 KiB
+            // behind; give it a moment rather than spinning.
+            while (dst.len == 0) {
+                if (shared.closing.load(.acquire)) {
+                    discard = true;
+                    dst = &scratch;
+                    break;
+                }
+                kernel32.Sleep(1);
+                dst = shared.ring.writable();
+            }
+        }
+        var got: DWORD = 0;
+        // FALSE with ERROR_BROKEN_PIPE once conhost closed its end; a
+        // zero-length read means the same.
+        if (kernel32.ReadFile(shared.out_read, dst.ptr, @intCast(@min(dst.len, std.math.maxInt(DWORD))), &got, null) == .FALSE) break;
+        if (got == 0) break;
+        if (!discard and shared.ring.commit(got)) shared.callNotify();
+    }
+    shared.eof.store(true, .release);
+    windows.CloseHandle(shared.out_read);
+    shared.callNotify();
+}
+
+fn watcherMain(shared: *Shared, gpa: Allocator) void {
+    defer shared.release(gpa);
+    const handles = [_]HANDLE{ shared.process, shared.stop };
+    // Index 0 is the process; anything else is the stop event (or a
+    // failed wait, after which there is nothing sensible to report).
+    if (kernel32.WaitForMultipleObjects(handles.len, &handles, .FALSE, INFINITE) != WAIT_OBJECT_0) return;
+    var code: DWORD = 0;
+    if (kernel32.GetExitCodeProcess(shared.process, &code) == .FALSE) code = 255;
+    shared.exit_code.store(code, .release);
+    shared.exited.store(true, .release);
+    shared.callNotify();
+    // Last: this may block until the UI thread has drained the ring, and
+    // the UI thread is free to — it is not us.
+    shared.closePty();
+}
+
+// ── helpers ─────────────────────────────────────────────────────────
+
+fn coord(cols: u16, rows: u16) windows.COORD {
+    return .{ .X = @intCast(@min(cols, std.math.maxInt(i16))), .Y = @intCast(@min(rows, std.math.maxInt(i16))) };
+}
+
+/// Blocking write. Bytes to a child that has gone away are dropped
+/// silently; the watcher will report the exit.
+fn writeAll(h: HANDLE, bytes: []const u8) void {
+    var off: usize = 0;
+    while (off < bytes.len) {
+        var written: DWORD = 0;
+        const n: DWORD = @intCast(@min(bytes.len - off, std.math.maxInt(DWORD)));
+        if (kernel32.WriteFile(h, bytes.ptr + off, n, &written, null) == .FALSE) return;
+        if (written == 0) return;
+        off += written;
+    }
+}
+
+/// Overlay the terminal identity on the child's environment. No terminfo
+/// on Windows: `xterm-256color` is what Windows Terminal itself claims,
+/// and what every Windows-aware TUI library keys on.
+fn applyTerm(env: *std.process.Environ.Map) Allocator.Error!void {
+    try env.put("TERM", "xterm-256color");
+    try env.put("COLORTERM", "truecolor");
+    try env.put("TERM_PROGRAM", "mnml-zig");
+    _ = env.swapRemove("TERM_PROGRAM_VERSION");
+}
