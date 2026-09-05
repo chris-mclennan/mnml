@@ -27,6 +27,8 @@ const CommandError = command.CommandError;
 const hooks = @import("../core/hooks.zig");
 const client = @import("../git/client.zig");
 const parse = @import("../git/parse.zig");
+const remote_mod = @import("../git/remote.zig");
+const builtin = @import("builtin");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const Theme = @import("../ui/theme.zig");
@@ -72,7 +74,17 @@ pub const Pick = enum {
     file_history,
 };
 
-pub const PromptKind = enum { none, commit, stash, new_branch, tag, graph_author, graph_subject, graph_date, worktree_add };
+pub const PromptKind = enum {
+    none,
+    commit,
+    stash,
+    new_branch,
+    tag,
+    graph_author,
+    graph_subject,
+    graph_date,
+    worktree_add,
+};
 
 /// A confirm box's payload; the path is owned.
 pub const Confirm = union(enum) {
@@ -192,6 +204,10 @@ pub const State = struct {
     /// Mutating jobs in flight (a spinner on the rail).
     busy: u32 = 0,
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
+    /// `remote.origin.url` as the last status reported (borrows the
+    /// snapshot) and the forge it names, for the badge.
+    remote: []const u8 = "",
+    provider: remote_mod.Provider = .none,
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa) };
@@ -474,6 +490,28 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     if (now - st.status_at_ms >= status_ttl_ms) requestStatus(app) catch {};
 }
 
+// ─── the platform opener ────────────────────────────────────────────────
+
+/// Hand a URL to the OS: `open` / `xdg-open` / `cmd /c start`. Only
+/// plain http(s) goes out — anything else is a toast, not a spawn.
+pub fn openExternal(app: *App, url: []const u8) void {
+    if (!(std.mem.startsWith(u8, url, "https://") or std.mem.startsWith(u8, url, "http://"))) {
+        app.toast("not a web URL: {s}", .{url});
+        return;
+    }
+    const argv: []const []const u8 = switch (builtin.os.tag) {
+        .macos => &.{ "open", url },
+        .windows => &.{ "cmd", "/c", "start", "", url },
+        else => &.{ "xdg-open", url },
+    };
+    const res = std.process.run(app.gpa, app.io, .{ .argv = argv, .cwd = .{ .path = app.workspace }, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) }) catch |err| {
+        app.toast("could not open a browser: {s}", .{@errorName(err)});
+        return;
+    };
+    app.gpa.free(res.stdout);
+    app.gpa.free(res.stderr);
+}
+
 // ─── the handler (D1) ───────────────────────────────────────────────────
 
 /// `result` is ours: adopted into a snapshot / a pane, or destroyed —
@@ -494,6 +532,8 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             adoptArena(&st.snapshot.arena, &result.arena, gpa);
             st.status = s.status;
             st.status_repo = repo.id;
+            st.remote = s.remote;
+            st.provider = remote_mod.providerOf(s.remote);
             st.marks.clearRetainingCapacity();
             for (s.signs) |f| {
                 const marks = try parse.gutterMarks(st.snapshot.allocator(), f);
@@ -577,7 +617,10 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             }
             if (op.refresh) try afterChange(app, repo);
         },
-        .url => |u| app.toast("{s}", .{u}),
+        .url => |u| {
+            openExternal(app, u);
+            app.toast("{s}", .{u});
+        },
         .head_sha => |sha| {
             if (sha.len == 0) return;
             try app.clipboard.setYank(sha, false);
@@ -620,6 +663,8 @@ fn clearStatus(app: *App) void {
     st.status = null;
     st.status_pending = false;
     st.status_at_ms = 0;
+    st.remote = "";
+    st.provider = .none;
     st.marks.clearRetainingCapacity();
     st.rows.clearRetainingCapacity();
     st.filtered.clearRetainingCapacity();
@@ -1536,6 +1581,10 @@ pub fn focusPanel(app: *App) void {
 /// click opens the diff, right opens the row menu.
 pub fn statusPaneClick(app: *App, sp: *StatusPane, idx: u32, m: Mouse) Allocator.Error!void {
     const st = &app.git;
+    if (idx == status_view.badge_id) {
+        if (m.kind == .press and m.button == .left) runToast(app, command.run(app, .{ .static = .@"git.browse_commit" }));
+        return;
+    }
     if (idx >= st.rows.items.len) return;
     const was = sp.cursor;
     sp.cursor = idx;
@@ -1572,10 +1621,11 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     for (st.filtered.items, 0..) |idx, i| rows[i] = st.rows.items[idx];
     const repo_name: []const u8 = if (st.activeRepo()) |r| r.name else "";
     const branch = st.branchLabel() orelse "";
+    const prov = st.provider.label();
     const subtitle = if (st.repos.items.len > 1)
-        ui.fmt(" {s} · {s} ({d})", .{ repo_name, branch, st.badge() })
+        ui.fmt(" {s} · {s} ({d}){s}{s}", .{ repo_name, branch, st.badge(), if (prov.len > 0) " · " else "", prov })
     else
-        ui.fmt(" {s} ({d})", .{ branch, st.badge() });
+        ui.fmt(" {s} ({d}){s}{s}", .{ branch, st.badge(), if (prov.len > 0) " · " else "", prov });
     const empty: list_panel.EmptyState = if (st.activeRepo() == null)
         .{ .message = "Not a git repository.", .hint = "git init, or open a workspace with one." }
     else if (st.status == null)
@@ -1617,7 +1667,7 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect
     const branch = st.branchLabel() orelse "…";
     const header = ui.fmt(" {s} · {s} · {d} change{s}   ·   s stage · u unstage · x discard · a all · c commit · enter diff ", .{ repo_name, branch, st.badge(), if (st.badge() == 1) "" else "s" });
     const focused = app.active == id and app.focus == .pane;
-    status_view.drawPane(ui, id, area, .{ .header = header, .rows = st.rows.items, .cursor = sp.cursor, .focused = focused, .empty = if (st.status == null) "Reading git status…" else "Working tree clean." }, &sp.scroll);
+    status_view.drawPane(ui, id, area, .{ .header = header, .rows = st.rows.items, .cursor = sp.cursor, .focused = focused, .empty = if (st.status == null) "Reading git status…" else "Working tree clean.", .badge = st.provider.label() }, &sp.scroll);
     if (app.active == id) app.pane_rows = @max(area.h -| 1, 1);
 }
 

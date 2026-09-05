@@ -1741,6 +1741,7 @@ test {
     _ = @import("app/git.zig");
     _ = @import("app/cmd_git.zig");
     _ = @import("git/parse.zig");
+    _ = @import("git/remote.zig");
     _ = @import("git/client.zig");
     _ = @import("ui/git_status_view.zig");
     _ = @import("ui/diff_view.zig");

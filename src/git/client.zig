@@ -17,6 +17,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
+const remote_mod = @import("remote.zig");
 const event = @import("../core/event.zig");
 
 /// What a diff pane shows. `file` and `head` are against HEAD (staged
@@ -51,6 +52,9 @@ pub const LogFilter = struct {
 };
 
 pub const ListKind = enum { stashes, tags, reflog, worktrees };
+
+/// What `browse` opens: the file, the file at a line, or a commit.
+pub const BrowseKind = enum { file, line, commit };
 
 /// One unit of work. Strings are gpa-owned by the job (`deinit`).
 pub const Job = union(enum) {
@@ -87,7 +91,7 @@ pub const Job = union(enum) {
     revert: []u8,
     undo,
     redo,
-    browse: struct { path: []u8, line: u32 },
+    browse: struct { kind: BrowseKind, path: ?[]u8 = null, line: u32 = 0, rev: ?[]u8 = null },
     worktree_add: struct { path: []u8, branch: ?[]u8 },
     worktree_remove: []u8,
     head_sha,
@@ -104,7 +108,10 @@ pub const Job = union(enum) {
                 gpa.free(a.patch);
                 gpa.free(a.desc);
             },
-            .browse => |b| gpa.free(b.path),
+            .browse => |b| {
+                if (b.path) |p| gpa.free(p);
+                if (b.rev) |v| gpa.free(v);
+            },
             .worktree_add => |w| {
                 gpa.free(w.path);
                 if (w.branch) |b| gpa.free(b);
@@ -125,7 +132,7 @@ pub const Result = struct {
     payload: Payload,
 
     pub const Payload = union(enum) {
-        status: struct { status: parse.Status, signs: []parse.FileDiff },
+        status: struct { status: parse.Status, signs: []parse.FileDiff, remote: []const u8 = "" },
         diff: struct { scope: DiffScope, path: ?[]const u8, rev: ?[]const u8, files: []parse.FileDiff },
         blame: struct { path: []const u8, lines: []parse.BlameLine },
         log: struct { commits: []parse.Commit, path: ?[]const u8 },
@@ -413,7 +420,8 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                 const d = try git(repo, io, arena, &.{ "diff", "--no-ext-diff", "-U0", "HEAD", "--" }, null);
                 if (d.ok) signs = try parse.parseDiff(arena, d.stdout);
             }
-            r.payload = .{ .status = .{ .status = status, .signs = signs } };
+            const remote = try git(repo, io, arena, &.{ "config", "--get", "remote.origin.url" }, null);
+            r.payload = .{ .status = .{ .status = status, .signs = signs, .remote = if (remote.ok) trimmed(remote.stdout) else "" } };
         },
         .diff => |d| {
             var args: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -627,13 +635,23 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
         },
         .browse => |b| {
             const remote = try git(repo, io, arena, &.{ "config", "--get", "remote.origin.url" }, null);
-            const branch = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
-            const head = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
-            const ref = if (branch.ok and trimmed(branch.stdout).len > 0) trimmed(branch.stdout) else trimmed(head.stdout);
             if (!remote.ok or trimmed(remote.stdout).len == 0) {
                 r.payload = .{ .op = .{ .desc = "browse: no origin remote", .ok = false, .refresh = false } };
-            } else {
-                r.payload = .{ .url = try browseUrl(arena, trimmed(remote.stdout), ref, b.path, b.line) };
+            } else switch (b.kind) {
+                .commit => {
+                    const rev = try git(repo, io, arena, &.{ "rev-parse", b.rev orelse "HEAD" }, null);
+                    if (!rev.ok) {
+                        r.payload = .{ .op = .{ .desc = "browse", .ok = false, .msg = rev.reason(), .refresh = false } };
+                    } else {
+                        r.payload = .{ .url = try remote_mod.commitUrl(arena, trimmed(remote.stdout), trimmed(rev.stdout)) };
+                    }
+                },
+                .file, .line => {
+                    const branch = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
+                    const head = try git(repo, io, arena, &.{ "rev-parse", "HEAD" }, null);
+                    const ref = if (branch.ok and trimmed(branch.stdout).len > 0) trimmed(branch.stdout) else trimmed(head.stdout);
+                    r.payload = .{ .url = try remote_mod.fileUrl(arena, trimmed(remote.stdout), ref, b.path orelse "", if (b.kind == .line) b.line else null) };
+                },
             }
         },
         .worktree_add => |w| {
@@ -683,54 +701,9 @@ fn firstLine(s: []const u8) []const u8 {
     return t[0..nl];
 }
 
-/// A file's web URL on GitHub / GitLab / Bitbucket / Azure DevOps from
-/// `remote.origin.url`. `git@host:owner/repo.git` and `https://…` both
-/// resolve; an unknown host gets GitHub's shape, which most forges
-/// mirror.
-pub fn browseUrl(arena: Allocator, remote: []const u8, ref: []const u8, path: []const u8, line: u32) Allocator.Error![]const u8 {
-    var host: []const u8 = "";
-    var repo_path: []const u8 = "";
-    if (std.mem.startsWith(u8, remote, "git@")) {
-        const colon = std.mem.indexOfScalar(u8, remote, ':') orelse remote.len;
-        host = remote[4..colon];
-        repo_path = if (colon < remote.len) remote[colon + 1 ..] else "";
-    } else if (std.mem.indexOf(u8, remote, "://")) |i| {
-        var rest = remote[i + 3 ..];
-        if (std.mem.indexOfScalar(u8, rest, '@')) |at| rest = rest[at + 1 ..];
-        const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
-        host = rest[0..slash];
-        repo_path = if (slash < rest.len) rest[slash + 1 ..] else "";
-    } else {
-        return arena.dupe(u8, remote);
-    }
-    if (std.mem.endsWith(u8, repo_path, ".git")) repo_path = repo_path[0 .. repo_path.len - 4];
-    repo_path = std.mem.trimEnd(u8, repo_path, "/");
-    if (std.mem.indexOf(u8, host, "bitbucket") != null) {
-        return std.fmt.allocPrint(arena, "https://{s}/{s}/src/{s}/{s}#lines-{d}", .{ host, repo_path, ref, path, line });
-    }
-    if (std.mem.indexOf(u8, host, "gitlab") != null) {
-        return std.fmt.allocPrint(arena, "https://{s}/{s}/-/blob/{s}/{s}#L{d}", .{ host, repo_path, ref, path, line });
-    }
-    if (std.mem.indexOf(u8, host, "dev.azure.com") != null or std.mem.indexOf(u8, host, "visualstudio.com") != null) {
-        return std.fmt.allocPrint(arena, "https://{s}/{s}?path=/{s}&version=GB{s}&line={d}", .{ host, repo_path, path, ref, line });
-    }
-    return std.fmt.allocPrint(arena, "https://{s}/{s}/blob/{s}/{s}#L{d}", .{ host, repo_path, ref, path, line });
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
-
-test "browseUrl: ssh and https remotes on the four forges" {
-    var a = std.heap.ArenaAllocator.init(testing.allocator);
-    defer a.deinit();
-    const arena = a.allocator();
-    try testing.expectEqualStrings("https://github.com/o/r/blob/main/src/a.zig#L7", try browseUrl(arena, "git@github.com:o/r.git", "main", "src/a.zig", 7));
-    try testing.expectEqualStrings("https://github.com/o/r/blob/main/src/a.zig#L7", try browseUrl(arena, "https://github.com/o/r", "main", "src/a.zig", 7));
-    try testing.expectEqualStrings("https://gitlab.com/g/p/-/blob/dev/x.rs#L1", try browseUrl(arena, "https://user@gitlab.com/g/p.git", "dev", "x.rs", 1));
-    try testing.expectEqualStrings("https://bitbucket.org/w/r/src/main/f#lines-3", try browseUrl(arena, "git@bitbucket.org:w/r.git", "main", "f", 3));
-    try testing.expectEqualStrings("https://dev.azure.com/org/proj/_git/repo?path=/f&version=GBmain&line=2", try browseUrl(arena, "https://dev.azure.com/org/proj/_git/repo", "main", "f", 2));
-}
 
 test "a Repo's queue takes jobs, and destroy frees what was never run" {
     const io = testing.io;

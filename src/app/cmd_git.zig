@@ -71,7 +71,10 @@ pub const table = .{
     .@"git.cherry_pick" = &cherryPick,
     .@"git.revert" = &revert,
     .@"git.file_history" = &fileHistory,
-    .@"git.browse" = &browse,
+    .@"git.browse" = &browseLine,
+    .@"git.browse_line" = &browseLine,
+    .@"git.browse_file" = &browseFile,
+    .@"git.browse_commit" = &browseCommit,
     .@"git.switch_repo" = &switchRepo,
     .@"git.next_repo" = &nextRepo,
     .@"git.prev_repo" = &prevRepo,
@@ -509,12 +512,36 @@ fn fileHistory(app: *App) CommandError!void {
     try git.submit(app, repo, .{ .log = .{ .n = 200, .filter = .{ .path = try app.gpa.dupe(u8, rel) } } });
 }
 
-fn browse(app: *App) CommandError!void {
+// ─── browse on the remote ───────────────────────────────────────────────
+
+fn browseLine(app: *App) CommandError!void {
     const repo = try git.requireRepo(app);
     const e = app.activeEditor() orelse return app.diag.fail(arena(app), "browse: not an editor", .{});
     const rel = try activeRel(app, repo);
     const line: u32 = @intCast(e.buf.editor.currentLine() + 1);
-    try git.submit(app, repo, .{ .browse = .{ .path = try app.gpa.dupe(u8, rel), .line = line } });
+    try git.submit(app, repo, .{ .browse = .{ .kind = .line, .path = try app.gpa.dupe(u8, rel), .line = line } });
+}
+
+fn browseFile(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    const rel = try activeRel(app, repo);
+    try git.submit(app, repo, .{ .browse = .{ .kind = .file, .path = try app.gpa.dupe(u8, rel) } });
+}
+
+/// The graph's selected commit when a graph pane is active, a diff
+/// pane's commit, else HEAD.
+fn browseCommit(app: *App) CommandError!void {
+    const repo = try git.requireRepo(app);
+    var rev: ?[]u8 = null;
+    if (git.activeGraph(app)) |g| {
+        if (g.selected()) |c| rev = try app.gpa.dupe(u8, c.hash);
+    } else if (git.activeDiff(app)) |dp| {
+        if (dp.scope == .commit) if (dp.rev) |r| {
+            rev = try app.gpa.dupe(u8, r);
+        };
+    }
+    errdefer if (rev) |r| app.gpa.free(r);
+    try git.submit(app, repo, .{ .browse = .{ .kind = .commit, .rev = rev } });
 }
 
 // ─── repos ──────────────────────────────────────────────────────────────

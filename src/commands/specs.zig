@@ -904,6 +904,10 @@ pub const specs = [_]Spec{
     .{ .id = "git.unstage_all", .title = "Git: unstage everything", .group = "git" },
     .{ .id = "git.discard", .title = "Git: discard changes to the selected file (confirm)", .group = "git" },
     .{ .id = "git.open_file", .title = "Git: open the selected file in an editor", .group = "git" },
+    // Zig-only: browse a file / a line / a commit on the remote.
+    .{ .id = "git.browse_line", .title = "Git: open the current line on the remote", .group = "git" },
+    .{ .id = "git.browse_file", .title = "Git: open the current file on the remote", .group = "git" },
+    .{ .id = "git.browse_commit", .title = "Git: open the selected commit (or HEAD) on the remote", .group = "git" },
     .{ .id = "clock.menu", .title = "Open clock menu (local ⇄ UTC)", .group = "clock" },
     // Zig-only: the Lua layer (D10).
     .{ .id = "script.reload", .title = "Lua: reload init.lua (drops every script command, hook, pane and segment first)", .group = "script" },
@@ -938,13 +942,13 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "883 specs, unique ids" {
+test "886 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
     // + eighteen file-manager commands + four TODOS row commands
     // + three NOTES row commands + four FINDINGS row commands + ten
     // SESSIONS commands + six dock commands + two lsp-more commands.
-    try std.testing.expectEqual(@as(usize, 883), specs.len);
+    try std.testing.expectEqual(@as(usize, 886), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

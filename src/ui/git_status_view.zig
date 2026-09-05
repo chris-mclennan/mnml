@@ -99,15 +99,32 @@ pub const PaneDoc = struct {
     cursor: usize,
     focused: bool,
     empty: []const u8,
+    /// The provider badge on the header's right edge; empty = none.
+    badge: []const u8 = "",
 };
 
-/// The status pane: a header row, then the rows with the cursor row
-/// banded. Every row registers `.script_hit{ pane, id = row index }`.
+/// The badge's hit id; rows stay below it.
+pub const badge_id: u32 = 0xF000_0001;
+
+/// The status pane: a header row (the provider badge at its right
+/// edge, clickable), then the rows with the cursor row banded. Every
+/// row registers `.script_hit{ pane, id = row index }`.
 pub fn drawPane(ui: Ui, pane: PaneId, area: Rect, doc: PaneDoc, scroll: *usize) void {
     const t = ui.theme;
     ui.fill(area, t.bg);
     if (area.isEmpty()) return;
-    _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(doc.header, area.w), Theme.onBg(t.accent, t.bg.bg));
+    var head_w = area.w;
+    if (doc.badge.len > 0) {
+        const label = ui.fmt(" {s} ", .{doc.badge});
+        const w = ui.width(label);
+        if (area.w > w + 8) {
+            const br = Rect.init(area.right() - w, area.y, w, 1);
+            _ = ui.putStr(br.x, br.y, w, label, Theme.onBg(t.chip, t.bg.bg));
+            ui.hit(br, .{ .script_hit = .{ .pane = pane, .id = badge_id } });
+            head_w = area.w - w - 1;
+        }
+    }
+    _ = ui.putStr(area.x, area.y, head_w, ui.clipStr(doc.header, head_w), Theme.onBg(t.accent, t.bg.bg));
     if (area.h < 2) return;
     const list = area.splitTop(1).rest;
     if (doc.rows.len == 0) {
@@ -163,4 +180,13 @@ test "drawPane: header, rows with hits, the cursor row banded" {
     try testing.expect(h == .script_hit);
     try testing.expectEqual(@as(u32, 1), h.script_hit.id);
     try testing.expectEqual(@as(PaneId, 3), h.script_hit.pane);
+}
+
+test "drawPane paints the provider badge on the header's right edge and registers its hit" {
+    var f = try Fixture.init(40, 2);
+    defer f.deinit();
+    var scroll: usize = 0;
+    drawPane(f.ui(), 3, Rect.init(0, 0, 40, 2), .{ .header = " main ", .rows = &.{}, .cursor = 0, .focused = true, .empty = "clean", .badge = "GitHub" }, &scroll);
+    try f.expectRow(0, " main                            GitHub");
+    try testing.expectEqual(badge_id, f.hits.at(35, 0).?.script_hit.id);
 }
