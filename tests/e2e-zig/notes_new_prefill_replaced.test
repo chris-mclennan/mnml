@@ -1,0 +1,18 @@
+# zig-only
+# NOTES `n` seeds the prompt with the next free `note-N.md` as a
+# selection: enter keeps it, typing replaces it. A typed name without
+# an extension gets `.md`, so the note lands where the panel lists it.
+command view.activity_notes
+wait 400
+expect screen contains NOTES
+key n
+expect screen contains "note-1.md"
+type mynote
+expect screen lacks "note-1.mdmynote"
+expect screen contains "mynote"
+key enter
+wait 400
+expect pane mynote.md
+expect file .mnml/notes/mynote.md lacks "zzz"
+expect screen contains "NOTES (1)"
+expect screen contains "mynote"
