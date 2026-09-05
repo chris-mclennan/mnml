@@ -57,6 +57,22 @@ pub const CursorShape = enum { block, bar, underline };
 /// style's `fg` colours the line; `ul_style` picks its shape.
 pub const Underline = struct { start: usize, end: usize, style: Style };
 
+// ── virtual text (lsp-more) ──
+// changed: `Doc` gains `virtual_text` (an inlay hint, a colour swatch —
+// cells painted BEFORE the grapheme at `byte`, taking columns but no
+// bytes; a click on them lands on `byte`) and `virtual_lines` (a code
+// lens — a row painted ABOVE `line`, counted in the scroll math; each
+// segment with a `hit` registers `.script_hit{pane, hit}`).
+
+/// Text painted before the grapheme at `byte` (`byte == line end` paints
+/// after the last grapheme). Sorted by `byte`.
+pub const VirtualText = struct { byte: usize, text: []const u8, style: Style };
+/// One clickable piece of a virtual line.
+pub const VirtualSeg = struct { text: []const u8, style: Style, hit: ?u32 = null };
+/// A row above `line` (0-based). Sorted by `line`; several rows may
+/// name the same line and stack in order.
+pub const VirtualLine = struct { line: u32, segments: []const VirtualSeg };
+
 pub const Doc = struct {
     text: []const u8,
     /// Byte offset.
@@ -92,6 +108,10 @@ pub const Doc = struct {
     blame: []const []const u8 = &.{},
     /// Sorted by `start`, non-overlapping.
     underlines: []const Underline = &.{},
+    /// Sorted by `byte`.
+    virtual_text: []const VirtualText = &.{},
+    /// Sorted by `line`.
+    virtual_lines: []const VirtualLine = &.{},
 };
 
 /// `added` / `modified` / `deleted` are git's change marks — a coloured
@@ -386,11 +406,38 @@ pub fn markStyle(t: *const Theme, kind: MarkKind, base: Style) Style {
     });
 }
 
-/// Rows `line` takes at `text_w` (1 when not wrapping or folded).
+/// The virtual lines stacked above `line`.
+fn virtualLinesAt(doc: Doc, line: u32) []const VirtualLine {
+    const vl = doc.virtual_lines;
+    var lo: usize = 0;
+    var hi: usize = vl.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (vl[mid].line < line) lo = mid + 1 else hi = mid;
+    }
+    var e = lo;
+    while (e < vl.len and vl[e].line == line) e += 1;
+    return vl[lo..e];
+}
+
+/// Index of the first virtual text at or past byte `off`.
+fn firstVirtualAt(vt: []const VirtualText, off: usize) usize {
+    var lo: usize = 0;
+    var hi: usize = vt.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (vt[mid].byte < off) lo = mid + 1 else hi = mid;
+    }
+    return lo;
+}
+
+/// Rows `line` takes at `text_w` (1 when not wrapping or folded), plus
+/// the virtual lines above it.
 fn lineRows(ui: Ui, doc: Doc, lines: Lines, line: u32, text_w: u16) Allocator.Error!u32 {
-    if (!doc.wrap or foldStartingAt(doc.folds, line) != null) return 1;
+    const above: u32 = @intCast(virtualLinesAt(doc, line).len);
+    if (!doc.wrap or foldStartingAt(doc.folds, line) != null) return 1 + above;
     const cells = try layoutLine(ui, lines.slice(doc.text, line), doc.tab_width);
-    return @intCast((try wrapRows(ui.arena, cells, text_w)).len);
+    return @as(u32, @intCast((try wrapRows(ui.arena, cells, text_w)).len)) + above;
 }
 
 /// Adjusts `view` so the cursor's row is inside `text_h` rows.
@@ -421,10 +468,10 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
             try starts.append(ui.arena, line);
             sum += h;
         }
-        var subrow: u32 = 0;
+        var subrow: u32 = @intCast(virtualLinesAt(doc, cur_line).len);
         if (doc.wrap and foldStartingAt(doc.folds, cur_line) == null) {
             const rows = try wrapRows(ui.arena, cur_cells, text_w);
-            subrow = rowOfCell(rows, cellIndex(cur_cells, cur_off));
+            subrow += rowOfCell(rows, cellIndex(cur_cells, cur_off));
         }
         var front: usize = 0;
         while (sum + subrow >= text_h and front < heights.items.len) {
@@ -536,6 +583,21 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         var var_spans = RangeCursor(VarSpan).init(doc.var_spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
         var underlines = RangeCursor(Underline).init(doc.underlines, line_start);
+        var vti = firstVirtualAt(doc.virtual_text, line_start);
+
+        // ── virtual lines: the rows above this line (a code lens) ──
+        for (virtualLinesAt(doc, line)) |vl| {
+            if (y >= area.bottom()) break;
+            ui.fill(Rect.init(area.x, y, area.w, 1), t.bg);
+            var vx: u16 = text_x;
+            for (vl.segments) |seg| {
+                if (vx >= text_x + text_w) break;
+                const used = ui.putStr(vx, y, text_x + text_w - vx, seg.text, Theme.onBg(seg.style, t.bg.bg));
+                if (seg.hit) |id| ui.hit(Rect.init(vx, y, used, 1), .{ .script_hit = .{ .pane = pane, .id = id } });
+                vx += used + 2;
+            }
+            y += 1;
+        }
 
         for (rows, 0..) |row, ri| {
             if (y >= area.bottom()) break;
@@ -583,6 +645,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             var rel_x: u32 = 0;
             var painted_x: u16 = text_x;
             const skip: u32 = if (ri == 0) view.scroll_col else 0;
+            // Columns the row's virtual text has taken so far (lsp-more).
+            var vx: u32 = 0;
             var i = row.start;
             while (i < row.end) : (i += 1) {
                 const c = cells[i];
@@ -590,12 +654,27 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 const rx = rel_x;
                 abs_x += c.w;
                 rel_x += c.w;
-                if (rx + c.w <= skip) continue;
+                const off: usize = line_start + c.off;
+                if (rx + c.w <= skip) {
+                    while (vti < doc.virtual_text.len and doc.virtual_text[vti].byte <= off) vti += 1;
+                    continue;
+                }
                 if (rx < skip) continue; // a wide glyph straddling the scroll edge
-                const cx: u32 = rx - skip;
+                var cx: u32 = rx - skip;
+                // ── virtual text anchored on this grapheme ──
+                while (vti < doc.virtual_text.len and doc.virtual_text[vti].byte <= off) : (vti += 1) {
+                    const vt = doc.virtual_text[vti];
+                    if (vt.byte < line_start) continue;
+                    const at: u32 = cx + vx;
+                    if (at >= text_w) break;
+                    const vsx: u16 = text_x + @as(u16, @intCast(at));
+                    const used = ui.putStr(vsx, y, text_w - @as(u16, @intCast(at)), vt.text, Theme.onBg(vt.style, row_style.bg));
+                    ui.hit(Rect.init(vsx, y, used, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
+                    vx += used;
+                }
+                cx += vx;
                 if (cx + c.w > text_w) break;
                 const sx: u16 = text_x + @as(u16, @intCast(cx));
-                const off: usize = line_start + c.off;
 
                 var style: Style = row_style;
                 if (spans.at(off)) |si| {
@@ -656,8 +735,23 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
             // The EOL cell and the space after it.
             const is_last_row = ri == rows.len - 1;
             if (is_last_row and painted_x < text_x + text_w) {
-                const eol_x = painted_x;
                 const eol_off = line_end - line_start;
+                // ── virtual text at the line's end ──
+                while (vti < doc.virtual_text.len and doc.virtual_text[vti].byte <= line_end) : (vti += 1) {
+                    const vt = doc.virtual_text[vti];
+                    if (vt.byte < line_start or painted_x >= text_x + text_w) continue;
+                    const used = ui.putStr(painted_x, y, text_x + text_w - painted_x, vt.text, Theme.onBg(vt.style, row_style.bg));
+                    ui.hit(Rect.init(painted_x, y, used, 1), .{ .editor_cell = .{ .pane = pane, .line = line, .col = eol_off } });
+                    painted_x += used;
+                }
+                if (painted_x >= text_x + text_w) {
+                    // The virtual text filled the row: the cursor's cell
+                    // is the last one, and there is no EOL space to hit.
+                    if (is_cursor_line and found == null and cursor_line_real == cursor_line and cursor_off >= eol_off) found = .{ .x = text_x + text_w - 1, .y = y };
+                    y += 1;
+                    continue;
+                }
+                const eol_x = painted_x;
                 var eol_style = row_style;
                 var paint_eol = false;
                 if (sel) |s| {
@@ -985,6 +1079,59 @@ test "an empty document paints one numbered row and puts the cursor at its start
     try f.expectRows(&.{ "   1", "" });
     try testing.expectEqual(Cursor{ .x = 5, .y = 0 }, cur.?);
     try testing.expectEqual(@as(u32, 0), f.hits.at(7, 0).?.editor_cell.col);
+}
+
+test "virtual text paints before its grapheme, takes no bytes, and its cells hit the anchor byte" {
+    var f = try Fixture.init(24, 1);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("let x = f(a)");
+    d.line_numbers = false;
+    d.cursor = 8; // `f`
+    // A type hint after `x` (byte 5 is the space) and a parameter hint before `a`.
+    d.virtual_text = &.{ .{ .byte = 5, .text = ": u32", .style = .{ .dim = true } }, .{ .byte = 10, .text = "n:", .style = .{} } };
+    const cur = draw(f.ui(), 3, f.full(), &view, d);
+    try f.expectRow(0, "let x: u32 = f(n:a)");
+    // The hint's cells land on the byte they sit before; the text after
+    // it keeps its own offsets.
+    try testing.expectEqual(@as(u32, 5), f.hits.at(6, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 5), f.hits.at(10, 0).?.editor_cell.col);
+    try testing.expectEqual(@as(u32, 8), f.hits.at(13, 0).?.editor_cell.col); // `f`
+    try testing.expectEqual(@as(u32, 10), f.hits.at(15, 0).?.editor_cell.col); // `n:` → a
+    try testing.expectEqual(@as(u32, 10), f.hits.at(17, 0).?.editor_cell.col); // a
+    // The cursor sits on `f`, shifted right by the hint's width.
+    try testing.expectEqual(Cursor{ .x = 13, .y = 0 }, cur.?);
+    try testing.expect(f.style(6, 0).dim);
+    try testing.expect(!f.style(13, 0).dim);
+    // A hint at the line's end paints after the text.
+    d.virtual_text = &.{.{ .byte = 12, .text = " → u32", .style = .{} }};
+    _ = draw(f.ui(), 3, f.full(), &view, d);
+    try f.expectRow(0, "let x = f(a) → u32");
+    try testing.expectEqual(@as(u32, 12), f.hits.at(14, 0).?.editor_cell.col);
+}
+
+test "a virtual line paints above its line, counts in the scroll math, and its segments register script hits" {
+    var f = try Fixture.init(30, 3);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("fn a() {}\nfn b() {}\nfn c() {}");
+    d.line_numbers = false;
+    d.virtual_lines = &.{.{ .line = 1, .segments = &.{ .{ .text = "3 references", .style = .{}, .hit = 7 }, .{ .text = "▶ run", .style = .{}, .hit = 8 } } }};
+    d.cursor = 10; // line 1
+    const cur = draw(f.ui(), 5, f.full(), &view, d);
+    try f.expectRows(&.{ "fn a() {}", "3 references  ▶ run", "fn b() {}" });
+    try testing.expectEqual(Cursor{ .x = 0, .y = 2 }, cur.?);
+    try testing.expectEqual(@as(u32, 7), f.hits.at(2, 1).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 8), f.hits.at(15, 1).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 5), f.hits.at(15, 1).?.script_hit.pane);
+    // Three text rows into two: the lens row costs one, so the cursor
+    // on line 2 scrolls line 0 away and keeps the lens above line 1.
+    var g = try Fixture.init(30, 3);
+    defer g.deinit();
+    d.cursor = 20; // line 2
+    _ = draw(g.ui(), 5, g.full(), &view, d);
+    try g.expectRows(&.{ "3 references  ▶ run", "fn b() {}", "fn c() {}" });
+    try testing.expectEqual(@as(u32, 1), view.scroll_line);
 }
 
 test "a degenerate area never panics" {
