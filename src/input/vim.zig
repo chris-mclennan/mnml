@@ -131,6 +131,7 @@ pub const Vim = struct {
     cmdline_cursor: usize = 0,
     tab_width: usize,
     text_width: usize,
+    use_tabs: bool,
     /// Last `f`/`F`/`t`/`T` so `;` and `,` can re-fire it.
     last_find_char: ?struct { ch: u21, forward: bool, before: bool } = null,
     /// `n` / `N` are relative to the last search's direction.
@@ -153,7 +154,18 @@ pub const Vim = struct {
     visual_exact: bool = false,
 
     pub fn init(gpa: Allocator, cfg: input.Config) Vim {
-        return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8) };
+        return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8), .use_tabs = cfg.use_tabs };
+    }
+
+    pub fn configure(self: *Vim, cfg: input.Config) void {
+        self.tab_width = @max(cfg.tab_width, 1);
+        self.text_width = @max(cfg.text_width, 8);
+        self.use_tabs = cfg.use_tabs;
+    }
+
+    /// What Tab types in insert / replace: one `\t` or a tab stop of spaces.
+    fn tabText(self: *const Vim, arena: Allocator) Allocator.Error![]const u8 {
+        return if (self.use_tabs) "\t" else try spaces(arena, self.tab_width);
     }
 
     pub fn deinit(self: *Vim) void {
@@ -691,7 +703,7 @@ pub const Vim = struct {
             },
             .char => |c| if (key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .insert_char = c }}),
             .enter => ops(arena, &.{.insert_newline}),
-            .tab => ops(arena, &.{.{ .insert_str = try spaces(arena, self.tab_width) }}),
+            .tab => ops(arena, &.{.{ .insert_str = try self.tabText(arena) }}),
             .backspace => ops(arena, &.{.backspace}),
             .delete => ops(arena, &.{.delete_forward}),
             .left => ops(arena, &.{.move_left}),
@@ -717,7 +729,7 @@ pub const Vim = struct {
             },
             .char => |c| if (key.mods.ctrl or key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .overwrite_char_and_advance = c }}),
             .enter => ops(arena, &.{.insert_newline}),
-            .tab => ops(arena, &.{.{ .insert_str = try spaces(arena, self.tab_width) }}),
+            .tab => ops(arena, &.{.{ .insert_str = try self.tabText(arena) }}),
             .backspace => ops(arena, &.{.replace_undo_one}),
             .delete => ops(arena, &.{.delete_forward}),
             .left => ops(arena, &.{.move_left}),

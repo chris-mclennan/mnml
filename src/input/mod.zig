@@ -138,6 +138,9 @@ pub const Style = enum { vim, standard };
 pub const Config = struct {
     tab_width: usize = 4,
     text_width: usize = 80,
+    /// Tab inserts a `\t` instead of `tab_width` spaces (`.editorconfig`
+    /// `indent_style = tab`).
+    use_tabs: bool = false,
 };
 
 /// A which-key style hint for a pending prefix: the prefix label and its
@@ -163,6 +166,14 @@ pub const InputHandler = union(enum) {
     pub fn deinit(h: *InputHandler) void {
         switch (h.*) {
             inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "deinit")) impl.deinit(),
+        }
+    }
+
+    /// Re-read the scalars after construction (a `.editorconfig` landed
+    /// for the file, `:set tabstop`).
+    pub fn configure(h: *InputHandler, cfg: Config) void {
+        switch (h.*) {
+            inline else => |*impl| impl.configure(cfg),
         }
     }
 

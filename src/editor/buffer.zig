@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const editorconfig = @import("editorconfig.zig");
 const Io = std.Io;
 const editor_mod = @import("editor.zig");
 const Editor = editor_mod.Editor;
@@ -68,6 +69,18 @@ pub const Buffer = struct {
     /// take it back — and, like any `replace_range`, leaves the cursor
     /// after the inserted text.
     ensure_trailing_newline: bool = true,
+    /// `[editor] trim_trailing_ws_on_save` / `.editorconfig`
+    /// `trim_trailing_whitespace`: line ends are stripped on save, in
+    /// one undo step, the cursor kept.
+    trim_trailing_ws_on_save: bool = false,
+    /// What a save writes between lines. The text is LF in memory
+    /// whatever the file had (`load` normalises and remembers); a
+    /// `.editorconfig` `end_of_line` overrides what was found.
+    eol: editorconfig.Eol = .lf,
+    /// The indent unit the handler types on Tab — kept here so a handler
+    /// rebuilt by `setInputStyle` gets the file's value back, not the
+    /// config's.
+    indent_unit: usize = 4,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -98,6 +111,7 @@ pub const Buffer = struct {
             .editor = ed,
             .input = InputHandler.init(gpa, style, cfg),
             .saved_text = saved,
+            .indent_unit = @max(cfg.tab_width, 1),
         };
     }
 
@@ -128,12 +142,50 @@ pub const Buffer = struct {
     /// Read `path` into a new buffer. A missing file is an error — the
     /// app decides whether that means "new file".
     pub fn load(gpa: Allocator, io: Io, path: []const u8, style: input.Style, cfg: input.Config) LoadError!Buffer {
-        const text = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
-        defer gpa.free(text);
+        const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
+        defer gpa.free(raw);
+        const eol = detectEol(raw);
+        const text = if (eol == .lf) raw else try normalizeEol(gpa, raw);
+        defer if (eol != .lf) gpa.free(text);
         var buf = try init(gpa, text, style, cfg);
         errdefer buf.deinit();
+        buf.eol = eol;
         try buf.setPath(path);
         return buf;
+    }
+
+    /// The first line break decides: `\r\n`, a lone `\r`, else LF.
+    pub fn detectEol(text: []const u8) editorconfig.Eol {
+        const i = std.mem.indexOfAny(u8, text, "\r\n") orelse return .lf;
+        if (text[i] == '\n') return .lf;
+        return if (i + 1 < text.len and text[i + 1] == '\n') .crlf else .cr;
+    }
+
+    /// Every `\r\n` and lone `\r` becomes `\n`.
+    pub fn normalizeEol(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
+        var out = try std.ArrayList(u8).initCapacity(gpa, text.len);
+        errdefer out.deinit(gpa);
+        var i: usize = 0;
+        while (i < text.len) : (i += 1) {
+            if (text[i] == '\r') {
+                out.appendAssumeCapacity('\n');
+                if (i + 1 < text.len and text[i + 1] == '\n') i += 1;
+            } else out.appendAssumeCapacity(text[i]);
+        }
+        return out.toOwnedSlice(gpa);
+    }
+
+    /// `text` with `\n` written as `eol`.
+    pub fn withEol(gpa: Allocator, text: []const u8, eol: editorconfig.Eol) Allocator.Error![]u8 {
+        if (eol == .lf) return gpa.dupe(u8, text);
+        const sep: []const u8 = if (eol == .crlf) "\r\n" else "\r";
+        const n = std.mem.count(u8, text, "\n");
+        var out = try std.ArrayList(u8).initCapacity(gpa, text.len + n * (sep.len - 1));
+        errdefer out.deinit(gpa);
+        for (text) |c| {
+            if (c == '\n') out.appendSliceAssumeCapacity(sep) else out.appendAssumeCapacity(c);
+        }
+        return out.toOwnedSlice(gpa);
     }
 
     pub fn setPath(self: *Buffer, path: []const u8) Allocator.Error!void {
@@ -153,9 +205,80 @@ pub const Buffer = struct {
 
     pub fn save(self: *Buffer, io: Io) SaveError!void {
         const path = self.path orelse return error.NoPath;
+        if (self.trim_trailing_ws_on_save) try self.trimTrailingWhitespace();
         if (self.ensure_trailing_newline) try self.fixTrailingNewline();
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = self.editor.bytes() });
+        const data = try withEol(self.gpa, self.editor.bytes(), self.eol);
+        defer self.gpa.free(data);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
         try self.markSaved();
+    }
+
+    /// Strip the spaces and tabs before every line end, as one undoable
+    /// edit; the cursor keeps its place (or moves left with the text
+    /// removed before it).
+    fn trimTrailingWhitespace(self: *Buffer) Allocator.Error!void {
+        const text = self.editor.bytes();
+        var out = std.ArrayList(u8).empty;
+        defer out.deinit(self.gpa);
+        var removed_before_cursor: usize = 0;
+        var line_start: usize = 0;
+        var changed = false;
+        while (line_start <= text.len) {
+            const nl = std.mem.indexOfScalarPos(u8, text, line_start, '\n') orelse text.len;
+            var end = nl;
+            while (end > line_start and (text[end - 1] == ' ' or text[end - 1] == '\t')) end -= 1;
+            if (end != nl) {
+                changed = true;
+                if (self.editor.cursor > end) removed_before_cursor += @min(self.editor.cursor, nl) - end;
+            }
+            try out.appendSlice(self.gpa, text[line_start..end]);
+            if (nl == text.len) break;
+            try out.append(self.gpa, '\n');
+            line_start = nl + 1;
+        }
+        if (!changed) return;
+        const cursor = self.editor.cursor - removed_before_cursor;
+        var clip = Clipboard.init(self.gpa);
+        defer clip.deinit();
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        _ = self.editor.apply(.{ .replace_range = .{ .start = 0, .end = text.len, .text = out.items } }, 0, &clip, arena.allocator()) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unsupported => return,
+        };
+        self.editor.anchor = null;
+        self.editor.setCursor(cursor);
+        self.editor.goal_col = null;
+    }
+
+    /// The indent unit and the tab display width, for the editor and
+    /// the handler both.
+    pub fn setIndent(self: *Buffer, tab_display: usize, indent_unit: usize, use_tabs: bool) void {
+        self.editor.tab_width = @max(tab_display, 1);
+        self.editor.use_tabs = use_tabs;
+        self.indent_unit = @max(indent_unit, 1);
+        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = self.textWidth(), .use_tabs = use_tabs });
+    }
+
+    fn textWidth(self: *const Buffer) usize {
+        return switch (self.input) {
+            .vim => |v| v.text_width,
+            .standard => 80,
+        };
+    }
+
+    /// What a `.editorconfig` said about this file, over the config's
+    /// defaults already on the buffer. Unset keys leave things alone.
+    pub fn applyEditorconfig(self: *Buffer, r: editorconfig.Resolved) void {
+        if (r.indent_style != null or r.indentUnit() != null) {
+            const use_tabs = if (r.indent_style) |s| s == .tab else self.editor.use_tabs;
+            const unit = r.indentUnit() orelse self.editor.tab_width;
+            const display = r.tabDisplayWidth() orelse self.editor.tab_width;
+            self.setIndent(display, unit, use_tabs);
+        }
+        if (r.end_of_line) |e| self.eol = e;
+        if (r.trim_trailing_whitespace) |v| self.trim_trailing_ws_on_save = v;
+        if (r.insert_final_newline) |v| self.ensure_trailing_newline = v;
     }
 
     fn fixTrailingNewline(self: *Buffer) Allocator.Error!void {
@@ -187,6 +310,8 @@ pub const Buffer = struct {
         if (self.input.style() == style) return;
         self.input.deinit();
         self.input = InputHandler.init(self.gpa, style, cfg);
+        // The file's indent (a `.editorconfig`) outlives the handler.
+        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = cfg.text_width, .use_tabs = self.editor.use_tabs });
         self.editor.anchor = null;
     }
 
@@ -1292,4 +1417,80 @@ test "buffer: load and save round-trip through the file system" {
     const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
     defer gpa.free(back);
     try testing.expectEqualStrings("hello!\n", back);
+}
+
+test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; trim + final newline on save; tabs as the indent" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const path = try std.fs.path.join(gpa, &.{ pbuf[0..n], "win.txt" });
+    defer gpa.free(path);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "win.txt", .data = "one  \r\ntwo\t\r\n  three" });
+    var buf = try Buffer.load(gpa, testing.io, path, .vim, .{ .tab_width = 4 });
+    defer buf.deinit();
+    try testing.expectEqualStrings("one  \ntwo\t\n  three", buf.editor.bytes());
+    try testing.expectEqual(editorconfig.Eol.crlf, buf.eol);
+    try testing.expect(!buf.dirty);
+    // The defaults: nothing trimmed, a final newline added, CRLF kept.
+    try buf.save(testing.io);
+    const first = try tmp.dir.readFileAlloc(testing.io, "win.txt", gpa, .limited(256));
+    defer gpa.free(first);
+    try testing.expectEqualStrings("one  \r\ntwo\t\r\n  three\r\n", first);
+    buf.editor.setCursor(6); // on "two"
+    // A `.editorconfig` says: trim, LF, tabs 8 wide, indent with tabs.
+    buf.applyEditorconfig(.{ .indent_style = .tab, .tab_width = 8, .end_of_line = .lf, .trim_trailing_whitespace = true, .insert_final_newline = false });
+    try testing.expectEqual(@as(usize, 8), buf.editor.tab_width);
+    try testing.expect(buf.editor.use_tabs);
+    try testing.expectEqual(@as(usize, 8), buf.input.vim.tab_width);
+    try testing.expect(buf.input.vim.use_tabs);
+    try buf.save(testing.io);
+    const second = try tmp.dir.readFileAlloc(testing.io, "win.txt", gpa, .limited(256));
+    defer gpa.free(second);
+    try testing.expectEqualStrings("one\ntwo\n  three\n", second); // the earlier save's newline stays
+    // The trim was one undo step; the cursor stayed on "two" (byte 6 → 4).
+    try testing.expectEqual(@as(usize, 4), buf.editor.cursor);
+    try testing.expectEqualStrings("one\ntwo\n  three\n", buf.editor.bytes());
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    _ = try buf.editor.apply(.undo, 10, &clip, arena.allocator());
+    try testing.expectEqualStrings("one  \ntwo\t\n  three\n", buf.editor.bytes());
+    _ = try buf.editor.apply(.redo, 10, &clip, arena.allocator());
+    // Tab in insert mode types a `\t`; `>>` pads with one.
+    const keys = try parseKeys(gpa, "ggI<tab><esc>j>>");
+    defer gpa.free(keys);
+    for (keys) |k| _ = try buf.feedKey(k, &clip, 10, null, arena.allocator());
+    try testing.expectEqualStrings("\tone\n\ttwo\n  three\n", buf.editor.bytes());
+    // `indent_size` alone sets the unit; the display width follows it.
+    buf.applyEditorconfig(.{ .indent_style = .space, .indent_size = 2 });
+    try testing.expect(!buf.editor.use_tabs);
+    try testing.expectEqual(@as(usize, 2), buf.editor.tab_width);
+    try testing.expectEqual(@as(usize, 2), buf.input.vim.tab_width);
+    // `indent_size = tab` with a tab_width: the unit is the width.
+    buf.applyEditorconfig(.{ .indent_size_is_tab = true, .tab_width = 3 });
+    try testing.expectEqual(@as(usize, 3), buf.input.vim.tab_width);
+    // An empty resolution changes nothing.
+    buf.applyEditorconfig(.{});
+    try testing.expectEqual(@as(usize, 3), buf.editor.tab_width);
+    try testing.expect(buf.trim_trailing_ws_on_save);
+    // A handler rebuilt for the other style keeps the file's indent.
+    buf.applyEditorconfig(.{ .indent_style = .tab, .indent_size = 6 });
+    buf.setInputStyle(.standard, .{ .tab_width = 4 });
+    try testing.expectEqual(@as(usize, 6), buf.input.standard.tab_width);
+    try testing.expect(buf.input.standard.use_tabs);
+    buf.setInputStyle(.vim, .{ .tab_width = 4 });
+    try testing.expectEqual(@as(usize, 6), buf.input.vim.tab_width);
+    try testing.expect(buf.input.vim.use_tabs);
+    // A lone-CR file is detected too; `withEol` writes it back.
+    try testing.expectEqual(editorconfig.Eol.cr, Buffer.detectEol("a\rb\r"));
+    try testing.expectEqual(editorconfig.Eol.lf, Buffer.detectEol("no breaks"));
+    const cr = try Buffer.withEol(gpa, "a\nb\n", .cr);
+    defer gpa.free(cr);
+    try testing.expectEqualStrings("a\rb\r", cr);
+    const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\n");
+    defer gpa.free(norm);
+    try testing.expectEqualStrings("a\nb\nc\n", norm);
 }

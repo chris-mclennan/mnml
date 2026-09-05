@@ -447,6 +447,7 @@ test {
     _ = @import("editor/edit_op.zig");
     _ = @import("editor/clipboard.zig");
     _ = @import("editor/editor.zig");
+    _ = @import("editor/editorconfig.zig");
     _ = @import("editor/undo.zig");
     _ = @import("editor/motion.zig");
     _ = @import("editor/insert.zig");

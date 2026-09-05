@@ -1,0 +1,32 @@
+# zig-only
+# A `.editorconfig` beside the sources is read when a file opens: with
+# `indent_style = tab` Tab types a real tab and `>>` pads with one, with
+# `trim_trailing_whitespace` a save strips line ends, and
+# `insert_final_newline = false` keeps the file's last line bare. A file
+# a section does not match takes the config's defaults (spaces).
+write .editorconfig "root = true\n\n[*]\nindent_style = space\nindent_size = 2\n\n[*.mk]\nindent_style = tab\ntrim_trailing_whitespace = true\ninsert_final_newline = false"
+write build.mk "all:\necho hi   "
+write notes.txt "x"
+open build.mk
+command editor.use_vim
+
+# Tab in insert mode is a `\t`; `>>` on the next line pads with one too.
+key j
+key I
+key tab
+key esc
+key k
+type ">>"
+command file.save
+expect file build.mk contains "\tall:\n\techo hi"
+# The trailing spaces went with the save; no final newline was added.
+expect file build.mk lacks "hi   "
+expect file build.mk lacks "hi\n"
+
+# notes.txt matches only `[*]`: two spaces per Tab, a final newline on save.
+open notes.txt
+key I
+key tab
+key esc
+command file.save
+expect file notes.txt contains "  x\n"

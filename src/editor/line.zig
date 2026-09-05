@@ -57,8 +57,11 @@ pub fn indent(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     const pos = ed.rowCol();
     const range = selectedLineRange(ed);
     var pad_buf: [64]u8 = undefined;
-    const pad = pad_buf[0..@min(ed.tab_width, pad_buf.len)];
-    @memset(pad, ' ');
+    const pad: []const u8 = if (ed.use_tabs) "\t" else blk: {
+        const p = pad_buf[0..@min(ed.tab_width, pad_buf.len)];
+        @memset(p, ' ');
+        break :blk p;
+    };
     var line = range[0];
     while (line <= range[1]) : (line += 1) {
         const bol = ed.lineStart(line);

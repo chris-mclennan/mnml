@@ -27,6 +27,7 @@ const hooks = @import("core/hooks.zig");
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const buffer_mod = @import("editor/buffer.zig");
+const editorconfig = @import("editor/editorconfig.zig");
 const edit_op = @import("editor/edit_op.zig");
 const edit_op_editor = @import("editor/editor.zig");
 const pane_mod = @import("app/pane.zig");
@@ -860,6 +861,20 @@ pub const App = struct {
         return .{ .tab_width = self.cfg.editor.tab_width, .text_width = self.cfg.editor.text_width };
     }
 
+    /// The save-time preferences from `cfg.editor`, then what the file's
+    /// `.editorconfig` chain says (`src/editor/editorconfig.zig`) — run
+    /// on every buffer before it joins the store, so the per-file
+    /// overrides land before the first edit. A scratch buffer takes the
+    /// config's defaults only.
+    pub fn applyBufferPrefs(self: *App, buf: *Buffer) Allocator.Error!void {
+        buf.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
+        buf.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
+        const path = buf.path orelse return;
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        buf.applyEditorconfig(try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace));
+    }
+
     /// `[keys.global]` + `[keys.<profile>]` over the profile's defaults.
     fn buildKeymap(gpa: Allocator, style: input.Style, keys: Config.Keys) Allocator.Error!keymap.Keymap {
         var scratch = std.heap.ArenaAllocator.init(gpa);
@@ -1130,6 +1145,7 @@ pub const App = struct {
             else => return err,
         };
         errdefer buf.deinit();
+        try self.applyBufferPrefs(&buf);
         // A file closed earlier reopens where the cursor was.
         var i: usize = self.closed.items.len;
         while (i > 0) {
@@ -1186,6 +1202,7 @@ pub const App = struct {
         var buf = try Buffer.init(gpa, src.buf.editor.bytes(), self.input_style, self.editorConfig());
         errdefer buf.deinit();
         if (src.buf.path) |p| try buf.setPath(p);
+        try self.applyBufferPrefs(&buf);
         try buf.markSaved();
         buf.dirty = src.buf.dirty;
         buf.editor.setCursor(src.buf.editor.cursor);
@@ -1202,6 +1219,7 @@ pub const App = struct {
         const gpa = self.gpa;
         var buf = try Buffer.init(gpa, "", self.input_style, self.editorConfig());
         errdefer buf.deinit();
+        try self.applyBufferPrefs(&buf);
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syntax.Syntax.init(gpa) } });
         self.showPane(id);
         return id;
@@ -1892,4 +1910,60 @@ test "persistent toasts survive tick; dismiss removes by id" {
     try std.testing.expectEqualStrings("stays", app.lastToast().?);
     app.dismissToast("ex:reg");
     try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+test "editorconfig reaches an opened buffer; a scratch takes the config's save prefs; the dead config fields are read" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &pbuf);
+    const root = try t.allocator.dupe(u8, pbuf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".editorconfig", .data = "[*.mk]\nindent_style = tab\ntab_width = 8\ntrim_trailing_whitespace = true\ninsert_final_newline = false\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "build.mk", .data = "all:\n\techo   \n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "x  " });
+    var c: Config = .{};
+    c.editor.input_style = .vim;
+    c.editor.tab_width = 2;
+    c.editor.trim_trailing_ws_on_save = true;
+    c.editor.ensure_trailing_newline = true;
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = c, .workspace = root, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const mk = try std.fs.path.join(t.allocator, &.{ root, "build.mk" });
+    defer t.allocator.free(mk);
+    _ = try app.openEditor(mk);
+    const e = app.activeEditor().?;
+    try t.expect(e.buf.editor.use_tabs);
+    try t.expectEqual(@as(usize, 8), e.buf.editor.tab_width);
+    try t.expectEqual(@as(usize, 8), e.buf.input.vim.tab_width);
+    try t.expect(e.buf.trim_trailing_ws_on_save);
+    try t.expect(!e.buf.ensure_trailing_newline);
+    // Through the real key path: Tab in insert mode is a `\t`.
+    const keys = try buffer_mod.parseKeys(t.allocator, "I<tab><esc>");
+    defer t.allocator.free(keys);
+    for (keys) |k| try dispatch.key(&app, k);
+    try t.expectEqualStrings("\tall:\n\techo   \n", e.buf.editor.bytes());
+    try @import("app/cmd_file.zig").saveCurrent(&app);
+    const back = try tmp.dir.readFileAlloc(t.io, "build.mk", t.allocator, .limited(256));
+    defer t.allocator.free(back);
+    try t.expectEqualStrings("\tall:\n\techo\n", back);
+    // notes.txt matches no section: the config's own values — spaces,
+    // width 2, trim on (the config field is honoured now), newline on.
+    const txt = try std.fs.path.join(t.allocator, &.{ root, "notes.txt" });
+    defer t.allocator.free(txt);
+    _ = try app.openEditor(txt);
+    const e2 = app.activeEditor().?;
+    try t.expect(!e2.buf.editor.use_tabs);
+    try t.expectEqual(@as(usize, 2), e2.buf.editor.tab_width);
+    try t.expect(e2.buf.trim_trailing_ws_on_save);
+    try t.expect(e2.buf.ensure_trailing_newline);
+    try @import("app/cmd_file.zig").saveCurrent(&app);
+    const back2 = try tmp.dir.readFileAlloc(t.io, "notes.txt", t.allocator, .limited(256));
+    defer t.allocator.free(back2);
+    try t.expectEqualStrings("x\n", back2);
+    // A scratch buffer: the config's prefs, no file to resolve against.
+    _ = try app.openScratch();
+    try t.expect(app.activeEditor().?.buf.trim_trailing_ws_on_save);
+    try t.expect(app.activeEditor().?.buf.path == null);
 }

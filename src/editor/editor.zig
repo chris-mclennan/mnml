@@ -153,6 +153,8 @@ pub const Editor = struct {
     /// `\n` + 1. Maintained incrementally by `splice`.
     line_starts: std.ArrayList(usize) = .empty,
     tab_width: usize = 4,
+    /// `>>` / indent pad with one `\t` instead of `tab_width` spaces.
+    use_tabs: bool = false,
     /// Carry the previous line's indent on Enter / `o`.
     auto_indent: bool = false,
     /// Insert the matching closer after `(` `[` `{` `"` `'` `` ` ``.

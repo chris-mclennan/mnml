@@ -17,9 +17,15 @@ const ops = input.ops;
 
 pub const Standard = struct {
     tab_width: usize,
+    use_tabs: bool,
 
     pub fn init(cfg: input.Config) Standard {
-        return .{ .tab_width = @max(cfg.tab_width, 1) };
+        return .{ .tab_width = @max(cfg.tab_width, 1), .use_tabs = cfg.use_tabs };
+    }
+
+    pub fn configure(self: *Standard, cfg: input.Config) void {
+        self.tab_width = @max(cfg.tab_width, 1);
+        self.use_tabs = cfg.use_tabs;
     }
 
     pub fn mode(_: *const Standard) input.EditingMode {
@@ -92,7 +98,7 @@ pub const Standard = struct {
             .tab => {
                 if (shift) return ops(arena, &.{.outdent});
                 if (ctx.has_selection) return ops(arena, &.{.indent});
-                return ops(arena, &.{.{ .insert_str = try spaces(arena, self.tab_width) }});
+                return ops(arena, &.{.{ .insert_str = if (self.use_tabs) "\t" else try spaces(arena, self.tab_width) }});
             },
             .backtab => return ops(arena, &.{.outdent}),
             .backspace => return ops(arena, &.{if (ctrl and !alt) .delete_word_left else .backspace}),
