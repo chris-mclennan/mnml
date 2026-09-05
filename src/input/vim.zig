@@ -151,6 +151,8 @@ pub const Vim = struct {
     ex_history_cursor: ?usize = null,
     ex_history_typing: ?[]u8 = null,
     cmdline_pending_ctrl_r: bool = false,
+    /// `c_CTRL-V`: the next key goes into the `:` line literally.
+    cmdline_literal_next: bool = false,
     /// A visual text object just set the selection to its exact range —
     /// the next operator must not widen it. Any other visual key clears it.
     visual_exact: bool = false,
@@ -483,10 +485,29 @@ pub const Vim = struct {
         const gpa = self.gpa;
         const line = &self.cmdline;
         const cur = @min(self.cmdline_cursor, line.items.len);
+        if (self.cmdline_literal_next) {
+            // `Ctrl-V Tab` is a tab character, `Ctrl-V Ctrl-X` the control
+            // char, whatever the key would otherwise do (`:help c_CTRL-V`).
+            self.cmdline_literal_next = false;
+            const lit: ?u21 = switch (key.code) {
+                .tab => '\t',
+                .enter => '\r',
+                .esc => 0x1b,
+                .char => |c| if (key.mods.ctrl and c < 0x80) @as(u21, std.ascii.toUpper(@intCast(c)) & 0x1f) else c,
+                else => null,
+            };
+            if (lit) |c| try self.insertCmdlineChar(c);
+            return .consumed;
+        }
         if (self.cmdline_pending_ctrl_r) {
             self.cmdline_pending_ctrl_r = false;
             if (isCtrlChar(key, 'w')) return .{ .app = .{ .cmdline_insert_cursor_word = false } };
             if (isCtrlChar(key, 'a')) return .{ .app = .{ .cmdline_insert_cursor_word = true } };
+            // `Ctrl-R "` / `+` / `*`: the register's text (`:help c_CTRL-R`).
+            if (charOf(key)) |c| switch (c) {
+                '"', '+', '*' => return .{ .app = .cmdline_paste_from_clipboard },
+                else => {},
+            };
         }
         if (isCtrlChar(key, 'r')) {
             self.cmdline_pending_ctrl_r = true;
@@ -514,7 +535,10 @@ pub const Vim = struct {
             self.cmdline_cursor = line.items.len;
             return .consumed;
         }
-        if (isCtrlChar(key, 'v')) return .{ .app = .cmdline_paste_from_clipboard };
+        if (isCtrlChar(key, 'v') or isCtrlChar(key, 'q')) {
+            self.cmdline_literal_next = true;
+            return .consumed;
+        }
         switch (key.code) {
             .tab => return .{ .app = .cmdline_tab_complete },
             .backtab => return .{ .app = .{ .cmdline_popup_move = -1 } },
@@ -596,15 +620,20 @@ pub const Vim = struct {
             },
             .char => |c| {
                 if (key.mods.ctrl or key.mods.alt or key.mods.super) return .consumed;
-                var buf: [4]u8 = undefined;
-                const n = std.unicode.utf8Encode(c, &buf) catch return .consumed;
-                try line.insertSlice(gpa, cur, buf[0..n]);
-                self.cmdline_cursor = cur + n;
-                self.stopHistoryWalk();
+                try self.insertCmdlineChar(c);
                 return .consumed;
             },
             else => return .consumed,
         }
+    }
+
+    fn insertCmdlineChar(self: *Vim, c: u21) Allocator.Error!void {
+        const cur = @min(self.cmdline_cursor, self.cmdline.items.len);
+        var buf: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(c, &buf) catch return;
+        try self.cmdline.insertSlice(self.gpa, cur, buf[0..n]);
+        self.cmdline_cursor = cur + n;
+        self.stopHistoryWalk();
     }
 
     fn closeCmdline(self: *Vim) void {
