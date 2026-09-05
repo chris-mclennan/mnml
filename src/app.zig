@@ -72,6 +72,7 @@ const request_pane = @import("app/request_pane.zig");
 const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
 const mount_pane = @import("app/mount_pane.zig");
+const integrations = @import("app/integrations.zig");
 const http_parse = @import("http/parse.zig");
 const builtin = @import("builtin");
 
@@ -204,10 +205,12 @@ pub const ConfirmPurpose = union(enum) {
     ai_tool: u64,
     /// SIGTERM these sessions (owned).
     kill_pids: []u32,
+    /// `integrations.remove`: the manifest id to delete (owned).
+    remove_integration: []u8,
 
     pub fn deinit(c: ConfirmPurpose, gpa: Allocator) void {
         switch (c) {
-            .delete_path => |s| gpa.free(s),
+            .delete_path, .remove_integration => |s| gpa.free(s),
             .kill_pids => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
@@ -217,7 +220,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
+pub const PickerKind = enum { integrations_details, integrations_manifest, integrations_toggle, integrations_remove, integrations_copy_id, buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -436,6 +439,7 @@ pub const App = struct {
     runners: runners.State = .{},
     tasks: tasks_mod.State = .{},
     http: http_app.State,
+    integrations: integrations.State,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -536,6 +540,7 @@ pub const App = struct {
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
             .http = http_app.State.init(gpa),
+            .integrations = integrations.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -554,10 +559,13 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &lsp.onOpen });
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
+        // Installed integrations are scanned once the app is up.
+        try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
+        try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();
         try trust_app.promptIfNeeded(&app);
@@ -653,6 +661,9 @@ pub const App = struct {
         self.http.deinit(gpa, self.io);
         self.git.deinit(gpa, self.io);
         self.dap.deinit(gpa);
+        // Panes go before the manifests their mount runners borrow.
+        self.panes.deinit();
+        self.integrations.deinit(gpa);
         self.lsp.deinit(gpa);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
@@ -686,7 +697,6 @@ pub const App = struct {
         self.clipboard.deinit();
         self.layouts.deinit();
         self.tree.deinit();
-        self.panes.deinit();
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
@@ -1365,6 +1375,9 @@ test {
     _ = @import("app/cheatsheet.zig");
     _ = @import("app/cmd_term.zig");
     _ = @import("app/mount_pane.zig");
+    _ = @import("app/integrations.zig");
+    _ = @import("ui/integrations_view.zig");
+    _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");
     _ = @import("ui/mount_view.zig");
     _ = @import("bridge/wire.zig");

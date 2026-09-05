@@ -28,6 +28,7 @@ const request_pane = @import("request_pane.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
+const integrations = @import("integrations.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
@@ -139,6 +140,8 @@ pub const Pane = union(enum) {
     browser: BrowserPane,
     /// An integration hosted over a mount socket (`mount.open`, a manifest command).
     mount: MountPane,
+    /// The installed integrations (one at a time).
+    integrations: integrations.IntegrationsPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
@@ -147,6 +150,7 @@ pub const Pane = union(enum) {
             .websocket => |*w| w.deinit(gpa),
             .browser => |*b| b.deinit(gpa),
             .mount => |*m| m.deinit(gpa),
+            .integrations => {},
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -187,13 +191,14 @@ pub const Pane = union(enum) {
             .websocket => |*w| return w.title(),
             .browser => |*b| return b.title(),
             .mount => |*m| return m.title(),
+            .integrations => return "Integrations",
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .mount => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .mount, .integrations => false,
         };
     }
 

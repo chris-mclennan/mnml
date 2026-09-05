@@ -55,6 +55,8 @@ const request_pane = @import("request_pane.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
+const integrations = @import("integrations.zig");
+const integrations_view = @import("../ui/integrations_view.zig");
 const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
@@ -182,6 +184,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .mount => |*mp| {
             if (try mount_pane.handleKey(app, id, mp, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .integrations => |*ip| {
+            if (try integrations.handleKey(app, id, ip, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -705,6 +712,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
         .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
         .kill_pids => |pids| if (choice == 0) try agents.killAccept(app, pids),
+        .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
     }
 }
 
@@ -991,6 +999,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .websocket => {},
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
+                .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
                 .editor, .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1050,6 +1059,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 return;
             }
             if (app.overlay != .none) closeOverlay(app);
+            // The palette bar's integration chips.
+            if (id >= integrations_view.chip_base and id < integrations_view.chip_base + integrations_view.max_chips) {
+                return integrations.chipClick(app, id - integrations_view.chip_base, m);
+            }
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
                 if (m.button == .right) return context_menus.openNewTabMenu(app, m.x, m.y);
                 const layout = app.layouts.current();
@@ -1234,6 +1247,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         // Reached only over a rect the view did not register (none): the
         // mount's rows carry the wheel through `.script_hit`.
         .mount => {},
+        .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 

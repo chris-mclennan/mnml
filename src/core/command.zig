@@ -119,6 +119,7 @@ const runner_tables = .{
     @import("../app/ws_pane.zig"),
     @import("../app/cmd_browser.zig"),
     @import("../app/mount_pane.zig"),
+    @import("../app/integrations.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
@@ -234,6 +235,22 @@ pub const Owner = union(enum) {
     }
 };
 
+/// What a manifest command opens: the binary as a mount (or a pty).
+pub const MountRun = struct {
+    binary: []u8,
+    args: [][]u8,
+    pty: bool,
+    /// The tab label.
+    label: []u8,
+
+    fn deinit(r: MountRun, gpa: Allocator) void {
+        gpa.free(r.binary);
+        for (r.args) |a| gpa.free(a);
+        gpa.free(r.args);
+        gpa.free(r.label);
+    }
+};
+
 pub const DynRunner = union(enum) {
     /// An ex-command line to run.
     ex: []u8,
@@ -241,10 +258,13 @@ pub const DynRunner = union(enum) {
     ipc,
     /// A Lua function held in the registry.
     lua: LuaRef,
+    /// Open an integration binary as a `Pane.mount` / `Pane.pty`.
+    mount: MountRun,
 
     fn deinit(r: DynRunner, gpa: Allocator) void {
         switch (r) {
             .ex => |s| gpa.free(s),
+            .mount => |m| m.deinit(gpa),
             .ipc, .lua => {},
         }
     }
@@ -275,8 +295,15 @@ pub const DynInit = struct {
     title: []const u8 = "",
     group: []const u8 = "plugin",
     keys: []const []const u8 = &.{},
-    runner: union(enum) { ex: []const u8, ipc, lua: LuaRef } = .ipc,
+    runner: Runner = .ipc,
     owner: union(enum) { integration: []const u8, script, ipc } = .ipc,
+
+    pub const Runner = union(enum) {
+        ex: []const u8,
+        ipc,
+        lua: LuaRef,
+        mount: struct { binary: []const u8, args: []const []const u8, pty: bool = false, label: []const u8 },
+    };
 };
 
 pub const DynRegistry = struct {
@@ -329,6 +356,23 @@ pub const DynRegistry = struct {
             .ex => |line| .{ .ex = try gpa.dupe(u8, line) },
             .ipc => .ipc,
             .lua => |r| .{ .lua = r },
+            .mount => |m| blk: {
+                const binary = try gpa.dupe(u8, m.binary);
+                errdefer gpa.free(binary);
+                const label = try gpa.dupe(u8, if (m.label.len == 0) std.fs.path.basename(m.binary) else m.label);
+                errdefer gpa.free(label);
+                const args = try gpa.alloc([]u8, m.args.len);
+                var n: usize = 0;
+                errdefer {
+                    for (args[0..n]) |a| gpa.free(a);
+                    gpa.free(args);
+                }
+                for (m.args) |a| {
+                    args[n] = try gpa.dupe(u8, a);
+                    n += 1;
+                }
+                break :blk .{ .mount = .{ .binary = binary, .args = args, .pty = m.pty, .label = label } };
+            },
         };
         errdefer c.runner.deinit(gpa);
         c.owner = switch (init_.owner) {
@@ -444,6 +488,16 @@ fn runDyn(app: *App, slot: u32) CommandError!void {
         .ex => |line| return app.runEx(line),
         .ipc => return app.ackPluginCommand(c.id),
         .lua => return error.Unsupported, // TODO(lua): registry lookup + protectedCall with budget (D10.1)
+        .mount => |r| return @import("../app/integrations.zig").runMount(app, .{
+            .id = switch (c.owner) {
+                .integration => |i| i,
+                else => "",
+            },
+            .binary = r.binary,
+            .args = @ptrCast(r.args),
+            .pty = r.pty,
+            .label = r.label,
+        }),
     }
 }
 

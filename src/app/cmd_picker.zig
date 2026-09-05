@@ -248,6 +248,11 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 return;
             };
         },
+        .integrations_details, .integrations_manifest, .integrations_toggle, .integrations_remove, .integrations_copy_id => |kind| {
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try @import("integrations.zig").acceptPicker(app, kind, i);
+        },
         .themes => {
             const name = try app.frame.allocator().dupe(u8, p.labels[i]);
             app.overlay.deinit(app.gpa);
