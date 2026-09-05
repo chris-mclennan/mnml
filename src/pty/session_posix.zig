@@ -43,6 +43,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const vt = @import("ghostty-vt");
 const Ring = @import("ring.zig").Ring;
+const common = @import("common.zig");
 
 const log = std.log.scoped(.pty);
 
@@ -74,35 +75,11 @@ extern "c" fn openpty(
     winp: ?*const posix.winsize,
 ) c_int;
 
-/// Called from the reader thread: once when the ring goes from empty to
-/// readable (see `Ring.commit`), and once when the child's output ends.
-/// The UI side answers by calling `Session.pump`. The call is made under
-/// `Shared.notify_lock`, and `Session.deinit` disarms it under that same
-/// lock before letting go — so `ctx` only has to outlive the *session*,
-/// not the detached reader. The callback must therefore never block on
-/// something the UI thread provides (a full event queue drained only by
-/// the UI thread would deadlock a `deinit` waiting for the lock).
-pub const Notify = struct {
-    ctx: ?*anyopaque = null,
-    fn_ptr: ?*const fn (?*anyopaque) void = null,
-
-    pub const none: Notify = .{};
-
-    fn call(self: Notify) void {
-        if (self.fn_ptr) |f| f(self.ctx);
-    }
-};
-
-pub const Exit = union(enum) {
-    /// Normal exit with this status code.
-    code: u8,
-    /// Killed by this signal.
-    signal: u32,
-
-    pub fn ok(self: Exit) bool {
-        return self == .code and self.code == 0;
-    }
-};
+/// The reader's wakeup and the child's end, shared with the Windows
+/// backend (`common.zig`, where the callback contract is spelled out).
+/// Here the call is made under `Shared.notify_lock`.
+pub const Notify = common.Notify;
+pub const Exit = common.Exit;
 
 pub const Options = struct {
     cols: u16,

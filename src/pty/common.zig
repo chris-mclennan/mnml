@@ -1,0 +1,36 @@
+//! What both pty backends hand the pane: the reader's wakeup and how the
+//! child ended. `session_posix.zig` and `session_windows.zig` re-export
+//! these so `pty.session.Exit` names one type whichever backend is in.
+
+/// Called from the reader thread: once when the ring goes from empty to
+/// readable (see `Ring.commit`), and once when the child's output ends.
+/// The UI side answers by calling `Session.pump`. The call is made under
+/// the session's notify lock, and `Session.deinit` disarms it under that
+/// same lock before letting go — so `ctx` only has to outlive the
+/// *session*, not the detached reader. The callback must therefore never
+/// block on something the UI thread provides (a full event queue drained
+/// only by the UI thread would deadlock a `deinit` waiting for the lock).
+pub const Notify = struct {
+    ctx: ?*anyopaque = null,
+    fn_ptr: ?*const fn (?*anyopaque) void = null,
+
+    pub const none: Notify = .{};
+
+    pub fn call(self: Notify) void {
+        if (self.fn_ptr) |f| f(self.ctx);
+    }
+};
+
+pub const Exit = union(enum) {
+    /// Normal exit with this status code.
+    code: u8,
+    /// Killed by this signal. On Windows: an exit code above 255 — the
+    /// NTSTATUS-shaped ones (`0xC0000005` access violation, `0xC000013A`
+    /// ctrl-C) — which is the closest thing the platform has to a death
+    /// by signal.
+    signal: u32,
+
+    pub fn ok(self: Exit) bool {
+        return self == .code and self.code == 0;
+    }
+};
