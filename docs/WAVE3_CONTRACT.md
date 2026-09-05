@@ -889,3 +889,92 @@ that the oldest slot reads `+K more…`.
   drag-to-resize section headers, and the `+ New request` / `Paste
   curl…` / `Import…` action rows (all reachable from the row menus and
   the palette).
+
+## Miscellaneous parity rows — `// changed:` notes (2026-09-05, branch `misc`)
+
+- `// changed (app):` `Pane.ai_apply` (`app/ai_apply.zig`): `a` in an
+  AI pane opens a review of the first code block as a unified line
+  diff against the editor *now* — arena-owned copies of both texts,
+  common prefix / suffix trimmed, an LCS over the middle (deletions
+  before insertions, as git orders a hunk; a middle past 4M cells is
+  one replacing hunk), three lines of context, hunks closer than that
+  merged, a missing final newline as a diffable sentinel line. Accepted
+  hunks land through one `App.splice`, so undo is one step. With no
+  selection the proposal is for the whole buffer, not the cursor's
+  zero-width range. `ui/ai_apply_view.zig` paints the tally, the
+  `[✓ accept]` / `[  skip  ]` badges and signed lines, one
+  `.script_hit{ pane, row }` per row.
+- `// changed (ui, ipc-tier2):` `statusline.Info.dyn_left` / `dyn_right`
+  and `seg_dyn_base` — a host's `statusline-set-segment` chips with
+  their own colour and a `.statusline_seg = seg_dyn_base + index` hit
+  (the index is the segment's slot in `App.ipc_fx.segments`, so a click
+  finds its `click_command` without frame-owned state). The left lane
+  ends the left cluster; the right lane is innermost of the right
+  cluster after the selection chip, so it drops before the position.
+  `src/ui/statusline.zig` is outside the touch list; this was the only
+  way to give the chips colour and clicks.
+- `// changed (app):` `App.ipc_fx: ipc.effects.State` (segments +
+  badges) and `App.native_notify` (`InitOptions.native_notify`; only
+  `tui/loop.zig` passes true — one line outside the touch list — so
+  headless and the tests never spawn `osascript` / `notify-send` /
+  PowerShell). `ipc/effects.zig` owns the pack (priority desc, ties in
+  registration order; `max_width` truncation with `…` / `...`;
+  `min_width` drop), `notify` (an `error` pins under `source` or
+  `notify:<title>`), `open-pty` (a pane below, labelled by basename)
+  and `apply`, which `app/driver.zig`'s `vIpcCommand` routes to. The
+  palette bar paints a host `git` badge in place of the repo's count
+  and the other sections' sum as `•N`. Acks unchanged;
+  `src/ipc/golden/tier2.*.jsonl` are the Rust shapes and a headless run
+  through the real `App` must reproduce them byte for byte.
+- `// changed (config, core):` `Config.LaunchProfile { name, product,
+  binary, args, env, cwd_mode }`, `Config.DefaultProfile`,
+  `Ai.launch_profiles` / `Ai.default_profile`; `MenuAction.ai_profile`
+  (`AiProfileAction`, one core touch) carries the product and the
+  menu row's index. Rust's `[[launch_profile]]` lived in the
+  integration manifest (TOML, two scopes, a `wrapper` legacy key); E1
+  makes config ZON the one place, the built-in `default` (the bare
+  binary) implicit. A profile runs through `<data root>/bin/mnml-ai-<name>`
+  (`.cmd` on Windows), rewritten before every spawn; `findSession`
+  recognises a profile shim by name. `ai.State.owned_default` holds a
+  default set this session until the next load.
+- `// changed (build):` `-Dtest-filter` narrows the `.test` files as it
+  narrows the unit tests (`mnml-zig test --filter`); `zig build test`
+  depends on the gate subset (so `check`'s nested Debug + ReleaseSafe
+  runs cover it twice more); `zig build e2e [-- ARGS]` is the whole
+  corpus; `zig build check` ends with the full corpus minus
+  `settings_persist_to_workspace` (`--skip`, announced), the file that
+  asserts TOML by design. `runner.Options.name_filter` / `skip`,
+  `runner.stemOf`.
+- `// changed (build):` a `── glyph audit ──` block: `tools/glyph_audit.zig`
+  bakes `data/nerd-glyphnames.json` into a `<hex>\t<name>` table at
+  build time and audits `src/` with `--strict`; its tests get
+  `build_options.src_root` / `glyph_json` and one walks the real `src/`
+  under `zig build test`. Sites are `\u{XXXX}` escapes in the
+  private-use planes; assertion lines are tests, not sites. The SVG
+  preview and font patching stay cut.
+- `// changed (main, dist):` `--startup-picker` sets
+  `MNML_STARTUP_PICKER=1` for the process (`startup_picker.wanted`
+  reads the environment; the flag is its spelling). `dist/macos/` is
+  the bundle: a plist template stamped by `sed` (no `plutil`, so the
+  Linux release runner can build it), a launcher that opens the bundled
+  binary in ghostty (CLI or `/Applications/Ghostty.app`) else
+  Terminal.app via `osascript`, with the picker on;
+  `scripts/package.sh --macos-app` ships `mnml-<triple>.app.zip` as an
+  optional `macos-app` asset. No icon yet.
+- `// changed (core, app):` `AppEvent.tests` (`tests_pane.Result`);
+  `tests_pane.zig` and `flaky.zig` in `runner_tables`; six Zig-only ids
+  — `test.run_playwright`, `test.run_playwright_file`,
+  `test.run_playwright_at_cursor`, `test.rerun_playwright_failed`,
+  `test.open_trace`, `test.sort` — because the generic `test.run_*` are
+  the cargo / npm / go / pytest runners here (Rust's were the
+  Playwright runner). The pin is 836. `App.flaky: flaky.State` is the
+  workspace's history, loaded once per process from
+  `<ws>/.mnml/flaky.zon` (ZON, never JSON: E1). `Pane.tests` /
+  `Pane.flaky` in every exhaustive switch. The trace viewer is a
+  launcher: `npx playwright show-trace <trace.zip>` in a pane below.
+- `// changed (test):` the tier-2 golden's `open-pty` runs `sleep 30`,
+  not `ls -la`: the pty reader is a detached thread sharing a refcount
+  with its session, and a child gone before the loop quits can race the
+  leak check (seen once under ReleaseSafe). Not fixed here —
+  `src/pty/` is outside the touch list; noted in
+  `docs/parity-notes/misc.md`.
