@@ -26,6 +26,7 @@ const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
+const macros_store = @import("macros_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -339,6 +340,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const mark_key: ?u8 = if (k.typed()) |c| (if (c < 128 and std.ascii.isAlphabetic(@intCast(c))) @as(u8, @intCast(c)) else null) else null;
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
+    const was_recording = e.buf.isRecording();
     const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
     cmd_find.seedCtxMatches(e);
     app.attachSeams(e);
@@ -366,6 +368,8 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // the store and moves every pane): `e` is stale from here. Look the
     // pane up again, and stop if it is gone.
     const still = app.panes.editor(pane_id) orelse return true;
+    // A recording that just stopped is on the clipboard: persist it.
+    if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
     // Marks toast from here: the buffer handles them silently.
     if (mark != null and mark_key != null and ev != .unhandled) {
         const c = mark_key.?;

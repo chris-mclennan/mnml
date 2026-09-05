@@ -91,6 +91,7 @@ const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
+const macros_store = @import("app/macros_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
 const startup_picker = @import("app/startup_picker.zig");
@@ -759,6 +760,8 @@ pub const App = struct {
         try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
         try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
+        try app.hooks.subscribe(.startup, .{ .zig = &macros_store.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &macros_store.onExit });
         // Installed integrations are scanned once the app is up.
         try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
         app.now_ms = nowMs(io);
@@ -1751,6 +1754,7 @@ test {
     _ = @import("app/cmd_harpoon.zig");
     _ = @import("app/stress.zig");
     _ = @import("app/undo_store.zig");
+    _ = @import("app/macros_store.zig");
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");
     _ = @import("app/cmd_session.zig");

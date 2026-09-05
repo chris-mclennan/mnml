@@ -24,6 +24,7 @@ pub const BufferEvent = input.BufferEvent;
 pub const AppCommand = input.AppCommand;
 pub const EditCtx = input.EditCtx;
 pub const Key = input.Key;
+pub const KeyCode = input.KeyCode;
 
 pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
 
@@ -409,7 +410,9 @@ pub const Buffer = struct {
 const testing = std.testing;
 
 /// Parse `<esc>`, `<cr>`, `<c-r>`, `<a-x>`, `<s-down>`… and plain chars
-/// into keys. `<lt>` is a literal `<`.
+/// into keys. `<lt>` is a literal `<`, `<gt>` a `>` (needed only under
+/// modifiers), `<u+XXXX>` a char UTF-8 cannot spell. The inverse is
+/// `formatKeys`; `macros_store.zig` writes registers in this notation.
 pub fn parseKeys(gpa: Allocator, spec: []const u8) ![]Key {
     var out = std.ArrayList(Key).empty;
     errdefer out.deinit(gpa);
@@ -446,26 +449,116 @@ fn parseToken(tok: []const u8) ?Key {
         }
         rest = rest[2..];
     }
-    const names = .{
-        .{ "esc", .esc },    .{ "cr", .enter },  .{ "enter", .enter },  .{ "tab", .tab },        .{ "bs", .backspace },
-        .{ "del", .delete }, .{ "left", .left }, .{ "right", .right },  .{ "up", .up },          .{ "down", .down },
-        .{ "home", .home },  .{ "end", .end },   .{ "pgup", .page_up }, .{ "pgdn", .page_down }, .{ "backtab", .backtab },
-    };
-    inline for (names) |n| {
+    inline for (token_names) |n| {
         if (std.ascii.eqlIgnoreCase(rest, n[0])) {
             // Terminals report shift+tab as backtab.
-            if (n[1] == .tab and mods.shift) return .{ .code = .backtab, .mods = .{} };
+            if (n[1] == .tab and mods.shift) {
+                var m = mods;
+                m.shift = false;
+                return .{ .code = .backtab, .mods = m };
+            }
             return .{ .code = n[1], .mods = mods };
         }
     }
     if (std.ascii.eqlIgnoreCase(rest, "lt")) return .{ .code = .{ .char = '<' }, .mods = mods };
+    if (std.ascii.eqlIgnoreCase(rest, "gt")) return .{ .code = .{ .char = '>' }, .mods = mods };
     if (std.ascii.eqlIgnoreCase(rest, "space")) return .{ .code = .{ .char = ' ' }, .mods = mods };
-    if (rest.len == 1) return .{ .code = .{ .char = rest[0] }, .mods = mods };
+    if (rest.len > 2 and std.ascii.toLower(rest[0]) == 'u' and rest[1] == '+') {
+        const c = std.fmt.parseInt(u21, rest[2..], 16) catch return null;
+        return .{ .code = .{ .char = c }, .mods = mods };
+    }
+    // One char, any script.
+    if (rest.len > 0) {
+        const n = std.unicode.utf8ByteSequenceLength(rest[0]) catch 0;
+        if (n == rest.len) {
+            if (std.unicode.utf8Decode(rest) catch null) |c| return .{ .code = .{ .char = c }, .mods = mods };
+        }
+    }
     if (rest.len >= 2 and std.ascii.toLower(rest[0]) == 'f') {
         const n = std.fmt.parseInt(u8, rest[1..], 10) catch return null;
         return .{ .code = .{ .f = n }, .mods = mods };
     }
     return null;
+}
+
+const token_names = .{
+    .{ "esc", .esc },       .{ "cr", .enter },  .{ "enter", .enter },  .{ "tab", .tab },        .{ "bs", .backspace },
+    .{ "del", .delete },    .{ "left", .left }, .{ "right", .right },  .{ "up", .up },          .{ "down", .down },
+    .{ "home", .home },     .{ "end", .end },   .{ "pgup", .page_up }, .{ "pgdn", .page_down }, .{ "backtab", .backtab },
+    .{ "insert", .insert },
+};
+
+/// The name `parseToken` reads a named key back from.
+fn tokenName(code: KeyCode) []const u8 {
+    return switch (code) {
+        .esc => "esc",
+        .enter => "cr",
+        .tab => "tab",
+        .backtab => "backtab",
+        .backspace => "bs",
+        .delete => "del",
+        .insert => "insert",
+        .left => "left",
+        .right => "right",
+        .up => "up",
+        .down => "down",
+        .home => "home",
+        .end => "end",
+        .page_up => "pgup",
+        .page_down => "pgdn",
+        .char, .f => unreachable,
+    };
+}
+
+/// Write `keys` in the `parseKeys` notation. Plain chars go out
+/// verbatim (`<` as `<lt>`); anything with a modifier, and every named
+/// key, goes out in angle brackets. `parseKeys(formatKeys(k)) == k` for
+/// every key a terminal can deliver — with one fold: shift+tab is
+/// written as `<backtab>`, which is what terminals report anyway.
+pub fn formatKeys(w: *std.Io.Writer, keys: []const Key) std.Io.Writer.Error!void {
+    for (keys) |k| try formatKey(w, k);
+}
+
+pub fn formatKey(w: *std.Io.Writer, key_in: Key) std.Io.Writer.Error!void {
+    var k = key_in;
+    if (k.code == .tab and k.mods.shift) {
+        k.code = .backtab;
+        k.mods.shift = false;
+    }
+    const plain = !k.mods.ctrl and !k.mods.alt and !k.mods.shift and !k.mods.super;
+    if (plain and k.code == .char) {
+        const c = k.code.char;
+        if (c == '<') return w.writeAll("<lt>");
+        var buf: [4]u8 = undefined;
+        if (std.unicode.utf8Encode(c, &buf)) |n| return w.writeAll(buf[0..n]) else |_| return w.print("<u+{x}>", .{c});
+    }
+    try w.writeByte('<');
+    if (k.mods.ctrl) try w.writeAll("c-");
+    if (k.mods.alt) try w.writeAll("a-");
+    if (k.mods.shift) try w.writeAll("s-");
+    if (k.mods.super) try w.writeAll("d-");
+    switch (k.code) {
+        .char => |c| switch (c) {
+            '<' => try w.writeAll("lt"),
+            '>' => try w.writeAll("gt"),
+            ' ' => try w.writeAll("space"),
+            else => {
+                var buf: [4]u8 = undefined;
+                if (std.unicode.utf8Encode(c, &buf)) |n| try w.writeAll(buf[0..n]) else |_| try w.print("u+{x}", .{c});
+            },
+        },
+        .f => |n| try w.print("f{d}", .{n}),
+        else => try w.writeAll(tokenName(k.code)),
+    }
+    try w.writeByte('>');
+}
+
+/// `keys` as spec text on `gpa`.
+pub fn keysToSpec(gpa: Allocator, keys: []const Key) Allocator.Error![]u8 {
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    formatKeys(&out.writer, keys) catch return error.OutOfMemory;
+    return out.toOwnedSlice();
 }
 
 /// A buffer whose text and cursor come from `marked` (`|` = cursor).
@@ -810,6 +903,52 @@ test "macro registers are shared through the clipboard: `qa` in one buffer, `@a`
     defer empty.deinit();
     try feed(&b, &empty, arena.allocator(), "@a");
     try testing.expectEqualStrings("three!\nfour!", b.editor.bytes());
+}
+
+test "key spec round-trips: every code, every modifier set, chars of every kind" {
+    const gpa = testing.allocator;
+    const key_mod = @import("../core/key.zig");
+    const codes = [_]KeyCode{
+        .{ .char = 'a' },     .{ .char = 'Z' },    .{ .char = '<' }, .{ .char = '>' }, .{ .char = ' ' },
+        .{ .char = '-' },     .{ .char = '\n' },
+        .{ .char = 'é' },
+        .{ .char = '日' },
+        .{ .char = 0x1F600 }, .{ .char = 0xD800 }, .enter,           .tab,             .backtab,
+        .esc,                 .backspace,          .delete,          .insert,          .up,
+        .down,                .left,               .right,           .home,            .end,
+        .page_up,             .page_down,          .{ .f = 1 },      .{ .f = 12 },     .{ .f = 20 },
+    };
+    var keys: std.ArrayList(Key) = .empty;
+    defer keys.deinit(gpa);
+    var bits: u5 = 0;
+    while (bits < 16) : (bits += 1) {
+        const mods: key_mod.Mods = @bitCast(@as(u4, @intCast(bits)));
+        for (codes) |c| try keys.append(gpa, .{ .code = c, .mods = mods });
+    }
+    const spec = try keysToSpec(gpa, keys.items);
+    defer gpa.free(spec);
+    const back = try parseKeys(gpa, spec);
+    defer gpa.free(back);
+    try testing.expectEqual(keys.items.len, back.len);
+    for (keys.items, back) |want_in, got| {
+        // The one fold: shift+tab is backtab.
+        var want = want_in;
+        if (want.code == .tab and want.mods.shift) {
+            want.code = .backtab;
+            want.mods.shift = false;
+        }
+        testing.expect(want.code.eql(got.code) and want.mods.eql(got.mods)) catch |err| {
+            std.debug.print("\n  want {any}\n  got  {any}\n", .{ want, got });
+            return err;
+        };
+    }
+    // The plain spellings a human would write come out unchanged.
+    const human = "ihello<esc>0<c-v>jl<s-down><lt>x<f5><a-cr>";
+    const parsed = try parseKeys(gpa, human);
+    defer gpa.free(parsed);
+    const again = try keysToSpec(gpa, parsed);
+    defer gpa.free(again);
+    try testing.expectEqualStrings(human, again);
 }
 
 /// `feed` / `ops` interleaved: each row is a list of steps.
