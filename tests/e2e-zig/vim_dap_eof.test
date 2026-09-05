@@ -1,0 +1,35 @@
+# zig-only
+# `ip` / `ap` are linewise objects: `dip` on the last paragraph removes its
+# lines outright (no empty line left where they were) and `dap` at the
+# end of the file takes the blank line BEFORE the paragraph instead of a
+# following one it does not have (`:help ap`). In the middle of the file
+# `dip` leaves the blank separator and nothing else; `cip` opens one
+# empty line to type into, like `cc`.
+write a.txt "l1\nl2\n\nl4\nl5\n\nl7\nl8\n"
+open a.txt
+command editor.use_vim
+
+key G
+type dip
+expect screen contains "Ln 6/6"
+command file.save
+expect file a.txt contains "l1\nl2\n\nl4\nl5\n\n"
+expect file a.txt lacks "l7"
+type u
+key G
+type dap
+expect screen contains "Ln 5/5"
+command file.save
+expect file a.txt contains "l1\nl2\n\nl4\nl5\n"
+expect file a.txt lacks "l5\n\n"
+type u
+type 4G
+type dip
+command file.save
+expect file a.txt contains "l1\nl2\n\n\nl7\nl8\n"
+type u
+type 4G
+type cipNEW
+key esc
+command file.save
+expect file a.txt contains "l1\nl2\n\nNEW\n\nl7\nl8\n"

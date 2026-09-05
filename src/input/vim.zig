@@ -747,16 +747,24 @@ pub const Vim = struct {
     // ─── normal ───
 
     /// The op list an operator appends after its range is selected.
-    /// `linewise_object` = `ip`/`ap` (yank stays linewise).
+    /// `linewise_object` = `ip`/`ap`: the object names whole lines, so
+    /// the operator widens to their terminators the way `V…d` does —
+    /// `dip` leaves no empty line behind, `cip` opens one to type into
+    /// (`:help ip`, `:help v_c`).
     fn finishOperator(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx, linewise_object: bool) Allocator.Error!InputResult {
         switch (op) {
-            .delete => try b.push(.delete_selection),
+            .delete => {
+                if (linewise_object) try b.push(.normalize_linewise_selection);
+                try b.push(.delete_selection);
+            },
             .yank => {
+                if (linewise_object) try b.push(.normalize_linewise_selection);
                 try b.push(if (linewise_object) .yank_selection_linewise else .yank_selection);
                 try b.push(.select_clear);
                 try b.push(.{ .set_cursor_byte = ctx.cursor });
             },
             .change => {
+                if (linewise_object) try b.push(.normalize_linewise_selection_inner);
                 try b.push(.{ .replace_selection = "" });
                 try b.push(.continue_insert_run);
                 self.vmode = .insert;
@@ -1807,6 +1815,8 @@ pub const Vim = struct {
                 self.resetPending();
                 const op = textObjectOp(key, around) orelse return .consumed;
                 self.visual_exact = true;
+                // `vip` / `vap` make the selection linewise (`:help v_ip`).
+                if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
                 return ops(arena, &.{op});
             },
             .align_char_wait => {

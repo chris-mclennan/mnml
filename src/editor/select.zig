@@ -116,7 +116,7 @@ pub fn enclosingQuotePairOnLine(ed: *const Editor, q: u21) ?[2]usize {
         if (ed.charAt(i) != q) continue;
         if (i > ls and ed.bytes()[i - 1] == '\\') continue;
         if (open) |o| {
-            if (ed.cursor >= o and ed.cursor <= i) return .{ o, i };
+            if (ed.cursor <= i) return .{ o, i };
             open = null;
         } else open = i;
     }
@@ -198,28 +198,37 @@ pub fn bracket(ed: *Editor, open: u21, around: bool) void {
     }
 }
 
-/// Byte range of the paragraph under the cursor; `around` pulls in the
-/// trailing blank lines (and their terminator).
+/// Byte range of the paragraph under the cursor, from its first line's
+/// start to its last line's end — the last `\n` excluded, so the range
+/// names lines the way a Visual `V` does and an operator widens it
+/// (`normalize_linewise_selection`) to take the terminators. `around`
+/// (`:help ap`) adds the blank lines after the paragraph; when none
+/// follow — the paragraph ends the file — the blank lines before it
+/// instead. On a blank line, `ip` is the run of blank lines and `ap`
+/// that run plus the paragraph after it.
 pub fn paragraphBounds(ed: *const Editor, around: bool) [2]usize {
     const n = ed.lineCount();
     const cur = ed.currentLine();
     var start = cur;
+    var end = cur;
     if (ed.lineIsBlank(cur)) {
         while (start > 0 and ed.lineIsBlank(start - 1)) start -= 1;
-        var end = cur;
         while (end + 1 < n and ed.lineIsBlank(end + 1)) end += 1;
+        if (around) {
+            while (end + 1 < n and !ed.lineIsBlank(end + 1)) end += 1;
+        }
         return .{ ed.lineStart(start), ed.lineEnd(end) };
     }
     while (start > 0 and !ed.lineIsBlank(start - 1)) start -= 1;
-    var end = cur;
     while (end + 1 < n and !ed.lineIsBlank(end + 1)) end += 1;
     if (around) {
-        while (end + 1 < n and ed.lineIsBlank(end + 1)) end += 1;
+        if (end + 1 < n) {
+            while (end + 1 < n and ed.lineIsBlank(end + 1)) end += 1;
+        } else {
+            while (start > 0 and ed.lineIsBlank(start - 1)) start -= 1;
+        }
     }
-    const lo = ed.lineStart(start);
-    var hi = ed.lineEnd(end);
-    if (around and hi < ed.len() and ed.lineIsBlank(end)) hi += 1;
-    return .{ lo, hi };
+    return .{ ed.lineStart(start), ed.lineEnd(end) };
 }
 
 pub fn paragraph(ed: *Editor, around: bool) void {
@@ -503,7 +512,17 @@ test "paragraphs and tags" {
     paragraph(ed, false);
     try std.testing.expectEqualStrings("p1a\np1b", sel(ed));
     paragraph(ed, true);
-    try std.testing.expectEqualStrings("p1a\np1b\n\n\n", sel(ed));
+    try std.testing.expectEqualStrings("p1a\np1b\n\n", sel(ed));
+    // The last paragraph has no blank line after it: `ap` takes the ones
+    // before it. On a blank line `ap` is the blanks plus the paragraph.
+    ed.cursor = 10;
+    paragraph(ed, true);
+    try std.testing.expectEqualStrings("\n\np2", sel(ed));
+    ed.cursor = 8;
+    paragraph(ed, false);
+    try std.testing.expectEqualStrings("\n", sel(ed));
+    paragraph(ed, true);
+    try std.testing.expectEqualStrings("\n\np2", sel(ed));
     const ed2 = try Editor.init(std.testing.allocator, "<div><p class=x>hi <b>there</b></p><br/></div>");
     defer ed2.deinit();
     ed2.cursor = 17;
