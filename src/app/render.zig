@@ -28,6 +28,7 @@ const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
 const messages = @import("messages.zig");
+const stress = @import("stress.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const prompt_mod = @import("../ui/prompt.zig");
 const confirm_mod = @import("../ui/confirm.zig");
@@ -646,9 +647,11 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.
     const branch_seg = try git_app.statusSegment(app, ui.arena);
     const meter_seg = try ai_app.meterSegment(app, ui.arena);
-    // Then the unread-messages bell (`:messages`), nearest the input style.
+    // Then the unread-messages bell and the frame-time bar (`:messages`,
+    // `ui.stress_meter`), nearest the input style.
     const bell_seg = try messages.bellSegment(app, ui.arena, ui.ascii);
-    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, bell_seg };
+    const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
+    const maybes = [_]?[]const u8{ branch_seg, lsp_seg, meter_seg, bell_seg, stress_seg };
     var extra: usize = 0;
     for (maybes) |m| extra += @intFromBool(m != null);
     if (extra > 0) {

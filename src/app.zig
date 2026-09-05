@@ -74,6 +74,7 @@ const browser_pane = @import("app/browser_pane.zig");
 const http_parse = @import("http/parse.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
+const stress = @import("app/stress.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -538,6 +539,8 @@ pub const App = struct {
     zen: bool = false,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
+    /// Render durations for the statusline stress meter.
+    stress: stress.Meter = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -1353,7 +1356,10 @@ pub const App = struct {
     /// One frame into any screen (the terminal loop paints into the
     /// terminal's).
     pub fn renderInto(self: *App, screen: *vaxis.Screen) Allocator.Error!void {
+        const t0 = Io.Timestamp.now(self.io, .awake);
         try render_mod.render(self, screen);
+        const us = @divTrunc(t0.durationTo(Io.Timestamp.now(self.io, .awake)).nanoseconds, 1000);
+        self.stress.push(@intCast(std.math.clamp(us, 0, std.math.maxInt(u32))));
         self.needs_render = false;
     }
 
@@ -1488,6 +1494,7 @@ test {
     _ = @import("app/zen.zig");
     _ = @import("app/harpoon.zig");
     _ = @import("app/cmd_harpoon.zig");
+    _ = @import("app/stress.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
