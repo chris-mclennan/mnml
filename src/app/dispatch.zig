@@ -48,6 +48,7 @@ const select = @import("../editor/select.zig");
 const scrollbar = @import("../ui/scrollbar.zig");
 const statusline = @import("../ui/statusline.zig");
 const bufferline = @import("../ui/bufferline.zig");
+const cmd_term = @import("cmd_term.zig");
 const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
@@ -672,6 +673,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .ai_chat => try toastOnFail(app, ai_app.chatAccept(app, text)),
         .ai_search => try toastOnFail(app, ai_app.sessionSearchAccept(app, text)),
         .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
+        .term_rename => |id| try toastOnFail(app, cmd_term.renameAccept(app, id, text)),
         .ai_branch_name => try toastOnFail(app, ai_app.branchNameAccept(app, text)),
         .ai_token => try toastOnFail(app, ai_app.tokenAccept(app, text)),
         .dap_add_watch => try dap.acceptWatch(app, text),
@@ -941,6 +943,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     app.drag = .{ .tab = .{ .pane = pane, .x = m.x, .y = m.y } };
                 },
             }
+        },
+        .tab_close => |tb| {
+            if (wheel or m.kind != .press or m.button != .left) return;
+            const layout = app.layouts.current();
+            const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
+            const leaf = layout.leaf(lid) orelse return;
+            if (tb.idx >= leaf.tabs.items.len) return;
+            if (app.overlay != .none) closeOverlay(app);
+            try app.closePane(leaf.tabs.items[tb.idx], false);
         },
         .overlay_item => |i| {
             if (m.kind != .press) return;
@@ -1480,7 +1491,7 @@ fn stripTabs(app: *App, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocat
     const leaf = layout.leaf(lid) orelse return tabs.items;
     for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
-        try tabs.append(app.frame.allocator(), .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id });
+        try tabs.append(app.frame.allocator(), .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file });
     }
     return tabs.items;
 }

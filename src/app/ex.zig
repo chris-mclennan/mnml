@@ -92,8 +92,10 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         const id = app.active orelse return error.NoActivePane;
         return app.closePane(id, bang);
     }
-    if (eqAny(verb, &.{ "bn", "bnext" })) return command.run(app, .{ .static = .@"buffer.next" });
-    if (eqAny(verb, &.{ "bp", "bprev", "bprevious", "bN", "bNext" })) return command.run(app, .{ .static = .@"buffer.prev" });
+    // `:bn` / `:bp` step over terminal tabs; the bang form takes them too.
+    if (eqAny(verb, &.{ "bn", "bnext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, 1) else command.run(app, .{ .static = .@"buffer.next" });
+    if (eqAny(verb, &.{ "bp", "bprev", "bprevious", "bN", "bNext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, -1) else command.run(app, .{ .static = .@"buffer.prev" });
+    if (eqAny(verb, &.{"rename"})) return @import("cmd_term.zig").renameEx(app, args);
     if (eqAny(verb, &.{ "ls", "buffers", "files" })) return command.run(app, .{ .static = .@"picker.buffers" });
     if (eqAny(verb, &.{"A"})) return alternate(app);
     if (eqAny(verb, &.{ "sor", "sort" })) return sort(app, range, args, bang);

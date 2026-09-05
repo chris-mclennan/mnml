@@ -35,10 +35,17 @@ pub const Axis = enum { v, h };
 /// `switch` arm can capture both.
 pub const PanelRow = struct { panel: PanelId, idx: u32 };
 
+/// A tab on a leaf's strip, by the leaf's index and the tab's position
+/// in it — shared by `.tab` and `.tab_close` so one arm captures both.
+pub const TabRef = struct { leaf: u32, idx: u16 };
+
 pub const HitTarget = union(enum) {
     pane: PaneId,
     divider: u32,
-    tab: struct { leaf: u32, idx: u16 },
+    tab: TabRef,
+    /// The `×` on a pty tab (`bufferline.zig`): the same leaf / index
+    /// as the `.tab` it sits on; a press closes that pane.
+    tab_close: TabRef,
     row: PanelRow,
     kebab: PanelRow,
     chip: struct { panel: PanelId, kind: ChipKind },
@@ -62,7 +69,7 @@ pub const HitTarget = union(enum) {
         try w.writeAll(@tagName(t));
         switch (t) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
-            .tab => |v| try w.print(":{d}:{d}", .{ v.leaf, v.idx }),
+            .tab, .tab_close => |v| try w.print(":{d}:{d}", .{ v.leaf, v.idx }),
             .row, .kebab => |v| try w.print(":{s}:{d}", .{ @tagName(v.panel), v.idx }),
             .chip => |v| try w.print(":{s}:{s}", .{ @tagName(v.panel), @tagName(v.kind) }),
             .filter_input => |p| try w.print(":{s}", .{@tagName(p)}),

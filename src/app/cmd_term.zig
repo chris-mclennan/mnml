@@ -1,5 +1,10 @@
 //! `term.*` runners and the `:term` line: shells in the four halves,
-//! a command in a pane, paste / clear / restart on the active pty.
+//! a command in a pane, paste / clear / restart on the active pty,
+//! `:rename` for the tab label, and the scratch strip — one shell per
+//! workspace that `term.scratch_toggle` shows below the active pane,
+//! hides when it has the focus, and focuses when it is merely visible
+//! (VS Code's `` Ctrl+` ``). Hidden means out of the layout but alive
+//! in the store: the shell keeps its history across toggles.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -21,6 +26,8 @@ pub const table = .{
     .@"term.paste" = &pasteClipboard,
     .@"term.clear" = &clear,
     .@"term.restart" = &restart,
+    .@"term.rename" = &rename,
+    .@"term.scratch_toggle" = &scratchToggle,
 };
 
 fn shell(app: *App, placement: pty_pane.Placement) CommandError!void {
@@ -73,6 +80,76 @@ fn restart(app: *App) CommandError!void {
     const id = app.active orelse return error.NoActivePane;
     _ = app.panes.pty(id) orelse return app.diag.fail(app.frame.allocator(), "not a terminal pane", .{});
     try pty_pane.restart(app, id);
+}
+
+// ─── rename ─────────────────────────────────────────────────────────────
+
+/// `term.rename`: a prompt seeded with the current label.
+fn rename(app: *App) CommandError!void {
+    const id = app.active orelse return error.NoActivePane;
+    const p = app.panes.pty(id) orelse return app.diag.fail(app.frame.allocator(), "not a terminal pane", .{});
+    var state = app_mod.Prompt.init(app.gpa, "Rename session");
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    try state.setText(app.gpa, p.label);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .term_rename = id } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// `:rename <name>` names the active pty outright; bare `:rename` prompts.
+pub fn renameEx(app: *App, args: []const u8) CommandError!void {
+    const name = std.mem.trim(u8, args, " \t");
+    if (name.len == 0) return rename(app);
+    const id = app.active orelse return error.NoActivePane;
+    return renameAccept(app, id, name);
+}
+
+/// The prompt's answer: the pane's label, if the pane is still a pty.
+pub fn renameAccept(app: *App, id: PaneId, text: []const u8) CommandError!void {
+    const name = std.mem.trim(u8, text, " \t");
+    if (name.len == 0) return app.diag.fail(app.frame.allocator(), "the name is empty", .{});
+    const p = app.panes.pty(id) orelse return app.diag.fail(app.frame.allocator(), "that terminal is gone", .{});
+    const copy = try app.gpa.dupe(u8, name);
+    app.gpa.free(p.label);
+    p.label = copy;
+    app.needs_render = true;
+}
+
+// ─── the scratch strip ──────────────────────────────────────────────────
+
+/// The live scratch pane, if the id still names one (the slot may have
+/// been reused by another pane since it was closed).
+fn scratchPane(app: *App) ?PaneId {
+    const id = app.scratch_pty orelse return null;
+    if (app.panes.pty(id)) |p| if (p.kind == .scratch) return id;
+    app.scratch_pty = null;
+    return null;
+}
+
+/// Focused → hide (out of the layout, still alive); visible → focus;
+/// hidden or never opened → show below the active pane.
+fn scratchToggle(app: *App) CommandError!void {
+    if (scratchPane(app)) |id| {
+        const layout = app.layouts.current();
+        const shown = layout.leafOf(id) != null;
+        if (shown and app.active == id and app.focus == .pane) {
+            const next = layout.removePane(id);
+            const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
+            app.active = null;
+            app.setActive(fallback);
+            return;
+        }
+        if (shown) {
+            app.showPane(id);
+            return;
+        }
+        if (app.active) |a| app.setActive(a);
+        try pty_pane.place(app, id, .below);
+        return;
+    }
+    const id = try pty_pane.open(app, .{ .placement = .below, .kind = .scratch, .label = "scratch" });
+    app.scratch_pty = id;
 }
 
 /// `:term` opens a shell below; `:term <cmd…>` runs the line through
@@ -134,4 +211,61 @@ test "term.shell opens the login shell beside the active pane; focus_or_open_she
     try command.run(&app, .{ .static = .@"term.focus_or_open_shell" });
     try t.expectEqual(sh, app.active.?);
     try t.expectEqual(@as(usize, 2), app.panes.count());
+}
+
+test "term.rename relabels the tab through the prompt and through :rename" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try pty_pane.open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command });
+    try command.run(&app, .{ .static = .@"term.rename" });
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("sh", app.overlay.prompt.state.text());
+    try t.expectEqual(id, app.overlay.prompt.purpose.term_rename);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try renameAccept(&app, id, "  build ");
+    try t.expectEqualStrings("build", app.panes.get(id).?.title());
+    try app.runEx("rename deploy");
+    try t.expectEqualStrings("deploy", app.panes.get(id).?.title());
+    try t.expectError(error.Failed, renameAccept(&app, id, " "));
+    // An editor is not a terminal.
+    _ = try app.openScratch();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"term.rename" }));
+}
+
+test "term.scratch_toggle: open below, hide when focused, focus when visible, show again alive" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 14 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    const sc = app.scratch_pty.?;
+    try t.expectEqual(sc, app.active.?);
+    try t.expect(app.panes.pty(sc).?.kind == .scratch);
+    try t.expectEqualStrings("scratch", app.panes.get(sc).?.title());
+    const layout = app.layouts.current();
+    try t.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
+    // Focused: hide. The pane stays in the store.
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try t.expect(layout.leafOf(sc) == null);
+    try t.expect(app.panes.pty(sc) != null);
+    try t.expectEqual(ed, app.active.?);
+    // Hidden: back below, the same pane.
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try t.expectEqual(sc, app.active.?);
+    try t.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
+    try t.expectEqual(sc, app.scratch_pty.?);
+    // Visible but not focused: focus it.
+    app.showPane(ed);
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try t.expectEqual(sc, app.active.?);
+    // Closed for good: the next toggle opens a fresh one.
+    try app.forceClosePane(sc);
+    try command.run(&app, .{ .static = .@"term.scratch_toggle" });
+    try t.expect(app.scratch_pty != null);
+    try t.expect(app.panes.pty(app.scratch_pty.?).?.kind == .scratch);
 }

@@ -49,7 +49,9 @@ pub const Exit = union(enum) {
 };
 
 /// What opened the pane — the statusline and `test.rerun` read it.
-pub const Kind = enum { shell, command, runner, task };
+/// `scratch` is the one `term.scratch_toggle` strip per workspace: a
+/// shell that hides instead of closing, and is never persisted.
+pub const Kind = enum { shell, command, runner, task, scratch };
 
 /// Where a new pane lands relative to the active one.
 pub const Placement = enum { below, right, above, left, tab };
@@ -274,8 +276,9 @@ fn initialSize(app: *App, placement: Placement) struct { cols: u16, rows: u16 } 
 }
 
 /// Put `id` where `placement` says. With no active leaf it simply
-/// becomes the only one.
-fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
+/// becomes the only one. Public for the scratch strip, which hides a
+/// live pane and later puts it back below the active one.
+pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
     const layout = app.layouts.current();
     const anchor: ?PaneId = if (app.active) |a| (if (layout.leafOf(a) != null) a else null) else null;
     if (anchor == null or placement == .tab) {

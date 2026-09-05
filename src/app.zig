@@ -191,6 +191,8 @@ pub const PromptPurpose = union(enum) {
     browser_add_storage,
     /// `mount.open`: the binary and args to host.
     mount_open,
+    /// `term.rename`: the new tab label for this pty pane.
+    term_rename: PaneId,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
@@ -503,6 +505,9 @@ pub const App = struct {
     /// focus must not lose the file's directory (monorepo detection).
     last_editor: ?PaneId = null,
     runners: runners.State = .{},
+    /// The workspace's one scratch terminal (`term.scratch_toggle`),
+    /// alive while hidden; null until the first toggle or once closed.
+    scratch_pty: ?PaneId = null,
     tasks: tasks_mod.State = .{},
     http: http_app.State,
     http_panel: http_panel.State,
