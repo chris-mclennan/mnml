@@ -199,6 +199,9 @@ pub const fold_tail = " lines hidden";
 pub const Lines = struct {
     starts: []const u32,
     text_len: u32,
+    /// Lines painted: `starts.len`, less the phantom line a trailing
+    /// `\n` would open — see `hidePhantom`.
+    shown: u32,
 
     pub fn build(arena: Allocator, text: []const u8) Allocator.Error!Lines {
         var n: usize = 1;
@@ -212,11 +215,24 @@ pub const Lines = struct {
             starts[i] = @intCast(off + 1);
             i += 1;
         };
-        return .{ .starts = starts, .text_len = @intCast(text.len) };
+        return .{ .starts = starts, .text_len = @intCast(text.len), .shown = @intCast(n) };
+    }
+
+    /// A trailing `\n` terminates the last line rather than opening an
+    /// empty line N+1 (the editor counts it that way; `G` cannot reach
+    /// it) — unless the cursor, the anchor or an extra cursor sits at
+    /// EOF, in which case the row stays so they have somewhere to paint.
+    pub fn hidePhantom(l: *Lines, doc: Doc) void {
+        if (l.starts.len < 2 or l.text_len == 0 or doc.text[l.text_len - 1] != '\n') return;
+        const phantom: u32 = @intCast(l.starts.len - 1);
+        if (l.lineOf(doc.cursor) == phantom) return;
+        if (doc.anchor) |a| if (l.lineOf(a) == phantom) return;
+        for (doc.extra_cursors) |c| if (l.lineOf(c) == phantom) return;
+        l.shown = phantom;
     }
 
     pub fn count(l: Lines) u32 {
-        return @intCast(l.starts.len);
+        return l.shown;
     }
 
     pub fn start(l: Lines, line: u32) u32 {
@@ -581,7 +597,8 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     ui.fill(area, t.bg);
     if (area.isEmpty()) return null;
 
-    const lines = try Lines.build(ui.arena, doc.text);
+    var lines = try Lines.build(ui.arena, doc.text);
+    lines.hidePhantom(doc);
     const total = lines.count();
     const gutter_w = @min(gutterWidth(doc, total), area.w);
     const num_w: u16 = gutter_w -| 2;
@@ -1249,6 +1266,27 @@ test "selection paints a byte range, including the EOL cell across lines" {
     try testing.expect(f.bgEql(1, 1, sel));
     try testing.expect(!f.bgEql(2, 1, sel));
     try testing.expect(!f.bgEql(0, 2, sel));
+}
+
+test "a trailing newline opens no phantom line; a cursor at EOF keeps it" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    var view: ViewState = .{};
+    var d = mkDoc("ab\ncd\n");
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(0, "   1 ab");
+    try f.expectRow(1, "   2 cd");
+    try f.expectRow(2, "");
+    // A cursor parked at EOF (modeless Ctrl+End) needs its row.
+    d.cursor = 6;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(2, "   3");
+    // No trailing newline: the last line is a real one.
+    d = mkDoc("ab\ncd");
+    d.cursor = 5;
+    _ = draw(f.ui(), 0, f.full(), &view, d);
+    try f.expectRow(1, "   2 cd");
+    try f.expectRow(2, "");
 }
 
 test "visual block paints a rectangle in display columns, over EOL too" {
