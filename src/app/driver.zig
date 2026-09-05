@@ -328,11 +328,11 @@ test "driver: open, type, status, dirty, title, rects, quit — the runner's con
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const st = try d.status(arena.allocator());
-    // Saving appended the file's terminating newline and, like every
-    // `replace_range`, left the cursor after it (Rust parity; the vim
-    // replace-mode gate depends on exactly this).
-    try t.expectEqual(@as(usize, 2), st.cursor_line);
-    try t.expectEqual(@as(usize, 1), st.cursor_col);
+    // Saving appended the file's terminating newline; the cursor stays
+    // after "TYPED " on line 1 (it used to ride the newline onto a
+    // phantom line 2 — a Rust bug this test once pinned as parity).
+    try t.expectEqual(@as(usize, 1), st.cursor_line);
+    try t.expectEqual(@as(usize, 7), st.cursor_col);
     try t.expectEqualStrings("none", st.mode);
     try t.expectEqualStrings(path, st.active_file);
     try t.expectEqual(@as(usize, 1), st.panes.len);

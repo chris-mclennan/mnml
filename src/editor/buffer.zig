@@ -288,9 +288,19 @@ pub const Buffer = struct {
         if (r.insert_final_newline) |v| self.ensure_trailing_newline = v;
     }
 
+    /// Append the missing final `\n` as one undoable edit. The cursor,
+    /// the anchor and the goal column keep their places — every one of
+    /// them is at or before the old end, so all stay on the last line;
+    /// `replace_range` alone would park the cursor after the newline, on
+    /// a phantom line N+1 (the jump Rust mnml's save has). A Normal-mode
+    /// cursor past the last char (only reachable through an edit that
+    /// left it there) steps back onto that char, where vim keeps it.
     fn fixTrailingNewline(self: *Buffer) Allocator.Error!void {
         const n = self.editor.len();
         if (n == 0 or self.editor.bytes()[n - 1] == '\n') return;
+        const cursor = self.editor.cursor;
+        const anchor = self.editor.anchor;
+        const goal_col = self.editor.goal_col;
         var clip = Clipboard.init(self.gpa);
         defer clip.deinit();
         var arena = std.heap.ArenaAllocator.init(self.gpa);
@@ -299,6 +309,9 @@ pub const Buffer = struct {
             error.OutOfMemory => return error.OutOfMemory,
             error.Unsupported => return,
         };
+        self.editor.cursor = if (cursor >= n and self.input.mode() == .normal) self.editor.prevBoundary(n) else @min(cursor, n);
+        self.editor.anchor = if (anchor) |a| @min(a, n) else null;
+        self.editor.goal_col = goal_col;
     }
 
     /// Record the current text as the on-disk text.
@@ -1690,7 +1703,18 @@ test "buffer: unsupported ops are skipped and named; folds shift with edits" {
     try testing.expectEqual(@as(usize, 2), h.buf.folds.keys()[0]);
 }
 
-test "buffer: save adds the trailing newline and parks the cursor after it (Rust parity: R then A<esc>R! appends)" {
+fn feedSpec(b: *Buffer, c: *Clipboard, a: Allocator, spec: []const u8) !void {
+    const keys = try parseKeys(testing.allocator, spec);
+    defer testing.allocator.free(keys);
+    for (keys) |k| _ = try b.feedKey(k, c, 10, null, a);
+}
+
+// This test used to pin the cursor AFTER the appended newline (`cursor ==
+// len`, a phantom line 2) as Rust parity, and a `A<esc>R!` chain that only
+// appended because Esc then stepped back across the line start onto the
+// `\n`. Both were bugs; the save keeps the cursor and vim's `R!` on the
+// last char overwrites it.
+test "buffer: save adds the trailing newline and the cursor keeps its place (no phantom line 2)" {
     const gpa = testing.allocator;
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
@@ -1706,31 +1730,78 @@ test "buffer: save adds the trailing newline and parks the cursor after it (Rust
     defer clip.deinit();
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const feed = struct {
-        fn run(b: *Buffer, c: *Clipboard, a: Allocator, spec: []const u8) !void {
-            const keys = try parseKeys(testing.allocator, spec);
-            defer testing.allocator.free(keys);
-            for (keys) |k| _ = try b.feedKey(k, c, 10, null, a);
-        }
-    }.run;
-    try feed(&buf, &clip, arena.allocator(), "RXYZ<esc>");
+    try feedSpec(&buf, &clip, arena.allocator(), "RXYZ<esc>");
+    try testing.expectEqual(@as(usize, 2), buf.editor.cursor);
     try buf.save(io);
     try testing.expectEqualStrings("XYZdef\n", buf.editor.bytes());
-    try testing.expectEqual(buf.editor.len(), buf.editor.cursor);
+    try testing.expectEqual(@as(usize, 2), buf.editor.cursor);
+    try testing.expectEqual(@as(usize, 1), buf.editor.lineCount());
     try testing.expect(!buf.dirty);
-    try feed(&buf, &clip, arena.allocator(), "A<esc>R!<esc>");
+    // `A<esc>` lands on `f`; `R!` overwrites it (`:help R`).
+    try feedSpec(&buf, &clip, arena.allocator(), "A<esc>R!<esc>");
+    try testing.expectEqual(@as(usize, 5), buf.editor.cursor);
     try buf.save(io);
     const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
     defer gpa.free(back);
-    try testing.expectEqualStrings("XYZdef!\n", back);
+    try testing.expectEqualStrings("XYZde!\n", back);
+    // A Normal cursor past the last char (a state only a direct edit
+    // reaches) steps back onto that char rather than onto the newline.
+    try feedSpec(&buf, &clip, arena.allocator(), "GA<del><esc>");
+    try testing.expectEqualStrings("XYZde!", buf.editor.bytes());
+    buf.editor.cursor = buf.editor.len();
+    try buf.save(io);
+    try testing.expectEqualStrings("XYZde!\n", buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 5), buf.editor.cursor);
     // Off, the buffer is written verbatim.
     buf.ensure_trailing_newline = false;
-    try feed(&buf, &clip, arena.allocator(), "GA<del><esc>");
+    try feedSpec(&buf, &clip, arena.allocator(), "GA<del><esc>");
     try buf.save(io);
-    try testing.expectEqualStrings("XYZdef!", buf.editor.bytes());
+    try testing.expectEqualStrings("XYZde!", buf.editor.bytes());
     const verbatim = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
     defer gpa.free(verbatim);
-    try testing.expectEqualStrings("XYZdef!", verbatim);
+    try testing.expectEqualStrings("XYZde!", verbatim);
+}
+
+test "buffer: save keeps an Insert / standard cursor at EOF before the appended newline, and a selection" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(path);
+    const file = try std.fs.path.join(gpa, &.{ path, "tail.txt" });
+    defer gpa.free(file);
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = "xy" });
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    {
+        var buf = try Buffer.load(gpa, io, file, .vim, .{});
+        defer buf.deinit();
+        try feedSpec(&buf, &clip, arena.allocator(), "Az");
+        try testing.expectEqual(input.EditingMode.insert, buf.input.mode());
+        try buf.save(io);
+        try testing.expectEqualStrings("xyz\n", buf.editor.bytes());
+        try testing.expectEqual(@as(usize, 3), buf.editor.cursor);
+        try testing.expectEqual(@as(usize, 0), buf.editor.currentLine());
+        try feedSpec(&buf, &clip, arena.allocator(), "!<esc>");
+        try testing.expectEqualStrings("xyz!\n", buf.editor.bytes());
+        try testing.expectEqual(@as(usize, 3), buf.editor.cursor);
+    }
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = "xy" });
+    {
+        var buf = try Buffer.load(gpa, io, file, .standard, .{});
+        defer buf.deinit();
+        try feedSpec(&buf, &clip, arena.allocator(), "<end>z<s-left><s-left>");
+        try testing.expectEqual(@as(usize, 1), buf.editor.cursor);
+        try testing.expectEqual(@as(?usize, 3), buf.editor.anchor);
+        try buf.save(io);
+        try testing.expectEqualStrings("xyz\n", buf.editor.bytes());
+        try testing.expectEqual(@as(usize, 1), buf.editor.cursor);
+        try testing.expectEqual(@as(?usize, 3), buf.editor.anchor);
+        try testing.expect(buf.editor.hasSelection());
+    }
 }
 
 test "buffer: load and save round-trip through the file system" {
