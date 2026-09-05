@@ -72,6 +72,8 @@ const request_pane = @import("app/request_pane.zig");
 const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
 const http_parse = @import("http/parse.zig");
+const scripting = @import("scripting/lua.zig");
+const script_api = @import("scripting/api.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -113,6 +115,10 @@ pub const InitOptions = struct {
     /// The environment children inherit (a pty's shell). The process's
     /// own when null.
     env: ?*const std.process.Environ.Map = null,
+    /// Whether `<workspace>/.mnml/init.lua` may run. Null derives it
+    /// from `loaded` (the trust store); the `.test` runner sets it for
+    /// the temp workspace it made itself.
+    workspace_trusted: ?bool = null,
 };
 
 /// How long an ordinary toast stays.
@@ -214,7 +220,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, lua, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -469,6 +475,11 @@ pub const App = struct {
     dyn_commands: command.DynRegistry,
     plugin_invocations: std.ArrayListUnmanaged([]u8) = .empty,
     hooks: hooks.Hooks,
+    /// The Lua state (D10). Reach it through `script()`, which points it
+    /// at this App — the struct moves after `initWith` returns.
+    lua: ?*scripting.Lua = null,
+    /// Whether the workspace's exec-bearing config and `init.lua` apply.
+    workspace_trusted: bool = false,
     block_insert: ?BlockInsert = null,
     repeat_insert: ?RepeatInsert = null,
     cmd_complete: ?CmdComplete = null,
@@ -541,6 +552,9 @@ pub const App = struct {
         };
         errdefer app.hooks.deinit();
         opts.loaded = null; // owned by `app` from here
+        app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
+        app.lua = try scripting.Lua.create(gpa, io, &app);
+        errdefer app.lua.?.destroy();
         // D10.2: the first Zig hook subscriber — a save rescans the TODOs.
         try app.hooks.subscribe(.save_post, .{ .zig = &todos.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
@@ -558,7 +572,16 @@ pub const App = struct {
         try app.toastConfigDiagnostics();
         try app.applyTheme();
         try trust_app.promptIfNeeded(&app);
+        // D10: the scripts subscribe before the `startup` hook fires.
+        try app.script().loadInitFiles();
         return app;
+    }
+
+    /// The Lua state, pointed at this App for the call about to happen.
+    pub fn script(self: *App) *scripting.Lua {
+        const l = self.lua.?;
+        l.app = self;
+        return l;
     }
 
     /// Load the three layers again with `trust` and switch to the result:
@@ -570,6 +593,8 @@ pub const App = struct {
         errdefer fresh.deinit();
         var km = try buildKeymap(self.gpa, styleOf(fresh.config.editor.input_style), fresh.config.keys);
         errdefer km.deinit();
+        const was_trusted = self.workspace_trusted;
+        self.workspace_trusted = fresh.workspace_trusted;
         self.cfg = fresh.config;
         old.deinit();
         self.loaded = fresh;
@@ -581,6 +606,12 @@ pub const App = struct {
         self.tree.width = self.cfg.ui.tree_width;
         try self.toastConfigDiagnostics();
         try self.applyTheme();
+        try script_api.rebind(self);
+        // A workspace just trusted gets its `.mnml/init.lua` now.
+        if (!was_trusted and self.workspace_trusted) {
+            try self.script().reset();
+            try self.script().loadInitFiles();
+        }
         self.needs_render = true;
     }
 
@@ -683,7 +714,9 @@ pub const App = struct {
         self.clipboard.deinit();
         self.layouts.deinit();
         self.tree.deinit();
+        // Script panes unref into the state; the state closes after them.
         self.panes.deinit();
+        if (self.lua) |l| l.destroy();
         self.screen.deinit(gpa);
         self.events.deinit(self.io);
         self.frame.deinit();
@@ -1050,6 +1083,7 @@ pub const App = struct {
         self.keymap = km;
         km = undefined;
         self.chord.clear(self.gpa);
+        if (self.lua != null) try script_api.rebind(self);
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| e.buf.setInputStyle(style, self.editorConfig()),
             else => {},
@@ -1261,6 +1295,7 @@ pub const App = struct {
         try watch.tick(self, now);
         try git_app.tick(self, now);
         try ai_app.tick(self);
+        try self.script().tick(now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -1281,6 +1316,9 @@ pub const App = struct {
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
+            next = @min(next orelse std.math.maxInt(i64), d);
+        };
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -1427,6 +1465,11 @@ test {
     _ = @import("ui/picker.zig");
     _ = @import("ui/fuzzy.zig");
     _ = @import("ui/editor_view.zig");
+    _ = @import("scripting/lua.zig");
+    _ = @import("scripting/api.zig");
+    _ = @import("app/script_pane.zig");
+    _ = @import("app/cmd_script.zig");
+    _ = @import("ui/script_view.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

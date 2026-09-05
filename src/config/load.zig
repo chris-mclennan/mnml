@@ -184,11 +184,17 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
     if (loaded.home_path) |p| {
         if (try readLayer(arena, io, &loaded.diagnostics, p)) |patch| try apply(arena, &loaded.config, patch);
     }
-    if (try readLayer(arena, io, &loaded.diagnostics, loaded.workspace_path)) |patch| {
-        var p = patch;
+    // `.mnml/init.lua` beside the config is an exec-bearing claim of its
+    // own (D10): a workspace with the script and no config still needs
+    // the trust decision.
+    const init_lua_path = try std.fs.path.join(arena, &.{ opts.workspace, ".mnml", "init.lua" });
+    const facts: trust_mod.Facts = .{ .init_lua = if (Io.Dir.cwd().access(io, init_lua_path, .{})) true else |_| false };
+    const ws_layer = try readLayer(arena, io, &loaded.diagnostics, loaded.workspace_path);
+    if (ws_layer != null or facts.init_lua) {
+        var p: Patch(Config) = ws_layer orelse .{};
         const trust: Trust = switch (opts.trust) {
             .trusted, .untrusted => opts.trust,
-            .ask => try decideTrust(gpa, io, &loaded, p),
+            .ask => try decideTrust(gpa, io, &loaded, p, facts),
         };
         loaded.workspace_trusted = trust == .trusted;
         if (trust == .untrusted) {
@@ -231,9 +237,9 @@ fn readLayer(arena: Allocator, io: Io, diags: *Diagnostics, path: []const u8) Al
 /// `.ask`: a layer with no exec-bearing claim needs no answer; one whose
 /// claims match the store is trusted; anything else is stripped and the
 /// prompt is set for the app.
-fn decideTrust(gpa: Allocator, io: Io, loaded: *Loaded, p: Patch(Config)) Allocator.Error!Trust {
+fn decideTrust(gpa: Allocator, io: Io, loaded: *Loaded, p: Patch(Config), facts: trust_mod.Facts) Allocator.Error!Trust {
     const arena = loaded.arena.allocator();
-    const claims = try trust_mod.claims(arena, p);
+    const claims = try trust_mod.claimsWith(arena, p, facts);
     if (claims.len == 0) return .trusted;
     const fp = trust_mod.fingerprint(claims);
     if (loaded.opts.data_root) |root| {
@@ -592,4 +598,27 @@ test "docs config example parses clean" {
     try t.expectEqual(@as(usize, 2), cfg.startup.layout.len);
     try t.expectEqual(Config.LintParser.shellcheck, cfg.linters.get("sh").?.parser);
     try t.expectEqualStrings("work", cfg.ai.extra.get("claude_accounts").?.array[0].get("name").?.string);
+}
+
+test "load: a workspace with only .mnml/init.lua still asks for trust" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, ".mnml");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/init.lua", .data = "mnml.toast('hi')" });
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    var loaded = try load(t.allocator, t.io, .{ .workspace = root, .trust = .ask, .env = .{ .vars = &vars } });
+    defer loaded.deinit();
+    try t.expect(!loaded.workspace_trusted);
+    const prompt = loaded.trust_prompt.?;
+    try t.expectEqual(@as(usize, 1), prompt.claims.len);
+    try t.expectEqual(trust_mod.Sink.init_lua, prompt.claims[0].sink);
+    // Explicit trust runs it; explicit distrust does not prompt.
+    var trusted_load = try load(t.allocator, t.io, .{ .workspace = root, .trust = .trusted, .env = .{ .vars = &vars } });
+    defer trusted_load.deinit();
+    try t.expect(trusted_load.workspace_trusted);
+    try t.expect(trusted_load.trust_prompt == null);
 }

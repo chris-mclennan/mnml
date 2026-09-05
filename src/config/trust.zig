@@ -28,6 +28,10 @@ pub const Sink = enum {
     startup_pty,
     startup_task,
     external_browser,
+    /// `<ws>/.mnml/init.lua` — not a config key but a file beside the
+    /// config, which runs with the whole `mnml` table (tasks, panes,
+    /// keys) once the workspace is trusted.
+    init_lua,
 
     /// Human label for the trust dialog's bullet list.
     pub fn label(s: Sink) []const u8 {
@@ -40,6 +44,7 @@ pub const Sink = enum {
             .startup_pty => "run at startup",
             .startup_task => "task at startup",
             .external_browser => "browser",
+            .init_lua => "script",
         };
     }
 
@@ -53,6 +58,7 @@ pub const Sink = enum {
             .md_preview => "when you preview markdown",
             .startup_pty, .startup_task => "immediately, on open",
             .external_browser => "when you open a link",
+            .init_lua => "immediately, on open",
         };
     }
 };
@@ -71,6 +77,16 @@ pub const exec_bearing = [_]Rule{
     .{ .path = "dap.<name>", .sink = .debug_adapter },
     .{ .path = "startup.layout[] with .kind = .pty", .sink = .startup_pty },
     .{ .path = "startup.tasks", .sink = .startup_task },
+    .{ .path = ".mnml/init.lua (the file beside the config)", .sink = .init_lua },
+};
+
+/// What the loader knows about the workspace beyond its config patch:
+/// whether `<ws>/.mnml/init.lua` exists. The file is never merged into
+/// the config, so it cannot be stripped; it simply does not run until
+/// the workspace is trusted, and it is a claim so that adding one to a
+/// trusted workspace asks again.
+pub const Facts = struct {
+    init_lua: bool = false,
 };
 
 comptime {
@@ -147,6 +163,8 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
             startup.tasks = &.{};
             return tasks.len;
         },
+        // Nothing in the patch: the file is gated by `workspace_trusted`.
+        .init_lua => return 0,
     }
 }
 
@@ -200,14 +218,22 @@ fn joinList(arena: Allocator, parts: []const []const u8) Allocator.Error![]const
 /// Everything in `p` that would execute, sorted and stable, so the same
 /// file always lists (and fingerprints) the same way.
 pub fn claims(arena: Allocator, p: Patch(Config)) Allocator.Error![]Claim {
+    return claimsWith(arena, p, .{});
+}
+
+/// `claims` plus what the loader saw beside the config.
+pub fn claimsWith(arena: Allocator, p: Patch(Config), facts: Facts) Allocator.Error![]Claim {
     var out: std.ArrayList(Claim) = .empty;
-    inline for (comptime std.enums.values(Sink)) |sink| try collect(sink, arena, p, &out);
+    inline for (comptime std.enums.values(Sink)) |sink| try collect(sink, arena, p, facts, &out);
     std.mem.sort(Claim, out.items, {}, Claim.lessThan);
     return out.toOwnedSlice(arena);
 }
 
-fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), out: *std.ArrayList(Claim)) Allocator.Error!void {
+fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts, out: *std.ArrayList(Claim)) Allocator.Error!void {
     switch (sink) {
+        .init_lua => {
+            if (facts.init_lua) try out.append(arena, .{ .sink = sink, .key = "script.init", .command = ".mnml/init.lua" });
+        },
         .external_browser => {
             const ui = p.ui orelse return;
             const b = ui.external_browser orelse return;
@@ -404,6 +430,26 @@ test "claims render for the dialog, sorted, with the verbatim command" {
     try t.expect(found);
     // sorted: sinks in table order, external_browser last
     try t.expectEqual(Sink.external_browser, list[list.len - 1].sink);
+}
+
+test "an init.lua beside the config is a claim of its own, and moves the fingerprint" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diags = Diagnostics.init(arena);
+    const p = try load.parseLayer(arena, ".{ .editor = .{ .tab_width = 2 } }", "ws.zon", &diags);
+    try t.expectEqual(@as(usize, 0), (try claims(arena, p)).len);
+    const with = try claimsWith(arena, p, .{ .init_lua = true });
+    try t.expectEqual(@as(usize, 1), with.len);
+    try t.expectEqual(Sink.init_lua, with[0].sink);
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try with[0].format(&w);
+    try t.expectEqualStrings("script init — runs `.mnml/init.lua` immediately, on open", w.buffered());
+    try t.expect(fingerprint(with) != fingerprint(try claims(arena, p)));
+    // Stripping has nothing to remove: the file is gated, not merged.
+    var q = p;
+    try t.expectEqual(@as(usize, 0), try strip(arena, &q));
 }
 
 test "fingerprint is stable, change-sensitive, and blind to ordinary edits" {

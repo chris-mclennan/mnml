@@ -36,14 +36,20 @@ pub const AppDriver = struct {
         errdefer gpa.destroy(self);
         var c = cfg.cfg;
         if (style) |s| c.editor.input_style = App.configStyleOf(s);
-        self.* = .{ .gpa = gpa, .app = try App.initWith(gpa, io, .{
-            .cfg = c,
-            .loaded = loaded,
-            .workspace = cfg.workspace,
-            .data_root = cfg.data_root,
-            .cols = cfg.cols,
-            .rows = cfg.rows,
-        }) };
+        self.* = .{
+            .gpa = gpa,
+            .app = try App.initWith(gpa, io, .{
+                .cfg = c,
+                .loaded = loaded,
+                .workspace = cfg.workspace,
+                .data_root = cfg.data_root,
+                .cols = cfg.cols,
+                .rows = cfg.rows,
+                // The runner made this workspace itself: its `.mnml/init.lua`
+                // is the script under test.
+                .workspace_trusted = true,
+            }),
+        };
         loaded = null;
         return self;
     }

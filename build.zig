@@ -62,6 +62,17 @@ pub fn build(b: *std.Build) void {
     // ── syntax: tree-sitter ──
     const ts = addTreeSitter(b, target, optimize);
 
+    // ── lua ──
+    // Lua 5.4 compiled from C inside this build, bound through zlua's
+    // `src/lib.zig` (vendored under `vendor/zlua/`: its `build.zig` and
+    // the translate-c package it pins fail analysis on 0.16.0, and the
+    // build runner compiles every dependency's build.zig — the same
+    // reason tree-sitter is vendored). The C sources come from the
+    // `lua54` tarball, the headers go through `Step.TranslateC`, and the
+    // `config` options zlua's lib reads are declared here. Nothing
+    // outside `src/scripting/` imports `zlua`.
+    const zlua_mod = addLua(b, target, optimize);
+
     // ── themes ──
     // `themes/root.zig` imports every `themes/*.zon` at comptime, so a
     // malformed palette fails the build. It is its own module because the
@@ -102,6 +113,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "tree_sitter", .module = ts.runtime },
             .{ .name = "highlight", .module = ts.highlight },
             .{ .name = "themes", .module = themes_mod },
+            .{ .name = "zlua", .module = zlua_mod },
         },
     });
     root_module.addOptions("build_options", build_options);
@@ -355,6 +367,76 @@ fn deriveVersion(b: *std.Build) []const u8 {
     const status = b.runAllowFail(&.{ "git", "status", "--porcelain", "--untracked-files=no" }, &code, .ignore) catch "";
     const dirty = std.mem.trim(u8, status, " \t\r\n").len != 0;
     return b.fmt("{s}+g{s}{s}", .{ base, sha, if (dirty) "-dirty" else "" });
+}
+
+// ── lua ────────────────────────────────────────────────────────────────────
+
+/// The `lang` option zlua's `src/lib.zig` switches on. Same field set as
+/// zlua's `build.zig` `Language` so every prong in the lib resolves.
+const LuaLanguage = enum { lua51, lua52, lua53, lua54, lua55, luajit, luau };
+
+const lua54_sources = [_][]const u8{
+    "src/lapi.c",     "src/lcode.c",    "src/lctype.c",  "src/ldebug.c",   "src/ldo.c",      "src/ldump.c",
+    "src/lfunc.c",    "src/lgc.c",      "src/llex.c",    "src/lmem.c",     "src/lobject.c",  "src/lopcodes.c",
+    "src/lparser.c",  "src/lstate.c",   "src/lstring.c", "src/ltable.c",   "src/ltm.c",      "src/lundump.c",
+    "src/lvm.c",      "src/lzio.c",     "src/lauxlib.c", "src/lbaselib.c", "src/lcorolib.c", "src/ldblib.c",
+    "src/liolib.c",   "src/lmathlib.c", "src/loadlib.c", "src/loslib.c",   "src/lstrlib.c",  "src/ltablib.c",
+    "src/lutf8lib.c", "src/linit.c",
+};
+
+fn addLua(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    const lua_root: std.Build.LazyPath = .{ .cwd_relative = packageRoot(b, "lua54") };
+    const zlua_root: std.Build.LazyPath = b.path("vendor/zlua");
+
+    // The interpreter, one static lib. `LUA_USE_APICHECK` in Debug turns
+    // a misuse of the C API into an assertion instead of a heap scribble.
+    const lib = b.addLibrary(.{
+        .name = "lua",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .sanitize_c = .off,
+        }),
+    });
+    const os_flag: []const u8 = switch (target.result.os.tag) {
+        .linux => "-DLUA_USE_LINUX",
+        .macos => "-DLUA_USE_MACOSX",
+        .windows => "-DLUA_USE_WINDOWS",
+        else => "-DLUA_USE_POSIX",
+    };
+    const apicheck: []const u8 = if (optimize == .Debug) "-DLUA_USE_APICHECK" else "-DLUA_COMPAT_MATHLIB=0";
+    lib.root_module.addCSourceFiles(.{
+        .root = lua_root,
+        .files = &lua54_sources,
+        .flags = &.{ "-std=gnu99", os_flag, apicheck },
+    });
+    lib.root_module.addIncludePath(lua_root.path(b, "src"));
+
+    // The headers as Zig: zlua's `lua_all.h` includes lua/lualib/lauxlib.
+    const tc = b.addTranslateC(.{
+        .root_source_file = zlua_root.path(b, "include/lua_all.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tc.addIncludePath(lua_root.path(b, "src"));
+    const c_mod = tc.createModule();
+    c_mod.linkLibrary(lib);
+
+    const config = b.addOptions();
+    config.addOption(LuaLanguage, "lang", .lua54);
+    config.addOption(bool, "luau_use_4_vector", false);
+
+    const zlua = b.createModule(.{
+        .root_source_file = zlua_root.path(b, "src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    zlua.addImport("c", c_mod);
+    zlua.addOptions("config", config);
+    zlua.linkLibrary(lib);
+    return zlua;
 }
 
 // ── tree-sitter ──────────────────────────────────────────────────────────────

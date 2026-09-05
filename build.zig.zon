@@ -192,6 +192,10 @@
             .url = "https://static.crates.io/crates/tree-sitter-astro-next/tree-sitter-astro-next-0.1.1.crate",
             .hash = "N-V-__8AAOLyAgD9hvchH4WHfrnOAu39nMjv3mYLliY6Yk6s",
         },
+        .lua54 = .{
+            .url = "https://www.lua.org/ftp/lua-5.4.9.tar.gz",
+            .hash = "N-V-__8AAEQ_FAAnte7Oq7KSLG9FZh_9mjvQimoekgYqkKSK",
+        },
     },
     .paths = .{
         "build.zig",

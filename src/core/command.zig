@@ -118,6 +118,7 @@ const runner_tables = .{
     @import("../app/cmd_http.zig"),
     @import("../app/ws_pane.zig"),
     @import("../app/cmd_browser.zig"),
+    @import("../app/cmd_script.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
@@ -442,7 +443,7 @@ fn runDyn(app: *App, slot: u32) CommandError!void {
     switch (c.runner) {
         .ex => |line| return app.runEx(line),
         .ipc => return app.ackPluginCommand(c.id),
-        .lua => return error.Unsupported, // TODO(lua): registry lookup + protectedCall with budget (D10.1)
+        .lua => |r| return app.script().callCommand(r),
     }
 }
 
@@ -470,7 +471,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 812), count);
+    try std.testing.expectEqual(@as(usize, 814), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 
