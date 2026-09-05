@@ -923,16 +923,28 @@ pub const Vim = struct {
                 if (asciiLetter(ch)) |c| return .{ .app = .{ .set_mark = c } };
                 return .consumed;
             },
-            .mark_jump_line => {
+            .mark_jump_line, .mark_jump_exact => {
+                const exact = self.prefix == .mark_jump_exact;
+                const op = self.op;
                 self.resetPending();
-                if (asciiLetter(ch)) |c| return .{ .app = .{ .jump_to_mark_line = c } };
-                if (ch == '\'') return runCmd(.@"nav.jump_toggle_prev");
-                return .consumed;
-            },
-            .mark_jump_exact => {
-                self.resetPending();
-                if (asciiLetter(ch)) |c| return .{ .app = .{ .jump_to_mark_exact = c } };
-                if (ch == '`') return runCmd(.@"nav.jump_toggle_prev");
+                if (asciiLetter(ch)) |c| {
+                    // `d'a` / `` y`a `` / `c'a`: a mark is a motion (`:help
+                    // '`). The buffer holds the mark, so it builds the
+                    // range; only the buffer-local marks are targets.
+                    if (op) |o| {
+                        const glyph: u8 = switch (o) {
+                            .delete => 'd',
+                            .yank => 'y',
+                            .change => 'c',
+                            else => return .consumed,
+                        };
+                        if (c < 'a' or c > 'z') return .consumed;
+                        return .{ .app = .{ .operator_to_mark = .{ .op = glyph, .mark = c, .exact = exact } } };
+                    }
+                    return .{ .app = if (exact) .{ .jump_to_mark_exact = c } else .{ .jump_to_mark_line = c } };
+                }
+                if (ch == '\'' and !exact) return runCmd(.@"nav.jump_toggle_prev");
+                if (ch == '`' and exact) return runCmd(.@"nav.jump_toggle_prev");
                 return .consumed;
             },
             .find_char => |f| {
@@ -1671,6 +1683,12 @@ pub const Vim = struct {
             if (n > 1) self.count = n;
             return .consumed;
         }
+        if (ch == '\'' or ch == '`') {
+            // `d'a`, `` y`a ``: the mark letter comes next.
+            self.op = op;
+            self.prefix = if (ch == '\'') .mark_jump_line else .mark_jump_exact;
+            return .consumed;
+        }
         if (ch == 'G' and (op == .delete or op == .yank)) {
             return .{ .app = .{ .operator_linewise_to = .{ .op = if (op == .delete) 'd' else 'y', .target = if (n > 1) n else null } } };
         }
@@ -1824,6 +1842,13 @@ pub const Vim = struct {
                 const c = ch orelse return ops(arena, &.{.select_clear});
                 return ops(arena, &.{ .{ .align_selection = .{ .on_char = c } }, .select_clear });
             },
+            .mark_jump_line, .mark_jump_exact => {
+                // `V'a`: the selection extends to the mark.
+                const exact = self.prefix == .mark_jump_exact;
+                self.resetPending();
+                const c = asciiLetter(ch) orelse return .consumed;
+                return .{ .app = if (exact) .{ .jump_to_mark_exact = c } else .{ .jump_to_mark_line = c } };
+            },
             else => {},
         }
         // Whatever comes next either widens the range itself or is a
@@ -1953,6 +1978,10 @@ pub const Vim = struct {
             'p', 'P' => {
                 self.enterNormal();
                 return ops(arena, &.{ widen, .{ .replace_selection = "" }, .paste_before });
+            },
+            '\'', '`' => {
+                self.prefix = if (c == '\'') .mark_jump_line else .mark_jump_exact;
+                return .consumed;
             },
             '*' => {
                 self.enterNormal();

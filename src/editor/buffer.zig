@@ -331,19 +331,22 @@ pub const Buffer = struct {
         self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
-            .ops => |list| blk: {
-                // The record keeps the handler's list: `.` on another
-                // fold re-expands against that fold.
-                const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
-                try self.trackDot(list, visual, arena);
-                break :blk if (changed) .edited else .redraw;
-            },
+            .ops => |list| try self.applyHandlerOps(list, visual, clip, viewport_rows, arena),
             .consumed => .redraw,
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
         self.syncInsertSession(undo_before);
         return ev;
+    }
+
+    /// A handler's op list: applied fold-aware, then recorded for `.`.
+    /// The record keeps the handler's own list, so `.` on another fold
+    /// re-expands against that fold.
+    fn applyHandlerOps(self: *Buffer, list: []const EditOp, visual: ?VisualShape, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
+        try self.trackDot(list, visual, arena);
+        return if (changed) .edited else .redraw;
     }
 
     /// Open / anchor / close the Insert undo session against the mode
@@ -744,8 +747,45 @@ pub const Buffer = struct {
             },
             .macro_record_into => |reg| return self.macroToggle(reg, clip),
             .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, clip, viewport_rows, wrap_width, arena),
+            .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
             else => return .{ .app = cmd },
         }
+    }
+
+    /// `d'a` / `` y`a `` / `c'a` (`:help '`): the range from the cursor to
+    /// the mark — whole lines for `'`, charwise and exclusive for the
+    /// backtick — as the op list the operator would have built from a
+    /// motion, so folds, `.` and the registers see the usual shape. A
+    /// mark that is not set does nothing (Vim: E20).
+    fn operatorToMark(self: *Buffer, op: u8, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const ed = &self.editor;
+        const mark_byte = @min(ed.marks.get(mark) orelse return .noop, ed.len());
+        const row = ed.lineOfByte(mark_byte);
+        var list: std.ArrayList(EditOp) = .empty;
+        if (exact) {
+            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = @min(ed.cursor, mark_byte) }, .select_start, .{ .set_cursor_byte = @max(ed.cursor, mark_byte) } });
+        } else {
+            const lo = @min(ed.currentLine(), row);
+            const hi = @max(ed.currentLine(), row);
+            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = ed.lineStart(lo) }, .select_start, .{ .set_cursor_byte = ed.lineEnd(hi) } });
+        }
+        switch (op) {
+            'd' => {
+                if (!exact) try list.append(arena, .normalize_linewise_selection);
+                try list.append(arena, .delete_selection);
+            },
+            'y' => {
+                if (!exact) try list.append(arena, .normalize_linewise_selection);
+                try list.appendSlice(arena, &.{ if (exact) .yank_selection else .yank_selection_linewise, .move_cursor_to_selection_start, .select_clear });
+            },
+            'c' => {
+                if (!exact) try list.append(arena, .normalize_linewise_selection_inner);
+                try list.appendSlice(arena, &.{ .{ .replace_selection = "" }, .continue_insert_run });
+                self.input.requestInsertMode();
+            },
+            else => return .noop,
+        }
+        return self.applyHandlerOps(list.items, null, clip, viewport_rows, arena);
     }
 };
 

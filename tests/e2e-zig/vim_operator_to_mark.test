@@ -1,0 +1,35 @@
+# zig-only
+# A mark is a motion (`:help '`): `d'a` deletes linewise to the mark,
+# `` y`a `` yanks charwise up to it, and in V-LINE `'a` extends the
+# selection to the mark's line. The mark letter must never fall through
+# to `a` (append) or `b` (back-word).
+write a.txt "l1\nl2\nl3\nl4\nl5\nl6\n"
+open a.txt
+command editor.use_vim
+
+type 5G
+type ma
+type gg
+type d'a
+expect screen contains "NORMAL"
+command file.save
+expect file a.txt contains "l6\n"
+expect file a.txt lacks "l1"
+type u
+type 3G
+type lmb
+type gg
+type y`b
+expect screen contains "NORMAL"
+type G
+type p
+command file.save
+expect file a.txt contains "l5\nll1\nl2\nl6\n"
+type u
+type G
+type mc
+type gg
+type V'cd
+command file.save
+expect file a.txt lacks "l1"
+expect file a.txt lacks "l6"

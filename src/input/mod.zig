@@ -90,9 +90,13 @@ pub const AppCommand = union(enum) {
     /// `{count}gT` (`count` pages back). Without a count the handler
     /// runs `tab.next` / `tab.prev` instead.
     tab_page: struct { count: u32, back: bool },
+    /// `d'a` / `` y`a `` / `c'a`: `op` is `d`, `y` or `c`; `exact` is the
+    /// backtick form (charwise, exclusive), else linewise to the mark's
+    /// line. The buffer owns the mark, so it builds the range.
+    operator_to_mark: struct { op: u8, mark: u8, exact: bool },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 23);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 24);
     }
 };
 

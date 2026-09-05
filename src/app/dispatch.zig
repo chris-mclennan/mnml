@@ -1922,7 +1922,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .jump_to_mark_line => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, false),
         .jump_to_mark_exact => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, true),
         // Buffer-local; the buffer answered them before we got here.
-        .dot_repeat, .macro_record_into, .macro_replay_from => {},
+        .dot_repeat, .macro_record_into, .macro_replay_from, .operator_to_mark => {},
         .block_insert_start => |b| try beginBlockInsert(app, pane_id, e, b.append, false),
         .block_change_start => try beginBlockInsert(app, pane_id, e, false, true),
         .block_replace_with => |r| try blockReplace(app, e, r.ch),
