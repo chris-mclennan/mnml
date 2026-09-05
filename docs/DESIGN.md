@@ -1,6 +1,6 @@
 # mnml → Zig port plan
 
-> Status: **Phase 0 closed (CONTINUE). Phases 1–3 merged 2026-09-04; Phase 7 (AI, agents, spend) on the `ai` branch**: config as ZON + themes + settings + first launch + trust; frame/mouse/splits/tabs/menus/palette; highlighting engine + outline + md preview + snippets + sticky; pty pane + runners + tasks + watcher. Gate 47/47, sweep 141/141, **corpus 171/226**, ~470 unit tests in Debug + ReleaseSafe, all five targets. Remaining corpus failures are git / LSP / DAP / HTTP / AI-agents / browser (Phases 4–7).
+> Status: **Phase 0 closed (CONTINUE). Phases 0–7 merged 2026-09-04**: config as ZON + themes + settings + first launch + trust; frame/mouse/splits/tabs/menus/palette; highlighting engine + outline + md preview + snippets + sticky; pty pane + runners + tasks + watcher; git (one worker, status/blame/diff/graph/staging); LSP + DAP on one JSON-RPC transport; HTTP + WS + SSE + CDP (the request pane, envs, cookies, chains, mocks, the WebSocket client, the browser pane, the `run`/`chain`/`discover`/`sync`/`proxy` CLI); AI (ghost text, the agentic loop, Claude Code / Codex panes, agents dashboard, spend). Gate 47/47, sweep 141/141, **corpus TBD/226**, unit tests in Debug + ReleaseSafe, all five targets. See `docs/WAVE3_CONTRACT.md` for the per-track `// changed:` notes.
 
 ## Context
 

@@ -67,6 +67,11 @@ const agents = @import("app/agents.zig");
 const spend = @import("app/spend.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
+const http_app = @import("app/http.zig");
+const request_pane = @import("app/request_pane.zig");
+const ws_pane = @import("app/ws_pane.zig");
+const browser_pane = @import("app/browser_pane.zig");
+const http_parse = @import("http/parse.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -148,11 +153,31 @@ pub const PromptPurpose = union(enum) {
     /// LSP: a `workspace/symbol` query.
     lsp_workspace_symbol,
 
+    /// HTTP: `KEY=VALUE` for a new env var; the value for `key` (owned).
+    http_env_add_key,
+    http_env_edit_value: []u8,
+    http_auth_value: @import("app/cmd_http.zig").AuthKind,
+    auth_preset_name,
+    http_save_as,
+    http_save_response,
+    http_new_env,
+    http_new_chain,
+    http_new_collection,
+    http_new_request,
+    http_lookup_var,
+    ws_url,
+    ws_message,
+    browser_url,
+    browser_navigate,
+    browser_eval,
+    browser_add_cookie,
+    browser_add_storage,
+
     pub const BpTarget = struct { path: []u8, line: u32 };
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .rename => |s| gpa.free(s),
+            .new_file, .new_folder, .rename, .http_env_edit_value => |s| gpa.free(s),
             .dap_bp_condition, .dap_hit_count => |b| gpa.free(b.path),
             .dap_set_variable => |sv| gpa.free(sv.name),
             else => {},
@@ -189,7 +214,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, git, ai_suggest_backend, ai_session, dap_remove_watch, dap_exceptions, dap_threads, lsp_locations, lsp_code_actions, lsp_symbols, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item, ws_history, browser_device, browser_throttle, browser_url_history };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -407,6 +432,7 @@ pub const App = struct {
     last_editor: ?PaneId = null,
     runners: runners.State = .{},
     tasks: tasks_mod.State = .{},
+    http: http_app.State,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -506,6 +532,7 @@ pub const App = struct {
             .todos = todos.State.init(gpa),
             .git = git_app.State.init(gpa),
             .snippets = snippets.State.init(gpa),
+            .http = http_app.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -525,6 +552,8 @@ pub const App = struct {
         try app.hooks.subscribe(.save_pre, .{ .zig = &lsp.onSavePre });
         try app.hooks.subscribe(.save_post, .{ .zig = &lsp.onSavePost });
         app.now_ms = nowMs(io);
+        app.http.auto_format_body = app.cfg.http.auto_format_body;
+        app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
         try app.toastConfigDiagnostics();
         try app.applyTheme();
@@ -618,6 +647,7 @@ pub const App = struct {
         // Workers first: they borrow `workspace` and post into `events`.
         self.ai.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
+        self.http.deinit(gpa, self.io);
         self.git.deinit(gpa, self.io);
         self.dap.deinit(gpa);
         self.lsp.deinit(gpa);
@@ -802,6 +832,14 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     pub fn openPath(self: *App, path: []const u8) !PaneId {
         try self.noteRecent(path);
+        // A request file opens as a request pane on its first block; a
+        // file the parser cannot read falls through to the editor.
+        if (http_parse.isRequestPath(path) and self.panes.findPath(path) == null) {
+            if (http_app.openFile(self, path, false)) |id| return id else |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            }
+        }
         const is_md = md_preview.isMarkdownPath(path);
         if (is_md and self.cfg.ui.markdown_opens_rendered and !self.cfg.ui.auto_md_preview and self.panes.findPath(path) == null) {
             return md_preview.open(self, path, .here, null);
@@ -1146,6 +1184,9 @@ pub const App = struct {
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
+            .http => |result| try http_app.handle(self, result),
+            .ws => |wev| try ws_pane.handle(self, wev),
+            .cdp => |cev| try browser_pane.handle(self, cev),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1216,6 +1257,7 @@ pub const App = struct {
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
+        ws_pane.tickAll(self);
         try watch.tick(self, now);
         try git_app.tick(self, now);
         try ai_app.tick(self);
@@ -1234,10 +1276,11 @@ pub const App = struct {
             else => {},
         };
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning or self.git.busy > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.git.busy > 0 or self.http.sending > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -1318,6 +1361,28 @@ test {
     _ = @import("app/cheatsheet.zig");
     _ = @import("app/cmd_term.zig");
     _ = @import("app/pty_pane.zig");
+    _ = @import("app/http.zig");
+    _ = @import("app/cmd_http.zig");
+    _ = @import("app/request_pane.zig");
+    _ = @import("ui/request_view.zig");
+    _ = @import("http/parse.zig");
+    _ = @import("http/env.zig");
+    _ = @import("http/client.zig");
+    _ = @import("http/mock.zig");
+    _ = @import("http/history.zig");
+    _ = @import("http/cookies.zig");
+    _ = @import("http/jwt.zig");
+    _ = @import("http/sse.zig");
+    _ = @import("http/schema.zig");
+    _ = @import("http/import.zig");
+    _ = @import("http/captured.zig");
+    _ = @import("http/chain.zig");
+    _ = @import("http/bench.zig");
+    _ = @import("http/ws.zig");
+    _ = @import("cdp/client.zig");
+    _ = @import("app/ws_pane.zig");
+    _ = @import("app/browser_pane.zig");
+    _ = @import("app/cmd_browser.zig");
     _ = @import("app/runners.zig");
     _ = @import("app/tasks.zig");
     _ = @import("app/watch.zig");
@@ -1367,10 +1432,10 @@ test {
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
     var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
     defer app.deinit();
-    // `http.send` has a spec and no runner until the http track lands
-    // (`ai.ask` and `git.commit` both grew runners).
-    try std.testing.expectError(error.Failed, command.run(&app, .{ .static = .@"http.send" }));
-    try std.testing.expectEqualStrings("http.send: not implemented yet", app.lastToast().?);
+    // `dock.close_all` has a spec and no runner until the dock lands
+    // (`ai.ask`, `git.commit` and `http.send` all grew runners).
+    try std.testing.expectError(error.Failed, command.run(&app, .{ .static = .@"dock.close_all" }));
+    try std.testing.expectEqualStrings("dock.close_all: not implemented yet", app.lastToast().?);
     try std.testing.expectError(error.Failed, command.runNamed(&app, "nope.nope"));
     try std.testing.expectEqualStrings("no such command: nope.nope", app.lastToast().?);
     // A dyn command with an ex runner reaches the interpreter.

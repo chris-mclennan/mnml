@@ -331,6 +331,19 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
                 else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("{s}", .{@errorName(err)}),
             };
         },
+        .http_env_vars, .http_env_delete, .http_env_pick, .http_history, .http_captured, .http_chains, .auth_presets, .cookies_show, .cookies_delete, .http_insert_header, .http_copy_as, .http_lookup_file, .http_lookup_item, .ws_history, .browser_device, .browser_throttle, .browser_url_history => |kind| {
+            const label = try app.frame.allocator().dupe(u8, p.labels[i]);
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            switch (kind) {
+                .ws_history => _ = @import("ws_pane.zig").open(app, label) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                },
+                .browser_device, .browser_throttle, .browser_url_history => try @import("cmd_browser.zig").acceptPicker(app, kind, i, label),
+                else => try @import("cmd_http.zig").acceptPicker(app, kind, i, label),
+            }
+        },
     }
     app.needs_render = true;
 }

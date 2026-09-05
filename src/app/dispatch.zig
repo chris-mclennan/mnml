@@ -51,6 +51,11 @@ const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
+const request_pane = @import("request_pane.zig");
+const ws_pane = @import("ws_pane.zig");
+const browser_pane = @import("browser_pane.zig");
+const cmd_browser = @import("cmd_browser.zig");
+const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
 const git_app = @import("git.zig");
 const ai_app = @import("ai.zig");
@@ -156,6 +161,21 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .dap_repl => |*r| {
             if (try dap.replKey(app, id, r, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .request => |*rp| {
+            if (try request_pane.handleKey(app, id, rp, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .websocket => |*w| {
+            if (try ws_pane.handleKey(app, id, w, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .browser => |*b| {
+            if (try browser_pane.handleKey(app, id, b, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -626,6 +646,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .dap_set_variable => |sv| try dap.acceptSetVariable(app, sv.parent_ref, sv.name, text),
         .lsp_rename => try lsp.acceptRename(app, text),
         .lsp_workspace_symbol => try lsp.acceptWorkspaceSymbol(app, text),
+        .ws_url, .ws_message => try ws_pane.acceptPrompt(app, purpose, text),
+        .browser_url, .browser_navigate, .browser_eval, .browser_add_cookie, .browser_add_storage => try cmd_browser.acceptPrompt(app, purpose, text),
+        .http_env_add_key, .http_env_edit_value, .http_auth_value, .auth_preset_name, .http_save_as, .http_save_response, .http_new_env, .http_new_chain, .http_new_collection, .http_new_request, .http_lookup_var => try cmd_http.acceptPrompt(app, purpose, text),
     }
 }
 
@@ -711,6 +734,12 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     if (app.find_bar) |*fb| return FindBar.paste(&fb.state, app.gpa, text);
     if (app.active) |id| if (app.panes.pty(id)) |p| {
         if (app.focus == .pane) return pty_pane.paste(app, p, text);
+    };
+    if (app.active) |id| if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        if (app.focus == .pane) return request_pane.paste(app, rp, text);
+    };
+    if (app.active) |id| if (app.panes.get(id)) |p| if (p.asWebsocket()) |w| {
+        if (app.focus == .pane) return ws_pane.paste(app, w, text);
     };
     const e = app.activeEditor() orelse return;
     const copy = try app.frame.allocator().dupe(u8, text);
@@ -942,6 +971,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
                 .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
+                .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
+                .websocket => {},
+                .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
                 .editor, .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1179,6 +1211,9 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .browser => |*b| browser_pane.scrollBy(b, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
     }
 }
 

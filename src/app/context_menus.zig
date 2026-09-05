@@ -48,6 +48,23 @@ pub fn openEditorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Editor", rows, x, y);
 }
 
+/// A request pane's URL / body / response: send, paste, copy, flip.
+pub fn openRequestFieldMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Send", .action = .{ .command = .@"http.send" } },
+        .{ .label = "Paste curl from clipboard", .action = .{ .command = .@"http.paste_curl" } },
+        .{ .label = "Copy as curl", .action = .{ .command = .@"http.copy_curl" } },
+        .{ .label = "Cycle method", .action = .{ .command = .@"http.cycle_method" } },
+        .{ .label = "Format body as JSON", .action = .{ .command = .@"http.format_body" }, .separator_before = true },
+        .{ .label = "Insert header…", .action = .{ .command = .@"http.insert_header" } },
+        .{ .label = "Switch Request ⇄ Response", .action = .{ .command = .@"http.toggle_view" }, .separator_before = true },
+        .{ .label = "Copy response body", .action = .{ .command = .@"http.copy_response_body" } },
+        .{ .label = "Save request", .action = .{ .command = .@"http.save" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Request", rows, x, y);
+}
+
 /// A strip tab: Save (when dirty) first, then the close family and the
 /// path. The tab is made active before the menu opens.
 pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {

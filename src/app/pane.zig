@@ -24,10 +24,16 @@ const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
 const dap = @import("dap.zig");
+const request_pane = @import("request_pane.zig");
+const ws_pane = @import("ws_pane.zig");
+const browser_pane = @import("browser_pane.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
 pub const PtyPane = pty_pane.PtyPane;
+pub const RequestPane = request_pane.RequestPane;
+pub const WebsocketPane = ws_pane.WebsocketPane;
+pub const BrowserPane = browser_pane.BrowserPane;
 
 /// What the file watcher last saw on disk for an editor's file.
 pub const DiskStamp = struct { mtime_ns: i128, size: u64 };
@@ -123,10 +129,19 @@ pub const Pane = union(enum) {
     debug: dap.DebugPane,
     /// The debugger's REPL.
     dap_repl: dap.DapReplPane,
+    /// An HTTP request and its response (`http.new`, a `.curl` file).
+    request: RequestPane,
+    /// A persistent WebSocket connection (`ws.connect`).
+    websocket: WebsocketPane,
+    /// A Chrome driven over CDP (`browser.open`).
+    browser: BrowserPane,
 
     /// `io` cancels the workers a dashboard pane owns before its arena goes.
     pub fn deinit(self: *Pane, gpa: Allocator, io: std.Io) void {
         switch (self.*) {
+            .request => |*r| r.deinit(),
+            .websocket => |*w| w.deinit(gpa),
+            .browser => |*b| b.deinit(gpa),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -163,13 +178,16 @@ pub const Pane = union(enum) {
             .spend_report => return "AI spend (24h)",
             .debug => return "Debug",
             .dap_repl => return "DAP REPL",
+            .request => |*r| return r.title(),
+            .websocket => |*w| return w.title(),
+            .browser => |*b| return b.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser => false,
         };
     }
 
@@ -190,6 +208,27 @@ pub const Pane = union(enum) {
     pub fn asMdPreview(self: *Pane) ?*MdPreviewPane {
         return switch (self.*) {
             .md_preview => |*m| m,
+            else => null,
+        };
+    }
+
+    pub fn asRequest(self: *Pane) ?*RequestPane {
+        return switch (self.*) {
+            .request => |*r| r,
+            else => null,
+        };
+    }
+
+    pub fn asWebsocket(self: *Pane) ?*WebsocketPane {
+        return switch (self.*) {
+            .websocket => |*w| w,
+            else => null,
+        };
+    }
+
+    pub fn asBrowser(self: *Pane) ?*BrowserPane {
+        return switch (self.*) {
+            .browser => |*b| b,
             else => null,
         };
     }

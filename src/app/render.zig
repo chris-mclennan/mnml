@@ -61,6 +61,9 @@ const agents_view = @import("../ui/agents_view.zig");
 const spend_view = @import("../ui/spend_view.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
+const request_pane = @import("request_pane.zig");
+const ws_pane = @import("ws_pane.zig");
+const browser_pane = @import("browser_pane.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -250,7 +253,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -316,6 +319,9 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             },
             .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
             .dap_repl => |*r| try dap.drawRepl(app, ui, pr.pane, r, rect),
+            .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
+            .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
+            .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -612,6 +618,19 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             info.col = c.x + 1;
         };
         info.total_lines = p.rows;
+    } else if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        info.mode_label = if (rp.isSending()) "SENDING" else "HTTP";
+        info.mode_kind = .edit;
+        info.file = if (rp.source_path) |sp| app.relPath(sp) else rp.title();
+        info.dirty = rp.edited;
+    } else if (p.asWebsocket()) |w| {
+        info.mode_label = "WS";
+        info.mode_kind = .edit;
+        info.file = w.url;
+    } else if (p.asBrowser()) |b| {
+        info.mode_label = "CDP";
+        info.mode_kind = .edit;
+        info.file = b.url;
     };
     // The branch segment (`main ↑2 ↓1 ●3`), the diagnostics chip
     // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.

@@ -15,6 +15,9 @@ const git_client = @import("../git/client.zig");
 const agents = @import("../app/agents.zig");
 const spend = @import("../app/spend.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
+const http_client = @import("../http/client.zig");
+const ws_pane = @import("../app/ws_pane.zig");
+const browser_pane = @import("../app/browser_pane.zig");
 
 pub const PtyId = u32;
 
@@ -54,10 +57,7 @@ pub const DapEvent = union(enum) {
         gpa.destroy(self);
     }
 };
-pub const CdpEvent = struct { _todo: u8 = 0 }; // TODO(cdp)
-pub const HttpJobResult = struct { _todo: u8 = 0 }; // TODO(http)
-pub const SseChunk = struct { _todo: u8 = 0 }; // TODO(http)
-pub const WsFrame = struct { _todo: u8 = 0 }; // TODO(http)
+pub const SseChunk = struct { _todo: u8 = 0 }; // TODO(http): a progressive stream
 /// What an AI worker posts (`src/app/ai.zig`). `job` on the event is
 /// the `Job` id; 0 for the ghost text, which has no job. Every slice is
 /// gpa-owned by the event.
@@ -99,12 +99,15 @@ pub const AppEvent = union(enum) {
 
     lsp: struct { server: u32, msg: *LspEvent },
     dap: struct { session: u32, msg: *DapEvent },
-    cdp: CdpEvent,
+    /// The CDP worker: connected / a raw message / closed. Owned.
+    cdp: *browser_pane.CdpEvent,
     /// A finished git job. Owned; `git.handle` adopts or destroys it.
     git: *git_client.Result,
-    http: *HttpJobResult,
+    /// A finished send. Owned; `http.handle` adopts the response.
+    http: *http_client.JobResult,
     sse: SseChunk,
-    ws: WsFrame,
+    /// The WebSocket pane's reader: open / a message / closed. Owned.
+    ws: *ws_pane.WsEvent,
     ai: struct { job: u64, msg: AiMsg },
     pty_readable: PtyId,
     sonos: SonosUpdate,
@@ -143,10 +146,12 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .lsp => |l| l.msg.destroy(gpa),
         .dap => |d| d.msg.destroy(gpa),
         .git => |r| r.destroy(gpa),
-        .http => |p| gpa.destroy(p),
+        .http => |p| p.destroy(gpa),
+        .cdp => |p| p.destroy(gpa),
+        .ws => |p| p.destroy(gpa),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| gpa.destroy(p),
-        .key, .mouse, .winsize, .focus, .cdp, .sse, .ws, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
+        .key, .mouse, .winsize, .focus, .sse, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
 }
 

@@ -593,3 +593,102 @@ that the oldest slot reads `+K more…`.
   is their only entry — so `nextDeadlineMs` folds git and ai only.
 - `// changed (app):` `App.deinit` retires the workers first, in this
   order: ai, todos, git, dap, lsp — then the rest as before.
+
+## HTTP track (Phase 6) — `// changed:` notes (2026-09-04, branch `http`)
+
+- `// changed (core):` `AppEvent.http` is `*http.client.JobResult` (a
+  finished send: status / headers / decoded body / timing, or a one-line
+  transport error); `AppEvent.cdp` is `*app.browser_pane.CdpEvent`
+  (connected / a raw JSON-RPC message / closed) and `AppEvent.ws` is
+  `*app.ws_pane.WsEvent` (open / a message / an error / closed). All three
+  are owned boxes: `freeEvent` destroys them, the handler adopts or drops.
+  `AppEvent.sse` stays a placeholder — SSE is parsed off a finished body
+  (`sse.parse_active_response`); a progressive stream is a later slice.
+- `// changed (app):` `Pane` gains `request: RequestPane`
+  (`app/request_pane.zig`), `websocket: WebsocketPane` (`app/ws_pane.zig`)
+  and `browser: BrowserPane` (`app/browser_pane.zig`), painted by
+  `ui/request_view.zig`, `ui/ws_view.zig`, `ui/browser_view.zig`. Each view
+  takes a plain `Model` the app assembles on the frame arena — the ui side
+  never sees `App`, a `Request` or a socket. Hits are `.script_hit{ pane, id }`
+  with per-view `hit_*` id constants; the response body goes through
+  `editor_view.draw` with `ViewState.pinAt(0)` so the wheel scrolls it.
+- `// changed (app):` `App.openPath` routes `.http` / `.rest` / `.curl` to a
+  request pane on the file's first block (`http.openFile`); a file the parser
+  cannot read falls through to the editor. `file.save` on a request pane is
+  `http.saveToSource`: a multi-block `.http` gets its block spliced
+  (`parse.splice`), anything else is overwritten as a curl one-liner.
+- `// changed (app):` `App.http: http.State` — one `Io.Group` of send
+  workers, the session env override, the cookie jar (loaded on first use),
+  the picker arena behind the history / captured pickers, the fan-out /
+  bench / sync bookkeeping. `PickerKind` gains 16 http/ws/browser kinds and
+  `PromptPurpose` 19 purposes; `cmd_picker.accept` and `dispatch.acceptPrompt`
+  route the new kinds to `cmd_http` / `ws_pane` / `cmd_browser`.
+- `// changed (spec):` every `http.*`, `ws.*`, `browser.*`, `auth.*`,
+  `cookies.*`, `jwt.*`, `sse.*` id in `commands/specs.zig` has a runner (125).
+  Three run as honest refusals in this build: `http.toggle_edit_split`,
+  `http.toggle_split_orientation`, `http.toggle_collapse_all` (the split edit
+  view and the HTTP sidebar are not in this build) and `browser.dock_toggle`
+  (window docking). `http.ai_build` / `http.ai_debug` say the Claude
+  integration lands in Phase 7; `http.copy_ai_prompt` works today.
+- `// changed (config):` `[http] auto_format_body` / `sync_normalize` seed
+  `App.http`; `[ws] subprotocols / ping_interval_secs / reconnect_max_attempts`
+  and `[browser] headless / autocapture_to_log / profile_mode` are read where
+  the Rust app read them. `browser.toggle_headless` and
+  `browser.autocapture_toggle` flip the live config, not the file.
+- Edit-tab order is Body / Headers / Params / Auth / Vars / Script
+  (`Ctrl+1..6`, `Ctrl+]` / `Ctrl+[`), as the gate files spell it; `Tab`
+  flips Request ⇄ Response, `Ctrl+Enter` sends, `Ctrl+S` writes back.
+- Files: `.rqst/history.jsonl` (the Rust line shape; sensitive headers keep
+  their `{{VAR}}` or are redacted), `.rqst/captured/log.jsonl`,
+  `<source>.mock.json`, `.mnml/cookies.json` (`{"host":{"name":"value"}}`),
+  `.mnml/auth/<name>.txt`, `.mnml/env/<name>.env` over `.rqst/env/<name>.env`,
+  `.mnml/chains/*.chain.json`, `.mnml/sources.json` (or `.rqst/`),
+  `<data>/history-global.jsonl`, `<data>/ws-history/<host>/history.jsonl`,
+  `.mnml/screenshots/shot-<ts>.png|pdf`.
+- Dependencies, as DESIGN.md decided: HTTP/TLS is `std.http.Client` +
+  `std.crypto.tls` (gzip / deflate / zstd decoded by std; **no brotli**, the
+  `accept-encoding` says so); WebSocket is RFC 6455 by hand over
+  `std.Io.net.Stream` + `std.crypto.tls` (`http/ws.zig`); JSON Schema is the
+  ~300-line subset in `http/schema.zig` (`pattern` matches as a literal — no
+  regex engine); YAML is the block/flow subset in `http/yaml.zig`
+  (no anchors / aliases / tags / multi-document). `-k` / `--insecure` is
+  parsed and carried but the std client verifies certificates regardless —
+  a self-signed dev host needs its CA in the bundle.
+- CLI: `mnml-zig run FILE [--env] [--workspace]`, `chain run FILE`,
+  `discover SPEC [--out] [--base-url] [--normalize] [--force]`,
+  `sync [--workspace] [--normalize]`, `sync-check`, `proxy --url URL
+  [--seconds] [--idle-ms] [--quiet]` (`http/cli.zig`).
+
+## Merge notes — http ⨯ (git + ai + lsp-dap) (2026-09-04)
+
+- `// changed (app):` `Pane` is 17 variants — the fourteen main had and
+  `request` / `websocket` / `browser`; every exhaustive switch (`deinit`,
+  `title`, `dirty`, the render arm, the key blocks, `md_preview` /
+  `outline`'s "not an editor" prongs, the wheel and `script_hit` arms)
+  names them all. `Pane.deinit(gpa, io)` / `PaneStore.init(gpa, io)`
+  stay main's; `http.openFile`'s preview-replace was the one http call
+  on the old shape.
+- `// changed (core):` `AppEvent` keeps `.git .agents .spend .ai .lsp
+  .dap` and has `.http .ws .cdp` as the owned boxes above; the `_todo`
+  placeholders for those three are gone, `.sse` is still one.
+  `freeEvent` destroys all of them.
+- `// changed (app):` `PickerKind` is the union (18 + 16) and
+  `PromptPurpose` the union (main's ai / dap / lsp purposes + http's 19);
+  `dispatch.acceptPrompt` names http's purposes explicitly instead of
+  an `else` prong so a new purpose is a compile error, not a silent
+  route into `cmd_http`. The runner tables list http, cmd_http, ws_pane
+  and cmd_browser after lsp. The count pin stays 812 — http added no
+  Zig-only ids.
+- `// changed (app):` `App.openPath` routes a request file ahead of the
+  markdown-preview rule; `openEditor` stays raw. Key routing keeps main's
+  order (overlay → find bar → `lsp.interceptKey` → tree / right panel →
+  non-editor pane blocks → ghost accept keys → chord chain → buffer) with
+  the request / ws / browser blocks among the non-editor panes. The
+  `script_hit` button gate is main's — left or right on every pane — and
+  the browser pane's click is left-only.
+- `// changed (app):` the statusline's right segments are still git's
+  branch, lsp's chip, ai's meter; http's `HTTP` / `SENDING` / `WS` / `CDP`
+  labels are the active pane's mode chip, like `TERM`. `App.tick` runs
+  pty, ws, watch, git and ai; `nextDeadlineMs` folds git's busy count and
+  TTL, ai's timers, http's sender count and the ws pane's timers.
+  `App.deinit` retires the workers as ai, todos, http, git, dap, lsp.
