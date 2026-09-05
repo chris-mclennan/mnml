@@ -410,6 +410,14 @@ pub fn discover(app: *App) Allocator.Error!void {
             }
         }.lt);
     }
+    // Every extra workspace root brings its repo (or the repos under it).
+    for (app.tree.roots.items) |r| {
+        if (hasDotGit(app.io, r.path)) {
+            try found.append(arena, .{ .path = r.path, .name = r.name, .root = false });
+        } else {
+            try walkRepos(app, arena, r.path, 0, &found);
+        }
+    }
     const active_path: ?[]const u8 = if (st.activeRepo()) |r| try arena.dupe(u8, r.path) else null;
     var fresh: std.ArrayListUnmanaged(*client.Repo) = .empty;
     errdefer fresh.deinit(gpa);
@@ -2737,6 +2745,35 @@ test "discover: the workspace repo wins outright; otherwise sub-repos by name; a
     try testing.expectEqual(@as(usize, 1), st.repos.items.len);
     try testing.expect(st.repos.items[0].is_workspace_root);
     try testing.expectEqualStrings(f.root, st.repos.items[0].path);
+}
+
+test "discover: every extra workspace root brings its repo, or the repos under it, after the primary's" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    try f.tmp.dir.createDirPath(testing.io, ".git");
+    try f.tmp.dir.createDirPath(testing.io, "other/.git");
+    try f.tmp.dir.createDirPath(testing.io, "plain/deep/.git");
+    const other = try std.fs.path.join(testing.allocator, &.{ f.root, "other" });
+    defer testing.allocator.free(other);
+    const plain = try std.fs.path.join(testing.allocator, &.{ f.root, "plain" });
+    defer testing.allocator.free(plain);
+    _ = try f.app.tree.addRoot(&f.app, other, "sibling");
+    _ = try f.app.tree.addRoot(&f.app, plain, null);
+    try discover(&f.app);
+    const st = &f.app.git;
+    // The workspace wins outright for its own tree; the roots still land.
+    try testing.expectEqual(@as(usize, 3), st.repos.items.len);
+    try testing.expect(st.repos.items[0].is_workspace_root);
+    try testing.expectEqualStrings("sibling", st.repos.items[1].name);
+    try testing.expectEqualStrings(other, st.repos.items[1].path);
+    try testing.expect(!st.repos.items[1].is_workspace_root);
+    try testing.expectEqualStrings("deep", st.repos.items[2].name);
+    try testing.expectEqual(@as(?usize, 0), st.active);
+    // Switching to a root's repo survives a rediscovery.
+    try switchTo(&f.app, 1);
+    try discover(&f.app);
+    try testing.expectEqual(@as(?usize, 1), st.active);
+    try testing.expectEqualStrings("sibling", st.activeRepo().?.name);
 }
 
 test "handle adopts a status result for the active repo, drops one from an unknown repo, and frees both" {

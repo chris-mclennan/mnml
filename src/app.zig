@@ -239,6 +239,8 @@ pub const PromptPurpose = union(enum) {
     /// Workspace grep: the query; the replacement for every enabled hit.
     grep_query,
     grep_replace,
+    /// `view.add_workspace`: a folder (Tab completes path segments).
+    add_workspace,
 
     pub const BpTarget = struct { path: []u8, line: u32 };
 
