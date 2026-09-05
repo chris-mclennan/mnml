@@ -31,6 +31,7 @@ const import_mod = @import("../http/import.zig");
 const captured = @import("../http/captured.zig");
 const chain_mod = @import("../http/chain.zig");
 const bench_mod = @import("../http/bench.zig");
+const sources = @import("../http/sources.zig");
 
 pub const table = .{
     .@"http.edit_env" = &editEnvCmd,
@@ -58,6 +59,9 @@ pub const table = .{
     .@"http.insert_header" = &insertHeaderCmd,
     .@"http.lookup" = &lookupCmd,
     .@"http.send_streaming" = &sendStreamingCmd,
+    .@"http.sync" = &syncCmd,
+    .@"http.sync_check" = &syncCheckCmd,
+    .@"http.toggle_sync_normalize" = &toggleSyncNormalizeCmd,
     .@"http.copy_ai_prompt" = &copyAiPromptCmd,
     .@"http.ai_build" = &aiNotYet,
     .@"http.ai_debug" = &aiNotYet,
@@ -582,9 +586,16 @@ pub fn onJobResult(app: *App, r: *client.JobResult) Allocator.Error!void {
         },
         .chain, .lookup => {
             app.http.chain_running = false;
+            app.http.sync_running = false;
+            if (r.label) |trace| {
+                const id = try app.openScratch();
+                const e = app.panes.editor(id).?;
+                e.buf.editor.setText(trace) catch return error.OutOfMemory;
+                e.buf.markSaved() catch return error.OutOfMemory;
+            }
             switch (r.outcome) {
-                .err => |e| app.toast("{s}: {s}", .{ @tagName(r.kind), e }),
-                else => app.toast("{s}: done", .{@tagName(r.kind)}),
+                .err => |e| app.toast("{s}: {s}", .{ r.method, e }),
+                else => app.toast("{s}: done", .{r.method}),
             }
         },
         else => {},
@@ -670,6 +681,53 @@ fn chainWorker(events: *@import("../core/event.zig").EventQueue, io: Io, gpa: Al
     const r = client.JobResult.create(gpa, 0, null, .chain, "CHAIN", path, if (out.ok) .moved else .{ .err = gpa.dupe(u8, out.err orelse "failed") catch return }) catch return;
     r.label = gpa.dupe(u8, out.trace) catch null;
     events.post(io, .{ .http = r });
+}
+
+/// `http.sync` / `http.sync_check` on a worker; the trace opens as a scratch.
+fn startSync(app: *App, check_only: bool) CommandError!void {
+    if (app.http.sync_running) return app.diag.fail(app.frame.allocator(), "{s} already running", .{if (check_only) "http.sync_check" else "http.sync"});
+    const ws = try app.gpa.dupe(u8, app.workspace);
+    errdefer app.gpa.free(ws);
+    app.http.sync_running = true;
+    app.http.group.concurrent(app.io, syncWorker, .{ &app.events, app.io, app.gpa, ws, check_only, app.http.sync_normalize }) catch |err| {
+        app.http.sync_running = false;
+        return app.diag.fail(app.frame.allocator(), "http.sync: could not start: {s}", .{@errorName(err)});
+    };
+    app.toast("{s}: running…", .{if (check_only) "http.sync_check" else "http.sync"});
+}
+
+fn syncWorker(events: *@import("../core/event.zig").EventQueue, io: Io, gpa: Allocator, ws: []u8, check_only: bool, normalize: bool) Io.Cancelable!void {
+    defer gpa.free(ws);
+    const label: []const u8 = if (check_only) "http.sync_check" else "http.sync";
+    const trace = (if (check_only) sources.check(gpa, io, ws, normalize) else sources.sync(gpa, io, ws, normalize)) catch |err| {
+        const msg = gpa.dupe(u8, switch (err) {
+            error.NoSourcesFile => "no sources.json at .mnml/ or .rqst/ (list swagger sources there)",
+            error.NoSources => "sources.json is empty",
+            else => @errorName(err),
+        }) catch return;
+        const r = client.JobResult.create(gpa, 0, null, .chain, label, ws, .{ .err = msg }) catch return;
+        events.post(io, .{ .http = r });
+        return;
+    };
+    const r = client.JobResult.create(gpa, 0, null, .chain, label, ws, .moved) catch {
+        gpa.free(trace);
+        return;
+    };
+    r.label = trace;
+    events.post(io, .{ .http = r });
+}
+
+fn syncCmd(app: *App) CommandError!void {
+    return startSync(app, false);
+}
+
+fn syncCheckCmd(app: *App) CommandError!void {
+    return startSync(app, true);
+}
+
+fn toggleSyncNormalizeCmd(app: *App) CommandError!void {
+    app.http.sync_normalize = !app.http.sync_normalize;
+    app.toast("sync normalize: {s} ({{{{$isoTimestamp}}}} / {{{{$uuid}}}} substitution)", .{if (app.http.sync_normalize) "on" else "off"});
 }
 
 fn newChainCmd(app: *App) CommandError!void {

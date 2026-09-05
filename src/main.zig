@@ -9,6 +9,7 @@ const loop = @import("tui/loop.zig");
 const Term = @import("tui/term.zig");
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
+const http_cli = @import("http/cli.zig");
 
 pub const version = "0.3.0-dev";
 
@@ -38,13 +39,14 @@ pub fn main(init: std.process.Init) !u8 {
     const w = &out.interface;
 
     if (args.len >= 2 and std.mem.eql(u8, args[1], "test")) return testSubcommand(gpa, io, env, args[2..], w);
+    if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
             try w.print("mnml-zig {s}\n", .{version});
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] | test [PATH…] [--gate]");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--headless] | test [PATH…] [--gate] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -171,6 +173,37 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
         error.NotATty => return usage(w, "stdout is not a terminal (use --headless)"),
         else => return err,
     };
+}
+
+// ─── mnml-zig run / chain / discover / sync / proxy ─────────────────────
+
+/// The HTTP client's subcommands, when `verb` is one of them.
+fn httpSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, verb: []const u8, rest: []const [:0]const u8, w: *Io.Writer) ?u8 {
+    var err_buf: [4096]u8 = undefined;
+    var err_file: Io.File.Writer = .init(.stderr(), io, &err_buf);
+    const std_: http_cli.Std = .{ .out = w, .err = &err_file.interface };
+    var argv_buf: [64][]const u8 = undefined;
+    const n = @min(rest.len, argv_buf.len);
+    for (rest[0..n], 0..) |a, i| argv_buf[i] = a;
+    const argv = argv_buf[0..n];
+    const result: anyerror!u8 = if (std.mem.eql(u8, verb, "run"))
+        http_cli.run(gpa, io, env, argv, std_)
+    else if (std.mem.eql(u8, verb, "chain"))
+        http_cli.chainRun(gpa, io, env, argv, std_)
+    else if (std.mem.eql(u8, verb, "discover"))
+        http_cli.discoverCmd(gpa, io, argv, std_)
+    else if (std.mem.eql(u8, verb, "sync"))
+        http_cli.syncCmd(gpa, io, argv, std_, false)
+    else if (std.mem.eql(u8, verb, "sync-check"))
+        http_cli.syncCmd(gpa, io, argv, std_, true)
+    else if (std.mem.eql(u8, verb, "proxy"))
+        http_cli.proxyCmd(gpa, io, env, argv, std_)
+    else
+        return null;
+    const code = result catch 1;
+    err_file.interface.flush() catch {};
+    w.flush() catch {};
+    return code;
 }
 
 // ─── mnml-zig test ──────────────────────────────────────────────────────
@@ -400,6 +433,11 @@ test {
     _ = @import("input/vim.zig");
     _ = @import("app/driver.zig");
     _ = @import("app/smoke_test.zig");
+    _ = @import("http/cli.zig");
+    _ = @import("http/proxy.zig");
+    _ = @import("http/yaml.zig");
+    _ = @import("http/discover.zig");
+    _ = @import("http/sources.zig");
     if (@import("builtin").os.tag != .windows) _ = @import("tui/loop.zig");
     _ = @import("ui/ui.zig");
 }
