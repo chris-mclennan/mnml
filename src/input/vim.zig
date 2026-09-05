@@ -653,7 +653,7 @@ pub const Vim = struct {
                     '.' => return runCmd(.@"editor.insert_last_inserted"),
                     else => {},
                 }
-                const valid = (c >= 'a' and c <= 'z') or c == '0' or c == '+' or c == '*' or c == '_' or c == '"';
+                const valid = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '"';
                 if (valid) return ops(arena, &.{ .{ .set_register_hint = c }, .paste });
             }
             return .consumed;
@@ -980,7 +980,7 @@ pub const Vim = struct {
             .register => {
                 self.prefix = .none;
                 if (ch) |c| {
-                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_';
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-';
                     if (valid) self.pending_register = c;
                 }
                 return .consumed;
@@ -1205,13 +1205,20 @@ pub const Vim = struct {
                         self.enterInsert();
                         return ops(arena, &.{if (above) .insert_newline_above else .insert_newline_below});
                     },
-                    'x' => {
+                    'x', 'X' => {
+                        // `x` is `dl`, `X` is `dh`: a real delete, so the
+                        // text lands in the unnamed and `"-` registers
+                        // and `xp` swaps two chars. Nothing to take on an
+                        // empty line / at the line start.
                         self.resetPending();
-                        return repeated(arena, .delete_forward, n);
-                    },
-                    'X' => {
-                        self.resetPending();
-                        return repeated(arena, .backspace, n);
+                        if (c == 'x' and ctx.line_len == 0) return ops(arena, &.{});
+                        if (c == 'X' and ctx.at_line_start) return ops(arena, &.{});
+                        const step: EditOp = if (c == 'x') .move_right_no_cross_line else .move_left_no_cross_line;
+                        var b = Builder.init(arena);
+                        try b.push(.select_start);
+                        try b.pushRepeated(step, n);
+                        try b.push(.delete_selection);
+                        return b.finish();
                     },
                     'D' => {
                         self.resetPending();
@@ -2001,6 +2008,14 @@ const Builder = struct {
 
     fn push(b: *Builder, op: EditOp) Allocator.Error!void {
         try b.list.append(b.arena, op);
+    }
+
+    /// `op` under a `repeat` — always, even for a count of 1, so a
+    /// `{count}.` later can find the count to replace.
+    fn pushRepeated(b: *Builder, op: EditOp, n: u32) Allocator.Error!void {
+        const inner = try b.arena.create(EditOp);
+        inner.* = op;
+        try b.push(.{ .repeat = .{ .count = n, .inner = inner } });
     }
 
     fn finish(b: *Builder) InputResult {

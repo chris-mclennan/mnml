@@ -1,6 +1,6 @@
 //! Registers. The unnamed register plus vim's named (`a`–`z`, append via
-//! `A`–`Z`), yank (`0`), delete-history (`1`–`9`) and blackhole (`_`)
-//! registers. A pending register name set by `set_register_hint` routes
+//! `A`–`Z`), yank (`0`), delete-history (`1`–`9`), small-delete (`-`)
+//! and blackhole (`_`) registers. A pending register name set by `set_register_hint` routes
 //! exactly one following write or read, then clears — vim's `"a` sticks
 //! for one op.
 //!
@@ -117,11 +117,16 @@ pub const Clipboard = struct {
     }
 
     /// A delete: writes the target register AND (for the unnamed target)
-    /// shifts the `1`–`9` history.
+    /// the small-delete register `-` when the text is less than a line,
+    /// else shifts the `1`–`9` history (`:help quote1`, `:help quote-`).
     pub fn pushDelete(self: *Clipboard, s: []const u8, linewise: bool) Allocator.Error!void {
         const reg = self.pending_register;
         try self.set(s, linewise);
         if (goesToUnnamed(reg)) {
+            if (!linewise and std.mem.indexOfScalar(u8, s, '\n') == null) {
+                try self.putNamed('-', .{ .text = try self.gpa.dupe(u8, s), .linewise = false });
+                return;
+            }
             var i: u8 = 8;
             while (i >= 1) : (i -= 1) {
                 if (self.named.fetchRemove('0' + i)) |kv| {
@@ -211,7 +216,7 @@ pub const Clipboard = struct {
                 self.effective_linewise = false;
                 return "";
             }
-            if ((r >= 'a' and r <= 'z') or (r >= 'A' and r <= 'Z') or (r >= '0' and r <= '9')) {
+            if ((r >= 'a' and r <= 'z') or (r >= 'A' and r <= 'Z') or (r >= '0' and r <= '9') or r == '-') {
                 const slot: u8 = if (r >= 'A' and r <= 'Z') @intCast(r - 'A' + 'a') else @intCast(r);
                 if (self.named.get(slot)) |e| {
                     self.effective_linewise = e.linewise;
@@ -254,19 +259,30 @@ pub const Clipboard = struct {
     }
 };
 
-test "unnamed + yank register + delete history" {
+test "unnamed + yank register + delete history + the small-delete register" {
     var c = Clipboard.init(std.testing.allocator);
     defer c.deinit();
     try c.setYank("one\n", true);
     try std.testing.expectEqualStrings("one\n", c.text());
     try std.testing.expect(c.isLinewise());
     try std.testing.expectEqualStrings("one\n", c.named_entry('0').?.text);
-    try c.pushDelete("two", false);
-    try c.pushDelete("three", false);
-    try std.testing.expectEqualStrings("three", c.text());
-    try std.testing.expect(!c.isLinewise());
-    try std.testing.expectEqualStrings("three", c.named_entry('1').?.text);
-    try std.testing.expectEqualStrings("two", c.named_entry('2').?.text);
+    try c.pushDelete("two\nx", false);
+    try c.pushDelete("three\n", true);
+    try std.testing.expectEqualStrings("three\n", c.text());
+    try std.testing.expect(c.isLinewise());
+    try std.testing.expectEqualStrings("three\n", c.named_entry('1').?.text);
+    try std.testing.expectEqualStrings("two\nx", c.named_entry('2').?.text);
+    // Less than a line goes to `"-`, and the history keeps its order.
+    try c.pushDelete("ch", false);
+    try std.testing.expectEqualStrings("ch", c.text());
+    try std.testing.expectEqualStrings("ch", c.named_entry('-').?.text);
+    try std.testing.expectEqualStrings("three\n", c.named_entry('1').?.text);
+    c.setPendingRegister('-');
+    try std.testing.expectEqualStrings("ch", c.text());
+    // A named target takes the small delete instead; `"-` is untouched.
+    c.setPendingRegister('a');
+    try c.pushDelete("named", false);
+    try std.testing.expectEqualStrings("ch", c.named_entry('-').?.text);
     // `"0p` still gives the last yank.
     c.setPendingRegister('0');
     try std.testing.expectEqualStrings("one\n", c.text());
@@ -309,12 +325,13 @@ test "\"+ and \"* write the sink and the unnamed register; an OSC 52 read falls 
     c.setPendingRegister('+');
     try std.testing.expectEqualStrings("line\n", c.text());
     try std.testing.expect(c.isLinewise());
-    // `"*` is the same sink; a delete through it shifts the history too.
+    // `"*` is the same sink; a delete through it fills `"-` (or the
+    // history) too.
     aw.clearRetainingCapacity();
     c.setPendingRegister('*');
     try c.pushDelete("gone", false);
     try std.testing.expectEqualStrings("\x1b]52;c;Z29uZQ==\x07", aw.written());
-    try std.testing.expectEqualStrings("gone", c.named_entry('1').?.text);
+    try std.testing.expectEqualStrings("gone", c.named_entry('-').?.text);
     c.setPendingRegister('*');
     try std.testing.expectEqualStrings("gone", c.text());
     // A named register never reaches the sink.

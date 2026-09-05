@@ -17,6 +17,19 @@ pub fn right(ed: *Editor) void {
     ed.cursor = ed.nextBoundary(ed.cursor);
 }
 
+/// `l` as an operator target: up to the line's end, never onto the
+/// next line — `dl` (`x`) on the last char takes just that char.
+pub fn rightNoCrossLine(ed: *Editor) void {
+    const eol = ed.lineEnd(ed.currentLine());
+    if (ed.cursor < eol) ed.cursor = ed.nextBoundary(ed.cursor);
+}
+
+/// `h` as an operator target: stops at the line's start.
+pub fn leftNoCrossLine(ed: *Editor) void {
+    const bol = ed.lineStart(ed.currentLine());
+    if (ed.cursor > bol) ed.cursor = ed.prevBoundary(ed.cursor);
+}
+
 /// One line up (`dir < 0`) or down, keeping the goal column. On the last
 /// line, down clamps to that line's end rather than a phantom line.
 pub fn vertical(ed: *Editor, dir: i2) void {

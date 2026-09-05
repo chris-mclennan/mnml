@@ -1,0 +1,36 @@
+# zig-only
+# `x` is `dl`: the deleted char lands in the unnamed register and in
+# `"-` (the small-delete register), so `xp` swaps two chars and `:reg`
+# shows what went. `X` is `dh`. A small delete does not shift `"1`–`"9`.
+write a.txt "alpha bravo charlie\nsecond\n"
+open a.txt
+command editor.use_vim
+
+key l
+key x
+key p
+expect screen contains "aplha bravo charlie"
+
+type ":reg"
+key enter
+expect screen contains "\"-  l"
+
+# `X` deletes the char before the cursor into the same registers.
+key $
+key X
+key p
+expect screen contains "aplha bravo charlei"
+
+# The line register `"1` is not touched by a small delete: `dd` fills
+# it, a later `x` leaves it.
+key j
+key d
+key d
+key k
+key x
+type ":reg 1"
+key enter
+expect screen contains "\"1  second"
+
+command file.save
+expect file a.txt contains "plha bravo charlei\n"

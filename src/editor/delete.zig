@@ -19,10 +19,12 @@ pub fn deleteSelectionIfAny(ed: *Editor, out: *EditOutcome) Allocator.Error!bool
         return false;
     }
     ed.rememberSelection();
-    try ed.checkpoint();
-    try ed.splice(sel[0], sel[1], "");
+    // The snapshot parks the cursor where the text began with no live
+    // selection: `xu` / `dwu` come back to the deleted spot, as in vim.
     ed.cursor = sel[0];
     ed.anchor = null;
+    try ed.checkpoint();
+    try ed.splice(sel[0], sel[1], "");
     out.buffer_changed = true;
     return true;
 }
