@@ -90,6 +90,18 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.cut` / `file.paste` | `y y` / `d d` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot move a file (the property `ctrl+v` lacks); a stray key between the two cancels. `D` duplicates in both profiles |
 
+## Ctrl-O / Ctrl-I / Tab in the vim profile
+
+- **NORMAL `Ctrl-O`** is the jumplist (`nav.back`); **INSERT `Ctrl-O`** is
+  one-shot normal (`:help i_CTRL-O`). The file picker's `ctrl+o` is
+  `standard` only for that reason.
+- **`Tab` / `S-Tab`** are NvChad's bufferline (`buffer.next` / `buffer.prev`),
+  not Neovim's jumplist-forward. `Ctrl-I` and `Tab` are one byte on a
+  terminal without the kitty keyboard protocol, so the bufferline wins
+  there; under kitty `ctrl+i` still reaches `nav.forward` (the handler's
+  ctrl table), and `ctrl+tab` does on every terminal. The choice follows
+  NvChad because that is what a vim user's hands expect on `Tab`.
+
 ## Known tension to resolve in Phase 1
 
 - `ctrl+h` / `ctrl+j` are on the vim side as NvChad window nav (rule 5 of the
