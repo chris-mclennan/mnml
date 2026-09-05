@@ -778,6 +778,10 @@ pub const App = struct {
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
+        // `ui.right_panel_visible` / `ui.right_panel_width` seed the slot;
+        // a restored session (the `startup` hook) then overrides both.
+        app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
+        if (app.cfg.ui.right_panel_visible) app.right_panel = .todos;
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();

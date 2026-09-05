@@ -145,7 +145,9 @@ pub const Ui = struct {
     /// Clamped to `tree_width_min..max` on load.
     tree_width: u16 = 30,
     right_panel_visible: bool = false,
-    right_panel_width: u16 = 32,
+    /// 40, not the Rust 32: the Zig right panel hosts the panels the
+    /// Rust rail shows in ~26 cells, and their chrome is tuned to 40.
+    right_panel_width: u16 = 40,
     auto_hide_narrow_width: u16 = 0,
     auto_equalize_splits: bool = false,
     relative_line_numbers: bool = false,
@@ -552,7 +554,7 @@ test "defaults are the shipped values" {
     // ui
     try std.testing.expectEqualStrings("onedark", c.ui.theme);
     try std.testing.expectEqual(@as(u16, 30), c.ui.tree_width);
-    try std.testing.expectEqual(@as(u16, 32), c.ui.right_panel_width);
+    try std.testing.expectEqual(@as(u16, 40), c.ui.right_panel_width);
     try std.testing.expect(c.ui.line_numbers);
     try std.testing.expect(!c.ui.relative_line_numbers);
     try std.testing.expect(c.ui.clock);
