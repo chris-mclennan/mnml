@@ -53,6 +53,8 @@ const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
+const http_app = @import("http.zig");
+const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
@@ -98,6 +100,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
             .todos => try todos.handleKey(app, k),
             .git => try git_app.handleKey(app, k),
             .diagnostics => try lsp.panelKey(app, k),
+            .http => try http_panel.handleKey(app, k),
             .notes, .findings, .sessions => false,
         };
         if (took) return;
@@ -498,6 +501,7 @@ fn restoreFocus(app: *App) void {
 fn closeOverlay(app: *App) void {
     // A confirm that a worker is parked on answers no before it goes.
     ai_app.overlayClosing(app);
+    http_app.overlayClosing(app);
     const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
@@ -508,7 +512,11 @@ fn closeOverlay(app: *App) void {
 
 /// A menu row was chosen: close the menu, then act.
 fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
+    // The `{{VAR}}` a quick-fix menu was opened on rides through the
+    // close to the row's command.
+    const quick_fix = http_app.takeQuickFix(app);
     closeOverlay(app);
+    app.http.quick_fix_var = quick_fix;
     switch (action) {
         .command => |id| command.run(app, .{ .static = id }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -520,7 +528,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
-            .notes, .findings, .sessions, .git, .diagnostics => {},
+            .notes, .findings, .sessions, .git, .diagnostics, .http => {},
         },
         .none => {},
     }
@@ -820,23 +828,27 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .todos => try todos.rowMouse(app, pr.idx, m),
             .git => try git_app.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
+            .http => try http_panel.rowMouse(app, pr.idx, m),
             .notes, .findings, .sessions => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
             .git => try git_app.kebabMouse(app, pr.idx, m),
+            .http => try http_panel.kebabMouse(app, pr.idx, m),
             .notes, .findings, .sessions, .diagnostics => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
             .git => try git_app.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
+            .http => try http_panel.chipMouse(app, c.kind, m),
             .notes, .findings, .sessions => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
             .git => git_app.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
+            .http => http_panel.filterMouse(app, m),
             .notes, .findings, .sessions => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
@@ -844,6 +856,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .todos => if (hitRect(app, m.x, m.y)) |r| todos.scrollbarMouse(app, r, m),
                 .git => if (hitRect(app, m.x, m.y)) |r| git_app.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
+                .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
                 .notes, .findings, .sessions => {},
             },
             .pane => |id| {
@@ -1014,7 +1027,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
-                .editor, .outline, .md_preview, .pty, .ai => {},
+                .editor => |*e| try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
+                .outline, .md_preview, .pty, .ai => {},
             }
         },
         .tree_node => |idx| switch (m.kind) {

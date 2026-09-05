@@ -1,0 +1,28 @@
+# zig-only
+# `{{VAR}}` in a request pane: the quick-fix menu names the token under
+# the caret, inline_var replaces it with the env's value, and the jump
+# lands in the env file — at the end, with a hint, when it is undefined.
+write .rqst/config "default_env=dev"
+write .mnml/env/dev.env "HOST=https://dev.example\n# @secret TOKEN\nTOKEN=abc123\n"
+write api.http "GET {{HOST}}/users/{{MISSING}}\nAuthorization: Bearer {{TOKEN}}\n"
+open api.http
+expect screen contains "{{HOST}}/users/{{MISSING}}"
+# The caret sits at the end of the URL, on {{MISSING}}.
+key end
+command http.quick_fix
+expect screen contains "{{MISSING}}"
+expect screen contains "Define in env"
+expect screen contains "Pick env"
+key esc
+# The menu closed without a row: the caret decides again. On {{HOST}}
+# (the URL's first byte) the value is inlined into the URL.
+key home
+command http.inline_var
+expect screen contains "inlined {{HOST}}"
+expect screen contains "https://dev.example/users/{{MISSING}}"
+# {{MISSING}} is undefined: the jump opens dev.env at its end and says so.
+key end
+command http.jump_to_env_var
+expect pane dev.env
+expect screen contains "not defined in .mnml/env/dev.env"
+expect screen contains "TOKEN=abc123"

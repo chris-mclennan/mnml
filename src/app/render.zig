@@ -65,6 +65,8 @@ const spend_view = @import("../ui/spend_view.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
+const http_app = @import("http.zig");
+const http_panel = @import("http_panel.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
@@ -245,6 +247,7 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
         .todos => try todos.draw(app, ui, area),
         .git => try git_app.draw(app, ui, area),
         .diagnostics => try lsp.drawPanel(app, ui, area),
+        .http => try http_panel.draw(app, ui, area),
         .notes, .findings, .sessions => {
             ui.fill(area, app.theme.panel_bg);
             const caps = ui.fmt(" {s}", .{@tagName(which)});
@@ -538,8 +541,10 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .gutter_marks = try gutterMarks(app, arena, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
         .underlines = try lsp.underlinesFor(app, arena, e, &app.theme),
+        .var_spans = try http_app.editorVarSpans(app, arena, e),
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
+    try http_app.drawEditorVarTip(app, ui, id, e, rect);
     if (ed.ghost_suggestion) |ghost| if (cursor) |c| {
         var digits: u16 = 1;
         var n = ed.lineCount();

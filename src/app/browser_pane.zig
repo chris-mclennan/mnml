@@ -22,6 +22,7 @@ const event = @import("../core/event.zig");
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const view = @import("../ui/browser_view.zig");
+const text_field = @import("../ui/text_field.zig");
 const cdp = @import("../cdp/client.zig");
 const parse = @import("../http/parse.zig");
 const captured = @import("../http/captured.zig");
@@ -160,6 +161,13 @@ pub const BrowserPane = struct {
     /// URLs visited, oldest first. Owned.
     visited: std.ArrayListUnmanaged([]u8) = .empty,
     device: ?usize = null,
+    /// The type-to-narrow filter over the current panel's rows. One per
+    /// pane; switching panels keeps it.
+    filter: text_field.Buf = .empty,
+    filter_caret: usize = 0,
+    filter_focused: bool = false,
+    /// The DOM row (unfiltered index) whose node Chrome is highlighting.
+    hover_dom: ?usize = null,
     title_buf: []u8,
     port: ?u16 = null,
     profile_dir: []u8,
@@ -190,6 +198,7 @@ pub const BrowserPane = struct {
         self.snapshots.deinit(gpa);
         for (self.visited.items) |v| gpa.free(v);
         self.visited.deinit(gpa);
+        self.filter.deinit(gpa);
         gpa.free(self.url);
         gpa.free(self.title_buf);
         gpa.free(self.profile_dir);
@@ -786,38 +795,31 @@ pub fn handleKey(app: *App, id: PaneId, p: *BrowserPane, k: Key) Allocator.Error
         return true;
     }
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
-    const rows = @max(app.pane_rows, 1);
+    if (p.filter_focused) return filterKey(app, p, k);
+    const page: i64 = @intCast(@max(app.pane_rows, 1));
     switch (k.code) {
         .esc => {
+            if (p.filter.items.len > 0) {
+                p.filter.clearRetainingCapacity();
+                p.filter_caret = 0;
+                try moveSel(p, 0);
+                return true;
+            }
             if (p.panel != .log) {
                 p.panel = .log;
                 return true;
             }
             return false;
         },
-        .up => {
-            moveSel(p, -1, rows);
-            return true;
-        },
-        .down => {
-            moveSel(p, 1, rows);
-            return true;
-        },
-        .page_up => {
-            moveSel(p, -@as(i64, @intCast(rows)), rows);
-            return true;
-        },
-        .page_down => {
-            moveSel(p, @intCast(rows), rows);
-            return true;
-        },
-        .enter => {
-            if (p.panel == .net) try resendSelected(app, p);
-            return true;
-        },
+        .up => try moveSel(p, -1),
+        .down => try moveSel(p, 1),
+        .page_up => try moveSel(p, -page),
+        .page_down => try moveSel(p, page),
+        .enter => if (p.panel == .net) try resendSelected(app, p),
         .char => |c| switch (c) {
-            'j' => moveSel(p, 1, rows),
-            'k' => moveSel(p, -1, rows),
+            '/' => p.filter_focused = true,
+            'j' => try moveSel(p, 1),
+            'k' => try moveSel(p, -1),
             'g' => try runCmd(app, .@"browser.navigate"),
             'e' => try evalPrompt(app),
             'r' => try runCmd(app, .@"browser.reload"),
@@ -839,6 +841,43 @@ pub fn handleKey(app: *App, id: PaneId, p: *BrowserPane, k: Key) Allocator.Error
     return true;
 }
 
+/// Keys while the filter has focus: esc clears then blurs, enter blurs,
+/// the arrows still move the selection, everything else edits the text.
+/// A changed filter keeps the selection on a visible row.
+fn filterKey(app: *App, p: *BrowserPane, k: Key) Allocator.Error!bool {
+    switch (k.code) {
+        .esc => {
+            if (p.filter.items.len > 0) {
+                p.filter.clearRetainingCapacity();
+                p.filter_caret = 0;
+                try moveSel(p, 0);
+            } else p.filter_focused = false;
+            return true;
+        },
+        .enter => {
+            p.filter_focused = false;
+            return true;
+        },
+        .up => {
+            try moveSel(p, -1);
+            return true;
+        },
+        .down => {
+            try moveSel(p, 1);
+            return true;
+        },
+        else => {},
+    }
+    switch (try text_field.handleKey(&p.filter, &p.filter_caret, app.gpa, k)) {
+        .ignored => return false,
+        .moved => return true,
+        .changed => {
+            try moveSel(p, 0);
+            return true;
+        },
+    }
+}
+
 fn runCmd(app: *App, cmd: command.CommandId) Allocator.Error!void {
     command.run(app, .{ .static = cmd }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -846,24 +885,75 @@ fn runCmd(app: *App, cmd: command.CommandId) Allocator.Error!void {
     };
 }
 
-fn moveSel(p: *BrowserPane, delta: i64, rows: usize) void {
-    _ = rows;
-    const step = struct {
-        fn f(sel: *usize, d: i64, len: usize) void {
-            if (len == 0) return;
-            const cur: i64 = @intCast(sel.*);
-            sel.* = @intCast(std.math.clamp(cur + d, 0, @as(i64, @intCast(len - 1))));
-        }
-    }.f;
+/// Case-insensitive substring; an empty needle matches everything.
+fn matches(needle: []const u8, hay: []const u8) bool {
+    if (needle.len == 0) return true;
+    return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+}
+
+/// The unfiltered indices of the current panel's rows that pass the
+/// filter, in order. Network rows match on method, url, status and
+/// mime; the row panels and the log on their text.
+pub fn visibleIndices(arena: Allocator, p: *const BrowserPane) Allocator.Error![]usize {
+    const needle = std.mem.trim(u8, p.filter.items, " \t");
+    var out: std.ArrayListUnmanaged(usize) = .empty;
     switch (p.panel) {
-        .log, .perf => {
-            if (delta < 0) p.scroll += @intCast(-delta) else p.scroll -|= @intCast(delta);
+        .log => for (p.log.items, 0..) |l, i| {
+            if (matches(needle, l.text)) try out.append(arena, i);
         },
-        .net => step(&p.net_sel, delta, p.net.items.len),
-        .cookies => step(&p.cookies_sel, delta, p.cookies.items.len),
-        .storage => step(&p.storage_sel, delta, p.storage.items.len),
-        .dom => step(&p.dom_sel, delta, p.dom.items.len),
+        .net => for (p.net.items, 0..) |n, i| {
+            var status_buf: [24]u8 = undefined;
+            const status: []const u8 = if (n.failed) |f| f else if (n.status) |st| (std.fmt.bufPrint(&status_buf, "{d}", .{st}) catch "") else "";
+            if (matches(needle, n.method) or matches(needle, n.url) or matches(needle, status) or matches(needle, n.mime orelse "")) try out.append(arena, i);
+        },
+        .cookies => for (p.cookies.items, 0..) |r, i| {
+            if (matches(needle, r.text)) try out.append(arena, i);
+        },
+        .storage => for (p.storage.items, 0..) |r, i| {
+            if (matches(needle, r.text)) try out.append(arena, i);
+        },
+        .dom => for (p.dom.items, 0..) |r, i| {
+            if (matches(needle, r.text)) try out.append(arena, i);
+        },
+        .perf => for (p.perf.items, 0..) |l, i| {
+            if (matches(needle, l)) try out.append(arena, i);
+        },
     }
+    return out.items;
+}
+
+/// The selection field the current panel moves.
+fn selOf(p: *BrowserPane) ?*usize {
+    return switch (p.panel) {
+        .net => &p.net_sel,
+        .cookies => &p.cookies_sel,
+        .storage => &p.storage_sel,
+        .dom => &p.dom_sel,
+        .log, .perf => null,
+    };
+}
+
+/// Step the selection `delta` rows through the narrowed order; the log
+/// and perf panels scroll instead. A selection the filter hid snaps to
+/// the first visible row.
+fn moveSel(p: *BrowserPane, delta: i64) Allocator.Error!void {
+    const sel = selOf(p) orelse {
+        if (delta < 0) p.scroll += @intCast(-delta) else p.scroll -|= @intCast(delta);
+        return;
+    };
+    var scratch = std.heap.ArenaAllocator.init(p.gpa);
+    defer scratch.deinit();
+    const visible = try visibleIndices(scratch.allocator(), p);
+    if (visible.len == 0) return;
+    var pos: ?usize = null;
+    for (visible, 0..) |idx, i| if (idx == sel.*) {
+        pos = i;
+        break;
+    };
+    const cur: i64 = if (pos) |x| @intCast(x) else -1;
+    const last: i64 = @intCast(visible.len - 1);
+    const next: i64 = if (pos == null) 0 else std.math.clamp(cur + delta, 0, last);
+    sel.* = visible[@intCast(next)];
 }
 
 pub fn evalPrompt(app: *App) Allocator.Error!void {
@@ -894,11 +984,15 @@ fn resendSelected(app: *App, p: *BrowserPane) Allocator.Error!void {
 }
 
 pub fn scrollBy(p: *BrowserPane, delta: i32) void {
-    moveSel(p, delta, 1);
+    moveSel(p, delta) catch {};
 }
 
 pub fn click(app: *App, p: *BrowserPane, hit_id: u32) Allocator.Error!void {
     app.needs_render = true;
+    if (hit_id == view.hit_filter) {
+        p.filter_focused = true;
+        return;
+    }
     if (hit_id >= view.hit_row_base) {
         const idx = hit_id - view.hit_row_base;
         switch (p.panel) {
@@ -927,21 +1021,43 @@ pub fn click(app: *App, p: *BrowserPane, hit_id: u32) Allocator.Error!void {
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocator.Error!void {
     const arena = ui.arena;
     const focused = app.active == id and app.focus == .pane;
-    const log = try arena.alloc(view.LogLine, p.log.items.len);
-    for (p.log.items, 0..) |l, i| log[i] = .{ .kind = l.kind, .text = l.text };
-    const net = try arena.alloc(view.NetRow, p.net.items.len);
-    for (p.net.items, 0..) |n, i| net[i] = .{
-        .method = n.method,
-        .url = history.shortUrl(n.url),
-        .status = if (n.failed != null) "✗" else if (n.status) |s| try std.fmt.allocPrint(arena, "{d}", .{s}) else "…",
-        .mime = n.mime orelse "",
-    };
-    const rows: []const []const u8 = switch (p.panel) {
-        .cookies => try rowTexts(arena, p.cookies.items),
-        .storage => try rowTexts(arena, p.storage.items),
-        .dom => try rowTexts(arena, p.dom.items),
-        .perf => p.perf.items,
-        .log, .net => &.{},
+    const visible = try visibleIndices(arena, p);
+    var log: []view.LogLine = &.{};
+    var net: []view.NetRow = &.{};
+    var rows: [][]const u8 = &.{};
+    switch (p.panel) {
+        .log => {
+            log = try arena.alloc(view.LogLine, visible.len);
+            for (visible, 0..) |idx, i| log[i] = .{ .kind = p.log.items[idx].kind, .text = p.log.items[idx].text };
+        },
+        .net => {
+            net = try arena.alloc(view.NetRow, visible.len);
+            for (visible, 0..) |idx, i| {
+                const n = p.net.items[idx];
+                net[i] = .{
+                    .index = idx,
+                    .method = n.method,
+                    .url = history.shortUrl(n.url),
+                    .status = if (n.failed != null) "✗" else if (n.status) |st| try std.fmt.allocPrint(arena, "{d}", .{st}) else "…",
+                    .mime = n.mime orelse "",
+                };
+            }
+        },
+        .cookies => rows = try rowTexts(arena, p.cookies.items, visible),
+        .storage => rows = try rowTexts(arena, p.storage.items, visible),
+        .dom => rows = try rowTexts(arena, p.dom.items, visible),
+        .perf => {
+            rows = try arena.alloc([]const u8, visible.len);
+            for (visible, 0..) |idx, i| rows[i] = p.perf.items[idx];
+        },
+    }
+    const total: usize = switch (p.panel) {
+        .log => p.log.items.len,
+        .net => p.net.items.len,
+        .cookies => p.cookies.items.len,
+        .storage => p.storage.items.len,
+        .dom => p.dom.items.len,
+        .perf => p.perf.items.len,
     };
     const sel: usize = switch (p.panel) {
         .net => p.net_sel,
@@ -950,7 +1066,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         .dom => p.dom_sel,
         .log, .perf => 0,
     };
-    view.draw(ui, id, area, .{
+    const out = view.draw(ui, id, area, .{
         .url = p.url,
         .state = @tagName(p.state),
         .port = p.port,
@@ -958,20 +1074,50 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         .log = log,
         .net = net,
         .rows = rows,
+        .row_index = visible,
+        .total = total,
         .sel = sel,
         .scroll = &p.scroll,
         .focused = focused,
         .device = if (p.device) |d| device_presets[d].name else null,
+        .filter = p.filter.items,
+        .filter_caret = p.filter_caret,
+        .filter_focused = p.filter_focused,
     });
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
         app.pane_cols = @max(area.w, 1);
+        if (focused) if (out.caret) |c| {
+            app.cursor_pos = .{ .x = c.x, .y = c.y };
+        };
+    }
+    try syncHighlight(app, p, if (p.panel == .dom) out.hovered_row else null);
+}
+
+/// Chrome's overlay follows the pointer over the DOM rows: one
+/// `Overlay.highlightNode` when a new row comes under it, one
+/// `Overlay.hideHighlight` when it leaves them all (or the panel is no
+/// longer the DOM).
+fn syncHighlight(app: *App, p: *BrowserPane, hovered: ?usize) Allocator.Error!void {
+    if (hovered) |idx| {
+        if (idx >= p.dom.items.len) return syncHighlight(app, p, null);
+        if (p.hover_dom == idx) return;
+        const params = try std.fmt.allocPrint(app.frame.allocator(), "{{\"nodeId\":{s},\"highlightConfig\":{s}}}", .{ p.dom.items[idx].key, highlight_config });
+        try send(app, p, "Overlay.highlightNode", params, .quiet);
+        p.hover_dom = idx;
+    } else if (p.hover_dom != null) {
+        try send(app, p, "Overlay.hideHighlight", "{}", .quiet);
+        p.hover_dom = null;
     }
 }
 
-fn rowTexts(arena: Allocator, rows: []const Row) Allocator.Error![]const []const u8 {
-    const out = try arena.alloc([]const u8, rows.len);
-    for (rows, 0..) |r, i| out[i] = r.text;
+/// DevTools' inspect colours: content blue, padding green, border
+/// yellow, margin orange, with the size tooltip.
+const highlight_config = "{\"showInfo\":true,\"contentColor\":{\"r\":111,\"g\":168,\"b\":220,\"a\":0.66},\"paddingColor\":{\"r\":147,\"g\":196,\"b\":125,\"a\":0.55},\"borderColor\":{\"r\":255,\"g\":229,\"b\":153,\"a\":0.66},\"marginColor\":{\"r\":246,\"g\":178,\"b\":107,\"a\":0.66}}";
+
+fn rowTexts(arena: Allocator, rows: []const Row, visible: []const usize) Allocator.Error![][]const u8 {
+    const out = try arena.alloc([]const u8, visible.len);
+    for (visible, 0..) |idx, i| out[i] = rows[idx].text;
     return out;
 }
 
@@ -1043,4 +1189,162 @@ test "events route into the log, the net list, the url and the captured log; rep
     closed.* = .{ .pane = id, .kind = .{ .closed = try gpa.dupe(u8, "page closed") } };
     try handle(&app, closed);
     try testing.expect(p.state == .closed);
+}
+
+/// A pane with no Chrome behind it: `send` queues, nothing connects.
+fn testPane(app: *App) !PaneId {
+    const gpa = testing.allocator;
+    const shared = try gpa.create(Shared);
+    shared.* = .{ .io = testing.io };
+    var pane: BrowserPane = .{ .gpa = gpa, .url = try gpa.dupe(u8, "about:blank"), .shared = shared, .title_buf = try gpa.dupe(u8, "browser"), .profile_dir = try gpa.dupe(u8, "/tmp/x"), .headless = true };
+    const id = try app.panes.add(.{ .browser = pane });
+    pane = undefined;
+    app.showPane(id);
+    return id;
+}
+
+fn netEvent(gpa: Allocator, pid: PaneId, request_id: []const u8, method: []const u8, url: []const u8) !*CdpEvent {
+    const box = try gpa.create(CdpEvent);
+    box.* = .{ .pane = pid, .kind = .{ .message = try std.fmt.allocPrint(gpa, "{{\"method\":\"Network.requestWillBeSent\",\"params\":{{\"requestId\":\"{s}\",\"type\":\"XHR\",\"request\":{{\"url\":\"{s}\",\"method\":\"{s}\"}}}}}}", .{ request_id, url, method }) } };
+    return box;
+}
+
+test "the filter narrows the network rows and the selection steps through the narrowed order" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try testPane(&app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    try handle(&app, try netEvent(gpa, id, "r1", "GET", "https://a.example.com/items"));
+    try handle(&app, try netEvent(gpa, id, "r2", "POST", "https://b.example.com/users"));
+    try handle(&app, try netEvent(gpa, id, "r3", "GET", "https://c.example.com/items/7"));
+    p.panel = .net;
+    try p.filter.appendSlice(gpa, "ITEMS");
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    try testing.expectEqualSlices(usize, &.{ 0, 2 }, try visibleIndices(arena.allocator(), p));
+    // j skips the hidden row; k comes back; the ends clamp.
+    try testing.expect(try handleKey(&app, id, p, Key.char('j')));
+    try testing.expectEqual(@as(usize, 2), p.net_sel);
+    _ = try handleKey(&app, id, p, Key.char('j'));
+    try testing.expectEqual(@as(usize, 2), p.net_sel);
+    _ = try handleKey(&app, id, p, Key.char('k'));
+    try testing.expectEqual(@as(usize, 0), p.net_sel);
+    // A selection the filter hides snaps to the first visible row.
+    p.net_sel = 1;
+    p.filter.clearRetainingCapacity();
+    try p.filter.appendSlice(gpa, "post");
+    try moveSel(p, 0);
+    try testing.expectEqual(@as(usize, 1), p.net_sel);
+    try p.filter.appendSlice(gpa, "x");
+    try testing.expectEqual(@as(usize, 0), (try visibleIndices(arena.allocator(), p)).len);
+    // The method matches too; other panels narrow on their text.
+    p.filter.clearRetainingCapacity();
+    try p.filter.appendSlice(gpa, "get");
+    try testing.expectEqualSlices(usize, &.{ 0, 2 }, try visibleIndices(arena.allocator(), p));
+    try p.dom.append(gpa, .{ .text = try gpa.dupe(u8, "html"), .key = try gpa.dupe(u8, "2") });
+    try p.dom.append(gpa, .{ .text = try gpa.dupe(u8, "  div#app"), .key = try gpa.dupe(u8, "3") });
+    p.panel = .dom;
+    p.filter.clearRetainingCapacity();
+    try p.filter.appendSlice(gpa, "#app");
+    try testing.expectEqualSlices(usize, &.{1}, try visibleIndices(arena.allocator(), p));
+}
+
+test "/ focuses the filter, typing narrows, esc clears then blurs, enter blurs" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try testPane(&app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    try handle(&app, try netEvent(gpa, id, "r1", "GET", "https://a.example.com/items"));
+    try handle(&app, try netEvent(gpa, id, "r2", "POST", "https://b.example.com/users"));
+    p.panel = .net;
+    try testing.expect(try handleKey(&app, id, p, Key.char('/')));
+    try testing.expect(p.filter_focused);
+    // Letters the pane would otherwise act on go to the text now.
+    try testing.expect(try handleKey(&app, id, p, Key.char('u')));
+    try testing.expect(try handleKey(&app, id, p, Key.char('s')));
+    try testing.expectEqualStrings("us", p.filter.items);
+    try testing.expectEqual(@as(usize, 1), p.net_sel);
+    try testing.expect(p.panel == .net);
+    // The arrows still move the selection while typing.
+    try testing.expect(try handleKey(&app, id, p, Key.named(.up)));
+    try testing.expectEqual(@as(usize, 1), p.net_sel);
+    // A ctrl chord is not the filter's.
+    try testing.expect(!try handleKey(&app, id, p, Key.ctrl('x')));
+    try testing.expect(try handleKey(&app, id, p, Key.named(.esc)));
+    try testing.expectEqualStrings("", p.filter.items);
+    try testing.expect(p.filter_focused);
+    try testing.expect(try handleKey(&app, id, p, Key.named(.esc)));
+    try testing.expect(!p.filter_focused);
+    _ = try handleKey(&app, id, p, Key.char('/'));
+    _ = try handleKey(&app, id, p, Key.char('a'));
+    try testing.expect(try handleKey(&app, id, p, Key.named(.enter)));
+    try testing.expect(!p.filter_focused);
+    try testing.expectEqualStrings("a", p.filter.items);
+    // Switching panels keeps the text; esc from the list clears a stale filter first.
+    _ = try handleKey(&app, id, p, Key.char('n'));
+    try testing.expect(p.panel == .log);
+    try testing.expectEqualStrings("a", p.filter.items);
+    try testing.expect(try handleKey(&app, id, p, Key.named(.esc)));
+    try testing.expectEqualStrings("", p.filter.items);
+    // The pill click focuses it.
+    try click(&app, p, view.hit_filter);
+    try testing.expect(p.filter_focused);
+}
+
+test "hovering a DOM row highlights its node once; leaving the rows hides the highlight once" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = pbuf[0..n], .data_root = pbuf[0..n] });
+    defer app.deinit();
+    const gpa = testing.allocator;
+    const id = try testPane(&app);
+    const p = app.panes.get(id).?.asBrowser().?;
+    try p.dom.append(gpa, .{ .text = try gpa.dupe(u8, "html"), .key = try gpa.dupe(u8, "2") });
+    try p.dom.append(gpa, .{ .text = try gpa.dupe(u8, "  div#app"), .key = try gpa.dupe(u8, "31") });
+    p.panel = .dom;
+    var f = try @import("../ui/test_fixture.zig").init(80, 20);
+    defer f.deinit();
+    // Rows start at y = 3 (header, strip, pill).
+    f.hover = .{ .x = 5, .y = 4 };
+    try draw(&app, f.ui(), id, p, f.full());
+    try testing.expectEqual(@as(usize, 1), p.queued.items.len);
+    try testing.expectEqualStrings("Overlay.highlightNode", p.queued.items[0].method);
+    try testing.expect(std.mem.startsWith(u8, p.queued.items[0].params, "{\"nodeId\":31,"));
+    try testing.expectEqual(@as(?usize, 1), p.hover_dom);
+    // Still on the same row: nothing more is sent.
+    f.hits.reset();
+    try draw(&app, f.ui(), id, p, f.full());
+    try testing.expectEqual(@as(usize, 1), p.queued.items.len);
+    // Off the rows: one hide.
+    f.hover = .{ .x = 5, .y = 15 };
+    f.hits.reset();
+    try draw(&app, f.ui(), id, p, f.full());
+    try testing.expectEqual(@as(usize, 2), p.queued.items.len);
+    try testing.expectEqualStrings("Overlay.hideHighlight", p.queued.items[1].method);
+    try testing.expect(p.hover_dom == null);
+    f.hits.reset();
+    try draw(&app, f.ui(), id, p, f.full());
+    try testing.expectEqual(@as(usize, 2), p.queued.items.len);
+    // A panel that is not the DOM hides a highlight it left behind.
+    f.hover = .{ .x = 5, .y = 3 };
+    f.hits.reset();
+    try draw(&app, f.ui(), id, p, f.full());
+    try testing.expectEqual(@as(usize, 3), p.queued.items.len);
+    p.panel = .log;
+    f.hits.reset();
+    try draw(&app, f.ui(), id, p, f.full());
+    try testing.expectEqual(@as(usize, 4), p.queued.items.len);
+    try testing.expectEqualStrings("Overlay.hideHighlight", p.queued.items[3].method);
 }

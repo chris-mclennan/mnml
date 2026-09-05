@@ -25,6 +25,8 @@ pub const EnvSet = struct {
     vars: std.StringArrayHashMapUnmanaged([]u8) = .empty,
     /// The process environment, consulted after the file. Borrowed.
     process: ?*const std.process.Environ.Map = null,
+    /// Names a `# @secret NAME …` line marked; a hover masks them.
+    secrets: std.StringArrayHashMapUnmanaged(void) = .empty,
 
     pub fn empty(gpa: Allocator) EnvSet {
         return .{ .gpa = gpa };
@@ -38,6 +40,15 @@ pub const EnvSet = struct {
             self.gpa.free(e.value_ptr.*);
         }
         self.vars.deinit(self.gpa);
+        for (self.secrets.keys()) |k| self.gpa.free(k);
+        self.secrets.deinit(self.gpa);
+    }
+
+    /// Marked `# @secret`, or named like one (token / secret / password /
+    /// key / auth) — the value is shown masked either way.
+    pub fn isSecret(self: *const EnvSet, name: []const u8) bool {
+        if (self.secrets.contains(name)) return true;
+        return looksSecret(name);
     }
 
     /// Read `.rqst/env/<name>.env` then `.mnml/env/<name>.env`; the
@@ -55,10 +66,24 @@ pub const EnvSet = struct {
         return set;
     }
 
-    /// Every `KEY=VALUE` line of `text`, later lines winning.
+    /// Every `KEY=VALUE` line of `text`, later lines winning; a
+    /// `# @secret A B` line marks names.
     pub fn mergeText(self: *EnvSet, text: []const u8) Allocator.Error!void {
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |line| {
+            const t = std.mem.trim(u8, line, " \t\r");
+            if (std.mem.startsWith(u8, t, "#")) {
+                const rest = std.mem.trimStart(u8, t[1..], " \t");
+                if (std.mem.startsWith(u8, rest, "@secret")) {
+                    var names = std.mem.tokenizeAny(u8, rest["@secret".len..], " \t,");
+                    while (names.next()) |n| if (isValidName(n) and !self.secrets.contains(n)) {
+                        const k = try self.gpa.dupe(u8, n);
+                        errdefer self.gpa.free(k);
+                        try self.secrets.put(self.gpa, k, {});
+                    };
+                }
+                continue;
+            }
             const kv = parseLine(line) orelse continue;
             try self.put(kv.key, kv.value);
         }
@@ -85,6 +110,29 @@ pub const EnvSet = struct {
 };
 
 pub const KeyValue = struct { key: []const u8, value: []const u8 };
+
+/// A name that reads like a credential.
+pub fn looksSecret(name: []const u8) bool {
+    const marks = [_][]const u8{ "token", "secret", "password", "passwd", "api_key", "apikey", "auth", "private" };
+    for (marks) |m| if (std.ascii.indexOfIgnoreCase(name, m) != null) return true;
+    return false;
+}
+
+/// `value` as a hover shows it: bullets for a secret.
+pub fn masked(name: []const u8, value: []const u8, set: *const EnvSet) []const u8 {
+    return if (set.isSecret(name)) "••••••••" else value;
+}
+
+/// The 0-based line of `KEY=` in an env file's text, if defined.
+pub fn lineOfKey(text: []const u8, key: []const u8) ?usize {
+    var n: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| : (n += 1) {
+        const kv = parseLine(line) orelse continue;
+        if (std.mem.eql(u8, kv.key, key)) return n;
+    }
+    return null;
+}
 
 /// `KEY=VALUE`, `export KEY=VALUE`, quotes stripped, `#` lines and
 /// blanks skipped. A trailing ` # comment` after an unquoted value is
@@ -514,4 +562,26 @@ test "load: .mnml overrides .rqst on the same key; select precedence; upsert wri
     const prod = try tmp.dir.readFileAlloc(testing.io, ".mnml/env/prod.env", testing.allocator, .limited(4096));
     defer testing.allocator.free(prod);
     try testing.expectEqualStrings("A=1\n", prod);
+}
+
+test "@secret marks names, credential-shaped names mask on their own, lineOfKey finds the definition" {
+    var set = EnvSet.empty(testing.allocator);
+    defer set.deinit();
+    const text = "HOST=a\n# @secret PIN, CODE\nPIN=1\nCODE=2\nAPI_TOKEN=t\n# X=9\n";
+    try set.mergeText(text);
+    try testing.expect(set.isSecret("PIN"));
+    try testing.expect(set.isSecret("CODE"));
+    try testing.expect(set.isSecret("API_TOKEN"));
+    try testing.expect(!set.isSecret("HOST"));
+    try testing.expect(looksSecret("my_password") and looksSecret("ApiKey") and !looksSecret("HOST"));
+    try testing.expectEqualStrings("••••••••", masked("PIN", "1", &set));
+    try testing.expectEqualStrings("a", masked("HOST", "a", &set));
+    try testing.expectEqual(@as(?usize, 3), lineOfKey(text, "CODE"));
+    try testing.expectEqual(@as(?usize, 0), lineOfKey(text, "HOST"));
+    try testing.expect(lineOfKey(text, "NOPE") == null);
+    // A commented-out key is not a definition.
+    try testing.expect(lineOfKey(text, "X") == null);
+    // The marker survives a second merge and does not duplicate.
+    try set.mergeText("# @secret PIN\n");
+    try testing.expectEqual(@as(usize, 2), set.secrets.count());
 }

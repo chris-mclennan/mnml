@@ -35,12 +35,35 @@ pub const EditTab = view.EditTab;
 pub const ResponseTab = view.ResponseTab;
 pub const Block = view.Block;
 pub const Field = view.Field;
+pub const Orientation = view.Orientation;
 const Buf = std.ArrayListUnmanaged(u8);
+
+/// A send whose body is still arriving: the head has landed, `body`
+/// grows with every `.sse` chunk, and the Response block paints it as
+/// it comes. `finish` turns it into the Done response.
+pub const Streaming = struct {
+    job: u64,
+    /// Status, headers, final url; `body` is empty until `finish`.
+    head: Response,
+    body: std.ArrayListUnmanaged(u8) = .empty,
+    is_sse: bool,
+    chunked: bool,
+    /// Complete SSE events so far (blank-line delimited).
+    events: usize = 0,
+    started_ms: i64,
+
+    pub fn deinit(self: *Streaming, gpa: Allocator) void {
+        self.head.deinit(gpa);
+        self.body.deinit(gpa);
+    }
+};
 
 pub const RunState = union(enum) {
     idle,
     /// The job id the worker will answer with.
     sending: u64,
+    /// The head is in; the body is arriving.
+    streaming: Streaming,
     done: Response,
     /// Owned transport error.
     failed: []u8,
@@ -48,10 +71,20 @@ pub const RunState = union(enum) {
     pub fn deinit(self: *RunState, gpa: Allocator) void {
         switch (self.*) {
             .done => |*r| r.deinit(gpa),
+            .streaming => |*st| st.deinit(gpa),
             .failed => |e| gpa.free(e),
             .idle, .sending => {},
         }
         self.* = .idle;
+    }
+
+    /// The job in flight, sending or streaming.
+    pub fn job(self: *const RunState) ?u64 {
+        return switch (self.*) {
+            .sending => |j| j,
+            .streaming => |st| st.job,
+            else => null,
+        };
     }
 };
 
@@ -112,6 +145,18 @@ pub const RequestPane = struct {
     edited: bool = false,
     /// Opened by browsing (a single click); replaced by the next browse.
     is_preview: bool = false,
+    /// The side-by-side edit view: on, the right half's tab, the left
+    /// half's share in percent, the right half's scroll. Pane state, so
+    /// each request keeps its own arrangement.
+    split: bool = false,
+    split_tab: EditTab = .vars,
+    split_ratio: u8 = 50,
+    split_scroll: usize = 0,
+    /// A press on the split divider; the next drags resize it.
+    dragging_divider: bool = false,
+    /// The edit area at the last draw — what a divider drag measures.
+    edit_area: ?Rect = null,
+    orientation: Orientation = .auto,
 
     pub fn init(gpa: Allocator) Allocator.Error!RequestPane {
         var req = try Request.init(gpa);
@@ -217,7 +262,43 @@ pub const RequestPane = struct {
     }
 
     pub fn isSending(self: *const RequestPane) bool {
-        return self.state == .sending;
+        return self.state == .sending or self.state == .streaming;
+    }
+
+    pub fn streaming(self: *RequestPane) ?*Streaming {
+        return switch (self.state) {
+            .streaming => |*st| st,
+            else => null,
+        };
+    }
+
+    /// The head landed for `job`: the pane shows it and follows the body.
+    pub fn beginStream(self: *RequestPane, job: u64, head: Response, is_sse: bool, chunked: bool, now_ms: i64) void {
+        self.keepAsPrev();
+        self.state = .{ .streaming = .{ .job = job, .head = head, .is_sse = is_sse, .chunked = chunked, .started_ms = now_ms } };
+        self.resp_view = .{};
+        self.response_tab = .body;
+        self.block = .response;
+    }
+
+    /// A run of body bytes; the view follows the tail.
+    pub fn appendStream(self: *RequestPane, bytes: []const u8) Allocator.Error!void {
+        const st = self.streaming() orelse return;
+        try st.body.appendSlice(self.gpa, bytes);
+        if (st.is_sse) st.events = countSseEvents(st.body.items);
+        self.resp_view.scroll_line = std.math.maxInt(u32) / 2;
+    }
+
+    /// The stream ended: the accumulated body becomes the Done response.
+    pub fn finishStream(self: *RequestPane, timing: client.Timing, truncated: bool) Allocator.Error!void {
+        const st = self.streaming() orelse return;
+        var resp = st.head;
+        resp.body = try st.body.toOwnedSlice(self.gpa);
+        resp.timing = timing;
+        resp.truncated = truncated;
+        self.state = .idle;
+        try self.setResponse(resp);
+        self.resp_view.scroll_line = 0;
     }
 
     /// A response landed (from the wire or a mock). The previous Done
@@ -315,12 +396,56 @@ pub const RequestPane = struct {
     }
 
     /// Enter the request block on `tab`; the caret lands in its content.
+    /// In the split, bringing the right half's tab to the left swaps the
+    /// halves so both stay visible.
     pub fn showTab(self: *RequestPane, tab: EditTab) void {
+        if (self.split and tab == self.split_tab and tab != self.edit_tab) self.split_tab = self.edit_tab;
         self.edit_tab = tab;
         self.block = .request;
         self.field = .content;
         self.row_cursor = 0;
         self.edit_scroll = 0;
+    }
+
+    /// `http.toggle_edit_split`: a second half showing another tab.
+    pub fn toggleSplit(self: *RequestPane) void {
+        self.split = !self.split;
+        if (self.split and self.split_tab == self.edit_tab) self.split_tab = if (self.edit_tab == .vars) .body else .vars;
+        self.split_scroll = 0;
+    }
+
+    /// The text of the focused field and the `{{VAR}}` under its caret.
+    pub fn varAtCaret(self: *RequestPane, arena: Allocator) Allocator.Error!?[]const u8 {
+        const f = self.activeBuf() orelse return null;
+        const at = @min(f.caret.*, f.buf.items.len);
+        for (try env_mod.tokens(arena, f.buf.items)) |tok| if (at >= tok.start and at <= tok.end) return tok.name;
+        return null;
+    }
+
+    /// Replace every `{{name}}` in the three text fields with `value`.
+    pub fn inlineVar(self: *RequestPane, name: []const u8, value: []const u8) Allocator.Error!usize {
+        var n: usize = 0;
+        const bufs = [_]*Buf{ &self.url, &self.headers_text, &self.body };
+        for (bufs) |b| {
+            var arena = std.heap.ArenaAllocator.init(self.gpa);
+            defer arena.deinit();
+            const toks = try env_mod.tokens(arena.allocator(), b.items);
+            var i = toks.len;
+            while (i > 0) {
+                i -= 1;
+                if (!std.mem.eql(u8, toks[i].name, name)) continue;
+                try b.replaceRange(self.gpa, toks[i].start, toks[i].end - toks[i].start, value);
+                n += 1;
+            }
+        }
+        if (n > 0) {
+            self.url_caret = @min(self.url_caret, self.url.items.len);
+            self.body_caret = @min(self.body_caret, self.body.items.len);
+            self.headers_caret = @min(self.headers_caret, self.headers_text.items.len);
+            self.edited = true;
+            try self.commit();
+        }
+        return n;
     }
 
     /// Enter the Request block on the URL (a `Tab` from the response).
@@ -556,6 +681,21 @@ pub fn handleKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Erro
     }
 }
 
+/// Blank-line-delimited events with at least one `data:` line.
+pub fn countSseEvents(body: []const u8) usize {
+    var n: usize = 0;
+    var has_data = false;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |raw| {
+        const l = std.mem.trimEnd(u8, raw, "\r");
+        if (l.len == 0) {
+            if (has_data) n += 1;
+            has_data = false;
+        } else if (std.mem.startsWith(u8, l, "data")) has_data = true;
+    }
+    return n;
+}
+
 fn lineOf(text: []const u8, at: usize) usize {
     var n: usize = 0;
     for (text[0..@min(at, text.len)]) |c| if (c == '\n') {
@@ -667,7 +807,8 @@ fn responseKey(app: *App, rp: *RequestPane, k: Key) Allocator.Error!bool {
 }
 
 fn clampScroll(rp: *RequestPane) void {
-    const total: u32 = if (rp.response()) |r| @intCast(std.mem.count(u8, r.body, "\n") + 1) else 0;
+    const body: []const u8 = if (rp.response()) |r| r.body else if (rp.streaming()) |st| st.body.items else "";
+    const total: u32 = @intCast(std.mem.count(u8, body, "\n") + 1);
     if (rp.resp_view.scroll_line >= total) rp.resp_view.scroll_line = total -| 1;
 }
 
@@ -703,9 +844,52 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
 /// A press on one of the view's hits.
 pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit_rect: ?Rect) Allocator.Error!void {
     app.needs_render = true;
+    // A divider drag: the press armed it, every drag inside the edit
+    // area moves it, the release ends it.
+    if (rp.dragging_divider) {
+        if (m.kind == .release) {
+            rp.dragging_divider = false;
+            return;
+        }
+        if (m.kind == .drag) {
+            if (rp.edit_area) |area| if (area.w > 0) {
+                const ratio: u32 = @as(u32, m.x -| area.x) * 100 / area.w;
+                rp.split_ratio = @intCast(std.math.clamp(ratio, 10, 90));
+            };
+            return;
+        }
+    }
+    if (m.kind != .press) return;
+    if (hit_id >= view.hit_var_base) return http.varClick(app, id, rp, hit_id - view.hit_var_base, m);
     if (hit_id >= view.hit_tab_base and hit_id < view.hit_tab_base + EditTab.all.len) {
         rp.showTab(EditTab.all[hit_id - view.hit_tab_base]);
         return;
+    }
+    if (hit_id >= view.hit_split_tab_base and hit_id < view.hit_split_tab_base + EditTab.all.len) {
+        const tab = EditTab.all[hit_id - view.hit_split_tab_base];
+        if (tab == rp.edit_tab) rp.edit_tab = rp.split_tab;
+        rp.split_tab = tab;
+        rp.split_scroll = 0;
+        return;
+    }
+    switch (hit_id) {
+        view.hit_split_toggle => {
+            rp.toggleSplit();
+            return;
+        },
+        view.hit_split_divider => {
+            if (m.button == .left) rp.dragging_divider = true;
+            return;
+        },
+        view.hit_split_content => {
+            rp.showTab(rp.split_tab);
+            return;
+        },
+        view.hit_edit_area => {
+            rp.block = .request;
+            return;
+        },
+        else => {},
     }
     if (hit_id >= view.hit_resp_tab_base and hit_id < view.hit_resp_tab_base + ResponseTab.all.len) {
         rp.response_tab = ResponseTab.all[hit_id - view.hit_resp_tab_base];
@@ -806,7 +990,25 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
     };
     const env_name = try http.envName(app, arena);
     const vars = try http.varRows(app, rp, arena, env_name);
+    const toks = try http.varTokens(app, rp, arena, env_name);
     var resp_model: ?view.ResponseModel = null;
+    var stream_info: ?view.StreamInfo = null;
+    if (rp.streaming()) |st| {
+        const r = &st.head;
+        const hs = try arena.alloc(view.Pair, r.headers.len);
+        for (r.headers, 0..) |h, i| hs[i] = .{ .key = h.name, .value = h.value };
+        stream_info = .{ .bytes = st.body.items.len, .events = st.events, .is_sse = st.is_sse, .elapsed_ms = @intCast(@max(app.now_ms - st.started_ms, 0)) };
+        resp_model = .{
+            .status = r.status,
+            .status_text = r.status_text,
+            .headers = hs,
+            .body = st.body.items,
+            .body_bytes = st.body.items.len,
+            .truncated = false,
+            .timing = .{ .wait_ms = 0, .receive_ms = 0, .total_ms = 0 },
+            .cookies = try r.setCookies(arena),
+        };
+    }
     if (rp.response()) |r| {
         const hs = try arena.alloc(view.Pair, r.headers.len);
         for (r.headers, 0..) |h, i| hs[i] = .{ .key = h.name, .value = h.value };
@@ -849,14 +1051,22 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .sending = rp.isSending(),
         .failed = if (rp.state == .failed) rp.state.failed else null,
         .response = resp_model,
+        .stream = stream_info,
         .sent_line = rp.sent_line,
         .response_tab = rp.response_tab,
         .resp_view = &rp.resp_view,
         .body_wrap = rp.body_wrap,
         .focused = focused,
         .source_path = rp.source_path,
+        .url_vars = toks.url,
+        .body_vars = toks.body,
+        .headers_vars = toks.headers,
+        .split = if (rp.split) .{ .tab = rp.split_tab, .ratio = rp.split_ratio, .scroll = &rp.split_scroll } else null,
+        .orientation = rp.orientation,
     };
     const caret = view.draw(ui, id, area, m);
+    const z = view.zones(area, m);
+    rp.edit_area = if (z.request.h > 2) Rect.init(z.request.x, z.request.y + 2, z.request.w, z.request.h - 2) else null;
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
         app.pane_cols = @max(area.w, 1);
@@ -864,6 +1074,11 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         };
     }
+    // A hovered `{{VAR}}` shows its value.
+    if (http.hoveredVar(ui, id, view.hit_var_base)) |hv| if (hv.idx < toks.all.len) {
+        const tok = toks.all[hv.idx];
+        view.drawVarTip(ui, area, hv.rect, tok.name, tok.shown, env_name);
+    };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -910,4 +1125,55 @@ test "moveLine keeps the column and stops at the edges" {
     try testing.expectEqual(@as(usize, 2), caret);
     moveLine(text, &caret, false);
     try testing.expectEqual(@as(usize, 2), caret);
+}
+
+test "split: toggling picks a second tab; showing the right tab swaps the halves; the pair survives off and on" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    var req = try parse.parse(testing.allocator, "curl 'https://{{HOST}}/a' -H 'A: {{T}}'");
+    try rp.load(req);
+    req = undefined;
+    rp.edit_tab = .body;
+    try testing.expect(!rp.split);
+    rp.toggleSplit();
+    try testing.expect(rp.split and rp.split_tab == .vars);
+    // Bringing the right half's tab to the left swaps the halves.
+    rp.showTab(.vars);
+    try testing.expect(rp.edit_tab == .vars and rp.split_tab == .body);
+    // Any other tab on the left leaves the right half alone.
+    rp.showTab(.headers);
+    try testing.expect(rp.edit_tab == .headers and rp.split_tab == .body);
+    rp.toggleSplit();
+    try testing.expect(!rp.split);
+    // Off and on again keeps the pair as long as the halves differ.
+    rp.toggleSplit();
+    try testing.expect(rp.split and rp.split_tab == .body);
+    rp.split_ratio = 30;
+    try testing.expectEqual(@as(u8, 30), rp.split_ratio);
+}
+
+test "varAtCaret finds the token under the URL caret; inlineVar replaces every occurrence across the fields" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    var req = try parse.parse(testing.allocator, "curl 'https://{{HOST}}/a' -H 'A: {{T}}'");
+    try rp.load(req);
+    req = undefined;
+    // The var under the URL caret; none past its end.
+    rp.field = .url;
+    rp.url_caret = 9;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqualStrings("HOST", (try rp.varAtCaret(arena.allocator())).?);
+    rp.url_caret = 16;
+    try testing.expectEqualStrings("HOST", (try rp.varAtCaret(arena.allocator())).?);
+    rp.url_caret = 17;
+    try testing.expect((try rp.varAtCaret(arena.allocator())) == null);
+    // Inlining replaces every occurrence across the three fields and commits.
+    try testing.expectEqual(@as(usize, 1), try rp.inlineVar("HOST", "x.test"));
+    try testing.expectEqualStrings("https://x.test/a", rp.url.items);
+    try testing.expectEqual(@as(usize, 1), try rp.inlineVar("T", "1"));
+    try testing.expectEqualStrings("A: 1\n", rp.headers_text.items);
+    try testing.expectEqualStrings("1", rp.request.header("a").?);
+    try testing.expectEqual(@as(usize, 0), try rp.inlineVar("NOPE", "z"));
+    try testing.expect(rp.edited);
 }

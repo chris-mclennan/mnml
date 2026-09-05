@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 const parse_mod = @import("parse.zig");
 const client = @import("client.zig");
 const env_mod = @import("env.zig");
+const script_mod = @import("script.zig");
 
 pub const Extract = struct { name: []const u8, path: []const u8 };
 
@@ -152,6 +153,10 @@ pub fn run(gpa: Allocator, io: Io, chain_path: []const u8, workspace: []const u8
         var raw = parse_mod_parse(a, src) catch |err| {
             return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: {s}: {s}", .{ i + 1, step.request, @errorName(err) }), &trace, &captured);
         };
+        // The step's own directives: `@set-*` before the send, `@assert`
+        // and `@capture` after it, captures feeding the later steps.
+        const script = try script_mod.parse(a, raw.script orelse "");
+        try script_mod.applyPre(a, &raw, &set, script);
         var req = try expandWith(a, io, &raw, &set);
         var outcome = try client.send(a, io, &req, .{});
         switch (outcome) {
@@ -162,6 +167,20 @@ pub fn run(gpa: Allocator, io: Io, chain_path: []const u8, workspace: []const u8
             .ok => |*resp| {
                 try appendFmt(a, &trace, "{d}. {s} {s} → {d} ({d} ms, {d} B)\n", .{ i + 1, req.method, req.url, resp.status, resp.timing.total_ms, resp.body.len });
                 if (resp.status >= 400) return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: status {d}", .{ i + 1, resp.status }), &trace, &captured);
+                for (try script_mod.runAsserts(a, script, resp.status, resp.headers, resp.body)) |r| {
+                    if (r.ok) {
+                        try appendFmt(a, &trace, "   ✓ {s}\n", .{r.label});
+                    } else {
+                        try appendFmt(a, &trace, "   ✗ {s} — {s}\n", .{ r.label, r.detail });
+                        return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: assert failed: {s}", .{ i + 1, r.label }), &trace, &captured);
+                    }
+                }
+                for (try script_mod.runCaptures(a, script, resp.status, resp.headers, resp.body)) |c| {
+                    const value = c.value orelse return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: capture {s} found nothing", .{ i + 1, c.name }), &trace, &captured);
+                    try set.put(c.name, value);
+                    try appendFmt(a, &trace, "   {s} = {s}\n", .{ c.name, value });
+                    try appendFmt(a, &captured, "{s}={s}\n", .{ c.name, value });
+                }
                 if (step.extract.len > 0) {
                     const body = std.json.parseFromSliceLeaky(std.json.Value, a, resp.body, .{}) catch {
                         return finish(gpa, false, try std.fmt.allocPrint(gpa, "step {d}: body is not JSON, cannot extract", .{i + 1}), &trace, &captured);
@@ -263,4 +282,43 @@ test "run: two steps over a local server, the first's extract feeds the second" 
     defer bad.deinit(testing.allocator);
     try testing.expect(!bad.ok);
     try testing.expect(std.mem.indexOf(u8, bad.err.?, "found nothing") != null);
+}
+
+test "run: a step's directives — @set-var feeds its headers, @assert gates the chain, @capture feeds the next step" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(io, &pbuf);
+    const ws = pbuf[0..n];
+    var server = try mock.Server.start(testing.allocator, io, .{ .body = "{\"session\":\"s-42\"}", .headers = &.{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "x-trace", .value = "abc123" } } });
+    defer server.stop(io);
+    try tmp.dir.createDirPath(io, ".mnml/chains");
+    try tmp.dir.createDirPath(io, ".mnml/requests");
+    const first = try std.fmt.allocPrint(testing.allocator, "# @set-var PROBE = yes\n# @set-header X-Probe = {{{{PROBE}}}}\n# @assert status == 200\n# @assert header.x-trace ~ /^[a-z0-9]+$/\n# @capture SESSION = body.session\ncurl 'http://127.0.0.1:{d}/one'\n", .{server.port});
+    defer testing.allocator.free(first);
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/requests/one.curl", .data = first });
+    const second = try std.fmt.allocPrint(testing.allocator, "# @assert body.session != nope\ncurl 'http://127.0.0.1:{d}/two' -H 'Cookie: sid={{{{SESSION}}}}'\n", .{server.port});
+    defer testing.allocator.free(second);
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/requests/two.curl", .data = second });
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/chains/d.chain.json", .data = "[{\"request\":\"one.curl\"},{\"request\":\"two.curl\"}]" });
+    const chain_path = try std.fs.path.join(testing.allocator, &.{ ws, ".mnml/chains/d.chain.json" });
+    defer testing.allocator.free(chain_path);
+    var out = try run(testing.allocator, io, chain_path, ws, "dev");
+    defer out.deinit(testing.allocator);
+    try testing.expect(out.ok);
+    try testing.expect(std.mem.indexOf(u8, out.trace, "✓ status == 200") != null);
+    try testing.expect(std.mem.indexOf(u8, out.trace, "SESSION = s-42") != null);
+    try testing.expectEqualStrings("SESSION=s-42\n", out.captured);
+    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "cookie: sid=s-42") != null);
+    // A failing assert stops the chain before the next step.
+    const failing = try std.fmt.allocPrint(testing.allocator, "# @assert status == 201\ncurl 'http://127.0.0.1:{d}/one'\n", .{server.port});
+    defer testing.allocator.free(failing);
+    try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/requests/one.curl", .data = failing });
+    var bad = try run(testing.allocator, io, chain_path, ws, "dev");
+    defer bad.deinit(testing.allocator);
+    try testing.expect(!bad.ok);
+    try testing.expect(std.mem.indexOf(u8, bad.err.?, "assert failed: status == 201") != null);
+    try testing.expect(std.mem.indexOf(u8, bad.trace, "got 200") != null);
+    try testing.expect(std.mem.indexOf(u8, bad.trace, "2. ") == null);
 }

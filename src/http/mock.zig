@@ -153,6 +153,13 @@ pub const Canned = struct {
     status_text: []const u8 = "OK",
     headers: []const struct { name: []const u8, value: []const u8 } = &.{},
     body: []const u8 = "",
+    /// When set, the body is these pieces written one at a time with
+    /// `chunk_delay_ms` between them — no `content-length`, the socket
+    /// closes at the end (an SSE server's shape), or `chunked` framing
+    /// when `chunked` is set.
+    chunks: ?[]const []const u8 = null,
+    chunk_delay_ms: u32 = 0,
+    chunked: bool = false,
 };
 
 /// One accept loop on its own thread. Every connection gets the canned
@@ -256,6 +263,20 @@ pub const Server = struct {
         const w = &writer.interface;
         try w.print("HTTP/1.1 {d} {s}\r\n", .{ self.canned.status, self.canned.status_text });
         for (self.canned.headers) |h| try w.print("{s}: {s}\r\n", .{ h.name, h.value });
+        if (self.canned.chunks) |chunks| {
+            if (self.canned.chunked) try w.writeAll("transfer-encoding: chunked\r\n");
+            try w.writeAll("connection: close\r\n\r\n");
+            try w.flush();
+            for (chunks) |c| {
+                if (self.stopping.load(.acquire)) return;
+                if (self.canned.chunk_delay_ms > 0) Io.sleep(io, .fromMilliseconds(self.canned.chunk_delay_ms), .awake) catch {};
+                if (self.canned.chunked) try w.print("{x}\r\n{s}\r\n", .{ c.len, c }) else try w.writeAll(c);
+                try w.flush();
+            }
+            if (self.canned.chunked) try w.writeAll("0\r\n\r\n");
+            try w.flush();
+            return;
+        }
         try w.print("content-length: {d}\r\nconnection: close\r\n\r\n", .{self.canned.body.len});
         try w.writeAll(self.canned.body);
         try w.flush();

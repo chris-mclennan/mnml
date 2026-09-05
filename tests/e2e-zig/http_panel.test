@@ -1,0 +1,57 @@
+# zig-only
+# The HTTP activity panel (src/app/http_panel.zig): seven collapsible
+# sections in the right slot, one `/` filter across them all, enter on
+# a header folds it and on an item opens / applies it.
+write api/users.http "GET https://x/users\n"
+write api/orders.curl "curl https://x/orders\n"
+write api/orders.curl.mock.json "{\"status\":200,\"body\":\"[]\"}\n"
+write .mnml/env/dev.env "HOST=https://dev\n"
+write .mnml/env/prod.env "HOST=https://prod\n"
+write .mnml/chains/login.chain.json "[{\"request\":\"api/users.http\"}]\n"
+write .mnml/cookies.json "{\"x.test\":{\"session\":\"abc\"}}\n"
+write .rqst/history.jsonl "{\"ts\":1,\"method\":\"POST\",\"url\":\"https://x/login\",\"status\":201}\n"
+command view.activity_http
+expect screen contains "HTTP (8)"
+expect screen contains "COLLECTIONS (2)"
+expect screen contains "api/users.http"
+expect screen contains "ENVS (2)"
+expect screen contains "CHAINS (1)"
+expect screen contains "MOCKS (1)"
+expect screen contains "COOKIES (1)"
+expect screen contains "session  x.test"
+expect screen contains "RECENT (1)"
+expect screen contains "POST x/login  201"
+expect screen contains "CAPTURED (0)"
+# The filter narrows every section at once; the ones it empties go.
+key /
+type log
+expect screen contains "(2 of 8)"
+expect screen contains "CHAINS (1)"
+expect screen contains "RECENT (1)"
+expect screen lacks "ENVS"
+expect screen lacks "COOKIES"
+key esc
+key esc
+expect screen contains "ENVS (2)"
+# Enter on the COLLECTIONS header folds it; right opens it again.
+key enter
+expect screen lacks "api/users.http"
+expect screen contains "COLLECTIONS (2)"
+key right
+expect screen contains "api/users.http"
+# Row 5 is the `prod` env: enter makes it the session override.
+key down
+key down
+key down
+key down
+key down
+key enter
+expect screen contains "env: prod (session override"
+expect screen contains "prod  active"
+# Row 2 is users.http: enter opens it as a request pane.
+key g
+key down
+key down
+key enter
+expect screen contains "https://x/users"
+expect pane GET

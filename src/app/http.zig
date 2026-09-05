@@ -26,8 +26,10 @@ const history = @import("../http/history.zig");
 const mock = @import("../http/mock.zig");
 const cookies = @import("../http/cookies.zig");
 const bench_mod = @import("../http/bench.zig");
+const script_mod = @import("../http/script.zig");
 const request_pane = @import("request_pane.zig");
 const view = @import("../ui/request_view.zig");
+const editor_view = @import("../ui/editor_view.zig");
 const Ui = @import("../ui/context.zig");
 
 pub const Request = parse.Request;
@@ -70,8 +72,17 @@ pub const Bench = struct {
     }
 };
 
+/// A send that may stream owns its `Io.Group`, so `http.cancel` can
+/// interrupt that one read without touching the other workers.
+pub const JobHandle = struct {
+    group: Io.Group = .init,
+    pane: ?PaneId,
+};
+
 pub const State = struct {
     group: Io.Group = .init,
+    /// Per-job groups of the sends in flight, by job id.
+    handles: std.AutoArrayHashMapUnmanaged(u64, *JobHandle) = .empty,
     next_job: u64 = 1,
     /// `http.pick_env`'s session choice. Owned.
     env_override: ?[]u8 = null,
@@ -96,6 +107,10 @@ pub const State = struct {
     sync_normalize: bool = false,
     /// Panes whose send is in flight, for the spinner.
     sending: u32 = 0,
+    /// `http.send_streaming`: the next `fire` streams whatever comes.
+    force_stream: bool = false,
+    /// The `{{VAR}}` the quick-fix menu was opened on. Owned.
+    quick_fix_var: ?[]u8 = null,
     /// Lines a `.ws` file queued for a pane that is still connecting.
     ws_queue: std.ArrayListUnmanaged(struct { pane: PaneId, text: []u8 }) = .empty,
 
@@ -106,7 +121,13 @@ pub const State = struct {
     /// Cancels every worker and waits — they borrow `app.events`.
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
+        for (self.handles.values()) |h| {
+            h.group.cancel(io);
+            gpa.destroy(h);
+        }
+        self.handles.deinit(gpa);
         if (self.env_override) |e| gpa.free(e);
+        if (self.quick_fix_var) |v| gpa.free(v);
         if (self.pending_env_key) |k| gpa.free(k);
         if (self.fan) |*f| f.deinit(gpa);
         if (self.bench) |*b| b.deinit(gpa);
@@ -163,12 +184,16 @@ pub const table = .{
     .@"http.field_cut" = &fieldCutCmd,
     .@"http.field_select_all" = &fieldSelectAllCmd,
     .@"http.abort" = &abortCmd,
+    .@"http.cancel" = &cancelCmd,
     .@"http.regenerate_body" = &regenerateBodyCmd,
     .@"http.copy_as" = &copyAsCmd,
     .@"http.generate_code" = &copyAsCmd,
-    .@"http.toggle_edit_split" = &notInThisBuild,
-    .@"http.toggle_split_orientation" = &notInThisBuild,
-    .@"http.toggle_collapse_all" = &notInThisBuild,
+    .@"http.toggle_edit_split" = &toggleEditSplitCmd,
+    .@"http.toggle_split_orientation" = &toggleSplitOrientationCmd,
+    .@"http.quick_fix" = &quickFixCmd,
+    .@"http.define_var" = &defineVarCmd,
+    .@"http.inline_var" = &inlineVarCmd,
+    .@"http.copy_var_name" = &copyVarNameCmd,
     .@"http.refresh" = &refreshCmd,
     .@"http.save_response" = &saveResponseCmd,
 };
@@ -214,6 +239,317 @@ pub fn varRows(app: *App, rp: *RequestPane, arena: Allocator, env_name: ?[]const
         }
     }
     return out.items;
+}
+
+/// One `{{VAR}}` occurrence in a pane's text, with what a hover shows.
+pub const VarToken = struct {
+    name: []const u8,
+    /// The value as the tip shows it — masked for a secret; null when
+    /// the env lacks it.
+    shown: ?[]const u8,
+    resolved: bool,
+    /// A `{{$uuid}}`-style built-in: resolved, never "define in env".
+    dynamic: bool,
+};
+
+/// Every `{{VAR}}` of the URL / body / headers as view spans, with the
+/// flat list their ids index. On `arena`.
+pub const VarTokens = struct {
+    all: []const VarToken,
+    url: []const view.VarSpan,
+    body: []const view.VarSpan,
+    headers: []const view.VarSpan,
+};
+
+pub fn varTokens(app: *App, rp: *RequestPane, arena: Allocator, env_name: ?[]const u8) Allocator.Error!VarTokens {
+    var set = try env_mod.EnvSet.load(arena, app.io, app.workspace, env_name orelse env_mod.fallback_name);
+    set.process = &app.env;
+    var all: std.ArrayListUnmanaged(VarToken) = .empty;
+    var spans: [3][]const view.VarSpan = undefined;
+    const sources = [_][]const u8{ rp.url.items, rp.body.items, rp.headers_text.items };
+    for (sources, 0..) |src, si| {
+        var list: std.ArrayListUnmanaged(view.VarSpan) = .empty;
+        for (try env_mod.tokens(arena, src)) |tok| {
+            if (tok.name.len == 0) continue;
+            const dynamic = tok.name[0] == '$';
+            const value: ?[]const u8 = if (dynamic) "(built-in)" else set.get(tok.name);
+            const id: u32 = @intCast(all.items.len);
+            try all.append(arena, .{
+                .name = tok.name,
+                .shown = if (value) |v| (if (dynamic) v else env_mod.masked(tok.name, v, &set)) else null,
+                .resolved = value != null,
+                .dynamic = dynamic,
+            });
+            try list.append(arena, .{ .start = tok.start, .end = tok.end, .resolved = value != null, .id = id });
+        }
+        spans[si] = list.items;
+    }
+    return .{ .all = all.items, .url = spans[0], .body = spans[1], .headers = spans[2] };
+}
+
+/// The `{{VAR}}` hit under the pointer, if any — a `.script_hit` of
+/// `pane` with an id at or past `base`, scanned back to front.
+pub fn hoveredVar(ui: Ui, pane: PaneId, base: u32) ?struct { idx: usize, rect: @import("../ui/rect.zig") } {
+    const h = ui.hover orelse return null;
+    var i = ui.hits.items.items.len;
+    while (i > 0) {
+        i -= 1;
+        const e = ui.hits.items.items[i];
+        if (!e.rect.contains(h.x, h.y)) continue;
+        switch (e.target) {
+            .script_hit => |sh| if (sh.pane == pane and sh.id >= base) return .{ .idx = sh.id - base, .rect = e.rect },
+            else => {},
+        }
+        return null;
+    }
+    return null;
+}
+
+/// A press on a `{{VAR}}` in a request pane: left jumps to its line in
+/// the env file, right opens the quick-fix menu.
+pub fn varClick(app: *App, id: PaneId, rp: *RequestPane, idx: usize, m: @import("../core/key.zig").Mouse) Allocator.Error!void {
+    _ = id;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const toks = try varTokens(app, rp, a, try envName(app, a));
+    if (idx >= toks.all.len) return;
+    const tok = toks.all[idx];
+    if (m.button == .right) return openQuickFixMenu(app, tok.name, tok.dynamic, m.x, m.y);
+    if (tok.dynamic) {
+        app.toast("{{{{{s}}}}} is a built-in", .{tok.name});
+        return;
+    }
+    jumpToVarDef(app, tok.name) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+    };
+}
+
+/// Open the active env file on the line that defines `name`, or at its
+/// end when the name is missing (the file is created under `.mnml/env`
+/// then) so the definition can be typed straight away.
+pub fn jumpToVarDef(app: *App, name: []const u8) CommandError!void {
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sel = try envSelection(app, a);
+    var target: ?[]const u8 = null;
+    var line: ?usize = null;
+    for ([_][]const u8{ ".mnml", ".rqst" }) |sub| {
+        const path = try env_mod.envPath(a, app.workspace, sub, sel.name);
+        const text = Io.Dir.cwd().readFileAlloc(app.io, path, a, .limited(1 << 20)) catch continue;
+        if (target == null) target = path;
+        if (env_mod.lineOfKey(text, name)) |n| {
+            target = path;
+            line = n;
+            break;
+        }
+    }
+    const path = target orelse blk: {
+        const fresh = try env_mod.envPath(a, app.workspace, ".mnml", sel.name);
+        if (std.fs.path.dirname(fresh)) |d| Io.Dir.cwd().createDirPath(app.io, d) catch {};
+        Io.Dir.cwd().writeFile(app.io, .{ .sub_path = fresh, .data = "" }) catch return app.diag.fail(app.frame.allocator(), "env: cannot create {s}", .{app.relPath(fresh)});
+        break :blk fresh;
+    };
+    const copy = try app.frame.allocator().dupe(u8, path);
+    _ = app.openEditor(copy) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return app.diag.fail(app.frame.allocator(), "env: cannot open {s}", .{app.relPath(path)}),
+    };
+    const e = app.activeEditor() orelse return;
+    if (line) |n| {
+        e.buf.editor.placeCursor(n, 0);
+    } else {
+        const last = e.buf.editor.lineCount() -| 1;
+        e.buf.editor.placeCursor(last, std.math.maxInt(u32) / 2);
+        app.toast("{{{{{s}}}}} is not defined in {s} — append it here", .{ name, app.relPath(path) });
+    }
+    app.needs_render = true;
+}
+
+/// Take the quick-fix menu's `{{VAR}}` out of the state: the caller
+/// owns it now.
+pub fn takeQuickFix(app: *App) ?[]u8 {
+    const v = app.http.quick_fix_var;
+    app.http.quick_fix_var = null;
+    return v;
+}
+
+/// A menu is closing without one of its rows running (Esc, a click
+/// elsewhere): the `{{VAR}}` it was opened on must not outlive it, or
+/// the next caret-based var command would act on the wrong token.
+pub fn overlayClosing(app: *App) void {
+    if (app.overlay != .menu) return;
+    if (takeQuickFix(app)) |v| app.gpa.free(v);
+}
+
+fn setQuickFixVar(app: *App, name: []const u8) Allocator.Error!void {
+    const copy = try app.gpa.dupe(u8, name);
+    if (app.http.quick_fix_var) |old| app.gpa.free(old);
+    app.http.quick_fix_var = copy;
+}
+
+/// The quick-fix rows for `{{name}}`. A built-in has nothing to define.
+pub fn openQuickFixMenu(app: *App, name: []const u8, dynamic: bool, x: u16, y: u16) Allocator.Error!void {
+    try setQuickFixVar(app, name);
+    var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    if (!dynamic) {
+        try rows.append(app.gpa, .{ .label = "Define in env…", .action = .{ .command = .@"http.define_var" } });
+        try rows.append(app.gpa, .{ .label = "Jump to definition", .action = .{ .command = .@"http.jump_to_env_var" } });
+    }
+    try rows.append(app.gpa, .{ .label = "Pick env…", .action = .{ .command = .@"http.pick_env" }, .separator_before = !dynamic });
+    try rows.append(app.gpa, .{ .label = "Inline value", .action = .{ .command = .@"http.inline_var" } });
+    try rows.append(app.gpa, .{ .label = "Copy variable name", .action = .{ .command = .@"http.copy_var_name" }, .separator_before = true });
+    const title = try std.fmt.allocPrint(app.frame.allocator(), "{{{{{s}}}}}", .{name});
+    try app.openMenu(title, try rows.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The `{{VAR}}` a var command acts on: the quick-fix menu's, else the
+/// one under the caret of the active request pane, else the Vars row.
+/// Always a copy on `arena` — a command that edits the field must not
+/// hold a slice of it.
+fn currentVar(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (takeQuickFix(app)) |v| {
+        defer app.gpa.free(v);
+        return try arena.dupe(u8, v);
+    }
+    const rp = activeRequest(app) orelse {
+        if (app.activeEditor()) |e| return if (try editorVarAtCursor(e, arena)) |n| try arena.dupe(u8, n) else null;
+        return null;
+    };
+    if (try rp.varAtCaret(arena)) |n| return try arena.dupe(u8, n);
+    if (rp.edit_tab == .vars) {
+        const rows = try varRows(app, rp, arena, try envName(app, arena));
+        if (rp.row_cursor < rows.len) return try arena.dupe(u8, rows[rp.row_cursor].name);
+    }
+    return null;
+}
+
+fn quickFixCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "quick_fix: no {{{{VAR}}}} under the caret", .{});
+    const pos: editor_view.Cursor = app.cursor_pos orelse .{ .x = 0, .y = 0 };
+    try openQuickFixMenu(app, name, name.len > 0 and name[0] == '$', pos.x, pos.y + 1);
+}
+
+fn defineVarCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "define_var: no {{{{VAR}}}} under the caret", .{});
+    var scratch = std.heap.ArenaAllocator.init(app.gpa);
+    defer scratch.deinit();
+    var set = try loadEnv(app, scratch.allocator());
+    defer set.deinit();
+    try @import("cmd_http.zig").openEnvValuePrompt(app, name, set.get(name) orelse "");
+}
+
+fn inlineVarCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "inline_var: no {{{{VAR}}}} under the caret", .{});
+    var scratch = std.heap.ArenaAllocator.init(app.gpa);
+    defer scratch.deinit();
+    var set = try loadEnv(app, scratch.allocator());
+    defer set.deinit();
+    const pattern = try std.fmt.allocPrint(scratch.allocator(), "{{{{{s}}}}}", .{name});
+    const value = try env_mod.expand(scratch.allocator(), app.io, pattern, &set);
+    if (std.mem.eql(u8, value, pattern)) return app.diag.fail(arena, "inline_var: {{{{{s}}}}} is not defined in the active env", .{name});
+    if (activeRequest(app)) |rp| {
+        const n = try rp.inlineVar(name, value);
+        app.toast("inlined {{{{{s}}}}} × {d}", .{ name, n });
+        return;
+    }
+    const e = try app.requireEditor();
+    const text = e.buf.editor.bytes();
+    const fresh = try env_mod.expand(scratch.allocator(), app.io, text, &set);
+    e.buf.editor.setText(fresh) catch return error.OutOfMemory;
+    e.hl_dirty = true;
+    app.toast("inlined the {{{{VAR}}}}s of the buffer", .{});
+}
+
+fn copyVarNameCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "copy_var_name: no {{{{VAR}}}} under the caret", .{});
+    try app.clipboard.set(name, false);
+    app.toast("copied {s}", .{name});
+}
+
+// ─── the same tokens in an editor holding a request file ────────────────
+
+/// The `{{VAR}}` spans of an editor buffer holding a `.http` / `.curl`
+/// / `.rest` file, for the editor view's hook; empty for anything else.
+pub fn editorVarSpans(app: *App, arena: Allocator, e: *app_mod.EditorPane) Allocator.Error![]editor_view.VarSpan {
+    if (!isRequestBuffer(e)) return &.{};
+    var set = try loadEnv(app, arena);
+    var out: std.ArrayListUnmanaged(editor_view.VarSpan) = .empty;
+    for (try env_mod.tokens(arena, e.buf.editor.bytes()), 0..) |tok, i| {
+        if (tok.name.len == 0) continue;
+        const resolved = tok.name[0] == '$' or set.get(tok.name) != null;
+        try out.append(arena, .{ .start = tok.start, .end = tok.end, .resolved = resolved, .id = @intCast(i) });
+    }
+    return out.items;
+}
+
+pub fn isRequestBuffer(e: *app_mod.EditorPane) bool {
+    if (e.buf.path) |p| return parse.isRequestPath(p);
+    return parse.looksLikeHttpFile(e.buf.editor.bytes());
+}
+
+fn editorVarAtCursor(e: *app_mod.EditorPane, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (!isRequestBuffer(e)) return null;
+    const at = e.buf.editor.cursor;
+    for (try env_mod.tokens(arena, e.buf.editor.bytes())) |tok| if (at >= tok.start and at <= tok.end) return tok.name;
+    return null;
+}
+
+/// `gd` on a `{{VAR}}` in a request file: to its definition. False when
+/// the cursor is not on one — the caller carries on with the LSP.
+pub fn jumpVarAtCursor(app: *App) CommandError!bool {
+    const e = app.activeEditor() orelse return false;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const name = (try editorVarAtCursor(e, arena.allocator())) orelse return false;
+    if (name[0] == '$') {
+        app.toast("{{{{{s}}}}} is a built-in", .{name});
+        return true;
+    }
+    try jumpToVarDef(app, name);
+    return true;
+}
+
+/// A press on a `{{VAR}}` span in an editor (the view registered it as
+/// `editor_view.var_hit_base + i`).
+pub fn editorVarClick(app: *App, id: PaneId, e: *app_mod.EditorPane, hit_id: u32, m: @import("../core/key.zig").Mouse) Allocator.Error!void {
+    _ = id;
+    if (m.kind != .press or hit_id < editor_view.var_hit_base) return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const toks = try env_mod.tokens(arena.allocator(), e.buf.editor.bytes());
+    const i = hit_id - editor_view.var_hit_base;
+    if (i >= toks.len) return;
+    const name = toks[i].name;
+    const dynamic = name.len > 0 and name[0] == '$';
+    if (m.button == .right) return openQuickFixMenu(app, name, dynamic, m.x, m.y);
+    if (dynamic) {
+        app.toast("{{{{{s}}}}} is a built-in", .{name});
+        return;
+    }
+    jumpToVarDef(app, name) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+    };
+}
+
+/// The tip for a hovered `{{VAR}}` span in an editor, after the view
+/// painted (it registered the hits).
+pub fn drawEditorVarTip(app: *App, ui: Ui, id: PaneId, e: *app_mod.EditorPane, area: @import("../ui/rect.zig")) Allocator.Error!void {
+    const hv = hoveredVar(ui, id, editor_view.var_hit_base) orelse return;
+    const toks = try env_mod.tokens(ui.arena, e.buf.editor.bytes());
+    if (hv.idx >= toks.len) return;
+    const name = toks[hv.idx].name;
+    var set = try loadEnv(app, ui.arena);
+    const value: ?[]const u8 = if (name.len > 0 and name[0] == '$') "(built-in)" else if (set.get(name)) |v| env_mod.masked(name, v, &set) else null;
+    view.drawVarTip(ui, area, hv.rect, name, value, set.name);
 }
 
 pub fn varCount(app: *App, rp: *RequestPane) Allocator.Error!usize {
@@ -414,6 +750,11 @@ pub fn parseActive(app: *App, arena: Allocator) CommandError!Active {
 
 // ─── the send ───────────────────────────────────────────────────────────
 
+/// Whether a send hands its body over as it arrives: `auto` streams
+/// an event-stream or a chunked body, `always` streams whatever comes
+/// (`http.send_streaming`), `never` is the fan-out / bench / chain shape.
+pub const StreamMode = enum { never, auto, always };
+
 const Job = struct {
     id: u64,
     pane: ?PaneId,
@@ -421,6 +762,12 @@ const Job = struct {
     req: Request,
     label: ?[]u8 = null,
     cookie: ?[]u8 = null,
+    stream: StreamMode = .never,
+    /// Set once the head went out as `.sse`; the end goes the same way.
+    streamed: bool = false,
+    events: *event.EventQueue,
+    io: Io,
+    gpa: Allocator,
 
     fn destroy(self: *Job, gpa: Allocator) void {
         self.req.deinit(gpa);
@@ -430,35 +777,86 @@ const Job = struct {
     }
 };
 
+pub const SpawnOptions = struct {
+    label: ?[]const u8 = null,
+    cookie: ?[]const u8 = null,
+    stream: StreamMode = .never,
+};
+
 /// Start a worker for `req` (ownership moves). Returns the job id.
 pub fn spawn(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, label: ?[]const u8, cookie: ?[]const u8) CommandError!u64 {
+    return spawnWith(app, pane, kind, req, .{ .label = label, .cookie = cookie });
+}
+
+pub fn spawnWith(app: *App, pane: ?PaneId, kind: client.JobKind, req: Request, opts: SpawnOptions) CommandError!u64 {
     const gpa = app.gpa;
     var incoming = req;
     errdefer incoming.deinit(gpa);
     const job = try gpa.create(Job);
     errdefer gpa.destroy(job);
-    job.* = .{ .id = app.http.nextJob(), .pane = pane, .kind = kind, .req = incoming };
+    job.* = .{ .id = app.http.nextJob(), .pane = pane, .kind = kind, .req = incoming, .stream = opts.stream, .events = &app.events, .io = app.io, .gpa = gpa };
     incoming = undefined;
-    if (label) |l| job.label = try gpa.dupe(u8, l);
+    if (opts.label) |l| job.label = try gpa.dupe(u8, l);
     errdefer if (job.label) |l| gpa.free(l);
-    if (cookie) |c| job.cookie = try gpa.dupe(u8, c);
+    if (opts.cookie) |c| job.cookie = try gpa.dupe(u8, c);
     errdefer if (job.cookie) |c| gpa.free(c);
     const id = job.id;
-    app.http.group.concurrent(app.io, worker, .{ &app.events, app.io, gpa, job }) catch |err| {
+    if (opts.stream == .never) {
+        app.http.group.concurrent(app.io, worker, .{job}) catch |err| {
+            return app.diag.fail(app.frame.allocator(), "http: could not start the send: {s}", .{@errorName(err)});
+        };
+        return id;
+    }
+    const own = try gpa.create(JobHandle);
+    errdefer gpa.destroy(own);
+    own.* = .{ .pane = pane };
+    try app.http.handles.put(gpa, id, own);
+    errdefer _ = app.http.handles.swapRemove(id);
+    own.group.concurrent(app.io, worker, .{job}) catch |err| {
         return app.diag.fail(app.frame.allocator(), "http: could not start the send: {s}", .{@errorName(err)});
     };
     return id;
 }
 
+/// Drop the per-job group once its worker has posted its last event.
+/// `cancel` on a finished group only releases its resources.
+fn releaseHandle(app: *App, job: u64) void {
+    const h = app.http.handles.get(job) orelse return;
+    _ = app.http.handles.swapRemove(job);
+    h.group.cancel(app.io);
+    app.gpa.destroy(h);
+}
+
 /// D1: the job is the worker's until it has posted; the result is the
 /// event's from there. Workers never toast (D2).
-fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job) Io.Cancelable!void {
+fn worker(job: *Job) Io.Cancelable!void {
+    const gpa = job.gpa;
+    const io = job.io;
+    const events = job.events;
     defer job.destroy(gpa);
     const started = App.nowMs(io);
-    var outcome = client.send(gpa, io, &job.req, .{ .cookie = job.cookie }) catch {
+    const sink: ?client.Stream = if (job.stream == .never) null else .{ .ctx = job, .onHead = onStreamHead, .onBytes = onStreamBytes, .onDone = onStreamDone };
+    var outcome = client.send(gpa, io, &job.req, .{ .cookie = job.cookie, .stream = sink }) catch {
         postErr(events, io, gpa, "out of memory during the send");
         return;
     };
+    if (job.streamed) {
+        // The head went out as `.sse`; the end went out from `onDone`,
+        // so only a failure after the head is left to report.
+        switch (outcome) {
+            .moved => {},
+            .err => |e| {
+                const chunk = client.StreamChunk.create(gpa, job.id, job.pane, .{ .err = e }) catch {
+                    gpa.free(e);
+                    postErr(events, io, gpa, "out of memory finishing the stream");
+                    return;
+                };
+                events.post(io, .{ .sse = chunk });
+            },
+            .ok => outcome.deinit(gpa),
+        }
+        return;
+    }
     const r = JobResult.create(gpa, job.id, job.pane, job.kind, job.req.method, job.req.url, outcome) catch {
         outcome.deinit(gpa);
         postErr(events, io, gpa, "out of memory finishing the send");
@@ -470,6 +868,56 @@ fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Job) Io.Cance
         job.label = null;
     }
     events.post(io, .{ .http = r });
+}
+
+/// The sink's head: decide, copy the head onto the gpa, post it.
+fn onStreamHead(ctx: *anyopaque, head: client.HeadInfo) bool {
+    const job: *Job = @ptrCast(@alignCast(ctx));
+    const want = switch (job.stream) {
+        .never => false,
+        .always => true,
+        .auto => head.is_sse or head.chunked,
+    };
+    if (!want) return false;
+    const gpa = job.gpa;
+    const status_text = gpa.dupe(u8, head.status_text) catch return false;
+    errdefer gpa.free(status_text);
+    const headers = gpa.alloc(client.Header, head.headers.len) catch return false;
+    var filled: usize = 0;
+    errdefer {
+        for (headers[0..filled]) |h| {
+            gpa.free(h.name);
+            gpa.free(h.value);
+        }
+        gpa.free(headers);
+    }
+    for (head.headers) |h| {
+        headers[filled].name = gpa.dupe(u8, h.name) catch return false;
+        errdefer gpa.free(headers[filled].name);
+        headers[filled].value = gpa.dupe(u8, h.value) catch return false;
+        filled += 1;
+    }
+    const chunk = client.StreamChunk.create(gpa, job.id, job.pane, .{ .head = .{ .status = head.status, .status_text = status_text, .headers = headers, .is_sse = head.is_sse, .chunked = head.chunked } }) catch return false;
+    job.streamed = true;
+    job.events.post(job.io, .{ .sse = chunk });
+    return true;
+}
+
+fn onStreamDone(ctx: *anyopaque, end: client.StreamEnd) void {
+    const job: *Job = @ptrCast(@alignCast(ctx));
+    const chunk = client.StreamChunk.create(job.gpa, job.id, job.pane, .{ .done = .{ .timing = end.timing, .bytes = end.bytes, .truncated = end.truncated } }) catch return;
+    job.events.post(job.io, .{ .sse = chunk });
+}
+
+fn onStreamBytes(ctx: *anyopaque, bytes: []const u8) void {
+    const job: *Job = @ptrCast(@alignCast(ctx));
+    const gpa = job.gpa;
+    const copy = gpa.dupe(u8, bytes) catch return;
+    const chunk = client.StreamChunk.create(gpa, job.id, job.pane, .{ .bytes = copy }) catch {
+        gpa.free(copy);
+        return;
+    };
+    job.events.post(job.io, .{ .sse = chunk });
 }
 
 fn postErr(events: *event.EventQueue, io: Io, gpa: Allocator, msg: []const u8) void {
@@ -489,16 +937,79 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     const a = arena.allocator();
     var set = try loadEnv(app, a);
     set.process = &app.env;
-    const missing = try env_mod.unresolved(a, rp.request.url, &set);
+    // Pre-request directives land on a copy: the editable fields stay
+    // as written, the wire sees the `@set-*` values.
+    var staged = try rp.request.clone(a);
+    const script = try script_mod.parse(a, rp.request.script orelse "");
+    try script_mod.applyPre(a, &staged, &set, script);
+    const missing = try env_mod.unresolved(a, staged.url, &set);
     if (missing.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing[0], set.name orelse "?" });
-    const expanded = try expandWith(app.gpa, app.io, &rp.request, &set);
+    const expanded = try expandWith(app.gpa, app.io, &staged, &set);
     try rp.setSentLine(expanded.method, expanded.url);
     const cookie = try @import("cmd_http.zig").cookieHeaderFor(app, a, expanded.url);
-    const job = try spawn(app, id, .send, expanded, null, cookie);
+    const mode: StreamMode = if (app.http.force_stream) .always else .auto;
+    app.http.force_stream = false;
+    const job = try spawnWith(app, id, .send, expanded, .{ .cookie = cookie, .stream = mode });
     rp.keepAsPrev();
     rp.state = .{ .sending = job };
     app.http.sending += 1;
     app.needs_render = true;
+}
+
+/// D1: a `.sse` chunk is ours to adopt or destroy. The head opens the
+/// stream on its pane, bytes append, `done` seals it into the Done
+/// response and runs everything a finished send runs.
+pub fn handleStream(app: *App, c: *client.StreamChunk) Allocator.Error!void {
+    defer c.destroy(app.gpa);
+    app.needs_render = true;
+    const id = c.pane orelse return;
+    const rp = (app.panes.get(id) orelse return).asRequest() orelse return;
+    const cmd_http = @import("cmd_http.zig");
+    switch (c.kind) {
+        .head => |*h| {
+            if (rp.state != .sending or rp.state.sending != c.job) return;
+            var head: Response = .{ .status = h.status, .status_text = h.status_text, .final_url = try app.gpa.dupe(u8, rp.request.url), .headers = h.headers, .body = &.{} };
+            // Adopted: the box must not free them.
+            c.kind = .{ .done = .{ .timing = .{}, .bytes = 0, .truncated = false } };
+            errdefer head.deinit(app.gpa);
+            rp.beginStream(c.job, head, h.is_sse, h.chunked, app.now_ms);
+        },
+        .bytes => |b| {
+            if (rp.state.job() != c.job or rp.state != .streaming) return;
+            try rp.appendStream(b);
+        },
+        .done => |d| {
+            if (rp.state.job() != c.job or rp.state != .streaming) return;
+            app.http.sending -|= 1;
+            releaseHandle(app, c.job);
+            const st = rp.streaming().?;
+            const facts: cmd_http.HistoryFacts = .{ .method = rp.request.method, .url = try app.frame.allocator().dupe(u8, rp.request.url), .status = st.head.status, .elapsed_ms = d.timing.total_ms };
+            try rp.finishStream(d.timing, d.truncated);
+            try cmd_http.afterResponse(app, id, rp);
+            cmd_http.recordHistory(app, facts, rp) catch {};
+        },
+        .err => |msg| {
+            if (rp.state.job() != c.job) return;
+            app.http.sending -|= 1;
+            releaseHandle(app, c.job);
+            try rp.setFailed(msg);
+        },
+    }
+}
+
+/// `http.cancel`: interrupt the active pane's send, streaming or not.
+fn cancelCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    const job = rp.state.job() orelse return app.diag.fail(app.frame.allocator(), "http.cancel: nothing in flight on this pane", .{});
+    const own = app.http.handles.get(job) orelse return app.diag.fail(app.frame.allocator(), "http.cancel: this send cannot be interrupted on its own — :http.abort stops every worker", .{});
+    own.group.cancel(app.io);
+    _ = app.http.handles.swapRemove(job);
+    app.gpa.destroy(own);
+    const was_streaming = rp.state == .streaming;
+    const got: usize = if (rp.streaming()) |st| st.body.items.len else 0;
+    try rp.setFailed(if (was_streaming) "canceled mid-stream" else "canceled");
+    app.http.sending -|= 1;
+    if (was_streaming) app.toast("http.cancel: stopped after {d} bytes", .{got}) else app.toast("http.cancel: stopped", .{});
 }
 
 /// D1: the result is ours to adopt or destroy. A job no pane is waiting
@@ -508,6 +1019,7 @@ pub fn handle(app: *App, r: *JobResult) Allocator.Error!void {
     app.needs_render = true;
     switch (r.kind) {
         .send => {
+            releaseHandle(app, r.job);
             const id = r.pane orelse return;
             const rp = (app.panes.get(id) orelse return).asRequest() orelse return;
             if (rp.state != .sending or rp.state.sending != r.job) return;
@@ -522,7 +1034,7 @@ pub fn handle(app: *App, r: *JobResult) Allocator.Error!void {
                 .err => |msg| try rp.setFailed(msg),
                 .moved => {},
             }
-            cmd_http.recordHistory(app, r, rp) catch {};
+            cmd_http.recordHistory(app, .{ .method = r.method, .url = r.url, .status = r.status(), .elapsed_ms = r.elapsed_ms }, rp) catch {};
         },
         .fan_env => try @import("cmd_http.zig").onFanResult(app, r),
         .bench, .lookup, .chain => try @import("cmd_http.zig").onJobResult(app, r),
@@ -987,9 +1499,14 @@ fn fieldSelectAllCmd(app: *App) CommandError!void {
 fn abortCmd(app: *App) CommandError!void {
     app.http.group.cancel(app.io);
     app.http.group = .init;
+    for (app.http.handles.values()) |h| {
+        h.group.cancel(app.io);
+        app.gpa.destroy(h);
+    }
+    app.http.handles.clearRetainingCapacity();
     var n: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .request => |*rp| if (rp.state == .sending) {
+        .request => |*rp| if (rp.isSending()) {
             try rp.setFailed("aborted");
             n += 1;
         },
@@ -1021,14 +1538,23 @@ fn copyAsCmd(app: *App) CommandError!void {
     return @import("cmd_http.zig").copyAsPicker(app);
 }
 
-fn notInThisBuild(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "the split edit view is not in this build", .{});
+fn toggleEditSplitCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    rp.toggleSplit();
+    if (rp.split) app.toast("edit split: {s} | {s}", .{ rp.edit_tab.label(), rp.split_tab.label() }) else app.toast("edit split: off", .{});
+}
+
+fn toggleSplitOrientationCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    rp.orientation = rp.orientation.next();
+    app.toast("request / response: {s}", .{rp.orientation.label()});
 }
 
 fn refreshCmd(app: *App) CommandError!void {
     _ = app.http.picker_arena.reset(.retain_capacity);
     app.http.history_rows = &.{};
     app.http.captured_curls = &.{};
+    try @import("http_panel.zig").refresh(app);
     app.needs_render = true;
     app.toast("http: rescanned", .{});
 }
@@ -1159,4 +1685,291 @@ test "save: a multi-block .http writes back one block; a scratch prompts" {
     try testing.expectEqualStrings("params: cleared 1", app.lastToast().?);
     try command.run(&app, .{ .static = .@"http.copy_curl" });
     try testing.expect(std.mem.startsWith(u8, app.clipboard.text(), "curl 'https://example.com/two EDIT'"));
+}
+
+fn pumpUntil(app: *App, rp: *RequestPane, comptime pred: fn (*RequestPane) bool, max_ticks: usize) !void {
+    var waited: usize = 0;
+    while (!pred(rp) and waited < max_ticks) : (waited += 1) {
+        try app.tick(App.nowMs(app.io));
+        try Io.sleep(app.io, .fromMilliseconds(10), .awake);
+    }
+}
+
+test "stream: an event-stream lands event by event, live, then seals into the Done response" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const chunks = [_][]const u8{ "event: a\ndata: one\n\n", "data: two\n\n", "event: c\ndata: three\n\n" };
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "text/event-stream" }}, .chunks = &chunks, .chunk_delay_ms = 60 });
+    defer server.stop(testing.io);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/events", .{server.port});
+    defer testing.allocator.free(url);
+    try rp.url.appendSlice(testing.allocator, url);
+    try command.run(&app, .{ .static = .@"http.send" });
+    try testing.expect(rp.state == .sending);
+    // The head arrives first: the pane is streaming with an empty body.
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state != .sending;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .streaming);
+    try testing.expect(rp.streaming().?.is_sse);
+    try testing.expectEqual(@as(u16, 200), rp.streaming().?.head.status);
+    // Events land one at a time — the second is visible before the third exists.
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state != .streaming or p.streaming().?.events >= 2;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .streaming);
+    try testing.expectEqual(@as(usize, 2), rp.streaming().?.events);
+    try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "data: two") != null);
+    try testing.expect(std.mem.indexOf(u8, rp.streaming().?.body.items, "three") == null);
+    try testing.expectEqual(@as(u32, 1), app.http.sending);
+    // The socket closes: the stream seals into a Done response with the whole body.
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .done);
+    try testing.expectEqualStrings("event: a\ndata: one\n\ndata: two\n\nevent: c\ndata: three\n\n", rp.response().?.body);
+    try testing.expectEqual(@as(usize, 0), app.http.handles.count());
+    try testing.expectEqual(@as(u32, 0), app.http.sending);
+    try command.run(&app, .{ .static = .@"sse.parse_active_response" });
+    try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "sse: 3 event(s)"));
+    const hist = try tmp.dir.readFileAlloc(testing.io, ".rqst/history.jsonl", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(hist);
+    try testing.expect(std.mem.indexOf(u8, hist, "\"status\":200") != null);
+}
+
+test "stream: http.cancel stops a stream where it is; a chunked body of any type streams with a byte count" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const chunks = [_][]const u8{ "data: first\n\n", "data: never\n\n" };
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "text/event-stream" }}, .chunks = &chunks, .chunk_delay_ms = 400 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/slow", .{server.port});
+    defer testing.allocator.free(url);
+    try rp.url.appendSlice(testing.allocator, url);
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .streaming and p.streaming().?.events >= 1;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .streaming);
+    // The server is parked on its 400 ms sleep; the cancel must not wait for it.
+    const before = App.nowMs(app.io);
+    try command.run(&app, .{ .static = .@"http.cancel" });
+    try testing.expect(App.nowMs(app.io) - before < 300);
+    try testing.expect(rp.state == .failed);
+    try testing.expectEqualStrings("canceled mid-stream", rp.state.failed);
+    try testing.expectEqual(@as(usize, 0), app.http.handles.count());
+    try testing.expectEqual(@as(u32, 0), app.http.sending);
+    // A late chunk for the dead job is dropped, not appended.
+    try app.tick(App.nowMs(app.io));
+    try testing.expect(rp.state == .failed);
+    server.stop(testing.io);
+
+    // Chunked framing on a plain body streams too, counting bytes.
+    const parts = [_][]const u8{ "{\"a\":", "1}" };
+    var server2 = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "application/json" }}, .chunks = &parts, .chunked = true, .chunk_delay_ms = 30 });
+    defer server2.stop(testing.io);
+    const url2 = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/chunked", .{server2.port});
+    defer testing.allocator.free(url2);
+    rp.url.clearRetainingCapacity();
+    try rp.url.appendSlice(testing.allocator, url2);
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .streaming and p.streaming().?.body.items.len > 0;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .streaming);
+    try testing.expect(!rp.streaming().?.is_sse and rp.streaming().?.chunked);
+    try testing.expectEqual(@as(usize, 5), rp.streaming().?.body.items.len);
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .done);
+    try testing.expectEqualStrings("{\"a\":1}", rp.response().?.body);
+    try testing.expect(rp.resp_editor != null);
+    // `http.cancel` with nothing in flight says so.
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"http.cancel" }));
+}
+
+test "directives: @set-* reach the wire, @assert rows land on the Tests tab, @capture persists into the env" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .headers = &.{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "x-request-id", .value = "req-7" } }, .body = "{\"id\":7,\"name\":\"Ada\"}" });
+    defer server.stop(testing.io);
+    const src = try std.fmt.allocPrint(testing.allocator,
+        \\# @set-var PROBE = yes
+        \\# @set-header X-Probe = {{{{PROBE}}}}
+        \\# @set-cookie session = abc
+        \\# @assert status == 200
+        \\# @assert body.id == 7
+        \\# @assert header.content-type ~ /json/
+        \\# @assert body.name == Grace
+        \\# @capture USER_ID = body.id
+        \\# @capture TRACE = header x-request-id
+        \\GET http://127.0.0.1:{d}/users/7
+        \\
+    , .{server.port});
+    defer testing.allocator.free(src);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "u.http", .data = src });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "u.http" });
+    defer testing.allocator.free(path);
+    const id = try app.openPath(path);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try testing.expect(rp.request.script != null);
+    try testing.expect(std.mem.indexOf(u8, rp.request.script.?, "@capture USER_ID = body.id") != null);
+    // The pane's own fields stay as written: no X-Probe in the Headers tab.
+    try testing.expect(std.mem.indexOf(u8, rp.headers_text.items, "X-Probe") == null);
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .done);
+    const seen = server.lastRequest();
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-probe: yes\r\n") != null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "cookie: session=abc\r\n") != null);
+    // Tests tab: three passes, one failure with the value it saw, two captures.
+    var passes: usize = 0;
+    var fails: usize = 0;
+    for (rp.tests.items) |line| {
+        if (std.mem.startsWith(u8, line, "✓")) passes += 1;
+        if (std.mem.startsWith(u8, line, "✗")) fails += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), passes);
+    try testing.expectEqual(@as(usize, 1), fails);
+    var found_fail = false;
+    var found_capture = false;
+    for (rp.tests.items) |line| {
+        if (std.mem.eql(u8, line, "✗ body.name == Grace — got Ada")) found_fail = true;
+        if (std.mem.eql(u8, line, "↳ TRACE = req-7")) found_capture = true;
+    }
+    try testing.expect(found_fail and found_capture);
+    try testing.expectEqualStrings("tests: 3 passed, 1 failed", app.lastToast().?);
+    // Captures were written into the active env file.
+    const env_text = try tmp.dir.readFileAlloc(testing.io, ".mnml/env/dev.env", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(env_text);
+    try testing.expect(std.mem.indexOf(u8, env_text, "USER_ID=7\n") != null);
+    try testing.expect(std.mem.indexOf(u8, env_text, "TRACE=req-7\n") != null);
+    // A write-back keeps the directive lines above the request line.
+    try rp.url.appendSlice(testing.allocator, "?x=1");
+    try saveToSource(&app);
+    const out = try tmp.dir.readFileAlloc(testing.io, "u.http", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.startsWith(u8, out, "# @set-var PROBE = yes\n"));
+    try testing.expect(std.mem.indexOf(u8, out, "# @capture TRACE = header x-request-id\nGET http://127.0.0.1:") != null);
+}
+
+test "vars: tokens classify against the env, a secret masks in the tip, the jump lands on the key's line or at the end" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.createDirPath(testing.io, ".rqst");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".rqst/config", .data = "default_env=dev\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=https://dev.example\n# @secret TOKEN\nTOKEN=abc123\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "api.http", .data = "GET {{HOST}}/x/{{MISSING}}?id={{$uuid}}\nAuthorization: Bearer {{TOKEN}}\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "api.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openPath(path);
+    const rp = activeRequest(&app).?;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const toks = try varTokens(&app, rp, a, try envName(&app, a));
+    try testing.expectEqual(@as(usize, 4), toks.all.len);
+    try testing.expectEqual(@as(usize, 3), toks.url.len);
+    try testing.expectEqual(@as(usize, 1), toks.headers.len);
+    try testing.expectEqual(@as(usize, 0), toks.body.len);
+    const host = toks.all[toks.url[0].id];
+    try testing.expectEqualStrings("HOST", host.name);
+    try testing.expect(host.resolved and !host.dynamic);
+    try testing.expectEqualStrings("https://dev.example", host.shown.?);
+    const missing = toks.all[toks.url[1].id];
+    try testing.expectEqualStrings("MISSING", missing.name);
+    try testing.expect(!missing.resolved and missing.shown == null and !toks.url[1].resolved);
+    const uuid = toks.all[toks.url[2].id];
+    try testing.expect(uuid.dynamic and uuid.resolved);
+    try testing.expectEqualStrings("(built-in)", uuid.shown.?);
+    const token = toks.all[toks.headers[0].id];
+    try testing.expectEqualStrings("TOKEN", token.name);
+    try testing.expect(token.resolved);
+    try testing.expectEqualStrings("••••••••", token.shown.?);
+    // The spans sit on the tokens' bytes.
+    try testing.expectEqualStrings("{{HOST}}", rp.url.items[toks.url[0].start..toks.url[0].end]);
+
+    // The jump: a defined key lands on its line, an undefined one at
+    // the end of the file with a hint.
+    try jumpToVarDef(&app, "TOKEN");
+    const e = app.activeEditor().?;
+    try testing.expect(std.mem.endsWith(u8, e.buf.path.?, ".mnml/env/dev.env"));
+    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try jumpToVarDef(&app, "NOPE");
+    try testing.expectEqual(e.buf.editor.lineCount() - 1, app.activeEditor().?.buf.editor.currentLine());
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "not defined") != null);
+    // `gd` in that editor is not on a request file: it does nothing here.
+    try testing.expect(!try jumpVarAtCursor(&app));
+}
+
+test "vars: the editor hook paints a request buffer's tokens and gd on one jumps to the env file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=h\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "req.http", .data = "GET {{HOST}}/a/{{NOPE}}\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "plain.txt", .data = "{{HOST}}\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "req.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openEditor(path);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const e = app.activeEditor().?;
+    const spans = try editorVarSpans(&app, arena.allocator(), e);
+    try testing.expectEqual(@as(usize, 2), spans.len);
+    try testing.expect(spans[0].resolved and !spans[1].resolved);
+    try testing.expectEqual(@as(usize, 4), spans[0].start);
+    // Not a request file: no spans, no jump.
+    const plain = try std.fs.path.join(testing.allocator, &.{ root, "plain.txt" });
+    defer testing.allocator.free(plain);
+    _ = try app.openEditor(plain);
+    try testing.expectEqual(@as(usize, 0), (try editorVarSpans(&app, arena.allocator(), app.activeEditor().?)).len);
+    try testing.expect(!try jumpVarAtCursor(&app));
+    // Back on the request file, the cursor on {{HOST}}: gd lands on HOST's line.
+    _ = try app.openEditor(path);
+    app.activeEditor().?.buf.editor.placeCursor(0, 6);
+    try testing.expect(try jumpVarAtCursor(&app));
+    try testing.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.path.?, "dev.env"));
+    try testing.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
 }

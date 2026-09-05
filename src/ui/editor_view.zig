@@ -38,6 +38,14 @@ pub const PaneId = ids.PaneId;
 /// A styled byte range (syntax highlighting). `style.fg` and the SGR
 /// flags apply; the background is layered by the view.
 pub const Span = struct { start: usize, end: usize, style: Style };
+// ── {{VAR}} hook ── a request file's variable tokens, painted over the
+// syntax spans (the variable role when the env resolves them, the error
+// role when not) and registered as `.script_hit{ pane, var_hit_base + id }`
+// so a click or hover reaches the http side. Nothing else in this file
+// knows what a request is.
+pub const VarSpan = struct { start: usize, end: usize, resolved: bool, id: u32 };
+pub const var_hit_base: u32 = 100_000;
+// ── end {{VAR}} hook ──
 pub const Range = struct { start: usize, end: usize };
 /// A collapsed fold: `first_line` stays visible, `first_line+1..=last_line`
 /// are hidden. 0-based, inclusive.
@@ -59,6 +67,7 @@ pub const Doc = struct {
     folds: []const Fold = &.{},
     /// Sorted by `start`, non-overlapping.
     spans: []const Span = &.{},
+    var_spans: []const VarSpan = &.{},
     /// Sorted by `start`.
     matches: []const Range = &.{},
     /// Index into `matches`.
@@ -524,6 +533,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
         const is_cursor_line = line == cursor_line;
         const row_style: Style = if (is_cursor_line) t.cursor_line else t.bg;
         var spans = RangeCursor(Span).init(doc.spans, line_start);
+        var var_spans = RangeCursor(VarSpan).init(doc.var_spans, line_start);
         var matches = RangeCursor(Range).init(doc.matches, line_start);
         var underlines = RangeCursor(Underline).init(doc.underlines, line_start);
 
@@ -598,6 +608,15 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                     style.strikethrough = s.strikethrough;
                     if (s.bg != .default) style.bg = s.bg;
                 }
+                // ── {{VAR}} hook ──
+                var var_hit: ?u32 = null;
+                if (var_spans.at(off)) |vi| {
+                    const v = doc.var_spans[vi];
+                    style.fg = if (v.resolved) t.syntax.variable.fg else t.error_fg.fg;
+                    style.bold = true;
+                    var_hit = var_hit_base + v.id;
+                }
+                // ── end {{VAR}} hook ──
                 if (underlines.at(off)) |ui_idx| {
                     const u = doc.underlines[ui_idx].style;
                     style.ul = u.fg;
@@ -626,6 +645,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 const cell_rect = Rect.init(sx, y, c.w, 1);
                 ui.canvas.put(sx, y, .{ .char = .{ .grapheme = c.bytes, .width = c.w }, .style = style });
                 ui.hit(cell_rect, .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
+                if (var_hit) |vh| ui.hit(cell_rect, .{ .script_hit = .{ .pane = pane, .id = vh } }); // {{VAR}} hook
                 painted_x = sx + c.w;
 
                 if (is_cursor_line and found == null and c.off == cursor_off and cursor_line_real == cursor_line) {

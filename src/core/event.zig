@@ -59,7 +59,6 @@ pub const DapEvent = union(enum) {
         gpa.destroy(self);
     }
 };
-pub const SseChunk = struct { _todo: u8 = 0 }; // TODO(http): a progressive stream
 /// What an AI worker posts (`src/app/ai.zig`). `job` on the event is
 /// the `Job` id; 0 for the ghost text, which has no job. Every slice is
 /// gpa-owned by the event.
@@ -106,7 +105,9 @@ pub const AppEvent = union(enum) {
     git: *git_client.Result,
     /// A finished send. Owned; `http.handle` adopts the response.
     http: *http_client.JobResult,
-    sse: SseChunk,
+    /// A progressive send: the head, a run of body bytes, the end.
+    /// Owned; `http.handleStream` adopts or destroys it.
+    sse: *http_client.StreamChunk,
     /// The WebSocket pane's reader: open / a message / closed. Owned.
     ws: *ws_pane.WsEvent,
     ai: struct { job: u64, msg: AiMsg },
@@ -152,12 +153,13 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .dap => |d| d.msg.destroy(gpa),
         .git => |r| r.destroy(gpa),
         .http => |p| p.destroy(gpa),
+        .sse => |p| p.destroy(gpa),
         .cdp => |p| p.destroy(gpa),
         .ws => |p| p.destroy(gpa),
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| p.destroy(gpa),
         .mount => |p| p.destroy(gpa),
-        .key, .mouse, .winsize, .focus, .sse, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
+        .key, .mouse, .winsize, .focus, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
 }
 

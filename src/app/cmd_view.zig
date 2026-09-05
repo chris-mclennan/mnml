@@ -213,7 +213,7 @@ fn notInBuild(app: *App, what: []const u8) CommandError!void {
 }
 
 fn activityHttp(app: *App) CommandError!void {
-    return notInBuild(app, "HTTP");
+    showRightPanel(app, .http);
 }
 
 fn activityGit(app: *App) CommandError!void {

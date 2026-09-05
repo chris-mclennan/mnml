@@ -633,6 +633,7 @@ pub const specs = [_]Spec{
     .{ .id = "http.params_add", .title = "HTTP: add a query parameter (?key=value) to the active Request URL", .group = "http" },
     .{ .id = "http.params_clear", .title = "HTTP: clear all query parameters from the active Request URL", .group = "http" },
     .{ .id = "http.abort", .title = "HTTP: cancel any in-flight bench / sync work", .group = "http" },
+    .{ .id = "http.cancel", .title = "HTTP: cancel the active pane's send — stops a stream where it is", .group = "http" },
     .{ .id = "http.set_method.get", .title = "HTTP: set method = GET", .group = "http" },
     .{ .id = "http.set_method.post", .title = "HTTP: set method = POST", .group = "http" },
     .{ .id = "http.set_method.put", .title = "HTTP: set method = PUT", .group = "http" },
@@ -684,6 +685,13 @@ pub const specs = [_]Spec{
     .{ .id = "http.toggle_split_orientation", .title = "HTTP: cycle Request/Response split orientation (Auto → Vertical → Horizontal)", .group = "http" },
     .{ .id = "http.set_env_var_value", .title = "HTTP: set value for env var at cursor / active request pane", .group = "http" },
     .{ .id = "http.jump_to_env_var", .title = "HTTP: jump to env var definition at cursor / active request pane", .group = "http" },
+    .{ .id = "http.quick_fix", .title = "HTTP: quick-fix menu for the {{VAR}} under the caret (define / pick env / inline)", .group = "http" },
+    .{ .id = "http.define_var", .title = "HTTP: define the {{VAR}} under the caret in the active env", .group = "http" },
+    .{ .id = "http.inline_var", .title = "HTTP: replace the {{VAR}} under the caret with its resolved value", .group = "http" },
+    .{ .id = "http.copy_var_name", .title = "HTTP: copy the name of the {{VAR}} under the caret", .group = "http" },
+    .{ .id = "http.panel_open", .title = "HTTP panel: open / apply / run the selected row", .group = "http" },
+    .{ .id = "http.panel_toggle_section", .title = "HTTP panel: collapse / expand the selected section", .group = "http" },
+    .{ .id = "http.panel_copy_path", .title = "HTTP panel: copy the selected row's path / name / value", .group = "http" },
     .{ .id = "http.ai_debug", .title = "HTTP: ask Claude why this request is failing", .group = "http" },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
@@ -874,9 +882,10 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "822 specs, unique ids" {
+test "830 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
-    // + two script commands + eight cutover-prep commands.
-    try std.testing.expectEqual(@as(usize, 822), specs.len);
+    // + two script commands + eight cutover-prep commands + four var
+    // commands + three HTTP panel commands.
+    try std.testing.expectEqual(@as(usize, 830), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

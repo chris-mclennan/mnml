@@ -1,0 +1,27 @@
+# zig-only
+# The request pane's edit split (http.toggle_edit_split): the primary
+# tab on the left, a second tab on the right with its own strip; bringing
+# the right tab to the left swaps the halves so both stay visible; the
+# split is pane state and the orientation cycles with its own command.
+write anchor.txt anchor
+open anchor.txt
+command http.new
+expect screen contains "[Body]  Headers   Params"
+expect screen lacks "[Vars]"
+command http.toggle_edit_split
+expect screen contains "edit split: Body | Vars"
+expect screen contains "[Body]  Headers   Params"
+expect screen contains "[Vars]"
+# Ctrl+5 (Vars) on the left swaps the halves: both tabs stay on screen.
+key ctrl+5
+expect screen contains "[Vars]  Script"
+expect screen contains "[Body]  Headers   Params"
+# Off again: only the primary strip is left, and it now shows Vars.
+command http.toggle_edit_split
+expect screen contains "edit split: off"
+expect screen contains "[Vars]  Script"
+expect screen lacks "[Body]  Headers   Params"
+command http.toggle_split_orientation
+expect screen contains "request / response: vertical"
+command http.toggle_split_orientation
+expect screen contains "request / response: horizontal"

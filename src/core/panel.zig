@@ -7,7 +7,8 @@ const std = @import("std");
 /// // changed (git): `git` — the status rows in the rail.
 /// // changed (lsp): `diagnostics` — the LSP problems list lives in the
 /// right slot like the other list panels.
-pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics };
+/// // changed (http-more): `http` — the seven-section HTTP sidebar.
+pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

@@ -27,6 +27,7 @@ const cookies = @import("../http/cookies.zig");
 const jwt = @import("../http/jwt.zig");
 const sse = @import("../http/sse.zig");
 const schema = @import("../http/schema.zig");
+const script_mod = @import("../http/script.zig");
 const import_mod = @import("../http/import.zig");
 const captured = @import("../http/captured.zig");
 const chain_mod = @import("../http/chain.zig");
@@ -118,6 +119,40 @@ pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!vo
     }
     rp.clearTests();
     try validateSchema(app, rp, false);
+    try runScript(app, rp);
+}
+
+/// The block's `@assert` / `@capture` lines against the Done response:
+/// one Tests row each, a summary toast, captures written into the
+/// active env.
+fn runScript(app: *App, rp: *RequestPane) Allocator.Error!void {
+    const resp = rp.response() orelse return;
+    const text = rp.request.script orelse return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const s = try script_mod.parse(a, text);
+    if (s.asserts.len == 0 and s.captures.len == 0) return;
+    var passed: usize = 0;
+    var failed: usize = 0;
+    for (try script_mod.runAsserts(a, s, resp.status, resp.headers, resp.body)) |r| {
+        if (r.ok) {
+            passed += 1;
+            try rp.addTest("✓ {s}", .{r.label});
+        } else {
+            failed += 1;
+            if (r.detail.len > 0) try rp.addTest("✗ {s} — {s}", .{ r.label, r.detail }) else try rp.addTest("✗ {s}", .{r.label});
+        }
+    }
+    for (try script_mod.runCaptures(a, s, resp.status, resp.headers, resp.body)) |c| {
+        if (c.value) |v| {
+            try rp.addTest("↳ {s} = {s}", .{ c.name, std.mem.sliceTo(v, '\n') });
+            try writeEnvVar(app, c.name, v);
+        } else try rp.addTest("✗ capture {s}: nothing at its source", .{c.name});
+    }
+    if (s.asserts.len > 0) {
+        if (failed == 0) app.toast("tests: {d} passed", .{passed}) else try app.toastLevel(.err, "tests: {d} passed, {d} failed", .{ passed, failed });
+    }
 }
 
 /// Run the sidecar validation into `rp.tests`; `announce` toasts.
@@ -168,8 +203,12 @@ fn showSchemaErrorsCmd(app: *App) CommandError!void {
     e.buf.markSaved() catch return error.OutOfMemory;
 }
 
+/// What a finished send tells history, whether it landed whole or
+/// streamed in.
+pub const HistoryFacts = struct { method: []const u8, url: []const u8, status: ?u16, elapsed_ms: u64 };
+
 /// One history line per finished send.
-pub fn recordHistory(app: *App, r: *client.JobResult, rp: *RequestPane) !void {
+pub fn recordHistory(app: *App, r: HistoryFacts, rp: *RequestPane) !void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
@@ -184,7 +223,7 @@ pub fn recordHistory(app: *App, r: *client.JobResult, rp: *RequestPane) !void {
     try history.append(app.gpa, app.io, app.workspace, global, .{
         .method = r.method,
         .url = r.url,
-        .status = r.status() orelse (if (resp) |x| x.status else null),
+        .status = r.status orelse (if (resp) |x| x.status else null),
         .duration_ms = r.elapsed_ms,
         .body_bytes = if (resp) |x| x.body.len else null,
         .err = if (rp.state == .failed) rp.state.failed else null,
@@ -311,6 +350,13 @@ fn jumpToEnvVarCmd(app: *App) CommandError!void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
+    // A `{{VAR}}` in hand (the quick-fix menu, the caret, the Vars row)
+    // lands on its line; otherwise the file opens as it is.
+    if (http.takeQuickFix(app)) |v| {
+        defer app.gpa.free(v);
+        return http.jumpToVarDef(app, try a.dupe(u8, v));
+    }
+    if (http.activeRequest(app)) |rp| if (try rp.varAtCaret(a)) |name| return http.jumpToVarDef(app, name);
     const sel = try activeEnvName(app, a);
     for ([_][]const u8{ ".mnml", ".rqst" }) |sub| {
         const path = try env_mod.envPath(a, app.workspace, sub, sel.name);
@@ -646,7 +692,7 @@ fn runChainCmd(app: *App) CommandError!void {
     try cmd_picker.openPickerWith(app, "Run chain", .http_chains, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
 }
 
-fn runChainNamed(app: *App, name: []const u8) CommandError!void {
+pub fn runChainNamed(app: *App, name: []const u8) CommandError!void {
     if (app.http.chain_running) return app.diag.fail(app.frame.allocator(), "http.run_chain: a chain is already running", .{});
     const arena = app.frame.allocator();
     const dir_path = try chainsDir(app, arena);
@@ -767,10 +813,12 @@ fn lookupCmd(app: *App) CommandError!void {
 }
 
 fn sendStreamingCmd(app: *App) CommandError!void {
-    // The blocking client reads the whole stream; the events are parsed
-    // afterwards. A progressive display is a later slice.
+    // `fire` streams an event-stream or chunked body on its own; this
+    // asks for the progressive reader whatever the server says.
+    app.http.force_stream = true;
+    errdefer app.http.force_stream = false;
     try command.run(app, .{ .static = .@"http.send" });
-    app.toast("streaming: the body is read to the end, then :sse.parse_active_response splits it", .{});
+    app.http.force_stream = false;
 }
 
 fn copyAiPromptCmd(app: *App) CommandError!void {
