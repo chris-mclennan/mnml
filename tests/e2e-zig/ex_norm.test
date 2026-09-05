@@ -1,0 +1,31 @@
+# zig-only
+# `:[range]norm keys` types `keys` at the start of each line in the
+# range through the vim handler, with an Esc between lines so an insert
+# never leaks into the next one. `<esc>` / `<lt>` notation is understood.
+write doc.txt "one\ntwo\nthree"
+open doc.txt
+command editor.use_vim
+
+type ":%norm A;"
+key enter
+command file.save
+expect file doc.txt contains "one;\ntwo;\nthree;"
+expect screen contains ":norm — 3 line(s)"
+
+# A trailing space in the keys is typed, not trimmed.
+type ":2norm 0i# "
+key enter
+command file.save
+expect file doc.txt contains "one;\n# two;\nthree;"
+
+# The mode is normal again afterwards: `x` deletes (the space the
+# insert left the cursor on) rather than types.
+key x
+command file.save
+expect file doc.txt contains "one;\n#two;\nthree;"
+
+# Notation for a key the `:` line cannot carry.
+type ":3norm I-<lt><esc>x"
+key enter
+command file.save
+expect file doc.txt contains "-three;"

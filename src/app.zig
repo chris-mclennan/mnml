@@ -38,6 +38,7 @@ const md_preview = @import("app/md_preview.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
 const ex = @import("app/ex.zig");
+const ex_verbs = @import("app/ex_verbs.zig");
 const dispatch = @import("app/dispatch.zig");
 const render_mod = @import("app/render.zig");
 const theme_mod = @import("ui/theme.zig");
@@ -266,6 +267,8 @@ pub const ConfirmPurpose = union(enum) {
     remove_integration: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
+    /// `:s///c`: one match's yes / no / all / quit / last (`ex_verbs.zig`).
+    replace_confirm,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
 
@@ -625,6 +628,21 @@ pub const App = struct {
     search_case: ?bool = null,
     /// `g;` / `g,` position in the active editor's change list.
     change_nav: ?ChangeNav = null,
+    /// `:command` definitions, name → expansion (both owned); persisted
+    /// at `<data root>/commands.zon` (`ex_verbs.zig`).
+    user_commands: std.StringHashMapUnmanaged([]u8) = .empty,
+    /// `:!!` and `:r !!` repeat it. Owned.
+    last_shell_cmd: ?[]u8 = null,
+    /// The scratch pane `:!` writes its output to, while it is open.
+    shell_pane: ?PaneId = null,
+    /// What `:&` / a bare `:s` repeat.
+    last_substitute: ?ex_verbs.LastSub = null,
+    /// A `:s///c` walking its matches.
+    replace_confirm: ?ex_verbs.ReplaceConfirm = null,
+    /// `:g` → user command → `:norm` → `:`… nesting, bounded by `ex_verbs.max_depth`.
+    ex_depth: u8 = 0,
+    /// A `:g` is running (a nested one is vim's E147).
+    in_global: bool = false,
     now_ms: i64 = 0,
     /// `theme.auto_system`: when the OS appearance is next polled.
     theme_auto_poll_ms: ?i64 = null,
@@ -721,6 +739,7 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &findings.onPathTouched });
         try app.hooks.subscribe(.save_post, .{ .zig = &findings.onPathTouched });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
+        try app.hooks.subscribe(.startup, .{ .zig = &ex_verbs.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         try app.hooks.subscribe(.save_post, .{ .zig = &git_app.onSavePost });
         try app.hooks.subscribe(.open, .{ .zig = &git_app.onOpen });
@@ -888,6 +907,7 @@ pub const App = struct {
             gpa.free(e.value_ptr.*);
         }
         self.abbrevs.deinit(gpa);
+        ex_verbs.deinitState(self);
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);

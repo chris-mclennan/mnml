@@ -82,6 +82,7 @@ const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const files_pane = @import("files_pane.zig");
 const trash = @import("trash.zig");
+const ex_verbs = @import("ex_verbs.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -536,6 +537,8 @@ fn closeOverlay(app: *App) void {
     // A confirm that a worker is parked on answers no before it goes.
     ai_app.overlayClosing(app);
     http_app.overlayClosing(app);
+    // Esc on a `:s///c` box keeps what was replaced and stops.
+    if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
     const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
@@ -752,6 +755,7 @@ fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!voi
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
     switch (purpose) {
         .trust_workspace => try @import("trust.zig").answer(app, choice),
+        .replace_confirm => try ex_verbs.answerConfirm(app, choice),
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;
@@ -1933,7 +1937,7 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
 
 // ── the `:` line ──
 
-const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast" };
+const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast", "global", "vglobal", "normal", "command", "delcommand", "read" };
 const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "vs", "vsplit", "tabe", "tabedit", "r", "read", "cd", "saveas" };
 
 /// Tab on the `:` line. First press builds the candidates for the text
@@ -2012,6 +2016,8 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
             }
         }
         for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 150 });
+        // User `:command`s outrank the registry: they are the user's own words.
+        for (try ex_verbs.sortedNames(app, app.frame.allocator(), line)) |n| try scored.append(gpa, .{ .name = n, .score = 400 });
         std.mem.sort(Scored, scored.items, {}, struct {
             fn lt(_: void, a: Scored, b: Scored) bool {
                 if (a.score != b.score) return a.score > b.score;

@@ -1,0 +1,42 @@
+# zig-only
+# `:s///c` asks about every match: the match is selected, a box offers
+# [y]es [n]o [a]ll [q]uit [l]ast, and the final toast counts what changed.
+write doc.txt "x1 x2\nx3\nx4 x5"
+open doc.txt
+command editor.use_vim
+
+type ":%s/x/Y/gc"
+key enter
+expect screen contains "Substitute"
+expect screen contains "(1 of 5)"
+expect screen contains "[Y]es"
+key y
+expect screen contains "(2 of 5)"
+key n
+key y
+key l
+expect screen lacks "Substitute"
+expect screen contains ":s — 3 replacement(s)"
+command file.save
+expect file doc.txt contains "Y1 x2\nY3\nY4 x5"
+
+# `a` takes the rest; `q` stops with nothing more.
+type ":%s/x/Z/gc"
+key enter
+key a
+command file.save
+expect file doc.txt contains "Y1 Z2\nY3\nY4 Z5"
+type ":%s/Y/q/c"
+key enter
+key q
+expect screen contains ":s — 0 replacement(s)"
+command file.save
+expect file doc.txt contains "Y1 Z2\nY3\nY4 Z5"
+
+# Esc keeps what was done so far.
+type ":%s/Y/w/c"
+key enter
+key y
+key esc
+command file.save
+expect file doc.txt contains "w1 Z2\nY3\nY4 Z5"

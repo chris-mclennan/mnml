@@ -1,8 +1,11 @@
 //! The `:` line. A range, a verb, its arguments — the vim subset mnml
 //! answers today: files (`:w :q :wq :x :e :bd :bn :bp :A`), text
 //! (`:s :sort :retab :d :<n>`), settings (`:set :ab :una :noh`), and the
-//! read-outs (`:reg :marks`). A verb nobody here knows is tried as a
-//! registered command id (`:tab.close`), then reported.
+//! read-outs (`:reg :marks`). The verbs that reach past one line —
+//! `:g` / `:v`, `:norm`, `:command`, `:!`, `:r`, `:<` / `:>`, `:&` and
+//! `:s///c` — live in `ex_verbs.zig`. A verb nobody here knows is tried
+//! as a user command, then as a registered command id (`:tab.close`),
+//! then reported.
 //!
 //! Errors travel as `CommandError`: the reason goes in `app.diag`, the
 //! caller (`dispatch.runExLine`, the dyn registry) toasts it.
@@ -19,12 +22,14 @@ const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
 const Config = app_mod.Config;
+const ex_verbs = @import("ex_verbs.zig");
 
 /// 0-based inclusive rows.
 pub const Range = struct { first: usize, last: usize };
 
 pub fn run(app: *App, line_in: []const u8) CommandError!void {
-    var line = std.mem.trim(u8, line_in, " \t\r\n");
+    // Trailing blanks stay: `:norm A ` types one. Every verb trims its own args.
+    var line = std.mem.trimStart(u8, std.mem.trimEnd(u8, line_in, "\r\n"), " \t");
     while (line.len > 0 and line[0] == ':') line = std.mem.trimStart(u8, line[1..], " \t");
     if (line.len == 0) return;
     const arena = app.frame.allocator();
@@ -47,12 +52,12 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
 
     // `:s/…/…/` — the verb is one letter followed by a delimiter.
     if (rest[0] == 's' and rest.len > 1 and !std.ascii.isAlphanumeric(rest[1]) and rest[1] != ' ' and rest[1] != '!') {
-        return substitute(app, range, rest[1..], p.saw_percent);
+        return ex_verbs.substituteEntry(app, range, rest[1..], p.saw_percent);
     }
     if (std.mem.startsWith(u8, rest, "substitute") and rest.len > "substitute".len and !std.ascii.isAlphanumeric(rest["substitute".len])) {
-        return substitute(app, range, rest["substitute".len..], p.saw_percent);
+        return ex_verbs.substituteEntry(app, range, rest["substitute".len..], p.saw_percent);
     }
-    if (rest[0] == '&') return app.diag.fail(arena, ":& — no previous substitute", .{});
+    if (rest[0] == '&') return ex_verbs.ampersand(app, range, rest, p.saw_percent);
 
     var i: usize = 0;
     while (i < rest.len and (std.ascii.isAlphanumeric(rest[i]) or rest[i] == '.' or rest[i] == '_')) i += 1;
@@ -68,6 +73,18 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         i = 1;
     }
     const args = std.mem.trim(u8, rest[i..], " \t");
+
+    // `:!cmd` (`:!!` repeats), or `:[range]!cmd` as a filter.
+    if (verb.len == 0 and bang) return ex_verbs.shell(app, range, rest[i..]);
+    if (eqAny(verb, &.{ "<", ">" })) return ex_verbs.shift(app, range, verb[0] == '>', args);
+    if (eqAny(verb, &.{ "g", "global" })) return ex_verbs.global(app, range, rest[i..], bang);
+    if (eqAny(verb, &.{ "v", "vglobal" })) return ex_verbs.global(app, range, rest[i..], true);
+    if (eqAny(verb, &.{ "norm", "normal" })) return ex_verbs.normal(app, range, std.mem.trimStart(u8, rest[i..], " \t"));
+    if (eqAny(verb, &.{ "com", "command" })) return ex_verbs.defineCommand(app, args, bang);
+    if (eqAny(verb, &.{ "delc", "delcommand" })) return ex_verbs.deleteCommand(app, args);
+    if (eqAny(verb, &.{ "r", "read" })) return ex_verbs.read(app, range, if (bang) try std.mem.concat(arena, u8, &.{ "!", args }) else args);
+    // A bare `:s [flags]` repeats the last substitute.
+    if (eqAny(verb, &.{ "s", "su", "substitute" })) return ex_verbs.ampersand(app, range, args, p.saw_percent);
 
     if (eqAny(verb, &.{ "w", "write" })) return write(app, args, false);
     if (eqAny(verb, &.{ "wa", "wall" })) return saveAll(app);
@@ -145,7 +162,8 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "term", "terminal" })) return @import("cmd_term.zig").termEx(app, args);
     if (eqAny(verb, &.{"task"})) return @import("tasks.zig").runNamed(app, args);
 
-    // A registered command by id.
+    // A user `:command`, then a registered command by id.
+    if (try ex_verbs.runUserCommand(app, range, verb, bang, args)) return;
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);
     return app.diag.fail(arena, ":{s} — unknown command", .{verb});
 }
@@ -398,7 +416,9 @@ fn alternate(app: *App) CommandError!void {
 // ─── text ───────────────────────────────────────────────────────────────
 
 /// `s/pat/rep/[g][i][I]` over `range` (default: the cursor's line).
-fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) CommandError!void {
+/// `ex_verbs.substituteEntry` is the way in: it remembers the spec for
+/// `:&` and takes the `c` flag.
+pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) CommandError!void {
     const arena = app.frame.allocator();
     const label: []const u8 = if (whole) ":%s" else ":s";
     const e = try editor(app, label);
