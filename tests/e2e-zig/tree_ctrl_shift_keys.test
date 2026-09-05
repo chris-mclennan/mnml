@@ -1,0 +1,25 @@
+# zig-only
+# The tree's file-clipboard chords are Ctrl+X/C/V/D — plain ctrl only.
+# Ctrl+Shift+D is Activity: Debug in both profiles and must never
+# duplicate the row; the shifted forms of the other three go to the
+# chord chain the same way.
+write a.txt "aa"
+command view.focus_tree
+key r
+key end
+key ctrl+shift+d
+wait 400
+expect screen lacks "duplicating"
+expect screen lacks "a-copy.txt"
+key ctrl+shift+c
+expect screen lacks "copied"
+key ctrl+shift+x
+expect screen lacks "cut"
+key ctrl+shift+v
+wait 300
+expect screen lacks "paste"
+# The plain chord still duplicates.
+key ctrl+d
+wait 400
+expect screen contains "a-copy.txt"
+expect file a-copy.txt contains "aa"

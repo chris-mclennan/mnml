@@ -309,9 +309,12 @@ pub const Tree = struct {
         self.pending = null;
         // The file clipboard's chords: Ctrl+X/C/V/D in both profiles —
         // the tree never edits text, so nothing else can want them here
-        // (Rust parity). vim also gets ranger's `yy` / `dd` / `P` below.
+        // (Rust parity). Plain ctrl only: Ctrl+Shift+D is Activity: Debug
+        // and the shifted forms of the others are the chord chain's too —
+        // a modifier-mismatched chord must never touch the file system.
+        // vim also gets ranger's `yy` / `dd` / `P` below.
         if (k.mods.ctrl or k.mods.alt or k.mods.super) {
-            if (k.mods.ctrl and !k.mods.alt and !k.mods.super and k.code == .char) {
+            if (k.mods.ctrl and !k.mods.shift and !k.mods.alt and !k.mods.super and k.code == .char) {
                 const id: ?command.CommandId = switch (k.code.char) {
                     'x' => .@"file.cut",
                     'c' => .@"file.copy",
@@ -339,6 +342,13 @@ pub const Tree = struct {
             .left => try self.collapseOrParent(app),
             .esc => {
                 if (app.active) |a| app.focus = .{ .pane = a };
+            },
+            // F2 renames the row (VS Code's Explorer chord). The global
+            // `lsp.rename` on F2 is an editor's; taking it here is how a
+            // tree-focused key wins over the chord chain.
+            .f => |fn_key| {
+                if (fn_key != 2) return false;
+                try runCmd(app, .@"file.rename");
             },
             .char => |c| switch (c) {
                 'j' => self.cursor = @min(self.cursor + 1, n -| 1),
@@ -941,6 +951,53 @@ test "tree file verbs: new file, new folder, rename into a folder, move by drag-
     try t.expect(app.active == null);
     try t.expect(app.tree.rowOf("lib/bb.txt") == null);
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"tree.open_in_split" }));
+}
+
+test "tree: Ctrl+Shift+X/C/V/D are not the clipboard chords — the tree declines them, the plain forms it takes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "aa" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rows.items.len - 1;
+    try t.expectEqualStrings("a.txt", app.tree.rows.items[app.tree.cursor].rel);
+    for ([_]u21{ 'd', 'x', 'c', 'v' }) |c| {
+        const shifted = Key{ .code = .{ .char = c }, .mods = .{ .ctrl = true, .shift = true } };
+        try t.expect(!try app.tree.handleKey(&app, shifted));
+    }
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "a-copy.txt", .{}));
+    try t.expect(app.file_clipboard.paths.items.len == 0);
+    // The plain chord is still the clipboard's.
+    try t.expect(try app.tree.handleKey(&app, Key.ctrl('x')));
+    try t.expectEqual(@as(usize, 1), app.file_clipboard.paths.items.len);
+}
+
+test "tree: F2 opens the rename prompt seeded with the row; other function keys go to the chain" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "aa" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rows.items.len - 1;
+    try t.expect(!try app.tree.handleKey(&app, Key{ .code = .{ .f = 3 }, .mods = .{} }));
+    try t.expect(app.overlay == .none);
+    try t.expect(try app.tree.handleKey(&app, Key{ .code = .{ .f = 2 }, .mods = .{} }));
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("Rename to (workspace-relative)", app.overlay.prompt.state.title);
+    try t.expectEqualStrings("a.txt", app.overlay.prompt.state.text());
+    try t.expect(app.focus == .overlay);
 }
 
 test "tree: artifact directories stay out of the rows without a .gitignore; H shows them" {

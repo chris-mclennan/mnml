@@ -16,6 +16,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
+const clip = @import("clip.zig");
 const parse = @import("../git/parse.zig");
 const ids = @import("../core/ids.zig");
 
@@ -501,6 +502,19 @@ fn drawWipButtons(ui: Ui, pane: PaneId, r: Rect, start_x: u16, base: Style) void
     }
 }
 
+/// Bytes of `rest` that go on one row of width `w`: the longest prefix
+/// that fits, cut back to the last space when the line continues. Never
+/// past `rest.len` — the caller slices `rest` by it.
+fn wrapTake(rest: []const u8, w: u16, method: vaxis.gwidth.Method) usize {
+    var take = clip.fitCells(rest, w, method);
+    if (take < rest.len) {
+        if (std.mem.lastIndexOfScalar(u8, rest[0..take], ' ')) |sp| if (sp > 0) {
+            take = sp + 1;
+        };
+    }
+    return take;
+}
+
 /// The detail panel: title, the message wrapped to the width, a blank,
 /// `files (n)` and one row per file (the cursor row banded when the
 /// panel has focus). The working tree shows its entries instead, with
@@ -531,13 +545,7 @@ fn drawDetail(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc, d: Detai
             var rest = line;
             if (rest.len == 0) lines.append(ui.arena, .{ .text = "", .style = t.panel_bg }) catch return;
             while (rest.len > 0) {
-                const fit = ui.clipStr(rest, inner.w);
-                var take = fit.len;
-                if (take < rest.len) {
-                    if (std.mem.lastIndexOfScalar(u8, fit, ' ')) |sp| if (sp > 0) {
-                        take = sp + 1;
-                    };
-                }
+                const take = wrapTake(rest, inner.w, ui.canvas.widthMethod());
                 if (take == 0) break;
                 lines.append(ui.arena, .{ .text = std.mem.trimEnd(u8, rest[0..take], " "), .style = Theme.onBg(t.fg, t.panel_bg.bg) }) catch return;
                 rest = rest[take..];
@@ -736,4 +744,25 @@ test "the WIP row paints its three buttons with hits, and the detail panel lists
     try f.expectContains("M src/a.zig");
     try f.expectContains("A new.txt");
     try testing.expectEqual(@as(u32, 1), detailRowOf(f.hits.at(p.detail.x + 2, 7).?.script_hit.id).?);
+}
+
+test "wrapTake: a line one cell wider than the panel takes the width, not the clipped form's bytes" {
+    const line = "x" ** 41;
+    try testing.expectEqual(@as(usize, 40), wrapTake(line, 40, .unicode));
+    try testing.expectEqual(@as(usize, 41), wrapTake(line, 41, .unicode));
+    try testing.expectEqual(@as(usize, 41), wrapTake(line, 120, .unicode));
+    // A continuing line breaks after its last space; a lone word does not.
+    try testing.expectEqual(@as(usize, 6), wrapTake("hello world", 8, .unicode));
+    try testing.expectEqual(@as(usize, 8), wrapTake("helloworld", 8, .unicode));
+    // Every width against every length walks the remainder without
+    // slicing past it — the loop drawDetail runs.
+    var w: u16 = 1;
+    while (w <= 45) : (w += 1) {
+        var rest: []const u8 = line;
+        while (rest.len > 0) {
+            const take = wrapTake(rest, w, .unicode);
+            try testing.expect(take > 0 and take <= rest.len);
+            rest = rest[take..];
+        }
+    }
 }

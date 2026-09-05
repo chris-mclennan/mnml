@@ -331,7 +331,7 @@ fn newCmd(app: *App) CommandError!void {
     errdefer app.gpa.free(dir);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "New note in " ++ dir_rel ++ "/"), .purpose = .{ .new_note = dir } } };
-    app.overlay.prompt.state.setText(app.gpa, seed) catch return error.OutOfMemory;
+    app.overlay.prompt.state.seed(app.gpa, seed) catch return error.OutOfMemory;
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -347,11 +347,21 @@ pub fn nextFreeName(app: *App, arena: Allocator, abs_dir: []const u8, stem: []co
     return try std.fmt.allocPrint(arena, "{s}.md", .{stem});
 }
 
+/// A typed name without an extension gets `.md` — the panel lists only
+/// markdown, so a bare `mynote` must not vanish into a file it cannot
+/// see. A name with any extension is kept as typed.
+pub fn withMdExt(arena: Allocator, text_in: []const u8) Allocator.Error![]const u8 {
+    const text = std.mem.trim(u8, text_in, " \t\r\n");
+    if (text.len == 0 or text[text.len - 1] == '/') return text;
+    if (std.fs.path.extension(text).len > 0) return text;
+    return std.fmt.allocPrint(arena, "{s}.md", .{text});
+}
+
 /// The prompt's accept: create + open through the tree, then rescan
 /// (the `open` hook does too; this covers a name the hook cannot see,
 /// such as one typed with a directory).
 pub fn acceptNew(app: *App, dir: []const u8, text: []const u8) Allocator.Error!void {
-    try tree_mod.acceptNewFile(app, dir, text);
+    try tree_mod.acceptNewFile(app, dir, try withMdExt(app.frame.allocator(), text));
     if (app.notes.scanned_once) refresh(app) catch {};
 }
 
@@ -740,6 +750,32 @@ test "headless: the panel lists notes, enter opens one, n seeds note-N.md and th
     try testing.expectEqualStrings("note-2.md", f.app.panes.get(f.app.active.?).?.title());
     try f.settle(2000);
     try testing.expectEqual(@as(usize, 2), f.app.notes.items.len);
+    // The seed is a selection: a typed name replaces it, and a name
+    // without an extension lands as `<name>.md`, where the panel sees it.
+    try command.run(&f.app, .{ .static = .@"view.activity_notes" });
+    try f.app.handle(.{ .key = Key.char('n') });
+    try testing.expectEqualStrings("note-3.md", f.app.overlay.prompt.state.text());
+    try testing.expect(f.app.overlay.prompt.state.select_all);
+    for ("mynote") |c| try f.app.handle(.{ .key = Key.char(c) });
+    try testing.expectEqualStrings("mynote", f.app.overlay.prompt.state.text());
+    try f.app.handle(.{ .key = Key.named(.enter) });
+    _ = f.tmp.dir.statFile(testing.io, ".mnml/notes/mynote.md", .{}) catch return error.TestNoteNotCreated;
+    try testing.expectEqualStrings("mynote.md", f.app.panes.get(f.app.active.?).?.title());
+    try f.settle(2000);
+    try testing.expectEqual(@as(usize, 3), f.app.notes.items.len);
+}
+
+test "withMdExt: a bare name gets .md, an extension or a folder is kept" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try testing.expectEqualStrings("mynote.md", try withMdExt(arena, "mynote"));
+    try testing.expectEqualStrings("mynote.md", try withMdExt(arena, "  mynote \n"));
+    try testing.expectEqualStrings("note-1.md", try withMdExt(arena, "note-1.md"));
+    try testing.expectEqualStrings("draft.txt", try withMdExt(arena, "draft.txt"));
+    try testing.expectEqualStrings("ideas/", try withMdExt(arena, "ideas/"));
+    try testing.expectEqualStrings("ideas/one.md", try withMdExt(arena, "ideas/one"));
+    try testing.expectEqualStrings("", try withMdExt(arena, ""));
 }
 
 test "mouse: a row's right-click menu names real ids; the sort chip cycles and persists ui.notes_sort; delete confirms and rescans" {

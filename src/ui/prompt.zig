@@ -38,16 +38,30 @@ pub const State = struct {
     hist_idx: ?usize = null,
     /// Paint bullets instead of the text (a token, a password).
     secret: bool = false,
+    /// The whole line is a selection (a seeded name): the next typed
+    /// character or paste replaces it, backspace / delete clear it, any
+    /// other key drops the selection and edits the line as usual.
+    select_all: bool = false,
 
     pub fn text(s: *const State) []const u8 {
         return s.buf.items;
     }
 
-    /// Replaces the line (a default value the app pre-fills).
+    /// Replaces the line (a default value the app pre-fills) with the
+    /// caret at its end — typing continues it.
     pub fn setText(s: *State, gpa: Allocator, value: []const u8) Allocator.Error!void {
         s.buf.clearRetainingCapacity();
         try s.buf.appendSlice(gpa, value);
         s.caret = s.buf.items.len;
+        s.select_all = false;
+    }
+
+    /// Pre-fills the line as a selection: enter keeps it, typing
+    /// replaces it (a suggested file name, the way an explorer's new-name
+    /// box behaves).
+    pub fn seed(s: *State, gpa: Allocator, value: []const u8) Allocator.Error!void {
+        try s.setText(gpa, value);
+        s.select_all = value.len > 0;
     }
 
     /// Appends the current line to the history (skipping blanks and a
@@ -80,6 +94,8 @@ pub fn deinit(s: *State, gpa: Allocator) void {
 /// everything else edits the line. A modal box consumes what it
 /// does not understand.
 pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
+    const selected = s.select_all;
+    s.select_all = false;
     switch (key.code) {
         .esc => return .cancel,
         .enter => {
@@ -112,8 +128,22 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
         },
         else => {},
     }
+    if (selected and consumeSelection(s, key)) return .consumed;
     _ = try text_field.handleKey(&s.buf, &s.caret, gpa, key);
     return .consumed;
+}
+
+/// The selection's answer to a key: a typed character or a delete
+/// replaces the whole line (true when the key is done — an erase; a
+/// typed character still inserts into the emptied line). Anything else
+/// leaves the text for the field to edit.
+fn consumeSelection(s: *State, key: Key) bool {
+    const typed = if (key.typed()) |cp| cp >= 0x20 and cp != 0x7f else false;
+    const erase = (key.code == .backspace or key.code == .delete) and !key.mods.ctrl and !key.mods.alt;
+    if (!typed and !erase) return false;
+    s.buf.clearRetainingCapacity();
+    s.caret = 0;
+    return erase;
 }
 
 fn loadHistory(s: *State, gpa: Allocator, idx: usize) Allocator.Error!void {
@@ -124,6 +154,11 @@ fn loadHistory(s: *State, gpa: Allocator, idx: usize) Allocator.Error!void {
 }
 
 pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void {
+    if (s.select_all) {
+        s.select_all = false;
+        s.buf.clearRetainingCapacity();
+        s.caret = 0;
+    }
     try text_field.insert(&s.buf, &s.caret, gpa, text);
 }
 
@@ -138,8 +173,11 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) ?Caret {
     const field_row = inner.row(0);
     const field = Rect.init(field_row.x + 1, field_row.y, field_row.w -| 2, 1);
     ui.hit(field_row, .{ .overlay_item = 0 });
+    // A seeded line paints as a selection so the user sees that typing
+    // replaces it.
+    const style = if (s.select_all and s.buf.items.len > 0) Theme.onBg(t.fg, t.selection.bg) else Theme.onBg(t.fg, t.overlay_bg.bg);
     const caret = text_field.draw(ui, field, s.buf.items, s.caret, .{
-        .style = Theme.onBg(t.fg, t.overlay_bg.bg),
+        .style = style,
         .placeholder = s.placeholder,
         .placeholder_style = blk: {
             var ps = Theme.onBg(t.muted, t.overlay_bg.bg);
@@ -181,6 +219,56 @@ test "the box carries its title verbatim, the input takes the caret, the hint si
     try f.expectLacks("line number");
     try testing.expectEqual(Caret{ .x = 14, .y = 3 }, caret.?);
     try testing.expect(!f.style(12, 3).italic);
+    try testing.expect(f.bgEql(12, 3, f.theme.overlay_bg));
+}
+
+test "a seeded line is a selection: typing replaces it, an arrow keeps it, backspace clears it, paste replaces it" {
+    const gpa = testing.allocator;
+    var s = init(gpa, "New note in .mnml/notes/");
+    defer deinit(&s, gpa);
+    try s.seed(gpa, "note-1.md");
+    try testing.expect(s.select_all);
+    try testing.expectEqualStrings("note-1.md", s.text());
+    // Typing replaces the seed, then continues normally.
+    _ = try handleKey(&s, gpa, Key.char('m'));
+    _ = try handleKey(&s, gpa, Key.char('y'));
+    try testing.expectEqualStrings("my", s.text());
+    try testing.expect(!s.select_all);
+    // A motion drops the selection and keeps the text.
+    try s.seed(gpa, "note-1.md");
+    _ = try handleKey(&s, gpa, Key.named(.left));
+    _ = try handleKey(&s, gpa, Key.char('x'));
+    try testing.expectEqualStrings("note-1.mxd", s.text());
+    // Backspace clears the seed outright; the next key edits an empty line.
+    try s.seed(gpa, "note-1.md");
+    _ = try handleKey(&s, gpa, Key.named(.backspace));
+    try testing.expectEqualStrings("", s.text());
+    // Enter keeps the seed — the fast path.
+    try s.seed(gpa, "note-1.md");
+    try testing.expectEqual(Outcome.submit, try handleKey(&s, gpa, Key.named(.enter)));
+    try testing.expectEqualStrings("note-1.md", s.text());
+    // A paste replaces it too.
+    try s.seed(gpa, "note-1.md");
+    try paste(&s, gpa, "pasted");
+    try testing.expectEqualStrings("pasted", s.text());
+    // setText is the plain pre-fill: the caret at the end, no selection.
+    try s.setText(gpa, "a.txt");
+    try testing.expect(!s.select_all);
+    _ = try handleKey(&s, gpa, Key.char('z'));
+    try testing.expectEqualStrings("a.txtz", s.text());
+}
+
+test "the seeded line paints on the selection ground" {
+    var f = try Fixture.init(80, 12);
+    defer f.deinit();
+    var s = init(testing.allocator, "New note");
+    defer deinit(&s, testing.allocator);
+    try s.seed(testing.allocator, "note-1.md");
+    _ = draw(f.ui(), f.full(), &s);
+    try f.expectContains("│ note-1.md");
+    try testing.expect(f.bgEql(12, 3, f.theme.selection));
+    _ = try handleKey(&s, testing.allocator, Key.named(.end));
+    _ = draw(f.ui(), f.full(), &s);
     try testing.expect(f.bgEql(12, 3, f.theme.overlay_bg));
 }
 

@@ -492,7 +492,7 @@ fn newCmd(app: *App) CommandError!void {
     errdefer app.gpa.free(dir);
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "New finding in " ++ dir_rel ++ "/"), .purpose = .{ .new_finding = dir } } };
-    app.overlay.prompt.state.setText(app.gpa, seed) catch return error.OutOfMemory;
+    app.overlay.prompt.state.seed(app.gpa, seed) catch return error.OutOfMemory;
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -502,7 +502,7 @@ fn newCmd(app: *App) CommandError!void {
 /// + opened through the tree, then the panel rescans.
 pub fn acceptNew(app: *App, dir: []const u8, text_in: []const u8) Allocator.Error!void {
     const arena = app.frame.allocator();
-    const text = std.mem.trim(u8, text_in, " \t\r\n");
+    const text = try notes.withMdExt(arena, text_in);
     if (text.len > 0) {
         const rel = if (std.mem.indexOfScalar(u8, text, '/') == null and dir.len > 0) try std.fs.path.join(arena, &.{ dir, text }) else text;
         const abs = try app.absPath(rel);

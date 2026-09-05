@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Tree `Delete…` dialog: `Enter` closes it without deleting and without feedback
 
@@ -29,3 +29,7 @@ After `Enter`: dialog gone, `ls` still shows the file, no `deleted …` toast. `
 **Actual**: Enter is a silent cancel; a VS Code user's muscle memory (right-click → Delete → Enter) leaves the file in place with no indication.
 
 **Source pointer**: the delete confirmation overlay's key handler (`src/app/file_ops*.zig` / the `[D]elete` `[P]ermanently` `[C]ancel` button overlay) — no `.enter` case.
+
+## Fix
+
+`387d7a9` on branch `fix-git-tree` — trash: enter on the delete confirm deletes; the action is the default in both forms and the toast follows. Regression: `tests/e2e-zig/tree_delete_enter.test`, the reworked unit test in `src/app/trash.zig`; break-checked.

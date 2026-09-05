@@ -1,6 +1,6 @@
 ---
 severity: SEV-1
-status: open
+status: fixed
 ---
 # Git graph: `Enter` on a commit panics the process (`drawDetail` word-wrap slices past the message)
 
@@ -40,3 +40,7 @@ src/app/render.zig:496:53 in drawBody
 **Actual**: mnml-zig panics and exits; unsaved buffers are gone.
 
 **Source pointer**: `src/ui/git_graph_view.zig:534-543`. `ui.clipStr(rest, inner.w)` appends a 3-byte `…` when it clips, so `fit.len` can exceed `rest.len`; `take = fit.len` is then used to slice `rest[0..take]`. Any wrapped body line whose clipped form (chars + `…`) is longer in bytes than the remaining text overflows.
+
+## Fix
+
+`ef1365e` on branch `fix-git-tree` — git graph: the detail panel wraps a body line by cells, never past its bytes (`clip.fitCells` + `wrapTake`). Regression: `tests/e2e-zig/git_graph_detail_wrap.test` (panicked the runner on the unfixed tree), unit rows in `src/ui/clip.zig` and `src/ui/git_graph_view.zig`; break-checked.

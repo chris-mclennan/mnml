@@ -202,16 +202,22 @@ pub fn confirmDelete(app: *App, paths: []const []const u8) Allocator.Error!void 
         try std.fmt.allocPrint(gpa, "  Delete {d} items?{s}", .{ paths.len, if (permanent_only) " This cannot be undone." else " They go to the trash." });
     errdefer gpa.free(msg);
     app.overlay.deinit(gpa);
-    app.overlay = .{ .confirm = .{
-        .state = .{
-            .title = if (permanent_only) "Delete permanently" else "Delete",
+    app.overlay = .{
+        .confirm = .{
+            .state = .{
+                .title = if (permanent_only) "Delete permanently" else "Delete",
+                .message = msg,
+                .choices = if (permanent_only) &permanent_choices else &delete_choices,
+                // Enter takes the action, as every other confirm's does: the
+                // trash is one keystroke away from undo, and the permanent form
+                // says "cannot be undone" in its message. A Cancel default made
+                // right-click → Delete → Enter a silent no-op.
+                .selected = 0,
+            },
+            .purpose = .{ .delete_paths = .{ .paths = owned, .permanent_only = permanent_only } },
             .message = msg,
-            .choices = if (permanent_only) &permanent_choices else &delete_choices,
-            .selected = if (permanent_only) 1 else 2,
         },
-        .purpose = .{ .delete_paths = .{ .paths = owned, .permanent_only = permanent_only } },
-        .message = msg,
-    } };
+    };
     app.focus = .overlay;
     app.needs_render = true;
 }
@@ -614,7 +620,7 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
     try t.expectEqual(@as(i64, 1000 + prune_every_ms), app.trash.last_prune_ms);
 }
 
-test "the confirm: Cancel is the default, Delete trashes, the permanent button skips the trash; inside the trash only the permanent form is offered" {
+test "the confirm: Delete is the default and enter trashes with a toast, the permanent button skips the trash; inside the trash only the permanent form is offered" {
     var env = try Env.init();
     defer env.deinit();
     var app = try env.app();
@@ -627,16 +633,18 @@ test "the confirm: Cancel is the default, Delete trashes, the permanent button s
     defer t.allocator.free(b);
     try confirmDelete(&app, &.{a});
     try t.expect(app.overlay == .confirm);
-    try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.selected);
+    try t.expectEqual(@as(usize, 0), app.overlay.confirm.state.selected);
     try t.expectEqual(@as(usize, 3), app.overlay.confirm.state.choices.len);
     try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "a.txt") != null);
-    // Enter on the default: cancel.
-    try app.handle(.{ .key = Key.named(.enter) });
+    // Esc is the silent way out; enter on the default trashes and says so.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
     try t.expect(exists(&app, a));
     try confirmDelete(&app, &.{a});
-    try app.handle(.{ .key = Key.char('d') });
+    try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(!exists(&app, a));
     try t.expectEqual(@as(usize, 1), count(&app));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "deleted a.txt") != null);
     try confirmDelete(&app, &.{b});
     try app.handle(.{ .key = Key.char('p') });
     try t.expect(!exists(&app, b));
@@ -652,7 +660,8 @@ test "the confirm: Cancel is the default, Delete trashes, the permanent button s
     try confirmDelete(&app, &.{entry_abs});
     try t.expectEqual(@as(usize, 2), app.overlay.confirm.state.choices.len);
     try t.expectEqualStrings("Delete permanently", app.overlay.confirm.state.title);
-    try app.handle(.{ .key = Key.char('p') });
+    try t.expectEqual(@as(usize, 0), app.overlay.confirm.state.selected);
+    try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqual(@as(usize, 0), count(&app));
 }
 
