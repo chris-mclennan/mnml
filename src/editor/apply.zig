@@ -26,12 +26,15 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
     switch (op) {
         // ── grouping ──
         .repeat => |r| {
-            if (r.inner.isMutation() and r.count > 1) {
+            // `{count}dd` past the end takes what is there (`:help dd`),
+            // never a line above the one it started on.
+            const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;
+            if (r.inner.isMutation() and count > 1) {
                 const tok = try ed.beginAtomic();
                 defer ed.endAtomic(tok);
-                for (0..r.count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
+                for (0..count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
             } else {
-                for (0..r.count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
+                for (0..count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
             }
         },
         .atomic => |ops| {
