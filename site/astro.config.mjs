@@ -153,6 +153,8 @@ export default defineConfig({
             { label: 'Cross-host PR workflow', slug: 'manual/cross-host-prs' },
             { label: 'Headless & .test', slug: 'manual/headless' },
             { label: 'Settings & configuration', slug: 'manual/settings' },
+            { label: 'Upgrading to 0.3', slug: 'manual/upgrading-to-0-3' },
+            { label: 'Config reference (ZON)', slug: 'manual/config-zon' },
             { label: 'Security & hardening', slug: 'manual/security' },
             { label: 'Cloud agents runner (ECS)', slug: 'manual/cloud-agents-config' },
             { label: 'Now-playing & transport', slug: 'manual/now-playing' },
@@ -169,6 +171,7 @@ export default defineConfig({
             { label: 'Launcher manifests', slug: 'manual/integrations/launcher-manifests' },
             { label: 'Building integrations', slug: 'manual/integrations/building' },
             { label: 'Community integrations', slug: 'manual/integrations/community' },
+            { label: 'Zig SDK (bridge v2) — 0.3.0', slug: 'manual/integrations/zig-sdk' },
           ],
         },
         {
