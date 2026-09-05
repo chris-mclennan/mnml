@@ -2062,6 +2062,16 @@ pub fn workspaceSymbols(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+/// `picker.workspace_symbol` (VS Code `Ctrl+T`): every workspace symbol
+/// straight into the one symbol picker — no query prompt, the picker's
+/// own filter narrows. `lsp.symbols` and `lsp.workspace_symbols` land
+/// in the same `.lsp_symbols` picker.
+pub fn workspaceSymbolPicker(app: *App) CommandError!void {
+    const t = try requireServer(app, "workspace symbols");
+    const arena = app.frame.allocator();
+    _ = t.server.request(.workspace_symbol, "workspace/symbol", .{ .query = "" }, .{ .pane = t.pane }) catch |err| return app.diag.fail(arena, "LSP workspace symbols: {s}", .{@errorName(err)});
+}
+
 pub fn acceptWorkspaceSymbol(app: *App, query: []const u8) Allocator.Error!void {
     const t = requireServer(app, "workspace symbols") catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -2350,6 +2360,10 @@ test "no server: every request explains itself, and peek never arms pending_peek
     try testing.expect(app.lsp.peek == null);
     try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"lsp.next_diagnostic" }));
     try testing.expectEqualStrings("no diagnostics in this file", app.lastToast().?);
+    // The VS Code Ctrl+T picker asks the same server the prompt does.
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"picker.workspace_symbol" }));
+    try testing.expectEqualStrings("no language server for this file (workspace symbols)", app.lastToast().?);
+    try testing.expect(app.overlay == .none);
 }
 
 test "a missing binary toasts once with its install hint, and never again this session" {

@@ -26,6 +26,8 @@ pub const table = .{
     .@"snippet.expand" = &expandCmd,
     .@"snippet.next_placeholder" = &nextCmd,
     .@"snippet.prev_placeholder" = &prevCmd,
+    .@"snippet.pick" = &pickCmd,
+    .@"snippet.pick_all" = &pickAllCmd,
 };
 
 pub const Stop = struct {
@@ -212,11 +214,17 @@ pub fn expand(app: *App, pane_id: PaneId, e: *EditorPane) Allocator.Error!bool {
         app.toast("no snippet matches \"{s}\"", .{w.word});
         return false;
     };
+    try insertBody(app, pane_id, e, w.start, ed.cursor, body);
+    return true;
+}
+
+/// `body` replaces `[start, cursor)` and its stops open a session — the
+/// tail of a trigger expansion, and the whole of a picker insert.
+fn insertBody(app: *App, pane_id: PaneId, e: *EditorPane, start: usize, cursor: usize, body: []const u8) Allocator.Error!void {
+    const ed = &e.buf.editor;
     var parsed = try parse(app.gpa, body);
     defer parsed.deinit(app.gpa);
     app.snippets.endSession();
-    const start = w.start;
-    const cursor = ed.cursor;
     const text = try app.frame.allocator().dupe(u8, parsed.text);
     try app.splice(e, start, cursor, text);
     // Land on the first stop (or the end of the body).
@@ -234,7 +242,97 @@ pub fn expand(app: *App, pane_id: PaneId, e: *EditorPane) Allocator.Error!bool {
         app.snippets.session = .{ .pane = pane_id, .stops = stops, .current = 0, .seen_seq = ed.edits.head() };
     }
     app.needs_render = true;
-    return true;
+}
+
+// ── the picker ──
+
+/// `snippet.pick`: the active file's scope (and `global`);
+/// `snippet.pick_all`: every scope. One row per snippet — the trigger,
+/// its scope as the hint, the body on one line as the detail — and
+/// Enter inserts the body at the cursor.
+fn pickCmd(app: *App) CommandError!void {
+    return openPicker(app, false);
+}
+
+fn pickAllCmd(app: *App) CommandError!void {
+    return openPicker(app, true);
+}
+
+fn openPicker(app: *App, all: bool) CommandError!void {
+    const e = try app.requireEditor();
+    var scope_buf: [32]u8 = undefined;
+    const scope = scopeFor(e.buf.path, &scope_buf);
+    const gpa = app.gpa;
+    const arena = app.frame.allocator();
+    // Scopes sorted, then triggers sorted: the list reads the same each time.
+    var scopes: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = app.snippets.scopes.keyIterator();
+    while (it.next()) |k| {
+        if (!all and !std.mem.eql(u8, k.*, scope) and !std.mem.eql(u8, k.*, "global")) continue;
+        try scopes.append(arena, k.*);
+    }
+    std.mem.sort([]const u8, scopes.items, {}, lessStr);
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
+    var hints: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
+        for (hints.items) |h| gpa.free(h);
+        hints.deinit(gpa);
+    }
+    for (scopes.items) |sc| {
+        const inner = app.snippets.scopes.get(sc) orelse continue;
+        var triggers: std.ArrayListUnmanaged([]const u8) = .empty;
+        var tit = inner.keyIterator();
+        while (tit.next()) |k| try triggers.append(arena, k.*);
+        std.mem.sort([]const u8, triggers.items, {}, lessStr);
+        for (triggers.items) |trig| {
+            try labels.append(gpa, try gpa.dupe(u8, trig));
+            try details.append(gpa, try oneLine(gpa, inner.get(trig).?));
+            try hints.append(gpa, try gpa.dupe(u8, sc));
+        }
+    }
+    if (labels.items.len == 0) {
+        if (all) return app.diag.fail(arena, "no snippets configured (config `.snippets`)", .{});
+        return app.diag.fail(arena, "no snippets for scope {s} (config `.snippets`)", .{scope});
+    }
+    const cmd_picker = @import("cmd_picker.zig");
+    try cmd_picker.openPickerWith(app, if (all) "Snippets (every scope)" else "Snippets", .snippets, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), try hints.toOwnedSlice(gpa));
+}
+
+fn lessStr(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// The body on one line: newlines become ` ↵ `, at most 60 cells.
+fn oneLine(gpa: Allocator, body: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    var first = true;
+    while (lines.next()) |line| {
+        if (!first) try out.appendSlice(gpa, " ↵ ");
+        first = false;
+        try out.appendSlice(gpa, std.mem.trim(u8, line, " \t"));
+        if (out.items.len > 60) {
+            out.shrinkRetainingCapacity(60);
+            try out.appendSlice(gpa, "…");
+            break;
+        }
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+/// The picker's Enter: `trigger` of `scope` at the cursor.
+pub fn pickerAccept(app: *App, trigger: []const u8, scope: []const u8) Allocator.Error!void {
+    const id = app.active orelse return;
+    const e = app.panes.editor(id) orelse return;
+    const inner = app.snippets.scopes.get(scope) orelse return;
+    const body = inner.get(trigger) orelse return;
+    try insertBody(app, id, e, e.buf.editor.cursor, e.buf.editor.cursor, body);
 }
 
 /// Move to the next (`dir = 1`) or previous stop. Forward past the last
@@ -411,4 +509,42 @@ test "expansion places the cursor at $1, tab walks the stops, backtab returns to
     try command.run(&app, .{ .static = .@"snippet.expand" });
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "no snippet matches") != null);
     _ = id;
+}
+
+test "snippet.pick lists the file's scope and global sorted, pick_all every scope; Enter inserts the body at the cursor" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/x.rs");
+    // Nothing configured explains itself.
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"snippet.pick" }));
+    try testing.expectEqualStrings("no snippets for scope rs (config `.snippets`)", app.lastToast().?);
+    try app.snippets.seed("global", "todo", "// TODO: $1");
+    try app.snippets.seed("rs", "fn", "fn $1() {\n    $0\n}");
+    try app.snippets.seed("rs", "derive", "#[derive($1)]");
+    try app.snippets.seed("py", "main", "if __name__ == '__main__':\n    $0");
+    try command.run(&app, .{ .static = .@"snippet.pick" });
+    try testing.expect(app.overlay == .picker);
+    try testing.expectEqual(app_mod.PickerKind.snippets, app.overlay.picker.kind);
+    const p = &app.overlay.picker;
+    try testing.expectEqual(@as(usize, 3), p.labels.len);
+    try testing.expectEqualStrings("todo", p.labels[0]);
+    try testing.expectEqualStrings("derive", p.labels[1]);
+    try testing.expectEqualStrings("fn", p.labels[2]);
+    try testing.expectEqualStrings("rs", p.hints[2]);
+    try testing.expectEqualStrings("fn $1() { ↵ $0 ↵ }", p.details[2]);
+    // Enter on `fn` (the filtered index of the third row).
+    const cmd_picker = @import("cmd_picker.zig");
+    try cmd_picker.accept(&app, 2);
+    try testing.expect(app.overlay == .none);
+    try testing.expectEqualStrings("fn () {\n    \n}", e.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 3), e.buf.editor.cursor);
+    try testing.expect(app.snippets.session != null);
+    try command.run(&app, .{ .static = .@"snippet.pick_all" });
+    try testing.expectEqual(@as(usize, 4), app.overlay.picker.labels.len);
+    try testing.expectEqualStrings("main", app.overlay.picker.labels[1]);
+    try testing.expectEqualStrings("py", app.overlay.picker.hints[1]);
+    app.overlay.deinit(app.gpa);
 }

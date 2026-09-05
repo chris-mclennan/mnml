@@ -140,7 +140,7 @@ the tree. Nothing left is larger than M.
 | Abbreviations | done | `abbreviate` in `src/app/ex.zig`, expansion in `src/app/dispatch.zig` | |
 | Charwise VISUAL inclusive | done | `make_selection_inclusive` in `src/editor/edit_op.zig` | |
 | Folds `za` / `zo` / `zc`, idempotent | done | `src/editor/buffer.zig` folds, `editor.toggle_fold` / `open_fold` / `close_fold` | |
-| Fold navigation `zj` / `zk`, fold the selection | done | `editor.fold_next` / `fold_prev` / `fold_selection` in `src/app/cmd_app.zig` | `editor.fold_all_brackets` has no runner |
+| Fold navigation `zj` / `zk`, fold the selection | done | `editor.fold_next` / `fold_prev` / `fold_selection` in `src/app/cmd_app.zig`; `editor.fold_all_brackets` (`foldAllBrackets` in `cmd_editor.zig`) | one stack scan per bracket family, the first fold to claim a start line keeps it; `tests/e2e-zig/fold_snippet_pick.test` |
 | Flash-motion `s` + two chars, labels | done | `src/app/flash.zig` (`start`, `interceptKey`), `drawFlashCue` in `render.zig`, `Doc.labels` in `src/ui/editor_view.zig` | labels nearest-to-cursor first; a single match jumps at once |
 | Ex `:w` `:q` `:e` `:wq` `:x` `:qa` `:bd` `:enew` | done | `src/app/ex.zig` | `:qa` refuses mid-transfer; `:qa!` overrides |
 | Ex `:%s/old/new/flags` | done | `substitute` / `compilePattern` in `ex.zig`, `substituteConfirm` / `substituteCount` / `ampersand` in `src/app/ex_verbs.zig`, `src/regex/` | vim patterns; `g` `i` `c` `n`; `:&` / `:&&`; `&`, `\0`–`\9`, `\u \l \U \L \E` in the replacement |
@@ -165,7 +165,7 @@ the tree. Nothing left is larger than M.
 | Code folding — manual | done | `src/editor/buffer.zig` | |
 | Code folding — LSP-suggested | done | `applyFolds` in `src/app/lsp.zig` | |
 | `.editorconfig` | done | `src/editor/editorconfig.zig`, `applyEditorconfig` in `src/editor/buffer.zig`, `App.applyBufferPrefs` | `indent_style` / `indent_size` / `tab_width` / `end_of_line` / `trim_trailing_whitespace`; a slash-in-the-middle glob |
-| Snippets with tab-stops | done | `src/app/snippets.zig` | `snippet.pick` / `pick_all` have no runner |
+| Snippets with tab-stops | done | `src/app/snippets.zig`; `snippet.pick` / `pick_all` (`openPicker`, `PickerKind.snippets`) | the file's scope + `global`, or every scope; trigger / scope hint / one-line body; Enter inserts at the cursor through the same `insertBody` as a trigger expansion |
 | Trailing-whitespace tools | done | `editor.trim_trailing_ws_on_save`, `ensure_trailing_newline` (both read by `Buffer.save`), `ui.highlight_trailing_ws` painted from `render.zig` | |
 | `:set` over every discrete config field | done | `option_paths` / `setOption` / `completeSet` in `src/app/ex.zig` | Zig-only: `no` / `!` / `inv` / `?` / `=value`, bare names when unique |
 | Ex `:messages` / `:messages!` | done | `src/app/ex.zig` → `src/app/messages.zig` | |
@@ -230,7 +230,7 @@ the tree. Nothing left is larger than M.
 | File finder | done | `picker.files` in `src/app/cmd_picker.zig` | `ctrl+o` in the vim profile is the jumplist now |
 | Command palette | done | `cmd_picker.zig` `palette` | |
 | Buffer switcher | done | `picker.buffers` | |
-| Symbol picker | partial | `lsp.symbols` / `lsp.workspace_symbols` in `src/app/cmd_lsp.zig` | `picker.workspace_symbol` has no runner |
+| Symbol picker | done | `lsp.symbols` / `lsp.workspace_symbols` / `picker.workspace_symbol` in `src/app/cmd_lsp.zig` → one `.lsp_symbols` picker (`symbolsPicker` in `lsp.zig`) | `picker.workspace_symbol` (`workspaceSymbolPicker`) sends an empty `workspace/symbol` query straight into the picker — VS Code `Ctrl+T`, the picker's own filter narrows; the no-server test in `lsp.zig` |
 | Marks picker | done | `picker.marks` in `src/app/cmd_app.zig` | lists the global marks too |
 | Clipboard / register picker | done | `picker.clipboard` in `cmd_app.zig` | Enter inserts |
 | Recent-commands picker | done | `picker.recent_commands` in `cmd_app.zig` (+ `view.cmdline_history`) | |

@@ -332,6 +332,7 @@ pub const PickerKind = enum {
     lsp_locations,
     lsp_code_actions,
     lsp_symbols,
+    snippets,
     http_env_vars,
     http_env_delete,
     http_env_pick,

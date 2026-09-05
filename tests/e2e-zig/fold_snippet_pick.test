@@ -1,0 +1,16 @@
+# zig-only
+# `editor.fold_all_brackets` closes every multi-line pair in one go;
+# `snippet.pick` lists the file's snippets and Enter inserts one.
+snippet rs fnn "fn $1() {\n    $0\n}"
+write code.rs "fn a() {\n    x = [\n        1,\n    ];\n}\n"
+open code.rs
+command editor.fold_all_brackets
+expect screen contains "folded 2 block(s)"
+expect screen lacks "x = ["
+command editor.unfold_all
+expect screen contains "x = ["
+command snippet.pick
+expect screen contains "Snippets"
+expect screen contains "fnn"
+key enter
+expect screen contains "fn () {"

@@ -34,6 +34,7 @@ pub const table = .{
     .@"lsp.organize_imports" = &lsp.organizeImports,
     .@"lsp.symbols" = &lsp.symbols,
     .@"lsp.workspace_symbols" = &lsp.workspaceSymbols,
+    .@"picker.workspace_symbol" = &lsp.workspaceSymbolPicker,
     .@"lsp.diagnostics" = &lsp.showDiagnostics,
     .@"lsp.diagnostics_filter" = &lsp.cycleFilter,
     .@"lsp.next_diagnostic" = &nextDiagnostic,
