@@ -889,3 +889,88 @@ that the oldest slot reads `+K more…`.
   drag-to-resize section headers, and the `+ New request` / `Paste
   curl…` / `Import…` action rows (all reachable from the row menus and
   the palette).
+
+## Panels + dock (2026-09-05, branch `panels`) — `// changed:` notes
+
+- `// changed (D8):` three more modules on the `todos.zig` shape —
+  `src/notes.zig`, `src/findings.zig`, `src/sessions.zig` — each with
+  its scan worker, snapshot arena, `handle`, `pub const table`, a
+  `ListPanel` draw and the dispatch prongs. `AppEvent` gains `.notes`,
+  `.findings`, `.sessions`, `.dock` (all owned, adopted-or-freed);
+  `Source` gains the same names. All four tables — and `findings.zig`
+  in particular, which the first cut left out — are listed in
+  `command.runner_tables`; the e2e driver swallows a failed runner by
+  design, so a panel's unit tests now run at least one of its
+  commands through `command.run`.
+- `// changed (todos):` `ui.todo_keywords` is the marker list (a
+  custom word paints as `.custom`); the `.fixme(` / `.fail(` / `.skip(`
+  scan is always on. `todos.mark_done` rewrites the marker to `DONE`
+  (a test call loses its `.fixme`); `todos.fix_with_agent` /
+  `open_claude` / `open_codex` hand the marker to a pty. The watcher
+  queues a rescan 500 ms after the last change (`noteFileChanged` /
+  `tick`); `App.nextDeadlineMs` knows about it.
+- `// changed (notes):` a note is `<ws>/.mnml/notes/*.md`; the title
+  is the first heading, else the first line. `notes.new` seeds the
+  next free `note-N.md`; `PromptPurpose.new_note` / `new_finding` carry
+  the directory. The `open` and `save_post` hooks rescan a used panel;
+  `tree.acceptDelete`'s confirm calls `onPathRemoved`.
+  `list_panel.paintSpinner` and `ageText` are shared by every panel.
+- `// changed (findings):` frontmatter `severity:` / `status:` (with
+  the `SEV-n` / `Sn` / `Pn` / blocker / fixed / wontfix aliases), or a
+  bare `Severity:` / `Status:` line in the first forty lines. Sort
+  ties break by severity. `findings.resolve` rewrites `status:
+  resolved` in place (`setStatusInText` adds the line or the block).
+  `findings.new` writes the frontmatter template before the tree
+  opens the file. Header: `(N open of M)`.
+- `// changed (sessions):` SESSIONS lists the transcripts
+  `agents.scanInto` reads (`~/.claude/projects`, `~/.codex/sessions`),
+  narrowed to this workspace by cwd / label; `w` widens. The axis is
+  `Config.SessionsSort` (State / Manual) — the sort menu names
+  `sessions.sort_auto` / `sort_manual`, so `MenuAction` did not grow.
+  `needs_approval` = a live session whose last tool use has no result
+  and whose file has gone quiet — ranked first. Aliases and the manual
+  order live in `State.aliases` / `order` and round-trip through
+  `session.zon` (`sessions_aliases`, `sessions_order`);
+  `session.parse` needed `@setEvalBranchQuota(8000)`.
+  `PromptPurpose.sessions_rename`, `ConfirmPurpose.delete_session`
+  (an absolute transcript path). A shown panel rescans every 3 s. The
+  `.test` runner's apps have no home: the panel says so instead of
+  scanning; `State.home` lets a test point at a fixture.
+- `// changed (ui):` the header ladder is now: full chip + count →
+  icon + count → full chip alone → icon alone → no chip. The first
+  cut only dropped the count when the refresh chip needed the room,
+  so a wide count deleted the sort chip at the shipped width (the
+  Rust bug the header's comment describes). FINDINGS' full chip with
+  its count needs 49 cells; at the default 40 the count sits beside
+  the icon. Break-checked ("a wide subtitle gives way to the chip").
+- `// changed (dock, core):` `src/core/dock.zig` holds `Corner`,
+  `Placement { overlay, @"inline" }`, `Opacity`, `Size` (five presets
+  as percentages, 15–90 clamp) and `Setting`; `MenuAction.dock_set{
+  id, setting }` is what a kebab row carries. `HitTarget.dock{ id,
+  part: DockPart { body, title, kebab, close } }` — `rects.json`
+  labels read `dock:<id>:<part>`. `Drag.dock: DockDrag{ id, x, y,
+  moved }`. `PromptPurpose.dock_new_text` / `dock_new_log` (a
+  `Corner`), `dock_edit` / `dock_rename` (a widget id).
+- `// changed (dock, app):` `App.dock: dock.State`, `App.dock_area`
+  (the body before the inline strips came off). `render.zig` takes
+  the strips off `panes_area` before `drawBody` and calls `dock.draw`
+  after it (never in zen). Overlay widgets stack per corner inside the
+  shrunken body, capped at half its height; inline widgets tile their
+  strip, each edge capped at a quarter. The tail is a worker in the
+  dock's `Io.Group` posting `.dock = *TailResult`; `remove`, `closeAll`,
+  `acceptEdit` (a re-pointed path) and `apply` cancel the group before
+  freeing what a worker borrows. `dock.tick` starts one read per widget
+  per second; `nextDeadlineMs` keeps a clock and a tail ticking.
+  `Translucent` blends rgb grounds at 45 % (`dock.blend`) and leaves
+  indexed / default cells as they were; the text is written over the
+  blend cell by cell. Drop: within `snap_cells` (8) of another
+  widget's centre → its corner, inserted beside it (above / below by
+  the pointer, which for a bottom corner means after / before in the
+  list); else the quadrant. `session.Saved.dock` / `dock_hidden`.
+  The `+` menu has "New dock note". Six ids beyond the Rust seven:
+  `dock.toggle` / `add` / `add_preset` (a `.custom` picker) / `remove` /
+  `edit` / `rename`. Pin 857.
+- Not done, by design: the `⟳` chip's right-click menu and
+  `ui.auto_refresh_off` (every panel's chip is a left-click rescan);
+  the Rust SESSIONS strip's per-row transcript summary lines, bells
+  and ticket detection; the clock is UTC (no `localtime` in std).
