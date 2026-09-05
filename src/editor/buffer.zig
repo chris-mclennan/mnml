@@ -704,9 +704,11 @@ pub const Buffer = struct {
         if (self.recording) |*r| {
             // The `q` that stopped us was recorded too — drop it.
             _ = r.keys.pop();
-            const keys = try r.keys.toOwnedSlice(self.gpa);
-            try clip.putMacro(r.reg, keys);
+            const spec = try keysToSpec(self.gpa, r.keys.items);
+            defer self.gpa.free(spec);
+            try clip.putMacro(r.reg, spec);
             clip.last_macro = r.reg;
+            r.keys.deinit(self.gpa);
             self.recording = null;
             return .redraw;
         }
@@ -716,16 +718,24 @@ pub const Buffer = struct {
         return .redraw;
     }
 
+    /// `@reg`: the register's text as keys. A register yanked back with
+    /// `yy` ends in a newline, which replays as Enter — vim executes it
+    /// the same way.
     fn macroReplay(self: *Buffer, reg_in: u8, count: u32, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         const reg = if (reg_in == '@') (clip.last_macro orelse return .noop) else reg_in;
-        const keys = clip.macro(reg) orelse return .noop;
+        const spec = clip.macro(reg) orelse return .noop;
         if (self.replay_depth >= max_replay_depth) return .noop;
         self.replay_depth += 1;
         defer self.replay_depth -= 1;
         clip.last_macro = reg;
+        // The register may be rewritten by what it replays (`"ay$`):
+        // take a copy first.
+        const keys = try parseKeys(self.gpa, spec);
+        defer self.gpa.free(keys);
         var edited = false;
         for (0..@max(count, 1)) |_| {
-            for (keys) |k| {
+            for (keys) |k_in| {
+                const k: Key = if (k_in.code == .char and k_in.code.char == '\n') Key.named(.enter) else k_in;
                 const ev = try self.feedKey(k, clip, viewport_rows, wrap_width, arena);
                 if (ev == .edited) edited = true;
             }
@@ -1259,6 +1269,11 @@ test "vim marks, macros and visual mode" {
     try vim("qaxq2@a", "|abcd", "|d");
     try vim("qaIX<esc>jqqbA!<esc>jq@a@b", "|a\nb\nc\nd", "Xa\nb!\nXc\nd!|");
     try vim("@z", "|a", "|a");
+    // A macro is its register: `"ap` pastes the keys, `"ay$` re-records, `:reg`-style read-back.
+    try vim("qaA!<esc>q\"ap", "|a", "a!A!<esc>|"); // charwise, like any recorded register
+    try vim("qaA!<esc>qj0\"ay$dd@a", "|a\nA?<esc>", "a!|?"); // an edited register replays
+    try vim("qaxqj\"ayygg@a", "|abc\nd\ne", "|e"); // `"ayy` holds `d<CR>`: the newline replays as Enter, so `@a` is `dj`
+    try vim("\"axjA!<esc>\"ap", "|ab\nc", "b\nc!a|"); // `"ax` fills a named register too
     try vim("vwd", "|hello world", "|orld");
     try vim("vwy$p", "|hello world", "hello worldhello w|");
     try vim("v$d", "a|bc\nd", "a|\nd");
@@ -1324,7 +1339,7 @@ test "macro registers are shared through the clipboard: `qa` in one buffer, `@a`
     try feed(&a, &clip, arena.allocator(), "qaA!<esc>jq");
     try testing.expectEqualStrings("one!\ntwo", a.editor.bytes());
     try testing.expect(!a.isRecording());
-    try testing.expectEqual(@as(usize, 4), clip.macro('a').?.len);
+    try testing.expectEqualStrings("A!<esc>j", clip.macro('a').?);
     try testing.expectEqual(@as(?u8, 'a'), clip.last_macro);
     // A different buffer, the same clipboard: the register replays.
     try feed(&b, &clip, arena.allocator(), "@a");

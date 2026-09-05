@@ -1,14 +1,14 @@
-//! Persisted macros — the registers `qa`…`q` fill outlive the process.
-//! `<data root>/macros.zon` holds every register as key-spec text
-//! (`buffer.zig`'s `parseKeys` notation: `ihello<esc>j`), written when a
-//! recording stops and on the `exit` hook, read on `startup`. A register
-//! whose text does not parse falls back to the chars it spells (the
-//! notation has no failure mode); nothing is written
-//! when the data root is empty (headless tests).
+//! Persisted registers — what `qa`…`q` (and any `"ayy`) fill outlives
+//! the process. `<data root>/macros.zon` holds every named register's
+//! text (a macro is in `buffer.zig`'s `parseKeys` notation:
+//! `ihello<esc>j`), written when a recording stops and on the `exit`
+//! hook, read on `startup`. Nothing is written when the data root is
+//! empty (headless tests).
 //!
 //! // changed: Rust mnml kept macros in memory only. The registers live
 //! on the `Clipboard` here (`clipboard.zig`), so one file covers every
-//! buffer.
+//! buffer — and since a macro IS its register, the file carries the
+//! named registers, not a macro store of its own.
 
 const std = @import("std");
 const Io = std.Io;
@@ -84,25 +84,27 @@ pub fn load(app: *App) Allocator.Error!usize {
     return restore(&app.clipboard, stored);
 }
 
-/// The registers as spec text, sorted by register.
+/// The named registers `a`–`z` and the anonymous macro slot, sorted.
 pub fn capture(arena: Allocator, clip: *const buffer.Clipboard) Allocator.Error!Stored {
     var regs: std.ArrayListUnmanaged(u8) = .empty;
-    var it = clip.macros.keyIterator();
-    while (it.next()) |k| try regs.append(arena, k.*);
+    var it = clip.named.iterator();
+    while (it.next()) |kv| {
+        const r = kv.key_ptr.*;
+        if (((r >= 'a' and r <= 'z') or r == '@') and kv.value_ptr.text.len > 0) try regs.append(arena, r);
+    }
     std.mem.sort(u8, regs.items, {}, std.sort.asc(u8));
     const out = try arena.alloc(Entry, regs.items.len);
     for (regs.items, 0..) |reg, i| {
-        out[i] = .{ .reg = reg, .keys = try buffer.keysToSpec(arena, clip.macros.get(reg).?) };
+        out[i] = .{ .reg = reg, .keys = try arena.dupe(u8, clip.macro(reg).?) };
     }
     return .{ .macros = out };
 }
 
-/// Put every entry that parses into `clip`, replacing what is there.
+/// Put every entry into `clip`, replacing what is there.
 pub fn restore(clip: *buffer.Clipboard, stored: Stored) Allocator.Error!usize {
     var n: usize = 0;
     for (stored.macros) |e| {
-        const keys = try buffer.parseKeys(clip.gpa, e.keys);
-        try clip.putMacro(e.reg, keys);
+        try clip.putMacro(e.reg, e.keys);
         n += 1;
     }
     return n;
@@ -155,7 +157,7 @@ test "macros: stopping a recording writes macros.zon; the next launch replays it
         defer app.deinit();
         try t.expect(app.clipboard.macro('a') == null);
         app.hooks.emit(&app, .startup);
-        try t.expectEqual(@as(usize, 4), app.clipboard.macro('a').?.len);
+        try t.expectEqualStrings("A!<esc>j", app.clipboard.macro('a').?);
         _ = try app.openEditor(b);
         const keys = try buffer.parseKeys(t.allocator, "@a");
         defer t.allocator.free(keys);
@@ -179,17 +181,21 @@ test "macros: stopping a recording writes macros.zon; the next launch replays it
 test "macros: capture / restore round-trip keeps every register" {
     var clip = buffer.Clipboard.init(t.allocator);
     defer clip.deinit();
-    try clip.putMacro('a', try buffer.parseKeys(t.allocator, "ihi<esc><c-v>j<lt>"));
-    try clip.putMacro('@', try buffer.parseKeys(t.allocator, "x"));
+    try clip.putMacro('a', "ihi<esc><c-v>j<lt>");
+    try clip.putMacro('@', "x");
+    // A plain yank into a named register travels too; `"0` does not.
+    clip.setPendingRegister('b');
+    try clip.setYank("two lines\n", true);
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const stored = try capture(arena_state.allocator(), &clip);
-    try t.expectEqual(@as(usize, 2), stored.macros.len);
+    try t.expectEqual(@as(usize, 3), stored.macros.len);
     try t.expectEqual(@as(u8, '@'), stored.macros[0].reg);
     try t.expectEqualStrings("ihi<esc><c-v>j<lt>", stored.macros[1].keys);
+    try t.expectEqualStrings("two lines\n", stored.macros[2].keys);
     var back = buffer.Clipboard.init(t.allocator);
     defer back.deinit();
-    try t.expectEqual(@as(usize, 2), try restore(&back, stored));
-    try t.expectEqual(@as(usize, 7), back.macro('a').?.len);
-    try t.expectEqual(@as(usize, 1), back.macro('@').?.len);
+    try t.expectEqual(@as(usize, 3), try restore(&back, stored));
+    try t.expectEqualStrings("ihi<esc><c-v>j<lt>", back.macro('a').?);
+    try t.expectEqualStrings("x", back.macro('@').?);
 }

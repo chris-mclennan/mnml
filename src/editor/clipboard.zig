@@ -17,17 +17,20 @@
 //! the clipboard is in-process only, which is what every test, the
 //! headless loop and a `.test` run get.
 //!
-//! Macro registers live here too: vim's `qa` / `@a` are registers, not
-//! buffer state, so a macro recorded in one buffer replays in another.
-//! `Buffer` keeps the in-flight recording and reaches the finished
-//! registers through the `*Clipboard` every `feedKey` already takes.
+//! Macros are registers (`:help q`): `qa…q` writes the keys, in the
+//! `parseKeys` notation (`I- <esc>`), into the named register `a` as
+//! charwise text, so `:reg a` shows it, `"ap` pastes it to edit, `"ay$`
+//! puts it back and `@a` parses whatever the register holds. `'@'` is
+//! the anonymous register `qq` / `@@` use; it is never listed. `Buffer`
+//! keeps the in-flight recording and reaches the registers through the
+//! `*Clipboard` every `feedKey` already takes.
 //! // changed: D4 placed macro registers on `Buffer`; that made them
 //! per-file, which vim users notice the first time `@a` says nothing.
+//! A separate key store came next, invisible to `:reg` and `"ap`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const clipboard_os = @import("../core/clipboard_os.zig");
-const Key = @import("../core/key.zig").Key;
 
 pub const Entry = struct {
     text: []u8,
@@ -55,9 +58,6 @@ pub const Clipboard = struct {
     /// The last text read back from the OS, gpa-owned — what `text()`
     /// handed out for a `"+` / `"*` read. Freed on the next such read.
     os_text: ?[]u8 = null,
-    /// Macro registers: raw keys, gpa-owned, replayed through
-    /// `Buffer.feedKey`. `'@'` is the anonymous register (`qq` / `@@`).
-    macros: std.AutoHashMapUnmanaged(u8, []Key) = .empty,
     /// The register `@@` repeats: the last one recorded or replayed.
     last_macro: ?u8 = null,
 
@@ -71,9 +71,6 @@ pub const Clipboard = struct {
         while (it.next()) |e| self.gpa.free(e.text);
         self.named.deinit(self.gpa);
         if (self.os_text) |t| self.gpa.free(t);
-        var mit = self.macros.valueIterator();
-        while (mit.next()) |k| self.gpa.free(k.*);
-        self.macros.deinit(self.gpa);
     }
 
     /// Install what the session has — the terminal's buffered writer and
@@ -90,16 +87,26 @@ pub const Clipboard = struct {
         self.os = clipboard_os.select(mode, self.live, self.tool);
     }
 
-    /// Store `keys` (adopted; gpa-owned) as macro `reg`, replacing any
-    /// previous recording.
-    pub fn putMacro(self: *Clipboard, reg: u8, keys: []Key) Allocator.Error!void {
-        errdefer self.gpa.free(keys);
-        if (self.macros.fetchRemove(reg)) |old| self.gpa.free(old.value);
-        try self.macros.put(self.gpa, reg, keys);
+    /// A finished recording: `spec` (key notation, copied) becomes the
+    /// charwise text of register `reg`.
+    pub fn putMacro(self: *Clipboard, reg: u8, spec: []const u8) Allocator.Error!void {
+        try self.putNamed(reg, .{ .text = try self.gpa.dupe(u8, spec), .linewise = false });
     }
 
-    pub fn macro(self: *const Clipboard, reg: u8) ?[]const Key {
-        return self.macros.get(reg);
+    /// What `@reg` replays: the register's text, borrowed.
+    pub fn macro(self: *const Clipboard, reg: u8) ?[]const u8 {
+        const e = self.named.get(reg) orelse return null;
+        return e.text;
+    }
+
+    /// The register names `:reg` lists: every non-empty named one, the
+    /// anonymous macro slot excluded. Sorted, on `arena`.
+    pub fn listedNames(self: *const Clipboard, arena: Allocator) Allocator.Error![]u8 {
+        var names: std.ArrayList(u8) = .empty;
+        var it = self.named.iterator();
+        while (it.next()) |kv| if (kv.key_ptr.* != '@' and kv.value_ptr.text.len > 0) try names.append(arena, kv.key_ptr.*);
+        std.mem.sort(u8, names.items, {}, std.sort.asc(u8));
+        return names.items;
     }
 
     pub fn setPendingRegister(self: *Clipboard, reg: ?u21) void {

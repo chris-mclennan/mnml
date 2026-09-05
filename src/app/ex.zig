@@ -741,14 +741,10 @@ fn registers(app: *App, filter: []const u8) CommandError!void {
     if (show_unnamed) if (app.clipboard.unnamed) |u| if (u.text.len > 0) {
         try parts.print(arena, "\"\"  {s}", .{try preview(arena, u.text, 40)});
     };
-    var names: std.ArrayListUnmanaged(u8) = .empty;
-    var it = app.clipboard.named.keyIterator();
-    while (it.next()) |k| try names.append(arena, k.*);
-    std.mem.sort(u8, names.items, {}, std.sort.asc(u8));
-    for (names.items) |c| {
+    // Macros are registers: `:reg a` shows what `qa…q` recorded.
+    for (try app.clipboard.listedNames(arena)) |c| {
         if (want.len > 0 and std.mem.indexOfScalar(u8, want, c) == null) continue;
         const entry = app.clipboard.named.get(c).?;
-        if (entry.text.len == 0) continue;
         if (parts.items.len > 0) try parts.appendSlice(arena, "  ");
         try parts.print(arena, "\"{c}  {s}", .{ c, try preview(arena, entry.text, 40) });
     }
