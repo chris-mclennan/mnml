@@ -94,9 +94,12 @@ pub const AppCommand = union(enum) {
     /// backtick form (charwise, exclusive), else linewise to the mark's
     /// line. The buffer owns the mark, so it builds the range.
     operator_to_mark: struct { op: u8, mark: u8, exact: bool },
+    /// `{count} Ctrl-W >` and friends: the active window's width
+    /// (`width`) or height by `cells`, negative to shrink.
+    split_resize: struct { width: bool, cells: i32 },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 24);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 25);
     }
 };
 

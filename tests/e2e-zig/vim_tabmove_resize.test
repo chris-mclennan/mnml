@@ -1,0 +1,31 @@
+# zig-only
+# `:tabmove N` reorders tab pages, `:resize N` / `:vertical resize N` set
+# a window's height / width in cells, and a count on `Ctrl-W >` is a
+# number of columns (`:help :tabmove`, `:help :resize`, `:help CTRL-W_>`).
+write a.txt "alpha\n"
+open a.txt
+command editor.use_vim
+
+type ":tabnew"
+key enter
+expect screen contains "tab 2/2"
+type ":tabmove 0"
+key enter
+expect screen contains "tab 1/2"
+type ":tabmove"
+key enter
+expect screen contains "tab 2/2"
+type ":tabclose"
+key enter
+type ":vsplit"
+key enter
+type ":vertical resize 20"
+key enter
+expect screen lacks "unknown command"
+type ":resize 5"
+key enter
+expect screen lacks "unknown command"
+key 5
+key ctrl+w
+key >
+expect screen lacks "unknown command"

@@ -1073,13 +1073,27 @@ pub const Vim = struct {
                 self.count = null;
                 const c = ch orelse return .consumed;
                 if (c == '@') return .{ .app = .{ .macro_replay_from = .{ .reg = '@', .count = count } } };
-                if (c >= 'a' and c <= 'z') return .{ .app = .{ .macro_replay_from = .{ .reg = @intCast(c), .count = count } } };
+                if (c >= 'a' and c <= 'z' or c >= '0' and c <= '9') return .{ .app = .{ .macro_replay_from = .{ .reg = @intCast(c), .count = count } } };
+                if (c >= 'A' and c <= 'Z') return .{ .app = .{ .macro_replay_from = .{ .reg = @intCast(c + ('a' - 'A')), .count = count } } };
                 if (c == ':') return runCmd(.@"vim.replay_last_ex");
                 return .consumed;
             },
             .window => {
+                const count = self.count;
                 self.resetPending();
                 const c = ch orelse return .consumed;
+                // `{count} Ctrl-W >` / `<` / `+` / `-`: that many cells
+                // (`:help CTRL-W_>`); the bare chord keeps its 5 % step.
+                if (count) |n| {
+                    const cells: i32 = @intCast(@min(n, 10_000));
+                    switch (c) {
+                        '>' => return .{ .app = .{ .split_resize = .{ .width = true, .cells = cells } } },
+                        '<' => return .{ .app = .{ .split_resize = .{ .width = true, .cells = -cells } } },
+                        '+' => return .{ .app = .{ .split_resize = .{ .width = false, .cells = cells } } },
+                        '-' => return .{ .app = .{ .split_resize = .{ .width = false, .cells = -cells } } },
+                        else => {},
+                    }
+                }
                 return switch (c) {
                     'w' => runCmd(.@"view.focus_next_split"),
                     'q', 'c' => runCmd(.@"view.close_split"),
