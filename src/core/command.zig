@@ -119,6 +119,7 @@ const runner_tables = .{
     @import("../app/ws_pane.zig"),
     @import("../app/cmd_browser.zig"),
     @import("../app/messages.zig"),
+    @import("../app/zen.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {

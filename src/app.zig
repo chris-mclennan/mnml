@@ -533,6 +533,8 @@ pub const App = struct {
     needs_render: bool = true,
     /// The toast history (`:messages`).
     messages: messages.State = .{},
+    /// Zen: the editor and the `:` line, nothing else painted.
+    zen: bool = false,
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -1479,6 +1481,7 @@ test {
     _ = @import("ui/fuzzy.zig");
     _ = @import("ui/editor_view.zig");
     _ = @import("app/messages.zig");
+    _ = @import("app/zen.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

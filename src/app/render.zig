@@ -118,6 +118,13 @@ pub fn frameRects(full: Rect) FrameRects {
     return .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline };
 }
 
+/// Zen: only the `:` line is kept (a vim user leaves through it).
+pub fn zenRects(full: Rect) FrameRects {
+    if (full.h < 2) return .{ .bar = Rect.empty, .upper = full, .status = Rect.empty, .cmdline = Rect.empty };
+    const s = full.splitBottom(1);
+    return .{ .bar = Rect.empty, .upper = s.top, .status = Rect.empty, .cmdline = s.rest };
+}
+
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
     app.hits.reset();
@@ -136,11 +143,13 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     screen.cursor_vis = false;
     app.cursor_pos = null;
 
-    const fr = frameRects(full);
+    // Zen: the panes fill everything above the `:` line — no bar, no
+    // tree, no right panel, no strips, no statusline (`zen.zig`).
+    const fr = if (app.zen) zenRects(full) else frameRects(full);
     drawPaletteBar(app, ui, fr.bar);
     // The tree takes its width plus a one-cell divider (Rust `ui/mod.rs`).
     var panes_area = fr.upper;
-    if (app.tree.visible and panes_area.w > 12) {
+    if (!app.zen and app.tree.visible and panes_area.w > 12) {
         const w: u16 = @max(@min(app.tree.width, panes_area.w -| 21), 8);
         const cols = panes_area.splitLeft(w);
         const div = cols.rest.splitLeft(1);
@@ -149,7 +158,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         panes_area = div.rest;
     }
     // The right panel takes its width plus a divider off the far side.
-    if (app.right_panel) |which| if (panes_area.w > 21 + 8) {
+    if (app.right_panel) |which| if (!app.zen and panes_area.w > 21 + 8) {
         const w: u16 = @max(@min(app.right_panel_width, panes_area.w -| 21), 8);
         const cols = panes_area.splitRight(w);
         const div = cols.left.splitRight(1);
@@ -159,7 +168,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     };
     app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
-    try drawStatusline(app, ui, fr.status);
+    if (!app.zen) try drawStatusline(app, ui, fr.status);
     drawCmdline(app, ui, fr.cmdline);
     try drawOverlay(app, ui, panes_area);
     try lsp.drawPopups(app, ui, panes_area);
@@ -293,7 +302,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         const pane = app.panes.get(pr.pane) orelse continue;
         try ui.hits.add(ui.arena, pr.rect, .{ .pane = pr.pane });
         var rect = pr.rect;
-        if (rect.h >= 2) {
+        if (rect.h >= 2 and !app.zen) {
             const s = rect.splitTop(1);
             bufferline.draw(ui, s.top, try tabsOf(app, ui, layout, pr.leaf), .{ .leaf = @intCast(li), .new_tab = Button.newTab(li) });
             if (app.active == pr.pane) drawMdChip(app, ui, s.top);
