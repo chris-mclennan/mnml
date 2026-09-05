@@ -129,6 +129,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     // `:bn` / `:bp` step over terminal tabs; the bang form takes them too.
     if (eqAny(verb, &.{ "bn", "bnext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, 1) else command.run(app, .{ .static = .@"buffer.next" });
     if (eqAny(verb, &.{ "bp", "bprev", "bprevious", "bN", "bNext" })) return if (bang) @import("cmd_buffer.zig").cycleAny(app, -1) else command.run(app, .{ .static = .@"buffer.prev" });
+    if (eqAny(verb, &.{ "b", "bu", "buf", "buffer" })) return @import("cmd_buffer.zig").switchTo(app, args);
     if (eqAny(verb, &.{ "bf", "bfirst", "br", "brewind" })) return @import("cmd_buffer.zig").firstTab(app);
     if (eqAny(verb, &.{ "bl", "blast" })) return @import("cmd_buffer.zig").lastTab(app);
     if (eqAny(verb, &.{ "t", "co", "copy" })) return copyMove(app, range, args, false);

@@ -609,6 +609,8 @@ pub const App = struct {
     quit: bool = false,
     /// What the process exits with once `quit` is set: `:cq` asks for 1.
     exit_code: u8 = 0,
+    /// The pane that was active before the current one (`buffer.last`).
+    prev_active: ?PaneId = null,
     restart: bool = false,
 
     panes: PaneStore,
@@ -1433,6 +1435,8 @@ pub const App = struct {
             if (self.activeBuffer()) |b| b.input.onBlur();
             self.change_nav = null;
             flash_mod.cancel(self);
+            // The alternate (`:b#`, `Ctrl-^`): the pane focus just left.
+            if (self.active) |prev| self.prev_active = prev;
         }
         self.active = id;
         // The focused pane is its leaf's shown tab.

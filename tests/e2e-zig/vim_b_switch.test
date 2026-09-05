@@ -1,0 +1,30 @@
+# zig-only
+# `:b N` switches to the N-th buffer of `:ls`, `:b name` to the one
+# whose name matches (a unique substring), `:b#` to the alternate.
+write a.txt "alpha\n"
+write b.txt "bravo\n"
+write c.txt "charlie\n"
+open a.txt
+open b.txt
+open c.txt
+command editor.use_vim
+
+type ":b 1"
+key enter
+expect pane a.txt
+type ":b c.t"
+key enter
+expect pane c.txt
+type ":buffer b"
+key enter
+expect pane b.txt
+type ":b#"
+key enter
+expect pane c.txt
+type ":b zzz"
+key enter
+expect screen contains "no matching buffer"
+expect pane c.txt
+type ":b 9"
+key enter
+expect screen contains "no buffer 9"
