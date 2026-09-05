@@ -83,6 +83,7 @@ const lsp = @import("lsp.zig");
 const files_pane = @import("files_pane.zig");
 const trash = @import("trash.zig");
 const ex_verbs = @import("ex_verbs.zig");
+const flash = @import("flash.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -93,6 +94,10 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         else => return overlayKey(app, k),
     }
     if (app.find_bar != null) return findBarKey(app, k);
+    // Armed flash labels take the next key ahead of everything the
+    // editor could do with it: a label jumps, Esc disarms, anything
+    // else disarms and carries on below.
+    if (app.flash != null and flash.interceptKey(app, k)) return;
     // The completion / hover / peek popups take their keys first: an
     // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
     // accept that edited the text leaves any ghost stale — drop it.
@@ -349,6 +354,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .redraw => {},
         .edited => {
             e.hl_dirty = true;
+            flash.cancel(app);
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
             if (trigger) try expandAbbreviation(app, e);
@@ -867,6 +873,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         if (app.drag != null) return continueDrag(app, m);
     }
     if (m.kind == .motion) return;
+    // A press anywhere puts flash's labels away.
+    if (m.kind == .press) flash.cancel(app);
     const target = app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;
@@ -1682,7 +1690,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .cmdline_popup_move => |d| try cmdlineCycle(app, e, d),
         .cmdline_insert_cursor_word => |big| try cmdlineInsertWord(app, e, big),
         .cmdline_paste_from_clipboard => try cmdlineInsert(app, e, app.clipboard.text()),
-        .flash_start => |f| flashJump(e, f.a, f.b),
+        .flash_start => |f| try flash.start(app, pane_id, e, f.a, f.b),
     }
 }
 
@@ -2071,21 +2079,6 @@ pub fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Erro
     const joined = try std.mem.concat(app.frame.allocator(), u8, &.{ line[0..caret], clean.items, line[caret..] });
     try e.buf.input.cmdlineSet(joined);
     e.buf.input.setCmdlineCaret(caret + clean.items.len);
-}
-
-// ── flash ──
-
-/// `s<a><b>`: jump to the next `ab` after the cursor (wrapping).
-fn flashJump(e: *EditorPane, a: u21, b: u21) void {
-    var pat: [8]u8 = undefined;
-    const na = std.unicode.utf8Encode(a, pat[0..4]) catch return;
-    const nb = std.unicode.utf8Encode(b, pat[na..]) catch return;
-    const needle = pat[0 .. na + nb];
-    const ed = &e.buf.editor;
-    const text = ed.bytes();
-    const from = @min(ed.cursor + 1, text.len);
-    const hit = std.mem.indexOfPos(u8, text, from, needle) orelse std.mem.indexOf(u8, text, needle) orelse return;
-    ed.setCursor(hit);
 }
 
 test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring opens it" {

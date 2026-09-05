@@ -59,6 +59,7 @@ const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
 const first_launch = @import("app/first_launch.zig");
 const scroll_mod = @import("app/scroll.zig");
+const flash_mod = @import("app/flash.zig");
 const Rect = @import("ui/rect.zig");
 const Ui = @import("ui/context.zig");
 const Canvas = @import("ui/canvas.zig");
@@ -621,6 +622,9 @@ pub const App = struct {
     workspace_trusted: bool = false,
     block_insert: ?BlockInsert = null,
     repeat_insert: ?RepeatInsert = null,
+    /// Flash-motion labels while armed (`s<a><b>` on several matches).
+    /// Reach it through `flash.current`, which drops a stale one.
+    flash: ?flash_mod.State = null,
     cmd_complete: ?CmdComplete = null,
     /// The line range a `!` filter prompt applies to.
     filter_rows: ?[2]usize = null,
@@ -911,6 +915,7 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
+        if (self.flash) |*f| f.deinit(gpa);
         for (self.recent.items) |r| gpa.free(r);
         self.recent.deinit(gpa);
         for (self.cmd_history.items) |c| gpa.free(c);
@@ -1218,6 +1223,7 @@ pub const App = struct {
         if (self.active != id) {
             if (self.activeBuffer()) |b| b.input.onBlur();
             self.change_nav = null;
+            flash_mod.cancel(self);
         }
         self.active = id;
         // The focused pane is its leaf's shown tab.
@@ -1613,6 +1619,7 @@ pub const App = struct {
 
 test {
     _ = @import("app/trust.zig");
+    _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
     _ = @import("app/first_launch.zig");
     _ = @import("app/pane.zig");

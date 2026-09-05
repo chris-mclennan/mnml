@@ -48,6 +48,7 @@ const dock = @import("dock.zig");
 const settings_app = @import("settings.zig");
 const settings_ui = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
+const flash = @import("flash.zig");
 const wizard_ui = @import("../ui/wizard.zig");
 const syntax = @import("syntax.zig");
 const sticky = @import("sticky.zig");
@@ -526,6 +527,17 @@ fn drawGhost(ui: Ui, rect: Rect, cursor: editor_view.Cursor, ed: *const @import(
     }
 }
 
+/// While flash is armed, the pane's last row says what to press —
+/// `ab → press a label to jump · Esc cancels`, right-aligned, in the
+/// label style; nothing on screen would otherwise say the next key
+/// is spoken for.
+fn drawFlashCue(ui: Ui, rect: Rect, f: *const flash.State) void {
+    if (rect.isEmpty()) return;
+    var pair: [8]u8 = undefined;
+    const hint = ui.fmt(" {s} {s} press a label to jump {s} Esc cancels ", .{ flash.pairText(f.a, f.b, &pair), if (ui.ascii) "->" else "→", if (ui.ascii) "-" else "·" });
+    _ = ui.putStrRight(rect.right(), rect.bottom() - 1, rect.w, hint, ui.theme.current_match);
+}
+
 /// The gutter's marks, in priority order: the debugger's signs first (a
 /// breakpoint, the ▶ of a stop), then a diagnostic's dot on the lines
 /// they leave, then git's change bars — the view paints the first sign
@@ -582,6 +594,14 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
     const matches = try arena.alloc(editor_view.Range, e.find.matches.items.len);
     for (e.find.matches.items, 0..) |m, i| matches[i] = .{ .start = m.start, .end = m.end };
     const mode = e.buf.input.mode();
+    // Flash labels: one per armed match, in byte order (the state
+    // keeps them sorted); a stale state is dropped here.
+    var labels: []editor_view.Label = &.{};
+    const armed: ?*flash.State = if (app.active == id) flash.current(app) else null;
+    if (armed) |f| {
+        labels = try arena.alloc(editor_view.Label, f.matches.len);
+        for (f.matches, 0..) |m, i| labels[i] = .{ .byte = m.byte, .text = m.text() };
+    }
     const doc: editor_view.Doc = .{
         .text = e.buf.editor.bytes(),
         .cursor = e.buf.editor.cursor,
@@ -606,9 +626,11 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
         .underlines = try lsp.underlinesFor(app, arena, e, &app.theme),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
+        .labels = labels,
     };
     const cursor = editor_view.draw(ui, id, rect, &e.view, doc);
     try http_app.drawEditorVarTip(app, ui, id, e, rect);
+    if (armed) |f| drawFlashCue(ui, rect, f);
     if (ed.ghost_suggestion) |ghost| if (cursor) |c| {
         var digits: u16 = 1;
         var n = ed.lineCount();
