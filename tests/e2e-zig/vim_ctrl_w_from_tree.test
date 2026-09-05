@@ -1,0 +1,30 @@
+# zig-only
+# The file tree is a window: once `Ctrl-W h` has put focus in it, `Ctrl-W
+# w` cycles on to the next window and `Ctrl-W l` moves right into the
+# editor — the same way `Ctrl-L` does, for hands that only know `Ctrl-W`.
+# The tree's cursor sits on a folder row, so `l` on its own would expand
+# it, not leave the tree; `x` shows where the focus is (the tree ignores
+# it, the editor deletes a char).
+write sub/b.txt "x\n"
+write a.txt "alpha\n"
+open a.txt
+command editor.use_vim
+
+key ctrl+w
+key h
+key up
+type x
+expect screen contains " 1 alpha"
+key ctrl+w
+key w
+type x
+expect screen contains " 1 lpha"
+key ctrl+w
+key h
+key up
+type x
+expect screen contains " 1 lpha"
+key ctrl+w
+key l
+type x
+expect screen contains " 1 pha"

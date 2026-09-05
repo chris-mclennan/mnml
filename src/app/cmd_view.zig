@@ -344,6 +344,13 @@ fn focusNextSplit(app: *App) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     const leaves = try layout.leaves(app.frame.allocator());
+    // From the sidebar the cycle continues into the first window.
+    if (app.focus == .tree and leaves.len > 0) {
+        app.setActive(layout.leaf(leaves[0]).?.active);
+        app.focus = .{ .pane = app.active orelse cur };
+        app.needs_render = true;
+        return;
+    }
     const mine = layout.leafOf(cur) orelse return;
     const idx = std.mem.indexOfScalar(layout_mod.NodeId, leaves, mine) orelse return;
     if (idx + 1 == leaves.len and app.tree.visible) {
