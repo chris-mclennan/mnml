@@ -51,6 +51,8 @@ const bufferline = @import("../ui/bufferline.zig");
 const cmd_term = @import("cmd_term.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
+const tests_pane = @import("tests_pane.zig");
+const flaky = @import("flaky.zig");
 const toast_mod = @import("../ui/toast.zig");
 const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
@@ -208,6 +210,16 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         },
         .ai_apply => |*ap| {
             if (try ai_apply.handleKey(app, id, ap, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .tests => |*tp| {
+            if (try tests_pane.handleKey(app, id, tp, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        },
+        .flaky => |*fp| {
+            if (try flaky.handleKey(app, id, fp, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1055,6 +1067,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 .editor => |*e| try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
                 .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
+                .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
+                .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .outline, .md_preview, .pty, .ai => {},
             }
         },
@@ -1307,6 +1321,8 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .marketplace => |*mk| marketplace.scrollBy(app, mk, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
     }
 }
 

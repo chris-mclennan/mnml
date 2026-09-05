@@ -64,6 +64,10 @@ const agents_view = @import("../ui/agents_view.zig");
 const spend_view = @import("../ui/spend_view.zig");
 const ai_apply_view = @import("../ui/ai_apply_view.zig");
 const ai_apply = @import("ai_apply.zig");
+const tests_pane = @import("tests_pane.zig");
+const tests_view = @import("../ui/tests_view.zig");
+const flaky = @import("flaky.zig");
+const flaky_view = @import("../ui/flaky_view.zig");
 const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
@@ -292,7 +296,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply => return,
+        .outline, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -366,6 +370,11 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .integrations => |*ip| try integrations.draw(app, ui, pr.pane, ip, rect),
             .marketplace => |*mk| try marketplace.draw(app, ui, pr.pane, mk, rect),
             .ai_apply => |*ap| drawAiApply(app, ui, pr.pane, ap, rect),
+            .tests => |*tp| try drawTests(app, ui, pr.pane, tp, rect),
+            .flaky => |*fp| {
+                if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
+                flaky_view.draw(ui, pr.pane, rect, fp, app.active == pr.pane and app.focus == .pane);
+            },
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -452,6 +461,19 @@ fn drawAiApply(app: *App, ui: Ui, id: PaneId, p: *ai_apply.AiApplyPane, rect: Re
         .focused = app.active == id and app.focus == .pane,
         .cursor_row = p.cursorRow(),
         .lineText = &Text.line,
+    });
+}
+
+/// The Playwright results: the history's wobbly marks come from the app.
+fn drawTests(app: *App, ui: Ui, id: PaneId, p: *tests_pane.TestsPane, rect: Rect) Allocator.Error!void {
+    if (app.active == id) app.pane_rows = @max(rect.h, 1);
+    const wobbly = try ui.arena.alloc(bool, p.run.tests.len);
+    for (p.run.tests, 0..) |tc, i| wobbly[i] = flaky.isWobbly(app, tc.file, tc.suite_path, tc.title);
+    tests_view.draw(ui, id, rect, .{
+        .p = p,
+        .focused = app.active == id and app.focus == .pane,
+        .wobbly = wobbly,
+        .command = try tests_pane.cmdlineFor(ui.arena, p.last_args),
     });
 }
 

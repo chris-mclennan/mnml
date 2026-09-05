@@ -65,6 +65,8 @@ const git_app = @import("app/git.zig");
 const ai_app = @import("app/ai.zig");
 const agents = @import("app/agents.zig");
 const spend = @import("app/spend.zig");
+const tests_pane = @import("app/tests_pane.zig");
+const flaky = @import("app/flaky.zig");
 const ipc = @import("ipc/root.zig");
 const dap = @import("app/dap.zig");
 const lsp = @import("app/lsp.zig");
@@ -520,6 +522,8 @@ pub const App = struct {
     marketplace: marketplace.State = .{},
     /// A host's statusline segments and activity badges (`ipc/effects.zig`).
     ipc_fx: ipc.effects.State = .{},
+    /// The workspace's Playwright outcome history (`app/flaky.zig`).
+    flaky: flaky.State = .{},
     native_notify: bool = false,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
@@ -790,6 +794,7 @@ pub const App = struct {
         self.git.deinit(gpa, self.io);
         self.marketplace.deinit(gpa, self.io);
         self.ipc_fx.deinit(gpa);
+        self.flaky.deinit(gpa);
         self.dap.deinit(gpa);
         // Panes go before the manifests their mount runners borrow.
         self.panes.deinit();
@@ -1332,6 +1337,7 @@ pub const App = struct {
             .git => |result| try git_app.handle(self, result),
             .agents => |result| try agents.handle(self, result),
             .spend => |result| try spend.handle(self, result),
+            .tests => |result| try tests_pane.handle(self, result),
             .ai => |a| try ai_app.handle(self, a.job, a.msg),
             .dap => |d| try dap.handle(self, d.session, d.msg),
             .lsp => |l| try lsp.handle(self, l.server, l.msg),
@@ -1573,6 +1579,10 @@ test {
     _ = @import("ui/spend_view.zig");
     _ = @import("app/ai_apply.zig");
     _ = @import("app/launch_profiles.zig");
+    _ = @import("app/tests_pane.zig");
+    _ = @import("app/flaky.zig");
+    _ = @import("ui/tests_view.zig");
+    _ = @import("ui/flaky_view.zig");
     _ = @import("ui/ai_apply_view.zig");
     _ = @import("todos.zig");
     _ = @import("app/git.zig");
