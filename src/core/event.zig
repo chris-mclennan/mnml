@@ -21,12 +21,13 @@ const ws_pane = @import("../app/ws_pane.zig");
 const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
 const marketplace = @import("../app/marketplace.zig");
+const transfers = @import("../app/transfers.zig");
 
 pub const PtyId = u32;
 
 /// Who produced an `.err`. Workers never toast; they post this and the
 /// UI thread decides how to surface it.
-pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount };
+pub const Source = enum { todos, git, lsp, dap, cdp, http, ai, pty, ipc, sonos, now_playing, marketplace, input, mount, transfer };
 
 // Payloads for subsystems that do not exist yet. Each is an opaque
 // placeholder so the union has its final shape today; the subsystem
@@ -131,6 +132,8 @@ pub const AppEvent = union(enum) {
     spend: *spend.Result,
     /// A finished Playwright run. Owned; `tests_pane.handle` adopts or destroys it.
     tests: *tests_pane.Result,
+    /// A file transfer's totals / progress / end. Owned; `transfers.handle` destroys it.
+    transfer: *transfers.Event,
 
     /// A worker failed. `msg` is gpa-owned and freed by the handler.
     err: struct { source: Source, msg: []u8 },
@@ -163,6 +166,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .now_playing => |p| gpa.destroy(p),
         .marketplace => |p| p.destroy(gpa),
         .mount => |p| p.destroy(gpa),
+        .transfer => |p| p.destroy(gpa),
         .key, .mouse, .winsize, .focus, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
 }

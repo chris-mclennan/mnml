@@ -80,6 +80,11 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "q", "quit", "clo", "close" })) return quit(app, bang);
     if (eqAny(verb, &.{ "qa", "qall", "quitall", "quita" })) {
         if (!bang and app.anyDirty()) return app.diag.fail(arena, "unsaved changes — use :qa! to discard", .{});
+        // ── files: the :qa transfer guard (src/app/transfers.zig) ──
+        // A quit kills the transfer workers mid-copy; an explicit cancel
+        // promises a cleanup, a quit cannot.
+        if (!bang and app.transfersRunning() > 0) return app.diag.fail(arena, "{d} transfer(s) still running — transfer.cancel_all, or :qa! to quit anyway", .{app.transfersRunning()});
+        // ── end files ──
         app.quit = true;
         return;
     }
