@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `q{A-Z}` (append to a macro register) is not accepted; the pending `q` then turns the next `:` into `q:`
 
@@ -34,3 +34,7 @@ after :reg a⏎:     panes [a.txt, "cmdline history"], mode none
 **Actual**: `A` is rejected as a register: the first `q` is dropped, `A!<Esc>` runs live, the trailing `q` starts a *new* pending record, and the `:` of `:reg a` completes it as `q:` — the cmdline-history pane opens and `reg a⏎` is typed into it. Two launches.
 
 **Source pointer**: `src/input/vim.zig:1005` — `if (c >= 'a' and c <= 'z')` only; no `'A'..'Z'` branch (and no `"`/digit registers); the `return .consumed` on line 1009 leaves nothing recording but the `q` at line ~997 has already been consumed.
+
+## Fix
+
+Commit `4809409` — `q{A-Z}` records into the lowercase register, appending; `@{A-Z}` replays it. Test: `tests/e2e-zig/vim_macro_append_upper.test`.

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `Ctrl-V` on the `:` line does not quote the next key — `Ctrl-V Tab` runs completion
 
@@ -26,3 +26,7 @@ statusline cmdline:   :agents.new_from_pr▏      (Tab completed the first comma
 **Actual**: `Ctrl-V` is ignored and `Tab` still triggers completion. Two launches.
 
 **Source pointer**: `src/app/dispatch.zig` cmdline key handling — no literal-next state.
+
+## Fix
+
+Commit `cf92f1d` — `Ctrl-V` / `Ctrl-Q` on the `:` line insert the next key literally; `Ctrl-R "` / `+` / `*` paste the register. Test: `tests/e2e-zig/vim_cmdline_ctrl_v_literal.test`.
