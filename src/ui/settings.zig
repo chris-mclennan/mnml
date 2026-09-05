@@ -256,6 +256,10 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
                 _ = ui.putStr(r.x + 1, y, r.w -| 1, ui.clipStr(text, r.w -| 1), Theme.onBg(t.muted, bg));
             },
             .row => |row| {
+                // The row first, its chips after: the hit map scans back
+                // to front, so a chip registered later wins the click
+                // over the row it sits on (D6 — last painted wins).
+                ui.hit(r, .{ .overlay_item = row.id });
                 var x = r.x + 1;
                 x += ui.putStr(x, y, 2, if (focused) (if (ui.ascii) "> " else "▸ ") else "  ", Theme.onBg(t.accent, row_style.bg));
                 const label = ui.fmt("{s}:", .{row.label});
@@ -302,7 +306,6 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
                     x += ow;
                 }
                 if (row.modified and x + 2 < r.right()) _ = ui.putStr(x + 2, y, 1, "*", Theme.withFg(row_style, t.warn_fg.fg));
-                ui.hit(Rect.init(r.x, y, @max(@min(x -| r.x, r.w), 1), 1), .{ .overlay_item = row.id });
             },
             .action => |a| {
                 var x = r.x + 1;
@@ -370,6 +373,18 @@ test "rows paint as `▸ Label:  [active] / other  *`, colons aligned, hits per 
         },
     };
     try testing.expect(saw_row and saw_opt and saw_next);
+    // Every chip painted is a chip the pointer reaches: the scan from the
+    // back must resolve a chip's own cells to the chip, not to the row
+    // that carries it — the `off` / `[on]` pair and the long list's `‹`.
+    for (f.hits.items.items) |h| switch (decodeHit(h.target.overlay_item)) {
+        .option => |o| try testing.expectEqual(Hit{ .option = o }, decodeHit(f.hits.at(h.rect.x, h.rect.y).?.overlay_item)),
+        else => {},
+    };
+    // …and the row's label cell is still the row.
+    for (f.hits.items.items) |h| switch (decodeHit(h.target.overlay_item)) {
+        .row => |id| if (id == 0) try testing.expectEqual(Hit{ .row = 0 }, decodeHit(f.hits.at(h.rect.x + 3, h.rect.y).?.overlay_item)),
+        else => {},
+    };
 }
 
 test "a number row paints ‹ [value] › with a hit on each arrow" {
