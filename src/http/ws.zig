@@ -340,7 +340,10 @@ pub const Conn = struct {
             self.tls_rbuf = try gpa.alloc(u8, tls.Client.min_buffer_len);
             errdefer gpa.free(self.tls_rbuf);
             self.tls_wbuf = try gpa.alloc(u8, tls.Client.min_buffer_len);
-            errdefer gpa.free(self.tls_wbuf);
+        }
+        errdefer if (self.tls_rbuf.len > 0) gpa.free(self.tls_rbuf);
+        errdefer if (self.tls_wbuf.len > 0) gpa.free(self.tls_wbuf);
+        if (url.secure) {
             const now = Io.Timestamp.now(io, .real);
             if (!opts.insecure) self.bundle.rescan(gpa, io, now) catch return error.CertificateBundleLoadFailure;
             var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
@@ -373,7 +376,7 @@ pub const Conn = struct {
         }
         for (opts.headers) |h| try w.print("{s}: {s}\r\n", .{ h[0], h[1] });
         try w.writeAll("\r\n");
-        try w.flush();
+        try self.flush();
         const head = try readHead(self.reader(), a);
         if (head.status != 101) return error.BadStatus;
         var accept_buf: [28]u8 = undefined;
@@ -402,6 +405,12 @@ pub const Conn = struct {
         return &self.plain_writer.interface;
     }
 
+    /// The TLS writer encrypts into the socket writer; both need flushing.
+    pub fn flush(self: *Conn) !void {
+        if (self.tls_client) |*c| try c.writer.flush();
+        try self.plain_writer.interface.flush();
+    }
+
     pub fn deinit(self: *Conn) void {
         const gpa = self.gpa;
         self.stream.close(self.io);
@@ -426,7 +435,7 @@ pub const Conn = struct {
         defer self.gpa.free(frame);
         const w = self.writer();
         try w.writeAll(frame);
-        try w.flush();
+        try self.flush();
     }
 
     pub fn sendText(self: *Conn, text: []const u8) !void {
