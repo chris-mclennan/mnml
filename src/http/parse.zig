@@ -588,7 +588,11 @@ pub fn tokenize(a: Allocator, s: []const u8) ParseError![]const []const u8 {
 // ─── .http / .rest ──────────────────────────────────────────────────────
 
 /// One request block: comments, `[METHOD] url [HTTP/x]`, headers, a
-/// blank line, the body. `@name` / `# @directive` lines are skipped.
+/// blank line, the body. `# @directive` / `// @directive` lines are
+/// directives wherever they sit — before the request line, among the
+/// headers, or after the body — and never body bytes (`parse` gathers
+/// them into `script`). A plain `#` / `//` line after the body boundary
+/// is body, as in Rust mnml: a text body may carry one on purpose.
 pub fn parseHttp(alloc: Allocator, input: []const u8) ParseError!Request {
     const text = std.mem.trim(u8, input, " \t\r\n");
     if (text.len == 0) return error.Empty;
@@ -604,6 +608,11 @@ pub fn parseHttp(alloc: Allocator, input: []const u8) ParseError!Request {
         offset += raw.len + 1;
         const line = std.mem.trimEnd(u8, raw, "\r");
         const t = std.mem.trim(u8, line, " \t");
+        if (body_start != null) {
+            // Past the boundary: the bytes are the body's, except the
+            // directive lines; those are cut out below.
+            continue;
+        }
         if (!seen_request_line) {
             if (t.len == 0 or t[0] == '#' or std.mem.startsWith(u8, t, "//") or std.mem.startsWith(u8, t, "###")) continue;
             var parts = std.mem.tokenizeAny(u8, t, " \t");
@@ -637,10 +646,28 @@ pub fn parseHttp(alloc: Allocator, input: []const u8) ParseError!Request {
     }
     if (!seen_request_line) return error.NoUrl;
     if (body_start) |bs| if (bs < text.len) {
-        const body = std.mem.trimEnd(u8, text[bs..], " \t\r\n");
-        if (body.len > 0) try req.setBody(alloc, body);
+        const body = try bodyWithoutDirectives(alloc, text[bs..]);
+        defer alloc.free(body);
+        const trimmed = std.mem.trimEnd(u8, body, " \t\r\n");
+        if (trimmed.len > 0) try req.setBody(alloc, trimmed);
     };
     return req;
+}
+
+/// The body region with its `# @…` / `// @…` lines removed and every
+/// other byte kept (a CR stays with its line). Owned by the caller.
+fn bodyWithoutDirectives(alloc: Allocator, region: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+    var lines = std.mem.splitScalar(u8, region, '\n');
+    var first = true;
+    while (lines.next()) |raw| {
+        if (script_mod.isDirectiveLine(raw)) continue;
+        if (!first) try out.append(alloc, '\n');
+        first = false;
+        try out.appendSlice(alloc, raw);
+    }
+    return out.toOwnedSlice(alloc);
 }
 
 // ─── multi-block files ──────────────────────────────────────────────────
@@ -1062,4 +1089,115 @@ test "params: add, list, clear; headers text round-trip; blank detection" {
     try testing.expect(isRequestPath("/x/y.CURL") and isRequestPath("a.http") and !isRequestPath("a.txt"));
     try testing.expectEqualStrings("POST", nextMethod("get"));
     try testing.expectEqualStrings("GET", nextMethod("OPTIONS"));
+}
+
+test "directives after the body boundary are script, never body: a GET keeps no body" {
+    // The documented shape: `# @assert` / `# @capture` after the blank
+    // line that ends the headers. The lines are directives wherever
+    // they sit in the block; the wire body must not carry them.
+    var req = try parse(testing.allocator,
+        \\### get-json
+        \\GET https://x/get
+        \\Accept: application/json
+        \\
+        \\# @assert status == 200
+        \\# @capture origin = body.origin
+        \\
+    );
+    defer req.deinit(testing.allocator);
+    try testing.expectEqualStrings("GET", req.method);
+    try testing.expect(req.body == null);
+    try testing.expectEqualStrings("# @assert status == 200\n# @capture origin = body.origin", req.script.?);
+}
+
+test "directives after a POST body: the body is byte-identical to the JSON, the directives are script" {
+    const json = "{\n  \"hello\": \"world\",\n  \"token\": \"{{$uuid}}\"\n}";
+    const src = "POST https://x/post\nContent-Type: application/json\n\n" ++ json ++ "\n\n# @assert status == 200\n// @capture origin = body.json.hello\n";
+    var req = try parse(testing.allocator, src);
+    defer req.deinit(testing.allocator);
+    try testing.expectEqualStrings(json, req.body.?);
+    try testing.expectEqualStrings("# @assert status == 200\n// @capture origin = body.json.hello", req.script.?);
+    // A plain comment after the boundary is body (Rust's rule: every
+    // line past the blank goes to the body verbatim); a `# @` line is
+    // not, wherever it sits.
+    var mixed = try parse(testing.allocator, "POST https://x/p\n\n# @assert status == 201\nline one\n# not a directive\nline two\n# @capture ID = body.id\n");
+    defer mixed.deinit(testing.allocator);
+    try testing.expectEqualStrings("line one\n# not a directive\nline two", mixed.body.?);
+    try testing.expectEqualStrings("# @assert status == 201\n# @capture ID = body.id", mixed.script.?);
+    // A body made only of directives is no body.
+    var only = try parse(testing.allocator, "DELETE https://x/d\n\n# @assert status == 204\n");
+    defer only.deinit(testing.allocator);
+    try testing.expect(only.body == null);
+    // CRLF source: the body keeps its bytes, the directives still go.
+    var crlf = try parse(testing.allocator, "POST https://x/p\r\nA: 1\r\n\r\n{\"a\":1}\r\n# @assert status == 200\r\n");
+    defer crlf.deinit(testing.allocator);
+    try testing.expectEqualStrings("{\"a\":1}", crlf.body.?);
+    try testing.expect(crlf.script != null);
+}
+
+test "parseHttp never fails hard on a malformed block: thirty shapes" {
+    // Every one either parses or returns a ParseError; none may panic.
+    const cases = [_][]const u8{
+        "# @assert status == 200",
+        "# @assert status == 200\nGET https://x",
+        "GET https://x\n# @assert status == 200\nAccept: */*\n\nbody",
+        "GET https://x\n\n# only\n# comments\n",
+        "GET https://x\n\n// @capture A = body.a\n// @assert body contains x",
+        "GET https://x\nContent-Length: 12\n",
+        "GET https://x\nContent-Length: 12\n\n",
+        "HEAD https://x\n\nignored body\n",
+        "OPTIONS https://x\n\n# @set-header X = 1\n",
+        "POST https://x\n\n### mid ### line\n",
+        "POST https://x\n\n{\"a\": \"###\"}\n",
+        "POST https://x\r\nA: 1\r\n\r\n\r\n\r\n",
+        "POST https://x\r\n\r\n#\r\n# @\r\n#@assert\r\n",
+        "GET https://x\n\n\n\n\n",
+        "GET\n",
+        "GET \n\n# @assert status == 200\n",
+        "https://x\n# @assert status == 200",
+        "https://x\n\n# @assert status == 200\n",
+        "PATCH https://x HTTP/1.1\nA: b: c\n\n# @capture X = body\n",
+        "PUT https://x\nA\n\n# @assert status == 200\n",
+        "TRACE https://x\n\n#@assert status == 200\n",
+        "CONNECT https://x\n\n# @assert\n",
+        "GET https://x\n:\n\n# @assert status == 200\n",
+        "GET https://x\n\n\t# @assert status == 200\n",
+        "GET https://x\n\n  // @capture A = header x\n\n\n",
+        "GET https://x\n\n#\n//\n#@\n//@\n",
+        "GET https://x\n\n\x00\x01\x02\n# @assert status == 200\n",
+        "GET https://x\n\n# @assert status == 200\nafter directive\n",
+        "POST https://x\n\n{\n# @assert status == 200\n}\n",
+        "\n\n\n### name\n\n# @assert status == 200\nGET https://x\n\n\n",
+    };
+    try testing.expectEqual(@as(usize, 30), cases.len);
+    for (cases) |c| {
+        var req = parse(testing.allocator, c) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => continue,
+        };
+        defer req.deinit(testing.allocator);
+        // Whatever landed, no directive line is in the body.
+        if (req.body) |b| {
+            var lines = std.mem.splitScalar(u8, b, '\n');
+            while (lines.next()) |l| try testing.expect(!script_mod.isDirectiveLine(l));
+        }
+    }
+}
+
+fn fuzzParse(_: void, smith: *testing.Smith) anyerror!void {
+    var buf: [512]u8 = undefined;
+    const input = buf[0..smith.slice(&buf)];
+    var req = parse(testing.allocator, input) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return,
+    };
+    defer req.deinit(testing.allocator);
+    if (req.body) |b| {
+        var lines = std.mem.splitScalar(u8, b, '\n');
+        while (lines.next()) |l| try testing.expect(!script_mod.isDirectiveLine(l));
+    }
+}
+
+test "fuzz: any bytes through parse; no directive line survives into a body" {
+    try testing.fuzz({}, fuzzParse, .{ .corpus = &.{ "GET https://x\n\n# @assert status == 200\n", "POST https://x\n\n{}\n# @capture A = body.a\n" } });
 }
