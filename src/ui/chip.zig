@@ -74,6 +74,11 @@ pub fn refreshStyle(t: *const Theme, bg: vaxis.Color) Style {
     return .{ .fg = t.chip_active.bg, .bg = bg };
 }
 
+/// The ` + ` chip: green on the panel ground.
+pub fn newStyle(t: *const Theme, bg: vaxis.Color) Style {
+    return .{ .fg = t.palette.green, .bg = bg, .bold = true };
+}
+
 /// Paints `text` at `(x, y)` in `style` and registers the chip target
 /// for exactly the cells it took. Returns the painted rect (empty when
 /// nothing fit) so a caller can lay out the next chip beside it.

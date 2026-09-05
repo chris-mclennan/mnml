@@ -452,9 +452,9 @@ the tree. Nothing left is larger than M.
 | HTTP activity-bar panel (7 sections) | done | `src/app/http_panel.zig`, `PanelId.http` | COLLECTIONS / ENVS / CHAINS / MOCKS / COOKIES / RECENT / CAPTURED |
 | HTTP panel `/` filter | done | `rebuild` in `http_panel.zig` | one filter across every section; honest header counts |
 | Blank request `http.new` | done | `openBlank` in `src/app/http.zig` | |
-| Green `+` chip in the INTEGRATIONS rail | missing | — | the HTTP panel's row menu and `http.new_request` cover the use |
+| Green `+` chip in the INTEGRATIONS rail | done | `new_chip` in `src/ui/header.zig` (`chip.newStyle`, `ChipKind.new`), set by `draw` in `src/app/http_panel.zig`; `chipMouse` runs `http.new` | a green ` + ` before the HTTP panel's ⟳; a click opens the blank request pane; `tests/e2e-zig/http_plus_chip.test` |
 | Paste curl | done | `pasteCurlCmd`, `context_menus.zig` | |
-| Field-aware right-click menu | partial | `openRequestFieldMenu` in `context_menus.zig` | one flat `Request` menu; no per-field title |
+| Field-aware right-click menu | done | `openRequestFieldMenu(app, field, x, y)` + `RequestField` in `context_menus.zig` | titled `URL` / `Body` / `Headers` / `Response` by the field under the pointer (the URL row, the edit area by its tab, the response body — `request_pane.zig`) |
 | Cycle method | done | `cycleMethodCmd` | |
 | SSE streaming | done | `handleStream` in `http.zig`, streaming in `src/http/client.zig`, `src/http/sse.zig` | events land one by one; `http.cancel` stops a stream |
 | Cookies normalizer | done | `src/http/cookies.zig` | |

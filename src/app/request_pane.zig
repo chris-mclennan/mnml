@@ -887,6 +887,8 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         },
         view.hit_edit_area => {
             rp.block = .request;
+            // The edit area's own field: the tab being edited.
+            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, if (rp.edit_tab == .headers) .headers else .body, m.x, m.y);
             return;
         },
         else => {},
@@ -925,7 +927,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
             rp.block = .request;
             rp.field = .url;
             if (m.button == .right) {
-                try @import("context_menus.zig").openRequestFieldMenu(app, m.x, m.y);
+                try @import("context_menus.zig").openRequestFieldMenu(app, .url, m.x, m.y);
                 return;
             }
             if (hit_rect) |r| {
@@ -944,7 +946,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         view.hit_wrap => rp.body_wrap = !rp.body_wrap,
         view.hit_resp_body => {
             rp.block = .response;
-            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, m.x, m.y);
+            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, .response, m.x, m.y);
         },
         view.hit_draft_key, view.hit_draft_value => {
             if (rp.draft == null) try rp.startDraft();
@@ -953,7 +955,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         view.hit_content => {
             rp.block = .request;
             rp.field = .content;
-            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, m.x, m.y);
+            if (m.button == .right) try @import("context_menus.zig").openRequestFieldMenu(app, if (rp.edit_tab == .headers) .headers else .body, m.x, m.y);
         },
         else => {},
     }

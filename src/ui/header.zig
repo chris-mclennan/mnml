@@ -44,9 +44,16 @@ pub const Props = struct {
     mode_chip: ?[]const u8 = null,
     mode_kind: ChipKind = .sort,
     show_refresh: bool = true,
+    /// A green ` + ` before the refresh chip (`ChipKind.new`): the HTTP
+    /// panel's blank request.
+    new_chip: bool = false,
     /// The panel's ground.
     bg: Style,
 };
+
+/// The ` + ` chip's text and width.
+pub const new_text = " + ";
+pub const new_w: u16 = 3;
 
 pub const Layout = struct {
     /// Where the mode chip painted (full or icon), null when dropped.
@@ -54,6 +61,8 @@ pub const Layout = struct {
     /// True when the icon rung was used.
     mode_is_icon: bool = false,
     refresh: ?Rect = null,
+    /// Where the ` + ` chip painted.
+    new: ?Rect = null,
 };
 
 pub fn labelStyle(t: *const Theme, bg: Style) Style {
@@ -78,7 +87,9 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
 
     const label_w = ui.width(p.label);
     const refresh_text = chip.refreshIcon(ui.ascii);
-    const refresh_w: u16 = if (p.show_refresh) ui.width(refresh_text) else 0;
+    // `refresh_w` is the room the right-end chips take: the refresh
+    // glyph and, with `new_chip`, the ` + ` before it.
+    const refresh_w: u16 = (if (p.show_refresh) ui.width(refresh_text) else 0) + @as(u16, if (p.new_chip) new_w else 0);
 
     // Rung 0: no room for any chip — the title alone, clipped.
     const refresh_fits = w >= label_w + refresh_w + 3;
@@ -138,7 +149,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
 
     const refresh_x = area.right() - refresh_w;
     // One cell of air between the two chips.
-    const gap: u16 = if (p.show_refresh) 1 else 0;
+    const gap: u16 = if (p.show_refresh or p.new_chip) 1 else 0;
     const mode_x = refresh_x -| (mode_w + gap);
     const title_end = if (mode_text != null) mode_x else refresh_x;
 
@@ -149,8 +160,13 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     if (mode_text) |mt| {
         out.mode = chip.paint(ui, mode_x, y, mode_w, mt, chip.modeStyle(t), p.panel, p.mode_kind);
     }
+    var cx = refresh_x;
+    if (p.new_chip) {
+        out.new = chip.paint(ui, cx, y, new_w, new_text, chip.newStyle(t, p.bg.bg), p.panel, .new);
+        cx += new_w;
+    }
     if (p.show_refresh) {
-        out.refresh = chip.paint(ui, refresh_x, y, refresh_w, refresh_text, chip.refreshStyle(t, p.bg.bg), p.panel, .refresh);
+        out.refresh = chip.paint(ui, cx, y, refresh_w - @as(u16, if (p.new_chip) new_w else 0), refresh_text, chip.refreshStyle(t, p.bg.bg), p.panel, .refresh);
     }
     return out;
 }
