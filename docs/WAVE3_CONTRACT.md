@@ -692,3 +692,51 @@ that the oldest slot reads `+K more…`.
   pty, ws, watch, git and ai; `nextDeadlineMs` folds git's busy count and
   TTL, ai's timers, http's sender count and the ws pane's timers.
   `App.deinit` retires the workers as ai, todos, http, git, dap, lsp.
+
+## Lua (Phase 8, D10) — `// changed:` notes (2026-09-04, branch `lua`)
+
+- `// changed (build):` zlua's `build.zig` and the translate-c package
+  it pins fail analysis on 0.16.0, so its `src/lib.zig` + `define.zig`
+  are vendored under `vendor/zlua/` (the tree-sitter precedent) and
+  `build.zig`'s `addLua` compiles the `lua54` tarball, translates
+  `lua_all.h`, and declares the `config` options the lib reads. The
+  vendored lib still used `Type.Struct.field_names` / `Type.Fn.param_types`
+  at the sites `pushAny`, `toAny` and `wrap` reach; those read `.fields`
+  / `.params` now.
+- `// changed (app):` D10 has `Lua{ state, app }`; the App struct moves
+  after `initWith` returns, so the back-pointer cannot be set at create.
+  `App.lua: ?*Lua` is reached through `App.script()`, which points the
+  state at the App of the call in flight; every Zig entry (a command
+  runner, a hook emit, a render, a tick) goes through it. Nothing on the
+  Lua side holds `*App`.
+- `// changed (core):` `command.runDyn`'s `.lua` prong and
+  `hooks.emit`'s `.lua` prong are filled (`callCommand` /
+  `callHook`); the hook payload is the flat `HookArgs` table plus
+  `hook = "<name>"`, since one function may subscribe to several.
+  `script.reload` and `script.edit_init` are static specs — count pin
+  814.
+- `// changed (app):` script reload (`Lua.reset`) unregisters
+  `owner == .script` wholesale as D10 says, which takes the config
+  tasks' `task.<name>` commands with it (they register as `.script` /
+  `.ex`); `reset` reinstalls them from `app.cfg`. The state is closed and
+  reopened rather than swept, so no ref can outlive a reload.
+- `// changed (config):` `trust.Sink.init_lua` — `<ws>/.mnml/init.lua`
+  is a claim without a config key; `trust.claimsWith(arena, p, Facts)`
+  carries whether the loader saw the file, `load` decides trust when the
+  file exists even with no `config.zon`, and `strip` has nothing to
+  remove (the file is gated by `Loaded.workspace_trusted`, mirrored on
+  `App.workspace_trusted`). `InitOptions.workspace_trusted` overrides
+  the derivation; the `.test` driver sets it for the temp workspace it
+  made.
+- `// changed (app):` `Pane.script` is the 18th variant
+  (`app/script_pane.zig`, painted by `ui/script_view.zig`); the
+  exhaustive switches in `pane`, `render` (`drawMdChip`, `drawBody`),
+  `dispatch` (keys, `script_hit`, wheel), `md_preview` and `outline`
+  name it. `PickerKind.lua` is the picker prong; `cmd_picker.accept`
+  calls the row's `on_accept` and `cancel` drops the refs. The
+  statusline's right cluster takes a script's `left` segments at its
+  inner edge and `right` ones after ai's meter.
+- `// changed (docs):` `docs/LUA.md` is the API reference;
+  `docs/examples/init.lua` the reference script (run by a unit test);
+  `tests/e2e-zig/lua_init.test` the e2e. Corpus 226/227 — the one
+  failure is main's `settings_persist_to_workspace.test`.
