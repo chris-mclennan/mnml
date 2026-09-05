@@ -107,16 +107,21 @@ fn saveJar(app: *App) void {
 pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!void {
     _ = id;
     const resp = rp.response() orelse return;
+    // A redirect hop's cookies belong to the host that set them, the
+    // final response's to the host it came from.
+    var jarred = false;
+    for (resp.hop_cookies) |c| {
+        try (try jar(app)).recordSetCookie(c.host, c.value);
+        jarred = true;
+    }
     if (cookies.hostOf(resp.final_url)) |host| {
         var arena = std.heap.ArenaAllocator.init(app.gpa);
         defer arena.deinit();
         const set = try resp.setCookies(arena.allocator());
-        if (set.len > 0) {
-            const j = try jar(app);
-            for (set) |c| try j.recordSetCookie(host, c);
-            saveJar(app);
-        }
+        for (set) |c| try (try jar(app)).recordSetCookie(host, c);
+        jarred = jarred or set.len > 0;
     }
+    if (jarred) saveJar(app);
     rp.clearTests();
     try validateSchema(app, rp, false);
     try runScript(app, rp);

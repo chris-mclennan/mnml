@@ -394,6 +394,46 @@ test "run: env resolution, the request line on stderr, the response on stdout; a
     try testing.expectEqual(@as(u8, 1), try run(testing.allocator, testing.io, &env, &.{ "a", "b" }, .{ .out = &out.writer, .err = &err2.writer }));
 }
 
+test "run: a GET with trailing directives goes out without a body; a POST's body is the JSON alone" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const ws = pbuf[0..n];
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .status_text = "OK", .body = "{\"json\":{\"hello\":\"world\"}}" });
+    defer server.stop(testing.io);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    const envf = try std.fmt.allocPrint(testing.allocator, "BASE_URL=http://127.0.0.1:{d}\n", .{server.port});
+    defer testing.allocator.free(envf);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = envf });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "get.http", .data = "### get-json\nGET {{BASE_URL}}/get\nAccept: application/json\n\n# @assert status == 200\n# @capture origin = body.origin\n" });
+    const json = "{\n  \"hello\": \"world\"\n}";
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "post.http", .data = "POST {{BASE_URL}}/post\nContent-Type: application/json\n\n" ++ json ++ "\n\n# @assert status == 200\n# @capture origin = body.json.hello\n" });
+    var out: Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var err: Io.Writer.Allocating = .init(testing.allocator);
+    defer err.deinit();
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const get_path = try std.fs.path.join(testing.allocator, &.{ ws, "get.http" });
+    defer testing.allocator.free(get_path);
+    // Before the fix this was exit 134: std's assert on a GET with a body.
+    try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{ get_path, "--env", "dev" }, .{ .out = &out.writer, .err = &err.writer }));
+    const seen_get = server.lastRequest();
+    try testing.expect(std.mem.startsWith(u8, seen_get, "GET /get HTTP/1.1\r\n"));
+    try testing.expect(std.mem.indexOf(u8, seen_get, "@assert") == null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen_get, "content-length:") == null);
+    try testing.expect(std.mem.endsWith(u8, seen_get, "\r\n\r\n"));
+    const post_path = try std.fs.path.join(testing.allocator, &.{ ws, "post.http" });
+    defer testing.allocator.free(post_path);
+    try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{ post_path, "--env", "dev" }, .{ .out = &out.writer, .err = &err.writer }));
+    const seen_post = server.lastRequest();
+    try testing.expect(std.mem.endsWith(u8, seen_post, "\r\n\r\n" ++ json));
+    const want_len = try std.fmt.allocPrint(testing.allocator, "content-length: {d}\r\n", .{json.len});
+    defer testing.allocator.free(want_len);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen_post, want_len) != null);
+}
+
 test "discover then sync-check from the CLI" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
