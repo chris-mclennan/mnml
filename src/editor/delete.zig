@@ -202,8 +202,8 @@ pub fn deleteSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocat
 }
 
 pub fn replaceSelection(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!void {
-    try ed.checkpoint();
     if (mc.hasExtras(ed)) {
+        try ed.checkpoint();
         try mc.deleteRangePerCursor(ed, {}, mc.ownRange);
         if (s.len > 0) try mc.insertStrAll(ed, s);
         ed.anchor = null;
@@ -212,9 +212,15 @@ pub fn replaceSelection(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator
         return;
     }
     if (ed.selection()) |sel| {
+        // Snapshot at the range's start with no selection: undoing a
+        // `cw` lands where the word began.
+        ed.cursor = sel[0];
+        ed.anchor = null;
+        try ed.checkpoint();
         try ed.splice(sel[0], sel[1], s);
         ed.cursor = sel[0] + s.len;
     } else {
+        try ed.checkpoint();
         try ed.splice(ed.cursor, ed.cursor, s);
         ed.cursor += s.len;
     }

@@ -1,0 +1,25 @@
+# zig-only
+# Everything typed between entering Insert and Esc is one undo step
+# (`:help undo-blocks`): `O one two<CR>three<Esc>` comes back with a
+# single `u`, and `cw` + the typed text undo together.
+write a.txt "alpha bravo\n"
+open a.txt
+command editor.use_vim
+
+key O
+type "one two\nthree"
+key esc
+expect screen contains "three"
+key u
+expect screen lacks "three"
+expect screen lacks "one two"
+expect screen contains "alpha bravo"
+
+key c
+key w
+type ZZZ
+key esc
+expect screen contains "ZZZ bravo"
+key u
+expect screen contains "alpha bravo"
+expect screen lacks "ZZZ"

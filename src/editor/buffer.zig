@@ -94,6 +94,13 @@ pub const Buffer = struct {
     dot_collecting: bool = false,
     replaying_dot: bool = false,
 
+    /// One Insert / Replace session is one undo step (`:help
+    /// undo-blocks`): `insert_undo_target` is the undo depth just past
+    /// the snapshot the session's first edit pushed; leaving the mode
+    /// truncates the stack back to it.
+    insert_session: bool = false,
+    insert_undo_target: ?usize = null,
+
     /// The macro being recorded; the finished keys go to the clipboard.
     recording: ?Recording = null,
     replay_depth: u8 = 0,
@@ -348,16 +355,46 @@ pub const Buffer = struct {
         // What a visual operator would act on, before the key resolves —
         // the shape `.` re-applies (`:help visual-repeat`).
         const visual: ?VisualShape = if (self.input.mode().isVisual()) self.visualShape() else null;
+        // A session the app ended without a key (a blur) closes before
+        // this key's own snapshot lands.
+        const undo_before = self.editor.history.undoLen();
+        self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
-        switch (result) {
-            .ops => |list| {
+        const ev: BufferEvent = switch (result) {
+            .ops => |list| blk: {
                 const changed = try self.applyOps(list, clip, viewport_rows, arena);
                 try self.trackDot(list, visual, arena);
-                return if (changed) .edited else .redraw;
+                break :blk if (changed) .edited else .redraw;
             },
-            .consumed => return .redraw,
-            .ignored => return .{ .unhandled = key },
-            .app => |cmd| return self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
+            .consumed => .redraw,
+            .ignored => .{ .unhandled = key },
+            .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
+        };
+        self.syncInsertSession(undo_before);
+        return ev;
+    }
+
+    /// Open / anchor / close the Insert undo session against the mode
+    /// the handler is in now. `undo_before` is the undo depth before the
+    /// key: the first snapshot pushed past it is the session's — the
+    /// `cw` that entered Insert and the text typed after undo together.
+    fn syncInsertSession(self: *Buffer, undo_before: usize) void {
+        const ed = &self.editor;
+        const typing = switch (self.input.mode()) {
+            .insert, .replace => true,
+            else => false,
+        };
+        if (typing) {
+            if (!self.insert_session) {
+                self.insert_session = true;
+                self.insert_undo_target = null;
+            }
+            if (self.insert_undo_target == null and ed.history.undoLen() > undo_before) self.insert_undo_target = undo_before + 1;
+        } else if (self.insert_session) {
+            self.insert_session = false;
+            if (self.insert_undo_target) |t| ed.history.truncateUndo(t);
+            self.insert_undo_target = null;
+            ed.in_insert_run = false;
         }
     }
 
@@ -1015,6 +1052,13 @@ test "vim undo, redo, dot-repeat" {
     try vim("xx2u", "|abc", "|abc");
     try vim("ifoo<esc>u", "|abc", "|abc");
     try vim("ifoo<esc>lx u", "|abc", "foo|abc");
+    // One Insert session is one undo step, whatever was typed in it.
+    try vim("Oone<cr>two<esc>u", "|abc", "|abc");
+    try vim("ia<tab>b<cr>c<bs><esc>u", "|x", "|x");
+    try vim("cwfoo<esc>u", "|hello world", "|hello world");
+    try vim("Oone<cr>two<esc>u<c-r>", "|abc", "one\ntw|o\nabc");
+    try vim("ione<esc>itwo<esc>u", "|x", "on|ex");
+    try vim("Rab<esc>u", "|xyz", "|xyz");
     try vim("3ddu", "|a\nb\nc\nd", "|a\nb\nc\nd");
     try vim("dw.", "|a b c d", "|c d");
     try vim("x..", "|abcd", "|d");
