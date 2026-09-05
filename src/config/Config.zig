@@ -74,6 +74,11 @@ pub const Editor = struct {
     inlay_hints: bool = true,
     cursor_blink: bool = false,
     semantic_tokens_viewport: bool = false,
+    // changed: the Rust config had only the viewport switch; the layer
+    // itself had no off. `semantic_tokens` is the master switch —
+    // off leaves the tree-sitter paint alone.
+    /// Lay a server's semantic tokens over the syntax highlighting.
+    semantic_tokens: bool = true,
     code_lens: bool = true,
     text_width: u16 = 80,
     ensure_trailing_newline: bool = true,
@@ -319,15 +324,29 @@ pub const DapAdapter = struct {
 };
 
 pub const Formatter = struct {
-    /// argv; the Rust config also accepted a bare string.
+    /// argv; the Rust config also accepted a bare string. `{file}` in
+    /// an argument becomes the workspace-relative path.
     cmd: []const []const u8 = &.{},
+    // changed: the Rust formatter was stdin → stdout only. A tool that
+    // insists on rewriting the file (`rustfmt`, `gofmt -w`) runs with
+    // `in_place`: the buffer is written, the tool runs on `{file}`, and
+    // the result is read back.
+    /// The tool rewrites `{file}` on disk instead of printing to stdout.
+    in_place: bool = false,
 };
 
-pub const LintParser = enum { vimgrep, eslint, tsc, ruff, shellcheck };
+pub const LintParser = enum { vimgrep, eslint, tsc, ruff, shellcheck, pattern };
 
 pub const Linter = struct {
+    /// argv; `{file}` becomes the workspace-relative path.
     cmd: []const []const u8 = &.{},
     parser: LintParser = .vimgrep,
+    // changed: Zig has no regex in std, and a linter's line format is
+    // rarely more than fields in a fixed order. `pattern` is a template
+    // of placeholders — `{file}:{line}:{col}: {severity}: {message}` —
+    // that `parser = .pattern` matches literally between them.
+    /// The line template for `parser = .pattern`.
+    pattern: []const u8 = "",
 };
 
 pub const Task = struct {
@@ -508,6 +527,15 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 500), c.editor.chord_timeout_ms);
     try std.testing.expectEqual(WheelMovesCursor.auto, c.editor.wheel_moves_cursor);
     try std.testing.expectEqual(ScrollAccel.normal, c.editor.scroll_accel);
+    try std.testing.expect(c.editor.inlay_hints);
+    try std.testing.expect(c.editor.semantic_tokens);
+    try std.testing.expect(c.editor.code_lens);
+    try std.testing.expect(!c.editor.format_on_type);
+    try std.testing.expect(!c.editor.will_save_wait_until);
+    try std.testing.expectEqual(@as(usize, 0), c.formatters.count());
+    try std.testing.expectEqual(@as(usize, 0), c.linters.count());
+    try std.testing.expect(!(Formatter{}).in_place);
+    try std.testing.expectEqual(LintParser.vimgrep, (Linter{}).parser);
     // ui
     try std.testing.expectEqualStrings("onedark", c.ui.theme);
     try std.testing.expectEqual(@as(u16, 30), c.ui.tree_width);
