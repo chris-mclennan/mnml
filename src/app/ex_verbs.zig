@@ -148,6 +148,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
         const cur = pane.buf.editor;
         // Map what is left through the edits the last command made.
         if (cur.doc.edits.lostSince(seen)) {
+            app.in_global = false;
             app.toast("{s} — stopped after {d}: the text was replaced wholesale", .{ label, ran });
             break;
         }
@@ -182,6 +183,9 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
         if (cur.doc.edits.head() == head_before and !cur.doc.edits.lostSince(head_before)) cur.popCheckpoint();
     }
     app.diag.clear();
+    // The summary is the one message the run makes; the sub-commands'
+    // were silenced while `in_global` was set.
+    app.in_global = false;
     if (failed > 0) {
         app.toast("{s} — ran on {d} line(s), {d} failed", .{ label, ran, failed });
     } else app.toast("{s} — ran on {d} line(s)", .{ label, ran });
