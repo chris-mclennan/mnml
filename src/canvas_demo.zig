@@ -27,8 +27,8 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
-const Term = @import("tui/term.zig");
-const Input = @import("tui/input.zig");
+const Term = @import("tui/term.zig").Term;
+const Input = @import("tui/input.zig").Input;
 const ui = @import("ui/ui.zig");
 const key_mod = @import("core/key.zig");
 const panel_mod = @import("core/panel.zig");
