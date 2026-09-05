@@ -157,6 +157,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .add_cursor_at_next_word => try mc.addCursorAtNextWord(ed),
         .block_select_start => block.selectStart(ed),
         .block_select_clear => block.selectClear(ed),
+        .block_eol => |v| ed.block_eol = v,
         .yank_block => try block.yankBlock(ed, clip, out),
         .delete_block => try block.deleteBlock(ed, clip, out),
 

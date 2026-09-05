@@ -1944,15 +1944,17 @@ pub const Vim = struct {
                 return .consumed;
             }
         }
-        if (modifiedMotion(key)) |m| {
+        if (modifiedMotion(key) orelse motion(key.code)) |m| {
             const n = self.count1();
             self.count = null;
-            return repeated(arena, m, n);
-        }
-        if (motion(key.code)) |m| {
-            const n = self.count1();
-            self.count = null;
-            return repeated(arena, m, n);
+            // `$` makes the block ragged-right (`:help v_$`); a vertical
+            // motion keeps that, any other horizontal one drops it.
+            if (m == .move_line_last_char) return ops(arena, &.{ m, .{ .block_eol = true } });
+            if (m.preservesGoalCol()) return repeated(arena, m, n);
+            var b = Builder.init(arena);
+            try b.pushRepeated(m, n);
+            try b.push(.{ .block_eol = false });
+            return b.finish();
         }
         self.count = null;
         if (key.code == .esc or isCtrlChar(key, 'v')) {

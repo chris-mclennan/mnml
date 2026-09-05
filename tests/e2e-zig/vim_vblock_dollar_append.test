@@ -1,0 +1,28 @@
+# zig-only
+# `$` in V-BLOCK makes the block ragged-right (`:help v_$`): `A` then
+# appends at the end of every line, whatever its length.
+write a.txt "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel india\n"
+open a.txt
+command editor.use_vim
+
+key ctrl+v
+key 2
+key j
+key $
+key A
+type ;
+key esc
+command file.save
+expect file a.txt contains "alpha bravo charlie;\ndelta echo foxtrot;\ngolf hotel india;\n"
+
+# A horizontal motion after `$` drops the ragged edge again.
+key g
+key g
+key ctrl+v
+key j
+key $
+key 0
+key l
+key d
+command file.save
+expect file a.txt contains "pha bravo charlie;\nlta echo foxtrot;\ngolf hotel india;\n"

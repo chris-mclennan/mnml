@@ -785,6 +785,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         },
         .focused = focused,
         .visual_block = mode == .visual_block,
+        .block_eol = e.buf.editor.block_eol,
         .scrollbar = app.cfg.ui.scrollbar,
         .gutter_marks = try gutterMarks(app, arena, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
