@@ -5,6 +5,6 @@
 {"event":"set_activity_badge","section":"cloud_agents","count":"0"}
 {"event":"notify","title":"build","body":"done"}
 {"event":"notify","title":"mnml","body":"no title"}
-{"event":"open_pty","exe":"ls"}
+{"event":"open_pty","exe":"sleep"}
 {"event":"unknown","raw":"{\"cmd\":\"open-pty\",\"command\":[]}"}
 {"event":"quit"}

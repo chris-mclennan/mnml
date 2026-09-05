@@ -540,6 +540,9 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
 
     const cmd_path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "ipc-zig", "command" });
     defer t.allocator.free(cmd_path);
+    // The pty runs `sleep 30`, not something that exits at once: the pty
+    // reader is a detached thread sharing a refcount with the session, and
+    // a child gone before the loop quits lets it race the leak check.
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 150, .lines = @embedFile("ipc/golden/tier2.commands.jsonl") };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
     const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 100, .rows = 12 }, .ipc = .{ .subdir = "ipc-zig" } });
@@ -556,7 +559,7 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
     try t.expect(!app.native_notify);
     var saw_pty = false;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .pty => |*pt| saw_pty = saw_pty or std.mem.eql(u8, pt.label, "ls"),
+        .pty => |*pt| saw_pty = saw_pty or std.mem.eql(u8, pt.label, "sleep"),
         else => {},
     };
     try t.expect(saw_pty);
