@@ -1908,7 +1908,10 @@ NvChad-exact; these are the places the editor was not, and what moved.
 - `// changed (view):` `Lines` carries the painted count: a trailing
   `\n` opens no phantom line N+1 unless the cursor, the anchor or an
   extra cursor sits at EOF. `Doc.block_eol` paints a ragged-right block
-  to each line's text.
+  to each line's text. *2026-09-05 (branch `save-cursor`):* a save
+  used to put the cursor exactly there (after the `\n` it appends), so
+  every save of a newline-less file painted that phantom line; the save
+  keeps the cursor now — see "Save-time cursor and Esc from Insert".
 - `// changed (macros):` a macro is its register. `qa…q` writes the keys
   in `parseKeys` notation as the charwise text of `"a`; `@a` parses what
   the register holds when it runs; a register yanked back with `yy`
@@ -2132,6 +2135,9 @@ moved.
   leaving Insert still steps left across a line start (the pinned
   Rust-parity row `i<cr><esc>`, and `vim_replace_mode.test`'s save-then-
   `A` chain depends on it); `Vc<esc>` lands where `cc<esc>` does.
+  *Resolved 2026-09-05 (branch `save-cursor`):* Esc no longer crosses
+  a line start, and the save no longer moves the cursor — see the
+  "Save-time cursor and Esc from Insert" section below.
 - `// changed (Undo chip):` `UndoChip.Action.reopen` carries the kept
   tab and the index it had. `closeTabs` closes right to left so the
   pops of the closed list land in strip order; a markdown preview goes
@@ -2238,3 +2244,72 @@ pub const Syntax = struct { dirty: bool, since_ms: ?i64, … };   // was EditorP
 // live on the shared state; `EditorPane` no longer deinit's its syntax — the
 // `DocStore` does, after the pane's buffer releases the document.
 
+## Save-time cursor and Esc from Insert (2026-09-05, branch `save-cursor`) — `// changed:` notes
+
+Two coupled Rust-parity deviations that the `vim-edit` and
+`fix-editor` tracks each flagged and left alone: the save-time cursor
+jump and the Esc that crossed a line start. `docs/DESIGN.md` D4 / D4b
+say the vim profile is Neovim-exact; parity with a Rust bug is not a
+goal.
+
+- `// changed (save):` `Buffer.save` appends the missing final newline
+  (`editor.ensure_trailing_newline`) without moving anything. Cursor,
+  anchor and goal column are snapshotted around the `replace_range` and
+  put back — all are at or before the old end, so all stay on the last
+  line. A cursor past the last char keeps its byte, now the position
+  before the appended `\n` (an Insert / standard cursor at EOF stays
+  after the last char, VS Code's behaviour); in vim Normal mode, where
+  a cursor never sits past the last char, it steps back onto that char.
+  Before: `replace_range` parked the cursor after the `\n`, on a
+  phantom line N+1 (`Ln 2/1`), and a Normal `A` / `o` from there edited
+  the wrong place. Rust mnml has the same jump.
+- `// changed (Esc):` leaving Insert or Replace is
+  `cursor = max(line_start, cursor - 1)` in grapheme terms
+  (`:help i_<Esc>`): the Insert Esc, the Replace Esc and Insert's
+  `Ctrl-[` emit `move_left_no_cross_line`, not `move_left`. So
+  `i<CR><Esc>` stays at column 0 of the new line, `o<Esc>` sits on the
+  opened line, `i<Esc>` at column 0 stays, `A<Esc>` lands on the last
+  char, `R<CR><Esc>` stays on the new line. `move_left_no_cross_line` /
+  `move_right_no_cross_line` fan out over extra cursors like `h` / `l`
+  (they did not; `x` / `X` are built on them and follow).
+- `// changed (tests that pinned the bugs):` `buffer.zig` "save adds the
+  trailing newline …" asserted `cursor == len` after a save and an
+  `A<esc>R!` chain that appended only through the jump — it asserts the
+  kept byte and vim's overwrite (`XYZde!`, checked against vim 9);
+  `driver.zig`'s status test asserted `cursor_line == 2` after a save;
+  the vim row `i<cr><esc>` "ab|c" → "ab|\nc" ("move_left crosses lines
+  (Rust parity)") and the multi-cursor row `i` + below + `<cr><esc>`
+  asserted the crossing. All four now assert the vim behaviour. New:
+  `tests/e2e-zig/save_keeps_cursor.test`,
+  `tests/e2e-zig/vim_esc_from_insert.test` (both watched failing on the
+  unfixed tree), a save test for an Insert cursor at EOF and a
+  standard-mode selection, vim rows for `A<esc>` / `i<esc>` / `o<esc>` /
+  `O<esc>` / `A<cr><esc>` / `RX<esc>` / `R<cr><esc>`.
+- `// changed (put):` charwise `p` on an empty line (or with the cursor
+  past the end) puts at the cursor, on that line; it stepped past the
+  `\n` onto the next line. The Esc fix unmasked it:
+  `tests/e2e-zig/vim_macro_register.test`'s `o<Esc>"ap` had only landed
+  on the opened line because Esc crossed back onto the line above and
+  `p` then jumped forward over its `\n`. Vim's `p` on an empty line
+  puts there; the test asserts that, the code was wrong. The
+  multi-cursor distribute put follows the same rule. Row: `yljp`
+  "|ab\n\nc" → "ab\na|\nc". Break-check:
+  `tools/break-check.sh "vim registers, yank and put" src/editor/register.zig
+  's/where == \.after and !on_newline/where == .after or on_newline/'`.
+- **Open — the Rust oracle asserts the deviation.**
+  `tests/e2e/vim_replace_mode.test:26` expects `XYZdef!` after
+  `RXYZ<Esc>`, save, `A<Esc>R!<Esc>`, save on `abcdef`. Its comment
+  says "`A` puts cursor in Insert mode past 'f'; Esc steps back. Then
+  `R` + `!` at EOF appends past the end" — but after `A<Esc>` vim's
+  cursor is *on* `f`, and `R!` overwrites it: vim 9 writes `XYZde!`
+  with the cursor on `!`. `XYZdef!` is reachable only through both bugs
+  (the save parks the cursor on the phantom line, `A<Esc>` then crosses
+  back onto the `\n`, and Replace inserts before a newline). The file
+  is the oracle and is not edited on this branch; until the Rust side
+  corrects it (its own `R!` after a save has the same jump) the gate
+  reads 46/47 and the corpus is one below the line, with that single
+  line the only failure. Break-checks run (both fail with the break in
+  place): `tools/break-check.sh "save adds the trailing newline"
+  src/editor/buffer.zig 's/else @min(cursor, n);/else @max(cursor, n + 1);/'`
+  and `tools/break-check.sh "vim inserts, opens and appends" src/input/vim.zig
+  's/break :blk ops(arena, &.{.move_left_no_cross_line});/break :blk ops(arena, \&.{.move_left});/'`.

@@ -1,0 +1,57 @@
+# zig-only
+# Esc leaving Insert (or Replace) steps one column left but never onto
+# the previous line (`:help i_<Esc>`): after `i<CR>` it stays at column
+# 0 of the new line, `i<Esc>` at column 0 stays put, `A<Esc>` lands on
+# the last char, `o<Esc>` sits on the opened line. It used to cross the
+# line start onto the previous line's end.
+write data.txt "abc\ndef\n"
+open data.txt
+command editor.use_vim
+
+# i<CR><Esc> from `b`: the cursor is on line 2, column 0 — `x` takes `b`.
+key l
+key i
+key enter
+key escape
+expect screen contains "Ln 2/3 Col 1"
+key x
+command file.save
+expect file data.txt contains "a\nc\ndef\n"
+
+# i<Esc> at column 0 stays at column 0.
+key i
+key escape
+expect screen contains "Ln 2/3 Col 1"
+
+# A<Esc> lands on the last char.
+key A
+key escape
+expect screen contains "Ln 2/3 Col 1"
+type "0"
+type "j"
+key A
+key escape
+expect screen contains "Ln 3/3 Col 3"
+
+# o<Esc> sits on the new empty line, column 0; `k` goes back to `def`.
+key o
+key escape
+expect screen contains "Ln 4/4 Col 1"
+key k
+expect screen contains "Ln 3/4 Col 1"
+
+# Replace mode: R then Esc steps back one column; R<CR><Esc> stays on
+# the new line's start.
+write rep.txt "abcdef"
+open rep.txt
+key R
+type "XY"
+key escape
+expect screen contains "Ln 1/1 Col 2"
+key R
+key enter
+key escape
+expect screen contains "Ln 2/2 Col 1"
+key x
+command file.save
+expect file rep.txt contains "X\ncdef\n"

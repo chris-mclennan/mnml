@@ -1,0 +1,37 @@
+# zig-only
+# `file.save` on a file with no trailing newline appends one
+# (`editor.ensure_trailing_newline`) and the cursor stays where it was:
+# on the last line, on its last char. It used to ride the appended `\n`
+# onto a phantom line 2 (`Ln 2/1`), and a Normal `A` or `o` from there
+# edited the wrong place. Rust mnml has the same jump and its test
+# pinned it as parity; a bug is not a parity target.
+write data.txt "abc"
+open data.txt
+command editor.use_vim
+key $
+expect screen contains "Ln 1/1 Col 3"
+command file.save
+expect file data.txt contains "abc\n"
+expect screen contains "Ln 1/1 Col 3"
+expect screen lacks "  2 "
+# The cursor is really on `c`: `x` takes it.
+key x
+command file.save
+expect file data.txt contains "ab\n"
+expect file data.txt lacks "abc"
+
+# A cursor past the last char (Insert mode at EOF) keeps its place on
+# the last line — before the appended newline, not after it.
+write tail.txt "xy"
+open tail.txt
+key A
+type "z"
+command file.save
+expect file tail.txt contains "xyz\n"
+expect screen contains "INSERT"
+expect screen contains "Ln 1/1 Col 4"
+type "!"
+key escape
+command file.save
+expect file tail.txt contains "xyz!\n"
+expect screen lacks "  2 "

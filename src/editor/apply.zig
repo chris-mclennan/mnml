@@ -66,8 +66,14 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             try mc.moveExtras(ed, motion.wordRight);
         },
         .move_word_right_no_cross_line => motion.wordRightNoCrossLine(ed),
-        .move_right_no_cross_line => motion.rightNoCrossLine(ed),
-        .move_left_no_cross_line => motion.leftNoCrossLine(ed),
+        .move_right_no_cross_line => {
+            motion.rightNoCrossLine(ed);
+            try mc.moveExtras(ed, motion.rightNoCrossLine);
+        },
+        .move_left_no_cross_line => {
+            motion.leftNoCrossLine(ed);
+            try mc.moveExtras(ed, motion.leftNoCrossLine);
+        },
         .move_word_left => {
             motion.wordLeft(ed);
             try mc.moveExtras(ed, motion.wordLeft);

@@ -683,7 +683,7 @@ pub const Vim = struct {
                 },
                 '[' => {
                     self.enterNormal();
-                    return ops(arena, &.{.move_left});
+                    return ops(arena, &.{.move_left_no_cross_line});
                 },
                 'w' => return ops(arena, &.{.delete_word_left}),
                 'u' => return ops(arena, &.{.delete_to_line_start}),
@@ -701,7 +701,7 @@ pub const Vim = struct {
         return switch (key.code) {
             .esc => blk: {
                 self.enterNormal();
-                break :blk ops(arena, &.{.move_left});
+                break :blk ops(arena, &.{.move_left_no_cross_line});
             },
             .char => |c| if (key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .insert_char = c }}),
             .enter => ops(arena, &.{.insert_newline}),
@@ -727,7 +727,7 @@ pub const Vim = struct {
         return switch (key.code) {
             .esc => blk: {
                 self.enterNormal();
-                break :blk ops(arena, &.{.move_left});
+                break :blk ops(arena, &.{.move_left_no_cross_line});
             },
             .char => |c| if (key.mods.ctrl or key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .overwrite_char_and_advance = c }}),
             .enter => ops(arena, &.{.insert_newline}),
