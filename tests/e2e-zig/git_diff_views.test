@@ -1,0 +1,37 @@
+# zig-only
+# The diff pane's three views (src/ui/diff_view.zig): `v` cycles
+# Hunk → Inline → Split and the header chips name the active one;
+# Inline shows the whole file (a line far from the change appears);
+# `/` narrows the pane to the hunks holding a string, esc clears it.
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.rs "fn alpha() {}\nfn two() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\nfn nine() {}\nfn omega() {}\n"
+shell git add code.rs
+shell git commit -q -m "initial"
+shell printf "fn beta() {}\nfn two() {}\nfn three() {}\nfn four() {}\nfn five() {}\nfn six() {}\nfn seven() {}\nfn eight() {}\nfn nine() {}\nfn omega() {}\n" > code.rs
+open code.rs
+command git.diff_file
+expect screen contains "[Hunk]"
+expect screen contains "alpha"
+expect screen contains "beta"
+# Three lines of context stop before `omega`.
+expect screen lacks "omega"
+key v
+expect screen contains "[Inline]"
+expect screen contains "omega"
+key v
+expect screen contains "[Split]"
+expect screen contains "alpha"
+expect screen contains "beta"
+command git.diff_toggle_view
+expect screen contains "[Hunk]"
+# The filter: no hunk holds `zzz`; one esc clears it (and leaves the
+# filter) and the hunk is back; a second esc would close the pane.
+key /
+type zzz
+expect screen contains "filter"
+expect screen contains "No hunk matches"
+key esc
+expect screen contains "alpha"
+expect screen lacks "No hunk matches"
