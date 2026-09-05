@@ -1633,7 +1633,7 @@ fn hitRect(app: *App, x: u16, y: u16) ?Rect {
 }
 
 /// Enter on a list pane row: the cmdline history re-runs the line, the
-/// quickfix opens the file at its row.
+/// quickfix and location lists open the file at the row.
 pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Error!void {
     if (l.cursor >= l.entries.items.len) return;
     const e = l.entries.items[l.cursor];
@@ -1643,7 +1643,10 @@ pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Er
             try app.forceClosePane(pane);
             try runExLine(app, line);
         },
-        .quickfix => {
+        .quickfix, .location => {
+            // changed: the location list shares the quickfix row action; the
+            // owning editor's index follows the row so `:lnext` continues from it.
+            if (l.kind == .location) @import("loclist.zig").noteEnter(app, l.cursor);
             const rel = try app.frame.allocator().dupe(u8, e.path orelse return);
             const abs = try app.absPath(rel);
             const line = e.line;

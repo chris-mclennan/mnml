@@ -23,6 +23,7 @@ const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
 const Config = app_mod.Config;
 const ex_verbs = @import("ex_verbs.zig");
+const loclist = @import("loclist.zig");
 
 /// 0-based inclusive rows.
 pub const Range = struct { first: usize, last: usize };
@@ -138,6 +139,13 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return command.run(app, .{ .static = .@"qf.prev" });
     if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return command.run(app, .{ .static = .@"qf.first" });
     if (eqAny(verb, &.{ "cla", "clast" })) return command.run(app, .{ .static = .@"qf.last" });
+    if (eqAny(verb, &.{ "lex", "lexpr", "lgetexpr" })) return loclist.lexpr(app, args);
+    if (eqAny(verb, &.{ "lop", "lopen", "lw", "lwindow" })) return loclist.open(app);
+    if (eqAny(verb, &.{ "lcl", "lclose" })) return loclist.close(app);
+    if (eqAny(verb, &.{ "lne", "lnext" })) return loclist.go(app, .next);
+    if (eqAny(verb, &.{ "lp", "lprev", "lprevious", "lN", "lNext" })) return loclist.go(app, .prev);
+    if (eqAny(verb, &.{ "lfir", "lfirst", "lr", "lrewind" })) return loclist.go(app, .first);
+    if (eqAny(verb, &.{ "lla", "llast" })) return loclist.go(app, .last);
     if (eqAny(verb, &.{ "theme", "colorscheme", "colo" })) {
         if (args.len == 0) return command.run(app, .{ .static = .@"theme.pick" });
         return @import("cmd_view.zig").useTheme(app, args);

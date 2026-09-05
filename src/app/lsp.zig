@@ -621,7 +621,8 @@ fn handleResponse(app: *App, s: *Server, kind: ReqKind, ctx: Ctx, result: ?Value
 
 // ─── diagnostics ────────────────────────────────────────────────────────
 
-fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.Error!void {
+/// Public for the location-list tests, which seed a list from it.
+pub fn applyDiagnostics(app: *App, path: []const u8, list: []const Value) Allocator.Error!void {
     const gpa = app.gpa;
     const gop = try app.lsp.diags.getOrPut(gpa, path);
     if (!gop.found_existing) {
