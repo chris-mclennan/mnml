@@ -350,6 +350,13 @@ fn jumpToEnvVarCmd(app: *App) CommandError!void {
     var arena = std.heap.ArenaAllocator.init(app.gpa);
     defer arena.deinit();
     const a = arena.allocator();
+    // A `{{VAR}}` in hand (the quick-fix menu, the caret, the Vars row)
+    // lands on its line; otherwise the file opens as it is.
+    if (http.takeQuickFix(app)) |v| {
+        defer app.gpa.free(v);
+        return http.jumpToVarDef(app, try a.dupe(u8, v));
+    }
+    if (http.activeRequest(app)) |rp| if (try rp.varAtCaret(a)) |name| return http.jumpToVarDef(app, name);
     const sel = try activeEnvName(app, a);
     for ([_][]const u8{ ".mnml", ".rqst" }) |sub| {
         const path = try env_mod.envPath(a, app.workspace, sub, sel.name);

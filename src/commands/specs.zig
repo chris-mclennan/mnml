@@ -685,6 +685,10 @@ pub const specs = [_]Spec{
     .{ .id = "http.toggle_split_orientation", .title = "HTTP: cycle Request/Response split orientation (Auto → Vertical → Horizontal)", .group = "http" },
     .{ .id = "http.set_env_var_value", .title = "HTTP: set value for env var at cursor / active request pane", .group = "http" },
     .{ .id = "http.jump_to_env_var", .title = "HTTP: jump to env var definition at cursor / active request pane", .group = "http" },
+    .{ .id = "http.quick_fix", .title = "HTTP: quick-fix menu for the {{VAR}} under the caret (define / pick env / inline)", .group = "http" },
+    .{ .id = "http.define_var", .title = "HTTP: define the {{VAR}} under the caret in the active env", .group = "http" },
+    .{ .id = "http.inline_var", .title = "HTTP: replace the {{VAR}} under the caret with its resolved value", .group = "http" },
+    .{ .id = "http.copy_var_name", .title = "HTTP: copy the name of the {{VAR}} under the caret", .group = "http" },
     .{ .id = "http.ai_debug", .title = "HTTP: ask Claude why this request is failing", .group = "http" },
     .{ .id = "term.shell", .title = "Terminal: open a NEW shell (split beside)", .group = "term", .keys = .{ .both = &.{"ctrl+shift+`"} } },
     .{ .id = "term.shell_left", .title = "Terminal: new shell in left half", .group = "term" },
@@ -875,9 +879,10 @@ pub const specs = [_]Spec{
     .{ .id = "harpoon.clear", .title = "Harpoon: unpin every slot", .group = "harpoon" },
 };
 
-test "823 specs, unique ids" {
+test "827 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
-    // + two script commands + eight cutover-prep commands.
-    try std.testing.expectEqual(@as(usize, 823), specs.len);
+    // + two script commands + eight cutover-prep commands + four var
+    // commands.
+    try std.testing.expectEqual(@as(usize, 827), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

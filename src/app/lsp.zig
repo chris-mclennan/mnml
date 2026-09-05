@@ -961,6 +961,8 @@ fn isIdent(c: u8) bool {
 // ── go to ──
 
 pub fn gotoDefinition(app: *App) CommandError!void {
+    // `gd` on a `{{VAR}}` in a request file: its line in the env file.
+    if (try @import("http.zig").jumpVarAtCursor(app)) return;
     const t = try requireServer(app, "definition");
     try sendAt(app, t, .definition, "textDocument/definition", 0);
 }

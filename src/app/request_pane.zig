@@ -414,6 +414,40 @@ pub const RequestPane = struct {
         self.split_scroll = 0;
     }
 
+    /// The text of the focused field and the `{{VAR}}` under its caret.
+    pub fn varAtCaret(self: *RequestPane, arena: Allocator) Allocator.Error!?[]const u8 {
+        const f = self.activeBuf() orelse return null;
+        const at = @min(f.caret.*, f.buf.items.len);
+        for (try env_mod.tokens(arena, f.buf.items)) |tok| if (at >= tok.start and at <= tok.end) return tok.name;
+        return null;
+    }
+
+    /// Replace every `{{name}}` in the three text fields with `value`.
+    pub fn inlineVar(self: *RequestPane, name: []const u8, value: []const u8) Allocator.Error!usize {
+        var n: usize = 0;
+        const bufs = [_]*Buf{ &self.url, &self.headers_text, &self.body };
+        for (bufs) |b| {
+            var arena = std.heap.ArenaAllocator.init(self.gpa);
+            defer arena.deinit();
+            const toks = try env_mod.tokens(arena.allocator(), b.items);
+            var i = toks.len;
+            while (i > 0) {
+                i -= 1;
+                if (!std.mem.eql(u8, toks[i].name, name)) continue;
+                try b.replaceRange(self.gpa, toks[i].start, toks[i].end - toks[i].start, value);
+                n += 1;
+            }
+        }
+        if (n > 0) {
+            self.url_caret = @min(self.url_caret, self.url.items.len);
+            self.body_caret = @min(self.body_caret, self.body.items.len);
+            self.headers_caret = @min(self.headers_caret, self.headers_text.items.len);
+            self.edited = true;
+            try self.commit();
+        }
+        return n;
+    }
+
     /// Enter the Request block on the URL (a `Tab` from the response).
     pub fn focusUrl(self: *RequestPane) void {
         self.block = .request;
@@ -826,6 +860,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
         }
     }
     if (m.kind != .press) return;
+    if (hit_id >= view.hit_var_base) return http.varClick(app, id, rp, hit_id - view.hit_var_base, m);
     if (hit_id >= view.hit_tab_base and hit_id < view.hit_tab_base + EditTab.all.len) {
         rp.showTab(EditTab.all[hit_id - view.hit_tab_base]);
         return;
@@ -955,6 +990,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
     };
     const env_name = try http.envName(app, arena);
     const vars = try http.varRows(app, rp, arena, env_name);
+    const toks = try http.varTokens(app, rp, arena, env_name);
     var resp_model: ?view.ResponseModel = null;
     var stream_info: ?view.StreamInfo = null;
     if (rp.streaming()) |st| {
@@ -1022,6 +1058,9 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .body_wrap = rp.body_wrap,
         .focused = focused,
         .source_path = rp.source_path,
+        .url_vars = toks.url,
+        .body_vars = toks.body,
+        .headers_vars = toks.headers,
         .split = if (rp.split) .{ .tab = rp.split_tab, .ratio = rp.split_ratio, .scroll = &rp.split_scroll } else null,
         .orientation = rp.orientation,
     };
@@ -1035,6 +1074,11 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         };
     }
+    // A hovered `{{VAR}}` shows its value.
+    if (http.hoveredVar(ui, id, view.hit_var_base)) |hv| if (hv.idx < toks.all.len) {
+        const tok = toks.all[hv.idx];
+        view.drawVarTip(ui, area, hv.rect, tok.name, tok.shown, env_name);
+    };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -1106,4 +1150,30 @@ test "split: toggling picks a second tab; showing the right tab swaps the halves
     try testing.expect(rp.split and rp.split_tab == .body);
     rp.split_ratio = 30;
     try testing.expectEqual(@as(u8, 30), rp.split_ratio);
+}
+
+test "varAtCaret finds the token under the URL caret; inlineVar replaces every occurrence across the fields" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    var req = try parse.parse(testing.allocator, "curl 'https://{{HOST}}/a' -H 'A: {{T}}'");
+    try rp.load(req);
+    req = undefined;
+    // The var under the URL caret; none past its end.
+    rp.field = .url;
+    rp.url_caret = 9;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqualStrings("HOST", (try rp.varAtCaret(arena.allocator())).?);
+    rp.url_caret = 16;
+    try testing.expectEqualStrings("HOST", (try rp.varAtCaret(arena.allocator())).?);
+    rp.url_caret = 17;
+    try testing.expect((try rp.varAtCaret(arena.allocator())) == null);
+    // Inlining replaces every occurrence across the three fields and commits.
+    try testing.expectEqual(@as(usize, 1), try rp.inlineVar("HOST", "x.test"));
+    try testing.expectEqualStrings("https://x.test/a", rp.url.items);
+    try testing.expectEqual(@as(usize, 1), try rp.inlineVar("T", "1"));
+    try testing.expectEqualStrings("A: 1\n", rp.headers_text.items);
+    try testing.expectEqualStrings("1", rp.request.header("a").?);
+    try testing.expectEqual(@as(usize, 0), try rp.inlineVar("NOPE", "z"));
+    try testing.expect(rp.edited);
 }

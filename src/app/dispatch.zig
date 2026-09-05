@@ -53,6 +53,7 @@ const tree_mod = @import("tree.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
+const http_app = @import("http.zig");
 const ws_pane = @import("ws_pane.zig");
 const browser_pane = @import("browser_pane.zig");
 const mount_pane = @import("mount_pane.zig");
@@ -498,6 +499,7 @@ fn restoreFocus(app: *App) void {
 fn closeOverlay(app: *App) void {
     // A confirm that a worker is parked on answers no before it goes.
     ai_app.overlayClosing(app);
+    http_app.overlayClosing(app);
     const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
@@ -508,7 +510,11 @@ fn closeOverlay(app: *App) void {
 
 /// A menu row was chosen: close the menu, then act.
 fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
+    // The `{{VAR}}` a quick-fix menu was opened on rides through the
+    // close to the row's command.
+    const quick_fix = http_app.takeQuickFix(app);
     closeOverlay(app);
+    app.http.quick_fix_var = quick_fix;
     switch (action) {
         .command => |id| command.run(app, .{ .static = id }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1014,7 +1020,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
                 .integrations => |*ip| try integrations.click(app, sh.pane, ip, sh.id, m),
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
-                .editor, .outline, .md_preview, .pty, .ai => {},
+                .editor => |*e| try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
+                .outline, .md_preview, .pty, .ai => {},
             }
         },
         .tree_node => |idx| switch (m.kind) {

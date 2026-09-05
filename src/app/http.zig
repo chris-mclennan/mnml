@@ -29,6 +29,7 @@ const bench_mod = @import("../http/bench.zig");
 const script_mod = @import("../http/script.zig");
 const request_pane = @import("request_pane.zig");
 const view = @import("../ui/request_view.zig");
+const editor_view = @import("../ui/editor_view.zig");
 const Ui = @import("../ui/context.zig");
 
 pub const Request = parse.Request;
@@ -108,6 +109,8 @@ pub const State = struct {
     sending: u32 = 0,
     /// `http.send_streaming`: the next `fire` streams whatever comes.
     force_stream: bool = false,
+    /// The `{{VAR}}` the quick-fix menu was opened on. Owned.
+    quick_fix_var: ?[]u8 = null,
     /// Lines a `.ws` file queued for a pane that is still connecting.
     ws_queue: std.ArrayListUnmanaged(struct { pane: PaneId, text: []u8 }) = .empty,
 
@@ -124,6 +127,7 @@ pub const State = struct {
         }
         self.handles.deinit(gpa);
         if (self.env_override) |e| gpa.free(e);
+        if (self.quick_fix_var) |v| gpa.free(v);
         if (self.pending_env_key) |k| gpa.free(k);
         if (self.fan) |*f| f.deinit(gpa);
         if (self.bench) |*b| b.deinit(gpa);
@@ -187,6 +191,10 @@ pub const table = .{
     .@"http.toggle_edit_split" = &toggleEditSplitCmd,
     .@"http.toggle_split_orientation" = &toggleSplitOrientationCmd,
     .@"http.toggle_collapse_all" = &notInThisBuild,
+    .@"http.quick_fix" = &quickFixCmd,
+    .@"http.define_var" = &defineVarCmd,
+    .@"http.inline_var" = &inlineVarCmd,
+    .@"http.copy_var_name" = &copyVarNameCmd,
     .@"http.refresh" = &refreshCmd,
     .@"http.save_response" = &saveResponseCmd,
 };
@@ -232,6 +240,317 @@ pub fn varRows(app: *App, rp: *RequestPane, arena: Allocator, env_name: ?[]const
         }
     }
     return out.items;
+}
+
+/// One `{{VAR}}` occurrence in a pane's text, with what a hover shows.
+pub const VarToken = struct {
+    name: []const u8,
+    /// The value as the tip shows it — masked for a secret; null when
+    /// the env lacks it.
+    shown: ?[]const u8,
+    resolved: bool,
+    /// A `{{$uuid}}`-style built-in: resolved, never "define in env".
+    dynamic: bool,
+};
+
+/// Every `{{VAR}}` of the URL / body / headers as view spans, with the
+/// flat list their ids index. On `arena`.
+pub const VarTokens = struct {
+    all: []const VarToken,
+    url: []const view.VarSpan,
+    body: []const view.VarSpan,
+    headers: []const view.VarSpan,
+};
+
+pub fn varTokens(app: *App, rp: *RequestPane, arena: Allocator, env_name: ?[]const u8) Allocator.Error!VarTokens {
+    var set = try env_mod.EnvSet.load(arena, app.io, app.workspace, env_name orelse env_mod.fallback_name);
+    set.process = &app.env;
+    var all: std.ArrayListUnmanaged(VarToken) = .empty;
+    var spans: [3][]const view.VarSpan = undefined;
+    const sources = [_][]const u8{ rp.url.items, rp.body.items, rp.headers_text.items };
+    for (sources, 0..) |src, si| {
+        var list: std.ArrayListUnmanaged(view.VarSpan) = .empty;
+        for (try env_mod.tokens(arena, src)) |tok| {
+            if (tok.name.len == 0) continue;
+            const dynamic = tok.name[0] == '$';
+            const value: ?[]const u8 = if (dynamic) "(built-in)" else set.get(tok.name);
+            const id: u32 = @intCast(all.items.len);
+            try all.append(arena, .{
+                .name = tok.name,
+                .shown = if (value) |v| (if (dynamic) v else env_mod.masked(tok.name, v, &set)) else null,
+                .resolved = value != null,
+                .dynamic = dynamic,
+            });
+            try list.append(arena, .{ .start = tok.start, .end = tok.end, .resolved = value != null, .id = id });
+        }
+        spans[si] = list.items;
+    }
+    return .{ .all = all.items, .url = spans[0], .body = spans[1], .headers = spans[2] };
+}
+
+/// The `{{VAR}}` hit under the pointer, if any — a `.script_hit` of
+/// `pane` with an id at or past `base`, scanned back to front.
+pub fn hoveredVar(ui: Ui, pane: PaneId, base: u32) ?struct { idx: usize, rect: @import("../ui/rect.zig") } {
+    const h = ui.hover orelse return null;
+    var i = ui.hits.items.items.len;
+    while (i > 0) {
+        i -= 1;
+        const e = ui.hits.items.items[i];
+        if (!e.rect.contains(h.x, h.y)) continue;
+        switch (e.target) {
+            .script_hit => |sh| if (sh.pane == pane and sh.id >= base) return .{ .idx = sh.id - base, .rect = e.rect },
+            else => {},
+        }
+        return null;
+    }
+    return null;
+}
+
+/// A press on a `{{VAR}}` in a request pane: left jumps to its line in
+/// the env file, right opens the quick-fix menu.
+pub fn varClick(app: *App, id: PaneId, rp: *RequestPane, idx: usize, m: @import("../core/key.zig").Mouse) Allocator.Error!void {
+    _ = id;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const toks = try varTokens(app, rp, a, try envName(app, a));
+    if (idx >= toks.all.len) return;
+    const tok = toks.all[idx];
+    if (m.button == .right) return openQuickFixMenu(app, tok.name, tok.dynamic, m.x, m.y);
+    if (tok.dynamic) {
+        app.toast("{{{{{s}}}}} is a built-in", .{tok.name});
+        return;
+    }
+    jumpToVarDef(app, tok.name) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+    };
+}
+
+/// Open the active env file on the line that defines `name`, or at its
+/// end when the name is missing (the file is created under `.mnml/env`
+/// then) so the definition can be typed straight away.
+pub fn jumpToVarDef(app: *App, name: []const u8) CommandError!void {
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sel = try envSelection(app, a);
+    var target: ?[]const u8 = null;
+    var line: ?usize = null;
+    for ([_][]const u8{ ".mnml", ".rqst" }) |sub| {
+        const path = try env_mod.envPath(a, app.workspace, sub, sel.name);
+        const text = Io.Dir.cwd().readFileAlloc(app.io, path, a, .limited(1 << 20)) catch continue;
+        if (target == null) target = path;
+        if (env_mod.lineOfKey(text, name)) |n| {
+            target = path;
+            line = n;
+            break;
+        }
+    }
+    const path = target orelse blk: {
+        const fresh = try env_mod.envPath(a, app.workspace, ".mnml", sel.name);
+        if (std.fs.path.dirname(fresh)) |d| Io.Dir.cwd().createDirPath(app.io, d) catch {};
+        Io.Dir.cwd().writeFile(app.io, .{ .sub_path = fresh, .data = "" }) catch return app.diag.fail(app.frame.allocator(), "env: cannot create {s}", .{app.relPath(fresh)});
+        break :blk fresh;
+    };
+    const copy = try app.frame.allocator().dupe(u8, path);
+    _ = app.openEditor(copy) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return app.diag.fail(app.frame.allocator(), "env: cannot open {s}", .{app.relPath(path)}),
+    };
+    const e = app.activeEditor() orelse return;
+    if (line) |n| {
+        e.buf.editor.placeCursor(n, 0);
+    } else {
+        const last = e.buf.editor.lineCount() -| 1;
+        e.buf.editor.placeCursor(last, std.math.maxInt(u32) / 2);
+        app.toast("{{{{{s}}}}} is not defined in {s} — append it here", .{ name, app.relPath(path) });
+    }
+    app.needs_render = true;
+}
+
+/// Take the quick-fix menu's `{{VAR}}` out of the state: the caller
+/// owns it now.
+pub fn takeQuickFix(app: *App) ?[]u8 {
+    const v = app.http.quick_fix_var;
+    app.http.quick_fix_var = null;
+    return v;
+}
+
+/// A menu is closing without one of its rows running (Esc, a click
+/// elsewhere): the `{{VAR}}` it was opened on must not outlive it, or
+/// the next caret-based var command would act on the wrong token.
+pub fn overlayClosing(app: *App) void {
+    if (app.overlay != .menu) return;
+    if (takeQuickFix(app)) |v| app.gpa.free(v);
+}
+
+fn setQuickFixVar(app: *App, name: []const u8) Allocator.Error!void {
+    const copy = try app.gpa.dupe(u8, name);
+    if (app.http.quick_fix_var) |old| app.gpa.free(old);
+    app.http.quick_fix_var = copy;
+}
+
+/// The quick-fix rows for `{{name}}`. A built-in has nothing to define.
+pub fn openQuickFixMenu(app: *App, name: []const u8, dynamic: bool, x: u16, y: u16) Allocator.Error!void {
+    try setQuickFixVar(app, name);
+    var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    if (!dynamic) {
+        try rows.append(app.gpa, .{ .label = "Define in env…", .action = .{ .command = .@"http.define_var" } });
+        try rows.append(app.gpa, .{ .label = "Jump to definition", .action = .{ .command = .@"http.jump_to_env_var" } });
+    }
+    try rows.append(app.gpa, .{ .label = "Pick env…", .action = .{ .command = .@"http.pick_env" }, .separator_before = !dynamic });
+    try rows.append(app.gpa, .{ .label = "Inline value", .action = .{ .command = .@"http.inline_var" } });
+    try rows.append(app.gpa, .{ .label = "Copy variable name", .action = .{ .command = .@"http.copy_var_name" }, .separator_before = true });
+    const title = try std.fmt.allocPrint(app.frame.allocator(), "{{{{{s}}}}}", .{name});
+    try app.openMenu(title, try rows.toOwnedSlice(app.gpa), x, y);
+}
+
+/// The `{{VAR}}` a var command acts on: the quick-fix menu's, else the
+/// one under the caret of the active request pane, else the Vars row.
+/// Always a copy on `arena` — a command that edits the field must not
+/// hold a slice of it.
+fn currentVar(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (takeQuickFix(app)) |v| {
+        defer app.gpa.free(v);
+        return try arena.dupe(u8, v);
+    }
+    const rp = activeRequest(app) orelse {
+        if (app.activeEditor()) |e| return if (try editorVarAtCursor(e, arena)) |n| try arena.dupe(u8, n) else null;
+        return null;
+    };
+    if (try rp.varAtCaret(arena)) |n| return try arena.dupe(u8, n);
+    if (rp.edit_tab == .vars) {
+        const rows = try varRows(app, rp, arena, try envName(app, arena));
+        if (rp.row_cursor < rows.len) return try arena.dupe(u8, rows[rp.row_cursor].name);
+    }
+    return null;
+}
+
+fn quickFixCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "quick_fix: no {{{{VAR}}}} under the caret", .{});
+    const pos: editor_view.Cursor = app.cursor_pos orelse .{ .x = 0, .y = 0 };
+    try openQuickFixMenu(app, name, name.len > 0 and name[0] == '$', pos.x, pos.y + 1);
+}
+
+fn defineVarCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "define_var: no {{{{VAR}}}} under the caret", .{});
+    var scratch = std.heap.ArenaAllocator.init(app.gpa);
+    defer scratch.deinit();
+    var set = try loadEnv(app, scratch.allocator());
+    defer set.deinit();
+    try @import("cmd_http.zig").openEnvValuePrompt(app, name, set.get(name) orelse "");
+}
+
+fn inlineVarCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "inline_var: no {{{{VAR}}}} under the caret", .{});
+    var scratch = std.heap.ArenaAllocator.init(app.gpa);
+    defer scratch.deinit();
+    var set = try loadEnv(app, scratch.allocator());
+    defer set.deinit();
+    const pattern = try std.fmt.allocPrint(scratch.allocator(), "{{{{{s}}}}}", .{name});
+    const value = try env_mod.expand(scratch.allocator(), app.io, pattern, &set);
+    if (std.mem.eql(u8, value, pattern)) return app.diag.fail(arena, "inline_var: {{{{{s}}}}} is not defined in the active env", .{name});
+    if (activeRequest(app)) |rp| {
+        const n = try rp.inlineVar(name, value);
+        app.toast("inlined {{{{{s}}}}} × {d}", .{ name, n });
+        return;
+    }
+    const e = try app.requireEditor();
+    const text = e.buf.editor.bytes();
+    const fresh = try env_mod.expand(scratch.allocator(), app.io, text, &set);
+    e.buf.editor.setText(fresh) catch return error.OutOfMemory;
+    e.hl_dirty = true;
+    app.toast("inlined the {{{{VAR}}}}s of the buffer", .{});
+}
+
+fn copyVarNameCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "copy_var_name: no {{{{VAR}}}} under the caret", .{});
+    try app.clipboard.set(name, false);
+    app.toast("copied {s}", .{name});
+}
+
+// ─── the same tokens in an editor holding a request file ────────────────
+
+/// The `{{VAR}}` spans of an editor buffer holding a `.http` / `.curl`
+/// / `.rest` file, for the editor view's hook; empty for anything else.
+pub fn editorVarSpans(app: *App, arena: Allocator, e: *app_mod.EditorPane) Allocator.Error![]editor_view.VarSpan {
+    if (!isRequestBuffer(e)) return &.{};
+    var set = try loadEnv(app, arena);
+    var out: std.ArrayListUnmanaged(editor_view.VarSpan) = .empty;
+    for (try env_mod.tokens(arena, e.buf.editor.bytes()), 0..) |tok, i| {
+        if (tok.name.len == 0) continue;
+        const resolved = tok.name[0] == '$' or set.get(tok.name) != null;
+        try out.append(arena, .{ .start = tok.start, .end = tok.end, .resolved = resolved, .id = @intCast(i) });
+    }
+    return out.items;
+}
+
+pub fn isRequestBuffer(e: *app_mod.EditorPane) bool {
+    if (e.buf.path) |p| return parse.isRequestPath(p);
+    return parse.looksLikeHttpFile(e.buf.editor.bytes());
+}
+
+fn editorVarAtCursor(e: *app_mod.EditorPane, arena: Allocator) Allocator.Error!?[]const u8 {
+    if (!isRequestBuffer(e)) return null;
+    const at = e.buf.editor.cursor;
+    for (try env_mod.tokens(arena, e.buf.editor.bytes())) |tok| if (at >= tok.start and at <= tok.end) return tok.name;
+    return null;
+}
+
+/// `gd` on a `{{VAR}}` in a request file: to its definition. False when
+/// the cursor is not on one — the caller carries on with the LSP.
+pub fn jumpVarAtCursor(app: *App) CommandError!bool {
+    const e = app.activeEditor() orelse return false;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const name = (try editorVarAtCursor(e, arena.allocator())) orelse return false;
+    if (name[0] == '$') {
+        app.toast("{{{{{s}}}}} is a built-in", .{name});
+        return true;
+    }
+    try jumpToVarDef(app, name);
+    return true;
+}
+
+/// A press on a `{{VAR}}` span in an editor (the view registered it as
+/// `editor_view.var_hit_base + i`).
+pub fn editorVarClick(app: *App, id: PaneId, e: *app_mod.EditorPane, hit_id: u32, m: @import("../core/key.zig").Mouse) Allocator.Error!void {
+    _ = id;
+    if (m.kind != .press or hit_id < editor_view.var_hit_base) return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const toks = try env_mod.tokens(arena.allocator(), e.buf.editor.bytes());
+    const i = hit_id - editor_view.var_hit_base;
+    if (i >= toks.len) return;
+    const name = toks[i].name;
+    const dynamic = name.len > 0 and name[0] == '$';
+    if (m.button == .right) return openQuickFixMenu(app, name, dynamic, m.x, m.y);
+    if (dynamic) {
+        app.toast("{{{{{s}}}}} is a built-in", .{name});
+        return;
+    }
+    jumpToVarDef(app, name) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |msg| app.toast("{s}", .{msg}),
+    };
+}
+
+/// The tip for a hovered `{{VAR}}` span in an editor, after the view
+/// painted (it registered the hits).
+pub fn drawEditorVarTip(app: *App, ui: Ui, id: PaneId, e: *app_mod.EditorPane, area: @import("../ui/rect.zig")) Allocator.Error!void {
+    const hv = hoveredVar(ui, id, editor_view.var_hit_base) orelse return;
+    const toks = try env_mod.tokens(ui.arena, e.buf.editor.bytes());
+    if (hv.idx >= toks.len) return;
+    const name = toks[hv.idx].name;
+    var set = try loadEnv(app, ui.arena);
+    const value: ?[]const u8 = if (name.len > 0 and name[0] == '$') "(built-in)" else if (set.get(name)) |v| env_mod.masked(name, v, &set) else null;
+    view.drawVarTip(ui, area, hv.rect, name, value, set.name);
 }
 
 pub fn varCount(app: *App, rp: *RequestPane) Allocator.Error!usize {
@@ -1568,4 +1887,93 @@ test "directives: @set-* reach the wire, @assert rows land on the Tests tab, @ca
     defer testing.allocator.free(out);
     try testing.expect(std.mem.startsWith(u8, out, "# @set-var PROBE = yes\n"));
     try testing.expect(std.mem.indexOf(u8, out, "# @capture TRACE = header x-request-id\nGET http://127.0.0.1:") != null);
+}
+
+test "vars: tokens classify against the env, a secret masks in the tip, the jump lands on the key's line or at the end" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.createDirPath(testing.io, ".rqst");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".rqst/config", .data = "default_env=dev\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=https://dev.example\n# @secret TOKEN\nTOKEN=abc123\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "api.http", .data = "GET {{HOST}}/x/{{MISSING}}?id={{$uuid}}\nAuthorization: Bearer {{TOKEN}}\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "api.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openPath(path);
+    const rp = activeRequest(&app).?;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const toks = try varTokens(&app, rp, a, try envName(&app, a));
+    try testing.expectEqual(@as(usize, 4), toks.all.len);
+    try testing.expectEqual(@as(usize, 3), toks.url.len);
+    try testing.expectEqual(@as(usize, 1), toks.headers.len);
+    try testing.expectEqual(@as(usize, 0), toks.body.len);
+    const host = toks.all[toks.url[0].id];
+    try testing.expectEqualStrings("HOST", host.name);
+    try testing.expect(host.resolved and !host.dynamic);
+    try testing.expectEqualStrings("https://dev.example", host.shown.?);
+    const missing = toks.all[toks.url[1].id];
+    try testing.expectEqualStrings("MISSING", missing.name);
+    try testing.expect(!missing.resolved and missing.shown == null and !toks.url[1].resolved);
+    const uuid = toks.all[toks.url[2].id];
+    try testing.expect(uuid.dynamic and uuid.resolved);
+    try testing.expectEqualStrings("(built-in)", uuid.shown.?);
+    const token = toks.all[toks.headers[0].id];
+    try testing.expectEqualStrings("TOKEN", token.name);
+    try testing.expect(token.resolved);
+    try testing.expectEqualStrings("••••••••", token.shown.?);
+    // The spans sit on the tokens' bytes.
+    try testing.expectEqualStrings("{{HOST}}", rp.url.items[toks.url[0].start..toks.url[0].end]);
+
+    // The jump: a defined key lands on its line, an undefined one at
+    // the end of the file with a hint.
+    try jumpToVarDef(&app, "TOKEN");
+    const e = app.activeEditor().?;
+    try testing.expect(std.mem.endsWith(u8, e.buf.path.?, ".mnml/env/dev.env"));
+    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try jumpToVarDef(&app, "NOPE");
+    try testing.expectEqual(e.buf.editor.lineCount() - 1, app.activeEditor().?.buf.editor.currentLine());
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "not defined") != null);
+    // `gd` in that editor is not on a request file: it does nothing here.
+    try testing.expect(!try jumpVarAtCursor(&app));
+}
+
+test "vars: the editor hook paints a request buffer's tokens and gd on one jumps to the env file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "HOST=h\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "req.http", .data = "GET {{HOST}}/a/{{NOPE}}\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "plain.txt", .data = "{{HOST}}\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "req.http" });
+    defer testing.allocator.free(path);
+    _ = try app.openEditor(path);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const e = app.activeEditor().?;
+    const spans = try editorVarSpans(&app, arena.allocator(), e);
+    try testing.expectEqual(@as(usize, 2), spans.len);
+    try testing.expect(spans[0].resolved and !spans[1].resolved);
+    try testing.expectEqual(@as(usize, 4), spans[0].start);
+    // Not a request file: no spans, no jump.
+    const plain = try std.fs.path.join(testing.allocator, &.{ root, "plain.txt" });
+    defer testing.allocator.free(plain);
+    _ = try app.openEditor(plain);
+    try testing.expectEqual(@as(usize, 0), (try editorVarSpans(&app, arena.allocator(), app.activeEditor().?)).len);
+    try testing.expect(!try jumpVarAtCursor(&app));
+    // Back on the request file, the cursor on {{HOST}}: gd lands on HOST's line.
+    _ = try app.openEditor(path);
+    app.activeEditor().?.buf.editor.placeCursor(0, 6);
+    try testing.expect(try jumpVarAtCursor(&app));
+    try testing.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.path.?, "dev.env"));
+    try testing.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
 }
