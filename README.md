@@ -1,3 +1,105 @@
-# mnml-zig
+# mnml
 
-A NvChad-style terminal IDE in Zig. Design and phasing: `docs/DESIGN.md`.
+**NvChad meets VSCode — a terminal IDE, in Zig.**
+
+Vim *or* standard editing, both first-class, without `if vim {}` scattered
+through the codebase. NvChad's chrome — file tree, tabline, statusline,
+Nerd-Font devicons, tree-sitter highlighting — with VSCode's discoverability:
+command palette, right-click menus, mouse-first, a modeless keymap that hides
+nothing behind a modifier. LSP, DAP, git, terminal and AI panes, a baked-in
+HTTP client, and a headless `.test` harness — one static binary, no runtime.
+
+This repository is mnml 0.3.0 and onward. mnml 0.2.x is the Rust build at
+[chris-mclennan/mnml](https://github.com/chris-mclennan/mnml), frozen at
+0.2.22; the two run side by side until cutover (`docs/DESIGN.md`, "Side-by-side
+mechanics"). Same commands, same `.test` corpus, same asset names minus the
+`-rs`.
+
+## Install
+
+Prebuilt, no toolchain — macOS and Linux (x86_64, aarch64), Windows (x86_64):
+
+```sh
+# macOS / Linux — into ~/.local/bin (MNML_INSTALL_DIR to change it)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml-zig/releases/latest/download/mnml-installer.sh | sh
+
+# Homebrew (macOS / Linux)
+brew install chris-mclennan/tap/mnml
+```
+
+```powershell
+# Windows — into %LOCALAPPDATA%\mnml\bin, added to your user PATH
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/chris-mclennan/mnml-zig/releases/latest/download/mnml-installer.ps1 | iex"
+
+# winget
+winget install ChrisMcLennan.mnml
+```
+
+Debian / Ubuntu and Fedora / RHEL packages sit on every release as
+`mnml-<triple>.deb` / `.rpm`; the raw archives (`mnml-<triple>.tar.xz`,
+`.zip` on Windows) each come with a `.sha256`. Every shipped binary is a
+ReleaseSafe build for a baseline CPU. A [Nerd Font](https://www.nerdfonts.com/)
+is recommended; `--ascii` works without one.
+
+Coming from 0.2.x: config is `config.zon` now, written beside your
+`config.toml` and never touching it. Run `mnml export-config-zon` on 0.2.22
+once. `docs/CONFIG.md` is the complete commented file.
+
+## Build from source
+
+[Zig 0.16.0](https://ziglang.org/download/) exactly — `build.zig.zon` pins it
+as `minimum_zig_version`, and the pipeline runs on nothing else. Dependencies
+(vaxis, libghostty-vt, the tree-sitter grammars) are fetched by `zig build` and
+verified by hash; there is no system library to install.
+
+```sh
+zig build                                   # zig-out/bin/mnml-zig, Debug
+zig build -Doptimize=ReleaseSafe            # what ships
+zig build test                              # the unit suite (leak = failure)
+zig build test -Doptimize=ReleaseSafe
+zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
+                                            # cross-compile exe + every test binary, no run
+zig build release                           # all five targets → zig-out/release/<triple>/
+zig build dist -Dversion=0.3.0              # + archives, sha256s, installers, manifest → zig-out/dist/
+```
+
+`-Dversion=` is what `--version` prints; without it a dev build prints the
+manifest version, the git short SHA and `-dirty` (`0.3.0-dev+g76ccf5b-dirty`).
+`-Dipc-subdir=` and the marker name keep a dev build's IPC beside a running
+0.2.x (`ipc-zig`, `mnml-zig-running-$USER.workspace`).
+
+## The `.test` oracle
+
+The end-to-end suite is a line-based script format — `write`, `open`, `key`,
+`type`, then `expect screen | file | dirty | pane` — run headlessly against the
+same `App` the terminal drives. The corpus is shared with the Rust repo
+(`tests/e2e` is a symlink to it until Rust freezes; `tests/e2e-zig` holds the
+files that only make sense here) and it is the definition of parity: 225 of
+226 green at 120x40.
+
+```sh
+./zig-out/bin/mnml-zig test                          # the whole corpus
+./zig-out/bin/mnml-zig test --gate                   # the 47-file Phase-0 gate (tools/gate.txt)
+./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
+./zig-out/bin/mnml-zig test tests/e2e/edit_and_save.test
+```
+
+Every file runs on a `DebugAllocator` with safety on and asserts a clean
+`deinit`; at 80x24 and 200x60 the assertion is no panic, no leak, no rect
+outside its parent. `MNML_E2E_ALLOW_SHELL=1` lets the files that spawn a shell
+run.
+
+## Where things are
+
+- `docs/DESIGN.md` — the design: architecture decisions D1–D10, the phase plan,
+  the release pipeline (E6), the safety gates (E7), the cutover checklist.
+- `docs/CONVENTIONS.md` — what a diff is checked against.
+- `docs/CONFIG.md` — the complete commented `config.zon`.
+- `docs/KEYMAP_PROFILES.md` — the vim and standard profiles.
+- `docs/RELEASE.md` — cutting a release, and the two traps in it.
+- `CHANGELOG.md` — what a user notices, release by release.
+- The manual: [mnml.sh](https://mnml.sh).
+
+## License
+
+MIT or Apache-2.0, at your option — `LICENSE-MIT`, `LICENSE-APACHE`.

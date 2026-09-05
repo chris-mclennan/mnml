@@ -1,0 +1,109 @@
+# Cutting a release
+
+One tag, one runner, ~20 assets. This is the sequence, then the two traps
+that have each cost the Rust repo a version number.
+
+## The sequence
+
+```sh
+scripts/release.sh v0.3.0 --dry-run    # build + every check, no tag
+scripts/release.sh v0.3.0              # the same, then `git tag -a v0.3.0`
+git push origin v0.3.0                 # release.sh prints this; it never pushes
+# … watch the Release workflow …
+scripts/dist-check.sh v0.3.0           # count the assets. Green is not enough.
+```
+
+`release.sh` refuses a dirty tree (a dirty tree ships `-dirty` binaries),
+refuses an existing tag, cuts CHANGELOG.md's top section as the notes and
+scrub-checks it, runs `zig build dist -Dversion=X` for all five targets — the
+exact command `release.yml` runs — and confirms this machine's packaged
+binary prints the version.
+
+What the tag push starts (`.github/workflows/`):
+
+| workflow | runs on | produces |
+|---|---|---|
+| `release.yml` `build` | ubuntu | 5 archives + 5 `.sha256`, `sha256.sum`, `mnml-installer.sh`, `mnml-installer.ps1`, `dist-manifest.json`; creates the release with the notes |
+| `release.yml` `msi` | windows | `mnml-x86_64-pc-windows-gnu.msi` + `.sha256` (WiX 5, from the zip) |
+| `release.yml` `verify` | ubuntu | `dist-check.sh --min 16` — fails the run if the release is short |
+| `package-linux.yml` | ubuntu ×2 | `mnml-{x86_64,aarch64}-unknown-linux-gnu.{deb,rpm}` (nfpm) |
+| `bump-homebrew-tap.yml` | ubuntu | `Formula/mnml.rb` in chris-mclennan/homebrew-tap, from `dist/homebrew/mnml.rb` |
+| `winget-releaser.yml` | ubuntu | a PR to microsoft/winget-pkgs for `ChrisMcLennan.mnml` |
+
+The last three fire on `workflow_run` of Release, not `release: published` —
+a release created with `GITHUB_TOKEN` inside a workflow does not emit the
+`published` event (GitHub's anti-loop rule). They also accept
+`workflow_dispatch` with a version, for a rerun.
+
+Twenty assets when everything has run — 5 archives + 5 `.sha256` (10),
+`sha256.sum` + two installers + `dist-manifest.json` (14), the MSI + its
+`.sha256` (16), then `.deb` + `.rpm` for two Linux arches (20).
+`scripts/dist-check.sh` carries that list by name and fails on the first
+missing one; `release.yml`'s own `verify` job runs it with `--min 16
+--without-linux-packages`, because package-linux has not run yet at that
+point.
+
+## Trap 1 — the CHANGELOG secret scrub
+
+**Never write a credential-shaped literal in CHANGELOG.md.** Not an
+`Authorization` header with its value spelled out, not a Slack-token prefix,
+not an API-key prefix, not a token assignment with a quoted value — not even
+an obviously fake one.
+
+GitHub Actions replaces any substring that equals a stored repo secret with
+`***` — everywhere in a job's output, including inside JSON. In the Rust repo
+cargo-dist embedded the changelog in its plan manifest; a scrubbed line
+corrupted the JSON, the build matrix failed to parse, the build jobs were
+*skipped*, and the Release run reported **success** while shipping one file.
+Twice: v0.2.9 and v0.2.18.
+
+Here the notes are posted as the release body rather than embedded in a
+manifest, so the same accident would corrupt the body instead of the build.
+The scrub check runs anyway, in `release.sh` and again in `release.yml`
+before anything is uploaded. The pattern lives in those two files (one
+regex, case-insensitive): the bearer-header word followed by a space, the
+two Slack token prefixes, an `sk-` key prefix with eight or more characters
+after it, and a `token` assignment with a quoted value. This page is written
+to pass it too — `grep -Ei` the pattern over `docs/` and expect no output.
+
+Describe the shape in prose ("an auth header written as a `{{VAR}}`
+reference").
+
+## Trap 2 — a green run that shipped nothing
+
+A workflow's conclusion says its jobs ran, not that the release has its
+files. After every release:
+
+```sh
+gh release view vX.Y.Z --json assets --jq '.assets|length'   # want 20, not 1
+scripts/dist-check.sh vX.Y.Z                                 # the same, by name
+```
+
+A tag that shipped short cannot be reused safely (`releases/latest/download`
+already pointed at it; Homebrew and winget may have read it). Bump the patch
+and re-cut — v0.2.9 → v0.2.10, v0.2.18 → v0.2.19.
+
+## Versions
+
+- `build.zig.zon`'s `.version` is the dev baseline (`0.3.0-dev`). It is not
+  the tag; `-Dversion=` is, and `release.yml` passes the tag through.
+- A prerelease tag (`v0.3.0-rc0`) creates a GitHub prerelease. The MSI's
+  ProductVersion is numeric, so `build.ps1` strips the suffix to `0.3.0` for
+  the installer database only.
+- CHANGELOG.md's top heading should name the version being cut;
+  `release-notes.sh` warns when it does not, and fails when the section is
+  empty.
+
+## First release on a new remote
+
+Nothing here has run against GitHub yet. Before `v0.3.0`:
+
+1. Repo secrets: `HOMEBREW_TAP_TOKEN` (fine-grained PAT, Contents read/write
+   on chris-mclennan/homebrew-tap) and `WINGET_TOKEN` (Contents write on the
+   chris-mclennan/winget-pkgs fork). Both exist for the Rust repo; copy them.
+2. `gh workflow run release.yml -f version=0.3.0-rc0` — the dry run: the same
+   build, artifacts on the workflow, no release created.
+3. `scripts/release.sh v0.3.0-rc0` and push the tag. A prerelease; the tap
+   and winget workflows will run against it, which is the point — fix them on
+   an rc, not on 0.3.0.
+4. `scripts/dist-check.sh v0.3.0-rc0`.

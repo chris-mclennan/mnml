@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  mnml.wxs — the Windows installer, for winget.
+
+  winget's package format needs an MSI as its download source; nobody is
+  expected to double-click this. It installs mnml.exe to
+  Program Files\mnml\bin and puts that directory on the system PATH, and
+  nothing else — no shortcuts, no icon, no EULA dialog.
+
+  WiX v4/v5 schema. dist/msi/build.ps1 compiles it on the windows-latest
+  runner with the `wix` .NET tool:
+
+    wix build -arch x64 -d Version=0.3.0 -d BinDir=path\to\dir mnml.wxs -o mnml-x86_64-pc-windows-gnu.msi
+
+  Version must be numeric major.minor.patch — build.ps1 strips a
+  prerelease suffix. The UpgradeCode is the Rust mnml's: the product is
+  the same `mnml`, so a 0.3.0 install replaces a 0.2.x one instead of
+  living beside it. Do not regenerate it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="mnml"
+      Manufacturer="Chris McLennan"
+      Version="$(var.Version)"
+      UpgradeCode="21DB6B89-F8E6-4078-B123-3A6FEAEECD56"
+      Language="1033"
+      Codepage="1252"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+
+    <SummaryInformation
+        Keywords="Installer"
+        Description="mnml — a NvChad-style terminal IDE"
+        Manufacturer="Chris McLennan" />
+
+    <MajorUpgrade
+        Schedule="afterInstallInitialize"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="APPLICATIONFOLDER" Name="mnml">
+        <Directory Id="BinDir" Name="bin">
+          <Component Id="MnmlExe" Guid="6D0C3B0E-5A7B-4B6E-9B93-2E5F1D4C7A10">
+            <File Id="MnmlExe" Name="mnml.exe" Source="$(var.BinDir)\mnml.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="PathEnv" Guid="F7EB5F6F-2277-4DF2-BC63-8A68BB048777">
+            <RegistryValue Root="HKLM" Key="Software\mnml" Name="InstallDir" Type="string" Value="[BinDir]" KeyPath="yes" />
+            <Environment Id="PathEnv" Name="PATH" Value="[BinDir]" Permanent="no" Part="last" Action="set" System="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Binaries" Title="mnml" Level="1" ConfigurableDirectory="APPLICATIONFOLDER" AllowAbsent="no">
+      <ComponentRef Id="MnmlExe" />
+      <Feature Id="Environment" Title="Add mnml to PATH" Level="1" AllowAbsent="yes">
+        <ComponentRef Id="PathEnv" />
+      </Feature>
+    </Feature>
+
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize" />
+    <Property Id="ARPHELPLINK" Value="https://mnml.sh" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/chris-mclennan/mnml-zig" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+  </Package>
+</Wix>
