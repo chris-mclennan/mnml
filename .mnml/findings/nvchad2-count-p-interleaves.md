@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `{count}p` repeats each line / each char of the register instead of the whole block (`2yy3p`, `yiw3p`)
 
@@ -40,3 +40,7 @@ after 2yy3p (cursor Ln 4):            after yiw3p:
 **Actual**: linewise: the three copies are grouped per line (alpha ×3 then delta ×3), cursor lands on Ln 4; charwise: `alpha` is inserted after each of the next three characters (`a|alpha|l|alpha|p|alpha|ha`). `P` with a count is right, so only the after-cursor loop advances the insertion point wrongly between iterations. `.` after `3p` repeats the same wrong shape.
 
 **Source pointer**: `src/input/vim.zig` `'p'` with count → the repeated put; the linewise/charwise put in `src/editor/clipboard.zig` / `edit_op` `paste` — the iteration re-positions the cursor after each single copy instead of pasting the concatenated text once.
+
+## Fix
+
+Commit `c8f7310` — `[count]p` is one put of the register repeated `count` times (`register.putTimes`, routed from the `repeat` prong). Test: `tests/e2e-zig/vim_count_p_consecutive.test`.

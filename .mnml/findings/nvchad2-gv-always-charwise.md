@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `gv` re-selects in charwise VISUAL regardless of the previous mode; after a V-LINE yank it also extends one line too far
 
@@ -32,3 +32,7 @@ after V j y, gv:         "mode":"VISUAL","cursor":{"line":3,"col":1}   statuslin
 **Actual**: the mode is always charwise VISUAL; the block reselection is a linear run and the linewise one reaches 3:1, so `gv` then `d` deletes a different region than the one just operated on. `gv` after a charwise `v…y` is correct. Two launches.
 
 **Source pointer**: `src/input/vim.zig:1500-1505` — `self.vmode = .visual` unconditionally before `.restore_last_selection`; the remembered range is stored as two byte offsets with no mode.
+
+## Fix
+
+Commit `eaa1b08` — the handler remembers the Visual mode it left and `restore_last_selection` carries the shape (linewise steps back onto the last line, block sets the block anchor). Test: `tests/e2e-zig/vim_gv_mode.test`.

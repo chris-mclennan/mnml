@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl-A` / `Ctrl-X` in Visual are read as a pending `a` text-object prefix — nothing is incremented and the next `Esc` is swallowed
 
@@ -31,3 +31,7 @@ after Esc:           "mode":"V-LINE" still (the Esc cancelled the pending text o
 **Actual**: the chord is treated as `a` (Visual's around-object prefix): the statusline shows the pending `a`, nothing changes, and the following `Esc` only clears the prefix so the user is still in V-LINE — one extra `Esc` is needed. `g Ctrl-A` likewise does nothing. Normal-mode `Ctrl-A`/`Ctrl-X` with counts and `.` are correct. Three launches.
 
 **Source pointer**: `src/input/vim.zig` Visual-mode `.char` handling — the `a`/`i` text-object branch does not check `key.mods.ctrl` (compare the Normal-mode ctrl table which routes `ctrl+a`).
+
+## Fix
+
+Commit `5187f3c` — `change_numbers_in_selection` (one undo step; `g Ctrl-A` progressive), routed ahead of the `a` / `i` text-object keys. Test: `tests/e2e-zig/vim_visual_ctrl_a.test`.

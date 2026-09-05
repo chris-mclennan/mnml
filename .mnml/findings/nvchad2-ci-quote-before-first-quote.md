@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `ci"` / `di"` / `yi"` with the cursor before the first quote on the line do nothing (Neovim uses the first quoted string after the cursor)
 
@@ -31,3 +31,7 @@ after 0di":         1 Xname = "world";      (unchanged)
 **Actual**: nothing is selected; `c` falls through to plain Insert at the cursor so the typed text lands at column 1 (`Xname`), `di"` / `yi"` are silent no-ops. `ci"` with the cursor *inside* the quotes (including an empty `""`) works.
 
 **Source pointer**: `src/editor/select.zig:106` `enclosingQuotePairOnLine` only returns a pair that *contains* the cursor (`ed.cursor >= o and ed.cursor <= i`); there is no forward-search fallback; `quote()` at line 123 returns silently when it is null.
+
+## Fix
+
+Commit `5a67861` — `enclosingQuotePairOnLine` takes the first pair after the cursor when none contains it. Test: `tests/e2e-zig/vim_ci_quote_forward.test`.

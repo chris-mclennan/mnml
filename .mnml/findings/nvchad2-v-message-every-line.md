@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `:v/pat/d` when every line matches reports `E486: pattern not found` (Vim: "Pattern found in every line")
 
@@ -24,3 +24,7 @@ Workspace `/Users/chrismclennan/Projects/mnml-zig-worktrees/hunt`, launched `MNM
 **Actual**: the `:g` wording is reused for `:v`, telling the user the opposite of what happened (`a` is on every line). Behaviour (no deletion) is right. Two launches.
 
 **Source pointer**: `src/app/ex_verbs.zig` `global` — the `ndone == 0` message does not branch on `bang`/inverted.
+
+## Fix
+
+Commit `9f5411c` — `:v` with nothing to act on says "Pattern found in every line"; E486 stays with `:g`. Test: `tests/e2e-zig/vim_vglobal_every_line.test`.

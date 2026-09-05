@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `u` after `:g/pat/normal …` or `:g/pat/s//…/` undoes only the last matching line
 
@@ -33,3 +33,7 @@ after :g/a/norm A; then u:        after :g/o/s/o/0/g then u:
 **Actual**: each per-line sub-command is its own undo entry; `u` peels back one line at a time. A user who runs a wrong `:g/…/norm …` over a 300-line file has to press `u` 300 times or `:e!`. Two launches, both sub-command kinds.
 
 **Source pointer**: `src/app/ex_verbs.zig` `global` — runs the sub-command per line without opening/closing one undo group around the loop; `src/editor/undo.zig` group API exists (the insert-session grouping from `2376e20` uses it).
+
+## Fix
+
+Commit `f85edfe` — `global` wraps the per-line loop in one atomic undo group. Test: `tests/e2e-zig/vim_global_one_undo.test`.

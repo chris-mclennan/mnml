@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `d'a`, `` y`a ``, `V'a` — `'`/`` ` `` are not accepted as a motion after an operator or in Visual; the operator is dropped and `a` enters Insert
 
@@ -34,3 +34,7 @@ after V'bd: Ln 1/8 — one line deleted (V, then `b` as back-word, then d), not 
 **Actual**: `'`/`` ` `` after `d`/`y`/`c` and inside Visual are ignored; the following register letter is then executed as a normal command — `a` → append → Insert mode with the operator lost, `b` → back-word. In a longer session this is how `d'a` followed by `:w⏎` turns into `a:w⏎` typed into the buffer (seen once). Two launches.
 
 **Source pointer**: `src/input/vim.zig:1406-1413` handles `'`/`` ` `` only in the plain-Normal switch (`self.prefix = .mark_jump_line`); the operator-pending motion table and the Visual-mode key switch have no branch for them.
+
+## Fix
+
+Commit `4fb9d88` — `'` / `` ` `` after `d` / `y` / `c` and in Visual arm the mark prefix with the operator kept; the buffer builds the range (`operator_to_mark`), linewise or exclusive-charwise. Test: `tests/e2e-zig/vim_operator_to_mark.test`.

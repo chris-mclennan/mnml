@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # REGRESSED: `<leader>` chords whose second key is a which-key *menu-only* entry (`<leader>w`, `<leader>n`, `<leader>sv`, `<leader>?`…) still hand that key to the vim handler when typed at speed
 
@@ -42,3 +42,7 @@ Earlier in the same shape (a15): type " n" → toast │ no active find — use 
 **Actual**: the fix `155f734` holds for chords that exist in `src/commands/specs.zig` (`space /`, `space c h`, `space e`, `space f b|f|g|m`, `space h`, `space v`, `space w K`, `space x`, `space z z`) — those work fast or slow. Entries that exist only in `src/app/whichkey.zig` (`n`, `?`, `p`, `q`, `m`, `1`–`9`, the `b`/`s`/`t`/`g`/`l`… groups, and `w` alone, which the popup labels `w → save`) are not chord continuations, so with `space` armed the keymap rejects `n`/`w`/`s` and `dispatch.key()` falls through to the vim handler: `n` is search-next, `w` is a word motion, `sv` is substitute-char. The popup then opens at its root after the timeout. Sent as separate `key` commands (each followed by a tick that fires the which-key fallback) the same chords work, which is why the original repro passes while the fix's own `type`-based shape does not for these entries. Two launches (a15, v15).
 
 **Source pointer**: `src/app/dispatch.zig:307` `editor_first = app.chord.len == 0 and …` — the pending-chord guard only helps when `resolveSeq` knows the continuation; `chordChain` (`:477-490`) gets `.no_match` for `space n` and releases the key to the editor instead of consulting the which-key menu (`src/app/whichkey.zig:46` `cmd('n', .@"view.toggle_line_numbers", …)`). Fix direction: either register every which-key leaf as a keymap chord, or make the chain treat any key under an armed which-key prefix as owned by the popup.
+
+## Fix
+
+Commit `8df591f` — a leader chain the keymap rejects is looked up in the which-key tree (a leaf runs, a group opens the popup at its path); a pending leader prefix that times out with no fallback resolves the same way. Test: `tests/e2e-zig/vim_leader_menu_only_leaf.test`.
