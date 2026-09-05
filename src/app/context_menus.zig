@@ -61,8 +61,26 @@ pub fn openEditorMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Editor", rows, x, y);
 }
 
-/// A request pane's URL / body / response: send, paste, copy, flip.
-pub fn openRequestFieldMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+/// The field a request-pane right-click landed on: the menu's title.
+pub const RequestField = enum {
+    url,
+    body,
+    headers,
+    response,
+
+    pub fn title(f: RequestField) []const u8 {
+        return switch (f) {
+            .url => "URL",
+            .body => "Body",
+            .headers => "Headers",
+            .response => "Response",
+        };
+    }
+};
+
+/// A request pane's URL / body / response: send, paste, copy, flip —
+/// titled by the field under the pointer.
+pub fn openRequestFieldMenu(app: *App, field: RequestField, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Send", .action = .{ .command = .@"http.send" } },
         .{ .label = "Paste curl from clipboard", .action = .{ .command = .@"http.paste_curl" } },
@@ -75,7 +93,7 @@ pub fn openRequestFieldMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Save request", .action = .{ .command = .@"http.save" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
-    try app.openMenu("Request", rows, x, y);
+    try app.openMenu(field.title(), rows, x, y);
 }
 
 /// A strip tab: Save (when dirty) first, then the close family and the
@@ -91,6 +109,7 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         .{ .label = "Close others", .action = .{ .command = .@"buffer.close_others" } },
         .{ .label = "Close to the right", .action = .{ .command = .@"buffer.close_right" } },
         .{ .label = "Close all", .action = .{ .command = .@"view.close_others" } },
+        .{ .label = if (p.pinned()) "Unpin tab" else "Pin tab", .action = .{ .command = .@"buffer.pin_toggle" }, .separator_before = true },
         .{ .label = "Split right", .action = .{ .command = .@"view.split_right" }, .separator_before = true },
         .{ .label = "Split down", .action = .{ .command = .@"view.split_down" } },
         .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" }, .separator_before = true },
@@ -446,6 +465,8 @@ fn closeTabs(app: *App, tabs: []const PaneId, keep: PaneId, after: ?usize) Comma
             skipped += 1;
             continue;
         }
+        // A pinned tab is immune to the bulk closes.
+        if (p.pinned()) continue;
         const is_file = if (p.asEditor()) |e| e.buf.path != null else p.* == .md_preview;
         if (is_file) {
             reopenable += 1;
@@ -598,6 +619,19 @@ fn copyPath(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+test "the request field menu is titled by the field under the pointer" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    inline for (.{ .{ RequestField.url, "URL" }, .{ RequestField.body, "Body" }, .{ RequestField.response, "Response" } }) |case| {
+        try openRequestFieldMenu(&app, case[0], 3, 3);
+        try t.expect(app.overlay == .menu);
+        try t.expectEqualStrings(case[1], app.overlay.menu.title);
+        try t.expectEqualStrings("Send", app.overlay.menu.items[0].label);
+        app.overlay.deinit(app.gpa);
+        app.overlay = .none;
+    }
+}
 
 test "tab menu: Save leads when dirty; close_others / close_right keep dirty tabs; copy_path reads the tree row" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });

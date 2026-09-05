@@ -24,6 +24,8 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
 const config = @import("../config/root.zig");
+const suggest = @import("../ai/suggest.zig");
+const ai_app = @import("ai.zig");
 const Config = config.Config;
 const command = @import("../core/command.zig");
 const input = @import("../input/mod.zig");
@@ -107,12 +109,14 @@ pub fn persist(app: *App, scope: Scope, key_path: []const []const u8, value: any
 pub const Section = enum {
     ui,
     editor,
+    ai,
     integrations,
 
     fn label(s: Section) []const u8 {
         return switch (s) {
             .ui => "UI",
             .editor => "Editor",
+            .ai => "AI",
             .integrations => "Integrations",
         };
     }
@@ -188,9 +192,14 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.tab_width", .label = "Tab width", .section = .editor, .scope = .workspace, .number = .{ .min = 1, .max = 16, .step = 1 } },
     .{ .path = "editor.text_width", .label = "Text width", .section = .editor, .scope = .workspace, .number = .{ .min = 20, .max = 400, .step = 10 } },
     .{ .path = "editor.chord_timeout_ms", .label = "Chord timeout (ms)", .section = .editor, .scope = .home, .number = .{ .min = config.Config.chord_timeout_ms_min, .max = config.Config.chord_timeout_ms_max, .step = 100 } },
+    // ── AI (the model is `ai.model`, free text in the config: v1 rows are
+    //    discrete choices) ──
+    .{ .path = "ai.inline_suggestions", .label = "Ghost text", .section = .ai, .scope = .home },
+    .{ .path = "ai.suggest_backend", .label = "Ghost-text backend", .section = .ai, .scope = .home },
+    .{ .path = "ai.routing.claude.backend", .label = "Claude backend", .section = .ai, .scope = .home },
+    .{ .path = "ai.routing.codex.backend", .label = "Codex backend", .section = .ai, .scope = .home },
+    .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .ai, .scope = .home },
     // ── Integrations ──
-    .{ .path = "ai.inline_suggestions", .label = "AI ghost text", .section = .integrations, .scope = .home },
-    .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .integrations, .scope = .home },
     .{ .path = "sonos.enabled", .label = "Sonos", .section = .integrations, .scope = .home },
     .{ .path = "sonos.chip_label", .label = "Sonos chip label", .section = .integrations, .scope = .home },
     .{ .path = "browser.headless", .label = "Browser: headless", .section = .integrations, .scope = .home },
@@ -254,14 +263,36 @@ fn isTheme(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "ui.theme");
 }
 
+/// `ai.suggest_backend` is not a typed field: the config keeps it in
+/// `ai.extra` (a string, aliases allowed) and the setup picker sets a
+/// runtime override. The row reads through `ai.suggestBackend` and
+/// writes the override plus the file.
+fn isSuggestBackend(comptime path: []const u8) bool {
+    return std.mem.eql(u8, path, "ai.suggest_backend");
+}
+
+/// The ghost-text backend tokens, in `suggest.Backend` order.
+pub const suggest_tokens: [4][]const u8 = blk: {
+    var out: [4][]const u8 = undefined;
+    for (std.enums.values(suggest.Backend), 0..) |b, i| out[i] = b.token();
+    break :blk out;
+};
+
+/// An optional enum's choices: `unset` first, then the enum's tags.
+fn optionalOptions(comptime E: type) []const []const u8 {
+    return &[_][]const u8{"unset"} ++ std.meta.fieldNames(E);
+}
+
 /// The choices for a row.
 pub fn options(comptime path: []const u8) []const []const u8 {
     @setEvalBranchQuota(200_000);
     if (comptime isTheme(path)) return &theme_names;
+    if (comptime isSuggestBackend(path)) return &suggest_tokens;
     const T = FieldType(path);
     return switch (@typeInfo(T)) {
         .bool => &bool_options,
         .@"enum" => comptime std.meta.fieldNames(T),
+        .optional => |o| if (@typeInfo(o.child) == .@"enum") comptime optionalOptions(o.child) else @compileError("settings: no discrete options for " ++ path),
         // A number row has no list; `currentIndex` is the value itself.
         .int => &.{},
         else => @compileError("settings: no discrete options for " ++ path ++ " (" ++ @typeName(T) ++ ")"),
@@ -270,10 +301,12 @@ pub fn options(comptime path: []const u8) []const []const u8 {
 
 /// True for the integer fields — the rows that step instead of cycle.
 pub fn isNumber(comptime path: []const u8) bool {
+    if (comptime isSuggestBackend(path)) return false;
     return @typeInfo(FieldType(path)) == .int;
 }
 
-/// Which option a config holds for a row.
+/// Which option a config holds for a row. The ghost-text row reads the
+/// file's token only; `rowIndex` adds the runtime override.
 pub fn currentIndex(cfg: *Config, comptime path: []const u8) usize {
     @setEvalBranchQuota(200_000);
     if (comptime isTheme(path)) {
@@ -281,13 +314,28 @@ pub fn currentIndex(cfg: *Config, comptime path: []const u8) usize {
         for (theme_names, 0..) |n, i| if (std.ascii.eqlIgnoreCase(n, name)) return i;
         return 0;
     }
+    if (comptime isSuggestBackend(path)) {
+        const v = cfg.ai.extra.get("suggest_backend") orelse return 0;
+        return switch (v) {
+            .string, .enum_literal => |s| @intFromEnum(suggest.Backend.parse(s)),
+            else => 0,
+        };
+    }
     const v = fieldPtr(cfg, path).*;
     return switch (@typeInfo(FieldType(path))) {
         .bool => @intFromBool(v),
         .@"enum" => @intFromEnum(v),
+        .optional => if (v) |e| @as(usize, @intFromEnum(e)) + 1 else 0,
         .int => @intCast(v),
         else => unreachable,
     };
+}
+
+/// `currentIndex` over the live app: the ghost-text row shows the
+/// backend in force (the setup picker's override wins over the file).
+fn rowIndex(app: *App, comptime path: []const u8) usize {
+    if (comptime isSuggestBackend(path)) return @intFromEnum(ai_app.suggestBackend(app));
+    return currentIndex(&app.cfg, path);
 }
 
 /// Set a row to its `idx`th option (wrapping); a number row to `idx`
@@ -305,9 +353,13 @@ pub fn setIndex(cfg: *Config, comptime path: []const u8, idx: usize) void {
         cfg.ui.theme = theme_names[i];
         return;
     }
+    // The ghost-text token lives in `ai.extra`; `setRow` writes the
+    // override and the file instead.
+    if (comptime isSuggestBackend(path)) return;
     fieldPtr(cfg, path).* = switch (@typeInfo(T)) {
         .bool => i == 1,
         .@"enum" => @enumFromInt(i),
+        .optional => if (i == 0) null else @enumFromInt(i - 1),
         else => unreachable,
     };
 }
@@ -337,6 +389,8 @@ pub const State = struct {
     ui: ui_settings.State = .{},
     /// The config as it was when the overlay opened; Esc restores it.
     before: Config,
+    /// The ghost-text override when the overlay opened (the row writes it).
+    before_suggest: ?suggest.Backend = null,
     files: std.EnumArray(Scope, FileSnapshot) = .initFill(.{}),
 
     pub fn deinit(s: *State, gpa: Allocator) void {
@@ -351,7 +405,7 @@ pub const State = struct {
 /// `view.settings`: snapshot, then open.
 pub fn open(app: *App) Allocator.Error!void {
     const gpa = app.gpa;
-    var st: State = .{ .before = app.cfg };
+    var st: State = .{ .before = app.cfg, .before_suggest = app.ai.backend_override };
     errdefer st.deinit(gpa);
     inline for (comptime std.enums.values(Scope)) |scope| {
         const snap = st.files.getPtr(scope);
@@ -379,8 +433,8 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
             try out.append(arena, .{ .row = .{
                 .label = r.label,
                 .options = options(r.path),
-                .current = currentIndex(&app.cfg, r.path),
-                .modified = currentIndex(&app.cfg, r.path) != comptime defaultIndex(r.path),
+                .current = rowIndex(app, r.path),
+                .modified = rowIndex(app, r.path) != comptime defaultIndex(r.path),
                 .id = i,
                 .number = r.number,
             } });
@@ -486,7 +540,7 @@ pub fn adjust(app: *App, id: u32, delta: i8) Allocator.Error!void {
         return setRow(app, id, next);
     }
     inline for (rows, 0..) |r, i| if (i == id) {
-        const cur = currentIndex(&app.cfg, r.path);
+        const cur = rowIndex(app, r.path);
         if (r.number) |num| {
             const next = if (delta < 0) @max(cur -| num.step, num.min) else @min(cur + num.step, num.max);
             return setRow(app, id, next);
@@ -510,6 +564,15 @@ pub fn setRow(app: *App, id: u32, idx: usize) Allocator.Error!void {
         return;
     }
     inline for (rows, 0..) |r, i| if (i == id) {
+        if (comptime isSuggestBackend(r.path)) {
+            const b: suggest.Backend = @enumFromInt(idx % suggest_tokens.len);
+            app.ai.backend_override = b;
+            app.ai.local_note_shown = false;
+            app.ai.key_missing_toasted = false;
+            _ = try persist(app, r.scope, comptime keyPath(r.path), b.token());
+            app.needs_render = true;
+            return;
+        }
         setIndex(&app.cfg, r.path, idx);
         try applyDerived(app, r.path);
         _ = try persist(app, r.scope, comptime keyPath(r.path), fieldPtr(&app.cfg, r.path).*);
@@ -532,7 +595,7 @@ fn resetRow(app: *App, id: u32) Allocator.Error!void {
 fn resetAll(app: *App) Allocator.Error!void {
     @setEvalBranchQuota(200_000);
     inline for (rows, 0..) |r, i| {
-        if (currentIndex(&app.cfg, r.path) != comptime defaultIndex(r.path)) try setRow(app, i, comptime defaultIndex(r.path));
+        if (rowIndex(app, r.path) != comptime defaultIndex(r.path)) try setRow(app, i, comptime defaultIndex(r.path));
     }
     app.toast("settings reset to defaults", .{});
 }
@@ -549,6 +612,8 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         app.syncAutoIndent();
     } else if (comptime isTheme(path)) {
         try app.applyTheme();
+    } else if (comptime std.mem.eql(u8, path, "ui.clock")) {
+        @import("clock.zig").seed(app);
     } else if (comptime std.mem.eql(u8, path, "ui.tree_width")) {
         app.tree.width = app.cfg.ui.tree_width;
     } else if (comptime std.mem.eql(u8, path, "ui.right_panel_width")) {
@@ -579,6 +644,7 @@ pub fn close(app: *App) void {
 pub fn cancel(app: *App) Allocator.Error!void {
     const st = &app.overlay.settings;
     app.cfg = st.before;
+    app.ai.backend_override = st.before_suggest;
     for (&st.files.values) |*f| {
         if (!f.touched) continue;
         const path = f.path orelse continue;
@@ -807,4 +873,50 @@ test "number rows: → steps the right panel width, writes it, and the config se
     defer t.allocator.free(screen);
     try t.expect(std.mem.indexOf(u8, screen, "Right panel width:") != null);
     try t.expect(std.mem.indexOf(u8, screen, "‹ [30] ›") != null);
+}
+
+/// The row index of a path, for the tests.
+fn rowId(comptime path: []const u8) u32 {
+    inline for (rows, 0..) |r, i| if (comptime std.mem.eql(u8, r.path, path)) return i;
+    @compileError("no settings row for " ++ path);
+}
+
+test "the AI section: the ghost-text row writes the token and the runtime override, an optional backend row writes the tag or null; Esc restores the override" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 40 });
+    defer app.deinit();
+    try open(&app);
+    const list = try items(&app, app.frame.allocator());
+    var saw_ai = false;
+    for (list) |it| if (it == .section and std.mem.eql(u8, it.section, "AI")) {
+        saw_ai = true;
+    };
+    try t.expect(saw_ai);
+    // Ghost-text backend: unset → claude-api.
+    try t.expectEqual(@as(usize, 0), rowIndex(&app, "ai.suggest_backend"));
+    try setRow(&app, rowId("ai.suggest_backend"), 2);
+    try t.expectEqual(suggest.Backend.claude_api, app.ai.backend_override.?);
+    try t.expectEqual(@as(usize, 2), rowIndex(&app, "ai.suggest_backend"));
+    const home = (try configPath(&app, .home)).?;
+    const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".suggest_backend = \"claude-api\"") != null);
+    // Claude backend: an optional enum — `unset` is null, the rest the tags.
+    try t.expectEqual(@as(usize, 0), rowIndex(&app, "ai.routing.claude.backend"));
+    try t.expectEqualStrings("unset", options("ai.routing.claude.backend")[0]);
+    try setRow(&app, rowId("ai.routing.claude.backend"), 2);
+    try t.expectEqual(Config.AiBackend.api, app.cfg.ai.routing.claude.backend.?);
+    const text2 = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
+    defer t.allocator.free(text2);
+    try t.expect(std.mem.indexOf(u8, text2, ".backend = .api") != null);
+    try setRow(&app, rowId("ai.routing.claude.backend"), 0);
+    try t.expect(app.cfg.ai.routing.claude.backend == null);
+    // Esc: the override goes back to how it was when the overlay opened.
+    try cancel(&app);
+    try t.expect(app.ai.backend_override == null);
+    try t.expect(app.overlay == .none);
 }

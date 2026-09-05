@@ -157,6 +157,8 @@ pub fn ListPanel(comptime Row: type) type {
             empty: EmptyState,
             show_filter: bool = true,
             show_refresh: bool = true,
+            /// A green ` + ` chip before the refresh glyph (`ChipKind.new`).
+            new_chip: bool = false,
         };
 
         pub const Outcome = union(enum) {
@@ -185,6 +187,7 @@ pub fn ListPanel(comptime Row: type) type {
                 .mode_chip = mode_text,
                 .mode_kind = .sort,
                 .show_refresh = p.show_refresh,
+                .new_chip = p.new_chip,
                 .bg = t.panel_bg,
             });
 

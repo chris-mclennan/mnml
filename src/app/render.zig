@@ -29,6 +29,9 @@ const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
 const messages = @import("messages.zig");
 const stress = @import("stress.zig");
+const clock_mod = @import("clock.zig");
+const coverage = @import("coverage.zig");
+const menu_bar = @import("menu_bar.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const prompt_mod = @import("../ui/prompt.zig");
 const confirm_mod = @import("../ui/confirm.zig");
@@ -97,7 +100,13 @@ const files_pane = @import("files_pane.zig");
 const transfers = @import("transfers.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
-pub const palette_bar_min_width: u16 = 80;
+/// Below this the palette bar is not painted at all (a tiny screen).
+pub const palette_bar_min_width: u16 = 40;
+/// Below this the bar is narrow: the right cluster drops its extras
+/// (the badges, the AI chips, the stress copy) and the palette chip is
+/// the icon — the bar itself stays. Rust: "drops TABS rather than
+/// vanishing entirely".
+pub const palette_bar_narrow_width: u16 = 80;
 /// The divider hit ids the split tree does not use (`.divider` is
 /// otherwise an index into the split tree's dividers).
 pub const tree_divider_id: u32 = std.math.maxInt(u32);
@@ -112,6 +121,10 @@ pub const Button = enum(u32) {
     /// `ui.tab_bar_ai_icon`: the brand chips in the bar's right cluster.
     ai_claude = 4,
     ai_codex = 5,
+    /// The green ` + ` after the integration chips: the Marketplace.
+    add_integration = 6,
+    /// The stress meter's bufferline copy.
+    stress = 7,
     new_tab_base = 0x100,
     _,
 
@@ -139,10 +152,14 @@ pub const SegId = enum(u32) {
     indent,
     encoding,
     transfer,
+    /// The clock beside the bell (`app/clock.zig`).
+    clock,
+    /// The coverage chip (`app/coverage.zig`).
+    coverage,
     _,
 
     pub fn of(id: u32) ?SegId {
-        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.transfer)) return null;
+        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.coverage)) return null;
         return @enumFromInt(id);
     }
 };
@@ -270,16 +287,38 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     ui.fill(bar, bg);
     const y = bar.y;
     const btn = Theme.onBg(th.muted, bg.bg);
-    const tree_glyph: []const u8 = if (ui.ascii) " = " else " ≡ ";
-    const w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
+    // The sidebar toggles are a matched codicon pair — `layout-sidebar-
+    // left-off` / `layout-sidebar-right-off` — with `=` / `#` as their
+    // ASCII twins.
+    const tree_glyph: []const u8 = if (ui.ascii) " = " else " " ++ tree_codicon ++ " ";
+    var w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
     ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
-    const right_glyph: []const u8 = if (ui.ascii) " # " else " ▤ ";
+    // The menu bar's words, after the sidebar toggle (`app/menu_bar.zig`).
+    if (menu_bar.shown(app) and bar.w >= palette_bar_narrow_width) {
+        var mx = bar.x + w0 + 1;
+        app.menu_bar_x = mx;
+        for (menu_bar.Menu.all) |m| {
+            const word = ui.fmt(" {s} ", .{m.label()});
+            const ww = ui.width(word);
+            if (mx + ww > bar.x + bar.w / 3) break;
+            const open = app.menu_bar_open == m;
+            _ = ui.putStr(mx, y, ww, word, if (open) Theme.onBg(th.accent, bg.bg) else btn);
+            ui.hit(Rect.init(mx, y, ww, 1), .{ .button = menu_bar.button_base + @as(u32, @intFromEnum(m)) });
+            mx += ww;
+        }
+        w0 = mx - bar.x;
+    }
+    const right_glyph: []const u8 = if (ui.ascii) " # " else " " ++ right_panel_codicon ++ " ";
     const rw = ui.width(right_glyph);
+    const narrow = bar.w < palette_bar_narrow_width;
     var cluster_left = bar.right();
     if (bar.w > w0 + rw + 4) {
         const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
         ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
         cluster_left = rx;
+    }
+    if (!narrow and bar.w > w0 + rw + 4) {
+        const rx = cluster_left;
         // The git badge: changed files in the active repo, Rust's
         // `set_activity_badge("git", n)` — a host's own `git` badge
         // replaces it. Then every other section's badge, summed, as
@@ -303,10 +342,21 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         const ai = app.cfg.ui.tab_bar_ai_icon;
         if (ai == .codex or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .codex);
         if (ai == .claude_code or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .claude);
+        // The stress meter's copy in the cluster: the same four blocks
+        // and p95 as the statusline's, hidden when idle.
+        if (try stress.segment(app, ui.arena, ui.ascii)) |txt| {
+            const sw = ui.width(txt) + 2;
+            if (cluster_left > w0 + sw + 2) {
+                const sx = ui.putStrRight(cluster_left, y, sw, ui.fmt(" {s} ", .{txt}), Theme.onBg(th.warn_fg, bg.bg));
+                ui.hit(Rect.init(sx, y, sw, 1), .{ .button = @intFromEnum(Button.stress) });
+                cluster_left = sx;
+            }
+        }
     }
     // `ui.top_bar_cluster_mode`: the palette chip's label — the full
-    // hint, or the icon alone; `auto` keeps the hint on a wide bar.
-    const compact = switch (app.cfg.ui.top_bar_cluster_mode) {
+    // hint, or the icon alone; `auto` keeps the hint on a wide bar. A
+    // narrow bar is always the icon.
+    const compact = narrow or switch (app.cfg.ui.top_bar_cluster_mode) {
         .compact => true,
         .expanded => false,
         .auto => bar.w < 100,
@@ -321,14 +371,27 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         ui.fill(chip, th.chip);
         _ = ui.putStr(x, y, lw, ui.clipStr(label, lw), Theme.onBg(th.muted, th.chip.bg));
         ui.hit(chip, .{ .button = @intFromEnum(Button.palette) });
-        // The integration chips sit between the palette chip and the
-        // right-panel toggle; whatever does not fit is dropped whole.
+        // The add-integration ` + ` (the Marketplace) sits at the right
+        // end of the chip strip, then the integration chips between it
+        // and the palette chip; whatever does not fit is dropped whole.
+        const plus: []const u8 = if (ui.ascii) " + " else " " ++ add_codicon ++ " ";
+        const pw = ui.width(plus);
+        if (chip_right > x + lw + pw + 1) {
+            const px = ui.putStrRight(chip_right, y, pw, plus, .{ .fg = th.palette.green, .bg = bg.bg, .bold = true });
+            ui.hit(Rect.init(px, y, pw, 1), .{ .button = @intFromEnum(Button.add_integration) });
+            chip_right = px -| 1;
+        }
         const strip = try integrations.chips(app, ui.arena);
         const props = try ui.arena.alloc(integrations_view.ChipProps, @min(strip.len, integrations_view.max_chips));
         for (props, 0..) |*cp, i| cp.* = .{ .glyph = strip[i].glyph, .fallback = strip[i].fallback, .color = strip[i].color, .enabled = strip[i].enabled };
         chip_right = integrations_view.drawChips(ui, chip_right, y, x + lw + 1, bg, props);
     }
 }
+
+/// codicon `layout-sidebar-left-off` / `layout-sidebar-right-off` / `add`.
+pub const tree_codicon = "\u{ec02}";
+pub const right_panel_codicon = "\u{ec00}";
+pub const add_codicon = "\u{ea7c}";
 
 pub const AiBrand = enum { claude, codex };
 
@@ -384,7 +447,7 @@ fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Al
     const leaf = layout.leaf(lid) orelse return tabs.items;
     for (leaf.tabs.items) |id| {
         const p = app.panes.get(id) orelse continue;
-        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file });
+        try tabs.append(ui.arena, .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file, .pinned = p.pinned() });
     }
     return tabs.items;
 }
@@ -796,6 +859,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .underlines = try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme)),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
+        .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,
         .virtual_text = try decor.virtualTextFor(app, arena, e, &app.theme, ui.ascii),
         .virtual_lines = try decor.virtualLinesFor(app, arena, e, &app.theme, ui.ascii),
         // ── ui toggles ──
@@ -958,6 +1022,8 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const bell_style: ?Style = if (bell_text == null) Theme.onBg(th.muted, th.statusline.bg) else if (std.mem.startsWith(u8, bell_text.?, if (ui.ascii) "x" else "✗")) Theme.onBg(th.error_fg, th.statusline.bg) else Theme.onBg(th.warn_fg, th.statusline.bg);
     const bell_seg: statusline.Seg = .{ .text = bell_text orelse (if (ui.ascii) "o" else "○"), .id = @intFromEnum(SegId.bell), .style = bell_style, .low = bell_text == null };
     const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
+    const clock_seg: ?statusline.Seg = if (try clock_mod.segment(app, ui.arena)) |txt| .{ .text = txt, .id = @intFromEnum(SegId.clock), .low = true } else null;
+    const coverage_seg: ?statusline.Seg = if (try coverage.segment(app, ui.arena)) |txt| .{ .text = txt, .id = @intFromEnum(SegId.coverage), .low = true } else null;
     // A host's `statusline-set-segment` chips, packed by priority into
     // what is left beside the built-ins (`ipc/effects.zig`).
     const budget: usize = area.w -| 40;
@@ -972,7 +1038,9 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         if (lsp_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.diagnostics) } else null,
         if (meter_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.ai_meter) } else null,
         if (transfer_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.transfer) } else null,
+        coverage_seg,
         bell_seg,
+        clock_seg,
         if (stress_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.stress) } else null,
         indent_seg,
         encoding_seg,
@@ -1185,17 +1253,21 @@ fn screenText(app: *App) ![]u8 {
     return screen_mod.toTestText(t.allocator, &app.screen);
 }
 
-test "frameRects: the bar needs 80 columns, the cmdline row needs 4 rows, the statusline is last to go" {
+test "frameRects: the bar needs 40 columns (narrow below 80), the cmdline row needs 4 rows, the statusline is last to go" {
     const wide = frameRects(Rect.init(0, 0, 120, 40));
     try t.expect(wide.bar.eql(Rect.init(0, 0, 120, 1)));
     try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 37)));
     try t.expect(wide.status.eql(Rect.init(0, 38, 120, 1)));
     try t.expect(wide.cmdline.eql(Rect.init(0, 39, 120, 1)));
+    // 40 columns: the bar stays (narrow — the cluster's extras drop).
     const narrow = frameRects(Rect.init(0, 0, 40, 8));
-    try t.expect(narrow.bar.isEmpty());
-    try t.expect(narrow.upper.eql(Rect.init(0, 0, 40, 6)));
+    try t.expect(narrow.bar.eql(Rect.init(0, 0, 40, 1)));
+    try t.expect(narrow.upper.eql(Rect.init(0, 1, 40, 5)));
     try t.expect(narrow.status.eql(Rect.init(0, 6, 40, 1)));
     try t.expect(narrow.cmdline.eql(Rect.init(0, 7, 40, 1)));
+    const slim = frameRects(Rect.init(0, 0, 39, 8));
+    try t.expect(slim.bar.isEmpty());
+    try t.expect(slim.upper.eql(Rect.init(0, 0, 39, 6)));
     const tiny = frameRects(Rect.init(0, 0, 100, 3));
     try t.expect(tiny.bar.isEmpty());
     try t.expect(tiny.cmdline.isEmpty());
@@ -1213,7 +1285,9 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     const empty = try screenText(&app);
     defer t.allocator.free(empty);
     try t.expect(std.mem.indexOf(u8, empty, "mnml-zig") != null);
-    try t.expectEqual(Button.newTab(0), app.hits.at(1, 0).?.button);
+    // Row 0 is the (narrow) palette bar at 48 columns; the strip is row 1.
+    try t.expectEqual(@intFromEnum(Button.toggle_tree), app.hits.at(1, 0).?.button);
+    try t.expectEqual(Button.newTab(0), app.hits.at(1, 1).?.button);
     _ = try app.openScratch();
     const e = app.activeEditor().?;
     try e.buf.editor.setText("hello\nworld");
@@ -1225,18 +1299,18 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     try t.expect(std.mem.indexOf(u8, txt, "2 world") != null);
     try t.expect(std.mem.indexOf(u8, txt, "Ln 2/2 Col 3") != null);
     try t.expect(std.mem.indexOf(u8, txt, "standard") != null);
-    try t.expect(app.hits.at(5, 2).? == .editor_cell);
-    try t.expect(app.hits.at(5, 0).? == .tab);
-    try t.expectEqual(@as(u32, 0), app.hits.at(5, 0).?.tab.leaf);
+    try t.expect(app.hits.at(5, 3).? == .editor_cell);
+    try t.expect(app.hits.at(5, 1).? == .tab);
+    try t.expectEqual(@as(u32, 0), app.hits.at(5, 1).?.tab.leaf);
     // The `+` after the last tab, the mode chip on the statusline.
-    try t.expectEqual(Button.newTab(0), app.hits.at(12, 0).?.button);
+    try t.expectEqual(Button.newTab(0), app.hits.at(12, 1).?.button);
     try t.expectEqual(@as(u32, 0), app.hits.at(2, 6).?.statusline_seg);
     // gutter is max(digits, 3) + 2 = 5 cells; the cursor sits at col 2.
     try t.expectEqual(@as(u16, 7), app.cursor_pos.?.x);
-    try t.expectEqual(@as(u16, 2), app.cursor_pos.?.y);
-    // 8 rows: strip, 5 text rows, statusline, cmdline.
-    try t.expectEqual(@as(usize, 5), app.pane_rows);
-    try t.expect(app.panes_area.eql(Rect.init(0, 0, 48, 6)));
+    try t.expectEqual(@as(u16, 3), app.cursor_pos.?.y);
+    // 8 rows: bar, strip, 4 text rows, statusline, cmdline.
+    try t.expectEqual(@as(usize, 4), app.pane_rows);
+    try t.expect(app.panes_area.eql(Rect.init(0, 1, 48, 5)));
 }
 
 test "a wide frame has the palette bar on row 0 and the strip on row 1; each leaf carries its own strip" {
@@ -1407,4 +1481,107 @@ test "ui toggles: expand_indicator and workspace dots change the tree rail" {
     try t.expect(app.cfg.ui.relative_line_numbers);
     try command.run(&app, .{ .static = .@"view.toggle_color_column" });
     try t.expectEqual(@as(u16, 80), app.cfg.ui.color_column);
+}
+
+test "the palette bar: codicons with ASCII twins, the + chip opens the Marketplace, the cluster's extras drop below 80 columns, the stress copy" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.cfg.ui.tab_bar_ai_icon = .claude_code;
+    const wide = try screenText(&app);
+    defer t.allocator.free(wide);
+    const row0 = wide[0..std.mem.indexOfScalar(u8, wide, '\n').?];
+    try t.expect(std.mem.indexOf(u8, row0, tree_codicon) != null);
+    try t.expect(std.mem.indexOf(u8, row0, right_panel_codicon) != null);
+    try t.expect(std.mem.indexOf(u8, row0, add_codicon) != null);
+    try t.expect(std.mem.indexOf(u8, row0, "search files") != null);
+    var plus: ?u16 = null;
+    var ai: ?u16 = null;
+    var x: u16 = 0;
+    while (x < 120) : (x += 1) {
+        const h = app.hits.at(x, 0) orelse continue;
+        if (h != .button) continue;
+        if (h.button == @intFromEnum(Button.add_integration)) plus = x;
+        if (h.button == @intFromEnum(Button.ai_claude)) ai = x;
+    }
+    try t.expect(plus != null and ai != null);
+    // The stress copy joins the cluster once the meter has samples.
+    app.cfg.ui.stress_meter = true;
+    var i: usize = 0;
+    while (i < 20) : (i += 1) app.stress.push(30_000);
+    const stressed = try screenText(&app);
+    defer t.allocator.free(stressed);
+    const srow = stressed[0..std.mem.indexOfScalar(u8, stressed, '\n').?];
+    try t.expect(std.mem.indexOf(u8, srow, "ms") != null);
+    var stress_hit = false;
+    x = 0;
+    while (x < 120) : (x += 1) if (app.hits.at(x, 0)) |h| if (h == .button and h.button == @intFromEnum(Button.stress)) {
+        stress_hit = true;
+    };
+    try t.expect(stress_hit);
+    // The + chip routes to integrations.show_marketplace — proved by its
+    // refusal when the marketplace is off (no fetch in a test). The chip
+    // moved left when the stress copy joined the cluster: find it again.
+    plus = null;
+    x = 0;
+    while (x < 120) : (x += 1) if (app.hits.at(x, 0)) |h| if (h == .button and h.button == @intFromEnum(Button.add_integration)) {
+        plus = x;
+    };
+    app.cfg.marketplace.enabled = false;
+    app.diag.clear();
+    try app.handle(.{ .mouse = .{ .x = plus.?, .y = 0, .kind = .press, .button = .left } });
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "marketplace: disabled") != null);
+    // Narrow: the bar stays, the palette chip is the icon, the AI chip and the + are gone.
+    try app.resize(60, 12);
+    const narrow = try screenText(&app);
+    defer t.allocator.free(narrow);
+    const nrow = narrow[0..std.mem.indexOfScalar(u8, narrow, '\n').?];
+    try t.expect(std.mem.indexOf(u8, nrow, tree_codicon) != null);
+    try t.expect(std.mem.indexOf(u8, nrow, right_panel_codicon) != null);
+    try t.expect(std.mem.indexOf(u8, nrow, "search files") == null);
+    try t.expect(std.mem.indexOf(u8, nrow, "⌘") != null);
+    x = 0;
+    while (x < 60) : (x += 1) if (app.hits.at(x, 0)) |h| if (h == .button) {
+        try t.expect(h.button != @intFromEnum(Button.ai_claude));
+        try t.expect(h.button != @intFromEnum(Button.stress));
+    };
+    // ASCII twins.
+    app.cfg.ui.ascii_icons = true;
+    const ascii = try screenText(&app);
+    defer t.allocator.free(ascii);
+    const arow = ascii[0..std.mem.indexOfScalar(u8, ascii, '\n').?];
+    try t.expect(std.mem.indexOf(u8, arow, " = ") != null);
+    try t.expect(std.mem.indexOf(u8, arow, " # ") != null);
+}
+
+test "ui.click_echo: a left press underlines the word under it for 120 ms; off, nothing" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try app.activeEditor().?.buf.editor.setText("hello world\n");
+    try app.render();
+    // The text row is under the bar and the strip; the gutter is 5 cells.
+    const y: u16 = 2;
+    const x: u16 = 7; // inside "hello"
+    try t.expect(app.hits.at(x, y).? == .editor_cell);
+    app.cfg.ui.click_echo = false;
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try t.expect(app.click_echo == null);
+    try app.render();
+    try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
+    app.cfg.ui.click_echo = true;
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try t.expect(app.click_echo != null);
+    try t.expectEqual(@as(usize, 0), app.click_echo.?.start);
+    try t.expectEqual(@as(usize, 5), app.click_echo.?.end);
+    try app.render();
+    try t.expect(app.screen.readCell(x, y).?.style.ul_style == .double);
+    try t.expect(app.screen.readCell(12, y).?.style.ul_style != .double); // "world" is not echoed
+    try t.expectEqual(app.click_echo.?.until_ms, app.nextDeadlineMs().?);
+    // 120 ms later the echo is gone.
+    try app.tick(app.now_ms + app_mod.click_echo_ms + 1);
+    try t.expect(app.click_echo == null);
+    try app.render();
+    try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
 }

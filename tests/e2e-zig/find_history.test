@@ -1,0 +1,25 @@
+# zig-only
+# The find bar keeps a history: Enter remembers the query, ↑ on the
+# next bar recalls it (a miss too), ↓ past the newest is empty.
+write a.txt "alpha\nbeta\n"
+open a.txt
+command find.find
+type zebra
+key enter
+expect screen contains "no matches for \"zebra\""
+command find.find
+type beta
+key enter
+expect screen contains "match 1/1"
+command find.find
+key up
+expect screen contains "Find"
+expect screen contains "beta"
+key up
+expect screen contains "zebra"
+key down
+key down
+# Past the newest the query is empty: what is typed now is the whole query.
+type xyz
+key enter
+expect screen contains "no matches for \"xyz\""

@@ -97,6 +97,11 @@ const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
 const macros_store = @import("app/macros_store.zig");
+const find_history = @import("app/find_history.zig");
+const auto_refresh = @import("app/auto_refresh.zig");
+const clock = @import("app/clock.zig");
+const coverage = @import("app/coverage.zig");
+const menu_bar = @import("app/menu_bar.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
@@ -277,7 +282,8 @@ pub const ConfirmPurpose = union(enum) {
     /// `files.empty_trash`.
     empty_trash,
     /// Move `from` into directory `into` (both workspace-relative, owned).
-    move_path: struct { from: []u8, into: []u8 },
+    /// `copy`: an Alt-drag — the file is copied into the folder.
+    move_path: struct { from: []u8, into: []u8, copy: bool = false },
     /// An AI job's write_file waits on this box (the job id).
     ai_tool: u64,
     /// SIGTERM these sessions (owned).
@@ -332,6 +338,7 @@ pub const PickerKind = enum {
     lsp_locations,
     lsp_code_actions,
     lsp_symbols,
+    snippets,
     http_env_vars,
     http_env_delete,
     http_env_pick,
@@ -488,6 +495,8 @@ pub const FindBarState = struct {
     /// An Enter (or a step) has put the cursor on a match of this
     /// query; the next Enter steps instead of landing again.
     landed: bool = false,
+    /// Where `↑` / `↓` are in `App.find_history`; `len` is the live query.
+    hist_cursor: usize = 0,
 };
 
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
@@ -498,6 +507,24 @@ pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize
 pub const RepeatInsert = struct { pane: PaneId, count: u32, above: bool, start_byte: usize, len_before: usize };
 
 pub const ClosedBuffer = struct { path: []u8, cursor: usize };
+
+/// `ui.click_echo`: a byte range of one pane underlined for `click_echo_ms`.
+pub const ClickEcho = struct { pane: PaneId, start: usize, end: usize, until_ms: i64 };
+pub const click_echo_ms: i64 = 120;
+
+/// A closed tab page, for `tab.reopen`: the files it showed (absolute,
+/// owned) and which of them was active. The page's split tree is not
+/// kept — closing a page closes its clean panes, so the files come
+/// back as tabs of one leaf.
+pub const ClosedTab = struct {
+    paths: [][]u8,
+    active: usize,
+
+    pub fn deinit(self: *ClosedTab, gpa: Allocator) void {
+        for (self.paths) |p| gpa.free(p);
+        gpa.free(self.paths);
+    }
+};
 
 /// A mouse gesture in flight: what the press landed on, until release.
 pub const Drag = union(enum) {
@@ -510,7 +537,8 @@ pub const Drag = union(enum) {
     tab: struct { pane: PaneId, x: u16, y: u16, moved: bool = false },
     /// A tree row: a file opens in the pane it is released over, or
     /// moves into the folder it is released on.
-    tree: struct { idx: usize, moved: bool = false },
+    /// `copy`: the press carried Alt — the drop copies instead of moving.
+    tree: struct { idx: usize, moved: bool = false, copy: bool = false },
     /// A text selection: char / word / line granularity from the click
     /// count, anchored where the press landed.
     select: struct { pane: PaneId, unit: SelectUnit, anchor: usize },
@@ -619,6 +647,13 @@ pub const App = struct {
     exit_code: u8 = 0,
     /// The pane that was active before the current one (`buffer.last`).
     prev_active: ?PaneId = null,
+    /// Every pane in most-recently-focused order, the active one first
+    /// (`buffer.last` reads the second entry, `buffer.clear_mru` wipes
+    /// it). A closed pane leaves the list.
+    pane_mru: std.ArrayListUnmanaged(PaneId) = .empty,
+    /// The tab pages closed by `tab.close` / `tab.only`, oldest first;
+    /// `tab.reopen` pops the last. Capped at `max_closed_tabs`.
+    closed_tabs: std.ArrayListUnmanaged(ClosedTab) = .empty,
     restart: bool = false,
 
     panes: PaneStore,
@@ -698,6 +733,18 @@ pub const App = struct {
     /// The Undo chip beside the toast stack (`armUndo`): one click puts
     /// a destructive action back, a right-click drops the offer.
     undo_chip: ?UndoChip = null,
+    /// The statusline clock (`app/clock.zig`).
+    clock: clock.State = .{},
+    /// The statusline coverage chip (`app/coverage.zig`).
+    coverage: coverage.State = .{},
+    /// The menu-bar menu that is open, if one is (`app/menu_bar.zig`).
+    menu_bar_open: ?menu_bar.Menu = null,
+    /// Where the bar painted its first word last frame (`view.menu_bar_open`).
+    menu_bar_x: u16 = 4,
+    /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
+    click_echo: ?ClickEcho = null,
+    /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
+    auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).initEmpty(),
     /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /
     /// `plus_menu_hidden` and written back there (owned ids).
     plus_pinned: std.ArrayListUnmanaged([]u8) = .empty,
@@ -712,6 +759,8 @@ pub const App = struct {
     image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
     find_bar: ?FindBarState = null,
+    /// The find bar's accepted queries, oldest first (`app/find_history.zig`).
+    find_history: std.ArrayListUnmanaged([]u8) = .empty,
     closed: std.ArrayListUnmanaged(ClosedBuffer) = .empty,
     abbrevs: std.StringHashMapUnmanaged([]u8) = .empty,
     dyn_commands: command.DynRegistry,
@@ -778,6 +827,7 @@ pub const App = struct {
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
+    pub const max_closed_tabs = 8;
     pub const max_recent = 50;
     pub const max_cmd_history = 200;
 
@@ -865,6 +915,8 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
         try app.hooks.subscribe(.startup, .{ .zig = &macros_store.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &macros_store.onExit });
+        try app.hooks.subscribe(.startup, .{ .zig = &find_history.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &find_history.onExit });
         try app.hooks.subscribe(.startup, .{ .zig = &marks_store.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &marks_store.onExit });
         // Installed integrations are scanned once the app is up.
@@ -878,6 +930,8 @@ pub const App = struct {
         app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
         if (app.cfg.ui.right_panel_visible) app.right_panel = .todos;
         try app.seedPlusMenu();
+        auto_refresh.seed(&app);
+        clock.seed(&app);
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();
@@ -915,13 +969,17 @@ pub const App = struct {
         if (style != self.input_style) try self.setInputStyle(style);
         self.tree.width = self.cfg.ui.tree_width;
         try self.seedPlusMenu();
+        auto_refresh.seed(self);
+        clock.seed(self);
         try self.toastConfigDiagnostics();
         try self.applyTheme();
         try script_api.rebind(self);
-        // A workspace just trusted gets its `.mnml/init.lua` now.
+        // A workspace just trusted gets its `.mnml/init.lua` now, and
+        // its manifests join the integrations.
         if (!was_trusted and self.workspace_trusted) {
             try self.script().reset();
             try self.script().loadInitFiles();
+            if (self.integrations.scanned) try integrations.refresh(self);
         }
         self.needs_render = true;
     }
@@ -1040,6 +1098,11 @@ pub const App = struct {
         self.jumplist.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
+        for (self.find_history.items) |q| gpa.free(q);
+        self.find_history.deinit(gpa);
+        self.pane_mru.deinit(gpa);
+        for (self.closed_tabs.items) |*c| c.deinit(gpa);
+        self.closed_tabs.deinit(gpa);
         var it = self.abbrevs.iterator();
         while (it.next()) |e| {
             gpa.free(e.key_ptr.*);
@@ -1451,6 +1514,11 @@ pub const App = struct {
             if (self.active) |prev| self.prev_active = prev;
         }
         self.active = id;
+        // The MRU: the focused pane moves to the front.
+        if (id) |i| {
+            if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, i)) |at| _ = self.pane_mru.orderedRemove(at);
+            self.pane_mru.insert(self.gpa, 0, i) catch {};
+        }
         // The focused pane is its leaf's shown tab.
         if (id) |i| {
             const layout = self.layouts.current();
@@ -1513,10 +1581,13 @@ pub const App = struct {
         const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
         const layout = self.layouts.current();
         const next = layout.removePane(id);
+        self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
         files_pane.onPaneClosed(self, id);
         if (self.last_editor == id) self.last_editor = null;
+        if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, id)) |at| _ = self.pane_mru.orderedRemove(at);
+        if (self.prev_active == id) self.prev_active = null;
         if (self.active == id) {
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
             self.active = null;
@@ -1571,6 +1642,21 @@ pub const App = struct {
     pub fn absPath(self: *App, rel: []const u8) Allocator.Error![]const u8 {
         if (std.fs.path.isAbsolute(rel)) return rel;
         return std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+    }
+
+    /// `ui.auto_equalize_splits`: a split just opened or closed — even
+    /// them out.
+    pub fn afterSplitChange(self: *App) void {
+        if (self.cfg.ui.auto_equalize_splits) self.layouts.current().equalize();
+    }
+
+    /// `~` / `~/…` → the home directory (the config's `HOME`, else the
+    /// process's); anything else unchanged. Frame arena.
+    pub fn expandTilde(self: *App, text: []const u8) Allocator.Error![]const u8 {
+        if (text.len == 0 or text[0] != '~' or (text.len > 1 and text[1] != '/')) return text;
+        const home = self.homeDir() orelse self.env.get("HOME") orelse return text;
+        if (text.len == 1) return home;
+        return std.fs.path.join(self.frame.allocator(), &.{ home, text[2..] });
     }
 
     // ─── text mutation helpers every subsystem goes through ───
@@ -1766,6 +1852,11 @@ pub const App = struct {
         try watch.tick(self, now);
         todos.tick(self, now);
         sessions.tick(self, now);
+        clock.tick(self);
+        if (self.click_echo) |e| if (now >= e.until_ms) {
+            self.click_echo = null;
+            self.needs_render = true;
+        };
         dock.tick(self, now);
         try git_app.tick(self, now);
         try lsp.tick(self, now);
@@ -1798,6 +1889,9 @@ pub const App = struct {
         if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (coverage.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (self.click_echo) |e| next = @min(next orelse std.math.maxInt(i64), e.until_ms);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -2004,6 +2098,13 @@ test {
     _ = @import("app/stress.zig");
     _ = @import("app/undo_store.zig");
     _ = @import("app/macros_store.zig");
+    _ = @import("app/find_history.zig");
+    _ = @import("app/auto_refresh.zig");
+    _ = @import("app/clock.zig");
+    _ = @import("app/coverage.zig");
+    _ = @import("app/menu_bar.zig");
+    _ = @import("app/browser_open.zig");
+    _ = @import("app/glyph_audit.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
     _ = @import("app/loclist.zig");

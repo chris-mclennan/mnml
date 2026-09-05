@@ -36,7 +36,13 @@ pub const Tab = struct {
     dirty: bool,
     active: bool,
     kind: Kind = .file,
+    /// Paints the pin glyph before the title.
+    pinned: bool = false,
 };
+
+/// The pin glyph (nf-fa-thumb_tack) and its ASCII twin, one cell each.
+pub const pin_glyph = "\u{f08d}";
+pub const pin_ascii = "^";
 
 pub const Opts = struct {
     /// What the `.tab` hits carry as their leaf.
@@ -54,7 +60,7 @@ pub const Slot = struct { idx: usize, x: u16, w: u16 };
 
 /// ` title ` plus ` ●` when dirty; a pty tab is ` title$ × `.
 fn tabWidth(ui: Ui, tab: Tab) u16 {
-    const base = 2 + ui.width(tab.title) + @as(u16, if (tab.dirty) 2 else 0);
+    const base = 2 + ui.width(tab.title) + @as(u16, if (tab.dirty) 2 else 0) + @as(u16, if (tab.pinned) 2 else 0);
     return if (tab.kind == .pty) base + 1 + close_w else base;
 }
 
@@ -155,7 +161,9 @@ fn drawTabs(ui: Ui, area: Rect, tabs: []const Tab, leaf: u32, sink: ?SlotSink) u
         const style = if (tab.active) t.tab_active else t.tab_inactive;
         const r = Rect.init(x, y, w, 1);
         ui.fill(r, style);
-        var tx = x + ui.putStr(x + 1, y, w - 1, tab.title, style) + 1;
+        var tx = x + 1;
+        if (tab.pinned) tx += ui.putStr(tx, y, 2, if (ui.ascii) pin_ascii ++ " " else pin_glyph ++ " ", Theme.onBg(t.tab_dirty, style.bg));
+        tx += ui.putStr(tx, y, w - (tx - x), tab.title, style);
         if (tab.kind == .pty) tx += ui.putStr(tx, y, 1, "$", Theme.onBg(t.muted, style.bg));
         if (tab.dirty) tx += ui.putStr(tx, y, 2, " ●", Theme.onBg(t.tab_dirty, style.bg));
         ui.hit(r, .{ .tab = .{ .leaf = leaf, .idx = @intCast(i) } });

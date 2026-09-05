@@ -19,6 +19,7 @@ pub const table = .{
     .@"editor.open_fold" = &openFold,
     .@"editor.close_fold" = &closeFold,
     .@"editor.unfold_all" = &unfoldAll,
+    .@"editor.fold_all_brackets" = &foldAllBrackets,
     .@"editor.bracket_match" = &bracketMatch,
     .@"editor.jump_prev_edit" = &jumpPrevEdit,
     .@"editor.jump_next_edit" = &jumpNextEdit,
@@ -339,6 +340,47 @@ fn matchBackward(text: []const u8, close_byte: usize, open: u8, close: u8) ?usiz
     return null;
 }
 
+/// `editor.fold_all_brackets` (`zM` without a server): one stack scan
+/// per bracket family closes every multi-line pair. The first fold to
+/// claim a start line keeps it; the cursor lands on the fold that
+/// swallowed it.
+fn foldAllBrackets(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    const ed = &e.buf.editor;
+    const text = ed.bytes();
+    const arena = app.frame.allocator();
+    var stack: std.ArrayListUnmanaged(usize) = .empty;
+    var added: usize = 0;
+    for ([_][2]u8{ .{ '{', '}' }, .{ '[', ']' }, .{ '(', ')' } }) |pr| {
+        stack.clearRetainingCapacity();
+        for (text, 0..) |ch, i| {
+            if (ch == pr[0]) {
+                try stack.append(arena, i);
+            } else if (ch == pr[1]) {
+                const o = stack.pop() orelse continue;
+                const lo = ed.lineOfByte(o);
+                const hi = ed.lineOfByte(i);
+                if (hi <= lo or e.buf.folds.contains(lo)) continue;
+                try e.buf.folds.put(app.gpa, lo, hi);
+                added += 1;
+            }
+        }
+    }
+    if (added == 0) {
+        app.toast("nothing to fold", .{});
+        return;
+    }
+    e.buf.folds.sort(struct {
+        keys: []const usize,
+        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+            return ctx.keys[a] < ctx.keys[b];
+        }
+    }{ .keys = e.buf.folds.keys() });
+    if (foldOwning(e, ed.currentLine())) |owner| if (ed.currentLine() > owner) ed.setCursor(ed.lineStart(owner));
+    app.toast("folded {d} block(s)", .{added});
+    app.needs_render = true;
+}
+
 fn unfoldAll(app: *App) CommandError!void {
     const e = try app.requireEditor();
     const n = e.buf.folds.count();
@@ -432,6 +474,25 @@ fn appWith(text: []const u8) !App {
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText(text);
     return app;
+}
+
+test "fold_all_brackets closes every multi-line pair once, outermost first per start line, and parks the cursor on its fold" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("fn a() {\n  x = [\n    1,\n  ];\n}\nfn b(\n  y,\n) {}\nz = (1)\n");
+    e.buf.editor.setCursor(e.buf.editor.lineStart(2));
+    try command.run(&app, .{ .static = .@"editor.fold_all_brackets" });
+    // `{…}` 0–4, `[…]` 1–3, `(…)` 5–7; `(1)` is one line.
+    try t.expectEqualSlices(usize, &.{ 0, 1, 5 }, e.buf.folds.keys());
+    try t.expectEqualSlices(usize, &.{ 4, 3, 7 }, e.buf.folds.values());
+    try t.expectEqualStrings("folded 3 block(s)", app.lastToast().?);
+    try t.expectEqual(@as(usize, 0), e.buf.editor.currentLine());
+    // Again: nothing new.
+    try command.run(&app, .{ .static = .@"editor.fold_all_brackets" });
+    try t.expectEqualStrings("nothing to fold", app.lastToast().?);
+    try t.expectEqual(@as(usize, 3), e.buf.folds.count());
 }
 
 test "folds: toggle picks the smallest enclosing block, zo/zc are idempotent, unfold_all clears" {

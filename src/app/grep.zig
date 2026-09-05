@@ -37,6 +37,14 @@ pub const table = .{
     .@"find.grep" = &grepCmd,
     .@"find.grep_replace" = &grepReplaceCmd,
     .@"view.activity_search" = &activitySearch,
+    .@"grep.open" = &openRowCmd,
+    .@"grep.toggle_hit" = &toggleHitCmd,
+    .@"grep.copy" = &copyCmd,
+    .@"grep.enable_all" = &enableAllCmd,
+    .@"grep.disable_all" = &disableAllCmd,
+    .@"grep.expand_all" = &expandAllCmd,
+    .@"grep.collapse_all" = &collapseAllCmd,
+    .@"grep.refresh" = &refreshCmd,
 };
 
 /// Hits past this are dropped; the pane says so.
@@ -896,15 +904,111 @@ fn foldRow(p: *GrepPane, on: bool) Allocator.Error!void {
     };
 }
 
+// ─── the row menu and its commands ──────────────────────────────────────
+
+/// The grep pane the row commands act on: the active one, else the
+/// one open.
+fn targetPane(app: *App) CommandError!struct { id: PaneId, p: *GrepPane } {
+    const id = blk: {
+        if (app.active) |a| if (app.panes.get(a)) |pane| if (pane.* == .grep) break :blk a;
+        break :blk find(app) orelse return app.diag.fail(app.frame.allocator(), "no grep pane — run find.grep first", .{});
+    };
+    return .{ .id = id, .p = &app.panes.get(id).?.grep };
+}
+
+fn openRowCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    try activateRow(app, tg.id, tg.p);
+}
+
+fn toggleHitCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    const h = tg.p.selectedHit() orelse return app.diag.fail(app.frame.allocator(), "grep: the cursor is on a file row", .{});
+    try tg.p.toggleHit(h);
+    app.needs_render = true;
+}
+
+fn copyCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    try copySelected(app, tg.p);
+}
+
+fn enableAllCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    tg.p.disabled.clearRetainingCapacity();
+    app.needs_render = true;
+}
+
+fn disableAllCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    var i: u32 = 0;
+    while (i < tg.p.hits.items.len) : (i += 1) try tg.p.disabled.put(tg.p.gpa, i, {});
+    app.needs_render = true;
+}
+
+fn expandAllCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    try setAllCollapsed(tg.p, false);
+    app.needs_render = true;
+}
+
+fn collapseAllCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    try setAllCollapsed(tg.p, true);
+    app.needs_render = true;
+}
+
+fn refreshCmd(app: *App) CommandError!void {
+    const tg = try targetPane(app);
+    try refresh(app, tg.id);
+}
+
+/// A right-click on a row: the row's verbs, titled by the row — the
+/// hit's `path:line`, or the file's path.
+pub fn openRowMenu(app: *App, p: *GrepPane, x: u16, y: u16) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    if (p.cursor >= p.rows.items.len) return;
+    const is_hit = p.rows.items[p.cursor] == .hit;
+    const title: []const u8 = switch (p.rows.items[p.cursor]) {
+        .hit => |h| try std.fmt.allocPrint(arena, "{s}:{d}", .{ p.hits.items[h].rel, p.hits.items[h].line }),
+        .file => |g| p.groups.items[g].rel,
+    };
+    var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    try rows.append(app.gpa, .{ .label = if (is_hit) "Open" else "Fold / unfold", .action = .{ .command = .@"grep.open" } });
+    if (is_hit) {
+        const enabled = if (p.selectedHit()) |h| !p.disabled.contains(h) else true;
+        try rows.append(app.gpa, .{ .label = if (enabled) "Skip this hit on replace" else "Include this hit on replace", .action = .{ .command = .@"grep.toggle_hit" } });
+        try rows.append(app.gpa, .{ .label = "Copy path:line + text", .action = .{ .command = .@"grep.copy" } });
+    }
+    try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Include every hit", .action = .{ .command = .@"grep.enable_all" }, .separator_before = true },
+        .{ .label = "Skip every hit", .action = .{ .command = .@"grep.disable_all" } },
+        .{ .label = "Replace in files…", .action = .{ .command = .@"find.grep_replace" } },
+        .{ .label = "Expand all", .action = .{ .command = .@"grep.expand_all" }, .separator_before = true },
+        .{ .label = "Collapse all", .action = .{ .command = .@"grep.collapse_all" } },
+        .{ .label = "Search again", .action = .{ .command = .@"grep.refresh" }, .separator_before = true },
+    });
+    const owned = try rows.toOwnedSlice(app.gpa);
+    errdefer app.gpa.free(owned);
+    try app.openMenu(title, owned, x, y);
+}
+
 /// A click on a row selects it; a second click on the selected row
-/// activates it (opens the hit, folds the file). The title toggles
-/// nothing; the filter row focuses the filter.
+/// activates it (opens the hit, folds the file); a right-click opens
+/// the row menu. The title toggles nothing; the filter row focuses the
+/// filter.
 pub fn click(app: *App, id: PaneId, p: *GrepPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     app.needs_render = true;
     if (hit_id >= row_base) {
         const i: usize = hit_id - row_base;
         if (i >= p.rows.items.len) return;
+        if (m.button == .right) {
+            p.cursor = i;
+            app.setActive(id);
+            return openRowMenu(app, p, m.x, m.y);
+        }
         if (m.button != .left) return;
         if (p.cursor == i) {
             try activateRow(app, id, p);

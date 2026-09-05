@@ -542,7 +542,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .refresh => runToast(app, refresh(app)),
-        .new => runToast(app, command.run(app, .{ .static = .@"http.new_request" })),
+        .new => runToast(app, command.run(app, .{ .static = .@"http.new" })),
         .sort, .view => {},
     }
 }
@@ -664,6 +664,8 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .paintRow = paintRow,
         .has_kebab = true,
         .empty = empty,
+        // The green ` + `: a blank request (`http.new_request`).
+        .new_chip = true,
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
 }
@@ -869,4 +871,32 @@ test "headless: the panel paints seven headers, the filter row narrows, enter on
     try testing.expect(std.mem.indexOf(u8, txt3, "CHAINS (1)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "RECENT (1)") != null);
     try testing.expect(std.mem.indexOf(u8, txt3, "ENVS") == null);
+}
+
+test "the green + chip on the header opens a blank request; its hit is the .new chip of the http panel" {
+    var f = try Fixture.init(100, 40);
+    defer f.deinit();
+    f.app.tree.visible = false;
+    try command.run(&f.app, .{ .static = .@"view.activity_http" });
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, " + ") != null);
+    // Find the chip by its hit, wherever the ladder put it.
+    var found: ?struct { x: u16, y: u16 } = null;
+    var y: u16 = 0;
+    while (y < 4 and found == null) : (y += 1) {
+        var x: u16 = 0;
+        while (x < 100) : (x += 1) {
+            const target = f.app.hits.at(x, y) orelse continue;
+            if (target == .chip and target.chip.kind == .new and target.chip.panel == .http) {
+                found = .{ .x = x, .y = y };
+                break;
+            }
+        }
+    }
+    try testing.expect(found != null);
+    try f.app.handle(.{ .mouse = .{ .x = found.?.x, .y = found.?.y, .kind = .press, .button = .left } });
+    const pane = f.app.panes.get(f.app.active.?).?;
+    try testing.expect(pane.* == .request);
+    try testing.expectEqualStrings("new request", pane.title());
 }

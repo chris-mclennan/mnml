@@ -492,11 +492,8 @@ pub fn openLinkAtCursor(app: *App) CommandError!void {
 
 /// Hand `url` to the desktop's opener.
 pub fn openExternal(app: *App, url: []const u8) !void {
-    const argv: []const []const u8 = switch (builtin.os.tag) {
-        .macos => &.{ "open", url },
-        .windows => &.{ "cmd", "/c", "start", "", url },
-        else => &.{ "xdg-open", url },
-    };
+    // `ui.external_browser` names the application (trust-stripped upstream).
+    const argv = try @import("browser_open.zig").argv(app, app.frame.allocator(), url);
     const result = try std.process.run(app.gpa, app.io, .{ .argv = argv, .environ_map = &app.env });
     app.gpa.free(result.stdout);
     app.gpa.free(result.stderr);

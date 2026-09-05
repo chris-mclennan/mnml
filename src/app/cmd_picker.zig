@@ -275,6 +275,13 @@ pub fn accept(app: *App, idx: usize) Allocator.Error!void {
             app.focus = if (app.active) |a| .{ .pane = a } else .tree;
             try lsp.pickerAccept(app, kind, i);
         },
+        .snippets => {
+            const trigger = try app.frame.allocator().dupe(u8, p.labels[i]);
+            const scope = try app.frame.allocator().dupe(u8, if (i < p.hints.len) p.hints[i] else "global");
+            app.overlay.deinit(app.gpa);
+            app.focus = if (app.active) |a| .{ .pane = a } else .tree;
+            try @import("snippets.zig").pickerAccept(app, trigger, scope);
+        },
         .dap_remove_watch, .dap_exceptions, .dap_threads => |kind| {
             const label = try app.frame.allocator().dupe(u8, p.labels[i]);
             const detail = try app.frame.allocator().dupe(u8, if (i < p.details.len) p.details[i] else "");

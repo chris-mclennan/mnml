@@ -15,6 +15,8 @@ pub const table = .{
     .@"buffer.close" = &close,
     .@"buffer.reopen" = &reopen,
     .@"buffer.last" = &alternate,
+    .@"buffer.clear_mru" = &clearMru,
+    .@"buffer.pin_toggle" = &pinToggle,
 };
 
 /// The tabs of the leaf showing the active pane, in tab order.
@@ -51,12 +53,40 @@ fn next(app: *App) CommandError!void {
     return cycle(app, 1, true);
 }
 
-/// `:b#` / `Ctrl-^`: the pane that was active before this one.
+/// `:b#` / `Ctrl-^`: the pane that was active before this one — the
+/// MRU's second entry, so a closed alternate falls through to the one
+/// before it rather than failing.
 fn alternate(app: *App) CommandError!void {
     const arena = app.frame.allocator();
-    const id = app.prev_active orelse return app.diag.fail(arena, "E23: no alternate buffer", .{});
-    if (app.panes.get(id) == null) return app.diag.fail(arena, "E23: no alternate buffer", .{});
+    const id: PaneId = blk: {
+        for (app.pane_mru.items) |id| if (app.active != id and app.panes.get(id) != null) break :blk id;
+        if (app.prev_active) |id| if (app.panes.get(id) != null) break :blk id;
+        return app.diag.fail(arena, "E23: no alternate buffer", .{});
+    };
     app.showPane(id);
+}
+
+/// `buffer.clear_mru`: forget the focus history; the active pane stays
+/// at the head so `buffer.last` has nothing to go back to.
+fn clearMru(app: *App) CommandError!void {
+    app.pane_mru.clearRetainingCapacity();
+    app.prev_active = null;
+    if (app.active) |id| try app.pane_mru.append(app.gpa, id);
+    app.toast("buffer MRU cleared", .{});
+}
+
+/// `buffer.pin_toggle`: a pinned editor tab moves to the front of its
+/// strip, paints a pin glyph and survives close-others / close-right /
+/// close-all. Only an editor pane pins.
+fn pinToggle(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = app.active orelse return error.NoActivePane;
+    const pane = app.panes.get(id) orelse return error.NoActivePane;
+    const e = pane.asEditor() orelse return app.diag.fail(arena, "buffer.pin_toggle: not an editor pane", .{});
+    e.pinned = !e.pinned;
+    if (e.pinned) app.layouts.current().reorderTab(id, 0);
+    app.toast("{s} {s}", .{ if (e.pinned) "pinned" else "unpinned", pane.title() });
+    app.needs_render = true;
 }
 
 /// `:bfirst` / `:blast`: the ends of the leaf's tab strip.
@@ -252,6 +282,61 @@ test ":b reaches a buffer by :ls number, by name, by a unique part of it, and by
     try t.expectError(error.Failed, app.runEx("b zzz"));
     try t.expectError(error.Failed, app.runEx("b 9"));
     try t.expectEqualStrings("bravo.txt", title.of(&app));
+}
+
+test "buffer.last follows the MRU past a closed pane; clear_mru leaves only the active; pin_toggle fronts the tab and survives close_others" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    var ids: [3]PaneId = undefined;
+    for ([_][]const u8{ "a.txt", "b.txt", "c.txt" }, 0..) |name, i| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = name });
+        const path = try std.fs.path.join(t.allocator, &.{ root, name });
+        defer t.allocator.free(path);
+        ids[i] = try app.openPath(path);
+    }
+    const title = struct {
+        fn of(a: *App) []const u8 {
+            return a.panes.get(a.active.?).?.title();
+        }
+    };
+    // Focus order a, b, c → MRU is c, b, a.
+    try t.expectEqualSlices(PaneId, &.{ ids[2], ids[1], ids[0] }, app.pane_mru.items);
+    try command.run(&app, .{ .static = .@"buffer.last" });
+    try t.expectEqualStrings("b.txt", title.of(&app));
+    // Close the alternate (c): last goes to the one before it, a.
+    try app.forceClosePane(ids[2]);
+    try t.expectEqualStrings("b.txt", title.of(&app));
+    try command.run(&app, .{ .static = .@"buffer.last" });
+    try t.expectEqualStrings("a.txt", title.of(&app));
+    try command.run(&app, .{ .static = .@"buffer.clear_mru" });
+    try t.expectEqualSlices(PaneId, &.{ids[0]}, app.pane_mru.items);
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"buffer.last" }));
+    try t.expectEqualStrings("a.txt", title.of(&app));
+    // Pin b (the second tab): it moves to the front of the strip.
+    app.showPane(ids[1]);
+    try command.run(&app, .{ .static = .@"buffer.pin_toggle" });
+    try t.expect(app.panes.get(ids[1]).?.pinned());
+    try t.expectEqualSlices(PaneId, &.{ ids[1], ids[0] }, tabsOfActive(&app).?);
+    try t.expectEqualStrings("pinned b.txt", app.lastToast().?);
+    // close_others from a keeps the pinned b.
+    app.showPane(ids[0]);
+    try command.run(&app, .{ .static = .@"buffer.close_others" });
+    try t.expect(app.panes.get(ids[1]) != null);
+    try t.expectEqual(@as(usize, 2), app.panes.count());
+    try command.run(&app, .{ .static = .@"view.close_others" });
+    try t.expect(app.panes.get(ids[1]) != null);
+    // Unpin, and close_others takes it.
+    app.showPane(ids[1]);
+    try command.run(&app, .{ .static = .@"buffer.pin_toggle" });
+    try t.expect(!app.panes.get(ids[1]).?.pinned());
+    app.showPane(ids[0]);
+    try command.run(&app, .{ .static = .@"buffer.close_others" });
+    try t.expect(app.panes.get(ids[1]) == null);
 }
 
 /// The tmp dir's absolute path, gpa-owned without a sentinel.

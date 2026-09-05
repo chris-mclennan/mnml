@@ -74,6 +74,10 @@ pub const EditorPane = struct {
     /// the entry the last `:lnext` / `:lprev` landed on, null after a fill.
     loclist: std.ArrayListUnmanaged(ListPane.Entry) = .empty,
     loc_idx: ?usize = null,
+    /// `buffer.pin_toggle`: the tab sits at the front of its strip with
+    /// a pin glyph and survives close-others / close-right / close-all.
+    /// Saved with the session.
+    pinned: bool = false,
 
     pub fn deinit(self: *EditorPane) void {
         ListPane.freeEntries(self.buf.gpa, self.loclist.items);
@@ -257,6 +261,14 @@ pub const Pane = union(enum) {
         };
     }
 
+    /// `buffer.pin_toggle` set it: a pinned editor tab.
+    pub fn pinned(self: *const Pane) bool {
+        return switch (self.*) {
+            .editor => |*e| e.pinned,
+            else => false,
+        };
+    }
+
     pub fn asEditor(self: *Pane) ?*EditorPane {
         return switch (self.*) {
             .editor => |*e| e,
@@ -419,6 +431,17 @@ pub const PaneStore = struct {
     }
 
     /// The image preview tab, if one is open — the next image replaces it.
+    /// The markdown tab a glance may take over (`md_preview.open`).
+    pub fn findMdGlance(self: *PaneStore) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| switch (p.*) {
+                .md_preview => |*m| if (m.is_preview) return @intCast(i),
+                else => {},
+            };
+        }
+        return null;
+    }
+
     pub fn findImagePreview(self: *PaneStore) ?PaneId {
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {

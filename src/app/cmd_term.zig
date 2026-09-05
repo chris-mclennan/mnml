@@ -135,6 +135,7 @@ fn scratchToggle(app: *App) CommandError!void {
         const shown = layout.leafOf(id) != null;
         if (shown and app.active == id and app.focus == .pane) {
             const next = layout.removePane(id);
+            app.afterSplitChange();
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
             app.active = null;
             app.setActive(fallback);

@@ -13,10 +13,10 @@ const command = @import("../core/command.zig");
 /// Glyph column width in cells (a one-cell glyph and a space).
 pub const width: u16 = 2;
 
-const Entry = struct { group: []const u8, glyph: []const u8, fallback: []const u8 };
+pub const Entry = struct { group: []const u8, glyph: []const u8, fallback: []const u8 };
 
 /// By command-id prefix (the part before the dot); the first match wins.
-const by_group = [_]Entry{
+pub const by_group = [_]Entry{
     .{ .group = "file", .glyph = "\u{f15b}", .fallback = "f" }, //  file
     .{ .group = "files", .glyph = "\u{f15b}", .fallback = "f" },
     .{ .group = "buffer", .glyph = "\u{f0c5}", .fallback = "b" }, //  copy / tab
@@ -74,6 +74,8 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_panel_sort => if (ascii) "~" else "\u{f0dc}", // fa-sort
         .ai_profile => if (ascii) "!" else "\u{f0e7}", // fa-flash: a launch profile
         .dock_set => if (ascii) "%" else "\u{f013}", // fa-gear: a dock setting
+        .toggle_auto_refresh => if (ascii) "@" else "\u{f021}", // fa-refresh
+        .set_coverage_mode => if (ascii) "%" else "\u{f0e4}", // fa-dashboard
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }

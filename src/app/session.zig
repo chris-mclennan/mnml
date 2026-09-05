@@ -59,6 +59,8 @@ pub const Pane = struct {
     wrap: ?bool = null,
     folds: []const Fold = &.{},
     marks: []const Mark = &.{},
+    /// `buffer.pin_toggle`.
+    pinned: bool = false,
     /// pty: the command line (empty = the shell), its cwd and tab label.
     argv: []const []const u8 = &.{},
     cwd: ?[]const u8 = null,
@@ -199,6 +201,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
                     .wrap = e.wrap,
                     .folds = folds.items,
                     .marks = marks.items,
+                    .pinned = e.pinned,
                 };
             },
             .md_preview => |*m| .{ .kind = .md_preview, .path = m.path },
@@ -461,6 +464,7 @@ fn openSaved(app: *App, sp: Pane) OpenError!?PaneId {
             e.view.scroll_col = sp.scroll_col;
             e.view.pinAt(e.buf.editor.cursor);
             e.wrap = sp.wrap;
+            e.pinned = sp.pinned;
             for (sp.folds) |f| {
                 if (f.start >= lines or f.end >= lines or f.end < f.start) continue;
                 try e.buf.folds.put(app.gpa, f.start, f.end);

@@ -188,9 +188,14 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
     // own (D10): a workspace with the script and no config still needs
     // the trust decision.
     const init_lua_path = try std.fs.path.join(arena, &.{ opts.workspace, ".mnml", "init.lua" });
-    const facts: trust_mod.Facts = .{ .init_lua = if (Io.Dir.cwd().access(io, init_lua_path, .{})) true else |_| false };
+    const facts: trust_mod.Facts = .{
+        .init_lua = if (Io.Dir.cwd().access(io, init_lua_path, .{})) true else |_| false,
+        // The manifests beside the config are claims too (the
+        // `workspace_manifests` sink).
+        .manifests = try trust_mod.manifestNames(arena, io, opts.workspace),
+    };
     const ws_layer = try readLayer(arena, io, &loaded.diagnostics, loaded.workspace_path);
-    if (ws_layer != null or facts.init_lua) {
+    if (ws_layer != null or facts.init_lua or facts.manifests.len > 0) {
         var p: Patch(Config) = ws_layer orelse .{};
         const trust: Trust = switch (opts.trust) {
             .trusted, .untrusted => opts.trust,

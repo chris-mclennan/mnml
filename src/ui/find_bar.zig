@@ -63,7 +63,7 @@ pub const State = struct {
 
 /// `ignored`: not a bar key and not a field key — a modified chord the
 /// app may still resolve (Ctrl+S saves from the bar, as in VS Code).
-pub const Outcome = enum { consumed, ignored, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed };
+pub const Outcome = enum { consumed, ignored, cancel, next, prev, submit, toggle_regex, toggle_case, focus_toggle, replace_one, replace_all, changed, history_prev, history_next };
 
 /// Match info from the app: `current` is 0-based.
 pub const Info = struct { current: ?usize, total: usize };
@@ -82,8 +82,9 @@ pub const chip_case = "Aa";
 pub const no_matches = "no matches";
 
 /// enter → submit (replace field: replace_one), ctrl+enter → replace_all,
-/// shift+enter / ↑ / ctrl+p → prev, ↓ / ctrl+n → next, esc → cancel,
-/// ctrl+r regex, ctrl+c case, tab → focus_toggle; typing → changed.
+/// shift+enter / ctrl+p / shift+F3 → prev, ctrl+n / F3 → next, ↑ / ↓ →
+/// the find history, esc → cancel, ctrl+r regex, ctrl+c case, tab →
+/// focus_toggle; typing → changed.
 pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
     const m = key.mods;
     switch (key.code) {
@@ -93,8 +94,8 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
             if (m.shift) return .prev;
             return if (s.focus == .replace) .replace_one else .submit;
         },
-        .up => return .prev,
-        .down => return .next,
+        .up => return .history_prev,
+        .down => return .history_next,
         .tab, .backtab => {
             if (s.show_replace) s.focus = if (s.focus == .query) .replace else .query;
             return .focus_toggle;
@@ -290,7 +291,9 @@ test "keys map to outcomes and flip the toggles; typing is changed" {
     try testing.expectEqual(Outcome.submit, try handleKey(&s, gpa, Key.named(.enter)));
     try testing.expectEqual(Outcome.prev, try handleKey(&s, gpa, .{ .code = .enter, .mods = .{ .shift = true } }));
     try testing.expectEqual(Outcome.next, try handleKey(&s, gpa, Key.ctrl('n')));
-    try testing.expectEqual(Outcome.prev, try handleKey(&s, gpa, Key.named(.up)));
+    try testing.expectEqual(Outcome.history_prev, try handleKey(&s, gpa, Key.named(.up)));
+    try testing.expectEqual(Outcome.history_next, try handleKey(&s, gpa, Key.named(.down)));
+    try testing.expectEqual(Outcome.prev, try handleKey(&s, gpa, .{ .code = .{ .f = 3 }, .mods = .{ .shift = true } }));
     try testing.expectEqual(Outcome.next, try handleKey(&s, gpa, Key.named(.{ .f = 3 })));
     try testing.expectEqual(Outcome.toggle_regex, try handleKey(&s, gpa, Key.ctrl('r')));
     try testing.expect(s.regex);

@@ -46,6 +46,11 @@ pub const MdPreviewPane = struct {
     scroll: usize = 0,
     /// Rows the content took at the last frame (for paging).
     total_rows: usize = 0,
+    /// A glance (a single click, a jump): the next glance at another
+    /// markdown file replaces this tab in place. `markdown.preview` on
+    /// an editor opens a permanent one. Typing swaps the editor in, and
+    /// an editor is never a preview.
+    is_preview: bool = false,
     /// The images the preview embeds, by resolved path — loaded on
     /// first sight, kept while the pane lives (`ui/md_view.zig`
     /// places them, `Term.paintImages` draws them).
@@ -94,7 +99,9 @@ pub const Placement = enum {
     beside,
 };
 
-/// Open (or reveal) the preview of `path`.
+/// Open (or reveal) the preview of `path`. A `.here` open is a glance:
+/// it takes over the tab of the last glanced-at markdown file (like the
+/// image viewer) rather than piling up tabs; `.beside` is permanent.
 pub fn open(app: *App, path: []const u8, placement: Placement, near: ?PaneId) Allocator.Error!PaneId {
     if (app.panes.findPreview(path)) |id| {
         if (placement == .here) app.showPane(id);
@@ -108,7 +115,16 @@ pub fn open(app: *App, path: []const u8, placement: Placement, near: ?PaneId) Al
     errdefer gpa.free(text);
     const owned_path = try gpa.dupe(u8, path);
     errdefer gpa.free(owned_path);
-    const id = try app.panes.add(.{ .md_preview = .{ .gpa = gpa, .path = owned_path, .text = text } });
+    const fresh: MdPreviewPane = .{ .gpa = gpa, .path = owned_path, .text = text, .is_preview = placement == .here };
+    if (placement == .here) if (app.panes.findMdGlance()) |id| {
+        const slot = app.panes.get(id).?;
+        slot.deinit(gpa, app.io);
+        slot.* = .{ .md_preview = fresh };
+        app.showPane(id);
+        app.needs_render = true;
+        return id;
+    };
+    const id = try app.panes.add(.{ .md_preview = fresh });
     switch (placement) {
         .here => app.showPane(id),
         .beside => {
@@ -116,6 +132,7 @@ pub fn open(app: *App, path: []const u8, placement: Placement, near: ?PaneId) Al
             const anchor = near orelse app.active;
             const split_ok = if (anchor) |a| (try layout.split(a, .horizontal, id)) != null else false;
             if (!split_ok) app.showPane(id);
+            app.afterSplitChange();
         },
     }
     app.needs_render = true;
@@ -155,7 +172,9 @@ fn previewCmd(app: *App) CommandError!void {
         .editor => |*e| {
             const path = e.buf.path orelse return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
             if (!isMarkdownPath(path)) return app.diag.fail(app.frame.allocator(), "not a markdown file", .{});
-            _ = try open(app, path, .here, active);
+            // Asked for by name: a permanent tab, in this leaf.
+            const id = try open(app, path, .beside, active);
+            app.showPane(id);
         },
         .outline, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .claude_agents, .spend_report, .grep, .debug, .dap_repl, .request, .websocket, .browser, .script, .mount, .integrations, .marketplace, .ai_apply, .tests, .flaky, .files => return app.diag.fail(app.frame.allocator(), "not a markdown file", .{}),
     }
@@ -362,4 +381,63 @@ test "inline images: the preview reserves md_image_rows per image on a transport
     try command.run(&app, .{ .static = .@"markdown.preview" });
     try app.render();
     try testing.expectEqual(@as(usize, 0), app.image_paints.items.len);
+}
+
+test "preview tabs: a glance at another .md replaces the glanced tab in place; typing makes it an editor (never a preview); markdown.preview is permanent; a request preview is promoted by editing" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "a.md", .data = "# A\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "b.md", .data = "# B\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "c.md", .data = "# C\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "r.http", .data = "GET https://example.test/\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 80, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const a = try std.fs.path.join(testing.allocator, &.{ root, "a.md" });
+    defer testing.allocator.free(a);
+    const b = try std.fs.path.join(testing.allocator, &.{ root, "b.md" });
+    defer testing.allocator.free(b);
+    const c = try std.fs.path.join(testing.allocator, &.{ root, "c.md" });
+    defer testing.allocator.free(c);
+    const r = try std.fs.path.join(testing.allocator, &.{ root, "r.http" });
+    defer testing.allocator.free(r);
+    // A glance, then another: the same tab, now b.md.
+    const first = try app.openPath(a);
+    try testing.expect(app.panes.get(first).?.md_preview.is_preview);
+    const second = try app.openPath(b);
+    try testing.expectEqual(first, second);
+    try testing.expectEqualStrings(b, app.panes.get(second).?.md_preview.path);
+    try testing.expectEqual(@as(usize, 1), app.panes.count());
+    // Glancing back at a.md replaces it again (no tab for a.md survived).
+    _ = try app.openPath(a);
+    try testing.expectEqualStrings(a, app.panes.get(first).?.md_preview.path);
+    // Typing swaps the editor in: an editor, never a preview — the next
+    // glance opens a new preview tab beside it instead of replacing it.
+    try app.handle(.{ .key = Key.char('Z') });
+    const eid = app.active.?;
+    try testing.expect(app.panes.get(eid).?.* == .editor);
+    try testing.expect(app.panes.get(first) == null);
+    const third = try app.openPath(c);
+    try testing.expect(third != eid);
+    try testing.expect(app.panes.get(eid).?.* == .editor);
+    try testing.expectEqual(@as(usize, 2), app.panes.count());
+    // markdown.preview on the editor: a permanent preview a glance does not take.
+    app.showPane(eid);
+    try command.run(&app, .{ .static = .@"markdown.preview" });
+    const explicit = app.active.?;
+    try testing.expect(!app.panes.get(explicit).?.md_preview.is_preview);
+    _ = try app.openPath(b);
+    try testing.expect(app.panes.get(explicit).?.* == .md_preview);
+    try testing.expectEqualStrings(a, app.panes.get(explicit).?.md_preview.path);
+    try testing.expectEqualStrings(b, app.panes.get(third).?.md_preview.path);
+    // A request opened from a glance is a preview until it is edited.
+    const http_app = @import("http.zig");
+    const rid = try http_app.openFile(&app, r, true);
+    try testing.expect(app.panes.get(rid).?.request.is_preview);
+    try testing.expect(!app.panes.get(rid).?.request.edited);
+    try app.handle(.{ .key = Key.char('x') });
+    try testing.expect(app.panes.get(rid).?.request.edited);
 }

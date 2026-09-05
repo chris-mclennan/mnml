@@ -801,6 +801,23 @@ pub const hit_refresh: u32 = 5;
 pub const hit_detail: u32 = 6;
 pub const row_base: u32 = 0x1000;
 
+/// A right-click on a session row: its verbs, titled by the session.
+pub fn openRowMenu(app: *App, p: *AgentsPane, x: u16, y: u16) Allocator.Error!void {
+    const row = p.selected() orelse return;
+    const title = try std.fmt.allocPrint(app.frame.allocator(), "{s} · {s}", .{ row.source.label(), if (row.cwd) |c| std.fs.path.basename(c) else "?" });
+    const items = try app.gpa.dupe(command.MenuItem, &.{
+        .{ .label = "Open transcript", .action = .{ .command = .@"ai.dashboard.open_transcript" } },
+        .{ .label = "Resume in a terminal", .action = .{ .command = .@"ai.dashboard.resume_in_pty" } },
+        .{ .label = "Copy session id", .action = .{ .command = .@"ai.dashboard.yank_session_id" }, .separator_before = true },
+        .{ .label = "Copy working directory", .action = .{ .command = .@"ai.dashboard.yank_cwd" } },
+        .{ .label = "Export as markdown…", .action = .{ .command = .@"ai.dashboard.export_markdown" } },
+        .{ .label = "Kill session…", .action = .{ .command = .@"ai.dashboard.kill" }, .separator_before = true },
+        .{ .label = "Refresh", .action = .{ .command = .@"agents.refresh" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(items);
+    try app.openMenu(title, items, x, y);
+}
+
 pub fn click(app: *App, id: PaneId, p: *AgentsPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     if (hit_id >= row_base) {
@@ -808,6 +825,10 @@ pub fn click(app: *App, id: PaneId, p: *AgentsPane, hit_id: u32, m: Mouse) Alloc
         if (vi >= p.visible.items.len) return;
         const again = p.cursor == vi;
         p.cursor = vi;
+        if (m.button == .right) {
+            app.setActive(id);
+            return openRowMenu(app, p, m.x, m.y);
+        }
         if (m.button == .left and again) runToast(app, openTranscript(app, p));
         return;
     }
@@ -1136,6 +1157,18 @@ test "filters and sort: state / source / workspace / query narrow the visible ro
     try refilter(&app, p);
     // Sorted by state rank: live, idle, ended.
     try t.expectEqualSlices(u32, &.{ 1, 2, 0 }, p.visible.items);
+    // A right-click on a row opens the session menu, titled by the row.
+    try click(&app, id, p, row_base + 1, .{ .kind = .press, .button = .right, .x = 10, .y = 5 });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqual(@as(usize, 1), p.cursor);
+    try t.expectEqual(@as(usize, 7), app.overlay.menu.items.len);
+    try t.expectEqualStrings("Open transcript", app.overlay.menu.items[0].label);
+    try t.expectEqualStrings("Kill session…", app.overlay.menu.items[5].label);
+    try t.expectEqual(command.CommandId.@"ai.dashboard.kill", app.overlay.menu.items[5].action.command);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.focus = .{ .pane = id };
+    p.cursor = 0;
     try app.handle(.{ .key = Key.char('W') });
     try t.expectEqualSlices(u32, &.{ 2, 0 }, p.visible.items);
     try app.handle(.{ .key = Key.char('W') });

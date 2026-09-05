@@ -37,6 +37,7 @@ pub const table = .{
     .@"view.focus_next_split" = &focusNextSplit,
     .@"view.close_split" = &closeSplit,
     .@"view.close_others" = &closeOthers,
+    .@"view.toggle_auto_equalize_splits" = &toggleAutoEqualize,
     .@"view.only" = &only,
     .@"view.equalize_splits" = &equalizeSplits,
     .@"view.focus_pane" = &focusPane,
@@ -241,7 +242,18 @@ pub fn splitWith(app: *App, dir: layout_mod.SplitDir, pane: ?PaneId) CommandErro
     };
     if (pane != null) _ = layout.removePane(id);
     _ = try layout.split(cur, dir, id);
+    app.afterSplitChange();
     app.setActive(id);
+}
+
+/// `view.toggle_auto_equalize_splits`: flip `ui.auto_equalize_splits`,
+/// persist it, and even the splits out at once when it went on.
+fn toggleAutoEqualize(app: *App) CommandError!void {
+    app.cfg.ui.auto_equalize_splits = !app.cfg.ui.auto_equalize_splits;
+    _ = try settings.persist(app, .workspace, &.{ "ui", "auto_equalize_splits" }, app.cfg.ui.auto_equalize_splits);
+    app.afterSplitChange();
+    app.toast("auto-equalize splits: {s}", .{if (app.cfg.ui.auto_equalize_splits) "on" else "off"});
+    app.needs_render = true;
 }
 
 fn splitRight(app: *App) CommandError!void {
@@ -375,6 +387,7 @@ fn closeSplit(app: *App) CommandError!void {
             try app.forceClosePane(tab);
         } else _ = layout.removePane(tab);
     }
+    app.afterSplitChange();
     const first = layout.firstLeaf() orelse return;
     app.setActive(layout.leaf(first).?.active);
 }
@@ -416,6 +429,7 @@ fn closeOthers(app: *App) CommandError!void {
             skipped += 1;
             continue;
         }
+        if (p.pinned()) continue;
         try app.forceClosePane(id);
     }
     if (skipped > 0) app.toast("kept {d} buffer(s) with unsaved changes", .{skipped});
@@ -1308,4 +1322,36 @@ test "project.todos opens the TODOS panel — the palette's name for view.activi
     try command.run(&app, .{ .static = .@"project.todos" });
     try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
     try t.expect(app.lastToast() == null or std.mem.indexOf(u8, app.lastToast().?, "not implemented") == null);
+}
+
+test "ui.auto_equalize_splits: a split or a close evens the ratios; off leaves them; the toggle persists and evens at once" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = buf[0..n], .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const layout = app.layouts.current();
+    // Skew the one split, then split again: off keeps the skew.
+    const split_id = layout.parentOf(layout.leafOf(app.active.?).?).?;
+    layout.setRatio(split_id, 20);
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    try std.testing.expectEqual(@as(u16, 20), layout.node(split_id).split.ratio);
+    // The toggle: on, persisted to the workspace config, and even at once.
+    try command.run(&app, .{ .static = .@"view.toggle_auto_equalize_splits" });
+    try std.testing.expect(app.cfg.ui.auto_equalize_splits);
+    try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
+    const text = try tmp.dir.readFileAlloc(std.testing.io, ".mnml/config.zon", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, ".auto_equalize_splits = true") != null);
+    // On: a skew is undone by the next split, and by a close.
+    layout.setRatio(split_id, 30);
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
+    layout.setRatio(split_id, 30);
+    try command.run(&app, .{ .static = .@"view.close_split" });
+    try std.testing.expectEqual(@as(u16, 50), layout.node(split_id).split.ratio);
 }

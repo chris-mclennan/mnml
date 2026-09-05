@@ -26,6 +26,7 @@ const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const app_mod = @import("app.zig");
 const App = app_mod.App;
+const auto_refresh = @import("app/auto_refresh.zig");
 const Key = app_mod.Key;
 const key_mod = @import("core/key.zig");
 const Mouse = key_mod.Mouse;
@@ -200,7 +201,7 @@ pub fn onPathTouched(app: *App, args: hooks.HookArgs) void {
         .save_post => |s| s.path,
         else => return,
     };
-    if (!app.findings.scanned_once) return;
+    if (!app.findings.scanned_once or !auto_refresh.on(app, .findings)) return;
     if (!isUnderDir(path)) return;
     refresh(app) catch {};
 }
@@ -208,7 +209,7 @@ pub fn onPathTouched(app: *App, args: hooks.HookArgs) void {
 /// `tree.acceptDelete` removed `rel`; a used panel rescans when it was
 /// a finding.
 pub fn onPathRemoved(app: *App, rel: []const u8) void {
-    if (!app.findings.scanned_once or !isUnderDir(rel)) return;
+    if (!app.findings.scanned_once or !isUnderDir(rel) or !auto_refresh.on(app, .findings)) return;
     refresh(app) catch {};
 }
 
@@ -660,7 +661,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
-        .refresh => runToast(app, refresh(app)),
+        .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .findings, m.x, m.y) else runToast(app, refresh(app)),
         .new => runToast(app, newCmd(app)),
         .view => {},
     }

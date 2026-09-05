@@ -490,6 +490,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
                     g.find_current = (g.find_current + total - 1) % total;
                 },
                 .changed => g.find_current = 0,
+                .history_prev, .history_next => {},
                 .cancel => g.setNote("find cancelled (esc)", .{}),
                 .replace_one => g.setNote("replace one: {s} → {s}", .{ g.find.queryText(), g.find.replaceText() }),
                 .replace_all => g.setNote("replace all: {s} → {s}", .{ g.find.queryText(), g.find.replaceText() }),

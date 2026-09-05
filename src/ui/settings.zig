@@ -256,9 +256,14 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
         .section => |name| widest = @max(widest, ui.width(name) + 6),
     };
     const hint = if (ui.ascii) hint_text_ascii else hint_text;
-    const want_w: u16 = @min(max_width, @max(@max(min_width, ui.width(hint) + 4), widest + 12));
+    // ~60 % of the screen wide and ~70 % tall (the family idiom): wider
+    // when the rows need it, up to `max_width`; shorter when the rows
+    // fit — a long list scrolls inside the box instead of filling the
+    // screen.
+    const want_w: u16 = @min(max_width, @max(@max(min_width, ui.width(hint) + 4), @max(widest + 12, area.w * 6 / 10)));
     const w = @min(want_w, area.w -| 2);
-    const want_h: u16 = @intCast(@min(@as(usize, area.h), items.len + 4));
+    const cap_h: u16 = @max(area.h * 7 / 10, @min(area.h, 8));
+    const want_h: u16 = @intCast(@min(@as(usize, cap_h), items.len + 4));
     const full_title = if (subtitle) |sub| ui.fmt("{s} · {s}", .{ title, sub }) else title;
     const box_rect = overlay.place(area, w, want_h, .center);
     const inner = overlay.frame(ui, box_rect, full_title);
@@ -518,6 +523,36 @@ test "choices that overflow the row paint a window around the active one, marked
     const w = choiceWindow(f.ui(), &sorts, 2, 6);
     try testing.expectEqual(@as(usize, 2), w.lo);
     try testing.expectEqual(@as(usize, 3), w.hi);
+}
+
+test "the box is ~60 % of the screen wide and caps at ~70 % tall; a long list scrolls inside it" {
+    var f = try Fixture.init(120, 40);
+    defer f.deinit();
+    var s: State = .{};
+    var items: [60]Item = undefined;
+    items[0] = .{ .section = "UI" };
+    for (1..60) |i| items[i] = .{ .row = .{ .label = "Row", .options = &bool_opts, .current = 0, .id = @intCast(i) } };
+    draw(f.ui(), f.full(), &s, &items, null);
+    const text = try f.text();
+    // 70 % of 40 rows = 28: the frame's corners sit 28 rows apart, centered.
+    var top: ?usize = null;
+    var bottom: ?usize = null;
+    var dashes: usize = 0;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var y: usize = 0;
+    while (it.next()) |line| : (y += 1) {
+        if (std.mem.indexOf(u8, line, "╭") != null and top == null) top = y;
+        if (std.mem.indexOf(u8, line, "╰") != null) {
+            bottom = y;
+            dashes = std.mem.count(u8, line, "─");
+        }
+    }
+    try testing.expectEqual(@as(usize, 6), top.?);
+    try testing.expectEqual(@as(usize, 33), bottom.?);
+    // 60 % of 120 columns = 72 wide: the bottom border is 70 dashes between its corners.
+    try testing.expectEqual(@as(usize, 70), dashes);
+    // The list scrolls: the last row is not painted, the first is.
+    try testing.expectEqual(@as(usize, 28 - 3), s.rows);
 }
 
 test "a number row paints ‹ [value] › with a hit on each arrow" {

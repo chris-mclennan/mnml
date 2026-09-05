@@ -1,0 +1,16 @@
+# zig-only
+# Settings has an AI section — ghost text, its backend, the Claude and
+# Codex backends, the meter — below Editor; End scrolls the box there.
+write a.txt alpha
+open a.txt
+command view.settings
+expect screen contains "── UI ──"
+expect screen contains "▸ Line numbers:"
+key end
+expect screen contains "── AI ──"
+expect screen contains "Ghost-text backend:"
+expect screen contains "Claude backend:"
+expect screen contains "[unset]"
+expect screen contains "▸ Reset all to defaults"
+key esc
+expect screen lacks "── AI ──"
