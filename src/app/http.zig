@@ -184,8 +184,8 @@ pub const table = .{
     .@"http.regenerate_body" = &regenerateBodyCmd,
     .@"http.copy_as" = &copyAsCmd,
     .@"http.generate_code" = &copyAsCmd,
-    .@"http.toggle_edit_split" = &notInThisBuild,
-    .@"http.toggle_split_orientation" = &notInThisBuild,
+    .@"http.toggle_edit_split" = &toggleEditSplitCmd,
+    .@"http.toggle_split_orientation" = &toggleSplitOrientationCmd,
     .@"http.toggle_collapse_all" = &notInThisBuild,
     .@"http.refresh" = &refreshCmd,
     .@"http.save_response" = &saveResponseCmd,
@@ -1221,7 +1221,19 @@ fn copyAsCmd(app: *App) CommandError!void {
 }
 
 fn notInThisBuild(app: *App) CommandError!void {
-    return app.diag.fail(app.frame.allocator(), "the split edit view is not in this build", .{});
+    return app.diag.fail(app.frame.allocator(), "the HTTP sidebar is not in this build", .{});
+}
+
+fn toggleEditSplitCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    rp.toggleSplit();
+    if (rp.split) app.toast("edit split: {s} | {s}", .{ rp.edit_tab.label(), rp.split_tab.label() }) else app.toast("edit split: off", .{});
+}
+
+fn toggleSplitOrientationCmd(app: *App) CommandError!void {
+    const rp = try requireRequest(app);
+    rp.orientation = rp.orientation.next();
+    app.toast("request / response: {s}", .{rp.orientation.label()});
 }
 
 fn refreshCmd(app: *App) CommandError!void {

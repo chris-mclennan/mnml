@@ -35,6 +35,7 @@ pub const EditTab = view.EditTab;
 pub const ResponseTab = view.ResponseTab;
 pub const Block = view.Block;
 pub const Field = view.Field;
+pub const Orientation = view.Orientation;
 const Buf = std.ArrayListUnmanaged(u8);
 
 /// A send whose body is still arriving: the head has landed, `body`
@@ -144,6 +145,18 @@ pub const RequestPane = struct {
     edited: bool = false,
     /// Opened by browsing (a single click); replaced by the next browse.
     is_preview: bool = false,
+    /// The side-by-side edit view: on, the right half's tab, the left
+    /// half's share in percent, the right half's scroll. Pane state, so
+    /// each request keeps its own arrangement.
+    split: bool = false,
+    split_tab: EditTab = .vars,
+    split_ratio: u8 = 50,
+    split_scroll: usize = 0,
+    /// A press on the split divider; the next drags resize it.
+    dragging_divider: bool = false,
+    /// The edit area at the last draw — what a divider drag measures.
+    edit_area: ?Rect = null,
+    orientation: Orientation = .auto,
 
     pub fn init(gpa: Allocator) Allocator.Error!RequestPane {
         var req = try Request.init(gpa);
@@ -383,12 +396,22 @@ pub const RequestPane = struct {
     }
 
     /// Enter the request block on `tab`; the caret lands in its content.
+    /// In the split, bringing the right half's tab to the left swaps the
+    /// halves so both stay visible.
     pub fn showTab(self: *RequestPane, tab: EditTab) void {
+        if (self.split and tab == self.split_tab and tab != self.edit_tab) self.split_tab = self.edit_tab;
         self.edit_tab = tab;
         self.block = .request;
         self.field = .content;
         self.row_cursor = 0;
         self.edit_scroll = 0;
+    }
+
+    /// `http.toggle_edit_split`: a second half showing another tab.
+    pub fn toggleSplit(self: *RequestPane) void {
+        self.split = !self.split;
+        if (self.split and self.split_tab == self.edit_tab) self.split_tab = if (self.edit_tab == .vars) .body else .vars;
+        self.split_scroll = 0;
     }
 
     /// Enter the Request block on the URL (a `Tab` from the response).
@@ -787,9 +810,51 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
 /// A press on one of the view's hits.
 pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit_rect: ?Rect) Allocator.Error!void {
     app.needs_render = true;
+    // A divider drag: the press armed it, every drag inside the edit
+    // area moves it, the release ends it.
+    if (rp.dragging_divider) {
+        if (m.kind == .release) {
+            rp.dragging_divider = false;
+            return;
+        }
+        if (m.kind == .drag) {
+            if (rp.edit_area) |area| if (area.w > 0) {
+                const ratio: u32 = @as(u32, m.x -| area.x) * 100 / area.w;
+                rp.split_ratio = @intCast(std.math.clamp(ratio, 10, 90));
+            };
+            return;
+        }
+    }
+    if (m.kind != .press) return;
     if (hit_id >= view.hit_tab_base and hit_id < view.hit_tab_base + EditTab.all.len) {
         rp.showTab(EditTab.all[hit_id - view.hit_tab_base]);
         return;
+    }
+    if (hit_id >= view.hit_split_tab_base and hit_id < view.hit_split_tab_base + EditTab.all.len) {
+        const tab = EditTab.all[hit_id - view.hit_split_tab_base];
+        if (tab == rp.edit_tab) rp.edit_tab = rp.split_tab;
+        rp.split_tab = tab;
+        rp.split_scroll = 0;
+        return;
+    }
+    switch (hit_id) {
+        view.hit_split_toggle => {
+            rp.toggleSplit();
+            return;
+        },
+        view.hit_split_divider => {
+            if (m.button == .left) rp.dragging_divider = true;
+            return;
+        },
+        view.hit_split_content => {
+            rp.showTab(rp.split_tab);
+            return;
+        },
+        view.hit_edit_area => {
+            rp.block = .request;
+            return;
+        },
+        else => {},
     }
     if (hit_id >= view.hit_resp_tab_base and hit_id < view.hit_resp_tab_base + ResponseTab.all.len) {
         rp.response_tab = ResponseTab.all[hit_id - view.hit_resp_tab_base];
@@ -957,8 +1022,12 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area: Rect) Allocat
         .body_wrap = rp.body_wrap,
         .focused = focused,
         .source_path = rp.source_path,
+        .split = if (rp.split) .{ .tab = rp.split_tab, .ratio = rp.split_ratio, .scroll = &rp.split_scroll } else null,
+        .orientation = rp.orientation,
     };
     const caret = view.draw(ui, id, area, m);
+    const z = view.zones(area, m);
+    rp.edit_area = if (z.request.h > 2) Rect.init(z.request.x, z.request.y + 2, z.request.w, z.request.h - 2) else null;
     if (app.active == id) {
         app.pane_rows = @max(area.h, 1);
         app.pane_cols = @max(area.w, 1);
@@ -1012,4 +1081,29 @@ test "moveLine keeps the column and stops at the edges" {
     try testing.expectEqual(@as(usize, 2), caret);
     moveLine(text, &caret, false);
     try testing.expectEqual(@as(usize, 2), caret);
+}
+
+test "split: toggling picks a second tab; showing the right tab swaps the halves; the pair survives off and on" {
+    var rp = try RequestPane.init(testing.allocator);
+    defer rp.deinit();
+    var req = try parse.parse(testing.allocator, "curl 'https://{{HOST}}/a' -H 'A: {{T}}'");
+    try rp.load(req);
+    req = undefined;
+    rp.edit_tab = .body;
+    try testing.expect(!rp.split);
+    rp.toggleSplit();
+    try testing.expect(rp.split and rp.split_tab == .vars);
+    // Bringing the right half's tab to the left swaps the halves.
+    rp.showTab(.vars);
+    try testing.expect(rp.edit_tab == .vars and rp.split_tab == .body);
+    // Any other tab on the left leaves the right half alone.
+    rp.showTab(.headers);
+    try testing.expect(rp.edit_tab == .headers and rp.split_tab == .body);
+    rp.toggleSplit();
+    try testing.expect(!rp.split);
+    // Off and on again keeps the pair as long as the halves differ.
+    rp.toggleSplit();
+    try testing.expect(rp.split and rp.split_tab == .body);
+    rp.split_ratio = 30;
+    try testing.expectEqual(@as(u8, 30), rp.split_ratio);
 }
