@@ -7,9 +7,70 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const regex = @import("../regex/regex.zig");
+const Editor = @import("../editor/editor.zig").Editor;
 
 /// The engine's own range type, so `findAll` can fill `matches` directly.
 pub const Range = regex.Range;
+
+/// A vim search offset (`:help search-offset`): `/pat/e+1` lands one
+/// past the match's last char, `/pat/s-2` two before its start,
+/// `/pat/+1` on the line below in column 1. `n` / `N` keep it.
+pub const Offset = struct {
+    kind: Kind = .none,
+    delta: i64 = 0,
+
+    pub const Kind = enum { none, start, end, line };
+
+    /// `e`, `e+2`, `s-1`, `b3`, `+1`, `-`, `` (none); null when `s` is
+    /// not an offset at all.
+    pub fn parse(s: []const u8) ?Offset {
+        if (s.len == 0) return .{};
+        var kind: Kind = .line;
+        var rest = s;
+        switch (s[0]) {
+            'e' => {
+                kind = .end;
+                rest = s[1..];
+            },
+            's', 'b' => {
+                kind = .start;
+                rest = s[1..];
+            },
+            else => {},
+        }
+        if (rest.len == 0) return .{ .kind = kind, .delta = if (kind == .line) 1 else 0 };
+        const sign: i64 = switch (rest[0]) {
+            '+' => 1,
+            '-' => -1,
+            else => 0,
+        };
+        const digits = if (sign != 0) rest[1..] else rest;
+        if (digits.len == 0) return .{ .kind = kind, .delta = sign };
+        const n = std.fmt.parseInt(i64, digits, 10) catch return null;
+        return .{ .kind = kind, .delta = if (sign < 0) -n else n };
+    }
+
+    /// The byte to land on for a match `[start, end)`.
+    pub fn landing(o: Offset, ed: *const Editor, start: usize, end: usize) usize {
+        switch (o.kind) {
+            .none => return start,
+            .start => return stepChars(ed, start, o.delta),
+            .end => return stepChars(ed, if (end > start) ed.prevBoundary(end) else start, o.delta),
+            .line => {
+                const row: i64 = @as(i64, @intCast(ed.lineOfByte(start))) + o.delta;
+                const last: i64 = @intCast(ed.lineCount() - 1);
+                return ed.lineStart(@intCast(std.math.clamp(row, 0, last)));
+            },
+        }
+    }
+
+    fn stepChars(ed: *const Editor, from: usize, delta: i64) usize {
+        var b = from;
+        var n: u64 = @abs(delta);
+        while (n > 0) : (n -= 1) b = if (delta > 0) ed.nextBoundary(b) else ed.prevBoundary(b);
+        return b;
+    }
+};
 
 pub const FindState = struct {
     gpa: Allocator,
@@ -20,6 +81,8 @@ pub const FindState = struct {
     case_sensitive: bool = false,
     /// The last regex query did not compile; `matches` is empty.
     bad_pattern: ?regex.Error = null,
+    /// The vim `/pat/e`-style offset the query carried.
+    offset: Offset = .{},
 
     pub fn init(gpa: Allocator) FindState {
         return .{ .gpa = gpa };
@@ -39,6 +102,7 @@ pub const FindState = struct {
         out.regex = self.regex;
         out.case_sensitive = self.case_sensitive;
         out.bad_pattern = self.bad_pattern;
+        out.offset = self.offset;
         return out;
     }
 
@@ -50,6 +114,7 @@ pub const FindState = struct {
         self.query.clearRetainingCapacity();
         self.matches.clearRetainingCapacity();
         self.current = null;
+        self.offset = .{};
     }
 
     /// Replace the query and recompute every match in `text`. Smart case:
