@@ -16,19 +16,25 @@
 # Homebrew's strip-one-directory extraction and package-linux's `find` keep
 # working. No completions or man page yet; when they exist, stage them here.
 #
-# Usage: scripts/package.sh --version V --release-dir DIR --out DIR [--name mnml]
+# With --macos-app, every *-apple-darwin binary is also wrapped as an
+# app bundle (dist/macos/build-app.sh) and shipped as
+# mnml-<triple>.app.zip — an optional asset, off by default.
+#
+# Usage: scripts/package.sh --version V --release-dir DIR --out DIR [--name mnml] [--macos-app]
 set -eu
 
 name=mnml
 version=
 release_dir=
 out=
+macos_app=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) version=$2; shift 2 ;;
         --release-dir) release_dir=$2; shift 2 ;;
         --out) out=$2; shift 2 ;;
         --name) name=$2; shift 2 ;;
+        --macos-app) macos_app=1; shift ;;
         -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "package.sh: unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -83,6 +89,23 @@ for dir in "$release_dir"/*/; do
     printf '%s *%s\n' "$hash" "$asset" >> "$out/sha256.sum"
     archives="$archives $asset"
     echo "  $asset  $(wc -c < "$out/$asset" | tr -d ' ') bytes  $hash"
+
+    # The optional macOS app bundle beside the archive.
+    case "$triple" in
+        *-apple-darwin)
+            if [ "$macos_app" = 1 ]; then
+                "$repo/dist/macos/build-app.sh" --bin "$dir/$bin" --version "$version" --out "$stage" >/dev/null
+                app_asset="$pkg.app.zip"
+                (cd "$stage" && zip -q -r -X -y "$out/$app_asset" "$name.app")
+                rm -rf "$stage/$name.app"
+                app_hash=$(sha256 "$out/$app_asset")
+                printf '%s  %s\n' "$app_hash" "$app_asset" > "$out/$app_asset.sha256"
+                printf '%s *%s\n' "$app_hash" "$app_asset" >> "$out/sha256.sum"
+                app_assets="${app_assets:-} $app_asset"
+                echo "  $app_asset  $(wc -c < "$out/$app_asset" | tr -d ' ') bytes  $app_hash"
+            fi
+            ;;
+    esac
 done
 [ -n "$archives" ] || { echo "package.sh: nothing under $release_dir" >&2; exit 1; }
 
@@ -112,6 +135,13 @@ case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
         [ $first -eq 1 ] || printf ',\n'
         first=0
         printf '    "%s": {"kind": "executable-zip", "target_triples": ["%s"], "checksum": "%s.sha256", "sha256": "%s"}' "$asset" "$triple" "$asset" "$hash"
+        printf ',\n    "%s.sha256": {"kind": "checksum", "target_triples": ["%s"]}' "$asset" "$triple"
+    done
+    for asset in ${app_assets:-}; do
+        triple=${asset#"$name-"}
+        triple=${triple%.app.zip}
+        hash=$(cut -d' ' -f1 "$out/$asset.sha256")
+        printf ',\n    "%s": {"kind": "macos-app", "target_triples": ["%s"], "checksum": "%s.sha256", "sha256": "%s"}' "$asset" "$triple" "$asset" "$hash"
         printf ',\n    "%s.sha256": {"kind": "checksum", "target_triples": ["%s"]}' "$asset" "$triple"
     done
     printf ',\n    "%s-installer.sh": {"kind": "installer", "target_triples": ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]}' "$name"
