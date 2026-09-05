@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const script_mod = @import("script.zig");
 
 pub const ParseError = error{ NoUrl, UnterminatedQuote, Empty } || Allocator.Error;
 
@@ -39,6 +40,9 @@ pub const Request = struct {
     body: ?[]u8 = null,
     /// `-k` / `--insecure`: the caller may skip certificate checks.
     insecure: bool = false,
+    /// The block's `# @…` directive lines (`src/http/script.zig`),
+    /// newline-joined, kept verbatim so a write-back preserves them.
+    script: ?[]u8 = null,
 
     pub fn init(gpa: Allocator) Allocator.Error!Request {
         return .{ .method = try gpa.dupe(u8, "GET"), .url = try gpa.dupe(u8, "") };
@@ -53,6 +57,7 @@ pub const Request = struct {
         }
         self.headers.deinit(gpa);
         if (self.body) |b| gpa.free(b);
+        if (self.script) |sc| gpa.free(sc);
         self.* = undefined;
     }
 
@@ -64,7 +69,16 @@ pub const Request = struct {
         errdefer out.deinitHeaders(gpa);
         for (self.headers.items) |h| try out.addHeader(gpa, h.name, h.value);
         if (self.body) |b| out.body = try gpa.dupe(u8, b);
+        errdefer if (out.body) |b| gpa.free(b);
+        if (self.script) |sc| out.script = try gpa.dupe(u8, sc);
         return out;
+    }
+
+    /// Replace the directive lines; null clears them.
+    pub fn setScript(self: *Request, gpa: Allocator, text: ?[]const u8) Allocator.Error!void {
+        const copy: ?[]u8 = if (text) |t| try gpa.dupe(u8, t) else null;
+        if (self.script) |old| gpa.free(old);
+        self.script = copy;
     }
 
     fn deinitHeaders(self: *Request, gpa: Allocator) void {
@@ -212,11 +226,19 @@ pub const Request = struct {
 pub fn parse(alloc: Allocator, input: []const u8) ParseError!Request {
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) return error.Empty;
-    if (looksLikeHttpFile(trimmed)) return parseHttp(alloc, trimmed);
-    return parseCurl(alloc, trimmed) catch |err| switch (err) {
+    var req = if (looksLikeHttpFile(trimmed)) try parseHttp(alloc, trimmed) else parseCurl(alloc, trimmed) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => return parseHttp(alloc, trimmed) catch err,
+        else => parseHttp(alloc, trimmed) catch return err,
     };
+    errdefer req.deinit(alloc);
+    // The `# @…` lines ride along whichever shape the block took.
+    if (script_mod.hasDirectives(trimmed)) {
+        var scratch = std.heap.ArenaAllocator.init(alloc);
+        defer scratch.deinit();
+        const lines = try script_mod.directiveLines(scratch.allocator(), trimmed);
+        try req.setScript(alloc, try std.mem.join(scratch.allocator(), "\n", lines));
+    }
+    return req;
 }
 
 pub fn looksLikeHttpFile(text: []const u8) bool {
@@ -733,6 +755,10 @@ pub fn toCurl(gpa: Allocator, req: *const Request) Allocator.Error![]u8 {
     defer scratch.deinit();
     const a = scratch.allocator();
     var out: std.ArrayListUnmanaged(u8) = .empty;
+    if (req.script) |sc| {
+        try out.appendSlice(a, sc);
+        try out.append(a, '\n');
+    }
     try out.appendSlice(a, "curl '");
     try out.appendSlice(a, try escapeSingle(a, req.url));
     try out.append(a, '\'');
@@ -767,6 +793,10 @@ pub fn toHttpBlock(a: Allocator, req: *const Request, name: ?[]const u8) Allocat
             try out.appendSlice(a, n);
             try out.append(a, '\n');
         }
+    }
+    if (req.script) |sc| {
+        try out.appendSlice(a, sc);
+        try out.append(a, '\n');
     }
     try out.appendSlice(a, req.method);
     try out.append(a, ' ');

@@ -27,6 +27,7 @@ const cookies = @import("../http/cookies.zig");
 const jwt = @import("../http/jwt.zig");
 const sse = @import("../http/sse.zig");
 const schema = @import("../http/schema.zig");
+const script_mod = @import("../http/script.zig");
 const import_mod = @import("../http/import.zig");
 const captured = @import("../http/captured.zig");
 const chain_mod = @import("../http/chain.zig");
@@ -118,6 +119,40 @@ pub fn afterResponse(app: *App, id: PaneId, rp: *RequestPane) Allocator.Error!vo
     }
     rp.clearTests();
     try validateSchema(app, rp, false);
+    try runScript(app, rp);
+}
+
+/// The block's `@assert` / `@capture` lines against the Done response:
+/// one Tests row each, a summary toast, captures written into the
+/// active env.
+fn runScript(app: *App, rp: *RequestPane) Allocator.Error!void {
+    const resp = rp.response() orelse return;
+    const text = rp.request.script orelse return;
+    var arena = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const s = try script_mod.parse(a, text);
+    if (s.asserts.len == 0 and s.captures.len == 0) return;
+    var passed: usize = 0;
+    var failed: usize = 0;
+    for (try script_mod.runAsserts(a, s, resp.status, resp.headers, resp.body)) |r| {
+        if (r.ok) {
+            passed += 1;
+            try rp.addTest("✓ {s}", .{r.label});
+        } else {
+            failed += 1;
+            if (r.detail.len > 0) try rp.addTest("✗ {s} — {s}", .{ r.label, r.detail }) else try rp.addTest("✗ {s}", .{r.label});
+        }
+    }
+    for (try script_mod.runCaptures(a, s, resp.status, resp.headers, resp.body)) |c| {
+        if (c.value) |v| {
+            try rp.addTest("↳ {s} = {s}", .{ c.name, std.mem.sliceTo(v, '\n') });
+            try writeEnvVar(app, c.name, v);
+        } else try rp.addTest("✗ capture {s}: nothing at its source", .{c.name});
+    }
+    if (s.asserts.len > 0) {
+        if (failed == 0) app.toast("tests: {d} passed", .{passed}) else try app.toastLevel(.err, "tests: {d} passed, {d} failed", .{ passed, failed });
+    }
 }
 
 /// Run the sidecar validation into `rp.tests`; `announce` toasts.

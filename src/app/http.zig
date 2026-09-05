@@ -26,6 +26,7 @@ const history = @import("../http/history.zig");
 const mock = @import("../http/mock.zig");
 const cookies = @import("../http/cookies.zig");
 const bench_mod = @import("../http/bench.zig");
+const script_mod = @import("../http/script.zig");
 const request_pane = @import("request_pane.zig");
 const view = @import("../ui/request_view.zig");
 const Ui = @import("../ui/context.zig");
@@ -618,9 +619,14 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     const a = arena.allocator();
     var set = try loadEnv(app, a);
     set.process = &app.env;
-    const missing = try env_mod.unresolved(a, rp.request.url, &set);
+    // Pre-request directives land on a copy: the editable fields stay
+    // as written, the wire sees the `@set-*` values.
+    var staged = try rp.request.clone(a);
+    const script = try script_mod.parse(a, rp.request.script orelse "");
+    try script_mod.applyPre(a, &staged, &set, script);
+    const missing = try env_mod.unresolved(a, staged.url, &set);
     if (missing.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing[0], set.name orelse "?" });
-    const expanded = try expandWith(app.gpa, app.io, &rp.request, &set);
+    const expanded = try expandWith(app.gpa, app.io, &staged, &set);
     try rp.setSentLine(expanded.method, expanded.url);
     const cookie = try @import("cmd_http.zig").cookieHeaderFor(app, a, expanded.url);
     const mode: StreamMode = if (app.http.force_stream) .always else .auto;
@@ -1477,4 +1483,77 @@ test "stream: http.cancel stops a stream where it is; a chunked body of any type
     try testing.expect(rp.resp_editor != null);
     // `http.cancel` with nothing in flight says so.
     try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"http.cancel" }));
+}
+
+test "directives: @set-* reach the wire, @assert rows land on the Tests tab, @capture persists into the env" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .status = 200, .headers = &.{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "x-request-id", .value = "req-7" } }, .body = "{\"id\":7,\"name\":\"Ada\"}" });
+    defer server.stop(testing.io);
+    const src = try std.fmt.allocPrint(testing.allocator,
+        \\# @set-var PROBE = yes
+        \\# @set-header X-Probe = {{{{PROBE}}}}
+        \\# @set-cookie session = abc
+        \\# @assert status == 200
+        \\# @assert body.id == 7
+        \\# @assert header.content-type ~ /json/
+        \\# @assert body.name == Grace
+        \\# @capture USER_ID = body.id
+        \\# @capture TRACE = header x-request-id
+        \\GET http://127.0.0.1:{d}/users/7
+        \\
+    , .{server.port});
+    defer testing.allocator.free(src);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "u.http", .data = src });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "u.http" });
+    defer testing.allocator.free(path);
+    const id = try app.openPath(path);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try testing.expect(rp.request.script != null);
+    try testing.expect(std.mem.indexOf(u8, rp.request.script.?, "@capture USER_ID = body.id") != null);
+    // The pane's own fields stay as written: no X-Probe in the Headers tab.
+    try testing.expect(std.mem.indexOf(u8, rp.headers_text.items, "X-Probe") == null);
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .done);
+    const seen = server.lastRequest();
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-probe: yes\r\n") != null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "cookie: session=abc\r\n") != null);
+    // Tests tab: three passes, one failure with the value it saw, two captures.
+    var passes: usize = 0;
+    var fails: usize = 0;
+    for (rp.tests.items) |line| {
+        if (std.mem.startsWith(u8, line, "✓")) passes += 1;
+        if (std.mem.startsWith(u8, line, "✗")) fails += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), passes);
+    try testing.expectEqual(@as(usize, 1), fails);
+    var found_fail = false;
+    var found_capture = false;
+    for (rp.tests.items) |line| {
+        if (std.mem.eql(u8, line, "✗ body.name == Grace — got Ada")) found_fail = true;
+        if (std.mem.eql(u8, line, "↳ TRACE = req-7")) found_capture = true;
+    }
+    try testing.expect(found_fail and found_capture);
+    try testing.expectEqualStrings("tests: 3 passed, 1 failed", app.lastToast().?);
+    // Captures were written into the active env file.
+    const env_text = try tmp.dir.readFileAlloc(testing.io, ".mnml/env/dev.env", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(env_text);
+    try testing.expect(std.mem.indexOf(u8, env_text, "USER_ID=7\n") != null);
+    try testing.expect(std.mem.indexOf(u8, env_text, "TRACE=req-7\n") != null);
+    // A write-back keeps the directive lines above the request line.
+    try rp.url.appendSlice(testing.allocator, "?x=1");
+    try saveToSource(&app);
+    const out = try tmp.dir.readFileAlloc(testing.io, "u.http", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.startsWith(u8, out, "# @set-var PROBE = yes\n"));
+    try testing.expect(std.mem.indexOf(u8, out, "# @capture TRACE = header x-request-id\nGET http://127.0.0.1:") != null);
 }
