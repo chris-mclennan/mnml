@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `:w !cmd` writes a file literally named `!cmd` into the workspace root
 
@@ -20,3 +20,7 @@ Then on disk: `ls /Users/chrismclennan/Projects/mnml-zig-worktrees/hunt` shows `
 **Actual**: the argument is taken as a filename; a stray file is created and left in the repo. Reproduced twice.
 
 **Source pointer**: `src/app/ex.zig` `:w <arg>` — no check for a leading `!`.
+
+## Fix
+
+`ba063a8` on branch `vim-edit` — ex: :w !cmd pipes the buffer to the command. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

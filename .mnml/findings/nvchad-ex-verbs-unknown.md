@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Everyday ex verbs not covered by PARITY's "missing" list are "unknown command"
 
@@ -22,3 +22,7 @@ status: open
 **Expected**: `:t` / `:m` (copy/move lines), `:only`, `:new`/`:vnew`, `:update`, `:saveas`, `:bfirst`/`:blast` are core vim and none is listed as cut or Remaining in `docs/PARITY.md`; `:set number?` should print the value like `:set wrap?` does.
 
 **Actual**: unknown-command toasts. (For contrast, `:g`, `:v`, `:norm`, `:!`, `:r`, `:>`, `:s///c` — all "missing" per PARITY — actually work; the ledger is stale in the other direction.)
+
+## Fix
+
+`2ec7ac3` on branch `vim-edit` — ex: :t :m :new :vnew :update :saveas :bfirst :blast :cq, and :set number?. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # A file ending in `\n` shows a phantom empty line N+1 in the gutter
 
@@ -21,3 +21,7 @@ status: open
 **Expected**: vim shows 9 numbered lines; the trailing newline is the line terminator, not a tenth line.
 
 **Actual**: a numbered empty line 10 is painted that `G` cannot reach. Cosmetic, but it is the first thing a vim user notices when opening any file. Seen in every launch.
+
+## Fix
+
+`71b31e2` on branch `vim-edit` — view: a trailing newline opens no phantom line. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

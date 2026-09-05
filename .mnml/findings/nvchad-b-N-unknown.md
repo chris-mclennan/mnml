@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `:b N` / `:b name` are "unknown command"
 
@@ -20,3 +20,7 @@ status: open
 **Actual**: only `:bn` / `:bp` cycle; the numbered/named form is missing while `:ls` exists and shows numbers. Reproduced twice.
 
 **Source pointer**: `src/app/ex.zig` lines ~115–123 — no `b`/`buffer` verb.
+
+## Fix
+
+`7f87597` on branch `vim-edit` — ex: :b N, :b name and :b# reach a buffer the way :ls numbers them. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

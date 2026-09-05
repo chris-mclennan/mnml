@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `.` does not repeat an operator applied to a visual selection
 
@@ -21,3 +21,7 @@ status: open
 **Expected**: `.` re-applies `d` to the same number of lines from the cursor (Vim `:help visual-repeat`) → `mike november oscar` becomes line 1.
 
 **Actual**: no-op. Reproduced twice. `.` after `cc`, `cw`, `dd` works.
+
+## Fix
+
+`99a4f98` on branch `vim-edit` — vim: . repeats an operator applied to a visual selection. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.

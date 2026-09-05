@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `{count}.` after `cw` corrupts the line (`3.` on `delta echo foxtrot` → `PAPPAPPAPA`)
 
@@ -30,3 +30,7 @@ status: open
 **Actual**: the change is replayed three times but each replay starts from the previous replay's cursor and re-deletes partially, leaving `PAP` + `PAP` + `PAPA` and losing `echo foxtrot`. Reproduced twice from fresh launches. Plain `.` (no count) after `cc` works.
 
 **Source pointer**: `src/editor/buffer.zig` dot-repeat with a count — the count is applied as "repeat N times" with the cursor left one column past the inserted text between iterations.
+
+## Fix
+
+`3ddb205` on branch `vim-edit` — vim: {count}. replaces the recorded change's count. Regression: `tests/e2e-zig/vim_*.test` for this finding, plus unit rows in `src/editor/buffer.zig`.
