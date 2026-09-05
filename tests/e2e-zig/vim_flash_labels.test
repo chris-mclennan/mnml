@@ -1,0 +1,43 @@
+# zig-only
+# Flash-motion labels (src/app/flash.zig): in vim Normal, `s` + two chars
+# labels every `ab` on screen — nearest to the cursor first, from the
+# `fjdksl…` pool — and the cue on the pane's last row says what to press.
+# A label jumps to its match and puts the labels away; Esc puts them away
+# with the cursor where it was; one match jumps at once; none toasts.
+write flash.txt "line one\nxab here\nyy\nzab there\nqq\nlast ab"
+open flash.txt
+command editor.use_vim
+expect screen contains "Ln 1/6"
+
+# Three matches from the cursor at 1:1 — bytes 10, 22, 39 wear f, j, d.
+key s
+type ab
+expect screen contains "xfb here"
+expect screen contains "zjb there"
+expect screen contains "last db"
+expect screen contains "press a label to jump"
+expect screen contains "Esc cancels"
+key j
+expect screen contains "Ln 4/6 Col 2"
+expect screen lacks "press a label to jump"
+expect screen contains "zab there"
+
+# Esc leaves the cursor alone; the cue goes.
+key s
+type ab
+expect screen contains "press a label to jump"
+key esc
+expect screen lacks "press a label to jump"
+expect screen contains "Ln 4/6 Col 2"
+
+# A pair with one match jumps to it without labels.
+key s
+type qq
+expect screen lacks "press a label to jump"
+expect screen contains "Ln 5/6 Col 1"
+
+# No match: a toast, the cursor stays.
+key s
+type zz
+expect screen contains "no match"
+expect screen contains "Ln 5/6 Col 1"

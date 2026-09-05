@@ -124,9 +124,14 @@ There is no third option, and no handler may stash the raw pointer to
 - `InputHandler.handleKey(key, ctx, arena) Allocator.Error!InputResult`:
   the op list, `repeat.inner` and string payloads live in the frame
   arena. Only `Buffer.feedKey` destructures an `InputResult`.
-- Dot-repeat and macro registers are `Buffer` state: ops are
-  `EditOp.dupe(gpa)`d when recorded and `free(gpa)`d when replaced;
-  macros store raw `Key`s and replay through `feedKey`.
+- Dot-repeat is `Buffer` state: ops are `EditOp.dupe(gpa)`d when
+  recorded and `free(gpa)`d when replaced. Macro registers store raw
+  `Key`s on the `Clipboard` (`clip.macros`, reached through the
+  `*Clipboard` `feedKey` takes) and replay through `feedKey`; only the
+  recording in flight is `Buffer` state.
+  // changed: D4 kept macros per buffer; vim's are registers, so `qa`
+  in one file and `@a` in another must work. They persist in
+  `<data root>/macros.zon` (`src/app/macros_store.zig`).
 - Undo snapshots own their text on the gpa, one per entry; the ring frees
   an entry when it evicts it.
 - Behaviour follows Rust mnml even where it differs from vim (cursor

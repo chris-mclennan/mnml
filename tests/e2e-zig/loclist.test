@@ -1,0 +1,26 @@
+# zig-only
+# Location lists are per editor pane: `:lexpr` fills the active editor's
+# list, `:lopen` shows it in the Location pane, and `:lnext` opens the entry
+# — the file at its line, reported as `(i of n) text` — from that pane.
+write a.txt "first line\nhello from line two\nthird line\n"
+open a.txt
+expect screen contains "Ln 1/3"
+
+ex lopen
+expect screen contains "E776: No location list"
+
+ex lexpr a.txt:2:1:hello
+expect screen contains "location list: 1 entry"
+ex lopen
+expect pane Location
+expect screen contains "a.txt:2:1 hello"
+expect screen contains "1 entry"
+
+ex lnext
+expect pane a.txt
+expect screen contains "Ln 2/3"
+expect screen contains "(1 of 1) hello"
+ex lnext
+expect screen contains "E553: No more items"
+ex lclose
+expect screen lacks "location list: enter opens"

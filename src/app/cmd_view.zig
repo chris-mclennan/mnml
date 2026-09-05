@@ -76,6 +76,10 @@ pub const table = .{
     .@"view.maximize_width" = &maximizeWidth,
     .@"view.maximize_height" = &maximizeHeight,
     .@"view.rotate_splits" = &rotateSplits,
+    .@"view.move_split_left" = &moveSplitLeft,
+    .@"view.move_split_right" = &moveSplitRight,
+    .@"view.move_split_up" = &moveSplitUp,
+    .@"view.move_split_down" = &moveSplitDown,
     .@"view.focus_right_panel" = &focusRightPanel,
     .@"view.right_panel_close_tab" = &closeRightPanel,
     .@"view.activity_todos" = &activityTodos,
@@ -1007,6 +1011,31 @@ fn rotateSplits(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+/// `ctrl+w H/J/K/L`: the active pane becomes a full edge of the whole
+/// window (vim moves the window to the far side, not just past its
+/// sibling). It keeps focus.
+fn moveSplit(app: *App, edge: layout_mod.Edge) CommandError!void {
+    const cur = app.active orelse return error.NoActivePane;
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(cur) orelse return error.NoActivePane;
+    if (layout.parentOf(lid) == null) return app.diag.fail(app.frame.allocator(), "only one pane — nothing to move", .{});
+    try layout.moveToEdge(cur, edge);
+    app.needs_render = true;
+}
+
+fn moveSplitLeft(app: *App) CommandError!void {
+    return moveSplit(app, .left);
+}
+fn moveSplitRight(app: *App) CommandError!void {
+    return moveSplit(app, .right);
+}
+fn moveSplitUp(app: *App) CommandError!void {
+    return moveSplit(app, .top);
+}
+fn moveSplitDown(app: *App) CommandError!void {
+    return moveSplit(app, .bottom);
+}
+
 // ─── right panel tabs ────────────────────────────────────────────────────
 
 /// The panels that are in this build, in tab order.
@@ -1098,4 +1127,32 @@ test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right
     try command.run(&app, .{ .static = .@"view.split_new_scratch" });
     try t.expect(app.active.? != before);
     try t.expect(app.layouts.current().leafOf(app.active.?).? != app.layouts.current().leafOf(before).?);
+}
+
+test "view.move_split_*: the active pane becomes the far edge and keeps focus; alone it fails" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const a = try app.openScratch();
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.move_split_left" }));
+    try command.run(&app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try command.run(&app, .{ .static = .@"view.split_down" });
+    const c = app.active.?;
+    // c is the bottom-right quarter; after `H` it is the whole left edge.
+    try command.run(&app, .{ .static = .@"view.move_split_left" });
+    try t.expectEqual(c, app.active.?);
+    try t.expect(app.focus == .pane);
+    const layout = app.layouts.current();
+    const leaves = try layout.leaves(app.frame.allocator());
+    try t.expectEqual(@as(usize, 3), leaves.len);
+    try t.expectEqual(c, layout.leaf(leaves[0]).?.active);
+    try command.run(&app, .{ .static = .@"view.focus_right" });
+    try t.expectEqual(a, app.active.?);
+    // `J` from a: full width along the bottom; b is now straight above c.
+    try command.run(&app, .{ .static = .@"view.move_split_down" });
+    try t.expectEqual(a, app.active.?);
+    try command.run(&app, .{ .static = .@"view.focus_up" });
+    try t.expect(app.active.? == b or app.active.? == c);
+    try command.run(&app, .{ .static = .@"view.focus_down" });
+    try t.expectEqual(a, app.active.?);
 }

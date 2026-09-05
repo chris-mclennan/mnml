@@ -67,8 +67,15 @@ pub const EditorPane = struct {
     /// The file's mtime + size when it was last read or written; the
     /// watcher compares against it every 2 s. Null for a scratch buffer.
     disk: ?DiskStamp = null,
+    /// The location list (vim's per-window quickfix, `src/app/loclist.zig`):
+    /// entries own their text and path on the buffer's gpa. `loc_idx` is
+    /// the entry the last `:lnext` / `:lprev` landed on, null after a fill.
+    loclist: std.ArrayListUnmanaged(ListPane.Entry) = .empty,
+    loc_idx: ?usize = null,
 
     pub fn deinit(self: *EditorPane) void {
+        ListPane.freeEntries(self.buf.gpa, self.loclist.items);
+        self.loclist.deinit(self.buf.gpa);
         self.buf.deinit();
         self.find.deinit();
         self.syntax.deinit();
@@ -78,10 +85,11 @@ pub const EditorPane = struct {
 pub const OutlinePane = outline.OutlinePane;
 pub const MdPreviewPane = md_preview.MdPreviewPane;
 
-/// A read-only list with a cursor: the `:` history (`q:`) and the
-/// quickfix list (`:cexpr`). Enter acts on the row by `kind`.
+/// A read-only list with a cursor: the `:` history (`q:`), the
+/// quickfix list (`:cexpr`) and an editor's location list (`:lopen`).
+/// Enter acts on the row by `kind`.
 pub const ListPane = struct {
-    pub const Kind = enum { cmdline_history, quickfix };
+    pub const Kind = enum { cmdline_history, quickfix, location };
     pub const Entry = struct {
         /// Owned display text.
         text: []u8,
@@ -98,17 +106,24 @@ pub const ListPane = struct {
     scroll: usize = 0,
 
     pub fn deinit(self: *ListPane) void {
-        for (self.entries.items) |e| {
-            self.gpa.free(e.text);
-            if (e.path) |p| self.gpa.free(p);
-        }
+        freeEntries(self.gpa, self.entries.items);
         self.entries.deinit(self.gpa);
+    }
+
+    /// Free what `entries` own (text and path) — for a list held
+    /// outside a pane too (an editor's location list).
+    pub fn freeEntries(gpa: Allocator, entries: []const Entry) void {
+        for (entries) |e| {
+            gpa.free(e.text);
+            if (e.path) |p| gpa.free(p);
+        }
     }
 
     pub fn title(self: *const ListPane) []const u8 {
         return switch (self.kind) {
             .cmdline_history => "cmdline history",
             .quickfix => "Quickfix",
+            .location => "Location",
         };
     }
 };

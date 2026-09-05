@@ -88,7 +88,19 @@ pub const Editor = struct {
     /// Keep each file's undo + redo stacks in `<data root>/undo/` across
     /// launches (`undo_store.zig`).
     persistent_undo: bool = false,
+    // changed: the Rust build always went through arboard — the unnamed
+    // register was the OS clipboard, unconditionally. mnml-zig makes it a
+    // switch: `"+` / `"*` (and the standard profile's Ctrl+C/X/V) reach
+    // the OS through OSC 52 or a clipboard tool; `.internal` never
+    // touches it. `src/core/clipboard_os.zig`.
+    /// `.auto`: OSC 52 on a live terminal, else a tool (pbcopy, wl-copy,
+    /// xclip, xsel, clip.exe), else in-process registers only. `.os`:
+    /// prefer the tool (it can read back), then OSC 52. `.internal`:
+    /// registers only.
+    clipboard: Clipboard = .auto,
 };
+
+pub const Clipboard = enum { auto, os, internal };
 
 // ─── ui ──────────────────────────────────────────────────────────────────
 
@@ -508,6 +520,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u16, 500), c.editor.chord_timeout_ms);
     try std.testing.expectEqual(WheelMovesCursor.auto, c.editor.wheel_moves_cursor);
     try std.testing.expectEqual(ScrollAccel.normal, c.editor.scroll_accel);
+    try std.testing.expectEqual(Clipboard.auto, c.editor.clipboard);
     // ui
     try std.testing.expectEqualStrings("onedark", c.ui.theme);
     try std.testing.expectEqual(@as(u16, 30), c.ui.tree_width);

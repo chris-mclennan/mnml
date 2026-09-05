@@ -1,0 +1,49 @@
+# zig-only
+# `:!cmd` shows the command's output in a scratch pane; `:r file` and
+# `:r !cmd` insert below the cursor's line; `:>` / `:<` shift by the
+# tab width; `:&` repeats the last substitute.
+write doc.txt "b\na\nc"
+write in.txt "from file"
+open doc.txt
+command editor.use_vim
+
+type ":!printf 'hi there'"
+key enter
+expect pane "[scratch]"
+expect screen contains "hi there"
+expect screen contains "done"
+command buffer.close
+
+# A ranged `!` filters the lines through the command.
+expect pane doc.txt
+type ":%!sort"
+key enter
+command file.save
+expect file doc.txt contains "a\nb\nc"
+
+type ":2r in.txt"
+key enter
+command file.save
+expect file doc.txt contains "a\nb\nfrom file\nc"
+type ":r !printf 'shell out'"
+key enter
+command file.save
+expect file doc.txt contains "a\nb\nfrom file\nshell out\nc"
+
+type ":%>"
+key enter
+command file.save
+expect file doc.txt contains "    a\n    b\n    from file"
+type ":1,2<"
+key enter
+command file.save
+expect file doc.txt contains "a\nb\n    from file"
+expect screen contains "2 line(s) <ed 1 time(s)"
+
+# `:&&` repeats the last substitute (flags kept) on the cursor's line.
+type ":%s/l/1/"
+key enter
+type ":4&&"
+key enter
+command file.save
+expect file doc.txt contains "    from fi1e\n    she11 out"

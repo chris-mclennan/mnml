@@ -1,8 +1,11 @@
 //! The `:` line. A range, a verb, its arguments — the vim subset mnml
 //! answers today: files (`:w :q :wq :x :e :bd :bn :bp :A`), text
 //! (`:s :sort :retab :d :<n>`), settings (`:set :ab :una :noh`), and the
-//! read-outs (`:reg :marks`). A verb nobody here knows is tried as a
-//! registered command id (`:tab.close`), then reported.
+//! read-outs (`:reg :marks`). The verbs that reach past one line —
+//! `:g` / `:v`, `:norm`, `:command`, `:!`, `:r`, `:<` / `:>`, `:&` and
+//! `:s///c` — live in `ex_verbs.zig`. A verb nobody here knows is tried
+//! as a user command, then as a registered command id (`:tab.close`),
+//! then reported.
 //!
 //! Errors travel as `CommandError`: the reason goes in `app.diag`, the
 //! caller (`dispatch.runExLine`, the dyn registry) toasts it.
@@ -13,18 +16,22 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const marks_store = @import("marks_store.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
 const editor_mod = @import("../editor/editor.zig");
 const Editor = editor_mod.Editor;
 const input = @import("../input/mod.zig");
 const Config = app_mod.Config;
+const ex_verbs = @import("ex_verbs.zig");
+const loclist = @import("loclist.zig");
 
 /// 0-based inclusive rows.
 pub const Range = struct { first: usize, last: usize };
 
 pub fn run(app: *App, line_in: []const u8) CommandError!void {
-    var line = std.mem.trim(u8, line_in, " \t\r\n");
+    // Trailing blanks stay: `:norm A ` types one. Every verb trims its own args.
+    var line = std.mem.trimStart(u8, std.mem.trimEnd(u8, line_in, "\r\n"), " \t");
     while (line.len > 0 and line[0] == ':') line = std.mem.trimStart(u8, line[1..], " \t");
     if (line.len == 0) return;
     const arena = app.frame.allocator();
@@ -47,12 +54,12 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
 
     // `:s/…/…/` — the verb is one letter followed by a delimiter.
     if (rest[0] == 's' and rest.len > 1 and !std.ascii.isAlphanumeric(rest[1]) and rest[1] != ' ' and rest[1] != '!') {
-        return substitute(app, range, rest[1..], p.saw_percent);
+        return ex_verbs.substituteEntry(app, range, rest[1..], p.saw_percent);
     }
     if (std.mem.startsWith(u8, rest, "substitute") and rest.len > "substitute".len and !std.ascii.isAlphanumeric(rest["substitute".len])) {
-        return substitute(app, range, rest["substitute".len..], p.saw_percent);
+        return ex_verbs.substituteEntry(app, range, rest["substitute".len..], p.saw_percent);
     }
-    if (rest[0] == '&') return app.diag.fail(arena, ":& — no previous substitute", .{});
+    if (rest[0] == '&') return ex_verbs.ampersand(app, range, rest, p.saw_percent);
 
     var i: usize = 0;
     while (i < rest.len and (std.ascii.isAlphanumeric(rest[i]) or rest[i] == '.' or rest[i] == '_')) i += 1;
@@ -68,6 +75,18 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
         i = 1;
     }
     const args = std.mem.trim(u8, rest[i..], " \t");
+
+    // `:!cmd` (`:!!` repeats), or `:[range]!cmd` as a filter.
+    if (verb.len == 0 and bang) return ex_verbs.shell(app, range, rest[i..]);
+    if (eqAny(verb, &.{ "<", ">" })) return ex_verbs.shift(app, range, verb[0] == '>', args);
+    if (eqAny(verb, &.{ "g", "global" })) return ex_verbs.global(app, range, rest[i..], bang);
+    if (eqAny(verb, &.{ "v", "vglobal" })) return ex_verbs.global(app, range, rest[i..], true);
+    if (eqAny(verb, &.{ "norm", "normal" })) return ex_verbs.normal(app, range, std.mem.trimStart(u8, rest[i..], " \t"));
+    if (eqAny(verb, &.{ "com", "command" })) return ex_verbs.defineCommand(app, args, bang);
+    if (eqAny(verb, &.{ "delc", "delcommand" })) return ex_verbs.deleteCommand(app, args);
+    if (eqAny(verb, &.{ "r", "read" })) return ex_verbs.read(app, range, if (bang) try std.mem.concat(arena, u8, &.{ "!", args }) else args);
+    // A bare `:s [flags]` repeats the last substitute.
+    if (eqAny(verb, &.{ "s", "su", "substitute" })) return ex_verbs.ampersand(app, range, args, p.saw_percent);
 
     if (eqAny(verb, &.{ "w", "write" })) return write(app, args, false);
     if (eqAny(verb, &.{ "wa", "wall" })) return saveAll(app);
@@ -121,6 +140,13 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "cp", "cprev", "cprevious", "cN", "cNext" })) return command.run(app, .{ .static = .@"qf.prev" });
     if (eqAny(verb, &.{ "cfir", "cfirst", "cr", "crewind" })) return command.run(app, .{ .static = .@"qf.first" });
     if (eqAny(verb, &.{ "cla", "clast" })) return command.run(app, .{ .static = .@"qf.last" });
+    if (eqAny(verb, &.{ "lex", "lexpr", "lgetexpr" })) return loclist.lexpr(app, args);
+    if (eqAny(verb, &.{ "lop", "lopen", "lw", "lwindow" })) return loclist.open(app);
+    if (eqAny(verb, &.{ "lcl", "lclose" })) return loclist.close(app);
+    if (eqAny(verb, &.{ "lne", "lnext" })) return loclist.go(app, .next);
+    if (eqAny(verb, &.{ "lp", "lprev", "lprevious", "lN", "lNext" })) return loclist.go(app, .prev);
+    if (eqAny(verb, &.{ "lfir", "lfirst", "lr", "lrewind" })) return loclist.go(app, .first);
+    if (eqAny(verb, &.{ "lla", "llast" })) return loclist.go(app, .last);
     if (eqAny(verb, &.{ "theme", "colorscheme", "colo" })) {
         if (args.len == 0) return command.run(app, .{ .static = .@"theme.pick" });
         return @import("cmd_view.zig").useTheme(app, args);
@@ -145,7 +171,8 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "term", "terminal" })) return @import("cmd_term.zig").termEx(app, args);
     if (eqAny(verb, &.{"task"})) return @import("tasks.zig").runNamed(app, args);
 
-    // A registered command by id.
+    // A user `:command`, then a registered command by id.
+    if (try ex_verbs.runUserCommand(app, range, verb, bang, args)) return;
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);
     return app.diag.fail(arena, ":{s} — unknown command", .{verb});
 }
@@ -280,6 +307,7 @@ const Parser = struct {
                     const row = ed.buf.editor.lineOfByte(hi);
                     break :blk if (hi > 0 and hi == ed.buf.editor.lineStart(row) and row > ed.buf.editor.lineOfByte(@min(s[0], s[1]))) row - 1 else row;
                 } else return app.diag.fail(arena, "E20: mark '> not set", .{}),
+                'A'...'Z' => marks_store.rowIn(app, m, ed.buf.path) orelse return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
                 else => if (ed.buf.marks.get(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
             };
         } else if (c == '+' or c == '-') {
@@ -398,7 +426,9 @@ fn alternate(app: *App) CommandError!void {
 // ─── text ───────────────────────────────────────────────────────────────
 
 /// `s/pat/rep/[g][i][I]` over `range` (default: the cursor's line).
-fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) CommandError!void {
+/// `ex_verbs.substituteEntry` is the way in: it remembers the spec for
+/// `:&` and takes the `c` flag.
+pub fn substitute(app: *App, range: ?Range, spec: []const u8, whole: bool) CommandError!void {
     const arena = app.frame.allocator();
     const label: []const u8 = if (whole) ":%s" else ":s";
     const e = try editor(app, label);
@@ -690,13 +720,15 @@ fn registers(app: *App, filter: []const u8) CommandError!void {
     try app.toastPersistent("ex:reg", msg, .info);
 }
 
+/// Local marks first (`'a@row:col`), then global (`'A  path:row:col`).
 fn marks(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":marks");
     var names: std.ArrayListUnmanaged(u8) = .empty;
     var it = e.buf.marks.keyIterator();
     while (it.next()) |k| try names.append(arena, k.*);
-    if (names.items.len == 0) {
+    const globals = try marks_store.letters(app, arena);
+    if (names.items.len == 0 and globals.len == 0) {
         app.toast(":marks — none set", .{});
         return;
     }
@@ -705,6 +737,10 @@ fn marks(app: *App) CommandError!void {
     for (names.items, 0..) |c, i| {
         const pos = e.buf.marks.get(c).?;
         try parts.print(arena, "{s}'{c}@{d}:{d}", .{ if (i > 0) "  " else "", c, pos.row + 1, pos.col + 1 });
+    }
+    for (globals) |c| {
+        const m = app.global_marks.get(c).?;
+        try parts.print(arena, "{s}'{c}  {s}:{d}:{d}", .{ if (parts.items.len > 0) "  " else "", c, app.relPath(m.path), m.row + 1, m.col + 1 });
     }
     app.toast(":marks · {s}", .{parts.items});
 }
@@ -720,7 +756,9 @@ fn delmarks(app: *App, args: []const u8, bang: bool) CommandError!void {
     var n: usize = 0;
     for (std.mem.trim(u8, args, " \t")) |c| {
         if (c == ' ') continue;
-        if (e.buf.marks.remove(c)) n += 1;
+        if (marks_store.isGlobal(c)) {
+            if (marks_store.remove(app, c)) n += 1;
+        } else if (e.buf.marks.remove(c)) n += 1;
     }
     if (args.len == 0) return app.diag.fail(app.frame.allocator(), ":delmarks — usage: `:delmarks <letters>` or `:delmarks!`", .{});
     app.toast(":delmarks — cleared {d} mark(s)", .{n});
@@ -897,6 +935,8 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
         settings.setIndex(&app.cfg, cp, idx);
         if (comptime std.mem.eql(u8, cp, "editor.input_style")) {
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
+        } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
+            app.clipboard.selectMode(app.cfg.editor.clipboard);
         }
         app.needs_render = true;
         app.toast("{s}={s}", .{ cp, opts[idx] });
@@ -1099,6 +1139,25 @@ test "ex: set reaches every discrete config field — dotted, bare, no/!/?/=, al
     try f.ex("set cursor_line=true");
     try testing.expect(f.app.cfg.ui.cursor_line);
     try testing.expectError(error.Failed, f.ex("set editor.scroll_accel=warp"));
+    // `editor.clipboard` is a plain enum field, so the generic path
+    // reaches it: bare name, `=`, `?`.
+    try f.ex("set clipboard=os");
+    try testing.expectEqual(app_mod.Config.Clipboard.os, f.app.cfg.editor.clipboard);
+    try f.ex("set editor.clipboard?");
+    try testing.expectEqualStrings("editor.clipboard=os", f.app.lastToast().?);
+    try f.ex("set clipboard=internal");
+    try testing.expectEqual(app_mod.Config.Clipboard.internal, f.app.cfg.editor.clipboard);
+    // The sink follows the mode at runtime: with a live writer attached,
+    // `.auto` is OSC 52 and `.internal` is nothing.
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    f.app.clipboard.attach(testing.io, &aw.writer, null, f.app.cfg.editor.clipboard);
+    try testing.expect(f.app.clipboard.os == .none);
+    try f.ex("set clipboard=auto");
+    try testing.expect(f.app.clipboard.os == .osc52);
+    try f.ex("set clipboard=internal");
+    try testing.expect(f.app.clipboard.os == .none);
+    try testing.expectError(error.Failed, f.ex("set clipboard=unnamedplus"));
     try testing.expectError(error.Failed, f.ex("set editor.scroll_accel!"));
     try testing.expectError(error.Failed, f.ex("set enabled"));
     try testing.expect(std.mem.indexOf(u8, f.app.diag.msg.?, "more than one section") != null);

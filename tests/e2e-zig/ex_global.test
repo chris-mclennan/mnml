@@ -1,0 +1,30 @@
+# zig-only
+# `:g/pat/cmd` runs `cmd` on every line matching `pat`; `:v` on every
+# line that does not. Line numbers stay right while `:d` removes lines
+# above later matches, and `:g/pat/p` prints the matches to :messages.
+write doc.txt "keep a\ndrop 1\nkeep b\ndrop 2\ndrop 3\nkeep c"
+open doc.txt
+command editor.use_vim
+
+type ":g/drop/d"
+key enter
+command file.save
+expect file doc.txt contains "keep a\nkeep b\nkeep c"
+expect file doc.txt lacks "drop"
+expect screen contains ":g — ran on 3 line(s)"
+
+# :v is the complement: every line NOT matching `b` gets the substitute.
+type ":v/b/s/keep/KEPT/"
+key enter
+command file.save
+expect file doc.txt contains "KEPT a\nkeep b\nKEPT c"
+
+# :g/pat/p reports the count and the first line.
+type ":g/keep/p"
+key enter
+expect screen contains "1 line(s); first: keep b"
+
+# A pattern nobody matches is vim's E486.
+type ":g/zzz/d"
+key enter
+expect screen contains "E486"

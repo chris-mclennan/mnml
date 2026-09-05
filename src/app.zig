@@ -27,6 +27,7 @@ const hooks = @import("core/hooks.zig");
 const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const buffer_mod = @import("editor/buffer.zig");
+const editorconfig = @import("editor/editorconfig.zig");
 const edit_op = @import("editor/edit_op.zig");
 const edit_op_editor = @import("editor/editor.zig");
 const pane_mod = @import("app/pane.zig");
@@ -38,6 +39,7 @@ const md_preview = @import("app/md_preview.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
 const ex = @import("app/ex.zig");
+const ex_verbs = @import("app/ex_verbs.zig");
 const dispatch = @import("app/dispatch.zig");
 const render_mod = @import("app/render.zig");
 const theme_mod = @import("ui/theme.zig");
@@ -58,6 +60,7 @@ const trust_app = @import("app/trust.zig");
 const settings_app = @import("app/settings.zig");
 const first_launch = @import("app/first_launch.zig");
 const scroll_mod = @import("app/scroll.zig");
+const flash_mod = @import("app/flash.zig");
 const Rect = @import("ui/rect.zig");
 const Ui = @import("ui/context.zig");
 const Canvas = @import("ui/canvas.zig");
@@ -89,6 +92,8 @@ const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
 const undo_store = @import("app/undo_store.zig");
+const macros_store = @import("app/macros_store.zig");
+const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
 const startup_picker = @import("app/startup_picker.zig");
@@ -266,6 +271,8 @@ pub const ConfirmPurpose = union(enum) {
     remove_integration: []u8,
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
+    /// `:s///c`: one match's yes / no / all / quit / last (`ex_verbs.zig`).
+    replace_confirm,
 
     pub const DeletePaths = struct { paths: [][]u8, permanent_only: bool };
 
@@ -601,6 +608,8 @@ pub const App = struct {
     cursor_pos: ?editor_view.Cursor = null,
 
     clipboard: Clipboard,
+    /// `mA`…`mZ`: cross-file marks, persisted (`marks_store.zig`).
+    global_marks: marks_store.Map = .empty,
     keymap: keymap.Keymap,
     chord: ChordChain = .{},
     toasts: std.ArrayListUnmanaged(Toast) = .empty,
@@ -618,6 +627,9 @@ pub const App = struct {
     workspace_trusted: bool = false,
     block_insert: ?BlockInsert = null,
     repeat_insert: ?RepeatInsert = null,
+    /// Flash-motion labels while armed (`s<a><b>` on several matches).
+    /// Reach it through `flash.current`, which drops a stale one.
+    flash: ?flash_mod.State = null,
     cmd_complete: ?CmdComplete = null,
     /// The line range a `!` filter prompt applies to.
     filter_rows: ?[2]usize = null,
@@ -625,6 +637,21 @@ pub const App = struct {
     search_case: ?bool = null,
     /// `g;` / `g,` position in the active editor's change list.
     change_nav: ?ChangeNav = null,
+    /// `:command` definitions, name → expansion (both owned); persisted
+    /// at `<data root>/commands.zon` (`ex_verbs.zig`).
+    user_commands: std.StringHashMapUnmanaged([]u8) = .empty,
+    /// `:!!` and `:r !!` repeat it. Owned.
+    last_shell_cmd: ?[]u8 = null,
+    /// The scratch pane `:!` writes its output to, while it is open.
+    shell_pane: ?PaneId = null,
+    /// What `:&` / a bare `:s` repeat.
+    last_substitute: ?ex_verbs.LastSub = null,
+    /// A `:s///c` walking its matches.
+    replace_confirm: ?ex_verbs.ReplaceConfirm = null,
+    /// `:g` → user command → `:norm` → `:`… nesting, bounded by `ex_verbs.max_depth`.
+    ex_depth: u8 = 0,
+    /// A `:g` is running (a nested one is vim's E147).
+    in_global: bool = false,
     now_ms: i64 = 0,
     /// `theme.auto_system`: when the OS appearance is next polled.
     theme_auto_poll_ms: ?i64 = null,
@@ -721,6 +748,7 @@ pub const App = struct {
         try app.hooks.subscribe(.open, .{ .zig = &findings.onPathTouched });
         try app.hooks.subscribe(.save_post, .{ .zig = &findings.onPathTouched });
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
+        try app.hooks.subscribe(.startup, .{ .zig = &ex_verbs.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         try app.hooks.subscribe(.save_post, .{ .zig = &git_app.onSavePost });
         try app.hooks.subscribe(.open, .{ .zig = &git_app.onOpen });
@@ -736,6 +764,10 @@ pub const App = struct {
         try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
         try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
         try app.hooks.subscribe(.save_post, .{ .zig = &undo_store.onSavePost });
+        try app.hooks.subscribe(.startup, .{ .zig = &macros_store.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &macros_store.onExit });
+        try app.hooks.subscribe(.startup, .{ .zig = &marks_store.onStartup });
+        try app.hooks.subscribe(.exit, .{ .zig = &marks_store.onExit });
         // Installed integrations are scanned once the app is up.
         try app.hooks.subscribe(.startup, .{ .zig = &integrations.onStartup });
         app.now_ms = nowMs(io);
@@ -829,6 +861,20 @@ pub const App = struct {
         return .{ .tab_width = self.cfg.editor.tab_width, .text_width = self.cfg.editor.text_width };
     }
 
+    /// The save-time preferences from `cfg.editor`, then what the file's
+    /// `.editorconfig` chain says (`src/editor/editorconfig.zig`) — run
+    /// on every buffer before it joins the store, so the per-file
+    /// overrides land before the first edit. A scratch buffer takes the
+    /// config's defaults only.
+    pub fn applyBufferPrefs(self: *App, buf: *Buffer) Allocator.Error!void {
+        buf.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
+        buf.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
+        const path = buf.path orelse return;
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        buf.applyEditorconfig(try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace));
+    }
+
     /// `[keys.global]` + `[keys.<profile>]` over the profile's defaults.
     fn buildKeymap(gpa: Allocator, style: input.Style, keys: Config.Keys) Allocator.Error!keymap.Keymap {
         var scratch = std.heap.ArenaAllocator.init(gpa);
@@ -888,9 +934,11 @@ pub const App = struct {
             gpa.free(e.value_ptr.*);
         }
         self.abbrevs.deinit(gpa);
+        ex_verbs.deinitState(self);
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
+        if (self.flash) |*f| f.deinit(gpa);
         for (self.recent.items) |r| gpa.free(r);
         self.recent.deinit(gpa);
         for (self.cmd_history.items) |c| gpa.free(c);
@@ -902,6 +950,7 @@ pub const App = struct {
         self.dyn_commands.deinit();
         self.keymap.deinit();
         self.clipboard.deinit();
+        marks_store.deinitMap(gpa, &self.global_marks);
         self.layouts.deinit();
         self.tree.deinit();
         // Script panes unref'd into the state when the pane store went
@@ -1096,6 +1145,7 @@ pub const App = struct {
             else => return err,
         };
         errdefer buf.deinit();
+        try self.applyBufferPrefs(&buf);
         // A file closed earlier reopens where the cursor was.
         var i: usize = self.closed.items.len;
         while (i > 0) {
@@ -1152,6 +1202,7 @@ pub const App = struct {
         var buf = try Buffer.init(gpa, src.buf.editor.bytes(), self.input_style, self.editorConfig());
         errdefer buf.deinit();
         if (src.buf.path) |p| try buf.setPath(p);
+        try self.applyBufferPrefs(&buf);
         try buf.markSaved();
         buf.dirty = src.buf.dirty;
         buf.editor.setCursor(src.buf.editor.cursor);
@@ -1168,6 +1219,7 @@ pub const App = struct {
         const gpa = self.gpa;
         var buf = try Buffer.init(gpa, "", self.input_style, self.editorConfig());
         errdefer buf.deinit();
+        try self.applyBufferPrefs(&buf);
         const id = try self.panes.add(.{ .editor = .{ .buf = buf, .find = FindState.init(gpa), .syntax = syntax.Syntax.init(gpa) } });
         self.showPane(id);
         return id;
@@ -1198,6 +1250,7 @@ pub const App = struct {
         if (self.active != id) {
             if (self.activeBuffer()) |b| b.input.onBlur();
             self.change_nav = null;
+            flash_mod.cancel(self);
         }
         self.active = id;
         // The focused pane is its leaf's shown tab.
@@ -1593,6 +1646,7 @@ pub const App = struct {
 
 test {
     _ = @import("app/trust.zig");
+    _ = @import("app/flash.zig");
     _ = @import("app/settings.zig");
     _ = @import("app/first_launch.zig");
     _ = @import("app/pane.zig");
@@ -1724,6 +1778,10 @@ test {
     _ = @import("app/cmd_harpoon.zig");
     _ = @import("app/stress.zig");
     _ = @import("app/undo_store.zig");
+    _ = @import("app/macros_store.zig");
+    _ = @import("app/marks_store.zig");
+    _ = @import("app/ex_verbs.zig");
+    _ = @import("app/loclist.zig");
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");
     _ = @import("app/cmd_session.zig");
@@ -1852,4 +1910,60 @@ test "persistent toasts survive tick; dismiss removes by id" {
     try std.testing.expectEqualStrings("stays", app.lastToast().?);
     app.dismissToast("ex:reg");
     try std.testing.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
+test "editorconfig reaches an opened buffer; a scratch takes the config's save prefs; the dead config fields are read" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &pbuf);
+    const root = try t.allocator.dupe(u8, pbuf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".editorconfig", .data = "[*.mk]\nindent_style = tab\ntab_width = 8\ntrim_trailing_whitespace = true\ninsert_final_newline = false\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "build.mk", .data = "all:\n\techo   \n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "x  " });
+    var c: Config = .{};
+    c.editor.input_style = .vim;
+    c.editor.tab_width = 2;
+    c.editor.trim_trailing_ws_on_save = true;
+    c.editor.ensure_trailing_newline = true;
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = c, .workspace = root, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const mk = try std.fs.path.join(t.allocator, &.{ root, "build.mk" });
+    defer t.allocator.free(mk);
+    _ = try app.openEditor(mk);
+    const e = app.activeEditor().?;
+    try t.expect(e.buf.editor.use_tabs);
+    try t.expectEqual(@as(usize, 8), e.buf.editor.tab_width);
+    try t.expectEqual(@as(usize, 8), e.buf.input.vim.tab_width);
+    try t.expect(e.buf.trim_trailing_ws_on_save);
+    try t.expect(!e.buf.ensure_trailing_newline);
+    // Through the real key path: Tab in insert mode is a `\t`.
+    const keys = try buffer_mod.parseKeys(t.allocator, "I<tab><esc>");
+    defer t.allocator.free(keys);
+    for (keys) |k| try dispatch.key(&app, k);
+    try t.expectEqualStrings("\tall:\n\techo   \n", e.buf.editor.bytes());
+    try @import("app/cmd_file.zig").saveCurrent(&app);
+    const back = try tmp.dir.readFileAlloc(t.io, "build.mk", t.allocator, .limited(256));
+    defer t.allocator.free(back);
+    try t.expectEqualStrings("\tall:\n\techo\n", back);
+    // notes.txt matches no section: the config's own values — spaces,
+    // width 2, trim on (the config field is honoured now), newline on.
+    const txt = try std.fs.path.join(t.allocator, &.{ root, "notes.txt" });
+    defer t.allocator.free(txt);
+    _ = try app.openEditor(txt);
+    const e2 = app.activeEditor().?;
+    try t.expect(!e2.buf.editor.use_tabs);
+    try t.expectEqual(@as(usize, 2), e2.buf.editor.tab_width);
+    try t.expect(e2.buf.trim_trailing_ws_on_save);
+    try t.expect(e2.buf.ensure_trailing_newline);
+    try @import("app/cmd_file.zig").saveCurrent(&app);
+    const back2 = try tmp.dir.readFileAlloc(t.io, "notes.txt", t.allocator, .limited(256));
+    defer t.allocator.free(back2);
+    try t.expectEqualStrings("x\n", back2);
+    // A scratch buffer: the config's prefs, no file to resolve against.
+    _ = try app.openScratch();
+    try t.expect(app.activeEditor().?.buf.trim_trailing_ws_on_save);
+    try t.expect(app.activeEditor().?.buf.path == null);
 }

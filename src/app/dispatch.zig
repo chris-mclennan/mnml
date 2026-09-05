@@ -26,6 +26,8 @@ const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
+const macros_store = @import("macros_store.zig");
+const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const settings_app = @import("settings.zig");
 const first_launch = @import("first_launch.zig");
@@ -82,6 +84,8 @@ const dap = @import("dap.zig");
 const lsp = @import("lsp.zig");
 const files_pane = @import("files_pane.zig");
 const trash = @import("trash.zig");
+const ex_verbs = @import("ex_verbs.zig");
+const flash = @import("flash.zig");
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
@@ -92,6 +96,10 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         else => return overlayKey(app, k),
     }
     if (app.find_bar != null) return findBarKey(app, k);
+    // Armed flash labels take the next key ahead of everything the
+    // editor could do with it: a label jumps, Esc disarms, anything
+    // else disarms and carries on below.
+    if (app.flash != null and flash.interceptKey(app, k)) return;
     // The completion / hover / peek popups take their keys first: an
     // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
     // accept that edited the text leaves any ghost stale — drop it.
@@ -333,6 +341,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const mark_key: ?u8 = if (k.typed()) |c| (if (c < 128 and std.ascii.isAlphabetic(@intCast(c))) @as(u8, @intCast(c)) else null) else null;
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
+    const was_recording = e.buf.isRecording();
     const wrap_width: ?usize = if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
     cmd_find.seedCtxMatches(e);
     app.attachSeams(e);
@@ -348,6 +357,7 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
         .redraw => {},
         .edited => {
             e.hl_dirty = true;
+            flash.cancel(app);
             snippets.afterEdit(app, pane_id, e);
             ai_app.noteEdit(app);
             if (trigger) try expandAbbreviation(app, e);
@@ -359,8 +369,12 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // the store and moves every pane): `e` is stale from here. Look the
     // pane up again, and stop if it is gone.
     const still = app.panes.editor(pane_id) orelse return true;
-    // Marks toast from here: the buffer handles them silently.
-    if (mark != null and mark_key != null and ev != .unhandled) {
+    // A recording that just stopped is on the clipboard: persist it.
+    if (was_recording and !still.buf.isRecording()) macros_store.afterRecording(app);
+    // Local marks toast from here: the buffer handles them silently.
+    // Global (uppercase) ones toast in `marks_store`, which also knows
+    // whether the set was refused.
+    if (mark != null and mark_key != null and ev != .unhandled and !marks_store.isGlobal(mark_key.?)) {
         const c = mark_key.?;
         switch (mark.?) {
             .set => app.toast("mark '{c} set", .{c}),
@@ -536,6 +550,8 @@ fn closeOverlay(app: *App) void {
     // A confirm that a worker is parked on answers no before it goes.
     ai_app.overlayClosing(app);
     http_app.overlayClosing(app);
+    // Esc on a `:s///c` box keeps what was replaced and stops.
+    if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
     const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
@@ -752,6 +768,7 @@ fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!voi
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
     switch (purpose) {
         .trust_workspace => try @import("trust.zig").answer(app, choice),
+        .replace_confirm => try ex_verbs.answerConfirm(app, choice),
         .close_pane => |id| switch (choice) {
             0 => {
                 const e = app.panes.editor(id) orelse return;
@@ -863,6 +880,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         if (app.drag != null) return continueDrag(app, m);
     }
     if (m.kind == .motion) return;
+    // A press anywhere puts flash's labels away.
+    if (m.kind == .press) flash.cancel(app);
     const target = app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;
@@ -992,6 +1011,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .middle => {
                     ed.anchor = null;
                     ed.setCursor(byte);
+                    // X11's middle click pastes the primary selection: `"*`.
+                    // Falls back to the unnamed register where the sink cannot read.
+                    app.clipboard.setPendingRegister('*');
                     const text = app.clipboard.text();
                     if (text.len > 0) {
                         const copy = try app.frame.allocator().dupe(u8, text);
@@ -1618,7 +1640,7 @@ fn hitRect(app: *App, x: u16, y: u16) ?Rect {
 }
 
 /// Enter on a list pane row: the cmdline history re-runs the line, the
-/// quickfix opens the file at its row.
+/// quickfix and location lists open the file at the row.
 pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Error!void {
     if (l.cursor >= l.entries.items.len) return;
     const e = l.entries.items[l.cursor];
@@ -1628,7 +1650,10 @@ pub fn listPaneEnter(app: *App, pane: PaneId, l: *app_mod.ListPane) Allocator.Er
             try app.forceClosePane(pane);
             try runExLine(app, line);
         },
-        .quickfix => {
+        .quickfix, .location => {
+            // changed: the location list shares the quickfix row action; the
+            // owning editor's index follows the row so `:lnext` continues from it.
+            if (l.kind == .location) @import("loclist.zig").noteEnter(app, l.cursor);
             const rel = try app.frame.allocator().dupe(u8, e.path orelse return);
             const abs = try app.absPath(rel);
             const line = e.line;
@@ -1655,8 +1680,12 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        // Uppercase marks reach here; the buffer answered lowercase ones.
+        .set_mark => |c| if (marks_store.isGlobal(c)) try marks_store.set(app, e, c),
+        .jump_to_mark_line => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, false),
+        .jump_to_mark_exact => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, true),
         // Buffer-local; the buffer answered them before we got here.
-        .dot_repeat, .set_mark, .jump_to_mark_line, .jump_to_mark_exact, .macro_record_into, .macro_replay_from => {},
+        .dot_repeat, .macro_record_into, .macro_replay_from => {},
         .block_insert_start => |b| try beginBlockInsert(app, pane_id, e, b.append, false),
         .block_change_start => try beginBlockInsert(app, pane_id, e, false, true),
         .block_replace_with => |r| try blockReplace(app, e, r.ch),
@@ -1675,7 +1704,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .cmdline_popup_move => |d| try cmdlineCycle(app, e, d),
         .cmdline_insert_cursor_word => |big| try cmdlineInsertWord(app, e, big),
         .cmdline_paste_from_clipboard => try cmdlineInsert(app, e, app.clipboard.text()),
-        .flash_start => |f| flashJump(e, f.a, f.b),
+        .flash_start => |f| try flash.start(app, pane_id, e, f.a, f.b),
     }
 }
 
@@ -1933,7 +1962,7 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
 
 // ── the `:` line ──
 
-const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast" };
+const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast", "global", "vglobal", "normal", "command", "delcommand", "read" };
 const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "vs", "vsplit", "tabe", "tabedit", "r", "read", "cd", "saveas" };
 
 /// Tab on the `:` line. First press builds the candidates for the text
@@ -2012,6 +2041,8 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
             }
         }
         for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 150 });
+        // User `:command`s outrank the registry: they are the user's own words.
+        for (try ex_verbs.sortedNames(app, app.frame.allocator(), line)) |n| try scored.append(gpa, .{ .name = n, .score = 400 });
         std.mem.sort(Scored, scored.items, {}, struct {
             fn lt(_: void, a: Scored, b: Scored) bool {
                 if (a.score != b.score) return a.score > b.score;
@@ -2062,21 +2093,6 @@ pub fn cmdlineInsert(app: *App, e: *EditorPane, text: []const u8) Allocator.Erro
     const joined = try std.mem.concat(app.frame.allocator(), u8, &.{ line[0..caret], clean.items, line[caret..] });
     try e.buf.input.cmdlineSet(joined);
     e.buf.input.setCmdlineCaret(caret + clean.items.len);
-}
-
-// ── flash ──
-
-/// `s<a><b>`: jump to the next `ab` after the cursor (wrapping).
-fn flashJump(e: *EditorPane, a: u21, b: u21) void {
-    var pat: [8]u8 = undefined;
-    const na = std.unicode.utf8Encode(a, pat[0..4]) catch return;
-    const nb = std.unicode.utf8Encode(b, pat[na..]) catch return;
-    const needle = pat[0 .. na + nb];
-    const ed = &e.buf.editor;
-    const text = ed.bytes();
-    const from = @min(ed.cursor + 1, text.len);
-    const hit = std.mem.indexOfPos(u8, text, from, needle) orelse std.mem.indexOf(u8, text, needle) orelse return;
-    ed.setCursor(hit);
 }
 
 test "chord chain: ctrl+k alone is pending with a which-key fallback; expiring opens it" {

@@ -131,6 +131,7 @@ pub const Vim = struct {
     cmdline_cursor: usize = 0,
     tab_width: usize,
     text_width: usize,
+    use_tabs: bool,
     /// Last `f`/`F`/`t`/`T` so `;` and `,` can re-fire it.
     last_find_char: ?struct { ch: u21, forward: bool, before: bool } = null,
     /// `n` / `N` are relative to the last search's direction.
@@ -153,7 +154,18 @@ pub const Vim = struct {
     visual_exact: bool = false,
 
     pub fn init(gpa: Allocator, cfg: input.Config) Vim {
-        return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8) };
+        return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8), .use_tabs = cfg.use_tabs };
+    }
+
+    pub fn configure(self: *Vim, cfg: input.Config) void {
+        self.tab_width = @max(cfg.tab_width, 1);
+        self.text_width = @max(cfg.text_width, 8);
+        self.use_tabs = cfg.use_tabs;
+    }
+
+    /// What Tab types in insert / replace: one `\t` or a tab stop of spaces.
+    fn tabText(self: *const Vim, arena: Allocator) Allocator.Error![]const u8 {
+        return if (self.use_tabs) "\t" else try spaces(arena, self.tab_width);
     }
 
     pub fn deinit(self: *Vim) void {
@@ -302,7 +314,9 @@ pub const Vim = struct {
             } },
             .window => .{ .prefix = "ctrl+w", .items = &.{
                 .{ .key = 's', .label = "split down" },  .{ .key = 'v', .label = "split right" }, .{ .key = 'w', .label = "next split" },
-                .{ .key = 'q', .label = "close split" }, .{ .key = 'o', .label = "only" },
+                .{ .key = 'q', .label = "close split" }, .{ .key = 'o', .label = "only" },        .{ .key = 'H', .label = "move far left" },
+                .{ .key = 'J', .label = "move bottom" }, .{ .key = 'K', .label = "move top" },    .{ .key = 'L', .label = "move far right" },
+                .{ .key = 'r', .label = "rotate" },      .{ .key = '=', .label = "equalize" },    .{ .key = 'n', .label = "new scratch" },
             } },
             else => null,
         };
@@ -639,7 +653,7 @@ pub const Vim = struct {
                     '.' => return runCmd(.@"editor.insert_last_inserted"),
                     else => {},
                 }
-                const valid = (c >= 'a' and c <= 'z') or c == '0' or c == '+' or c == '_' or c == '"';
+                const valid = (c >= 'a' and c <= 'z') or c == '0' or c == '+' or c == '*' or c == '_' or c == '"';
                 if (valid) return ops(arena, &.{ .{ .set_register_hint = c }, .paste });
             }
             return .consumed;
@@ -689,7 +703,7 @@ pub const Vim = struct {
             },
             .char => |c| if (key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .insert_char = c }}),
             .enter => ops(arena, &.{.insert_newline}),
-            .tab => ops(arena, &.{.{ .insert_str = try spaces(arena, self.tab_width) }}),
+            .tab => ops(arena, &.{.{ .insert_str = try self.tabText(arena) }}),
             .backspace => ops(arena, &.{.backspace}),
             .delete => ops(arena, &.{.delete_forward}),
             .left => ops(arena, &.{.move_left}),
@@ -715,7 +729,7 @@ pub const Vim = struct {
             },
             .char => |c| if (key.mods.ctrl or key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .overwrite_char_and_advance = c }}),
             .enter => ops(arena, &.{.insert_newline}),
-            .tab => ops(arena, &.{.{ .insert_str = try spaces(arena, self.tab_width) }}),
+            .tab => ops(arena, &.{.{ .insert_str = try self.tabText(arena) }}),
             .backspace => ops(arena, &.{.replace_undo_one}),
             .delete => ops(arena, &.{.delete_forward}),
             .left => ops(arena, &.{.move_left}),
@@ -966,7 +980,7 @@ pub const Vim = struct {
             .register => {
                 self.prefix = .none;
                 if (ch) |c| {
-                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '_';
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_';
                     if (valid) self.pending_register = c;
                 }
                 return .consumed;
@@ -1008,7 +1022,23 @@ pub const Vim = struct {
                     'j' => runCmd(.@"view.focus_down"),
                     'k' => runCmd(.@"view.focus_up"),
                     'l' => runCmd(.@"view.focus_right"),
-                    else => .consumed, // TODO(vim-slice: splits) the rest of ctrl+w
+                    'H' => runCmd(.@"view.move_split_left"),
+                    'J' => runCmd(.@"view.move_split_down"),
+                    'K' => runCmd(.@"view.move_split_up"),
+                    'L' => runCmd(.@"view.move_split_right"),
+                    '=' => runCmd(.@"view.equalize_splits"),
+                    'r' => runCmd(.@"view.rotate_splits"),
+                    '_' => runCmd(.@"view.maximize_height"),
+                    '|' => runCmd(.@"view.maximize_width"),
+                    '+' => runCmd(.@"view.split_grow_height"),
+                    '-' => runCmd(.@"view.split_shrink_height"),
+                    '>' => runCmd(.@"view.split_grow_width"),
+                    '<' => runCmd(.@"view.split_shrink_width"),
+                    'n' => runCmd(.@"view.split_new_scratch"),
+                    'd' => runCmd(.@"view.split_goto_definition"),
+                    'f' => runCmd(.@"view.split_open_file_under_cursor"),
+                    // TODO(vim-slice: splits) `T` (view.move_to_new_tab) once it has a runner
+                    else => .consumed,
                 };
             },
             .surround_delete => {
@@ -2068,6 +2098,42 @@ test "cmdline: typing, caret edits, history walk, enter emits ex_command" {
     try testing.expectEqualStrings("b", v.exHistory()[1]);
 }
 
+test "ctrl+w H/J/K/L move the split; = r _ | + - > < n d f reach their runners; T is still pending" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    const Case = struct { key: u21, id: CommandId };
+    const cases = [_]Case{
+        .{ .key = 'H', .id = .@"view.move_split_left" },
+        .{ .key = 'J', .id = .@"view.move_split_down" },
+        .{ .key = 'K', .id = .@"view.move_split_up" },
+        .{ .key = 'L', .id = .@"view.move_split_right" },
+        .{ .key = '=', .id = .@"view.equalize_splits" },
+        .{ .key = 'r', .id = .@"view.rotate_splits" },
+        .{ .key = '_', .id = .@"view.maximize_height" },
+        .{ .key = '|', .id = .@"view.maximize_width" },
+        .{ .key = '+', .id = .@"view.split_grow_height" },
+        .{ .key = '-', .id = .@"view.split_shrink_height" },
+        .{ .key = '>', .id = .@"view.split_grow_width" },
+        .{ .key = '<', .id = .@"view.split_shrink_width" },
+        .{ .key = 'n', .id = .@"view.split_new_scratch" },
+        .{ .key = 'd', .id = .@"view.split_goto_definition" },
+        .{ .key = 'f', .id = .@"view.split_open_file_under_cursor" },
+    };
+    for (cases) |c| {
+        try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
+        const r = try v.handleKey(Key.char(c.key), .{}, a);
+        try testing.expect(r == .app);
+        try testing.expectEqual(c.id, r.app.run_command);
+        try testing.expect(!v.isOpPending());
+    }
+    // `T` has no runner yet: the prefix is consumed and nothing runs.
+    try testing.expect((try v.handleKey(Key.ctrl('w'), .{}, a)) == .consumed);
+    try testing.expect((try v.handleKey(Key.char('T'), .{}, a)) == .consumed);
+}
+
 test "pending display shows register, count, operator and prefix" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -2088,4 +2154,26 @@ test "pending display shows register, count, operator and prefix" {
     try testing.expect(v.operatorMenuHint() == null);
     _ = try v.handleKey(Key.char('g'), .{}, a);
     try testing.expectEqualStrings("g", v.operatorMenuHint().?.prefix);
+}
+
+test "\"* and \"+ route the next yank / put through the OS registers" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char('"'), .{}, a);
+    _ = try v.handleKey(Key.char('*'), .{}, a);
+    _ = try v.handleKey(Key.char('y'), .{}, a);
+    const yank = try v.handleKey(Key.char('y'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{ .{ .set_register_hint = '*' }, .{ .yank_lines_count = 1 } }, yank.ops);
+    _ = try v.handleKey(Key.char('"'), .{}, a);
+    _ = try v.handleKey(Key.char('+'), .{}, a);
+    const put = try v.handleKey(Key.char('p'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{ .{ .set_register_hint = '+' }, .paste_after }, put.ops);
+    // An unknown register name is dropped; the op runs unhinted.
+    _ = try v.handleKey(Key.char('"'), .{}, a);
+    _ = try v.handleKey(Key.char('!'), .{}, a);
+    const plain = try v.handleKey(Key.char('p'), .{}, a);
+    try testing.expectEqualSlices(EditOp, &.{.paste_after}, plain.ops);
 }

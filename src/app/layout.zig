@@ -22,6 +22,9 @@ pub const SplitDir = enum {
     vertical,
 };
 
+/// Where `moveToEdge` puts a pane: the far side of the whole tree.
+pub const Edge = enum { left, right, top, bottom };
+
 pub const Leaf = struct {
     active: PaneId,
     /// Insertion order; never empty while the leaf is live.
@@ -228,6 +231,73 @@ pub const Layout = struct {
         const moved = try self.alloc(self.nodes.items[lid]);
         self.nodes.items[lid] = .{ .split = .{ .dir = dir, .ratio = 50, .first = moved, .second = new_leaf } };
         return new_leaf;
+    }
+
+    /// Take the leaf `lid` out of the tree without releasing it: its
+    /// sibling takes the parent split's place (or the root). The leaf
+    /// keeps its id and its tabs; the caller re-hangs it.
+    fn detachLeaf(self: *Layout, lid: NodeId) void {
+        const pid = self.parentOf(lid) orelse return;
+        const s = self.nodes.items[pid].split;
+        const sibling = if (s.first == lid) s.second else s.first;
+        if (self.parentOf(pid)) |gp| {
+            const g = &self.nodes.items[gp].split;
+            if (g.first == pid) g.first = sibling else g.second = sibling;
+        } else self.root = sibling;
+        self.nodes.items[pid] = .free;
+    }
+
+    /// `Ctrl-W H/J/K/L`: `pane` becomes a full-height (left / right) or
+    /// full-width (top / bottom) edge of the whole tree. A pane sharing
+    /// its leaf with other tabs moves out into a leaf of its own; a pane
+    /// alone in its leaf takes the leaf with it. A single-leaf layout is
+    /// a no-op. The moved leaf stays the one holding `pane` (its active
+    /// tab), so the focused pane is still in a leaf afterwards.
+    pub fn moveToEdge(self: *Layout, pane: PaneId, edge: Edge) Allocator.Error!void {
+        const lid = self.leafOf(pane) orelse return;
+        const root = self.root orelse return;
+        if (root == lid) return;
+        const l = self.leaf(lid).?;
+        const alone = l.tabs.items.len == 1;
+        // Every allocation happens before the first mutation, so a
+        // failed one leaves the tree as it was.
+        const moved: NodeId = if (alone) lid else blk: {
+            var nl: Leaf = .{ .active = pane };
+            try nl.tabs.append(self.gpa, pane);
+            errdefer nl.tabs.deinit(self.gpa);
+            break :blk try self.alloc(.{ .leaf = nl });
+        };
+        errdefer if (!alone) self.release(moved);
+        const dir: SplitDir = switch (edge) {
+            .left, .right => .horizontal,
+            .top, .bottom => .vertical,
+        };
+        // The halves are filled in after the detach; until then they
+        // name no node, so `parentOf` cannot mistake this split for
+        // the moved leaf's parent.
+        const none = std.math.maxInt(NodeId);
+        const new_root = try self.alloc(.{ .split = .{ .dir = dir, .ratio = 50, .first = none, .second = none } });
+        if (alone) {
+            self.detachLeaf(lid);
+        } else {
+            const old = self.leaf(lid).?;
+            const idx = std.mem.indexOfScalar(PaneId, old.tabs.items, pane).?;
+            _ = old.tabs.orderedRemove(idx);
+            if (old.active == pane) old.active = old.tabs.items[@min(idx, old.tabs.items.len - 1)];
+        }
+        const rest = self.root.?;
+        const s = &self.nodes.items[new_root].split;
+        switch (edge) {
+            .left, .top => {
+                s.first = moved;
+                s.second = rest;
+            },
+            .right, .bottom => {
+                s.first = rest;
+                s.second = moved;
+            },
+        }
+        self.root = new_root;
     }
 
     /// Set a split's ratio so its divider lands `pos` cells into the
@@ -481,6 +551,112 @@ test "layout: min sizes clamp a dragged ratio, equalize resets, tabs reorder, di
     try std.testing.expectEqual(l0, l.leafOf(0).?);
     try std.testing.expectEqual(l0, (try l.leafAt(a, 0)).?);
     try std.testing.expect((try l.leafAt(a, 1)) == null);
+}
+
+/// The rect `computeRects` gives `pane` over `area`, or null.
+fn rectOf(l: *const Layout, area: Rect, arena: Allocator, pane: PaneId) !?Rect {
+    const rects = try l.computeRects(area, arena);
+    for (rects.panes) |pr| if (pr.pane == pane) return pr.rect;
+    return null;
+}
+
+test "layout: moveToEdge makes the pane a full edge of the whole tree; the other leaves keep their ids" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const area = Rect.init(0, 1, 100, 40);
+    // Three leaves: 0 | (1 / 2) — pane 2 is the bottom-right quarter.
+    _ = try l.showIn(null, 0);
+    _ = try l.split(0, .horizontal, 1);
+    _ = try l.split(1, .vertical, 2);
+    // `split` re-slots the leaf it splits, so read the ids after building.
+    const leaf0 = l.leafOf(0).?;
+    const leaf1 = l.leafOf(1).?;
+    const leaf2 = l.leafOf(2).?;
+    const before = (try rectOf(&l, area, a, 2)).?;
+    try std.testing.expect(before.h < area.h and before.w < area.w);
+    try std.testing.expectEqual(@as(usize, 3), (try l.leaves(a)).len);
+
+    // Left: pane 2 spans the full height at x = 0; nothing else moved.
+    try l.moveToEdge(2, .left);
+    const left = (try rectOf(&l, area, a, 2)).?;
+    try std.testing.expectEqual(@as(u16, 0), left.x);
+    try std.testing.expectEqual(area.h, left.h);
+    try std.testing.expectEqual(leaf2, l.leafOf(2).?);
+    try std.testing.expectEqual(@as(PaneId, 2), l.leaf(leaf2).?.active);
+    try std.testing.expectEqual(leaf0, l.leafOf(0).?);
+    try std.testing.expectEqual(leaf1, l.leafOf(1).?);
+    try std.testing.expectEqual(@as(usize, 3), (try l.leaves(a)).len);
+    try std.testing.expectEqualSlices(NodeId, &.{ leaf2, leaf0, leaf1 }, try l.leaves(a));
+
+    // Right: full height, flush with the right edge.
+    try l.moveToEdge(2, .right);
+    const right = (try rectOf(&l, area, a, 2)).?;
+    try std.testing.expectEqual(area.right(), right.right());
+    try std.testing.expectEqual(area.h, right.h);
+    try std.testing.expectEqualSlices(NodeId, &.{ leaf0, leaf1, leaf2 }, try l.leaves(a));
+
+    // Top: full width along the top row.
+    try l.moveToEdge(2, .top);
+    const top = (try rectOf(&l, area, a, 2)).?;
+    try std.testing.expectEqual(area.y, top.y);
+    try std.testing.expectEqual(area.w, top.w);
+    try std.testing.expectEqualSlices(NodeId, &.{ leaf2, leaf0, leaf1 }, try l.leaves(a));
+
+    // Bottom: full width along the bottom row; 0 and 1 still side by side.
+    try l.moveToEdge(2, .bottom);
+    const bottom = (try rectOf(&l, area, a, 2)).?;
+    try std.testing.expectEqual(area.bottom(), bottom.bottom());
+    try std.testing.expectEqual(area.w, bottom.w);
+    const r0 = (try rectOf(&l, area, a, 0)).?;
+    const r1 = (try rectOf(&l, area, a, 1)).?;
+    try std.testing.expectEqual(r0.y, r1.y);
+    try std.testing.expect(r1.x > r0.x);
+    try std.testing.expectEqual(@as(usize, 3), (try l.leaves(a)).len);
+    // Every node not in the tree is a freed slot: no split leaked.
+    var live: usize = 0;
+    for (l.nodes.items) |n| if (n != .free) {
+        live += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 5), live); // 3 leaves + 2 splits
+}
+
+test "layout: moveToEdge on a pane sharing its leaf moves only that tab; a single leaf is a no-op" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const area = Rect.init(0, 1, 100, 40);
+    // One leaf with two tabs: nothing to move against.
+    const only = try l.showIn(null, 0);
+    _ = try l.showIn(only, 1);
+    try l.moveToEdge(1, .left);
+    try std.testing.expectEqual(only, l.root.?);
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 1 }, l.leaf(only).?.tabs.items);
+    // A pane in no leaf is a no-op too.
+    try l.moveToEdge(9, .top);
+    try std.testing.expectEqual(only, l.root.?);
+    // Two leaves; pane 1 shares leaf0 with pane 0 and is its active tab.
+    const leaf7 = (try l.split(0, .horizontal, 7)).?;
+    const leaf0 = l.leafOf(0).?;
+    l.leaf(leaf0).?.active = 1;
+    try l.moveToEdge(1, .right);
+    // Pane 1 left leaf0 (which fell back to pane 0) for a leaf of its own.
+    try std.testing.expectEqualSlices(PaneId, &.{0}, l.leaf(leaf0).?.tabs.items);
+    try std.testing.expectEqual(@as(PaneId, 0), l.leaf(leaf0).?.active);
+    const leaf1 = l.leafOf(1).?;
+    try std.testing.expect(leaf1 != leaf0 and leaf1 != leaf7);
+    try std.testing.expectEqual(@as(PaneId, 1), l.leaf(leaf1).?.active);
+    try std.testing.expectEqualSlices(NodeId, &.{ leaf0, leaf7, leaf1 }, try l.leaves(a));
+    const r1 = (try rectOf(&l, area, a, 1)).?;
+    try std.testing.expectEqual(area.right(), r1.right());
+    try std.testing.expectEqual(area.h, r1.h);
+    try std.testing.expectEqualSlices(PaneId, &.{ 0, 7, 1 }, try l.allPanes(a));
 }
 
 test "drop zones: the middle third is the centre, otherwise the nearest edge" {

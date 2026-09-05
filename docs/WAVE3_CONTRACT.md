@@ -1164,3 +1164,86 @@ that the oldest slot reads `+K more…`.
   `ui.auto_refresh_off` (every panel's chip is a left-click rescan);
   the Rust SESSIONS strip's per-row transcript summary lines, bells
   and ticket detection; the clock is UTC (no `localtime` in std).
+
+## EDITOR / EX tier — `// changed:` notes (2026-09-05, branch `editor-ex`)
+
+The full row-by-row account is `docs/parity-notes/editor-ex.md`; this
+is the contract-level list of what moved.
+
+- `// changed (config):` `Config.Editor.clipboard: Clipboard = .auto`
+  (`.auto | .os | .internal`). Rust routed the unnamed register through
+  arboard unconditionally; here only `"+` / `"*` and the standard
+  profile's Ctrl+C / X / V reach the OS, and a headless / `.test` run
+  never does. `:set clipboard=…` re-selects the sink at runtime.
+- `// changed (core):` `src/core/clipboard_os.zig` — `Sink{ none, osc52,
+  tool }`, `select(mode, live_writer, tool)`, `probe(io, env)` (stats
+  `$PATH` only), `writeOsc52`. The tool pair per platform: pbcopy /
+  pbpaste, wl-copy / wl-paste, xclip, xsel, clip.exe / Get-Clipboard.
+- `// changed (editor):` `Clipboard.attach(io, writer, tool, mode)` /
+  `selectMode`; a `"+` / `"*` write lands in the unnamed register first,
+  then the sink; a read asks the sink and falls back. OS text is
+  linewise on a trailing newline (vim's rule; Rust was charwise).
+  `Clipboard.macros` / `last_macro` / `putMacro` / `macro`: macro
+  registers moved off `Buffer` (D4 said buffer state; that made them
+  per-file). `Buffer` keeps only the recording in flight.
+- `// changed (input):` `input.Config.use_tabs`; `InputHandler.configure`
+  re-reads the scalars after construction. The standard profile's
+  Ctrl+C / X / V emit `set_register_hint = '+'`. Vim's `.window` prong
+  binds `H J K L = r _ | + - > < n d f` (it swallowed everything but
+  `w q c s v o h j k l`). `s<a><b>` arms flash labels through
+  `AppCommand.flash_start` as before; the interception of the label key
+  is `flash.interceptKey` at the top of `dispatch.key`.
+- `// changed (tui):` `src/tui/loop.zig` attaches the session's buffered
+  writer and the probed tool one line after `App.initWith` — OSC 52 goes
+  out between frames through the writer `term.render` already uses.
+- `// changed (ui):` `editor_view.Doc.labels: []const Label{ byte, text }`
+  — one delimited block in the cell loop paints a one-cell label over
+  the glyph at a byte, so the label is exactly the cell the byte
+  occupies under wrap, folds, tabs and wide glyphs. `render.drawFlashCue`
+  paints `ab → press a label to jump · Esc cancels` on the pane's last
+  row in `theme.current_match`. `ListPane.Kind.location` is a third list
+  kind under its own header, the quickfix row layout otherwise.
+- `// changed (app):` `App` state: `flash: ?flash.State`, `global_marks`,
+  `user_commands`, `last_shell_cmd`, `shell_pane`, `last_substitute`,
+  `replace_confirm`, `ex_depth`, `in_global`; `ConfirmPurpose.replace_confirm`.
+  `EditorPane.loclist` / `loc_idx`. Hooks: `ex_verbs.onStartup`
+  (`commands.zon`), `macros_store` and `marks_store` on `startup` /
+  `exit`. `closeOverlay` cancels a `:s///c` in flight. `setActive`
+  cancels flash.
+- `// changed (app):` `src/app/ex_verbs.zig` holds every verb that
+  reaches past one line — `ex.zig` parses the range and verb and hands
+  the rest over in one delimited block of dispatch lines. `:g` keeps
+  line numbers right by remapping line-start bytes through
+  `Editor.edits` after each command (not vim's per-line marks); a
+  wholesale `setText` stops the loop with a toast. `:norm` types through
+  `App.handle` with an Esc after each line and needs `<esc>` notation
+  (the `:` line cannot carry a raw Esc). `:command` persists per data
+  root. `:!` writes to a reused scratch pane; `:[range]!` filters; `:r
+  !cmd` inserts. `:s///c` is the confirm overlay (`y n a q l`, Esc keeps
+  what was done); `:s///n` counts; `:&` / `:&&` / a bare `:s` repeat.
+  Matching is plain substring — `TODO(regex)` marks where the search
+  track's engine plugs in (`scanMatches`, `lineHas`).
+- `// changed (app):` global marks live in `<data root>/marks.zon` (Rust:
+  the per-workspace session file) — `'A` reaches the same place from any
+  workspace; `'A` is also an ex address (E20 in another file).
+  Uppercase `m` / `'` / `` ` `` bubble out of `Buffer.handleApp` as
+  `.app` and land in `dispatch.handleAppCommand`.
+- `// changed (app):` `Layout.moveToEdge(pane, edge)` detaches the
+  pane's leaf (or the pane alone, when it shares a leaf) and re-hangs it
+  as one half of a new root split; `view.move_split_*` are its runners.
+- `// changed (editor):` `src/editor/editorconfig.zig` — the walk, the
+  parser, the spec's glob (`*`, `**`, `?`, classes, nested braces,
+  `{n..m}`, slash-anchoring). `Buffer` gains `trim_trailing_ws_on_save`,
+  `eol`, `indent_unit`, `applyEditorconfig`, `setIndent`; `load`
+  normalises CRLF / CR to LF and remembers, `save` trims (one undo
+  step, cursor kept), fixes the final newline, and writes the
+  remembered / configured EOL. `Editor.use_tabs` drives `line.indent`.
+  `App.applyBufferPrefs` runs on every open / scratch / duplicate: the
+  config's `trim_trailing_ws_on_save` and `ensure_trailing_newline`
+  (both unread before this branch) seed the buffer, then the file's
+  `.editorconfig` overrides. `Buffer.setInputStyle` re-applies the
+  file's indent to the rebuilt handler — `editor.use_vim` used to reset
+  it to the config's.
+- `// changed (tools):` `tools/break-check.sh` with a filter that starts
+  with `:` matches nothing and prints "still passes" — the tool is not
+  in this branch's file list; use a colon-free substring.

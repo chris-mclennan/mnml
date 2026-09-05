@@ -439,6 +439,7 @@ test {
     _ = @import("core/command.zig");
     _ = @import("core/panel.zig");
     _ = @import("core/hooks.zig");
+    _ = @import("core/clipboard_os.zig");
     _ = @import("app.zig");
     _ = @import("ipc/root.zig");
     _ = @import("e2e/root.zig");
@@ -446,6 +447,7 @@ test {
     _ = @import("editor/edit_op.zig");
     _ = @import("editor/clipboard.zig");
     _ = @import("editor/editor.zig");
+    _ = @import("editor/editorconfig.zig");
     _ = @import("editor/undo.zig");
     _ = @import("editor/motion.zig");
     _ = @import("editor/insert.zig");

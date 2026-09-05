@@ -124,6 +124,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.cursor_blink", .label = "Cursor blink", .section = .editor, .scope = .home },
     .{ .path = "editor.wheel_moves_cursor", .label = "Mouse wheel moves cursor", .section = .editor, .scope = .home },
     .{ .path = "editor.scroll_accel", .label = "Scroll acceleration", .section = .editor, .scope = .home },
+    .{ .path = "editor.clipboard", .label = "System clipboard", .section = .editor, .scope = .home },
     // ── Integrations ──
     .{ .path = "ai.inline_suggestions", .label = "AI ghost text", .section = .integrations, .scope = .home },
     .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .integrations, .scope = .home },
@@ -451,6 +452,8 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
     if (comptime std.mem.eql(u8, path, "editor.input_style")) {
         const style = App.styleOf(app.cfg.editor.input_style);
         if (style != app.input_style) try app.setInputStyle(style);
+    } else if (comptime std.mem.eql(u8, path, "editor.clipboard")) {
+        app.clipboard.selectMode(app.cfg.editor.clipboard);
     } else if (comptime isTheme(path)) {
         try app.applyTheme();
     }

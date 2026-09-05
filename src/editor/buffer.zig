@@ -1,14 +1,17 @@
 //! `Buffer` — an `Editor` plus the handler that drives it, the file it
-//! came from, marks, folds, and the two cross-iteration op holders
-//! (dot-repeat and macro registers). `feedKey` is THE seam: the only
-//! place an `InputResult` is destructured.
+//! came from, marks, folds, the dot-repeat holder and the macro
+//! recording in flight. `feedKey` is THE seam: the only place an
+//! `InputResult` is destructured.
 //!
-//! Buffer-local `AppCommand`s (marks, dot-repeat, macros) are handled
-//! here and come back as `.edited` / `.redraw`; everything else bubbles
-//! up as `.app` for the app to run.
+//! Buffer-local `AppCommand`s (lowercase marks, dot-repeat, macros) are
+//! handled here and come back as `.edited` / `.redraw`; everything else
+//! — an uppercase (global) mark included — bubbles up as `.app` for the
+//! app to run. Finished macro registers live on the `Clipboard`
+//! (`clipboard.zig`), so a macro recorded here replays in any buffer.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const editorconfig = @import("editorconfig.zig");
 const Io = std.Io;
 const editor_mod = @import("editor.zig");
 const Editor = editor_mod.Editor;
@@ -22,6 +25,7 @@ pub const BufferEvent = input.BufferEvent;
 pub const AppCommand = input.AppCommand;
 pub const EditCtx = input.EditCtx;
 pub const Key = input.Key;
+pub const KeyCode = input.KeyCode;
 
 pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
 
@@ -65,6 +69,18 @@ pub const Buffer = struct {
     /// take it back — and, like any `replace_range`, leaves the cursor
     /// after the inserted text.
     ensure_trailing_newline: bool = true,
+    /// `[editor] trim_trailing_ws_on_save` / `.editorconfig`
+    /// `trim_trailing_whitespace`: line ends are stripped on save, in
+    /// one undo step, the cursor kept.
+    trim_trailing_ws_on_save: bool = false,
+    /// What a save writes between lines. The text is LF in memory
+    /// whatever the file had (`load` normalises and remembers); a
+    /// `.editorconfig` `end_of_line` overrides what was found.
+    eol: editorconfig.Eol = .lf,
+    /// The indent unit the handler types on Tab — kept here so a handler
+    /// rebuilt by `setInputStyle` gets the file's value back, not the
+    /// config's.
+    indent_unit: usize = 4,
     /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
     /// The find state lives with the app; it seeds these before a key.
     find_next: ?[2]usize = null,
@@ -78,10 +94,8 @@ pub const Buffer = struct {
     dot_collecting: bool = false,
     replaying_dot: bool = false,
 
-    /// Macro registers: raw keys, replayed through `feedKey`.
-    macros: std.AutoHashMapUnmanaged(u8, []Key) = .empty,
+    /// The macro being recorded; the finished keys go to the clipboard.
     recording: ?Recording = null,
-    last_macro: ?u8 = null,
     replay_depth: u8 = 0,
 
     pub const max_replay_depth = 8;
@@ -97,6 +111,7 @@ pub const Buffer = struct {
             .editor = ed,
             .input = InputHandler.init(gpa, style, cfg),
             .saved_text = saved,
+            .indent_unit = @max(cfg.tab_width, 1),
         };
     }
 
@@ -112,9 +127,6 @@ pub const Buffer = struct {
         if (self.dot) |d| freeOps(gpa, d);
         for (self.dot_pending.items) |o| o.free(gpa);
         self.dot_pending.deinit(gpa);
-        var it = self.macros.valueIterator();
-        while (it.next()) |k| gpa.free(k.*);
-        self.macros.deinit(gpa);
         if (self.recording) |*r| r.keys.deinit(gpa);
     }
 
@@ -130,12 +142,50 @@ pub const Buffer = struct {
     /// Read `path` into a new buffer. A missing file is an error — the
     /// app decides whether that means "new file".
     pub fn load(gpa: Allocator, io: Io, path: []const u8, style: input.Style, cfg: input.Config) LoadError!Buffer {
-        const text = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
-        defer gpa.free(text);
+        const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30));
+        defer gpa.free(raw);
+        const eol = detectEol(raw);
+        const text = if (eol == .lf) raw else try normalizeEol(gpa, raw);
+        defer if (eol != .lf) gpa.free(text);
         var buf = try init(gpa, text, style, cfg);
         errdefer buf.deinit();
+        buf.eol = eol;
         try buf.setPath(path);
         return buf;
+    }
+
+    /// The first line break decides: `\r\n`, a lone `\r`, else LF.
+    pub fn detectEol(text: []const u8) editorconfig.Eol {
+        const i = std.mem.indexOfAny(u8, text, "\r\n") orelse return .lf;
+        if (text[i] == '\n') return .lf;
+        return if (i + 1 < text.len and text[i + 1] == '\n') .crlf else .cr;
+    }
+
+    /// Every `\r\n` and lone `\r` becomes `\n`.
+    pub fn normalizeEol(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
+        var out = try std.ArrayList(u8).initCapacity(gpa, text.len);
+        errdefer out.deinit(gpa);
+        var i: usize = 0;
+        while (i < text.len) : (i += 1) {
+            if (text[i] == '\r') {
+                out.appendAssumeCapacity('\n');
+                if (i + 1 < text.len and text[i + 1] == '\n') i += 1;
+            } else out.appendAssumeCapacity(text[i]);
+        }
+        return out.toOwnedSlice(gpa);
+    }
+
+    /// `text` with `\n` written as `eol`.
+    pub fn withEol(gpa: Allocator, text: []const u8, eol: editorconfig.Eol) Allocator.Error![]u8 {
+        if (eol == .lf) return gpa.dupe(u8, text);
+        const sep: []const u8 = if (eol == .crlf) "\r\n" else "\r";
+        const n = std.mem.count(u8, text, "\n");
+        var out = try std.ArrayList(u8).initCapacity(gpa, text.len + n * (sep.len - 1));
+        errdefer out.deinit(gpa);
+        for (text) |c| {
+            if (c == '\n') out.appendSliceAssumeCapacity(sep) else out.appendAssumeCapacity(c);
+        }
+        return out.toOwnedSlice(gpa);
     }
 
     pub fn setPath(self: *Buffer, path: []const u8) Allocator.Error!void {
@@ -155,9 +205,80 @@ pub const Buffer = struct {
 
     pub fn save(self: *Buffer, io: Io) SaveError!void {
         const path = self.path orelse return error.NoPath;
+        if (self.trim_trailing_ws_on_save) try self.trimTrailingWhitespace();
         if (self.ensure_trailing_newline) try self.fixTrailingNewline();
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = self.editor.bytes() });
+        const data = try withEol(self.gpa, self.editor.bytes(), self.eol);
+        defer self.gpa.free(data);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
         try self.markSaved();
+    }
+
+    /// Strip the spaces and tabs before every line end, as one undoable
+    /// edit; the cursor keeps its place (or moves left with the text
+    /// removed before it).
+    fn trimTrailingWhitespace(self: *Buffer) Allocator.Error!void {
+        const text = self.editor.bytes();
+        var out = std.ArrayList(u8).empty;
+        defer out.deinit(self.gpa);
+        var removed_before_cursor: usize = 0;
+        var line_start: usize = 0;
+        var changed = false;
+        while (line_start <= text.len) {
+            const nl = std.mem.indexOfScalarPos(u8, text, line_start, '\n') orelse text.len;
+            var end = nl;
+            while (end > line_start and (text[end - 1] == ' ' or text[end - 1] == '\t')) end -= 1;
+            if (end != nl) {
+                changed = true;
+                if (self.editor.cursor > end) removed_before_cursor += @min(self.editor.cursor, nl) - end;
+            }
+            try out.appendSlice(self.gpa, text[line_start..end]);
+            if (nl == text.len) break;
+            try out.append(self.gpa, '\n');
+            line_start = nl + 1;
+        }
+        if (!changed) return;
+        const cursor = self.editor.cursor - removed_before_cursor;
+        var clip = Clipboard.init(self.gpa);
+        defer clip.deinit();
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        _ = self.editor.apply(.{ .replace_range = .{ .start = 0, .end = text.len, .text = out.items } }, 0, &clip, arena.allocator()) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unsupported => return,
+        };
+        self.editor.anchor = null;
+        self.editor.setCursor(cursor);
+        self.editor.goal_col = null;
+    }
+
+    /// The indent unit and the tab display width, for the editor and
+    /// the handler both.
+    pub fn setIndent(self: *Buffer, tab_display: usize, indent_unit: usize, use_tabs: bool) void {
+        self.editor.tab_width = @max(tab_display, 1);
+        self.editor.use_tabs = use_tabs;
+        self.indent_unit = @max(indent_unit, 1);
+        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = self.textWidth(), .use_tabs = use_tabs });
+    }
+
+    fn textWidth(self: *const Buffer) usize {
+        return switch (self.input) {
+            .vim => |v| v.text_width,
+            .standard => 80,
+        };
+    }
+
+    /// What a `.editorconfig` said about this file, over the config's
+    /// defaults already on the buffer. Unset keys leave things alone.
+    pub fn applyEditorconfig(self: *Buffer, r: editorconfig.Resolved) void {
+        if (r.indent_style != null or r.indentUnit() != null) {
+            const use_tabs = if (r.indent_style) |s| s == .tab else self.editor.use_tabs;
+            const unit = r.indentUnit() orelse self.editor.tab_width;
+            const display = r.tabDisplayWidth() orelse self.editor.tab_width;
+            self.setIndent(display, unit, use_tabs);
+        }
+        if (r.end_of_line) |e| self.eol = e;
+        if (r.trim_trailing_whitespace) |v| self.trim_trailing_ws_on_save = v;
+        if (r.insert_final_newline) |v| self.ensure_trailing_newline = v;
     }
 
     fn fixTrailingNewline(self: *Buffer) Allocator.Error!void {
@@ -189,6 +310,8 @@ pub const Buffer = struct {
         if (self.input.style() == style) return;
         self.input.deinit();
         self.input = InputHandler.init(self.gpa, style, cfg);
+        // The file's indent (a `.editorconfig`) outlives the handler.
+        self.input.configure(.{ .tab_width = self.indent_unit, .text_width = cfg.text_width, .use_tabs = self.editor.use_tabs });
         self.editor.anchor = null;
     }
 
@@ -342,15 +465,13 @@ pub const Buffer = struct {
 
     // ─── macros ───
 
-    fn macroToggle(self: *Buffer, reg: u8) Allocator.Error!BufferEvent {
+    fn macroToggle(self: *Buffer, reg: u8, clip: *Clipboard) Allocator.Error!BufferEvent {
         if (self.recording) |*r| {
             // The `q` that stopped us was recorded too — drop it.
             _ = r.keys.pop();
             const keys = try r.keys.toOwnedSlice(self.gpa);
-            errdefer self.gpa.free(keys);
-            if (self.macros.fetchRemove(r.reg)) |old| self.gpa.free(old.value);
-            try self.macros.put(self.gpa, r.reg, keys);
-            self.last_macro = r.reg;
+            try clip.putMacro(r.reg, keys);
+            clip.last_macro = r.reg;
             self.recording = null;
             return .redraw;
         }
@@ -361,12 +482,12 @@ pub const Buffer = struct {
     }
 
     fn macroReplay(self: *Buffer, reg_in: u8, count: u32, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
-        const reg = if (reg_in == '@') (self.last_macro orelse return .noop) else reg_in;
-        const keys = self.macros.get(reg) orelse return .noop;
+        const reg = if (reg_in == '@') (clip.last_macro orelse return .noop) else reg_in;
+        const keys = clip.macro(reg) orelse return .noop;
         if (self.replay_depth >= max_replay_depth) return .noop;
         self.replay_depth += 1;
         defer self.replay_depth -= 1;
-        self.last_macro = reg;
+        clip.last_macro = reg;
         var edited = false;
         for (0..@max(count, 1)) |_| {
             for (keys) |k| {
@@ -386,11 +507,14 @@ pub const Buffer = struct {
     fn handleApp(self: *Buffer, cmd: AppCommand, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         switch (cmd) {
             .dot_repeat => |n| return self.dotRepeat(n, clip, viewport_rows, arena),
+            // Uppercase marks are the app's (a file + position).
             .set_mark => |c| {
+                if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 try self.marks.put(self.gpa, c, self.editor.rowCol());
                 return .redraw;
             },
             .jump_to_mark_line => |c| {
+                if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.marks.get(c) orelse return .noop;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
@@ -398,11 +522,12 @@ pub const Buffer = struct {
                 return .redraw;
             },
             .jump_to_mark_exact => |c| {
+                if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.marks.get(c) orelse return .noop;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },
-            .macro_record_into => |reg| return self.macroToggle(reg),
+            .macro_record_into => |reg| return self.macroToggle(reg, clip),
             .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, clip, viewport_rows, wrap_width, arena),
             else => return .{ .app = cmd },
         }
@@ -414,7 +539,9 @@ pub const Buffer = struct {
 const testing = std.testing;
 
 /// Parse `<esc>`, `<cr>`, `<c-r>`, `<a-x>`, `<s-down>`… and plain chars
-/// into keys. `<lt>` is a literal `<`.
+/// into keys. `<lt>` is a literal `<`, `<gt>` a `>` (needed only under
+/// modifiers), `<u+XXXX>` a char UTF-8 cannot spell. The inverse is
+/// `formatKeys`; `macros_store.zig` writes registers in this notation.
 pub fn parseKeys(gpa: Allocator, spec: []const u8) ![]Key {
     var out = std.ArrayList(Key).empty;
     errdefer out.deinit(gpa);
@@ -451,26 +578,116 @@ fn parseToken(tok: []const u8) ?Key {
         }
         rest = rest[2..];
     }
-    const names = .{
-        .{ "esc", .esc },    .{ "cr", .enter },  .{ "enter", .enter },  .{ "tab", .tab },        .{ "bs", .backspace },
-        .{ "del", .delete }, .{ "left", .left }, .{ "right", .right },  .{ "up", .up },          .{ "down", .down },
-        .{ "home", .home },  .{ "end", .end },   .{ "pgup", .page_up }, .{ "pgdn", .page_down }, .{ "backtab", .backtab },
-    };
-    inline for (names) |n| {
+    inline for (token_names) |n| {
         if (std.ascii.eqlIgnoreCase(rest, n[0])) {
             // Terminals report shift+tab as backtab.
-            if (n[1] == .tab and mods.shift) return .{ .code = .backtab, .mods = .{} };
+            if (n[1] == .tab and mods.shift) {
+                var m = mods;
+                m.shift = false;
+                return .{ .code = .backtab, .mods = m };
+            }
             return .{ .code = n[1], .mods = mods };
         }
     }
     if (std.ascii.eqlIgnoreCase(rest, "lt")) return .{ .code = .{ .char = '<' }, .mods = mods };
+    if (std.ascii.eqlIgnoreCase(rest, "gt")) return .{ .code = .{ .char = '>' }, .mods = mods };
     if (std.ascii.eqlIgnoreCase(rest, "space")) return .{ .code = .{ .char = ' ' }, .mods = mods };
-    if (rest.len == 1) return .{ .code = .{ .char = rest[0] }, .mods = mods };
+    if (rest.len > 2 and std.ascii.toLower(rest[0]) == 'u' and rest[1] == '+') {
+        const c = std.fmt.parseInt(u21, rest[2..], 16) catch return null;
+        return .{ .code = .{ .char = c }, .mods = mods };
+    }
+    // One char, any script.
+    if (rest.len > 0) {
+        const n = std.unicode.utf8ByteSequenceLength(rest[0]) catch 0;
+        if (n == rest.len) {
+            if (std.unicode.utf8Decode(rest) catch null) |c| return .{ .code = .{ .char = c }, .mods = mods };
+        }
+    }
     if (rest.len >= 2 and std.ascii.toLower(rest[0]) == 'f') {
         const n = std.fmt.parseInt(u8, rest[1..], 10) catch return null;
         return .{ .code = .{ .f = n }, .mods = mods };
     }
     return null;
+}
+
+const token_names = .{
+    .{ "esc", .esc },       .{ "cr", .enter },  .{ "enter", .enter },  .{ "tab", .tab },        .{ "bs", .backspace },
+    .{ "del", .delete },    .{ "left", .left }, .{ "right", .right },  .{ "up", .up },          .{ "down", .down },
+    .{ "home", .home },     .{ "end", .end },   .{ "pgup", .page_up }, .{ "pgdn", .page_down }, .{ "backtab", .backtab },
+    .{ "insert", .insert },
+};
+
+/// The name `parseToken` reads a named key back from.
+fn tokenName(code: KeyCode) []const u8 {
+    return switch (code) {
+        .esc => "esc",
+        .enter => "cr",
+        .tab => "tab",
+        .backtab => "backtab",
+        .backspace => "bs",
+        .delete => "del",
+        .insert => "insert",
+        .left => "left",
+        .right => "right",
+        .up => "up",
+        .down => "down",
+        .home => "home",
+        .end => "end",
+        .page_up => "pgup",
+        .page_down => "pgdn",
+        .char, .f => unreachable,
+    };
+}
+
+/// Write `keys` in the `parseKeys` notation. Plain chars go out
+/// verbatim (`<` as `<lt>`); anything with a modifier, and every named
+/// key, goes out in angle brackets. `parseKeys(formatKeys(k)) == k` for
+/// every key a terminal can deliver — with one fold: shift+tab is
+/// written as `<backtab>`, which is what terminals report anyway.
+pub fn formatKeys(w: *std.Io.Writer, keys: []const Key) std.Io.Writer.Error!void {
+    for (keys) |k| try formatKey(w, k);
+}
+
+pub fn formatKey(w: *std.Io.Writer, key_in: Key) std.Io.Writer.Error!void {
+    var k = key_in;
+    if (k.code == .tab and k.mods.shift) {
+        k.code = .backtab;
+        k.mods.shift = false;
+    }
+    const plain = !k.mods.ctrl and !k.mods.alt and !k.mods.shift and !k.mods.super;
+    if (plain and k.code == .char) {
+        const c = k.code.char;
+        if (c == '<') return w.writeAll("<lt>");
+        var buf: [4]u8 = undefined;
+        if (std.unicode.utf8Encode(c, &buf)) |n| return w.writeAll(buf[0..n]) else |_| return w.print("<u+{x}>", .{c});
+    }
+    try w.writeByte('<');
+    if (k.mods.ctrl) try w.writeAll("c-");
+    if (k.mods.alt) try w.writeAll("a-");
+    if (k.mods.shift) try w.writeAll("s-");
+    if (k.mods.super) try w.writeAll("d-");
+    switch (k.code) {
+        .char => |c| switch (c) {
+            '<' => try w.writeAll("lt"),
+            '>' => try w.writeAll("gt"),
+            ' ' => try w.writeAll("space"),
+            else => {
+                var buf: [4]u8 = undefined;
+                if (std.unicode.utf8Encode(c, &buf)) |n| try w.writeAll(buf[0..n]) else |_| try w.print("u+{x}", .{c});
+            },
+        },
+        .f => |n| try w.print("f{d}", .{n}),
+        else => try w.writeAll(tokenName(k.code)),
+    }
+    try w.writeByte('>');
+}
+
+/// `keys` as spec text on `gpa`.
+pub fn keysToSpec(gpa: Allocator, keys: []const Key) Allocator.Error![]u8 {
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    formatKeys(&out.writer, keys) catch return error.OutOfMemory;
+    return out.toOwnedSlice();
 }
 
 /// A buffer whose text and cursor come from `marked` (`|` = cursor).
@@ -781,6 +998,86 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jVd", "a|b\ncd\ne", "ab\n|e");
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
     try vim("<c-v>jdu", "|ab\ncd", "ab\n|cd"); // one undo step; the snapshot cursor comes back
+}
+
+test "macro registers are shared through the clipboard: `qa` in one buffer, `@a` in another" {
+    const gpa = testing.allocator;
+    var a = try Buffer.init(gpa, "one\ntwo", .vim, .{ .tab_width = 4 });
+    defer a.deinit();
+    var b = try Buffer.init(gpa, "three\nfour", .vim, .{ .tab_width = 4 });
+    defer b.deinit();
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const feed = struct {
+        fn run(buf: *Buffer, c: *Clipboard, ar: Allocator, spec: []const u8) !void {
+            const keys = try parseKeys(testing.allocator, spec);
+            defer testing.allocator.free(keys);
+            for (keys) |k| _ = try buf.feedKey(k, c, 10, null, ar);
+        }
+    }.run;
+    try feed(&a, &clip, arena.allocator(), "qaA!<esc>jq");
+    try testing.expectEqualStrings("one!\ntwo", a.editor.bytes());
+    try testing.expect(!a.isRecording());
+    try testing.expectEqual(@as(usize, 4), clip.macro('a').?.len);
+    try testing.expectEqual(@as(?u8, 'a'), clip.last_macro);
+    // A different buffer, the same clipboard: the register replays.
+    try feed(&b, &clip, arena.allocator(), "@a");
+    try testing.expectEqualStrings("three!\nfour", b.editor.bytes());
+    try feed(&b, &clip, arena.allocator(), "@@");
+    try testing.expectEqualStrings("three!\nfour!", b.editor.bytes());
+    // A fresh clipboard knows nothing.
+    var empty = Clipboard.init(gpa);
+    defer empty.deinit();
+    try feed(&b, &empty, arena.allocator(), "@a");
+    try testing.expectEqualStrings("three!\nfour!", b.editor.bytes());
+}
+
+test "key spec round-trips: every code, every modifier set, chars of every kind" {
+    const gpa = testing.allocator;
+    const key_mod = @import("../core/key.zig");
+    const codes = [_]KeyCode{
+        .{ .char = 'a' },     .{ .char = 'Z' },    .{ .char = '<' }, .{ .char = '>' }, .{ .char = ' ' },
+        .{ .char = '-' },     .{ .char = '\n' },
+        .{ .char = 'é' },
+        .{ .char = '日' },
+        .{ .char = 0x1F600 }, .{ .char = 0xD800 }, .enter,           .tab,             .backtab,
+        .esc,                 .backspace,          .delete,          .insert,          .up,
+        .down,                .left,               .right,           .home,            .end,
+        .page_up,             .page_down,          .{ .f = 1 },      .{ .f = 12 },     .{ .f = 20 },
+    };
+    var keys: std.ArrayList(Key) = .empty;
+    defer keys.deinit(gpa);
+    var bits: u5 = 0;
+    while (bits < 16) : (bits += 1) {
+        const mods: key_mod.Mods = @bitCast(@as(u4, @intCast(bits)));
+        for (codes) |c| try keys.append(gpa, .{ .code = c, .mods = mods });
+    }
+    const spec = try keysToSpec(gpa, keys.items);
+    defer gpa.free(spec);
+    const back = try parseKeys(gpa, spec);
+    defer gpa.free(back);
+    try testing.expectEqual(keys.items.len, back.len);
+    for (keys.items, back) |want_in, got| {
+        // The one fold: shift+tab is backtab.
+        var want = want_in;
+        if (want.code == .tab and want.mods.shift) {
+            want.code = .backtab;
+            want.mods.shift = false;
+        }
+        testing.expect(want.code.eql(got.code) and want.mods.eql(got.mods)) catch |err| {
+            std.debug.print("\n  want {any}\n  got  {any}\n", .{ want, got });
+            return err;
+        };
+    }
+    // The plain spellings a human would write come out unchanged.
+    const human = "ihello<esc>0<c-v>jl<s-down><lt>x<f5><a-cr>";
+    const parsed = try parseKeys(gpa, human);
+    defer gpa.free(parsed);
+    const again = try keysToSpec(gpa, parsed);
+    defer gpa.free(again);
+    try testing.expectEqualStrings(human, again);
 }
 
 /// `feed` / `ops` interleaved: each row is a list of steps.
@@ -1120,4 +1417,80 @@ test "buffer: load and save round-trip through the file system" {
     const back = try Io.Dir.cwd().readFileAlloc(io, file, gpa, .limited(1024));
     defer gpa.free(back);
     try testing.expectEqualStrings("hello!\n", back);
+}
+
+test "editorconfig on a buffer: CRLF files load as LF and save back as CRLF; trim + final newline on save; tabs as the indent" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const path = try std.fs.path.join(gpa, &.{ pbuf[0..n], "win.txt" });
+    defer gpa.free(path);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "win.txt", .data = "one  \r\ntwo\t\r\n  three" });
+    var buf = try Buffer.load(gpa, testing.io, path, .vim, .{ .tab_width = 4 });
+    defer buf.deinit();
+    try testing.expectEqualStrings("one  \ntwo\t\n  three", buf.editor.bytes());
+    try testing.expectEqual(editorconfig.Eol.crlf, buf.eol);
+    try testing.expect(!buf.dirty);
+    // The defaults: nothing trimmed, a final newline added, CRLF kept.
+    try buf.save(testing.io);
+    const first = try tmp.dir.readFileAlloc(testing.io, "win.txt", gpa, .limited(256));
+    defer gpa.free(first);
+    try testing.expectEqualStrings("one  \r\ntwo\t\r\n  three\r\n", first);
+    buf.editor.setCursor(6); // on "two"
+    // A `.editorconfig` says: trim, LF, tabs 8 wide, indent with tabs.
+    buf.applyEditorconfig(.{ .indent_style = .tab, .tab_width = 8, .end_of_line = .lf, .trim_trailing_whitespace = true, .insert_final_newline = false });
+    try testing.expectEqual(@as(usize, 8), buf.editor.tab_width);
+    try testing.expect(buf.editor.use_tabs);
+    try testing.expectEqual(@as(usize, 8), buf.input.vim.tab_width);
+    try testing.expect(buf.input.vim.use_tabs);
+    try buf.save(testing.io);
+    const second = try tmp.dir.readFileAlloc(testing.io, "win.txt", gpa, .limited(256));
+    defer gpa.free(second);
+    try testing.expectEqualStrings("one\ntwo\n  three\n", second); // the earlier save's newline stays
+    // The trim was one undo step; the cursor stayed on "two" (byte 6 → 4).
+    try testing.expectEqual(@as(usize, 4), buf.editor.cursor);
+    try testing.expectEqualStrings("one\ntwo\n  three\n", buf.editor.bytes());
+    var clip = Clipboard.init(gpa);
+    defer clip.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    _ = try buf.editor.apply(.undo, 10, &clip, arena.allocator());
+    try testing.expectEqualStrings("one  \ntwo\t\n  three\n", buf.editor.bytes());
+    _ = try buf.editor.apply(.redo, 10, &clip, arena.allocator());
+    // Tab in insert mode types a `\t`; `>>` pads with one.
+    const keys = try parseKeys(gpa, "ggI<tab><esc>j>>");
+    defer gpa.free(keys);
+    for (keys) |k| _ = try buf.feedKey(k, &clip, 10, null, arena.allocator());
+    try testing.expectEqualStrings("\tone\n\ttwo\n  three\n", buf.editor.bytes());
+    // `indent_size` alone sets the unit; the display width follows it.
+    buf.applyEditorconfig(.{ .indent_style = .space, .indent_size = 2 });
+    try testing.expect(!buf.editor.use_tabs);
+    try testing.expectEqual(@as(usize, 2), buf.editor.tab_width);
+    try testing.expectEqual(@as(usize, 2), buf.input.vim.tab_width);
+    // `indent_size = tab` with a tab_width: the unit is the width.
+    buf.applyEditorconfig(.{ .indent_size_is_tab = true, .tab_width = 3 });
+    try testing.expectEqual(@as(usize, 3), buf.input.vim.tab_width);
+    // An empty resolution changes nothing.
+    buf.applyEditorconfig(.{});
+    try testing.expectEqual(@as(usize, 3), buf.editor.tab_width);
+    try testing.expect(buf.trim_trailing_ws_on_save);
+    // A handler rebuilt for the other style keeps the file's indent.
+    buf.applyEditorconfig(.{ .indent_style = .tab, .indent_size = 6 });
+    buf.setInputStyle(.standard, .{ .tab_width = 4 });
+    try testing.expectEqual(@as(usize, 6), buf.input.standard.tab_width);
+    try testing.expect(buf.input.standard.use_tabs);
+    buf.setInputStyle(.vim, .{ .tab_width = 4 });
+    try testing.expectEqual(@as(usize, 6), buf.input.vim.tab_width);
+    try testing.expect(buf.input.vim.use_tabs);
+    // A lone-CR file is detected too; `withEol` writes it back.
+    try testing.expectEqual(editorconfig.Eol.cr, Buffer.detectEol("a\rb\r"));
+    try testing.expectEqual(editorconfig.Eol.lf, Buffer.detectEol("no breaks"));
+    const cr = try Buffer.withEol(gpa, "a\nb\n", .cr);
+    defer gpa.free(cr);
+    try testing.expectEqualStrings("a\rb\r", cr);
+    const norm = try Buffer.normalizeEol(gpa, "a\r\nb\rc\n");
+    defer gpa.free(norm);
+    try testing.expectEqualStrings("a\nb\nc\n", norm);
 }
