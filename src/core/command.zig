@@ -108,6 +108,8 @@ const runner_tables = .{
     @import("../app/cmd_term.zig"),
     @import("../app/runners.zig"),
     @import("../app/tasks.zig"),
+    @import("../app/http.zig"),
+    @import("../app/cmd_http.zig"),
 };
 
 pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {

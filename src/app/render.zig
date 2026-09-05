@@ -52,6 +52,7 @@ const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
+const request_pane = @import("request_pane.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 pub const palette_bar_min_width: u16 = 80;
@@ -230,7 +231,7 @@ fn drawMdChip(app: *App, ui: Ui, area: Rect) void {
     const label: []const u8, const button: u32 = switch (pane.*) {
         .md_preview => .{ if (ui.ascii) " Edit " else " ✏ Edit ", md_preview.button_edit },
         .editor => |*e| if (e.buf.path != null and md_preview.isMarkdownPath(e.buf.path.?)) .{ if (ui.ascii) " Preview " else "  Preview ", md_preview.button_preview } else return,
-        .outline, .cheatsheet, .list, .pty => return,
+        .outline, .cheatsheet, .list, .pty, .request => return,
     };
     const w = ui.width(label);
     if (area.w < w + 2) return;
@@ -285,6 +286,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),
             .list => |*l| drawListPane(app, l, ui, pr.pane, rect),
             .pty => |*p| try drawPty(app, ui, pr.pane, p, rect),
+            .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
         }
         drawDropHint(app, ui, pr.pane, rect);
     }
@@ -493,6 +495,11 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             info.col = c.x + 1;
         };
         info.total_lines = p.rows;
+    } else if (app.panes.get(id)) |p| if (p.asRequest()) |rp| {
+        info.mode_label = if (rp.isSending()) "SENDING" else "HTTP";
+        info.mode_kind = .edit;
+        info.file = if (rp.source_path) |sp| app.relPath(sp) else rp.title();
+        info.dirty = rp.edited;
     };
     statusline.draw(ui, area, info);
 }

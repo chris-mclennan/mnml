@@ -19,10 +19,12 @@ const outline = @import("outline.zig");
 const md_preview = @import("md_preview.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const pty_pane = @import("pty_pane.zig");
+const request_pane = @import("request_pane.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Buffer = buffer_mod.Buffer;
 pub const PtyPane = pty_pane.PtyPane;
+pub const RequestPane = request_pane.RequestPane;
 
 /// What the file watcher last saw on disk for an editor's file.
 pub const DiskStamp = struct { mtime_ns: i128, size: u64 };
@@ -102,9 +104,12 @@ pub const Pane = union(enum) {
     list: ListPane,
     /// A shell or a command, painted from the ghostty-vt grid.
     pty: PtyPane,
+    /// An HTTP request and its response (`http.new`, a `.curl` file).
+    request: RequestPane,
 
     pub fn deinit(self: *Pane, gpa: Allocator) void {
         switch (self.*) {
+            .request => |*r| r.deinit(),
             .editor => |*e| e.deinit(),
             .outline => |*o| o.deinit(),
             .md_preview => |*m| m.deinit(),
@@ -125,13 +130,14 @@ pub const Pane = union(enum) {
             .cheatsheet => return "Cheatsheet",
             .list => |*l| return l.title(),
             .pty => |*p| return p.label,
+            .request => |*r| return r.title(),
         }
     }
 
     pub fn dirty(self: *const Pane) bool {
         return switch (self.*) {
             .editor => |*e| e.buf.dirty,
-            .outline, .md_preview, .cheatsheet, .list, .pty => false,
+            .outline, .md_preview, .cheatsheet, .list, .pty, .request => false,
         };
     }
 
@@ -152,6 +158,13 @@ pub const Pane = union(enum) {
     pub fn asMdPreview(self: *Pane) ?*MdPreviewPane {
         return switch (self.*) {
             .md_preview => |*m| m,
+            else => null,
+        };
+    }
+
+    pub fn asRequest(self: *Pane) ?*RequestPane {
+        return switch (self.*) {
+            .request => |*r| r,
             else => null,
         };
     }

@@ -61,6 +61,9 @@ const pty_pane = @import("app/pty_pane.zig");
 const runners = @import("app/runners.zig");
 const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
+const http_app = @import("app/http.zig");
+const request_pane = @import("app/request_pane.zig");
+const http_parse = @import("http/parse.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -121,10 +124,22 @@ pub const PromptPurpose = union(enum) {
     new_folder: []u8,
     /// The workspace-relative path being renamed (owned).
     rename: []u8,
+    /// HTTP: `KEY=VALUE` for a new env var; the value for `key` (owned).
+    http_env_add_key,
+    http_env_edit_value: []u8,
+    http_auth_value: @import("app/cmd_http.zig").AuthKind,
+    auth_preset_name,
+    http_save_as,
+    http_save_response,
+    http_new_env,
+    http_new_chain,
+    http_new_collection,
+    http_new_request,
+    http_lookup_var,
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {
-            .new_file, .new_folder, .rename => |s| gpa.free(s),
+            .new_file, .new_folder, .rename, .http_env_edit_value => |s| gpa.free(s),
             else => {},
         }
     }
@@ -152,7 +167,7 @@ pub const ConfirmPurpose = union(enum) {
         }
     }
 };
-pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks };
+pub const PickerKind = enum { buffers, files, recent, commands, tabs, themes, go_run_cmd, tools, tasks, http_env_vars, http_env_delete, http_env_pick, http_history, http_captured, http_chains, auth_presets, cookies_show, cookies_delete, http_insert_header, http_copy_as, http_lookup_file, http_lookup_item };
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
@@ -366,6 +381,7 @@ pub const App = struct {
     last_editor: ?PaneId = null,
     runners: runners.State = .{},
     tasks: tasks_mod.State = .{},
+    http: http_app.State,
     hits: hit.HitMap = .{},
     /// Where the pointer last was; the frame paints hover affordances
     /// (a row's kebab) from it.
@@ -464,6 +480,7 @@ pub const App = struct {
             .tree = tree_mod.Tree.init(gpa),
             .todos = todos.State.init(gpa),
             .snippets = snippets.State.init(gpa),
+            .http = http_app.State.init(gpa),
             .screen = screen,
             .clipboard = Clipboard.init(gpa),
             .keymap = km,
@@ -477,6 +494,8 @@ pub const App = struct {
         try app.hooks.subscribe(.startup, .{ .zig = &tasks_mod.onStartup });
         try app.hooks.subscribe(.save_post, .{ .zig = &watch.onSavePost });
         app.now_ms = nowMs(io);
+        app.http.auto_format_body = app.cfg.http.auto_format_body;
+        app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
         try app.toastConfigDiagnostics();
         try app.applyTheme();
@@ -569,6 +588,7 @@ pub const App = struct {
         const gpa = self.gpa;
         // Workers first: they borrow `workspace` and post into `events`.
         self.todos.deinit(gpa, self.io);
+        self.http.deinit(gpa, self.io);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
         if (self.find_bar) |*fb| {
@@ -750,6 +770,14 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     pub fn openPath(self: *App, path: []const u8) !PaneId {
         try self.noteRecent(path);
+        // A request file opens as a request pane on its first block; a
+        // file the parser cannot read falls through to the editor.
+        if (http_parse.isRequestPath(path) and self.panes.findPath(path) == null) {
+            if (http_app.openFile(self, path, false)) |id| return id else |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            }
+        }
         const is_md = md_preview.isMarkdownPath(path);
         if (is_md and self.cfg.ui.markdown_opens_rendered and !self.cfg.ui.auto_md_preview and self.panes.findPath(path) == null) {
             return md_preview.open(self, path, .here, null);
@@ -1084,6 +1112,7 @@ pub const App = struct {
             .focus => {},
             // D1: the payload is the handler's to adopt or free.
             .todos => |result| try todos.handle(self, result),
+            .http => |result| try http_app.handle(self, result),
             .pty_readable => |id| pty_pane.onReadable(self, id),
             .err => |e| {
                 defer self.gpa.free(e.msg);
@@ -1166,7 +1195,7 @@ pub const App = struct {
             else => {},
         };
         // A spinner is animating: keep frames coming.
-        if (self.todos.scanning) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
+        if (self.todos.scanning or self.http.sending > 0) next = @min(next orelse std.math.maxInt(i64), self.now_ms + 80);
         for (self.toasts.items) |t| {
             if (t.id != null) continue;
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
@@ -1247,6 +1276,23 @@ test {
     _ = @import("app/cheatsheet.zig");
     _ = @import("app/cmd_term.zig");
     _ = @import("app/pty_pane.zig");
+    _ = @import("app/http.zig");
+    _ = @import("app/cmd_http.zig");
+    _ = @import("app/request_pane.zig");
+    _ = @import("ui/request_view.zig");
+    _ = @import("http/parse.zig");
+    _ = @import("http/env.zig");
+    _ = @import("http/client.zig");
+    _ = @import("http/mock.zig");
+    _ = @import("http/history.zig");
+    _ = @import("http/cookies.zig");
+    _ = @import("http/jwt.zig");
+    _ = @import("http/sse.zig");
+    _ = @import("http/schema.zig");
+    _ = @import("http/import.zig");
+    _ = @import("http/captured.zig");
+    _ = @import("http/chain.zig");
+    _ = @import("http/bench.zig");
     _ = @import("app/runners.zig");
     _ = @import("app/tasks.zig");
     _ = @import("app/watch.zig");
