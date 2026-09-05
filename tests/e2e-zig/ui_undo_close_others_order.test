@@ -1,0 +1,20 @@
+# zig-only
+# Undo after "close others" puts the tabs back in the order they had,
+# the markdown preview among them, and keeps the tab that was kept
+# active.
+write a.txt alpha
+write b.txt beta
+write c.md "# charlie"
+write d.txt delta
+open a.txt
+open b.txt
+open c.md
+open d.txt
+expect screen contains " a.txt   b.txt   c.md   d.txt "
+command buffer.close_others
+expect screen contains "Undo · closed 3 tab(s)"
+expect screen lacks " a.txt "
+click 110 37
+expect screen contains "reopened 3 tab(s)"
+expect screen contains " a.txt   b.txt   c.md   d.txt "
+expect pane d.txt
