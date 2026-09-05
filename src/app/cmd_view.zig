@@ -357,15 +357,15 @@ fn hasTwin(app: *App, id: PaneId) bool {
 }
 
 /// Drop the active leaf. A clean duplicate of a file open elsewhere
-/// closes; every other tab stays open in the background.
+/// closes; every other tab stays open in the background. The last
+/// window has nothing to fall back to, so its buffer closes instead
+/// (a dirty one asks first) — a pty that is the only pane goes with
+/// its process, and the layout may be empty afterwards.
 fn closeSplit(app: *App) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     const leaves = try layout.leaves(app.frame.allocator());
-    if (leaves.len < 2) {
-        app.toast("only one split", .{});
-        return;
-    }
+    if (leaves.len < 2) return app.closePane(cur, false);
     const mine = layout.leafOf(cur) orelse return;
     const tabs = try app.frame.allocator().dupe(PaneId, layout.leaf(mine).?.tabs.items);
     for (tabs) |tab| {
@@ -1280,4 +1280,22 @@ test "view.move_split_*: the active pane becomes the far edge and keeps focus; a
     try t.expect(app.active.? == b or app.active.? == c);
     try command.run(&app, .{ .static = .@"view.focus_down" });
     try t.expectEqual(a, app.active.?);
+}
+
+test "view.close_split on the last window closes its buffer: the layout goes empty, a dirty one asks first" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try t.expectEqual(@as(usize, 1), app.panes.count());
+    try command.run(&app, .{ .static = .@"view.close_split" });
+    try t.expectEqual(@as(usize, 0), app.panes.count());
+    try t.expect(app.active == null);
+    try t.expectEqual(@as(usize, 0), (try app.layouts.current().leaves(app.frame.allocator())).len);
+    // Unsaved: the close asks, nothing goes until it is answered.
+    _ = try app.openScratch();
+    app.activeEditor().?.buf.dirty = true;
+    try command.run(&app, .{ .static = .@"view.close_split" });
+    try t.expect(app.overlay == .confirm);
+    try t.expectEqual(@as(usize, 1), app.panes.count());
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
 }
