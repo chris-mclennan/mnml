@@ -57,6 +57,10 @@ pub const CursorShape = enum { block, bar, underline };
 /// style's `fg` colours the line; `ul_style` picks its shape.
 pub const Underline = struct { start: usize, end: usize, style: Style };
 
+/// A one-cell label painted OVER the glyph at `byte` in the
+/// `current_match` style — flash-motion's jump targets.
+pub const Label = struct { byte: usize, text: []const u8 };
+
 pub const Doc = struct {
     text: []const u8,
     /// Byte offset.
@@ -92,6 +96,11 @@ pub const Doc = struct {
     blame: []const []const u8 = &.{},
     /// Sorted by `start`, non-overlapping.
     underlines: []const Underline = &.{},
+    /// Sorted by `byte`. Each replaces the cell at its byte.
+    /// // changed: flash labels are a `Doc` prop the app fills from its
+    /// armed state, not an overlay walking the pane rects after the
+    /// fact — the view already knows where every byte landed.
+    labels: []const Label = &.{},
 };
 
 /// `added` / `modified` / `deleted` are git's change marks — a coloured
@@ -514,6 +523,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
     const cursor_line = visibleOwner(doc.folds, cursor_line_real);
     const cursor_off: u32 = if (cursor_line_real == cursor_line) @intCast(doc.cursor - lines.start(cursor_line)) else 0;
     var found: ?Cursor = null;
+    var label_i: usize = 0;
 
     const fold_word = if (ui.ascii) fold_marker_ascii else fold_marker;
 
@@ -643,7 +653,11 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 };
 
                 const cell_rect = Rect.init(sx, y, c.w, 1);
-                ui.canvas.put(sx, y, .{ .char = .{ .grapheme = c.bytes, .width = c.w }, .style = style });
+                while (label_i < doc.labels.len and doc.labels[label_i].byte < off) label_i += 1;
+                if (label_i < doc.labels.len and doc.labels[label_i].byte == off) {
+                    ui.canvas.put(sx, y, .{ .char = .{ .grapheme = doc.labels[label_i].text, .width = 1 }, .style = t.current_match });
+                    if (c.w > 1) ui.canvas.put(sx + 1, y, .{ .char = .{ .grapheme = " ", .width = 1 }, .style = t.current_match });
+                } else ui.canvas.put(sx, y, .{ .char = .{ .grapheme = c.bytes, .width = c.w }, .style = style });
                 ui.hit(cell_rect, .{ .editor_cell = .{ .pane = pane, .line = line, .col = c.off } });
                 if (var_hit) |vh| ui.hit(cell_rect, .{ .script_hit = .{ .pane = pane, .id = vh } }); // {{VAR}} hook
                 painted_x = sx + c.w;
