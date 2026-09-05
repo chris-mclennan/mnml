@@ -612,6 +612,8 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         app.syncAutoIndent();
     } else if (comptime isTheme(path)) {
         try app.applyTheme();
+    } else if (comptime std.mem.eql(u8, path, "ui.clock")) {
+        @import("clock.zig").seed(app);
     } else if (comptime std.mem.eql(u8, path, "ui.tree_width")) {
         app.tree.width = app.cfg.ui.tree_width;
     } else if (comptime std.mem.eql(u8, path, "ui.right_panel_width")) {

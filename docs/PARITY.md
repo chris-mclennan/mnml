@@ -553,7 +553,7 @@ the tree. Nothing left is larger than M.
 | Right panel — drag grip | done | `dispatch.zig`, `right_divider_id` | |
 | Right panel — persisted visible + width | done | `ui.right_panel_visible` / `ui.right_panel_width` read in `initWith` (`src/app.zig`), number rows in `settings.zig` | `// changed:` the default width is 40, not 32 — 32 drops the sort chip to its icon; a session restore still overrides |
 | `:set rightpanel` / `rightpanel!` / `norightpanel` | done | `src/app/ex.zig` | |
-| Right-panel icon in the palette bar | partial | `render.zig` | `▤`, not the codicon |
+| Right-panel icon in the palette bar | done | `right_panel_codicon` / `tree_codicon` in `render.zig` | codicon `layout-sidebar-right-off` (EC00), the mirror of the sidebar's EC02; `#` / `=` under `--ascii` |
 | `<leader>tr` | done | the `t` group in `whichkey.zig` | `view.toggle_right_panel`; `t ]` / `t [` / `t x` step and close the panel's tabs |
 | Outline / diagnostics hosted in the panel | done | `render.zig`, `lsp.drawPanel` | |
 | `×` evicts the hosted pane | done | `view.right_panel_close_tab` | |
@@ -562,8 +562,8 @@ the tree. Nothing left is larger than M.
 | Keyboard right-click `Shift+F10` | done | `contextMenuAtFocus` in `context_menus.zig`, `view.context_menu_at_focus` | tree row / panel row / active tab, anchored at the thing's rect |
 | Palette bar — sidebar + panel toggles + palette chip | done | `drawPaletteBar` in `render.zig` | |
 | Palette bar — integration chips | done | `chips` in `src/app/integrations.zig`, `drawChips` in `src/ui/integrations_view.zig` | config icons and installed manifests with a chip, in `ui.integration_icon_order` |
-| Palette bar — `+` add-integration | partial | the `+` menu's Integrations submenu (`plus_sections` in `context_menus.zig`) | Installed / Marketplace / Refresh rows; no dedicated add-integration chip |
-| Palette bar — narrow drops TABS | missing | the bar hides below 80 columns (`palette_bar_min_width`) | |
+| Palette bar — `+` add-integration | done | `Button.add_integration` in `drawPaletteBar` (`add_codicon`, green) → `integrations.show_marketplace` | at the right end of the chip strip; the `+` menu's Integrations submenu stays |
+| Palette bar — narrow drops TABS | done | `palette_bar_narrow_width` (80) / `palette_bar_min_width` (40) in `render.zig` | below 80 the bar stays: the cluster's extras (badges, AI chips, the stress copy, the `+`) drop and the palette chip is the icon; below 40 it goes; the frame tests pin 39 / 40 / 48 / 120 |
 | Menu glyphs | done | `src/ui/menu_glyph.zig`, `paintMenuRows` in `render.zig` | one glyph per command group; `MenuItem.icon` overrides |
 | `ascii_icons` blanks glyphs | done | `forItem(it, ascii)` in `menu_glyph.zig` | every group glyph has a one-character ASCII twin |
 | `menu.glyph_audit` | missing | spec only | `zig build glyph-audit` is the tool |
@@ -592,7 +592,7 @@ the tree. Nothing left is larger than M.
 | Idle `♪` chip, `preferred_music_app` | cut | same; config keys accepted and ignored | |
 | Mixr panel size chips | cut | same | |
 | Stress meter — statusline bar | done | `src/app/stress.zig`, `render.zig` | p95 of a 120-sample ring |
-| Stress meter — bufferline copy | missing | — | |
+| Stress meter — bufferline copy | done | `Button.stress` in `drawPaletteBar` | the same four blocks + p95 in the bar's right cluster, hidden when idle; click toasts, right-click the meter menu |
 | Stress meter — hover numbers | done | `describeSegment(.stress)` in `discovery.zig` | p50 / p95 / max / n in the tooltip |
 | Stress meter — right-click Reset / Copy / Toast | done | `openStressMenu` in `context_menus.zig`, `perf.copy_stress` | |
 | Stress meter — hidden when idle, 120 samples | done | `stress.zig` | |
@@ -602,13 +602,13 @@ the tree. Nothing left is larger than M.
 | `:messages` picker | done | `messages.show` in `src/app/messages.zig` | |
 | `:messages!` dump | done | `dump` in `messages.zig`, `:messages!` in `ex.zig` | |
 | Persists per workspace | done | `session.zig` `messages` | |
-| Bell chip — three states | done | `bell_seg` in `render.drawStatusline` | idle `○`, yellow count, red count; no clock beside it |
+| Bell chip — three states | done | `bell_seg` in `render.drawStatusline` | idle `○`, yellow count, red count; the clock beside it |
 | Zen mode | done | `src/app/zen.zig` (`view.zen` / `view.fullscreen`) | |
 | Clickable statusline | done | `Seg.id` in `src/ui/statusline.zig`, `.statusline_seg` in `dispatch.zig` | branch / diagnostics / AI / bell / stress / indent / encoding / transfers / input style; host segments above `seg_dyn_base` |
-| Clock | missing | `ui.clock` unread; `clock.*` have no runner | the dock has a Zig-only Clock content |
+| Clock | done | `src/app/clock.zig` (`SegId.clock`, `clock.local` / `utc` / `hide` / `menu`) | `HH:MM` local beside the bell, `HH:MMZ` for UTC, a frame on every minute; `ui.clock` seeds and follows (`clock.hide` persists it); `// changed:` local time is libc `localtime_r` — Windows shows UTC; UTC is a session choice, the config has no zone key; `tests/e2e-zig/palette_bar_clock.test` |
 | Settings overlay | done | `src/app/settings.zig`, `src/ui/settings.zig` | 39 discrete rows + 9 number rows (`‹ [32] ›`) |
 | `:set` for every discrete field | done | `src/app/ex.zig` | Zig-only |
-| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`); unread: `click_echo`, `coverage_chip_mode`, `menu_bar`, `clock`, `auto_equalize_splits` |
+| The `ui.*` toggles | partial | read: relative numbers, whitespace, rainbow brackets, trailing-ws, word highlight, hover help / tooltip, workspace dots, todo keywords, breadcrumb, cluster mode, tab-bar AI icon, AI layout mode (`render.zig`, `tooltip.zig`, `todos.zig`) | `auto_refresh_off` (`auto_refresh.zig`), `clock` (`clock.zig`); unread: `click_echo`, `coverage_chip_mode`, `menu_bar`, `auto_equalize_splits` |
 | Update check | done | `src/app/update.zig` | GitHub releases JSON on a worker; `ui.check_updates`, `MNML_NO_UPDATE_CHECK` |
 | Startup picker | done | `src/app/startup_picker.zig` | |
 
@@ -647,7 +647,7 @@ the tree. Nothing left is larger than M.
 | `.ui.integration_icons` config | done | read by `chips` in `integrations.zig` | |
 | Launcher-icon strip | done | the palette-bar chip strip (`drawChips` in `integrations_view.zig`) | |
 | Integration-icon rail | missing | `IntegrationIcon` has `in_palette_bar` only; nothing places an icon in the tree rail | |
-| `+` add-integration → Marketplace | partial | the `+` menu's Integrations submenu | a row, not a chip |
+| `+` add-integration → Marketplace | done | `Button.add_integration` in `render.zig` → `integrations.show_marketplace` | the green codicon chip at the end of the palette bar's strip; the `+` menu row stays |
 | Marketplace | done | `src/app/marketplace.zig`, `Pane.marketplace`, `src/ui/marketplace_view.zig`, `marketplace.*` | `github_launcher_folder` and `github_monorepo_apps` sources; a `crates_keyword` source lists nothing |
 | `integrations.toggle_enabled`, `<leader>iE` | done | `toggleEnabled` in `integrations.zig` (a picker); the `i` group in `whichkey.zig` | `i d` details, `i h` / `i I` / `i r` the tool panes |
 | `integrations.edit` / `remove` / kebab | done | `editCmd` / `removeCmd` / `openRowMenu` in `integrations.zig` | |

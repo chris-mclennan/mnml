@@ -134,6 +134,7 @@ const runner_tables = .{
     @import("../app/zen.zig"),
     @import("../app/cmd_harpoon.zig"),
     @import("../app/stress.zig"),
+    @import("../app/clock.zig"),
     @import("../app/update.zig"),
     @import("../app/cmd_session.zig"),
     @import("../app/startup_picker.zig"),

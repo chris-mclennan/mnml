@@ -99,6 +99,7 @@ const undo_store = @import("app/undo_store.zig");
 const macros_store = @import("app/macros_store.zig");
 const find_history = @import("app/find_history.zig");
 const auto_refresh = @import("app/auto_refresh.zig");
+const clock = @import("app/clock.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
 const session = @import("app/session.zig");
@@ -726,6 +727,8 @@ pub const App = struct {
     /// The Undo chip beside the toast stack (`armUndo`): one click puts
     /// a destructive action back, a right-click drops the offer.
     undo_chip: ?UndoChip = null,
+    /// The statusline clock (`app/clock.zig`).
+    clock: clock.State = .{},
     /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
     auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).initEmpty(),
     /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /
@@ -914,6 +917,7 @@ pub const App = struct {
         if (app.cfg.ui.right_panel_visible) app.right_panel = .todos;
         try app.seedPlusMenu();
         auto_refresh.seed(&app);
+        clock.seed(&app);
         try integrations.loadSettings(&app);
         try app.toastConfigDiagnostics();
         try app.applyTheme();
@@ -952,6 +956,7 @@ pub const App = struct {
         self.tree.width = self.cfg.ui.tree_width;
         try self.seedPlusMenu();
         auto_refresh.seed(self);
+        clock.seed(self);
         try self.toastConfigDiagnostics();
         try self.applyTheme();
         try script_api.rebind(self);
@@ -1824,6 +1829,7 @@ pub const App = struct {
         try watch.tick(self, now);
         todos.tick(self, now);
         sessions.tick(self, now);
+        clock.tick(self);
         dock.tick(self, now);
         try git_app.tick(self, now);
         try lsp.tick(self, now);
@@ -1856,6 +1862,7 @@ pub const App = struct {
         if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (ws_pane.nextDeadline(@constCast(self))) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
@@ -2064,6 +2071,7 @@ test {
     _ = @import("app/macros_store.zig");
     _ = @import("app/find_history.zig");
     _ = @import("app/auto_refresh.zig");
+    _ = @import("app/clock.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
     _ = @import("app/loclist.zig");

@@ -24,6 +24,7 @@ const EditOp = edit_op.EditOp;
 const whichkey = @import("whichkey.zig");
 const find_history = @import("find_history.zig");
 const auto_refresh = @import("auto_refresh.zig");
+const clock_mod = @import("clock.zig");
 const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
 const cmd_find = @import("cmd_find.zig");
@@ -1373,6 +1374,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .ai_meter => try runCmd(app, .@"ai.spend_today"),
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
                     .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
+                    .clock => try clock_mod.openMenu(app, m.x, m.y),
                     .indent => try runCmd(app, .@"editor.set_tab_width"),
                     .encoding => app.toast("utf-8 is the only encoding in this build", .{}),
                     .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
@@ -1427,6 +1429,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
                 .ai_claude => try runCmd(app, .@"ai.claude_code"),
                 .ai_codex => try runCmd(app, .@"ai.codex"),
+                .add_integration => try runCmd(app, .@"integrations.show_marketplace"),
+                .stress => if (m.button == .right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
                 else => {},
             }
         },

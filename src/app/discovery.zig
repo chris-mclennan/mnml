@@ -147,6 +147,8 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
         .toggle_right_panel => .{ .title = "Right panel", .detail = "click toggles it (ctrl+shift+b)" },
         .ai_claude => .{ .title = "Claude Code", .detail = "click opens the session (ai.claude_code)" },
         .ai_codex => .{ .title = "Codex", .detail = "click opens the session (ai.codex)" },
+        .add_integration => .{ .title = "+ Add an integration", .detail = "click opens the Marketplace (integrations.show_marketplace)" },
+        .stress => .{ .title = "Stress meter", .detail = "the statusline meter's copy · click toasts the numbers · right-click: its menu" },
         else => null,
     };
 }
@@ -203,6 +205,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .indent => .{ .title = try std.fmt.allocPrint(arena, "Indent — {d} columns per tab", .{app.cfg.editor.tab_width}), .detail = "click: set the tab width" },
         .encoding => .{ .title = "Encoding — utf-8", .detail = "the only encoding in this build" },
         .transfer => .{ .title = "File transfers", .detail = "progress of the running copies · right-click: cancel all" },
+        .clock => .{ .title = "Clock", .detail = "local time (a Z is UTC) · click: local / UTC / hide" },
         _ => null,
     };
 }
