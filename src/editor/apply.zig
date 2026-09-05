@@ -211,6 +211,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .transform_selection_case => |k| try line.transformSelectionCase(ed, k, out),
         .toggle_case_char => try line.toggleCaseChar(ed, out),
         .change_number_at_cursor => |n| try line.changeNumberAtCursor(ed, n.delta, out),
+        .change_numbers_in_selection => |n| try line.changeNumbersInSelection(ed, n.delta, n.progressive, out),
         .reflow_paragraph => |r| try line.reflowParagraph(ed, r.width, out),
         .align_selection => |a| try line.alignSelection(ed, a.on_char, out),
 
@@ -353,6 +354,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
         .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
         .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
+        .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

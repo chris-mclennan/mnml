@@ -1804,8 +1804,16 @@ pub const Vim = struct {
         const ch = charOf(key);
         switch (self.prefix) {
             .g => {
+                const n = self.count1();
                 self.resetPending();
                 const c = ch orelse return .consumed;
+                // `v_g_CTRL-A` / `v_g_CTRL-X`: a progression down the lines.
+                if (key.mods.ctrl and (c == 'a' or c == 'x')) {
+                    self.enterNormal();
+                    const d: i64 = if (c == 'a') @intCast(n) else -@as(i64, @intCast(n));
+                    const w: EditOp = if (linewise) .normalize_linewise_selection else .make_selection_inclusive;
+                    return ops(arena, &.{ w, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = true } } });
+                }
                 switch (c) {
                     'A' => {
                         // The alignment char arrives next; widen now so
@@ -1878,6 +1886,14 @@ pub const Vim = struct {
             }
         }
         if (key.mods.ctrl) {
+            // `v_CTRL-A` / `v_CTRL-X`: every selected line's first number,
+            // then Normal — never the `a` text-object prefix.
+            if (isCtrlChar(key, 'a') or isCtrlChar(key, 'x')) {
+                const n = self.count1();
+                self.enterNormal();
+                const d: i64 = if (isCtrlChar(key, 'a')) @intCast(n) else -@as(i64, @intCast(n));
+                return ops(arena, &.{ widen, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = false } } });
+            }
             if (ch) |c| {
                 const scroll: ?EditOp = switch (std.ascii.toLower(@intCast(@min(c, 0x7F)))) {
                     'b' => .page_up,
