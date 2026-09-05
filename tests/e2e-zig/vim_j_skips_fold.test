@@ -1,0 +1,18 @@
+# zig-only
+# `j` / `k` treat a closed fold as one line: from the fold header `j`
+# lands on the first line after the fold, `k` from below lands on the
+# header, and the cursor never walks the hidden lines.
+write long.zig "pub fn one() void {\n    a();\n    b();\n}\npub fn two() void {\n    c();\n}\n"
+open long.zig
+command editor.use_vim
+
+key z
+key c
+expect screen contains "lines hidden"
+key j
+expect screen contains "Ln 5/"
+key k
+expect screen contains "Ln 1/"
+key 2
+key j
+expect screen contains "Ln 6/"

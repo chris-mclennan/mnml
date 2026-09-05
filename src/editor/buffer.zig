@@ -362,7 +362,9 @@ pub const Buffer = struct {
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
             .ops => |list| blk: {
-                const changed = try self.applyOps(list, clip, viewport_rows, arena);
+                // The record keeps the handler's list: `.` on another
+                // fold re-expands against that fold.
+                const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
                 try self.trackDot(list, visual, arena);
                 break :blk if (changed) .edited else .redraw;
             },
@@ -445,6 +447,123 @@ pub const Buffer = struct {
             i += 1;
         }
         try self.folds.reIndex(self.gpa);
+    }
+
+    // ─── folds ───
+
+    /// The closed fold holding `row`, as `(start, end)`.
+    pub fn foldAt(self: *const Buffer, row: usize) ?[2]usize {
+        for (self.folds.keys(), self.folds.values()) |s, e| if (row >= s and row <= e and e > s) return .{ s, e };
+        return null;
+    }
+
+    /// The row on screen for `row`: itself, or the header of the fold
+    /// hiding it.
+    fn visibleRow(self: *const Buffer, row: usize) usize {
+        return if (self.foldAt(row)) |f| f[0] else row;
+    }
+
+    /// Closed folds are one line to `j` / `k` and to the line operators
+    /// (`:help fold-behavior`): `j` from a fold header lands on the first
+    /// line after the fold, `dd` deletes the whole fold and `yy` yanks
+    /// it. The handler's list is rewritten before it is applied; a list
+    /// no fold touches comes back as it was. Frame arena.
+    fn foldAwareOps(self: *Buffer, list: []const EditOp, arena: Allocator) Allocator.Error![]const EditOp {
+        if (self.folds.count() == 0 or list.len == 0) return list;
+        const ed = &self.editor;
+        const cur = ed.currentLine();
+        const count = ed.lineCount();
+        // A `"x` prefix stays in front.
+        const head: usize = if (list[0] == .set_register_hint) 1 else 0;
+        const body = list[head..];
+        if (body.len == 0) return list;
+
+        // `j` / `k` / `+` / `-` and their counts.
+        if (body.len == 1) {
+            var inner = body[0];
+            var n: usize = 1;
+            if (body[0] == .repeat) {
+                n = body[0].repeat.count;
+                inner = body[0].repeat.inner.*;
+            }
+            const vertical: ?bool = switch (inner) {
+                .move_down, .move_down_first_non_ws => true,
+                .move_up, .move_up_first_non_ws => false,
+                else => null,
+            };
+            if (vertical) |down| {
+                var line = self.visibleRow(cur);
+                for (0..n) |_| {
+                    if (down) {
+                        const next = (if (self.foldAt(line)) |f| f[1] else line) + 1;
+                        if (next >= count) break;
+                        line = next;
+                    } else {
+                        if (line == 0) break;
+                        line = self.visibleRow(line - 1);
+                    }
+                }
+                const steps = if (down) line -| cur else cur -| line;
+                if (steps == n) return list;
+                if (steps == 0) return list[0..head];
+                const ptr = try arena.create(EditOp);
+                ptr.* = inner;
+                const out = try arena.alloc(EditOp, head + 1);
+                @memcpy(out[0..head], list[0..head]);
+                out[head] = .{ .repeat = .{ .count = @intCast(steps), .inner = ptr } };
+                return out;
+            }
+        }
+
+        // `dd` / `<n>dd` / `dj` / `yy` / `<n>yy`.
+        const Kind = enum { delete, yank };
+        var kind: Kind = .delete;
+        var n: usize = 0;
+        if (body.len == 1 and body[0] == .repeat and body[0].repeat.inner.* == .delete_line) {
+            n = body[0].repeat.count;
+        } else if (body.len == 1 and body[0] == .yank_line) {
+            kind = .yank;
+            n = 1;
+        } else if (body.len == 1 and body[0] == .yank_lines_count) {
+            kind = .yank;
+            n = body[0].yank_lines_count;
+        } else {
+            for (body) |o| if (o != .delete_line) return list;
+            n = body.len;
+        }
+        if (n == 0) return list;
+        const first = self.visibleRow(cur);
+        var line = first;
+        var last = first;
+        for (0..n) |i| {
+            last = if (self.foldAt(line)) |f| f[1] else line;
+            if (i + 1 < n) {
+                if (last + 1 >= count) break;
+                line = last + 1;
+            }
+        }
+        if (first == cur and last + 1 - first == n) return list;
+        var out: std.ArrayList(EditOp) = .empty;
+        try out.appendSlice(arena, list[0..head]);
+        if (first != cur) try out.append(arena, .{ .move_to_line = first + 1 });
+        const covered: u32 = @intCast(last + 1 - first);
+        switch (kind) {
+            .delete => {
+                // The folds going with the lines go first; `applyOps`
+                // shifts the ones after.
+                var i: usize = 0;
+                while (i < self.folds.count()) {
+                    const start = self.folds.keys()[i];
+                    if (start >= first and start <= last) self.folds.orderedRemoveAt(i) else i += 1;
+                }
+                try self.folds.reIndex(self.gpa);
+                const ptr = try arena.create(EditOp);
+                ptr.* = .delete_line;
+                try out.append(arena, .{ .repeat = .{ .count = covered, .inner = ptr } });
+            },
+            .yank => try out.append(arena, .{ .yank_lines_count = covered }),
+        }
+        return out.items;
     }
 
     // ─── dot-repeat ───
@@ -1085,6 +1204,41 @@ test "vim undo, redo, dot-repeat" {
     try vim("Vjdj.", "|a\nb\nc\nd\ne\nf", "c\n|f");
     try vim("Vjd.", "|alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\n", "|echo\nfoxtrot\n");
     try vim("<c-v>jld.", "|abcd\nefgh\nijkl\nmnop", "|\n\nijkl\nmnop");
+}
+
+test "closed folds are one line to j / k and to dd / yy" {
+    const gpa = testing.allocator;
+    var h = try Harness.init(gpa, .vim, "|fn a() {\n  1\n  2\n}\nfn b() {\n  3\n}\nend");
+    defer h.deinit();
+    try h.buf.folds.put(gpa, 0, 3);
+    try h.buf.folds.put(gpa, 4, 6);
+    // `j` from a fold header lands after the fold; `k` from below lands on it.
+    try h.feed("j");
+    try testing.expectEqual(@as(usize, 4), h.buf.editor.currentLine());
+    try h.feed("j");
+    try testing.expectEqual(@as(usize, 7), h.buf.editor.currentLine());
+    try h.feed("k");
+    try testing.expectEqual(@as(usize, 4), h.buf.editor.currentLine());
+    try h.feed("2k");
+    try testing.expectEqual(@as(usize, 0), h.buf.editor.currentLine());
+    // A count walks visible lines; the last visible line stops.
+    try h.feed("2j");
+    try testing.expectEqual(@as(usize, 7), h.buf.editor.currentLine());
+    try h.feed("j");
+    try testing.expectEqual(@as(usize, 7), h.buf.editor.currentLine());
+    // `yy` on a fold yanks every line of it.
+    try h.feed("ggyy");
+    try testing.expectEqualStrings("fn a() {\n  1\n  2\n}\n", h.clip.text());
+    // `dd` on a fold removes the fold with its lines; the next fold shifts up.
+    try h.feed("dd");
+    try testing.expectEqualStrings("fn b() {\n  3\n}\nend", h.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 1), h.buf.folds.count());
+    try testing.expectEqual(@as(usize, 0), h.buf.folds.keys()[0]);
+    try testing.expectEqual(@as(usize, 2), h.buf.folds.values()[0]);
+    // `dj` from a fold takes the fold and the line after it.
+    try h.feed("dj");
+    try testing.expectEqualStrings("", h.buf.editor.bytes());
+    try testing.expectEqual(@as(usize, 0), h.buf.folds.count());
 }
 
 test "vim marks, macros and visual mode" {
