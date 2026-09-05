@@ -431,6 +431,17 @@ pub const PaneStore = struct {
     }
 
     /// The image preview tab, if one is open — the next image replaces it.
+    /// The markdown tab a glance may take over (`md_preview.open`).
+    pub fn findMdGlance(self: *PaneStore) ?PaneId {
+        for (self.slots.items, 0..) |*slot, i| {
+            if (slot.*) |*p| switch (p.*) {
+                .md_preview => |*m| if (m.is_preview) return @intCast(i),
+                else => {},
+            };
+        }
+        return null;
+    }
+
     pub fn findImagePreview(self: *PaneStore) ?PaneId {
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {

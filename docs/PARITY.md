@@ -582,10 +582,10 @@ the tree. Nothing left is larger than M.
 | Inline images in the preview | done | `Placement` / `renderWith` in `md_view.zig`, `ui.md_image_rows` | a standalone `![alt](src)` reserves rows; text fallback headless |
 | `render_markdown` inline in the editor | done | the `// ── ui toggles ──` block in `editor_view.zig`, `view.toggle_render_markdown` | marks concealed off the cursor line |
 | `markdown_opens_rendered` | done | `src/app.zig` `openPath` | |
-| Preview tabs — markdown | partial | opens rendered; `findMdPreview` reuses the same path's tab | no replace-on-next-glance |
+| Preview tabs — markdown | done | `MdPreviewPane.is_preview`, `PaneStore.findMdGlance`, the in-place swap in `md_preview.open` | a `.here` open (a click, a jump, the session) is a glance the next glance replaces, like the image viewer; `markdown.preview` on an editor is permanent; `tests/e2e-zig/md_preview_glance.test` |
 | Preview tabs — `.http` / `.curl` | done | `findPreview` in `src/app/http.zig` | |
 | Preview tabs — images | done | `src/app/image_pane.zig` (`open` replaces the preview tab in place), `PaneStore.findImagePreview`, `Pane.image`, `view.image_open` | |
-| Typing makes a preview permanent | partial | request panes only | |
+| Typing makes a preview permanent | done | `edited` in `request_pane.zig` (request panes); `swapToEditor` in `md_preview.zig` (a markdown preview becomes the raw editor, which is never a preview) | the rule as Rust's: a request preview is promoted by an edit; typing on a markdown preview swaps the editor in; editor and image tabs carry no promotion — pinned by the `preview tabs:` test in `md_preview.zig` |
 | Image rendering (kitty / iTerm2) | done | `src/image/{root,kitty,iterm2,sixel,painter}.zig`, the attach in `tui/loop.zig` | kitty by probe, iTerm2 by `TERM_PROGRAM`, sixel for foot / mlterm; `MNML_IMAGE_PROTOCOL` overrides |
 | Now-playing transport chip | cut | `cutRunner` toasts | |
 | Source-aware dispatch (mixr / AppleScript) | cut | same | |
