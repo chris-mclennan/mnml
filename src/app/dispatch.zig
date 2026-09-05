@@ -942,8 +942,8 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
         .cancel => app.closeFindBar(true),
         .changed => try cmd_find.liveUpdate(app),
         .submit => try cmd_find.acceptFromBar(app),
-        .next => try cmd_find.stepFind(app, 1),
-        .prev => try cmd_find.stepFind(app, -1),
+        .next => try cmd_find.stepFromBar(app, 1),
+        .prev => try cmd_find.stepFromBar(app, -1),
         .replace_one => try cmd_find.replaceCurrent(app),
         .replace_all => {
             const text = try app.frame.allocator().dupe(u8, fb.state.replace.items);

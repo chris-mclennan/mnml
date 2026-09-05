@@ -485,6 +485,9 @@ pub const FindBarState = struct {
     reverse: bool = false,
     /// Enter chains straight into the replace prompt (VS Code `Ctrl+H`).
     chain_to_replace: bool = false,
+    /// An Enter (or a step) has put the cursor on a match of this
+    /// query; the next Enter steps instead of landing again.
+    landed: bool = false,
 };
 
 /// Visual-block `I` / `A` / `c` in flight: the typed run on the first
