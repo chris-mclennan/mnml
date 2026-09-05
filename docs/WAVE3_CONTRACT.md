@@ -978,3 +978,105 @@ that the oldest slot reads `+K more…`.
   leak check (seen once under ReleaseSafe). Not fixed here —
   `src/pty/` is outside the touch list; noted in
   `docs/parity-notes/misc.md`.
+## File manager — `// changed:` notes (2026-09-05, branch `files`)
+
+- `// changed (app):` `Pane.files: FilesPane` (`src/app/files_pane.zig`)
+  and `Pane.asFiles()`. A directory listing is a pane: `files.open`
+  opens one at the workspace, `files.open_split` two side by side,
+  `files.trash` one at the trash. State is the pane (`cwd`, a
+  `SnapshotArena` listing replaced on every `reload`, `visible` indices
+  under the `/` filter, `sort`, `show_hidden`, `marks` keyed by absolute
+  path, `anchor` for a range, `preview_pane`, the `preview_text` head of
+  the cursor file, the vim `pending` verb byte). Every exhaustive
+  `switch (pane.*)` gained a `.files` arm (`md_preview`, `outline`,
+  `render.drawMdChip`, `Pane.dirty`).
+- `// changed (ui):` `src/ui/files_view.zig` — `draw(ui, pane, area,
+  Doc, *scroll) ?Caret`. `Doc` is plain data (`crumbs`, `rows: []Row{
+  name, is_dir, is_link, size, mtime, marked, git }`, `cursor`,
+  `focused`, `sort_label`, `show_hidden`, `filter`, `marked`, `total`,
+  `err`, `preview`, `now_s`, `empty`). Every target registers a
+  `.script_hit{ pane, id }` in the same statement as its paint; `Hit`
+  splits the id space (rows below `0x1000_0000`; `crumb_base`,
+  `chip_base` + `Chip{ sort, hidden, refresh, up }`, `kebab_base`,
+  `body`, `filter`, `column_base` + `Column{ name, size, modified,
+  kind }`) and `Hit.decode` reverses it. The preview column paints at
+  ≥ 80 cells (`2/5` of the width); the filter pill reuses
+  `filter_input.draw` and re-registers its rect under the pane's id.
+  `humanBytes` / `humanAge` are `pub` (the transfer chip uses the first).
+- `// changed (app):` `dispatch.key`'s pane switch routes `.files` to
+  `files_pane.handleKey` before the chord chain (false = fall through:
+  `delete` → `file.delete`, `f2` → `file.rename`, `ctrl+p`…);
+  `dispatch.mouse`'s `.script_hit` arm routes `.files` to
+  `files_pane.click`; `wheelOnPane` to `files_pane.scrollBy`.
+- `// changed (app):` the subject of every file verb is
+  `file_clipboard.targetPaths(app, arena)`: a FOCUSED Files pane's marks
+  (visible ones first, in display order), else its cursor row, else the
+  tree's cursor row — never a browser that is merely open. `targetDir`
+  is where a paste lands (the pane's directory, else the tree row's).
+  `tree.zig`'s `file.rename` / `file.move_to` / `file.new_folder` /
+  `file.delete` runners defer to the pane when one has focus.
+- `// changed (app):` `App.file_clipboard: file_clipboard.State{ paths,
+  cut }`. `file.cut` / `file.copy` stage; `file.paste` resolves
+  (source, destination) pairs on the UI thread — `-copy` / `-copy-N`
+  names beside the source (`copyName`), an existing destination skipped
+  with a toast, a cut pasted home a no-op that keeps the clipboard, a
+  folder into itself refused — and hands them to ONE background
+  transfer. `file.duplicate` is a copy to `copyName` beside each target.
+- `// changed (app):` `App.transfers: transfers.State{ group: Io.Group,
+  jobs, next_id }` (`src/app/transfers.zig`); `AppEvent.transfer:
+  *transfers.Event{ id, msg: total | progress | done | failed |
+  cancelled }`, `Source.transfer`, destroyed by `transfers.handle` on
+  every path (D1). `transfers.start(app, kind, items) !u64` copies the
+  items for the worker and returns at once; the worker sizes first
+  (`total`), credits per file (`progress` at most every 32 files), and a
+  move on one filesystem is a rename. A cancel (`transfer.cancel_all`,
+  or `State.deinit`) is a flag read between files; what THIS transfer
+  created is removed, recorded per entry only when it was not already
+  there. `transfers.clash` refuses a second paste into a tree one is
+  still writing. `App.transfersRunning()`; `nextDeadlineMs` keeps a
+  frame due every 80 ms while one runs.
+- `// changed (ui):` `render.drawStatusline` gains `transfer_seg`
+  between the AI meter and the bell: `⇄ 42% 3.1M/s` (`⇄2 …` for two,
+  `sizing…` first, `<>` in ASCII), nothing at rest. A focused Files pane
+  puts `FILES` (or `TRASH`) in the mode chip and its directory, cursor
+  row and count in the file / line segments.
+- `// changed (app):` `ex.zig` — the `:qa` guard, one delimited block
+  (`── files: the :qa transfer guard ──` … `── end files ──`): with
+  transfers running `:qa` fails with a toast naming `transfer.cancel_all`
+  and `:qa!`; `:qa!` quits.
+- `// changed (app):` `App.trash: trash.State{ last_prune_ms, bounds }`
+  (`src/app/trash.zig`). `trash.dir` is `<data root>/trash/<wyhash of
+  the workspace>/` (`<workspace>/.mnml/trash` with no data root); the
+  origin index is `<that dir>.index.zon` beside it. `ConfirmPurpose.
+  delete_path: []u8` became `delete_paths: DeletePaths{ paths: [][]u8,
+  permanent_only }` plus `empty_trash`; `dispatch.acceptConfirm` routes
+  both to `trash.acceptDelete / acceptEmpty`. `trash.confirmDelete(app,
+  paths)` builds the three-button confirm (`Delete` / `Delete
+  permanently` / `Cancel`, Cancel selected; two buttons inside the
+  trash); `trash.deletePaths(app, paths, permanent)` moves each entry to
+  `<stamp>-<name>` (a counter within one second), records its origin,
+  closes buffers on the path, drops it from `recent`, prunes, and
+  refreshes the tree + every Files pane. `tree.acceptDelete` now goes
+  through it. `trash.restore` puts an entry back (refuses when the
+  origin exists again); `trash.prune(app, now_s, bounds)` enforces the
+  age / total / per-entry bounds; `App.tick` calls `trash.tick` (the
+  first tick, then every ten minutes).
+- `// changed (app):` `PromptPurpose.move_paths: [][]u8` — `file.move_to`
+  from a Files pane prompts once for a folder and moves every marked
+  path there as one background move (`files_pane.acceptMoveTo`).
+- `// changed (app):` `files_pane.refreshAfterFsChange(app)` is the one
+  place a filesystem change announces itself (the tree + every Files
+  pane). `App.closePane` calls `files_pane.onPaneClosed` so a browser
+  forgets a preview pane that closed. `Tree.setExpanded` is `pub`;
+  `Tree.pending: ?u8` holds vim's first `y` / `d`.
+- `// changed (app):` the tree's Ctrl+X/C/V/D fire in both profiles;
+  vim also gets `yy` / `dd` / `P` on the tree and the Files pane
+  (`docs/KEYMAP_PROFILES.md`).
+- Eighteen Zig-only ids (`files.up / refresh / toggle_hidden /
+  cycle_sort / sort_name / sort_size / sort_modified / activate / preview
+  / mark_toggle / mark_all / mark_invert / mark_clear / copy_path /
+  new_file / new_folder / destinations / empty_trash`); the pin is 854
+  (836 after the `misc` merge + 18).
+  `docs/commands.md` regenerated.
+- Not done, by design: the destinations picker's volumes / recents
+  sections; an editor breadcrumb row (its PARITY row stays partial).
