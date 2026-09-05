@@ -227,6 +227,134 @@ pub fn build(b: *std.Build) void {
     canvas_demo_run.step.dependOn(&canvas_demo_install.step);
     const canvas_demo_step = b.step("canvas-demo", "Run the canvas demo (Term + Canvas on the real terminal)");
     canvas_demo_step.dependOn(&canvas_demo_run.step);
+
+    // ── release ──
+    // What ships. Three steps and one option:
+    //
+    //   -Dversion=X      the string `--version` prints. Absent, a dev build
+    //                    derives it: build.zig.zon's `.version`, the git short
+    //                    SHA, and `-dirty` when the tree has uncommitted changes
+    //                    (`0.3.0-dev+g1a2b3c4-dirty`).
+    //   release-one      this target's exe, installed as
+    //                    zig-out/release/<rust-triple>/mnml[.exe]. The Rust
+    //                    triple, not Zig's, because every downstream consumer —
+    //                    the tap formula, winget, nfpm, the install scripts —
+    //                    keys on the names cargo-dist used (E6).
+    //   release          `release-one` for each of the five shipped targets,
+    //                    through a nested `zig build` per target: ReleaseSafe,
+    //                    `-Dcpu=baseline`, the same cache dirs and prefix. A
+    //                    nested build is how the module graph above gets built
+    //                    per target without being written out five times.
+    //   dist             `release`, then scripts/package.sh: .tar.xz (.zip on
+    //                    Windows) + .sha256 per target, sha256.sum, the two
+    //                    installers, dist-manifest.json — all under zig-out/dist/.
+    //
+    // Completions and a man page would be installed here too; mnml-zig ships
+    // neither yet, so the archives carry the binary, the licenses, the README
+    // and the CHANGELOG.
+    const version = b.option([]const u8, "version", "Version stamped into --version (default: build.zig.zon version + git SHA)") orelse deriveVersion(b);
+    build_options.addOption([]const u8, "version", version);
+
+    const triple = rustTriple(b, target.result);
+    const release_one = b.step("release-one", "Install this target's exe as zig-out/release/<rust-triple>/mnml (what `release` runs per target)");
+    release_one.dependOn(&b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .{ .custom = b.fmt("release/{s}", .{triple}) } },
+        .dest_sub_path = if (target.result.os.tag == .windows) "mnml.exe" else "mnml",
+    }).step);
+
+    const release_step = b.step("release", "Cross-compile ReleaseSafe exes for the five shipped targets into zig-out/release/<rust-triple>/");
+    for (release_targets) |rt| {
+        const nested = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build",
+            "release-one",
+            b.fmt("-Dtarget={s}", .{rt.zig}),
+            "-Dcpu=baseline",
+            "-Doptimize=ReleaseSafe",
+            b.fmt("-Dversion={s}", .{version}),
+            b.fmt("-Dipc-subdir={s}", .{ipc_subdir}),
+            b.fmt("-Dpartial={}", .{partial}),
+            b.fmt("-Dpty-simd={}", .{pty_simd}),
+            "--prefix",
+            b.install_path,
+            "--cache-dir",
+            b.cache_root.path orelse ".zig-cache",
+            "--global-cache-dir",
+            b.graph.global_cache_root.path orelse ".",
+        });
+        nested.setCwd(b.path("."));
+        nested.setName(b.fmt("zig build release-one ({s})", .{rt.rust}));
+        // Its outputs land under the prefix, not in the cache — always run it.
+        nested.has_side_effects = true;
+        release_step.dependOn(&nested.step);
+    }
+
+    const dist_step = b.step("dist", "`release`, then package zig-out/release/ into zig-out/dist/ (archives, sha256s, installers, manifest)");
+    const pack = b.addSystemCommand(&.{
+        "sh",
+        "scripts/package.sh",
+        "--version",
+        version,
+        "--release-dir",
+        b.pathJoin(&.{ b.install_path, "release" }),
+        "--out",
+        b.pathJoin(&.{ b.install_path, "dist" }),
+    });
+    pack.setCwd(b.path("."));
+    pack.setName("scripts/package.sh");
+    pack.has_side_effects = true;
+    pack.step.dependOn(release_step);
+    dist_step.dependOn(&pack.step);
+}
+
+/// The shipped targets, Zig query on the left, the Rust triple the asset
+/// names carry on the right. Windows is `-gnu`: ghostty marks msvc "doesn't
+/// work yet", mingw-w64 is bundled with Zig, and an msvc cross build would
+/// need a Windows SDK on the Linux runner (E6).
+const ReleaseTarget = struct { zig: []const u8, rust: []const u8 };
+const release_targets = [_]ReleaseTarget{
+    .{ .zig = "aarch64-macos", .rust = "aarch64-apple-darwin" },
+    .{ .zig = "x86_64-macos", .rust = "x86_64-apple-darwin" },
+    .{ .zig = "x86_64-linux-gnu", .rust = "x86_64-unknown-linux-gnu" },
+    .{ .zig = "aarch64-linux-gnu", .rust = "aarch64-unknown-linux-gnu" },
+    .{ .zig = "x86_64-windows-gnu", .rust = "x86_64-pc-windows-gnu" },
+};
+
+/// The Rust triple for a resolved target: one of the five above, or Zig's own
+/// triple for anything else (a `-Dtarget=x86_64-linux-musl` still installs
+/// somewhere sensible; it just is not a shipped name).
+fn rustTriple(b: *std.Build, t: std.Target) []const u8 {
+    const fallback = t.zigTriple(b.allocator) catch @panic("OOM");
+    const arch: []const u8 = switch (t.cpu.arch) {
+        .aarch64 => "aarch64",
+        .x86_64 => "x86_64",
+        else => return fallback,
+    };
+    return switch (t.os.tag) {
+        .macos => b.fmt("{s}-apple-darwin", .{arch}),
+        .linux => if (t.abi == .gnu) b.fmt("{s}-unknown-linux-gnu", .{arch}) else fallback,
+        .windows => if (t.cpu.arch == .x86_64 and t.abi == .gnu) "x86_64-pc-windows-gnu" else fallback,
+        else => fallback,
+    };
+}
+
+/// `<zon version>+g<short sha>[-dirty]` — what a build without `-Dversion=`
+/// prints. The zon file is read as text (a dev build should not fail because
+/// the manifest grew a field); git is optional (a tarball checkout has none).
+fn deriveVersion(b: *std.Build) []const u8 {
+    const zon = b.build_root.handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, .limited(1 << 20)) catch @panic("build.zig.zon unreadable");
+    const key = ".version = \"";
+    const start = (std.mem.indexOf(u8, zon, key) orelse @panic("build.zig.zon has no .version")) + key.len;
+    const end = std.mem.indexOfScalarPos(u8, zon, start, '"') orelse @panic("build.zig.zon .version is unterminated");
+    const base = zon[start..end];
+
+    var code: u8 = undefined;
+    const sha_raw = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .ignore) catch return base;
+    const sha = std.mem.trim(u8, sha_raw, " \t\r\n");
+    if (sha.len == 0) return base;
+    const status = b.runAllowFail(&.{ "git", "status", "--porcelain", "--untracked-files=no" }, &code, .ignore) catch "";
+    const dirty = std.mem.trim(u8, status, " \t\r\n").len != 0;
+    return b.fmt("{s}+g{s}{s}", .{ base, sha, if (dirty) "-dirty" else "" });
 }
 
 // ── tree-sitter ──────────────────────────────────────────────────────────────

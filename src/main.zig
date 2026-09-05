@@ -11,7 +11,9 @@ const input = @import("input/mod.zig");
 const config = @import("config/root.zig");
 const http_cli = @import("http/cli.zig");
 
-pub const version = "0.3.0-dev";
+/// What `--version` prints: `-Dversion=` at build time, or the derived
+/// dev string (see build.zig, the release block).
+pub const version = build_options.version;
 
 /// A crash prints its trace on a readable terminal, not inside the alt
 /// screen with the mouse still reporting. The terminal session is POSIX
