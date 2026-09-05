@@ -73,6 +73,7 @@ const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
 const http_parse = @import("http/parse.zig");
 const messages = @import("app/messages.zig");
+const harpoon = @import("app/harpoon.zig");
 const builtin = @import("builtin");
 
 pub const PaneId = ids.PaneId;
@@ -535,6 +536,8 @@ pub const App = struct {
     messages: messages.State = .{},
     /// Zen: the editor and the `:` line, nothing else painted.
     zen: bool = false,
+    /// Nine pinned files (`harpoon.*`).
+    harpoon: harpoon.State = .{},
 
     pub const max_toasts = 32;
     pub const max_closed = 32;
@@ -710,6 +713,7 @@ pub const App = struct {
         for (self.toasts.items) |t| freeToast(gpa, t);
         self.toasts.deinit(gpa);
         self.messages.deinit(gpa);
+        self.harpoon.deinit(gpa);
         for (self.closed.items) |c| gpa.free(c.path);
         self.closed.deinit(gpa);
         var it = self.abbrevs.iterator();
@@ -1482,6 +1486,8 @@ test {
     _ = @import("ui/editor_view.zig");
     _ = @import("app/messages.zig");
     _ = @import("app/zen.zig");
+    _ = @import("app/harpoon.zig");
+    _ = @import("app/cmd_harpoon.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
