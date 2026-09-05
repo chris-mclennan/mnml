@@ -164,6 +164,27 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(ts_tests).step);
     test_step.dependOn(&b.addRunArtifact(highlight_tests).step);
 
+    // ── docs + check (cutover prep) ─────────────────────────────────────
+    // `zig build docs` regenerates docs/commands.md from the comptime spec
+    // table (E8).
+    const specs_mod = b.createModule(.{ .root_source_file = b.path("src/commands/specs.zig"), .target = target, .optimize = optimize });
+    const gen_mod = b.createModule(.{
+        .root_source_file = b.path("tools/gen_commands.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "specs", .module = specs_mod }},
+    });
+    const gen = b.addExecutable(.{ .name = "gen-commands", .root_module = gen_mod });
+    const gen_run = b.addRunArtifact(gen);
+    gen_run.addArg(b.pathFromRoot("docs/commands.md"));
+    gen_run.has_side_effects = true;
+    const docs_step = b.step("docs", "Regenerate docs/commands.md from the command spec table");
+    docs_step.dependOn(&gen_run.step);
+    const gen_tests = b.addTest(.{ .root_module = gen_mod, .filters = test_filters });
+    test_step.dependOn(&b.addRunArtifact(gen_tests).step);
+
+    // ── end docs + check ────────────────────────────────────────────────
+
     // ── e2e: gate-build ──
     // Compile the exe and every test binary for the selected target without
     // running them, installed under zig-out/gate/. The exe alone is not a
