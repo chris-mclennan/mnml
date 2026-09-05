@@ -452,6 +452,8 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
     if (comptime std.mem.eql(u8, path, "editor.input_style")) {
         const style = App.styleOf(app.cfg.editor.input_style);
         if (style != app.input_style) try app.setInputStyle(style);
+    } else if (comptime std.mem.eql(u8, path, "editor.clipboard")) {
+        app.clipboard.selectMode(app.cfg.editor.clipboard);
     } else if (comptime isTheme(path)) {
         try app.applyTheme();
     }

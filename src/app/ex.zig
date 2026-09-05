@@ -917,6 +917,8 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
         settings.setIndex(&app.cfg, cp, idx);
         if (comptime std.mem.eql(u8, cp, "editor.input_style")) {
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
+        } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
+            app.clipboard.selectMode(app.cfg.editor.clipboard);
         }
         app.needs_render = true;
         app.toast("{s}={s}", .{ cp, opts[idx] });
@@ -1127,6 +1129,16 @@ test "ex: set reaches every discrete config field — dotted, bare, no/!/?/=, al
     try testing.expectEqualStrings("editor.clipboard=os", f.app.lastToast().?);
     try f.ex("set clipboard=internal");
     try testing.expectEqual(app_mod.Config.Clipboard.internal, f.app.cfg.editor.clipboard);
+    // The sink follows the mode at runtime: with a live writer attached,
+    // `.auto` is OSC 52 and `.internal` is nothing.
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    f.app.clipboard.attach(testing.io, &aw.writer, null, f.app.cfg.editor.clipboard);
+    try testing.expect(f.app.clipboard.os == .none);
+    try f.ex("set clipboard=auto");
+    try testing.expect(f.app.clipboard.os == .osc52);
+    try f.ex("set clipboard=internal");
+    try testing.expect(f.app.clipboard.os == .none);
     try testing.expectError(error.Failed, f.ex("set clipboard=unnamedplus"));
     try testing.expectError(error.Failed, f.ex("set editor.scroll_accel!"));
     try testing.expectError(error.Failed, f.ex("set enabled"));

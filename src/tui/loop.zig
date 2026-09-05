@@ -20,6 +20,7 @@ const ipc = @import("../ipc/root.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const build_options = @import("build_options");
 const tasks = @import("../app/tasks.zig");
+const clipboard_os = @import("../core/clipboard_os.zig");
 
 pub const Options = struct {
     /// The merged config; the App takes ownership.
@@ -52,6 +53,12 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         .native_notify = true,
     });
     defer app.deinit();
+    // The one place the App meets a live terminal: `"+` / `"*` get the
+    // session's buffered stdout for OSC 52 — the writer `term.render`
+    // uses, so the sequence never lands inside a frame — and whatever
+    // clipboard tool `$PATH` has. `editor.clipboard` picks between them;
+    // `App.initWith` alone leaves the sink `.none` (headless, `.test`).
+    app.clipboard.attach(io, term.writer(), clipboard_os.probe(io, env), app.cfg.editor.clipboard);
     // `ipc.write_screen`: mirror every frame into `<ws>/.mnml/<ipc>/screen.txt`,
     // the file the headless loop writes, so a script can watch the real
     // terminal session too.
