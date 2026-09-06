@@ -53,6 +53,9 @@ pub const HitTarget = union(enum) {
     /// A visible editor cell; `line`/`col` are 0-based document coords.
     editor_cell: struct { pane: PaneId, line: u32, col: u32 },
     overlay_item: u32,
+    // changed (welcome): `welcome: WelcomeRow` — `struct { kind: enum { recent, shortcut }, idx: u16 }`,
+    // the welcome pane's rows (`ui/welcome.zig`); label `welcome:recent:0`. `dispatch.mouse`
+    // opens the `idx`-th recent file (newest first) or runs the `idx`-th shortcut shown.
 };
 pub const HitMap = struct {
     pub const Entry = struct { rect: Rect, target: HitTarget };
@@ -81,6 +84,27 @@ pub const Ui = struct {
 };
 ```
 `src/ui/ui.zig` stays the barrel/test root and re-exports all of the above.
+
+## `src/ui/welcome.zig` (ui)
+
+```zig
+// changed (welcome): new. The editor area when no pane is open — the Rust `welcome.rs` look:
+// the figlet logo, `workspace · <name>`, `on <branch>`, Recent Files, Shortcuts, `mnml <version>`,
+// every row centred on its own width, the stack centred on the pane, Rust's height ladder
+// (nothing under 6 rows, the word for the logo under 19, recent files from 21, at most 8).
+pub const Shortcut = struct { chord: []const u8, label: []const u8 };      // chord in display spelling: `^P`, `SPC`
+pub const Props = struct {
+    workspace: []const u8, branch: ?[]const u8 = null, changed: u32 = 0,
+    recent: []const []const u8 = &.{},                                       // workspace-relative, newest first
+    shortcuts: []const Shortcut = &.{}, version: []const u8,
+};
+pub fn draw(ui: Ui, area: Rect, p: Props) void;   // registers `.welcome` hits on recent + shortcut rows
+```
+The app side (`render.zig`, the `// ── welcome ──` block) builds the props: `welcomeShortcuts(app, arena)`
+resolves each row's chord from `command.spec(id).keys` under the active profile (shared before own,
+a modified chord before a bare key, a single chord before a sequence; an unbound row is dropped),
+`welcomeRecent` / `welcomeRecentPath` map the recent list newest-first, and the block calls
+`git_app.requireRepo` once so the branch row has a repo to name.
 
 ## `src/ui/editor_view.zig` (ui)
 

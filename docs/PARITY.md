@@ -568,6 +568,7 @@ trust sink. Each row names its file and its test.
 | F1 click-discovery overlay | done | `src/app/discovery.zig` (`drawOverlay`, `explain`), `view.discovery` | every hit tinted and labelled; the next click explains |
 | Hover tooltips on chips | done | `describe` in `discovery.zig`, `src/ui/tooltip.zig` | `ui.hover_tooltip` popup and the `ui.hover_help` rail box; wake on motion only |
 | Right-click menus throughout | done | `src/app/context_menus.zig` — editor / tab / tree / mode / `+` / request / todos / stress / branch / diagnostics / bell / toast | |
+| Welcome pane (no pane open) | done | `src/ui/welcome.zig`, the `// ── welcome ──` block in `src/app/render.zig` | logo · workspace · branch · Recent Files · Shortcuts · version; rows 10–28 of `docs/ui-spec/rust-120x40.txt` match |
 | First-launch welcome | done | `src/app/first_launch.zig` | |
 | About & Settings overlays | done | `view.about` / `view.welcome`, `src/app/settings.zig` | |
 | Markdown live preview | done | `src/app/md_preview.zig`, `src/ui/md_view.zig` | |
