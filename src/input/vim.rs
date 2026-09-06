@@ -2482,41 +2482,52 @@ impl VimInputHandler {
                     PendingOp::Reflow => InputResult::Ops(vec![ReflowParagraph {
                         width: self.text_width,
                     }]),
-                    // `guu` / `gUU` / `g~~`. SelectLine sets
+                    // `guu` / `gUU` / `g~~` (+ `{count}`). SelectLine sets
                     // `anchor = line_start` but (since the 2026-06-13
                     // V-doesn't-snap-down fix) leaves cursor where it
                     // was — selection = (anchor, cursor) covers only
                     // part of the line. Add `MoveLineEnd` after the
                     // SelectLine so the selection extends through the
                     // last printable char and the whole-line transform
-                    // actually fires.
-                    PendingOp::Lower => InputResult::Ops(vec![
-                        SelectLine,
-                        MoveLineEnd,
-                        TransformSelectionCase(crate::edit_op::CaseTransform::Lower),
-                        SelectClear,
-                        // Vim convention: `guu` leaves the cursor at
-                        // the START of the NEXT line, ready for a
-                        // chord-chain (`guu`/`gUU`/`g~~` per line).
-                        MoveDown,
-                        MoveLineStart,
-                    ]),
-                    PendingOp::Upper => InputResult::Ops(vec![
-                        SelectLine,
-                        MoveLineEnd,
-                        TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
-                        SelectClear,
-                        MoveDown,
-                        MoveLineStart,
-                    ]),
-                    PendingOp::ToggleCase => InputResult::Ops(vec![
-                        SelectLine,
-                        MoveLineEnd,
-                        TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
-                        SelectClear,
-                        MoveDown,
-                        MoveLineStart,
-                    ]),
+                    // actually fires; `n - 1` further `MoveDown` +
+                    // `MoveLineEnd` pairs take `3guu` over three lines
+                    // (it used to ignore the count), the same shape
+                    // `<n>cc` builds above.
+                    //
+                    // Cursor rule (probed against the real `vim`,
+                    // 2026-09-05): the transform parks the cursor at
+                    // the selection START — the line's column 0 — and
+                    // the doubled form then settles exactly where vim
+                    // does. Without a count vim's `nv_lineop` runs
+                    // `beginline(BL_WHITE)`, so `3G3|g~~` ends at 3:1
+                    // and `1G9|g~~` on `    Hello` at 1:5 — the first
+                    // non-blank. With a count the operator's start is
+                    // the ORIGINAL cursor, which vim restores whole:
+                    // `1G5|2gUU` ends at 1:5. This used to end with
+                    // `MoveDown, MoveLineStart` "ready for a
+                    // chord-chain", which is not vim: `j .` after
+                    // `gUU` skipped a line, and the cursor left the
+                    // line it had just changed.
+                    PendingOp::Lower | PendingOp::Upper | PendingOp::ToggleCase => {
+                        let how = match op {
+                            PendingOp::Lower => crate::edit_op::CaseTransform::Lower,
+                            PendingOp::Upper => crate::edit_op::CaseTransform::Upper,
+                            _ => crate::edit_op::CaseTransform::Toggle,
+                        };
+                        let mut ops = vec![SelectLine, MoveLineEnd];
+                        for _ in 1..n {
+                            ops.push(MoveDown);
+                            ops.push(MoveLineEnd);
+                        }
+                        ops.push(TransformSelectionCase(how));
+                        ops.push(SelectClear);
+                        if n > 1 {
+                            ops.push(SetCursorByte(ctx.cursor));
+                        } else {
+                            ops.push(MoveLineFirstNonWs);
+                        }
+                        InputResult::Ops(ops)
+                    }
                     PendingOp::SurroundAdd => {
                         // `yss<c>` ⇒ surround the current line.
                         self.pending_surround_ops = vec![SelectLine];
@@ -5312,6 +5323,68 @@ mod tests {
                 _ => panic!("{key:?} → expected RunCommand({want}), got a different InputResult"),
             }
         }
+    }
+
+    /// `guu` / `gUU` / `g~~` change the cursor's line and leave the
+    /// cursor ON it: vim's `3G3|g~~` ends at 3:1, on the line's first
+    /// non-blank (`nv_lineop` → `beginline(BL_WHITE)`). The sequence
+    /// used to end with `MoveDown, MoveLineStart` "ready for a
+    /// chord-chain", which is not vim — `j .` after `gUU` skipped a
+    /// line (e2e `vim_case_ops.test`, 2026-09-05).
+    #[test]
+    fn doubled_case_ops_stay_on_their_line() {
+        use crate::edit_op::CaseTransform::{Lower, Toggle, Upper};
+        for (key, how) in [('u', Lower), ('U', Upper), ('~', Toggle)] {
+            let mut v = h();
+            v.handle_key(k('g'), &ctx());
+            v.handle_key(k(key), &ctx());
+            let got = ops(v.handle_key(k(key), &ctx()));
+            assert!(
+                !got.contains(&EditOp::MoveDown),
+                "g{key}{key} drifted to the next line: {got:?}"
+            );
+            assert_eq!(
+                got,
+                vec![
+                    EditOp::SelectLine,
+                    EditOp::MoveLineEnd,
+                    EditOp::TransformSelectionCase(how),
+                    EditOp::SelectClear,
+                    EditOp::MoveLineFirstNonWs,
+                ],
+                "g{key}{key}"
+            );
+        }
+    }
+
+    /// `2gUU` uppercases two lines (the count used to be ignored) and
+    /// puts the cursor back where it was — with a count vim's operator
+    /// start is the original cursor, restored whole: `1G5|2gUU` ends at
+    /// 1:5 (probed 2026-09-05).
+    #[test]
+    fn counted_doubled_case_op_covers_n_lines_and_keeps_the_cursor() {
+        let mut v = h();
+        let c = EditCtx {
+            cursor: 4,
+            cursor_col: 4,
+            at_line_start: false,
+            ..ctx()
+        };
+        v.handle_key(k('2'), &c);
+        v.handle_key(k('g'), &c);
+        v.handle_key(k('U'), &c);
+        assert_eq!(
+            ops(v.handle_key(k('U'), &c)),
+            vec![
+                EditOp::SelectLine,
+                EditOp::MoveLineEnd,
+                EditOp::MoveDown,
+                EditOp::MoveLineEnd,
+                EditOp::TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+                EditOp::SelectClear,
+                EditOp::SetCursorByte(4),
+            ]
+        );
     }
 }
 

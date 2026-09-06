@@ -11923,6 +11923,83 @@ mod tests {
         );
     }
 
+    /// A doubled case operator leaves the cursor on the line it changed
+    /// (vim: `3G3|g~~` ends at 3:1), so `j .` repeats on the NEXT line.
+    /// The op sequence used to move down a line after each op, so
+    /// `gUU j .` uppercased lines 2 and 4 instead of 2 and 3 (e2e
+    /// `vim_case_ops.test`, 2026-09-05). Every expected position below
+    /// was taken from the real `vim` binary (`vim -es -u NONE`).
+    #[test]
+    fn doubled_case_ops_stay_on_their_line_so_dot_lands_on_the_next() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let d = tempfile::tempdir().unwrap();
+        let k = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty());
+        let mut n = 0;
+        let mut run = |text: &str, at: (usize, usize), keys: &str| -> (String, (usize, usize)) {
+            n += 1;
+            let path = d.path().join(format!("case{n}.txt"));
+            fs::write(&path, text).unwrap();
+            let mut cfg = Config::default();
+            cfg.editor.input_style = "vim".to_string();
+            let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+            app.open_path(&path);
+            let pid = app.active.expect("active pane");
+            if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                b.editor.place_cursor(at.0, at.1);
+            }
+            for c in keys.chars() {
+                crate::tui::dispatch_key(&mut app, k(c));
+            }
+            match app.panes.get(pid) {
+                Some(Pane::Editor(b)) => (b.editor.text().to_string(), b.editor.row_col()),
+                _ => panic!("editor pane gone"),
+            }
+        };
+        let words = "Hello World\nMixed Case Words\nALL CAPS\nlower case\n";
+
+        // `3G3|g~~` — vim ends at 3:1.
+        assert_eq!(
+            run(words, (2, 2), "g~~"),
+            (
+                "Hello World\nMixed Case Words\nall caps\nlower case\n".into(),
+                (2, 0)
+            ),
+            "g~~ toggles its own line and stays on it"
+        );
+        // `gUU j .` — the repeat lands on line 3, not line 4 (vim: 2:1).
+        assert_eq!(
+            run(words, (0, 0), "gUUj."),
+            (
+                "HELLO WORLD\nMIXED CASE WORDS\nALL CAPS\nlower case\n".into(),
+                (1, 0)
+            ),
+            "gUU j . uppercases lines 1 and 2, not 1 and 3"
+        );
+        // `1G5|2gUU` — two lines, cursor restored (vim: 1:5).
+        assert_eq!(
+            run(words, (0, 4), "2gUU"),
+            (
+                "HELLO WORLD\nMIXED CASE WORDS\nALL CAPS\nlower case\n".into(),
+                (0, 4)
+            ),
+            "2gUU covers two lines and keeps the cursor"
+        );
+
+        let indented = "    Hello World\n  Mixed Case\nALL CAPS\n";
+        // `1G9|g~~` on an indented line — first non-blank (vim: 1:5).
+        assert_eq!(
+            run(indented, (0, 8), "g~~"),
+            ("    hELLO wORLD\n  Mixed Case\nALL CAPS\n".into(), (0, 4)),
+            "g~~ lands on the first non-blank, not column 0"
+        );
+        // `1G9|2guu j .` — `.` replays the count too (vim: 2:9).
+        assert_eq!(
+            run(indented, (0, 8), "2guuj."),
+            ("    hello world\n  mixed case\nall caps\n".into(), (1, 8)),
+            "2guu j . lowercases 1-2 then 2-3 and keeps the column"
+        );
+    }
+
     /// nvchad-user SEV-2 2026-07-10 — `.` should repeat text-object
     /// ops like `di(` / `da{` / `di"`. Regression against a bug that
     /// dropped the `i<c>` suffix from `dot_keys`.

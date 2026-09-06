@@ -21,6 +21,11 @@ block); this file is the curated, user-facing summary.
 
 ### Fixed
 
+- *(vim)* `guu` / `gUU` / `g~~` leave the cursor on the line they changed
+  (`3G3|g~~` ends at 3:1, on the first non-blank) instead of dropping to
+  the start of the next line, so `j .` repeats on the next line rather
+  than the one after; the count form (`3guu`) now covers three lines and
+  keeps the cursor where it was, as vim does.
 - *(editor)* Saving a file with no final newline no longer moves the cursor:
   the appended `\n` used to park it on a phantom line below the last one
   (`Ln 2/1`), so a vim `A` / `o` from there edited the wrong place. Cursor,
