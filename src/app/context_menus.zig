@@ -144,7 +144,14 @@ pub fn openTreeMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void 
             .{ .label = "New folder…", .action = .{ .command = .@"file.new_folder" } },
         });
     }
+    // The clipboard rows the Files pane's menu has: the chords work on
+    // the tree already (`docs/KEYMAP_PROFILES.md`), the menu is where a
+    // mouse user finds them.
     try rows.appendSlice(app.gpa, &.{
+        .{ .label = "Cut", .action = .{ .command = .@"file.cut" }, .separator_before = true },
+        .{ .label = "Copy", .action = .{ .command = .@"file.copy" } },
+        .{ .label = "Paste here", .action = .{ .command = .@"file.paste" } },
+        .{ .label = "Duplicate", .action = .{ .command = .@"file.duplicate" } },
         .{ .label = "Move to…", .action = .{ .command = .@"file.move_to" }, .separator_before = true },
         .{ .label = "Rename…", .action = .{ .command = .@"file.rename" } },
         .{ .label = "Delete…", .action = .{ .command = .@"file.delete" } },
