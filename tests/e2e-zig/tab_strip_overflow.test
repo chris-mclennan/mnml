@@ -1,0 +1,60 @@
+# zig-only
+# Tab strip overflow: hidden tabs show as ‹ › markers, the wheel over
+# the strip scrolls it a tab at a time, the markers click, and the `+`
+# stays at the end. 16 tabs at 120 columns with the tree open cannot fit.
+write alpha.zig "const alpha = 1;\n"
+write t1.txt "t1\n"
+write t2.txt "t2\n"
+write t3.txt "t3\n"
+write t4.txt "t4\n"
+write t5.txt "t5\n"
+write t6.txt "t6\n"
+write t7.txt "t7\n"
+write t8.txt "t8\n"
+write t9.txt "t9\n"
+write t10.txt "t10\n"
+write t11.txt "t11\n"
+write t12.txt "t12\n"
+write t13.txt "t13\n"
+write t14.txt "t14\n"
+write t15.txt "t15\n"
+open alpha.zig
+open t1.txt
+open t2.txt
+open t3.txt
+open t4.txt
+open t5.txt
+open t6.txt
+open t7.txt
+open t8.txt
+open t9.txt
+open t10.txt
+open t11.txt
+open t12.txt
+open t13.txt
+open t14.txt
+open t15.txt
+# The active tab (t15) is in view; the first ones hide behind ‹; the + is there.
+expect screen contains "‹ "
+expect screen contains "t15.txt   +"
+expect screen lacks "alpha.zig   t1.txt"
+# Wheel up over the strip: one hidden tab comes back on the left, the last hides behind ›.
+scroll 60 1 up
+expect screen contains " ›"
+expect screen lacks "t15.txt   +"
+scroll 60 1 up
+scroll 60 1 up
+scroll 60 1 up
+scroll 60 1 up
+scroll 60 1 up
+scroll 60 1 up
+scroll 60 1 up
+expect screen contains "alpha.zig   t1.txt"
+expect screen lacks "‹ "
+# Wheel down brings the tail back; the + never left.
+scroll 60 1 down
+expect screen lacks "alpha.zig   t1.txt"
+expect screen contains "+"
+# Switching the active tab re-windows to it.
+key ctrl+tab
+expect screen contains "alpha.zig"
