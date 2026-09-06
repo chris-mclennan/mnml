@@ -1508,6 +1508,24 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .rail => |part| try activity_bar.mouse(app, part, m),
+        .welcome => |row| {
+            // The welcome pane: a recent file opens, a shortcut row runs
+            // its command.
+            if (wheel or m.kind != .press or m.button != .left) return;
+            switch (row.kind) {
+                .recent => if (render.welcomeRecentPath(app, row.idx)) |path| {
+                    const copy = try app.frame.allocator().dupe(u8, path);
+                    _ = app.openPath(copy) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {},
+                    };
+                },
+                .shortcut => {
+                    const rows = try render.welcomeShortcuts(app, app.frame.allocator());
+                    if (row.idx < rows.len) try runCmd(app, rows[row.idx].command);
+                },
+            }
+        },
         .button => |id| {
             // The strip's markers and `+`: a wheel scrolls the strip, a
             // press on a marker steps it.

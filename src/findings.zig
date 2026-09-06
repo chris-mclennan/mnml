@@ -737,9 +737,9 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const empty: list_panel.EmptyState = if (st.scanning and st.items.len == 0)
         .{ .message = "Reading findings…" }
     else if (st.items.len == 0)
-        .{ .message = "No findings yet — n starts one.", .hint = "Reports live in " ++ dir_rel ++ "/ with severity: / status: frontmatter." }
+        .{ .message = "No findings yet.", .hint = "Stored under " ++ dir_rel ++ "/*.md" }
     else
-        .{ .message = "No matches — Esc clears" };
+        .{ .message = ui.fmt("No findings match /{s} — {d} in workspace", .{ st.list.filterText(), st.items.len }), .hint = "Stored under " ++ dir_rel ++ "/*.md" };
     now_s = Io.Timestamp.now(app.io, .real).toSeconds();
     const caret = Panel.draw(&st.list, ui, area, .{
         .panel = .findings,

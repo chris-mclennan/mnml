@@ -44,6 +44,9 @@ pub const PanelRow = struct { panel: PanelId, idx: u32 };
 /// A tab on a leaf's strip, by the leaf's index and the tab's position
 /// in it — shared by `.tab` and `.tab_close` so one arm captures both.
 pub const TabRef = struct { leaf: u32, idx: u16 };
+/// A row of the welcome pane (`ui/welcome.zig`): the `idx`-th recent
+/// file (newest first) or the `idx`-th shortcut shown.
+pub const WelcomeRow = struct { kind: enum { recent, shortcut }, idx: u16 };
 
 pub const HitTarget = union(enum) {
     pane: PaneId,
@@ -72,6 +75,7 @@ pub const HitTarget = union(enum) {
     /// A row of the activity bar (`ui/activity_bar.zig`): a section's
     /// icon, or the settings gear at the bottom.
     rail: activity_bar.Part,
+    welcome: WelcomeRow,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -99,6 +103,7 @@ pub const HitTarget = union(enum) {
                 .section => |s| try w.print(":{s}", .{@tagName(s)}),
                 .gear => try w.writeAll(":gear"),
             },
+            .welcome => |v| try w.print(":{s}:{d}", .{ @tagName(v.kind), v.idx }),
         }
     }
 };

@@ -751,13 +751,13 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         ui.fmt(" ({d} of {d})", .{ rows.len, in_ws });
     const no_home = st.home == null and app.homeDir() == null;
     const empty: list_panel.EmptyState = if (st.scanning and st.items.len == 0)
-        .{ .message = "Reading sessions…" }
+        .{ .message = "Scanning sessions…" }
     else if (no_home)
         .{ .message = "No home directory — nowhere to look for sessions." }
     else if (in_ws == 0 and st.items.len > 0)
         .{ .message = "No sessions for this workspace — w shows every workspace's." }
     else if (st.items.len == 0)
-        .{ .message = "No Claude Code or Codex sessions yet.", .hint = "Transcripts under ~/.claude/projects and ~/.codex/sessions are listed here." }
+        .{ .message = "No sessions yet." }
     else
         .{ .message = "No matches — Esc clears" };
     now_s = Io.Timestamp.now(app.io, .real).toSeconds();

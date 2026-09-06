@@ -913,7 +913,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const empty: list_panel.EmptyState = if (st.scanning and st.items.len == 0)
         .{ .message = "Scanning the workspace…", .hint = "Markers appear as they are found." }
     else if (st.items.len == 0)
-        .{ .message = ui.fmt("No markers found — click{s}in the header to rescan.", .{refresh_glyph}), .hint = "Scans ui.todo_keywords and .fixme( / .fail( / .skip( calls." }
+        .{ .message = ui.fmt("No markers found — click{s}in the header to rescan.", .{refresh_glyph}), .hint = "Scans for TODO / FIXME / XXX / HACK / REVIEW." }
     else
         .{ .message = "No matches — Esc clears" };
     const caret = Panel.draw(&st.list, ui, area, .{
