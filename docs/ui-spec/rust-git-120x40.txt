@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │ GIT               │ 󰊢 ws 󰅖   󰊢 mixr 󰅖   󰊢 acmeco-claude-wor… 󰅖   󰊢 acmeco-mnml-works… 󰅖   󰊢 a 󰐕  󰅁  󰅂        
+  │  ws 󰅀              │    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
+ 󰍉 │ ⎇ main             │     G… │ COMMIT MESSAGE          │ DATE / TIME   │     SHA    │─ WIP @ main · 1 change(s) · 1
+▌󰊢 │                    │▌▶       │ 1 change(s) · 1 new    │               │            │
+  │ 󰍉 / filter         │▌    ●─╮ │ merge feature          │   09/06 20:00 │ 7ce273514  │  ▾ Unstaged Files (1)  Stage A
+ 󰐱 │                    │▌    ● │ │ main work              │   09/06 20:00 │ 34b03ced4  │    ? .gitignore           [+]
+ 󰎒 │ ▾ WORKTREES     1  │▌    │ ● │ feature work           │   09/06 20:00 │ 3ec2bf9e8  │
+ 󰚩 │   ⌂ main (ws)      │▌    ●─╯ │ init                   │   09/06 03:55 │ 482589dd2  │  ▾ Staged Files (0)  Unstage A
+ 󰅣 │                    │                                                               │
+  │ ▾ LOCAL         2  │                                                               │
+  │   ○ feature        │                                                               │
+  │   ● main           │                                                               │
+ 󱘣 │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │                    │                                                               │
+   │────────────────────│                                                               │
+   │ Sidebar          ⋮ │                                                               │  ▾ Commit  · (nothing staged)
+   │                    │                                                               │   click here · then type a …
+   │ Arrows or j/k walk │                                                               │
+   │ rows. Enter opens  │                                                               │
+   │ the selection.     │                                                               │
+   │ Ctrl+Shift+P opens │                                                               │
+   │ the palette.       │                                                               │
+   │                    │                                                               │
+  │                    │                                                               │   Commit    AI Message    Clea
+   │                    │                                                               │  Click textarea to type · c c…
+ VIEW   main  󰐙 1  [no file]                                         C 74% ±0.0  󱼀 󰐎  WRAP    16:00  ws   —
+

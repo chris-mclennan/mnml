@@ -41,6 +41,15 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     defer gpa.destroy(term);
     try term.init(io, gpa, env, .{});
     defer term.deinit();
+    // The window title names the workspace ("mnml — work"), so several
+    // mnml tabs stay telling apart — and `scripts/shot.sh` finds the
+    // window by it.
+    {
+        const base = std.fs.path.basename(opts.workspace);
+        var title_buf: [256]u8 = undefined;
+        const title = if (base.len > 0) std.fmt.bufPrint(&title_buf, "mnml — {s}", .{base}) catch "mnml" else "mnml";
+        term.setTitle(title) catch {};
+    }
 
     const size = term.screen();
     var app = try App.initWith(gpa, io, .{
