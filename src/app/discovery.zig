@@ -163,17 +163,8 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
         return null;
     }
     if (render.Button.newTabLeaf(id) != null) return .{ .title = "+ New tab", .detail = "click opens a scratch buffer · right-click: the + menu (New / Open / Panels / Tools / Integrations)" };
-    if (@import("menu_bar.zig").buttonOf(id)) |m| return .{ .title = try std.fmt.allocPrint(arena, "{s} menu", .{m.label()}), .detail = "click drops the menu" };
-    return switch (@as(render.Button, @enumFromInt(id))) {
-        .palette => .{ .title = "Command palette", .detail = "search files · run commands (ctrl+shift+p)" },
-        .toggle_tree => .{ .title = "Left panel", .detail = "click toggles the file tree (ctrl+n)" },
-        .toggle_right_panel => .{ .title = "Right panel", .detail = "click toggles it (ctrl+shift+b)" },
-        .ai_claude => .{ .title = "Claude Code", .detail = "click opens the session (ai.claude_code)" },
-        .ai_codex => .{ .title = "Codex", .detail = "click opens the session (ai.codex)" },
-        .add_integration => .{ .title = "+ Add an integration", .detail = "click opens the Marketplace (integrations.show_marketplace)" },
-        .stress => .{ .title = "Stress meter", .detail = "the statusline meter's copy · click toasts the numbers · right-click: its menu" },
-        else => null,
-    };
+    // The chrome row's words and buttons, the strip's split buttons.
+    return @import("menu_bar.zig").describeButton(app, arena, id);
 }
 
 fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {

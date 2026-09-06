@@ -553,6 +553,9 @@ pub const MenuAction = union(enum) {
     toggle_auto_refresh: panel.PanelId,
     /// The coverage chip's mode menu (`app/coverage.zig`).
     set_coverage_mode: @import("../config/Config.zig").CoverageChipMode,
+    /// // changed (menu-bar): a row of the ` » ` overflow menu — opens
+    /// menu-bar menu `index` (`app/menu_bar.zig`).
+    menu_bar: u8,
     none,
 };
 
@@ -561,6 +564,9 @@ pub const MenuItem = struct {
     action: MenuAction,
     checked: bool = false,
     separator_before: bool = false,
+    /// // changed (menu-bar): the row's chord, right-aligned in the
+    /// muted colour (the menu-bar menus fill it from the active profile).
+    hint: ?[]const u8 = null,
     /// // changed (ui-polish): a glyph override for the row; null draws
     /// the command group's glyph (`ui/menu_glyph.zig`).
     icon: ?[]const u8 = null,

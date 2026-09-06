@@ -36,25 +36,27 @@ open t14.txt
 open t15.txt
 # The active tab (t15) is in view; the first ones hide behind ‹; the + is there.
 expect screen contains "‹ "
-expect screen contains "t15.txt   +"
+expect screen contains "t15.txt   󰐕"
 expect screen lacks "alpha.zig   t1.txt"
 # Wheel up over the strip: one hidden tab comes back on the left, the last hides behind ›.
 scroll 60 1 up
 expect screen contains " ›"
-expect screen lacks "t15.txt   +"
+expect screen lacks "t15.txt   󰐕"
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
 scroll 60 1 up
+scroll 60 1 up
+# (one more: the split buttons take nine cells off the strip's right end)
 scroll 60 1 up
 expect screen contains "alpha.zig   t1.txt"
 expect screen lacks "‹ "
 # Wheel down brings the tail back; the + never left.
 scroll 60 1 down
 expect screen lacks "alpha.zig   t1.txt"
-expect screen contains "+"
+expect screen contains "󰐕"
 # Switching the active tab re-windows to it.
 key ctrl+tab
 expect screen contains "alpha.zig"

@@ -76,6 +76,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .dock_set => if (ascii) "%" else "\u{f013}", // fa-gear: a dock setting
         .toggle_auto_refresh => if (ascii) "@" else "\u{f021}", // fa-refresh
         .set_coverage_mode => if (ascii) "%" else "\u{f0e4}", // fa-dashboard
+        .menu_bar => if (ascii) "=" else "\u{f0c9}", // fa-bars: a menu-bar menu
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }
