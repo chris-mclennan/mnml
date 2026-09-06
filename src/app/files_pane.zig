@@ -335,7 +335,10 @@ pub const FilesPane = struct {
     }
 
     /// The parent directory, with the cursor on the directory just left.
+    /// The trash is a root of its own: `↑` from it goes nowhere — the
+    /// directory above it is the data root's trash of every workspace.
     pub fn up(self: *FilesPane, io: Io) Allocator.Error!void {
+        if (self.in_trash) return;
         const parent = std.fs.path.dirname(self.cwd) orelse return;
         if (parent.len == 0) return;
         const was = try self.gpa.dupe(u8, self.cwd);
@@ -618,12 +621,13 @@ fn openCmd(app: *App) CommandError!void {
     _ = try open(app, dir);
 }
 
-/// Two browsers side by side — the commander layout. The second pane IS
-/// the new side, so no placeholder tab is ever made.
+/// Two browsers side by side — the commander layout. The focused
+/// browser is the left side when there is one (a fresh one otherwise);
+/// the second pane IS the new side, so exactly one pane is added.
 fn openSplitCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const dir = try arena.dupe(u8, if (focused(app)) |fp| fp.pane.cwd else app.workspace);
-    const left = try open(app, dir);
+    const left = if (focused(app)) |fp| fp.id else try open(app, dir);
     var second = try FilesPane.init(app.gpa, dir);
     errdefer second.deinit();
     second.in_trash = trash.isTrashDir(app, dir);
@@ -636,6 +640,7 @@ fn openSplitCmd(app: *App) CommandError!void {
 fn upCmd(app: *App) CommandError!void {
     const fp = try require(app);
     try fp.pane.up(app.io);
+    fp.pane.in_trash = trash.isTrashDir(app, fp.pane.cwd);
     app.needs_render = true;
 }
 
@@ -1079,7 +1084,10 @@ pub fn click(app: *App, id: PaneId, f: *FilesPane, hit_id: u32, m: Mouse) Alloca
             .sort => if (m.button == .right) try openSortMenu(app, f, m.x, m.y) else runToast(app, cycleSortCmd(app)),
             .hidden => runToast(app, toggleHiddenCmd(app)),
             .refresh => try f.reload(app.io),
-            .up => try f.up(app.io),
+            .up => {
+                try f.up(app.io);
+                f.in_trash = trash.isTrashDir(app, f.cwd);
+            },
         },
         .body => if (m.button == .right) try openDirMenu(app, f, m.x, m.y),
         .filter => f.filter_focused = true,
@@ -1158,15 +1166,28 @@ fn openSortMenu(app: *App, f: *FilesPane, x: u16, y: u16) Allocator.Error!void {
 
 const Crumbs = struct { labels: []const []const u8, paths: []const []const u8 };
 
+fn under(path: []const u8, root: []const u8) bool {
+    return std.mem.eql(u8, path, root) or (std.mem.startsWith(u8, path, root) and path.len > root.len and path[root.len] == '/');
+}
+
 /// The path as crumbs: the workspace name then the relative segments
-/// when inside the workspace, else the absolute components.
+/// when inside the workspace; `Trash` then the segments when inside the
+/// workspace's trash (its data-root path is an implementation detail,
+/// and nothing above it belongs to this workspace); else the absolute
+/// components.
 fn crumbs(app: *App, f: *const FilesPane, arena: Allocator) Allocator.Error!Crumbs {
     var labels: std.ArrayListUnmanaged([]const u8) = .empty;
     var paths: std.ArrayListUnmanaged([]const u8) = .empty;
-    const inside = std.mem.eql(u8, f.cwd, app.workspace) or (std.mem.startsWith(u8, f.cwd, app.workspace) and f.cwd.len > app.workspace.len and f.cwd[app.workspace.len] == '/');
+    const inside = under(f.cwd, app.workspace);
+    const trash_dir = try trash.dir(app, arena);
     var base: []const u8 = "/";
     var rest: []const u8 = f.cwd;
-    if (inside) {
+    if (under(f.cwd, trash_dir)) {
+        try labels.append(arena, "Trash");
+        try paths.append(arena, trash_dir);
+        base = trash_dir;
+        rest = if (f.cwd.len > trash_dir.len) f.cwd[trash_dir.len + 1 ..] else "";
+    } else if (inside) {
         const ws_name = std.fs.path.basename(app.workspace);
         try labels.append(arena, if (ws_name.len == 0) "workspace" else ws_name);
         try paths.append(arena, app.workspace);
@@ -1441,15 +1462,18 @@ test "the pane in the app: files.open, keys, enter descends and opens, the previ
     try t.expectEqual(@as(usize, 5), app.panes.get(id).?.files.count());
     // A key the pane does not own falls through to the chord chain.
     try t.expect(!try handleKey(&app, id, &app.panes.get(id).?.files, Key.ctrl('p')));
-    // open_split: two browsers, the right one focused, no scratch tab.
+    // open_split: the focused browser plus ONE beside it, the right one
+    // focused, no scratch tab. (This pinned 3 browsers once — the
+    // duplicate tab the finding reported.)
     try command.run(&app, .{ .static = .@"files.open_split" });
     var browsers: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.* == .files) {
         browsers += 1;
     };
-    try t.expectEqual(@as(usize, 3), browsers);
+    try t.expectEqual(@as(usize, 2), browsers);
     try t.expect(app.panes.get(app.active.?).?.* == .files);
-    try t.expectEqual(@as(usize, 4), app.panes.count()); // 3 browsers + README
+    try t.expect(app.active.? != id);
+    try t.expectEqual(@as(usize, 3), app.panes.count()); // 2 browsers + README
 }
 
 test "mouse: a row press moves the cursor, a second press opens, ctrl-click marks, shift-click extends, the crumb navigates, the sort chip cycles" {
