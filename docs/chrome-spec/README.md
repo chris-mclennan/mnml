@@ -1,0 +1,18 @@
+# The chrome spec
+
+`rust-120x40.txt` is the Rust editor's screen — every cell, glyphs
+included — on the fixture workspace with the author's real config, at
+120×40, after the first-run overlay is dismissed. It is what mnml-zig
+must look like. Colours are not in the dump; for those the Rust source
+under `src/ui/` is the reference, and a side-by-side screenshot in
+ghostty is the final check.
+
+Regenerate and compare with `tools/chrome-diff.sh WS RS_DATA ZIG_DATA
+STEPS` (see the script header). Out of scope until the Zig integrations
+exist: the pinned integration launcher icons in the rail and palette
+bar. Cut: now-playing / Sonos chips.
+
+Same look, Zig internals: the Rust modules are a behaviour reference,
+not a template. Build on the component system (`Ui`, `HitMap`,
+`Canvas`, `ListPanel`), register every click target in the same
+statement that paints it, and add nothing the Rust screen does not show.
