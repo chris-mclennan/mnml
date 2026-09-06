@@ -116,6 +116,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .overlay_item => .{ .title = "Overlay item", .detail = "click chooses it" },
         .rail => |part| activity_bar.describe(part),
+        .welcome => |row| switch (row.kind) {
+            .recent => .{ .title = "Recent file", .detail = "click opens it" },
+            .shortcut => .{ .title = "Shortcut", .detail = "click runs it" },
+        },
     };
 }
 
