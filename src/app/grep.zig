@@ -34,6 +34,7 @@ const text_field = @import("../ui/text_field.zig");
 const EditOp = @import("../editor/edit_op.zig").EditOp;
 
 pub const table = .{
+    .@"search.toggle_regex" = &toggleRegexCmd,
     .@"find.grep" = &grepCmd,
     .@"find.grep_replace" = &grepReplaceCmd,
     .@"view.activity_search" = &activitySearch,
@@ -86,9 +87,37 @@ pub const Hit = struct {
     col: u32,
     /// Match length in bytes.
     len: u32,
-    /// The line, newline stripped.
+    /// The line, newline stripped — or a window of it around the match
+    /// (`windowLine`) when the line is long. `col` is the line's column
+    /// either way; `col - text_off` is the match's offset in `text`.
     text: []const u8,
+    /// Byte offset of `text` on the line; 0 when `text` is the whole line.
+    text_off: u32 = 0,
+
+    /// The match's byte offset within `text`.
+    pub fn textCol(h: Hit) usize {
+        return h.col -| h.text_off;
+    }
 };
+
+/// Bytes of the line kept ahead of a match and past its end. A minified
+/// file has lines of half a megabyte; a hit stores what a row can show
+/// (`grep_view` paints `…` + ~40 cells before the match) plus a tail
+/// that survives the `/` filter. Both edges land on UTF-8 boundaries.
+pub const window_before: usize = 128;
+pub const window_after: usize = 512;
+
+pub const Window = struct { text: []const u8, off: u32 };
+
+pub fn windowLine(line: []const u8, col: u32, len: u32) Window {
+    if (line.len <= window_before + window_after) return .{ .text = line, .off = 0 };
+    var start: usize = @as(usize, col) -| window_before;
+    while (start > 0 and start < line.len and (line[start] & 0xC0) == 0x80) start -= 1;
+    var end: usize = @min(line.len, @as(usize, col) + len + window_after);
+    while (end < line.len and (line[end] & 0xC0) == 0x80) end += 1;
+    if (start >= end) return .{ .text = line, .off = 0 };
+    return .{ .text = line[start..end], .off = @intCast(start) };
+}
 
 /// One batch from the worker. Owned by the event until `handle`.
 pub const Result = struct {
@@ -297,7 +326,21 @@ pub fn find(app: *App) ?PaneId {
     return app.panes.findKind(.grep);
 }
 
-/// `find.grep`: the query prompt, prefilled with the active find query.
+/// `search.toggle_regex`: flip the Search pane's regex flag and rerun
+/// the query. The flag was inherited from the editor's find bar and
+/// could not be changed in the pane.
+fn toggleRegexCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = find(app) orelse return app.diag.fail(arena, "no Search pane — find.grep opens one", .{});
+    const pane = app.panes.get(id) orelse return error.Failed;
+    pane.grep.flags.regex = !pane.grep.flags.regex;
+    app.toast("search regex: {s}", .{if (pane.grep.flags.regex) "on" else "off"});
+    try refresh(app, id);
+}
+
+/// `find.grep`: the query prompt, prefilled with the active find query
+/// — seeded as a selection, so typing replaces it (VS Code's search box
+/// keeps the last query selected) and Enter reruns it.
 fn grepCmd(app: *App) CommandError!void {
     try openQueryPrompt(app);
 }
@@ -306,8 +349,8 @@ pub fn openQueryPrompt(app: *App) Allocator.Error!void {
     app.overlay.deinit(app.gpa);
     var state = app_mod.Prompt.init(app.gpa, "Find in files");
     state.placeholder = "pattern — rg when installed, else a vim pattern";
-    if (app.activeEditor()) |e| if (e.find.query.items.len > 0) try state.setText(app.gpa, e.find.query.items);
-    if (find(app)) |id| if (app.panes.get(id)) |p| if (state.buf.items.len == 0) try state.setText(app.gpa, p.grep.query);
+    if (app.activeEditor()) |e| if (e.find.query.items.len > 0) try state.seed(app.gpa, e.find.query.items);
+    if (find(app)) |id| if (app.panes.get(id)) |p| if (state.buf.items.len == 0) try state.seed(app.gpa, p.grep.query);
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .grep_query } };
     app.focus = .overlay;
     app.needs_render = true;
@@ -450,13 +493,15 @@ const Ctx = struct {
         }
         const b = try c.open(backend);
         const arena = b.arena.allocator();
+        const win = windowLine(text, col, len);
         try b.hits.append(arena, .{
             .path = try arena.dupe(u8, path),
             .rel = try arena.dupe(u8, rel),
             .line = line,
             .col = col,
             .len = len,
-            .text = try arena.dupe(u8, text),
+            .text = try arena.dupe(u8, win.text),
+            .text_off = win.off,
         });
         c.total += 1;
         if (b.hits.items.len >= batch_size) c.flush(false);
@@ -701,6 +746,7 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
             .col = h.col,
             .len = h.len,
             .text = try arena.dupe(u8, h.text),
+            .text_off = h.text_off,
         });
     }
     p.backend = result.backend;
@@ -1061,8 +1107,10 @@ fn locate(text: []const u8, line_starts: []const usize, h: Hit) ?regex.Range {
     const start = line_starts[h.line - 1] + h.col;
     const end = start + h.len;
     if (end > text.len) return null;
-    if (h.col + h.len > h.text.len) return null;
-    if (!std.mem.eql(u8, text[start..end], h.text[h.col .. h.col + h.len])) return null;
+    if (h.col < h.text_off) return null;
+    const tc = h.textCol();
+    if (tc + h.len > h.text.len) return null;
+    if (!std.mem.eql(u8, text[start..end], h.text[tc .. tc + h.len])) return null;
     return .{ .start = start, .end = end };
 }
 
@@ -1266,7 +1314,7 @@ fn walkInto(f: *Fixture, query: []const u8, flags: Flags) !*Result {
             if (ev != .grep) continue;
             const b = ev.grep;
             const arena = merged.arena.allocator();
-            for (b.hits.items) |h| try merged.hits.append(arena, .{ .path = try arena.dupe(u8, h.path), .rel = try arena.dupe(u8, h.rel), .line = h.line, .col = h.col, .len = h.len, .text = try arena.dupe(u8, h.text) });
+            for (b.hits.items) |h| try merged.hits.append(arena, .{ .path = try arena.dupe(u8, h.path), .rel = try arena.dupe(u8, h.rel), .line = h.line, .col = h.col, .len = h.len, .text = try arena.dupe(u8, h.text), .text_off = h.text_off });
             if (b.err) |e| merged.err = try arena.dupe(u8, e);
             merged.done = b.done;
         }

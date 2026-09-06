@@ -408,11 +408,21 @@ pub fn count(app: *App) usize {
 
 /// Open the trash as a Files pane — the seven days are real only if
 /// there is somewhere to see them.
+/// The trash view is a singleton: a second `files.trash` focuses and
+/// re-reads the one that is open rather than stacking a twin.
 fn openTrashCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const trash_dir = try dir(app, arena);
     Io.Dir.cwd().createDirPath(app.io, trash_dir) catch return app.diag.fail(arena, "could not open the trash", .{});
     if (count(app) == 0) app.toast("trash is empty", .{});
+    for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
+        .files => |*f| if (f.in_trash) {
+            try f.reload(app.io);
+            app.showPane(@intCast(i));
+            return;
+        },
+        else => {},
+    };
     _ = try files_pane.open(app, trash_dir);
 }
 

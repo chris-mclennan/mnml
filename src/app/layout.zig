@@ -29,6 +29,15 @@ pub const Leaf = struct {
     active: PaneId,
     /// Insertion order; never empty while the leaf is live.
     tabs: std.ArrayListUnmanaged(PaneId) = .empty,
+    /// The tab strip's window: the first painted position. The wheel
+    /// and the `‹ ›` markers move it; a change of active tab re-fits
+    /// it so the active tab is in view (`strip_anchor` remembers which
+    /// active tab the window was fitted for).
+    strip_first: usize = 0,
+    strip_anchor: ?PaneId = null,
+    /// Tabs past the window's right edge as of the last paint — what a
+    /// wheel-down has to scroll into.
+    strip_hidden_right: usize = 0,
 };
 
 pub const Node = union(enum) {

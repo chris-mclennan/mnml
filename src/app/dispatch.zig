@@ -648,12 +648,37 @@ fn closeOverlay(app: *App) void {
     // Esc on a `:s///c` box keeps what was replaced and stops.
     if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
     git_app.overlayClosing(app);
-    const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else null;
+    const back: ?app_mod.FocusId = if (app.overlay == .menu) app.overlay.menu.return_focus else if (app.overlay == .prompt) app.overlay.prompt.return_focus else null;
     app.overlay.deinit(app.gpa);
     if (back) |f| {
         app.focus = f;
         if (f == .panel and app.right_panel == null) restoreFocus(app);
     } else restoreFocus(app);
+}
+
+/// Scroll a leaf's tab strip by one tab: down / `›` hides one more on
+/// the left when tabs are hidden on the right, up / `‹` brings one
+/// back. The window stays anchored to the current active tab so the
+/// next paint does not snap it back.
+fn tabStripStep(app: *App, leaf_idx: u32, delta: i8) Allocator.Error!void {
+    const lid = (try app.layouts.current().leafAt(app.frame.allocator(), leaf_idx)) orelse return;
+    return tabStripStepLid(app, lid, delta);
+}
+
+/// Scroll a leaf's strip by one, addressed by its node id (the pane
+/// wheel path has the id, not the paint ordinal).
+fn tabStripStepLid(app: *App, lid: layout_mod.NodeId, delta: i8) Allocator.Error!void {
+    const layout = app.layouts.current();
+    const leaf = layout.leaf(lid) orelse return;
+    if (delta > 0) {
+        if (leaf.strip_hidden_right == 0) return;
+        leaf.strip_first += 1;
+    } else {
+        if (leaf.strip_first == 0) return;
+        leaf.strip_first -= 1;
+    }
+    leaf.strip_anchor = leaf.active;
+    app.needs_render = true;
 }
 
 /// Enter on a menu row: a parent opens its child, a leaf runs.
@@ -1120,6 +1145,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         }
     }
     const wheel = m.kind == .scroll_up or m.kind == .scroll_down;
+    // A notch on a pane's tab-strip row (a gap between tabs falls through
+    // to the pane) scrolls the strip, not the buffer.
+    if (wheel and target == .pane) {
+        if (!app.zen) if (hitRect(app, m.x, m.y)) |r| if (r.h >= 2 and m.y == r.y) {
+            if (app.layouts.current().leafOf(target.pane)) |lid| return tabStripStepLid(app, lid, if (m.kind == .scroll_down) 1 else -1);
+        };
+    }
     switch (target) {
         // The list panels (D6): one prong per hit kind, routed by panel.
         .row => |pr| switch (pr.panel) {
@@ -1267,7 +1299,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .tab => |tb| {
-            if (wheel) return;
+            if (wheel) return tabStripStep(app, tb.leaf, if (m.kind == .scroll_down) 1 else -1);
             const layout = app.layouts.current();
             const lid = (try layout.leafAt(app.frame.allocator(), tb.leaf)) orelse return;
             const leaf = layout.leaf(lid) orelse return;
@@ -1453,6 +1485,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .button => |id| {
+            // The strip's markers and `+`: a wheel scrolls the strip, a
+            // press on a marker steps it.
+            if (render.Button.tabScrollOf(id)) |ts| return tabStripStep(app, @intCast(ts.leaf), if (wheel) (if (m.kind == .scroll_down) @as(i8, 1) else -1) else (if (ts.dir == .right) @as(i8, 1) else -1));
+            if (wheel) {
+                if (render.Button.newTabLeaf(id)) |leaf_idx| return tabStripStep(app, @intCast(leaf_idx), if (m.kind == .scroll_down) 1 else -1);
+                return;
+            }
             if (m.kind != .press) return;
             // The strip's markdown chip (`render.drawMdChip`).
             if (id == md_preview.button_edit) return runCmd(app, .@"markdown.edit_raw");

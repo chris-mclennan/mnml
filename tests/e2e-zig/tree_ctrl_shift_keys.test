@@ -15,6 +15,12 @@ key ctrl+shift+c
 expect screen lacks "copied"
 key ctrl+shift+x
 expect screen lacks "cut"
+# ctrl+shift+x is Activity: Integrations in both profiles (a real
+# binding now, not a stub), so it opens that pane — never a clipboard
+# op. Back to the tree for the plain-chord check.
+expect screen contains "INTEGRATIONS"
+command view.focus_tree
+key end
 key ctrl+shift+v
 wait 300
 expect screen lacks "paste"

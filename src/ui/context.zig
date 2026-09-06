@@ -84,7 +84,7 @@ pub fn putStr(ui: Ui, x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u
 /// Paints `s` so that it ends at `right_x` (exclusive), within `max_w`.
 /// Returns the x it started at.
 pub fn putStrRight(ui: Ui, right_x: u16, y: u16, max_w: u16, s: []const u8, style: Style) u16 {
-    const w = @min(ui.width(s), max_w);
+    const w = ui.widthUpTo(s, max_w);
     const x = right_x -| w;
     _ = ui.putStr(x, y, w, s, style);
     return x;
@@ -102,10 +102,24 @@ pub fn ellipsis(ui: Ui) clip.Ellipsis {
     return if (ui.ascii) .ascii else .unicode;
 }
 
+/// Cell width of `s` capped at `cap`: stops measuring at the first
+/// grapheme past it, so a whole file line costs `cap` of work.
+pub fn widthUpTo(ui: Ui, s: []const u8, cap: u16) u16 {
+    return if (ui.fitsIn(s, cap)) ui.width(s) else cap;
+}
+
+/// True when `s` paints in `max` cells — the measure every clip does
+/// first, bounded by `max` rather than by the text.
+pub fn fitsIn(ui: Ui, s: []const u8, max: u16) bool {
+    return clip.fits(s, max, ui.canvas.widthMethod());
+}
+
 /// `s` cut to `max` cells with the terminal's ellipsis, on the frame
-/// arena. OOM returns `s` uncut; the paint will clip it instead.
+/// arena. OOM returns `s` uncut; the paint will clip it instead. Never
+/// measures past `max`: a 545k-char line clipped to a row is `max`
+/// graphemes of work, and cannot overflow the cell sum.
 pub fn clipStr(ui: Ui, s: []const u8, max: u16) []const u8 {
-    if (ui.width(s) <= max) return s;
+    if (ui.fitsIn(s, max)) return s;
     return ui.canvas.clipCells(ui.arena, s, max, ui.ellipsis()) catch s;
 }
 

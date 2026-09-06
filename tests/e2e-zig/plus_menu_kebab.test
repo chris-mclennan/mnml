@@ -1,0 +1,17 @@
+# zig-only
+# The `+` menu's child rows: a click on the curation kebab `⋯` opens
+# Pin / Hide / Copy for that row. The row's hit used to be registered
+# over the glyph's cell, so clicking the glyph ran the row (only the
+# margin cell beside it reached the curation). This replays the
+# finding's drive: alpha.zig's tab puts the `+` at column 45; the child
+# menu's first row paints its kebab at column 87.
+write alpha.zig "const alpha = 1;\n"
+open alpha.zig
+rightclick 45 1
+expect screen contains "New"
+click 55 2
+expect screen contains "New file…"
+expect screen contains "⋯"
+click 87 2
+expect screen contains "Pin to top"
+expect screen lacks "Rename"

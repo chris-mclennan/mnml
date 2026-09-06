@@ -23,6 +23,7 @@ const Ui = context;
 const files_pane = @import("files_pane.zig");
 const file_clipboard = @import("file_clipboard.zig");
 const trash = @import("trash.zig");
+const watch = @import("watch.zig");
 
 pub const table = .{
     .@"view.add_workspace" = &addWorkspace,
@@ -97,6 +98,10 @@ pub const Tree = struct {
     expanded: std.StringHashMapUnmanaged(void) = .empty,
     /// Top-level directories a refresh has already met (owned keys).
     seen_top: std.StringHashMapUnmanaged(void) = .empty,
+    /// Every directory the rows were read from, by absolute path
+    /// (owned keys), stamped as it was read. `watch.check` refreshes
+    /// the tree when one of them moves on disk.
+    dir_stamps: std.StringHashMapUnmanaged(watch.DiskStamp) = .empty,
     /// Extra roots, in section order. With none, the tree is the
     /// primary workspace alone and paints no headers.
     roots: std.ArrayListUnmanaged(Root) = .empty,
@@ -118,6 +123,7 @@ pub const Tree = struct {
     pub fn deinit(self: *Tree) void {
         self.clearRows();
         self.rows.deinit(self.gpa);
+        self.dir_stamps.deinit(self.gpa);
         var it = self.expanded.keyIterator();
         while (it.next()) |k| self.gpa.free(k.*);
         self.expanded.deinit(self.gpa);
@@ -198,6 +204,35 @@ pub const Tree = struct {
     fn clearRows(self: *Tree) void {
         for (self.rows.items) |r| self.gpa.free(r.rel);
         self.rows.clearRetainingCapacity();
+        self.clearDirStamps();
+    }
+
+    fn clearDirStamps(self: *Tree) void {
+        var it = self.dir_stamps.keyIterator();
+        while (it.next()) |k| self.gpa.free(k.*);
+        self.dir_stamps.clearRetainingCapacity();
+    }
+
+    fn noteDirStamp(self: *Tree, app: *App, abs: []const u8) Allocator.Error!void {
+        const st = watch.stamp(app.io, abs) orelse return;
+        if (self.dir_stamps.getPtr(abs)) |slot| {
+            slot.* = st;
+            return;
+        }
+        const key = try self.gpa.dupe(u8, abs);
+        errdefer self.gpa.free(key);
+        try self.dir_stamps.put(self.gpa, key, st);
+    }
+
+    /// Whether any listed directory's mtime moved since it was read —
+    /// an entry another tool added, removed or renamed.
+    pub fn dirsChanged(self: *const Tree, io: std.Io) bool {
+        var it = self.dir_stamps.iterator();
+        while (it.next()) |kv| {
+            const now_st = watch.stamp(io, kv.key_ptr.*) orelse return true;
+            if (now_st.mtime_ns != kv.value_ptr.mtime_ns) return true;
+        }
+        return false;
     }
 
     /// Rebuild the rows from disk: the root's entries, then each
@@ -250,6 +285,7 @@ pub const Tree = struct {
         const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(app.frame.allocator(), &.{ app.workspace, rel_dir });
         var dir = std.Io.Dir.cwd().openDir(app.io, abs, .{ .iterate = true }) catch return;
         defer dir.close(app.io);
+        try self.noteDirStamp(app, abs);
         var names: std.ArrayListUnmanaged(Row) = .empty;
         defer names.deinit(gpa);
         var it = dir.iterate();
@@ -700,9 +736,16 @@ fn rename(app: *App) CommandError!void {
     app.overlay.deinit(app.gpa);
     var state = app_mod.Prompt.init(app.gpa, "Rename to (workspace-relative)");
     try state.setText(app.gpa, rel);
-    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel } } };
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .return_focus = promptReturnFocus(app) } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// A prompt the tree opened hands focus back to the tree — Esc and
+/// Enter both — so the next arrow key moves the tree cursor, not the
+/// editor's. Opened from anywhere else, the active pane takes it.
+fn promptReturnFocus(app: *App) ?app_mod.FocusId {
+    return if (app.focus == .tree) .tree else null;
 }
 
 pub const move_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'm', .label = "Move" }, .{ .key = 'c', .label = "Cancel" } };
@@ -731,7 +774,7 @@ fn moveTo(app: *App) CommandError!void {
     var state = app_mod.Prompt.init(app.gpa, title);
     errdefer app_mod.Prompt.deinit(&state, app.gpa);
     if (std.fs.path.dirname(row.rel)) |parent| try state.setText(app.gpa, try std.fmt.allocPrint(app.frame.allocator(), "{s}/", .{parent}));
-    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .title_owned = title } };
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .title_owned = title, .return_focus = promptReturnFocus(app) } };
     app.focus = .overlay;
     app.needs_render = true;
 }

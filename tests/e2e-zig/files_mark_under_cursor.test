@@ -1,0 +1,11 @@
+# zig-only
+# A marked row under the cursor shows its tick: the cursor band is the
+# cursor, the marker column keeps the `✓`. It used to paint the bar over
+# the tick, so the row being decided on never looked marked.
+write a.txt "a"
+write b.txt "b"
+command files.open
+key space
+key up
+expect screen contains "✓1"
+expect screen contains "✓  a.txt"

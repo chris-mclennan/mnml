@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Files pane and tree do not notice files created outside mnml until a manual refresh — no watcher on the listing
 
@@ -27,3 +27,15 @@ status: open
 **Source pointer**: `src/app/files_pane.zig` (`reload` is called from the pane's own ops and `refreshCmd` only); the watcher in `src/app/watch.zig` is subscribed by `todos.zig` alone.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `feat(files): the Files pane and the tree re-read when their directory changes on disk`.
+
+`watch.check`'s 2 s pass (the debounce) now ends in `checkDirs`: a Files
+pane stamps its directory at every `reload` (`FilesPane.dir_stamp`) and
+re-reads when the mtime moved; the tree stamps every directory `listInto`
+walks (`Tree.dir_stamps`) and refreshes when any moved (`dirsChanged`).
+A directory's mtime moves when an entry is added, removed or renamed —
+what VS Code's Explorer reacts to. Unit test in `watch.zig`;
+`tests/e2e-zig/files_external_refresh.test` (a shell `touch` between waits).

@@ -1,0 +1,18 @@
+# zig-only
+# Esc on the tree's F2 rename prompt hands focus back to the tree (the
+# prompt was the tree's), so the next Enter opens the tree row instead
+# of editing the file the prompt overlay left focused.
+write a.txt "a\n"
+write b.txt "b\n"
+open a.txt
+command view.focus_tree
+# A fresh tree has not scanned: r refreshes it, then the last row is b.txt.
+key r
+key end
+key f2
+expect screen contains "Rename to"
+key escape
+expect screen lacks "Rename to"
+key enter
+expect pane b.txt
+expect dirty false

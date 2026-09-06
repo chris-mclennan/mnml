@@ -119,6 +119,7 @@ pub const table = .{
     .@"integrations.refresh" = &refreshCmd,
     .@"integrations.refresh_binary_cache" = &refreshCmd,
     .@"integrations.show_installed" = &showInstalled,
+    .@"view.activity_integrations" = &showInstalled,
     .@"integrations.show_details" = &showDetails,
     .@"integrations.show_manifest" = &showManifest,
     .@"integrations.edit" = &editCmd,

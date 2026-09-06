@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Tree `F2` rename: `Esc` closes the prompt but leaves focus on the editor pane, so the next arrow keys edit instead of moving in the tree
 
@@ -26,3 +26,14 @@ status: open
 **Source pointer**: `src/app/dispatch.zig:585` `restoreFocus` / the prompt close in `src/app/tree.zig` `handleKey` `.f2` branch (opens with `app.focus = .overlay`, no `prev_focus`).
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(tree): a prompt the tree opened hands focus back to the tree`.
+
+The prompt overlay gained `return_focus: ?FocusId` (the menu overlay
+already had one); `closeOverlay` honours it on Esc and on Enter — the one
+line in `dispatch.zig`. The tree's rename and move-to prompts set it to
+`.tree` when the tree had focus (`tree.promptReturnFocus`).
+`tests/e2e-zig/tree_rename_esc_focus.test`: F2, Esc, Enter opens the tree
+row instead of editing the file.

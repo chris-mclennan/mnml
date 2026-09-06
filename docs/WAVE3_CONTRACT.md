@@ -2401,3 +2401,59 @@ repro and, for seven of them, a `vim()` case in the buffer harness.
   5 % step). `/pat/e` is a search offset kept on the pane's find state.
   `Ctrl-V` on the `:` line quotes the next key (the paste is `Ctrl-R "`).
   `q{A-Z}` appends to the register.
+
+## Round two of the VS Code hunt (`fix-vscode2`)
+
+Fourteen findings, each with a `tests/e2e-zig/*.test` repro and, where a
+painter or a pure function is the fix, a unit test with a landed
+break-check.
+
+- `// changed (ui):` `clip.width` sums cells per grapheme, saturating at
+  `u16`, and `clipCells` measures through `clip.fits`, which stops at the
+  first grapheme past the budget — a grep hit on a 545k-char line (the
+  repo's own `data/nerd-glyphnames.json`) used to hand the whole prefix to
+  vaxis' `gwidth` and overflow the process to death. `Ui.clipStr` /
+  `widthUpTo` / `fitsIn` are the bounded front. Every painter that can
+  receive a whole file line is guarded and unit-tested at 100k chars:
+  `grep_view.paintHit` (which now paints a `…`-windowed line around the
+  match, the walker storing a `grep.windowLine` window in `Hit.text_off`),
+  `diagnostics_view` / `todos` / `http_panel` (which summed two saturated
+  widths), `outline_view`, and the location list.
+- `// changed (app):` `transfers.quitGuard(app, force)` is the one quit
+  guard both `app.quit` (Ctrl+Q, the palette) and `:qa` ask; a copy in
+  flight refuses either. (`:qa` keeps its inline copy in `ex.zig`, the
+  vim-round2 file — fold it onto `quitGuard` after that merge.)
+- `// changed (ui):` `Prompt` has `return_focus: ?FocusId` (as the menu
+  overlay already did); `closeOverlay` honours it, so a tree-opened rename
+  prompt hands focus back to the tree. Ctrl+A in a prompt is select-all
+  (VS Code), and the grep prompt seeds the last query as a selection.
+- `// changed (app):` `dock.layout` overflows a widget its corner cannot
+  hold to the next corner clockwise with room (`placeInCorner`); a drop on
+  a full corner snaps to the nearest with room and toasts, never leaving
+  the widget unpainted. `dock.move_corner_next` asks the same
+  `cornerWithRoom`.
+- `// changed (app):` `files.open_split` reuses the focused browser as the
+  left pane (one new pane, not two). The trash view is a singleton titled
+  `Trash`: `crumbs` reads `Trash › …` under the workspace trash and
+  `FilesPane.up` stops there, so `↑` never climbs into the data root.
+  `files_view` paints a marked row's tick on the cursor row too.
+- `// changed (app):` the tree's right-click menu carries Cut / Copy /
+  Paste here / Duplicate (the Files pane's ids). `search.toggle_regex`
+  flips the Search pane's regex and reruns; `view.activity_integrations`
+  (ctrl+shift+x) opens the Integrations pane; `view.image_open` is a
+  picker of the workspace's images — its runner table was never listed in
+  `command.runner_tables`, so it is now.
+- `// changed (render):` a menu row's curation kebab (`⋯`) registers its
+  hit after the row hit and the row hit stops where the kebab starts, so a
+  click on the glyph opens Pin / Hide / Copy rather than running the row.
+- `// changed (app):` `watch.check` ends in `checkDirs`: a Files pane
+  (`FilesPane.dir_stamp`) and the tree (`Tree.dir_stamps` / `dirsChanged`)
+  re-read when a directory's mtime moves on disk — a file added by a build,
+  a git checkout or another editor.
+- `// changed (ui):` the tab strip is a window. `bufferline.draw` takes
+  `Opts.first` (default `fitActive`, so the active tab is the last one
+  shown) and returns the `Window`; hidden tabs show `‹` / `›` that register
+  per-leaf `render.Button.tabScroll` buttons, and the `+` keeps its place.
+  `Leaf` holds `strip_first` / `strip_anchor` / `strip_hidden_right`; a
+  wheel over the strip (a gap between tabs routes through the pane's strip
+  row) and a marker click step it a tab at a time (`dispatch.tabStripStep`).

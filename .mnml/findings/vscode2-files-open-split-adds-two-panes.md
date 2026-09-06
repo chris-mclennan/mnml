@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `files.open_split` adds two Files panes — a duplicate tab in the current group *and* the split
 
@@ -22,3 +22,11 @@ status: open
 **Source pointer**: `src/app/files_pane.zig:623-634` — `const left = try open(app, dir);` at `:626` should reuse the focused Files pane when there is one.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(files): open_split adds exactly one pane beside the focused browser`.
+
+`openSplitCmd` reuses the focused Files pane as the left side (a fresh one
+only when no browser has focus). The unit test that pinned three browsers
+now pins two; `tests/e2e-zig/files_open_split.test`.

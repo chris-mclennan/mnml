@@ -22,6 +22,7 @@ const dispatch = @import("dispatch.zig");
 const ex = @import("ex.zig");
 const settings = @import("settings.zig");
 const find = @import("find.zig");
+const transfers = @import("transfers.zig");
 
 pub const table = .{
     .@"app.quit" = &quit,
@@ -138,6 +139,9 @@ fn cutRunner(comptime reason: []const u8) CommandFn {
 /// box (`close_prompt.test` is the spec for the box; `ConfirmPurpose.quit`
 /// routes the choice).
 fn quit(app: *App) CommandError!void {
+    // A copy in flight is refused before the dirty check: the box's
+    // Discard must not be a way past it (`transfers.quitGuard`).
+    try transfers.quitGuard(app, false);
     if (!app.anyDirty()) {
         app.quit = true;
         return;

@@ -1,0 +1,17 @@
+# zig-only
+# The tree's right-click menu carries Cut / Copy / Paste here /
+# Duplicate — the Files pane's menu had them, the tree only had the
+# chords. view.context_menu_at_focus opens the menu on the cursor row.
+write a.txt "a"
+write b.txt "b"
+open a.txt
+command view.focus_tree
+# A fresh tree has not scanned: r refreshes it, then the last row is b.txt.
+key r
+key end
+command view.context_menu_at_focus
+expect screen contains "Open in split"
+expect screen contains "Cut"
+expect screen contains "Paste here"
+expect screen contains "Duplicate"
+expect screen contains "Rename…"

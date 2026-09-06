@@ -13,8 +13,9 @@
 //! removes its source only on a genuine full completion.
 //!
 //! The statusline chip is aggregate and hidden at rest: `⇄ 42% 3.1M/s`.
-//! `transfer.cancel_all` stops every one; `:qa` refuses while one runs,
-//! `:qa!` overrides.
+//! `transfer.cancel_all` stops every one; `quitGuard` refuses a quit
+//! while one runs — `app.quit` (Ctrl+Q, the palette) and `:qa` both ask
+//! it — and `:qa!` overrides.
 
 const std = @import("std");
 const Io = std.Io;
@@ -496,6 +497,16 @@ pub fn running(app: *App) usize {
     return app.transfers.jobs.items.len;
 }
 
+/// The quit guard: a quit kills the workers mid-copy and leaves a
+/// half-written destination behind; an explicit cancel promises a
+/// cleanup, a quit cannot. Every quit path asks here (`force` is
+/// `:qa!`), so the standard profile's Ctrl+Q refuses like `:qa` does.
+pub fn quitGuard(app: *App, force: bool) CommandError!void {
+    const n = running(app);
+    if (force or n == 0) return;
+    return app.diag.fail(app.frame.allocator(), "{d} transfer(s) still running — transfer.cancel_all, or :qa! to quit anyway", .{n});
+}
+
 /// Raise every worker's flag. Returns how many were told.
 pub fn cancelAll(app: *App) usize {
     var n: usize = 0;
@@ -668,6 +679,30 @@ test ":qa refuses while a transfer runs and :qa! overrides; the chip shows progr
     _ = cancelAll(&app);
     try settle(&app, 4000);
     try t.expectEqual(@as(usize, 0), running(&app));
+}
+
+test "app.quit refuses while a transfer runs, like :qa; the discard box never opens over it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try seedTree(&tmp, 400);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    const src = try std.fs.path.join(t.allocator, &.{ root, "big" });
+    defer t.allocator.free(src);
+    const dst = try std.fs.path.join(t.allocator, &.{ root, "out" });
+    defer t.allocator.free(dst);
+    _ = try start(&app, .copy, &.{.{ .src = src, .dst = dst }});
+    try t.expectError(error.Failed, command.run(&app, .{ .static = .@"app.quit" }));
+    try t.expect(!app.quit);
+    try t.expect(app.overlay != .confirm);
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "1 transfer(s) still running") != null);
+    _ = cancelAll(&app);
+    try settle(&app, 4000);
+    try t.expectEqual(@as(usize, 0), running(&app));
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try t.expect(app.quit);
 }
 
 test "commonAncestor and percent" {

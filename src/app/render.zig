@@ -125,8 +125,29 @@ pub const Button = enum(u32) {
     add_integration = 6,
     /// The stress meter's bufferline copy.
     stress = 7,
+    /// The tab strip's `‹` / `›` overflow markers, one pair per leaf
+    /// (`tabScroll`); leaves 0..63.
+    tab_scroll_left_base = 0x80,
+    tab_scroll_right_base = 0xC0,
     new_tab_base = 0x100,
     _,
+
+    pub const ScrollDir = enum { left, right };
+    pub const TabScroll = struct { leaf: usize, dir: ScrollDir };
+
+    pub fn tabScroll(leaf: usize, dir: ScrollDir) u32 {
+        const base: u32 = @intFromEnum(if (dir == .left) Button.tab_scroll_left_base else Button.tab_scroll_right_base);
+        return base + @as(u32, @intCast(@min(leaf, 63)));
+    }
+
+    /// The leaf and direction a marker id names, if it is one.
+    pub fn tabScrollOf(id: u32) ?TabScroll {
+        const l: u32 = @intFromEnum(Button.tab_scroll_left_base);
+        const r: u32 = @intFromEnum(Button.tab_scroll_right_base);
+        if (id >= l and id < r) return .{ .leaf = id - l, .dir = .left };
+        if (id >= r and id < @intFromEnum(Button.new_tab_base)) return .{ .leaf = id - r, .dir = .right };
+        return null;
+    }
 
     pub fn newTab(leaf: usize) u32 {
         return @intFromEnum(Button.new_tab_base) + @as(u32, @intCast(leaf));
@@ -471,6 +492,32 @@ fn tabsOf(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId) Al
     return tabs.items;
 }
 
+/// The leaf's tab strip. The window (`Leaf.strip_first`) is re-fitted
+/// to the active tab when that changed since the last paint, else it
+/// stays where the wheel / markers left it; what was painted goes back
+/// on the leaf so the wheel knows whether there is anything to scroll.
+fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId, li: usize, strip: Rect) void {
+    const tabs = tabsOf(app, ui, layout, lid) catch return;
+    var first: usize = 0;
+    if (layout.leaf(lid)) |leaf| {
+        if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
+            first = bufferline.fitActive(ui, strip, tabs, bufferline.plus_w);
+            leaf.strip_anchor = leaf.active;
+        } else first = leaf.strip_first;
+    }
+    const win = bufferline.draw(ui, strip, tabs, .{
+        .leaf = @intCast(li),
+        .new_tab = Button.newTab(li),
+        .first = first,
+        .scroll_left = Button.tabScroll(li, .left),
+        .scroll_right = Button.tabScroll(li, .right),
+    });
+    if (layout.leaf(lid)) |leaf| {
+        leaf.strip_first = win.first;
+        leaf.strip_hidden_right = win.hidden_right;
+    }
+}
+
 /// The markdown chip at the right end of the active leaf's strip:
 /// `✏ Edit` on a preview, ` Preview` on a markdown editor. A click is
 /// the command.
@@ -534,7 +581,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     if (layout.isEmpty()) {
         // An empty frame keeps the strip row so the `+` is where the
         // first tab will land.
-        if (body.h >= 2) bufferline.draw(ui, body.row(0), &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0) });
+        if (body.h >= 2) _ = bufferline.draw(ui, body.row(0), &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0) });
         const msg = "mnml-zig — ctrl+p opens a file, ctrl+q quits";
         const w: u16 = @intCast(@min(std.unicode.utf8CountCodepoints(msg) catch msg.len, body.w));
         const r = Rect.init(body.x + (body.w -| w) / 2, body.y + body.h / 2, w, 1);
@@ -560,7 +607,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         var rect = pr.rect;
         if (rect.h >= 2 and !app.zen) {
             const s = rect.splitTop(1);
-            bufferline.draw(ui, s.top, try tabsOf(app, ui, layout, pr.leaf), .{ .leaf = @intCast(li), .new_tab = Button.newTab(li) });
+            drawStrip(app, ui, layout, pr.leaf, li, s.top);
             if (app.active == pr.pane) {
                 const md_w = drawMdChip(app, ui, s.top);
                 if (app.cfg.editor.breadcrumb) drawBreadcrumb(app, ui, pane, s.top, md_w);
@@ -1254,17 +1301,19 @@ fn paintMenuRows(ui: Ui, inner: Rect, items: []const command.MenuItem, cursor: u
         xx += menu_glyph.width;
         const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else th.fg.fg;
         _ = ui.putStr(xx, r.y, r.right() -| (xx + 2), ui.clipStr(it.label, r.right() -| (xx + 2)), Theme.withFg(style, label_fg));
+        var kebab_x: ?u16 = null;
         if (it.submenu.len > 0) {
             _ = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ">" else "▸", Theme.withFg(style, th.accent.fg));
         } else if (kebab and selected and it.action == .command) {
-            const kx = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
-            ui.hit(Rect.init(kx, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+            kebab_x = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
         }
-        // The kebab's own hit was registered last, so it wins the cell.
-        ui.hit(Rect.init(r.x, r.y, r.w -| 1, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
-        if (kebab and selected and it.action == .command and it.submenu.len == 0) {
-            ui.hit(Rect.init(r.right() -| 1, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
-        }
+        // The row's hit stops where the kebab starts, and the kebab's
+        // cells (the glyph and its margin) are registered after it, so
+        // a click on the glyph opens the curation. Registering the
+        // glyph cell first let the row's hit cover it and run the row.
+        const row_w: u16 = if (kebab_x) |kx| kx -| r.x else r.w -| 1;
+        ui.hit(Rect.init(r.x, r.y, row_w, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
+        if (kebab_x) |kx| ui.hit(Rect.init(kx, r.y, r.right() -| kx, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
         row += 1;
     }
     return offsets;

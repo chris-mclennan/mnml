@@ -379,6 +379,11 @@ pub const Overlay = union(enum) {
         /// A title built at open time (`Replace 3× "q" with`); the
         /// state borrows it.
         title_owned: ?[]u8 = null,
+        /// Where focus goes when the prompt closes — Esc or Enter. The
+        /// tree's prompts name `.tree`, so cancelling a rename does not
+        /// leave the arrow keys editing the file (`FocusId` is a plain
+        /// value; null is the active pane).
+        return_focus: ?FocusId = null,
     },
     confirm: struct { state: Confirm.State, purpose: ConfirmPurpose, message: []u8 },
     info: InfoKind,

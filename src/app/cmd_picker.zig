@@ -96,7 +96,7 @@ fn files(app: *App) CommandError!void {
 
 /// Every regular file under the workspace, workspace-relative, hidden
 /// entries and the usual build dirs skipped. Returns whether the cap hit.
-fn walk(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
+pub fn walk(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
     const gpa = app.gpa;
     var dir = std.Io.Dir.cwd().openDir(app.io, app.workspace, .{ .iterate = true }) catch |err| return app.diag.fail(app.frame.allocator(), "cannot open {s}: {s}", .{ app.workspace, @errorName(err) });
     defer dir.close(app.io);

@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # FINDINGS `n` / `findings.new` with a bare name writes `<name>.md` for the panel and *also* an empty `<name>` — and opens the extension-less twin in the editor
 
@@ -33,3 +33,11 @@ $ ls -la .mnml/findings | grep vs-probe2
 **Source pointer**: `src/findings.zig:504-534` — `const text = try notes.withMdExt(arena, text_in)` at `:506`, but the `openPath(abs)` at `:534` is fed a path built from `text_in`.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(findings): a bare name creates and opens one file, <name>.md`.
+
+`findings.acceptNew` handed the tree the raw prompt text after writing the
+`.md`; it now hands it the same `.md` name, so one file is created and the
+one with the frontmatter opens. `tests/e2e-zig/findings_new_bare_name.test`.

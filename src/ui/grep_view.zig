@@ -13,6 +13,7 @@ const ids = @import("../core/ids.zig");
 const grep = @import("../app/grep.zig");
 const text_field = @import("text_field.zig");
 const scrollbar = @import("scrollbar.zig");
+const vaxis = @import("vaxis");
 
 pub const PaneId = ids.PaneId;
 
@@ -112,6 +113,12 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
 
 /// `  12:5  text` with the matched bytes in the match role. The line
 /// is clipped to the row; a match past the clip is simply not shown.
+/// The text before the match is a window: its last `context_cells`
+/// (fewer on a narrow row) behind `…` when more was cut — by the
+/// walker (`grep.windowLine`) or here — so a hit deep in a long line
+/// stays visible and nothing measures more than the row can paint.
+pub const context_cells: u16 = 40;
+
 fn paintHit(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype) void {
     const th = ui.theme;
     const dim = Theme.onBg(th.muted, bg);
@@ -121,17 +128,87 @@ fn paintHit(ui: Ui, r: Rect, h: grep.Hit, disabled: bool, bg: anytype) void {
     x += ui.putStr(x, r.y, r.w, mark, dim);
     const pos = ui.fmt("{d}:{d}  ", .{ h.line, h.col + 1 });
     x += ui.putStr(x, r.y, r.right() -| x, pos, dim);
-    // The line, trimmed on the left so a hit deep in a long line stays visible.
-    const text = std.mem.trimStart(u8, h.text, " \t");
+    // Leading blanks go only when the text starts the line: a window
+    // that begins mid-line keeps its bytes as they are.
+    const text = if (h.text_off == 0) std.mem.trimStart(u8, h.text, " \t") else h.text;
     const trimmed_off = h.text.len - text.len;
-    const col: usize = h.col -| trimmed_off;
+    const col: usize = h.textCol() -| trimmed_off;
     const avail: u16 = r.right() -| x;
     if (avail == 0) return;
-    const before = text[0..@min(col, text.len)];
+    const win = tailWindow(ui, text[0..@min(col, text.len)], @min(context_cells, avail / 2));
     const match_end = @min(col + h.len, text.len);
     const matched = if (col < text.len) text[col..match_end] else "";
     const after = if (match_end < text.len) text[match_end..] else "";
-    var w = ui.putStr(x, r.y, avail, ui.clipStr(before, avail), fg);
+    var w: u16 = 0;
+    if (win.cut or h.text_off > 0) w += ui.putStr(x, r.y, avail, if (ui.ascii) "..." else "…", dim);
+    if (w < avail) w += ui.putStr(x + w, r.y, avail - w, win.text, fg);
     if (w < avail) w += ui.putStr(x + w, r.y, avail - w, ui.clipStr(matched, avail - w), if (disabled) dim else Theme.onBg(th.match, bg));
     if (w < avail) _ = ui.putStr(x + w, r.y, avail - w, ui.clipStr(after, avail - w), fg);
+}
+
+const Tail = struct { text: []const u8, cut: bool };
+
+/// The last `keep` cells of `s`, whole graphemes, and whether anything
+/// was dropped. Bounded before it measures: at most `4 * keep + 4`
+/// bytes of `s` are ever looked at, so a whole file line costs nothing.
+fn tailWindow(ui: Ui, s_in: []const u8, keep: u16) Tail {
+    var s = s_in;
+    var cut = false;
+    const byte_cap: usize = 4 * @as(usize, keep) + 4;
+    if (s.len > byte_cap) {
+        var start = s.len - byte_cap;
+        while (start < s.len and (s[start] & 0xC0) == 0x80) start += 1;
+        s = s[start..];
+        cut = true;
+    }
+    var total = ui.width(s);
+    if (total <= keep) return .{ .text = s, .cut = cut };
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| {
+        total -= ui.canvas.cellWidth(g.bytes(s));
+        if (total <= keep) return .{ .text = s[g.start + g.len ..], .cut = true };
+    }
+    return .{ .text = "", .cut = true };
+}
+
+// ── tests ──
+
+const testing = std.testing;
+const Fixture = @import("test_fixture.zig");
+
+test "a hit on a 100k-char line paints a window: ellipsis, ~40 cells of context, the match, the clipped tail" {
+    var f = try Fixture.init(100, 1);
+    defer f.deinit();
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 'y');
+    @memcpy(long[70_000..][0..6], "needle");
+    const ui = f.ui();
+    // The whole line stored (an older session, or a test): the painter windows it itself.
+    paintHit(ui, f.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 70_000, .len = 6, .text = long }, false, f.theme.bg.bg);
+    var buf: [1024]u8 = undefined;
+    const row = f.row(0, &buf);
+    try testing.expect(std.mem.startsWith(u8, row, "   1:70001  …"));
+    try testing.expect(std.mem.indexOf(u8, row, "y" ** 40 ++ "needle" ++ "y" ** 10) != null);
+    try testing.expect(std.mem.indexOf(u8, row, "y" ** 41 ++ "needle") == null);
+    try testing.expect(std.mem.endsWith(u8, row, "…"));
+    // The walker's window carries the same picture through `text_off`.
+    const win = grep.windowLine(long, 70_000, 6);
+    try testing.expect(win.off > 0 and win.text.len < long.len);
+    var g = try Fixture.init(100, 1);
+    defer g.deinit();
+    paintHit(g.ui(), g.full(), .{ .path = "/x", .rel = "x", .line = 1, .col = 70_000, .len = 6, .text = win.text, .text_off = win.off }, false, g.theme.bg.bg);
+    try testing.expectEqualStrings(row, g.row(0, &buf));
+    // A match at the head of a long line: no leading ellipsis, the tail is clipped.
+    var h = try Fixture.init(60, 1);
+    defer h.deinit();
+    paintHit(h.ui(), h.full(), .{ .path = "/x", .rel = "x", .line = 2, .col = 0, .len = 3, .text = long }, false, h.theme.bg.bg);
+    try h.expectRow(0, "   2:1  " ++ "y" ** 51 ++ "…");
+}
+
+test "a short hit paints whole: no ellipsis, leading blanks trimmed" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    paintHit(f.ui(), f.full(), .{ .path = "/x", .rel = "x", .line = 3, .col = 8, .len = 4, .text = "    let name = 1;" }, false, f.theme.bg.bg);
+    try f.expectRow(0, "   3:9  let name = 1;");
 }

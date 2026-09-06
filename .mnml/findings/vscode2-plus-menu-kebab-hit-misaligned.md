@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `+` menu: the per-row `⋯` kebab is painted 2–3 cells right of its hit rect — clicking the visible glyph closes the menu (or runs the row); the Pin / Hide list is only reachable by clicking blank cells
 
@@ -27,3 +27,19 @@ status: open
 **Source pointer**: the submenu painter that registers `menu_item:3:*` (kebab) vs. where it draws `⋯` — `src/ui/menu_view.zig` / `src/app/context_menus.zig:356` (`openCuration`), `src/app/dispatch.zig:1140-1150`.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(menu): a click on a child row's kebab glyph opens the curation`.
+
+The measurement in this finding did not reproduce: replaying the drive
+(`alpha.zig` tab, right-click 45, click 55) paints `⋯` at cell 87 — the
+first of the two `menu_item:3:0` hit cells — in both the unit test (cell
+readback) and the e2e text dump; the "90" was a column miscount. The second
+observation was real and is the bug: `paintMenuRows` registered the glyph
+cell's hit *before* the full-width row hit, and the last-registered hit
+wins, so a click on the glyph ran the row and only the margin cell beside
+it reached Pin / Hide / Copy. The row's hit now stops where the kebab
+starts and the kebab's two cells are registered after it. Unit test in
+`context_menus.zig` (the glyph cell resolves to `menu=3`; the click opens
+`Pin to top`); `tests/e2e-zig/plus_menu_kebab.test`.

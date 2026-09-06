@@ -42,15 +42,41 @@ pub const Options = struct {
     ellipsis: Ellipsis = .unicode,
 };
 
+/// Cell width of one grapheme. The ASCII fast path skips the table walk.
+pub fn graphemeWidth(g: []const u8, method: Method) u16 {
+    if (g.len == 1 and g[0] >= 0x20 and g[0] < 0x7f) return 1;
+    return vaxis.gwidth.gwidth(g, method);
+}
+
+/// Cell width of `s`, saturating at 65535. vaxis' `gwidth` sums into a
+/// `u16` and overflows past that — a single-line 545k JSON file did it
+/// through the grep pane — so the sum is ours, one grapheme at a time.
 pub fn width(s: []const u8, method: Method) u16 {
-    return vaxis.gwidth.gwidth(s, method);
+    var total: u16 = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| total +|= graphemeWidth(g.bytes(s), method);
+    return total;
+}
+
+/// True when `s` fits in `max_cells`. Stops at the first grapheme past
+/// the budget, so a whole file line costs `max_cells` of work, not its
+/// length — the measure every clip does first.
+pub fn fits(s: []const u8, max_cells: u16, method: Method) bool {
+    if (s.len <= max_cells) return true; // a byte is at most one cell
+    var used: u32 = 0;
+    var it = vaxis.unicode.graphemeIterator(s);
+    while (it.next()) |g| {
+        used += graphemeWidth(g.bytes(s), method);
+        if (used > max_cells) return false;
+    }
+    return true;
 }
 
 /// Returns `s` copied when it fits in `max_cells`; otherwise as many leading
 /// graphemes as fit beside the ellipsis, then the ellipsis. A budget smaller
 /// than the ellipsis yields the ellipsis itself cut to the budget.
 pub fn clipCells(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options) Allocator.Error![]u8 {
-    if (width(s, opts.method) <= max_cells) return alloc.dupe(u8, s);
+    if (fits(s, max_cells, opts.method)) return alloc.dupe(u8, s);
     if (max_cells == 0) return alloc.alloc(u8, 0);
 
     const ell = opts.ellipsis.text();
@@ -153,6 +179,26 @@ test "emoji and combining marks measure as cells" {
     try expectClip("…", "👋🏿👋🏿", 2, .{});
     // NFD "é" is two codepoints, one cell.
     try expectClip("e\u{0301}a…", "e\u{0301}abc", 3, .{});
+}
+
+test "a 100k-char line measures without overflowing and clips in budget-bounded time" {
+    const testing = std.testing;
+    const long = try testing.allocator.alloc(u8, 100_000);
+    defer testing.allocator.free(long);
+    @memset(long, 'y');
+    try testing.expectEqual(@as(u16, 65535), width(long, .unicode));
+    try testing.expect(!fits(long, 65535, .unicode));
+    try testing.expect(fits(long[0..40], 40, .unicode));
+    try testing.expect(!fits(long[0..41], 40, .unicode));
+    try expectClip("yyyy…", long, 5, .{});
+    // Wide glyphs past the budget are never measured: 70k of them would
+    // be 140k cells.
+    const wide = try testing.allocator.alloc(u8, 3 * 70_000);
+    defer testing.allocator.free(wide);
+    var i: usize = 0;
+    while (i < wide.len) : (i += 3) @memcpy(wide[i .. i + 3], "漢");
+    try testing.expectEqual(@as(u16, 65535), width(wide, .unicode));
+    try expectClip("漢漢…", wide, 5, .{});
 }
 
 test "width helper agrees with vaxis" {
