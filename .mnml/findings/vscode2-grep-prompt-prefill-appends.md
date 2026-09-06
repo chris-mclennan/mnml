@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # Find-in-files prompt prefills the previous query unselected — typing appends to it, and `Ctrl+A` moves the caret to the start instead of selecting
 
@@ -35,3 +35,14 @@ and after `ctrl+a` + `X`: `│ Xcharlie onebravo line`. Submitting runs the conc
 **Source pointer**: the `find.grep` prompt in `src/app/cmd_find.zig` / `src/app/grep.zig` (the prompt is opened with the last query as `text`, not via `Prompt.seed`); `src/ui/prompt.zig` / `text_field.zig` `ctrl+a`.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(grep): the find-in-files prompt seeds the last query as a selection`.
+
+`grep.openQueryPrompt` uses `Prompt.seed` for both prefills (the editor's
+find query, then the open Search pane's), so typing replaces and Enter
+reruns. `Prompt.handleKey` takes `Ctrl+A` as select-all (VS Code) before the
+text field sees it as home. Unit test in `prompt.zig`;
+`tests/e2e-zig/grep_prompt_seed.test`. The picker's `Ctrl+A` is a separate
+idiom and untouched.

@@ -125,6 +125,13 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
             if (key.mods.ctrl and (c == 'p' or c == 'n')) {
                 return handleKey(s, gpa, Key.named(if (c == 'p') .up else .down));
             }
+            // Ctrl+A selects the line (VS Code), not the field's home:
+            // the next typed character replaces it.
+            if (key.mods.ctrl and !key.mods.alt and c == 'a') {
+                s.select_all = s.buf.items.len > 0;
+                s.caret = s.buf.items.len;
+                return .consumed;
+            }
         },
         else => {},
     }
@@ -220,6 +227,27 @@ test "the box carries its title verbatim, the input takes the caret, the hint si
     try testing.expectEqual(Caret{ .x = 14, .y = 3 }, caret.?);
     try testing.expect(!f.style(12, 3).italic);
     try testing.expect(f.bgEql(12, 3, f.theme.overlay_bg));
+}
+
+test "ctrl+a selects the whole line: the next character replaces it; on an empty line it is nothing" {
+    const gpa = testing.allocator;
+    var s = init(gpa, "Find in files");
+    defer deinit(&s, gpa);
+    try s.setText(gpa, "charlie one");
+    try testing.expect(!s.select_all);
+    try testing.expectEqual(Outcome.consumed, try handleKey(&s, gpa, Key.ctrl('a')));
+    try testing.expect(s.select_all);
+    _ = try handleKey(&s, gpa, Key.char('X'));
+    try testing.expectEqualStrings("X", s.text());
+    try testing.expect(!s.select_all);
+    // An arrow after ctrl+a keeps the text and drops the selection.
+    _ = try handleKey(&s, gpa, Key.ctrl('a'));
+    _ = try handleKey(&s, gpa, Key.named(.left));
+    try testing.expectEqualStrings("X", s.text());
+    try testing.expect(!s.select_all);
+    _ = try handleKey(&s, gpa, Key.named(.backspace));
+    _ = try handleKey(&s, gpa, Key.ctrl('a'));
+    try testing.expect(!s.select_all);
 }
 
 test "a seeded line is a selection: typing replaces it, an arrow keeps it, backspace clears it, paste replaces it" {

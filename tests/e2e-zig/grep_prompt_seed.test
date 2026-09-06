@@ -1,0 +1,32 @@
+# zig-only
+# The find-in-files prompt prefills the last query as a SELECTION
+# (Prompt.seed): typing replaces it instead of appending, Enter reruns
+# it, and Ctrl+A selects the whole line the way VS Code's search box
+# does — not the text field's home.
+write alpha.zig "const alpha = 1;\n"
+write charlie.txt "charlie one\n"
+open alpha.zig
+command find.grep
+type charlie one
+key enter
+wait 600
+expect screen contains "charlie.txt (1)"
+# Reopen: the last query is the seed; typing replaces it whole.
+command find.grep
+expect screen contains "Find in files"
+expect screen contains "charlie one"
+type alpha
+key enter
+wait 600
+expect screen contains "alpha.zig (1)"
+expect screen lacks "charlie onealpha"
+# Ctrl+A on a line the user has edited into: select all, then replace.
+command find.grep
+key end
+key ctrl+a
+type X
+key enter
+wait 600
+expect screen contains "\"X\""
+expect screen lacks "Xalpha"
+expect screen lacks "alphaX"

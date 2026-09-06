@@ -325,7 +325,9 @@ pub fn find(app: *App) ?PaneId {
     return app.panes.findKind(.grep);
 }
 
-/// `find.grep`: the query prompt, prefilled with the active find query.
+/// `find.grep`: the query prompt, prefilled with the active find query
+/// — seeded as a selection, so typing replaces it (VS Code's search box
+/// keeps the last query selected) and Enter reruns it.
 fn grepCmd(app: *App) CommandError!void {
     try openQueryPrompt(app);
 }
@@ -334,8 +336,8 @@ pub fn openQueryPrompt(app: *App) Allocator.Error!void {
     app.overlay.deinit(app.gpa);
     var state = app_mod.Prompt.init(app.gpa, "Find in files");
     state.placeholder = "pattern — rg when installed, else a vim pattern";
-    if (app.activeEditor()) |e| if (e.find.query.items.len > 0) try state.setText(app.gpa, e.find.query.items);
-    if (find(app)) |id| if (app.panes.get(id)) |p| if (state.buf.items.len == 0) try state.setText(app.gpa, p.grep.query);
+    if (app.activeEditor()) |e| if (e.find.query.items.len > 0) try state.seed(app.gpa, e.find.query.items);
+    if (find(app)) |id| if (app.panes.get(id)) |p| if (state.buf.items.len == 0) try state.seed(app.gpa, p.grep.query);
     app.overlay = .{ .prompt = .{ .state = state, .purpose = .grep_query } };
     app.focus = .overlay;
     app.needs_render = true;
