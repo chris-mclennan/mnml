@@ -620,6 +620,10 @@ pub fn relToRepo(r: *const client.Repo, abs: []const u8) []const u8 {
 pub fn tick(app: *App, now: i64) Allocator.Error!void {
     const st = &app.git;
     try pollAiWait(app);
+    // The statusline's branch chip is the first git surface most
+    // sessions show: the repos are looked up on the first tick, not
+    // the first git pane.
+    if (!st.discovered) try discover(app);
     if (st.activeRepo() == null or st.status_pending) return;
     if (now - st.status_at_ms >= status_ttl_ms) requestStatus(app) catch {};
 }
