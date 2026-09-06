@@ -1,14 +1,16 @@
-//! The statusline coverage chip — `F 83%` (feature coverage) and
-//! `C 71%` (Istanbul lines), from the two `trends.json` files the Rust
-//! chip read: `<home>/.tattle-claude-artifacts/feature-coverage/_trends/
-//! trends.json` and `…/code-coverage/_trends/trends.json`. Either may be
-//! absent (no sync, a non-acmeco user): its number is simply not
+//! The statusline coverage chip — `F 83% ▲1.0` (feature coverage and
+//! its move over seven days) and `C 71% ±0.0` (Istanbul lines and the
+//! move since the previous commit), from the two `trends.json` files
+//! the Rust chip read: `<home>/.tattle-claude-artifacts/feature-coverage/
+//! _trends/trends.json` and `…/code-coverage/_trends/trends.json`. Either
+//! may be absent (no sync, a non-acmeco user): its number is simply not
 //! shown; with neither the chip is not painted. The files are re-read
 //! every five minutes at most, whatever the outcome.
 //!
 //! `ui.coverage_chip_mode` picks the shape: `feature` / `code` (one
-//! number), `both` (`F 83% · C 71%`), `ticker` (F ⇄ C every four
-//! seconds). A click toasts both numbers; a right-click picks the mode.
+//! number), `both` (`F 83% ▲1.0 · C 71% ±0.0`), `ticker` (F ⇄ C every
+//! four seconds). A click toasts both numbers; a right-click picks the
+//! mode. `shown` hands the app the readings; `segment` is the text.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -26,6 +28,10 @@ pub const artifacts_dir = ".tattle-claude-artifacts";
 pub const State = struct {
     feature: ?f64 = null,
     code: ?f64 = null,
+    /// The feature number seven days before its latest point.
+    feature_prev: ?f64 = null,
+    /// The code number at the previous commit's point.
+    code_prev: ?f64 = null,
     /// The loop clock at the last read attempt; 0 = never.
     loaded_at_ms: i64 = 0,
 };
@@ -37,7 +43,7 @@ pub const table = .{
 
 // ─── the files ───────────────────────────────────────────────────────────
 
-const FeaturePoint = struct { ui: ?f64 = null, api: ?f64 = null, features: u32 = 0 };
+const FeaturePoint = struct { date: []const u8 = "", ui: ?f64 = null, api: ?f64 = null, features: u32 = 0 };
 const FeatureApp = struct { series: []const FeaturePoint = &.{} };
 const FeatureFile = struct { apps: []const FeatureApp = &.{} };
 
@@ -76,6 +82,88 @@ pub fn codeOverall(f: CodeFile) ?f64 {
     return if (weight > 0) sum / weight else null;
 }
 
+/// `featureOverall` over the point of each app closest to `days` days
+/// before its latest — the first point, walking back, dated on or
+/// before the target; the series' first point when none is. Null with
+/// no data at all.
+pub fn featureAt(f: FeatureFile, days: u32) ?f64 {
+    var sum: f64 = 0;
+    var weight: f64 = 0;
+    for (f.apps) |a| {
+        if (a.series.len == 0) continue;
+        const latest = a.series[a.series.len - 1];
+        var target_buf: [16]u8 = undefined;
+        const target = dateMinusDays(&target_buf, latest.date, days);
+        var pick = a.series[0];
+        if (target) |tgt| {
+            var i = a.series.len;
+            while (i > 0) {
+                i -= 1;
+                if (std.mem.order(u8, a.series[i].date, tgt) != .gt) {
+                    pick = a.series[i];
+                    break;
+                }
+            }
+        }
+        const score: f64 = if (pick.ui != null and pick.api != null) (pick.ui.? + pick.api.?) / 2 else pick.ui orelse pick.api orelse continue;
+        const w: f64 = @floatFromInt(@max(pick.features, 1));
+        sum += score * w;
+        weight += w;
+    }
+    return if (weight > 0) sum / weight else null;
+}
+
+/// `codeOverall` over each app's second-to-last point (its first when
+/// there is only one) — the previous commit, since Istanbul reports
+/// per merge, not per day.
+pub fn codePrev(f: CodeFile) ?f64 {
+    var sum: f64 = 0;
+    var weight: f64 = 0;
+    for (f.apps) |a| {
+        if (a.series.len == 0) continue;
+        const p = if (a.series.len >= 2) a.series[a.series.len - 2] else a.series[0];
+        const w: f64 = @floatFromInt(@max(p.files, 1));
+        sum += p.lines * w;
+        weight += w;
+    }
+    return if (weight > 0) sum / weight else null;
+}
+
+/// `YYYY-MM-DD` less `days`, or null for a date that does not parse.
+fn dateMinusDays(buf: []u8, date: []const u8, days: u32) ?[]const u8 {
+    if (date.len != 10 or date[4] != '-' or date[7] != '-') return null;
+    const y = std.fmt.parseInt(i64, date[0..4], 10) catch return null;
+    const m = std.fmt.parseInt(i64, date[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(i64, date[8..10], 10) catch return null;
+    const civil = civilFromDays(daysFromCivil(y, m, d) - @as(i64, days));
+    if (civil.y < 0) return null;
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}", .{ @as(u32, @intCast(civil.y)), @as(u32, @intCast(civil.m)), @as(u32, @intCast(civil.d)) }) catch null;
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date (Hinnant).
+fn daysFromCivil(y_in: i64, m: i64, d: i64) i64 {
+    const y = if (m <= 2) y_in - 1 else y_in;
+    const era = @divFloor(y, 400);
+    const yoe = y - era * 400;
+    const mp = @mod(m + 9, 12);
+    const doy = @divFloor(153 * mp + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
+    const z = z_in + 719468;
+    const era = @divFloor(z, 146097);
+    const doe = z - era * 146097;
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365);
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
+    const mp = @divFloor(5 * doy + 2, 153);
+    const d = doy - @divFloor(153 * mp + 2, 5) + 1;
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    const y = yoe + era * 400 + @intFromBool(m <= 2);
+    return .{ .y = y, .m = m, .d = d };
+}
+
 /// The directory holding `.tattle-claude-artifacts`: `MNML_ARTIFACTS_HOME`
 /// when set (the e2e driver points it at the test's own root, so a
 /// developer's real coverage never paints into a test's statusline),
@@ -99,29 +187,74 @@ pub fn ensureLoaded(app: *App) void {
     if (st.loaded_at_ms != 0 and app.now_ms - st.loaded_at_ms < reload_ms) return;
     st.loaded_at_ms = if (app.now_ms == 0) 1 else app.now_ms;
     const arena = app.frame.allocator();
-    st.feature = if (readJson(FeatureFile, app, arena, "feature-coverage/_trends/trends.json")) |f| featureOverall(f) else null;
-    st.code = if (readJson(CodeFile, app, arena, "code-coverage/_trends/trends.json")) |f| codeOverall(f) else null;
+    const feature = readJson(FeatureFile, app, arena, "feature-coverage/_trends/trends.json");
+    st.feature = if (feature) |f| featureOverall(f) else null;
+    st.feature_prev = if (feature) |f| featureAt(f, 7) else null;
+    const code = readJson(CodeFile, app, arena, "code-coverage/_trends/trends.json");
+    st.code = if (code) |f| codeOverall(f) else null;
+    st.code_prev = if (code) |f| codePrev(f) else null;
 }
 
 // ─── the chip ────────────────────────────────────────────────────────────
 
-fn pct(arena: Allocator, letter: []const u8, v: f64) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(arena, "{s} {d}%", .{ letter, @as(u64, @intFromFloat(@round(std.math.clamp(v, 0, 100)))) });
-}
+/// One number and where it was.
+pub const Reading = struct { now: f64, prev: ?f64 = null };
 
-/// The statusline text for the mode, or null when there is nothing to show.
-pub fn segment(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+/// What the chip shows for the mode: the feature reading, the code
+/// reading, either or both. Null when there is nothing to show.
+pub const Shown = struct { feature: ?Reading = null, code: ?Reading = null };
+
+pub fn shown(app: *App) ?Shown {
     ensureLoaded(app);
     const st = &app.coverage;
     if (st.feature == null and st.code == null) return null;
-    const f: ?[]const u8 = if (st.feature) |v| try pct(arena, "F", v) else null;
-    const c: ?[]const u8 = if (st.code) |v| try pct(arena, "C", v) else null;
+    const f: ?Reading = if (st.feature) |v| .{ .now = v, .prev = st.feature_prev } else null;
+    const c: ?Reading = if (st.code) |v| .{ .now = v, .prev = st.code_prev } else null;
     return switch (app.cfg.ui.coverage_chip_mode) {
-        .feature => f orelse c,
-        .code => c orelse f,
-        .both => if (f != null and c != null) try std.fmt.allocPrint(arena, "{s} · {s}", .{ f.?, c.? }) else f orelse c,
-        .ticker => if (f != null and c != null) (if (@mod(@divTrunc(app.now_ms, ticker_ms), 2) == 0) f.? else c.?) else f orelse c,
+        .feature => .{ .feature = f, .code = if (f == null) c else null },
+        .code => .{ .code = c, .feature = if (c == null) f else null },
+        .both => .{ .feature = f, .code = c },
+        .ticker => if (f != null and c != null) (if (@mod(@divTrunc(app.now_ms, ticker_ms), 2) == 0) Shown{ .feature = f } else Shown{ .code = c }) else Shown{ .feature = f, .code = c },
     };
+}
+
+pub const Direction = enum { up, down, flat, none };
+
+/// ` ▲1.0` / ` ▼0.3` / ` ±0.0` for a reading with a past, "" without.
+pub const Delta = struct { text: []const u8, dir: Direction };
+
+pub fn delta(arena: Allocator, r: Reading) Allocator.Error!Delta {
+    const p = r.prev orelse return .{ .text = "", .dir = .none };
+    const d = r.now - p;
+    const dir: Direction = if (@abs(d) < 0.05) .flat else if (d > 0) .up else .down;
+    const arrow: []const u8 = switch (dir) {
+        .flat => "±",
+        .up => "▲",
+        .down, .none => "▼",
+    };
+    return .{ .text = try std.fmt.allocPrint(arena, " {s}{d:.1}", .{ arrow, @abs(d) }), .dir = dir };
+}
+
+/// `F 83%` — the letter and the rounded percent.
+pub fn pct(arena: Allocator, letter: []const u8, v: f64) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s} {d}%", .{ letter, @as(u64, @intFromFloat(@round(std.math.clamp(v, 0, 100)))) });
+}
+
+/// The chip's whole text for the mode (`F 79% ▲43.8 · C 75% ±0.0`),
+/// or null when there is nothing to show.
+pub fn segment(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    const s = shown(app) orelse return null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    if (s.feature) |f| {
+        try out.appendSlice(arena, try pct(arena, "F", f.now));
+        try out.appendSlice(arena, (try delta(arena, f)).text);
+    }
+    if (s.code) |c| {
+        if (out.items.len > 0) try out.appendSlice(arena, " · ");
+        try out.appendSlice(arena, try pct(arena, "C", c.now));
+        try out.appendSlice(arena, (try delta(arena, c)).text);
+    }
+    return out.items;
 }
 
 /// The ticker wants a frame at its next flip; the loader at its next read.
@@ -206,23 +339,43 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     // Throttled: the miss is remembered for five minutes.
     try t.expect((try segment(&app, app.frame.allocator())) == null);
     app.now_ms += reload_ms;
-    try t.expectEqualStrings("F 79%", (try segment(&app, app.frame.allocator())).?);
+    // Seven days before 2026-09-01 is 08-25: app a's point on or before
+    // it is 08-01 (score 10, weight 1); b has one point, which stands in
+    // for its past (60, weight 1) → 35, so the feature delta is +43.75.
+    // Both code series are single points, so the code delta is flat.
+    try t.expectEqualStrings("F 79% ▲43.8", (try segment(&app, app.frame.allocator())).?);
     app.cfg.ui.coverage_chip_mode = .code;
-    try t.expectEqualStrings("C 75%", (try segment(&app, app.frame.allocator())).?);
+    try t.expectEqualStrings("C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
     app.cfg.ui.coverage_chip_mode = .both;
-    try t.expectEqualStrings("F 79% · C 75%", (try segment(&app, app.frame.allocator())).?);
+    try t.expectEqualStrings("F 79% ▲43.8 · C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
     app.cfg.ui.coverage_chip_mode = .ticker;
     app.now_ms = 400_000; // an even slot
-    try t.expectEqualStrings("F 79%", (try segment(&app, app.frame.allocator())).?);
+    try t.expectEqualStrings("F 79% ▲43.8", (try segment(&app, app.frame.allocator())).?);
     app.now_ms += ticker_ms;
-    try t.expectEqualStrings("C 75%", (try segment(&app, app.frame.allocator())).?);
+    try t.expectEqualStrings("C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
     try t.expectEqual(@as(i64, 408_000), nextDeadlineMs(&app).?);
     // The chip is on the statusline, and the click toasts both.
     app.cfg.ui.coverage_chip_mode = .both;
     try app.render();
     const text = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
     defer t.allocator.free(text);
-    try t.expect(std.mem.indexOf(u8, text, "F 79% · C 75%") != null);
+    try t.expect(std.mem.indexOf(u8, text, "F 79% ▲43.8 · C 75% ±0.0") != null);
     try command.run(&app, .{ .static = .@"coverage.toast" });
     try t.expectEqualStrings("coverage: features 79% · code lines 75%", app.lastToast().?);
+}
+
+test "the seven-day lookback walks ISO dates across a month boundary; a falling number reads ▼" {
+    var buf: [16]u8 = undefined;
+    try t.expectEqualStrings("2026-08-25", dateMinusDays(&buf, "2026-09-01", 7).?);
+    try t.expectEqualStrings("2025-12-30", dateMinusDays(&buf, "2026-01-06", 7).?);
+    try t.expectEqualStrings("2024-02-29", dateMinusDays(&buf, "2024-03-01", 1).?);
+    try t.expect(dateMinusDays(&buf, "yesterday", 7) == null);
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try t.expectEqualStrings(" ▼0.3", (try delta(a, .{ .now = 74.2, .prev = 74.5 })).text);
+    try t.expectEqual(Direction.down, (try delta(a, .{ .now = 74.2, .prev = 74.5 })).dir);
+    try t.expectEqualStrings(" ±0.0", (try delta(a, .{ .now = 74.2, .prev = 74.21 })).text);
+    try t.expectEqualStrings("", (try delta(a, .{ .now = 74.2 })).text);
+    try t.expectEqual(Direction.none, (try delta(a, .{ .now = 74.2 })).dir);
 }
