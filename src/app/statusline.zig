@@ -506,3 +506,389 @@ test "SegId.of covers the app's ids and nothing else" {
     try testing.expect(SegId.of(sl.seg_dyn_base) == null);
 }
 
+// ─── the row against the spec ────────────────────────────────────────────
+
+const command = @import("../core/command.zig");
+const git_app = @import("git.zig");
+const client = @import("../git/client.zig");
+const screen_mod = @import("../ipc/screen.zig");
+const discovery = @import("discovery.zig");
+const Config = @import("../config/Config.zig");
+const Key = app_mod.Key;
+
+/// The Rust editor's screen at 120×40 on the fixture (`docs/ui-spec/`).
+const spec_120x40 = @embedFile("ui_spec_rust_120x40");
+/// The cut now-playing cluster as the Rust row carries it: the arrow,
+/// the mnml-baked Beatport mark, nf-md-play_box_outline — six cells.
+const cut_cluster = sl.pl_left_nerd ++ " " ++ sl.cluster_brand_glyph ++ " " ++ sl.cluster_play_glyph ++ " ";
+/// nf-dev-npm — `package.json`'s glyph (`ui/file_glyph.zig`).
+const npm_glyph = "\u{e71e}";
+const npm_ascii = "n";
+/// The spec's clock.
+const spec_clock = "23:58";
+
+/// A workspace named `ws` under a temp dir, with a `.git` and a
+/// feature-coverage trends file that reads `F 57% ▲1.0` — the fixture
+/// the Rust spec was dumped on, as far as the statusline can see it.
+/// The config is the fixture's: wrap on, the clock on, the feature
+/// coverage number.
+const Bench = struct {
+    tmp: testing.TmpDir,
+    root: []u8,
+    ws: []u8,
+    app: App,
+
+    const trends =
+        \\{"apps":[{"series":[
+        \\ {"date":"2026-08-25","ui":56,"api":56,"features":1},
+        \\ {"date":"2026-09-01","ui":57,"api":57,"features":1}]}]}
+    ;
+
+    fn init(cols: u16, rows: u16) !Bench {
+        var tmp = testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try tmp.dir.realPath(testing.io, &buf);
+        const root = try testing.allocator.dupe(u8, buf[0..n]);
+        errdefer testing.allocator.free(root);
+        try tmp.dir.createDirPath(testing.io, "ws/.git");
+        try tmp.dir.createDirPath(testing.io, ".tattle-claude-artifacts/feature-coverage/_trends");
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = ".tattle-claude-artifacts/feature-coverage/_trends/trends.json", .data = trends });
+        const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+        errdefer testing.allocator.free(ws);
+        var cfg: Config = .{};
+        cfg.ui.wrap = true;
+        cfg.ui.clock = true;
+        cfg.ui.coverage_chip_mode = .feature;
+        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cfg = cfg, .cols = cols, .rows = rows });
+        errdefer app.deinit();
+        // The developer's own coverage must not paint into the row.
+        try app.env.put("MNML_ARTIFACTS_HOME", root);
+        return .{ .tmp = tmp, .root = root, .ws = ws, .app = app };
+    }
+
+    fn deinit(b: *Bench) void {
+        b.app.deinit();
+        testing.allocator.free(b.ws);
+        testing.allocator.free(b.root);
+        b.tmp.cleanup();
+    }
+
+    /// The branch chip's data without a git binary: `main`, one
+    /// untracked file — what the fixture's repo shows.
+    fn onMain(b: *Bench, porcelain: []const u8) !void {
+        try git_app.discover(&b.app);
+        const id = b.app.git.activeRepo().?.id;
+        const r = try client.Result.create(testing.allocator, id);
+        r.payload = .{ .status = .{ .status = try parse.parseStatus(r.arena.allocator(), porcelain), .signs = &.{} } };
+        b.app.git.status_pending = true;
+        try git_app.handle(&b.app, r);
+    }
+
+    /// A frame, then row `y` of the screen on the frame arena.
+    fn row(b: *Bench, y: usize) ![]const u8 {
+        try b.app.render();
+        const text = try screen_mod.toTestText(b.app.frame.allocator(), &b.app.screen);
+        var it = std.mem.splitScalar(u8, text, '\n');
+        var i: usize = 0;
+        while (it.next()) |line| : (i += 1) if (i == y) return line;
+        return "";
+    }
+
+    fn cell(b: *Bench, x: u16, y: u16) @import("vaxis").Style {
+        return b.app.screen.readCell(x, y).?.style;
+    }
+
+    /// The first column on row `y` whose hit is statusline chip `id`.
+    fn colOf(b: *Bench, y: u16, id: u32) ?u16 {
+        var x: u16 = 0;
+        while (x < b.app.screen.width) : (x += 1) if (b.app.hits.at(x, y)) |h| if (h == .statusline_seg and h.statusline_seg == id) return x;
+        return null;
+    }
+
+    /// A frame, then a click on chip `id`.
+    fn click(b: *Bench, y: u16, id: u32, button: anytype) !void {
+        _ = try b.row(y);
+        const x = b.colOf(y, id) orelse return error.ChipNotOnRow;
+        try b.app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = button } });
+    }
+
+    fn key(b: *Bench, k: Key) !void {
+        try b.app.handle(.{ .key = k });
+    }
+};
+
+fn specRow(text: []const u8, y: usize) []const u8 {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var i: usize = 0;
+    while (it.next()) |line| : (i += 1) if (i == y) return line;
+    return "";
+}
+
+/// The Rust row less the cut cluster: its six cells join the gap
+/// between the lanes.
+fn lessCluster(arena: Allocator, row: []const u8) ![]const u8 {
+    const cut = std.mem.indexOf(u8, row, cut_cluster) orelse return error.NoClusterInSpec;
+    const first = std.mem.indexOf(u8, row, sl.pl_left_nerd).?;
+    return std.fmt.allocPrint(arena, "{s}{s}{s}{s}", .{ row[0..first], " " ** 6, row[first..cut], row[cut + cut_cluster.len ..] });
+}
+
+/// `actual` with its clock cells rewritten to the spec's, so the two
+/// rows compare cell for cell; the clock must sit where the spec's does.
+fn normaliseClock(arena: Allocator, expected: []const u8, actual: []const u8) ![]const u8 {
+    const at = std.mem.indexOf(u8, expected, spec_clock) orelse return error.NoClockInSpec;
+    if (actual.len < at + spec_clock.len) return error.RowTooShort;
+    const got = actual[at .. at + spec_clock.len];
+    for (got, 0..) |c, i| if (if (i == 2) c != ':' else !std.ascii.isDigit(c)) return error.NoClockWhereTheSpecHasOne;
+    const out = try arena.dupe(u8, actual);
+    @memcpy(out[at .. at + spec_clock.len], spec_clock);
+    return out;
+}
+
+fn trimRight(s: []const u8) []const u8 {
+    return std.mem.trimEnd(u8, s, " ");
+}
+
+test "row 38 at 120×40 is the Rust spec's, cell for cell, less the cut cluster and the clock" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.focus = .tree;
+    const expected = try lessCluster(b.app.frame.allocator(), specRow(spec_120x40, 38));
+    const actual = try b.row(38);
+    try testing.expectEqualStrings(trimRight(expected), trimRight(try normaliseClock(b.app.frame.allocator(), expected, actual)));
+    // The colours the dump cannot carry: TREE dark on blue, the branch
+    // green on bg2, the delta green on teal, the workspace bold blue.
+    const p = &b.app.theme.palette;
+    try testing.expect(Color.eql(b.cell(1, 38).bg, p.blue));
+    try testing.expect(Color.eql(b.cell(1, 38).fg, p.bg_darker));
+    try testing.expect(b.cell(1, 38).bold);
+    try testing.expect(Color.eql(b.cell(9, 38).fg, p.green));
+    try testing.expect(Color.eql(b.cell(9, 38).bg, p.bg2));
+    const delta = std.mem.indexOf(u8, expected, "▲").?;
+    const delta_col = try std.unicode.utf8CountCodepoints(expected[0..delta]);
+    try testing.expect(Color.eql(b.cell(@intCast(delta_col), 38).fg, p.green));
+    try testing.expect(Color.eql(b.cell(@intCast(delta_col), 38).bg, p.teal));
+    try testing.expect(Color.eql(b.cell(112, 38).fg, p.blue));
+    try testing.expect(b.cell(112, 38).bold);
+    // Every chip on the row is a hit, and the gap is not.
+    try testing.expectEqual(sl.seg_mode, b.app.hits.at(1, 38).?.statusline_seg);
+    try testing.expectEqual(SegId.branch.raw(), b.app.hits.at(9, 38).?.statusline_seg);
+    try testing.expect(b.app.hits.at(50, 38) == null);
+    try testing.expectEqual(SegId.coverage.raw(), b.app.hits.at(@intCast(delta_col), 38).?.statusline_seg);
+    try testing.expectEqual(sl.seg_language, b.app.hits.at(118, 38).?.statusline_seg);
+}
+
+test "with a file open the row gains the file chip, the size and Ln/Col, and the language, as the Rust row does" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/package.json", .data = "{}\n" });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "package.json" });
+    defer testing.allocator.free(path);
+    _ = try b.app.openPath(path);
+    // The Rust row on the same fixture with `package.json` open
+    // (`tools/ui-diff.sh`, 2026-09-06), less the cluster.
+    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ " " ** 19 ++
+        sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " 3B  Ln 1/1 Col 1  " ++ sl.bell_glyph ++ "  " ++ spec_clock ++ " " ++ sl.pl_left_nerd ++ sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  json";
+    const actual = try b.row(38);
+    try testing.expectEqualStrings(expected, trimRight(try normaliseClock(b.app.frame.allocator(), expected, actual)));
+    // The glyph paints in the file type's colour; a dirty buffer shows ●.
+    try testing.expect(Color.eql(b.cell(22, 38).fg, Theme.rgb(0xe8274b)));
+    try b.key(Key.char('x'));
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " package.json ● ") != null);
+    // A markdown file opens as a preview, not an editor: VIEW and no file
+    // chip — the Rust row says the same.
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/README.md", .data = "# hi\n" });
+    const md = try std.fs.path.join(testing.allocator, &.{ b.ws, "README.md" });
+    defer testing.allocator.free(md);
+    _ = try b.app.openPath(md);
+    const view = try b.row(38);
+    try testing.expect(std.mem.startsWith(u8, view, " VIEW " ++ sl.pl_right_nerd));
+    try testing.expect(std.mem.indexOf(u8, view, " [no file] ") != null);
+    try testing.expect(std.mem.indexOf(u8, view, "Ln ") == null);
+}
+
+test "at 80 columns the row keeps every chip once the cluster is cut; a long name clips, and clips first" {
+    var b = try Bench.init(80, 24);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.focus = .tree;
+    // Rust at 80×24 (`docs/ui-spec/rust-80x24.txt`) clips the branch to
+    // `main …` to fit the cluster; without it the counts fit.
+    const row = try b.row(22);
+    try testing.expect(std.mem.startsWith(u8, row, " TREE " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " [no file]"));
+    try testing.expect(std.mem.endsWith(u8, trimRight(row), sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  —"));
+    // A file whose name is longer than the room: the name gives way,
+    // the branch keeps its counts, the right lane keeps every chip.
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/a-file-with-a-very-long-name-indeed.txt", .data = "x\n" });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "a-file-with-a-very-long-name-indeed.txt" });
+    defer testing.allocator.free(path);
+    _ = try b.app.openPath(path);
+    const long = try b.row(22);
+    try testing.expect(std.mem.indexOf(u8, long, sl.added_glyph ++ " 1 ") != null);
+    try testing.expect(std.mem.indexOf(u8, long, "…") != null);
+    try testing.expect(std.mem.indexOf(u8, long, "-indeed.txt") == null);
+    try testing.expect(std.mem.indexOf(u8, long, " Ln 1/") != null);
+    try testing.expect(std.mem.endsWith(u8, trimRight(long), sl.pl_left_nerd ++ "  txt"));
+}
+
+// ─── every chip: a hit, a description, an action ─────────────────────────
+
+test "every chip on the row registers its hit, has words, and its click does what the words say" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/notes.txt", .data = "hello world\n" });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "notes.txt" });
+    defer testing.allocator.free(path);
+    _ = try b.app.openPath(path);
+    _ = try b.row(38);
+    // The set of chips on the row, by hit id.
+    var seen = std.AutoHashMap(u32, void).init(testing.allocator);
+    defer seen.deinit();
+    var x: u16 = 0;
+    while (x < 120) : (x += 1) if (b.app.hits.at(x, 38)) |h| if (h == .statusline_seg) try seen.put(h.statusline_seg, {});
+    const expected = [_]u32{ sl.seg_mode, sl.seg_file, sl.seg_position, sl.seg_language, SegId.branch.raw(), SegId.coverage.raw(), SegId.wrap.raw(), SegId.filesize.raw(), SegId.bell.raw(), SegId.clock.raw(), SegId.workspace.raw() };
+    try testing.expectEqual(expected.len, seen.count());
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    for (expected) |id| {
+        try testing.expect(seen.contains(id));
+        // `discovery.describe` has words for each.
+        try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = id })) != null);
+    }
+    // The position chip: the go-to-line prompt.
+    try b.click(38, sl.seg_position, .left);
+    try testing.expect(b.app.overlay == .prompt);
+    try b.key(Key.named(.esc));
+    try testing.expect(b.app.overlay == .none);
+    // The mode chip toggles the keymap, both ways.
+    const style = b.app.input_style;
+    try b.click(38, sl.seg_mode, .left);
+    try testing.expect(b.app.input_style != style);
+    try b.click(38, sl.seg_mode, .left);
+    try testing.expectEqual(style, b.app.input_style);
+    // Right: the keymap menu.
+    try b.click(38, sl.seg_mode, .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // The language chip says what the file is.
+    try b.click(38, sl.seg_language, .left);
+    try testing.expectEqualStrings("language: txt (via file extension)", b.app.lastToast().?);
+    // The size chip: bytes and lines.
+    try b.click(38, SegId.filesize.raw(), .left);
+    try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "notes.txt: 12 bytes"));
+    // The coverage chip toasts both numbers; right-click picks the mode.
+    try b.click(38, SegId.coverage.raw(), .left);
+    try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "coverage: features 57%"));
+    try b.click(38, SegId.coverage.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // The clock flips local ⇄ UTC; right-click is its menu.
+    try b.click(38, SegId.clock.raw(), .left);
+    try testing.expectEqual(clock_mod.Mode.utc, b.app.clock.mode);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), "Z ") != null);
+    try b.click(38, SegId.clock.raw(), .left);
+    try testing.expectEqual(clock_mod.Mode.local, b.app.clock.mode);
+    try b.click(38, SegId.clock.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // The bell opens the message history; right-click its menu.
+    try b.click(38, SegId.bell.raw(), .left);
+    try testing.expect(b.app.overlay == .picker);
+    try b.key(Key.named(.esc));
+    try b.click(38, SegId.bell.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // The workspace chip: the workspace picker — with one workspace
+    // open and one repo, the command says so instead.
+    try b.click(38, SegId.workspace.raw(), .left);
+    try testing.expect(b.app.overlay == .none);
+    try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, "one workspace open") != null);
+    // The branch chip's right-click is the git menu.
+    try b.click(38, SegId.branch.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // The file chip: nothing on the left button (as in Rust), the
+    // Buffer menu on the right.
+    const toasts_before = b.app.toasts.items.len;
+    try b.click(38, sl.seg_file, .left);
+    try testing.expect(b.app.overlay == .none);
+    try testing.expectEqual(toasts_before, b.app.toasts.items.len);
+    try b.click(38, sl.seg_file, .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.key(Key.named(.esc));
+    // WRAP turns wrapping off for this editor — and leaves the row.
+    try b.click(38, SegId.wrap.raw(), .left);
+    try testing.expectEqualStrings("wrap off", b.app.lastToast().?);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " WRAP ") == null);
+    try testing.expect(b.colOf(38, SegId.wrap.raw()) == null);
+    // A host's segment on the left lane is a hit too, at its slot.
+    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira", .text = "TE-1", .side = .left, .priority = 5, .max_width = 8, .color = "yellow", .click_command = "view.toggle_wrap" });
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
+    try testing.expect(b.colOf(38, sl.seg_dyn_base) != null);
+    try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
+}
+
+// ─── the mode chip, per profile ──────────────────────────────────────────
+
+test "the mode chip: the standard profile's context labels, the vim profile's modes with the glyph, each on its ground" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/notes.txt", .data = "hello world\n" });
+    const path = try std.fs.path.join(testing.allocator, &.{ b.ws, "notes.txt" });
+    defer testing.allocator.free(path);
+    _ = try b.app.openPath(path);
+    const t = &b.app.theme;
+    const p = &t.palette;
+    // Standard: EDIT on green, no glyph; the hit covers the six cells.
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " EDIT " ++ sl.pl_right_nerd));
+    try testing.expect(Color.eql(b.cell(1, 38).bg, t.mode_edit.bg));
+    try testing.expectEqual(sl.seg_mode, b.app.hits.at(0, 38).?.statusline_seg);
+    try testing.expectEqual(sl.seg_mode, b.app.hits.at(5, 38).?.statusline_seg);
+    try testing.expect(b.app.hits.at(6, 38) == null or b.app.hits.at(6, 38).? != .statusline_seg);
+    // Vim: the diamond-V in orange, then the label, one pill on the mode's ground.
+    try command.run(&b.app, .{ .static = .@"editor.toggle_keymap" });
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " " ++ sl.vim_glyph ++ " NORMAL " ++ sl.pl_right_nerd));
+    try testing.expect(Color.eql(b.cell(1, 38).fg, p.orange));
+    try testing.expect(Color.eql(b.cell(1, 38).bg, t.mode_normal.bg));
+    try testing.expect(Color.eql(b.cell(5, 38).bg, t.mode_normal.bg));
+    try testing.expectEqual(sl.seg_mode, b.app.hits.at(1, 38).?.statusline_seg);
+    try testing.expectEqual(sl.seg_mode, b.app.hits.at(8, 38).?.statusline_seg);
+    try b.key(Key.char('i'));
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " " ++ sl.vim_glyph ++ " INSERT "));
+    try testing.expect(Color.eql(b.cell(5, 38).bg, t.mode_insert.bg));
+    try b.key(Key.named(.esc));
+    try b.key(Key.char('v'));
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " " ++ sl.vim_glyph ++ " VISUAL "));
+    try testing.expect(Color.eql(b.cell(5, 38).bg, t.mode_visual.bg));
+    try b.key(Key.named(.esc));
+    try b.key(Key.char('V'));
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " " ++ sl.vim_glyph ++ " V-LINE "));
+    try b.key(Key.named(.esc));
+    // REPLACE is on orange: the glyph goes near-black rather than vanish.
+    try b.key(Key.char('R'));
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " " ++ sl.vim_glyph ++ " REPLACE "));
+    try testing.expect(Color.eql(b.cell(1, 38).fg, p.bg_darker));
+    try testing.expect(Color.eql(b.cell(1, 38).bg, t.mode_replace.bg));
+    try b.key(Key.named(.esc));
+    // A pending chord sits in the gap between the lanes.
+    try b.key(Key.char('d'));
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), "   d   ") != null);
+    try b.key(Key.named(.esc));
+    // Back to standard: VIEW on cyan for a read-only buffer, TREE on
+    // blue when the tree has the keys.
+    try command.run(&b.app, .{ .static = .@"editor.toggle_keymap" });
+    b.app.activeEditor().?.buf.doc.read_only = true;
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " VIEW " ++ sl.pl_right_nerd));
+    try testing.expect(Color.eql(b.cell(1, 38).bg, p.cyan));
+    b.app.focus = .tree;
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " TREE " ++ sl.pl_right_nerd));
+    try testing.expect(Color.eql(b.cell(1, 38).bg, p.blue));
+    // `--ascii`: the label alone, no glyph, no arrow.
+    b.app.focus = .{ .pane = b.app.active.? };
+    try command.run(&b.app, .{ .static = .@"editor.toggle_keymap" });
+    b.app.cfg.ui.ascii_icons = true;
+    try testing.expect(std.mem.startsWith(u8, try b.row(38), " NORMAL  "));
+}
