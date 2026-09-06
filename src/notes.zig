@@ -568,7 +568,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const empty: list_panel.EmptyState = if (st.scanning and st.items.len == 0)
         .{ .message = "Reading notes…" }
     else if (st.items.len == 0)
-        .{ .message = "No notes yet — n starts one.", .hint = "Notes live in " ++ dir_rel ++ "/ as markdown." }
+        .{ .message = "No notes yet — click + New note above.", .hint = "Stored under " ++ dir_rel ++ "/*.md" }
     else
         .{ .message = "No matches — Esc clears" };
     now_s = Io.Timestamp.now(app.io, .real).toSeconds();

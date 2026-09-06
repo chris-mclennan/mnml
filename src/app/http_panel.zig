@@ -651,9 +651,8 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         ui.fmt(" ({d}{s})", .{ total, cap })
     else
         ui.fmt(" ({d} of {d}{s})", .{ shown, total, cap });
-    const refresh_glyph = chip.refreshIcon(ui.ascii);
     const empty: list_panel.EmptyState = if (total == 0)
-        .{ .message = ui.fmt("No requests yet — :http.new starts one; click{s}to rescan.", .{refresh_glyph}), .hint = "Lists .http / .curl files, envs, chains, mocks, cookies, history and captured traffic." }
+        .{ .message = "No .http / .curl files yet — save one to see it here." }
     else
         .{ .message = "No matches — Esc clears" };
     const caret = Panel.draw(&st.list, ui, area, .{
