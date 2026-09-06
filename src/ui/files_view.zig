@@ -217,8 +217,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) ?Caret {
         const selected = idx == doc.cursor;
         const base: Style = if (selected) Theme.onBg(t.fg, t.cursor_line.bg) else if (row.marked) Theme.onBg(t.fg, t.selection.bg) else t.bg;
         ui.fill(r, base);
-        // Marker column: the cursor's bar, or a mark's tick.
-        const marker: []const u8 = if (selected) (if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph) else if (row.marked) (if (ui.ascii) "*" else "✓") else " ";
+        // Marker column: a mark's tick — on the cursor row too, where the
+        // band is the cursor — else the cursor's bar.
+        const marker: []const u8 = if (row.marked) (if (ui.ascii) "*" else "✓") else if (selected) (if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph) else " ";
         _ = ui.putStr(r.x, r.y, 1, marker, Theme.withFg(base, if (selected and doc.focused) t.accent.fg else if (row.marked) t.accent.fg else t.muted.fg));
         paintRow(ui, Rect.init(r.x + 1, r.y, r.w -| 1, 1), row, base, doc.now_s);
         ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(idx) } });
@@ -457,7 +458,8 @@ test "the pane at 60 wide: crumbs with chips, columns, rows with their hits, the
     try f.expectContains("Modified");
     try f.expectContains("Kind");
     try f.expectContains("src/");
-    try f.expectContains("▌M README.md");
+    // README is marked AND under the cursor: the tick shows on the band.
+    try f.expectContains("✓M README.md");
     try f.expectContains("2.0K");
     try f.expectContains("just now");
     try f.expectContains("2m ago"); // build.zig: 90 s before "now - 30 s"
