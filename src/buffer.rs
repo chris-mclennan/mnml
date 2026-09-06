@@ -835,18 +835,45 @@ impl Buffer {
     /// Append a single `\n` to the buffer if it doesn't already end with one
     /// (and the buffer isn't empty). Goes through `apply_edit_ops` so undo
     /// can revert it.
+    ///
+    /// The save moves nothing. `ReplaceRange` lands the cursor after the
+    /// appended byte — on a phantom line N+1 (`Ln 2/1`), from where a
+    /// Normal `A` / `o` edited the wrong place — so the cursor, anchor
+    /// and goal column are snapshotted around it and put back. All of
+    /// them are at or before the old end, so all stay on the last line.
+    /// A cursor past the last char keeps its byte, now the position
+    /// before the `\n` (an Insert / standard cursor at EOF stays after
+    /// the last char); in vim Normal mode, where a cursor never sits
+    /// past the last char, it steps back onto that char.
     fn apply_ensure_trailing_newline(&mut self) {
         let text = self.editor.text();
         if text.is_empty() || text.ends_with('\n') {
             return;
         }
         let end = text.len();
+        let caret = self.editor.caret_snapshot();
         let ops = vec![crate::edit_op::EditOp::ReplaceRange {
             start: end,
             end,
             text: "\n".to_string(),
         }];
         self.apply_edit_ops(ops, &mut crate::clipboard::Clipboard::new(), 0);
+        let cursor = if caret.cursor >= end && self.input.mode() == EditingMode::Normal {
+            // Start of the last char before the appended newline.
+            let text = self.editor.text();
+            let mut b = end - 1;
+            while !text.is_char_boundary(b) {
+                b -= 1;
+            }
+            b
+        } else {
+            caret.cursor.min(end)
+        };
+        self.editor.restore_caret(crate::editor::CaretSnapshot {
+            cursor,
+            anchor: caret.anchor.map(|a| a.min(end)),
+            goal_col: caret.goal_col,
+        });
     }
 
     /// Strip trailing space/tab from every line in the buffer (called from the
@@ -1803,6 +1830,79 @@ mod tests {
         let mut b = Buffer::open(&p, &cfg).unwrap();
         b.save_to_disk().unwrap();
         assert_eq!(fs::read_to_string(&p).unwrap(), "x");
+    }
+
+    /// The save moves nothing. Appending the missing final `\n` used to
+    /// go through `ReplaceRange`, which parks the cursor after the new
+    /// byte — on a phantom line N+1 (`Ln 2/1`). Every caret position is
+    /// at or before the old end, so all of them stay on the last line.
+    #[test]
+    fn save_without_trailing_newline_keeps_cursor_on_last_line() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nl.txt");
+        fs::write(&p, "ab\ncd").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.editor.place_cursor(1, 1);
+        b.save_to_disk().unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "ab\ncd\n");
+        assert_eq!(b.editor.cursor(), 4, "cursor byte unchanged");
+        assert_eq!(b.editor.row_col(), (1, 1));
+    }
+
+    /// An Insert / standard cursor sitting after the last char keeps its
+    /// byte — which is now the position before the appended newline,
+    /// still on the last line (VS Code's behaviour).
+    #[test]
+    fn save_keeps_an_insert_cursor_past_the_last_char() {
+        let cfg = Config::default(); // standard (modeless) handler
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nl.txt");
+        fs::write(&p, "ab\ncd").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.editor.set_cursor_byte(5);
+        b.save_to_disk().unwrap();
+        assert_eq!(b.editor.text(), "ab\ncd\n");
+        assert_eq!(b.editor.cursor(), 5, "before the appended newline");
+        assert_eq!(
+            b.editor.row_col(),
+            (1, 2),
+            "last line, not a phantom line 2"
+        );
+    }
+
+    /// In vim Normal mode the cursor never sits past the last char, so a
+    /// save that finds it there (only reachable through an edit that left
+    /// it there) steps it back onto that char, where vim keeps it.
+    #[test]
+    fn save_steps_a_normal_cursor_back_onto_the_last_char() {
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nl.txt");
+        fs::write(&p, "ab\ncd").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        assert_eq!(b.editing_mode(), EditingMode::Normal);
+        b.editor.set_cursor_byte(5);
+        b.save_to_disk().unwrap();
+        assert_eq!(b.editor.text(), "ab\ncd\n");
+        assert_eq!(b.editor.cursor(), 4, "on the 'd'");
+        assert_eq!(b.editor.row_col(), (1, 1));
+    }
+
+    /// A selection survives the save too — both ends are at or before
+    /// the old end.
+    #[test]
+    fn save_without_trailing_newline_keeps_the_selection() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nl.txt");
+        fs::write(&p, "ab\ncd").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.editor.set_selection(1, 4);
+        b.save_to_disk().unwrap();
+        assert_eq!(b.editor.selection(), Some((1, 4)));
+        assert_eq!(b.editor.cursor(), 4);
     }
 
     #[test]

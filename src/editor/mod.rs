@@ -562,6 +562,16 @@ fn class_of(c: char) -> CharClass {
     }
 }
 
+/// A caret position captured by [`Editor::caret_snapshot`] and put back by
+/// [`Editor::restore_caret`]. Byte offsets; `goal_col` is the sticky column
+/// (`None` = recompute from the cursor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaretSnapshot {
+    pub cursor: usize,
+    pub anchor: Option<usize>,
+    pub goal_col: Option<usize>,
+}
+
 /// Vertical motions keep the "goal column" so repeated up/down through short
 /// lines doesn't shrink the target. Everything else resets it to the new column.
 fn op_preserves_goal_col(op: &EditOp) -> bool {
@@ -1522,6 +1532,33 @@ impl Editor {
     /// cursor at the insert origin and to splice the replay text on other rows.
     pub fn byte_at_col_pub(&self, line: usize, col: usize) -> usize {
         self.byte_at_col(line, col)
+    }
+    /// The caret as one unit — cursor, selection anchor, sticky column —
+    /// for a caller that has to run an edit and then put the caret back
+    /// where it was. The save-time trailing-newline append is the one
+    /// such caller: the edit goes through `apply` (undo, fold shifts,
+    /// reparse hints), which parks the cursor after the new byte.
+    pub fn caret_snapshot(&self) -> CaretSnapshot {
+        CaretSnapshot {
+            cursor: self.cursor,
+            anchor: self.anchor,
+            goal_col: self.goal_col,
+        }
+    }
+    /// Put a [`Self::caret_snapshot`] back. Offsets are clamped to the
+    /// text and rounded DOWN to a char boundary, so a snapshot taken
+    /// before an edit is safe to restore after it.
+    pub fn restore_caret(&mut self, snap: CaretSnapshot) {
+        let clamp = |ed: &Self, b: usize| {
+            let mut b = b.min(ed.text.len());
+            while !ed.text.is_char_boundary(b) {
+                b -= 1;
+            }
+            b
+        };
+        self.cursor = clamp(self, snap.cursor);
+        self.anchor = snap.anchor.map(|a| clamp(self, a));
+        self.goal_col = snap.goal_col;
     }
     /// Public cursor setter, byte-clamped to a char boundary. The App uses
     /// this for "place the cursor here precisely" gestures (visual-block

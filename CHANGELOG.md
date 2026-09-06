@@ -19,6 +19,14 @@ block); this file is the curated, user-facing summary.
   string-or-list as a list, and anything it cannot place kept verbatim in a
   trailing `// unmigrated:` block. The TOML file is left where it was.
 
+### Fixed
+
+- *(editor)* Saving a file with no final newline no longer moves the cursor:
+  the appended `\n` used to park it on a phantom line below the last one
+  (`Ln 2/1`), so a vim `A` / `o` from there edited the wrong place. Cursor,
+  selection and sticky column all stay put; a vim Normal cursor sitting past
+  the last character steps back onto it.
+
 ## [0.2.21](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.20...mnml-rs-v0.2.21) - 2026-09-01
 
 ### Added
