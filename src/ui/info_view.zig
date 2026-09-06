@@ -1,0 +1,349 @@
+//! The sidebar's info view — the Ableton-style help box at the bottom
+//! of the left panel (Rust `ui/hover_help.rs`): a rule, a title row on
+//! the lighter ground with the `⋮` kebab at its right edge, a spacer,
+//! then the copy word-wrapped with a one-cell gutter — the body, an
+//! italic aside, `[Chord] Label` shortcut rows, `→ label` links — and a
+//! scrollbar when the copy outgrows the rows. The last row stays blank
+//! as a cushion above the statusline.
+//!
+//! The copy is data (`Copy`); what it says about a target is the app's
+//! business (`app/info_view.zig`). The whole box registers as
+//! `info_view:body` first, so a press inside it never falls through to
+//! the tree; the kebab and each link row register after it and win.
+
+const std = @import("std");
+const vaxis = @import("vaxis");
+const Rect = @import("rect.zig");
+const Ui = @import("context.zig");
+const Theme = @import("theme.zig");
+const hit = @import("hit.zig");
+
+const Style = vaxis.Style;
+
+pub const Part = hit.InfoPart;
+
+pub const Shortcut = struct { chord: []const u8, label: []const u8 };
+
+/// A `→ label` row; the app keeps what it runs, by position.
+pub const Link = struct { label: []const u8 };
+
+/// What the box says (Rust `InfoViewCopy`).
+pub const Copy = struct {
+    /// The topic, bold on the title row.
+    title: []const u8,
+    /// Prose, wrapped.
+    body: []const u8 = "",
+    /// One italic caveat after the body.
+    aside: ?[]const u8 = null,
+    shortcuts: []const Shortcut = &.{},
+    try_it: []const Link = &.{},
+};
+
+/// Rust's `to_flat_pair`: the body, the aside and the first two
+/// shortcuts on one line — what the keyboard-focus ladder shows.
+pub fn flatten(arena: std.mem.Allocator, c: Copy) std.mem.Allocator.Error!Copy {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(arena, c.body);
+    if (c.aside) |a| {
+        if (out.items.len > 0) try out.appendSlice(arena, "  ");
+        try out.appendSlice(arena, a);
+    }
+    for (c.shortcuts[0..@min(c.shortcuts.len, 2)]) |s| {
+        if (out.items.len > 0) try out.appendSlice(arena, "  ");
+        try out.print(arena, "[{s}] {s}", .{ s.chord, s.label });
+    }
+    return .{ .title = c.title, .body = out.items };
+}
+
+pub const Props = struct {
+    copy: Copy,
+    /// The first content line shown; the painter clamps it.
+    scroll: u16 = 0,
+};
+
+pub const Layout = struct {
+    /// The last `scroll` that still fills the rows; 0 when it all fits.
+    max_scroll: u16 = 0,
+    kebab: ?Rect = null,
+};
+
+pub const kebab_glyph = "⋮";
+pub const kebab_ascii = ":";
+
+const Line = struct {
+    /// Painted after the gutter cell.
+    segs: []const vaxis.Segment,
+    /// A `→ label` row: its index in `copy.try_it`.
+    link: ?u8 = null,
+};
+
+pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
+    var out: Layout = .{};
+    if (area.isEmpty()) return out;
+    const t = ui.theme;
+    const pal = t.palette;
+    const body_bg = pal.bg_darker;
+    const title_bg = pal.bg2;
+    ui.fill(area, Theme.onBg(t.fg, body_bg));
+    ui.hit(area, .{ .info_view = .body });
+    // Row 0: the rule.
+    var sep = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
+    sep.dim = true;
+    var x: u16 = area.x;
+    while (x < area.right()) : (x += 1) _ = ui.putStr(x, area.y, 1, if (ui.ascii) "-" else "─", sep);
+    if (area.h <= 1) return out;
+    // Row 1: the title band, from the second cell (the first keeps the
+    // panel's ground so the band never touches the activity bar), the
+    // kebab and a trailing cell at the right.
+    const ty = area.y + 1;
+    const kebab_cells: u16 = 2;
+    const title_avail = area.w -| kebab_cells -| 1;
+    var title_style = Theme.onBg(t.fg, title_bg);
+    title_style.bold = true;
+    ui.fill(Rect.init(area.x + 1, ty, title_avail, 1), title_style);
+    // A long title is cut, not ellipsised (Rust), a cell short of the kebab.
+    _ = ui.putStr(area.x + 1, ty, title_avail -| 1, p.copy.title, title_style);
+    if (area.w >= 3) {
+        const kx = area.right() - kebab_cells;
+        ui.fill(Rect.init(kx, ty, kebab_cells, 1), Theme.onBg(t.fg, title_bg));
+        _ = ui.putStr(kx, ty, 1, if (ui.ascii) kebab_ascii else kebab_glyph, Theme.onBg(Theme.withFg(t.fg, pal.comment), title_bg));
+        const kr = Rect.init(kx, ty, 1, 1);
+        ui.hit(kr, .{ .info_view = .kebab });
+        out.kebab = kr;
+    }
+    if (area.h <= 2) return out;
+    // Rows 2..: the lines, wrapped to the width less the gutters.
+    const content_w = area.w -| 2;
+    const arena = ui.arena;
+    var lines: std.ArrayListUnmanaged(Line) = .empty;
+    const fg = Theme.onBg(t.fg, body_bg);
+    var aside_style = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
+    aside_style.italic = true;
+    var chord_style = Theme.onBg(Theme.withFg(t.fg, pal.cyan), body_bg);
+    chord_style.bold = true;
+    var link_style = Theme.onBg(Theme.withFg(t.fg, pal.green), body_bg);
+    link_style.bold = true;
+    link_style.ul_style = .single;
+    lines.append(arena, .{ .segs = &.{} }) catch return out;
+    for (wrapWords(arena, p.copy.body, content_w) catch return out) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return out }) catch return out;
+    if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return out) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return out }) catch return out;
+    const max_body_rows: usize = area.h -| 3;
+    var rows_left = max_body_rows -| lines.items.len;
+    if (rows_left > 0 and p.copy.shortcuts.len > 0) {
+        lines.append(arena, .{ .segs = &.{} }) catch return out;
+        for (p.copy.shortcuts[0..@min(p.copy.shortcuts.len, rows_left -| 1)]) |s| {
+            const segs = arena.alloc(vaxis.Segment, 2) catch return out;
+            segs[0] = .{ .text = ui.fmt("[{s}]", .{s.chord}), .style = chord_style };
+            segs[1] = .{ .text = ui.fmt(" {s}", .{s.label}), .style = fg };
+            lines.append(arena, .{ .segs = segs }) catch return out;
+        }
+    }
+    rows_left = max_body_rows -| lines.items.len;
+    if (rows_left > 0 and p.copy.try_it.len > 0) {
+        lines.append(arena, .{ .segs = &.{} }) catch return out;
+        for (p.copy.try_it[0..@min(p.copy.try_it.len, rows_left -| 1)], 0..) |l, i| {
+            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ if (ui.ascii) "->" else "→", l.label }), link_style) catch return out, .link = @intCast(i) }) catch return out;
+        }
+    }
+    const body = Rect.init(area.x, area.y + 2, area.w, area.h -| 3);
+    const cap: usize = body.h;
+    const total = lines.items.len;
+    const overflow = total > cap;
+    out.max_scroll = @intCast(total -| cap);
+    const scroll: usize = @min(p.scroll, out.max_scroll);
+    const text_w = body.w -| @as(u16, if (overflow) 1 else 0);
+    for (lines.items[scroll..@min(total, scroll + cap)], 0..) |line, i| {
+        const y: u16 = body.y + @as(u16, @intCast(i));
+        var lx = body.x + 1;
+        for (line.segs) |s| lx += ui.putStr(lx, y, (body.x + text_w) -| lx, s.text, s.style);
+        if (line.link) |li| ui.hit(Rect.init(body.x, y, text_w, 1), .{ .info_view = .{ .try_it = li } });
+    }
+    if (overflow) {
+        // The track in the comment colour, the thumb in cyan (Rust).
+        const track_h: usize = body.h;
+        const thumb_h = @max(1, (cap * track_h) / total);
+        const thumb_y = if (out.max_scroll == 0) 0 else (scroll * (track_h -| thumb_h)) / out.max_scroll;
+        const sx = body.right() - 1;
+        var i: usize = 0;
+        while (i < track_h) : (i += 1) {
+            const is_thumb = i >= thumb_y and i < thumb_y + thumb_h;
+            _ = ui.putStr(sx, body.y + @as(u16, @intCast(i)), 1, if (is_thumb) (if (ui.ascii) "#" else "┃") else (if (ui.ascii) "|" else "│"), Theme.onBg(Theme.withFg(t.fg, if (is_thumb) pal.cyan else pal.comment), body_bg));
+        }
+    }
+    return out;
+}
+
+fn seg1(arena: std.mem.Allocator, text: []const u8, style: Style) std.mem.Allocator.Error![]const vaxis.Segment {
+    const segs = try arena.alloc(vaxis.Segment, 1);
+    segs[0] = .{ .text = text, .style = style };
+    return segs;
+}
+
+/// Rust `wrap_words`: greedy on whitespace, a word longer than the
+/// width hard-broken, counting code points. Empty text is one empty
+/// line.
+pub fn wrapWords(arena: std.mem.Allocator, text: []const u8, width: u16) std.mem.Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (width == 0 or text.len == 0) {
+        try out.append(arena, "");
+        return out.items;
+    }
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    var line_len: usize = 0;
+    var words = std.mem.tokenizeAny(u8, text, " \t\r\n");
+    while (words.next()) |word| {
+        const word_len = std.unicode.utf8CountCodepoints(word) catch word.len;
+        if (word_len > width) {
+            if (line.items.len > 0) {
+                try out.append(arena, try line.toOwnedSlice(arena));
+                line_len = 0;
+            }
+            var it = std.unicode.Utf8View.initUnchecked(word).iterator();
+            var chunk: std.ArrayListUnmanaged(u8) = .empty;
+            var n: usize = 0;
+            while (it.nextCodepointSlice()) |cp| {
+                try chunk.appendSlice(arena, cp);
+                n += 1;
+                if (n == width) {
+                    try out.append(arena, try chunk.toOwnedSlice(arena));
+                    n = 0;
+                }
+            }
+            if (n > 0) {
+                line = chunk;
+                line_len = n;
+            }
+            continue;
+        }
+        const needed = if (line_len == 0) word_len else line_len + 1 + word_len;
+        if (needed > width) {
+            try out.append(arena, try line.toOwnedSlice(arena));
+            line = .empty;
+            try line.appendSlice(arena, word);
+            line_len = word_len;
+        } else {
+            if (line_len > 0) {
+                try line.append(arena, ' ');
+                line_len += 1;
+            }
+            try line.appendSlice(arena, word);
+            line_len += word_len;
+        }
+    }
+    if (line.items.len > 0) try out.append(arena, line.items);
+    if (out.items.len == 0) try out.append(arena, "");
+    return out.items;
+}
+
+// ─── tests ──────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+const Fixture = @import("test_fixture.zig");
+
+const sidebar_copy: Copy = .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." };
+
+test "the spec's rows 27..33 at 26x11: the rule, `Sidebar` with the kebab, a spacer, the body wrapped at 24" {
+    var f = try Fixture.init(26, 11);
+    defer f.deinit();
+    const l = draw(f.ui(), f.full(), .{ .copy = sidebar_copy });
+    try f.expectRows(&.{
+        "──────────────────────────",
+        " Sidebar                ⋮",
+        "",
+        " Arrows or j/k walk rows.",
+        " Enter opens the",
+        " selection. Ctrl+Shift+P",
+        " opens the palette.",
+        "",
+        "",
+        "",
+        "",
+    });
+    try testing.expectEqual(@as(u16, 0), l.max_scroll);
+    try testing.expect(l.kebab.?.eql(Rect.init(24, 1, 1, 1)));
+    try testing.expect(f.hits.at(24, 1).?.info_view == .kebab);
+    try testing.expect(f.hits.at(5, 4).?.info_view == .body);
+    try testing.expect(f.hits.at(0, 0).?.info_view == .body);
+    // The title band from the second cell on bg2, the first cell on the panel ground.
+    try testing.expect(vaxis.Color.eql(f.style(1, 1).bg, f.theme.palette.bg2));
+    try testing.expect(vaxis.Color.eql(f.style(25, 1).bg, f.theme.palette.bg2));
+    try testing.expect(vaxis.Color.eql(f.style(0, 1).bg, f.theme.palette.bg_darker));
+    try testing.expect(f.style(1, 1).bold);
+    try testing.expect(f.style(3, 0).dim);
+}
+
+test "shortcuts and links get their rows after a spacer; a link row is a hit by index; a long title clips before the kebab" {
+    var f = try Fixture.init(30, 10);
+    defer f.deinit();
+    const copy: Copy = .{
+        .title = "A title that is far too long for the band",
+        .body = "Body.",
+        .aside = "An aside.",
+        .shortcuts = &.{ .{ .chord = "Enter", .label = "Open" }, .{ .chord = "→ / ←", .label = "Expand / collapse" } },
+        .try_it = &.{.{ .label = "Run it" }},
+    };
+    _ = draw(f.ui(), f.full(), .{ .copy = copy });
+    try f.expectRow(1, " A title that is far too lo ⋮");
+    try f.expectRow(3, " Body.");
+    try f.expectRow(4, " An aside.");
+    try f.expectRow(5, "");
+    try f.expectRow(6, " [Enter] Open");
+    try f.expectRow(7, " [→ / ←] Expand / collapse");
+    // Only two rows were left: the links needed a spacer and a row.
+    try f.expectLacks("Run it");
+    try testing.expect(f.style(4, 4).italic);
+    try testing.expect(vaxis.Color.eql(f.style(2, 6).fg, f.theme.palette.cyan));
+    var g = try Fixture.init(30, 14);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), .{ .copy = copy });
+    try g.expectRow(9, " → Run it");
+    try testing.expectEqual(@as(u8, 0), g.hits.at(3, 9).?.info_view.try_it);
+    try testing.expect(g.hits.at(3, 8).?.info_view == .body);
+    try testing.expect(g.style(2, 9).ul_style == .single);
+}
+
+test "overflow: a scrollbar in the last column, the scroll clamped to what still fills the rows" {
+    var f = try Fixture.init(20, 6);
+    defer f.deinit();
+    const copy: Copy = .{ .title = "T", .body = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen" };
+    const l = draw(f.ui(), f.full(), .{ .copy = copy, .scroll = 99 });
+    try testing.expect(l.max_scroll > 0);
+    var buf: [64]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, f.row(2, &buf), "│") or std.mem.endsWith(u8, f.row(2, &buf), "┃"));
+    try f.expectRow(5, "");
+    // Scrolled to the end: the last wrapped line shows.
+    try f.expectContains("fourteen");
+    var g = try Fixture.init(20, 6);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), .{ .copy = copy, .scroll = 0 });
+    try g.expectLacks("fourteen");
+    try g.expectRow(2, "                   ┃");
+    try g.expectRow(3, " one two three four│");
+}
+
+test "wrapWords: greedy on whitespace, a long word broken, empty is one line" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const a = try wrapWords(arena, "Arrows or j/k walk rows. Enter opens the selection.", 24);
+    try testing.expectEqual(@as(usize, 3), a.len);
+    try testing.expectEqualStrings("Arrows or j/k walk rows.", a[0]);
+    try testing.expectEqualStrings("Enter opens the", a[1]);
+    try testing.expectEqualStrings("selection.", a[2]);
+    const b = try wrapWords(arena, "abcdefghij", 4);
+    try testing.expectEqual(@as(usize, 3), b.len);
+    try testing.expectEqualStrings("abcd", b[0]);
+    try testing.expectEqualStrings("ij", b[2]);
+    const c = try wrapWords(arena, "", 10);
+    try testing.expectEqual(@as(usize, 1), c.len);
+    try testing.expectEqualStrings("", c[0]);
+    const flat = try flatten(arena, .{ .title = "x/", .body = "Dir.", .shortcuts = &.{ .{ .chord = "Enter", .label = "Open" }, .{ .chord = "l", .label = "In" }, .{ .chord = "h", .label = "Out" } } });
+    try testing.expectEqualStrings("Dir.  [Enter] Open  [l] In", flat.body);
+    // Degenerate areas: a one-row box is the rule alone, a two-row one adds the title.
+    var f = try Fixture.init(10, 2);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy });
+    try f.expectRow(0, "──────────");
+    try f.expectRow(1, " Sideba ⋮");
+    _ = draw(f.ui(), Rect.empty, .{ .copy = sidebar_copy });
+}

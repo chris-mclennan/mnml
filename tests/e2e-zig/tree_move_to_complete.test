@@ -1,17 +1,15 @@
 # zig-only
 # `file.move_to` on a tree row: Tab completes the workspace's folders in
 # order and cycles, Enter moves the file into the typed one; the open
-# buffer follows.
+# buffer follows. End lands on zz.txt, the last row (the `.keep` files
+# show: dot entries are visible by default, as in Rust).
 write lib/.keep ""
 write src/deep/.keep ""
 write zz.txt "z"
 open zz.txt
 command view.focus_tree
 command tree.expand_all
-key down
-key down
-key down
-key down
+key end
 command file.move_to
 expect screen contains "Move zz.txt to folder"
 key tab

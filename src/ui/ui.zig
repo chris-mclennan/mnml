@@ -25,6 +25,9 @@ pub const statusline = @import("statusline.zig");
 pub const bufferline = @import("bufferline.zig");
 
 pub const chip = @import("chip.zig");
+pub const icons = @import("icons.zig");
+pub const tree_view = @import("tree_view.zig");
+pub const info_view = @import("info_view.zig");
 pub const text_field = @import("text_field.zig");
 pub const Caret = text_field.Caret;
 pub const scrollbar = @import("scrollbar.zig");

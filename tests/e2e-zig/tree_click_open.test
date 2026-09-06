@@ -1,0 +1,23 @@
+# zig-only
+# width: 120
+# The file tree (src/ui/tree_view.zig): one click on a file row opens
+# it, as Rust does; one click on a folder's chevron folds it and a
+# second opens it again. The sidebar's rows start under the palette bar
+# at row 1 (the workspace header); `src` is row 2, its `main.zig` row 3,
+# README.md row 4; the text starts at column 4 past the activity bar.
+# A markdown file opens rendered, so its heading loses the `#`.
+write src/main.zig "const x = 1;\n"
+write README.md "# hi\nsecond line\n"
+expect screen contains "README.md"
+expect screen contains "main.zig"
+expect screen lacks "second line"
+click 14 4
+expect pane README.md
+expect screen contains "second line"
+click 7 2
+expect screen lacks "main.zig"
+click 7 2
+expect screen contains "main.zig"
+click 14 3
+expect pane main.zig
+expect screen contains "const x = 1;"

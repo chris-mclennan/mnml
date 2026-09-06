@@ -17,6 +17,7 @@ const Rect = @import("rect.zig");
 const ids = @import("../core/ids.zig");
 const panel = @import("../core/panel.zig");
 const activity_bar = @import("activity_bar.zig");
+const tree_view = @import("tree_view.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -30,9 +31,16 @@ pub const ChipKind = enum { sort, refresh, new, view };
 /// register their title / kebab / close / body here like any component.
 pub const DockPart = enum { body, title, kebab, close };
 
+/// The parts of the sidebar's info view (`ui/info_view.zig`): the kebab
+/// on its title row, a `→ label` link row by its index, and the rest,
+/// which swallows a press.
+pub const InfoPart = union(enum) { body, kebab, try_it: u8 };
+
 pub const Owner = union(enum) {
     pane: PaneId,
     panel: PanelId,
+    /// The file tree's list (`ui/tree_view.zig`).
+    tree,
 };
 
 pub const Axis = enum { v, h };
@@ -64,7 +72,15 @@ pub const HitTarget = union(enum) {
     link: struct { url: []const u8 },
     menu_item: struct { menu: u32, idx: u16 },
     statusline_seg: u32,
+    /// A file tree entry, by its row index in the app's tree.
     tree_node: u32,
+    /// A workspace section's header row (`ui/tree_view.zig`): 0 the
+    /// primary, i + 1 the i-th extra root. A press folds the section.
+    tree_root: u8,
+    /// A chip on the primary header, or the `Add workspace` row.
+    tree_chip: tree_view.Chip,
+    /// The sidebar's info view.
+    info_view: InfoPart,
     script_hit: struct { pane: PaneId, id: u32 },
     /// A visible editor cell; `line` is the 0-based document line and
     /// `col` the byte offset of the grapheme under the cell within that
@@ -83,6 +99,12 @@ pub const HitTarget = union(enum) {
         try w.writeAll(@tagName(t));
         switch (t) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
+            .tree_root => |n| try w.print(":{d}", .{n}),
+            .tree_chip => |c| try w.print(":{s}", .{@tagName(c)}),
+            .info_view => |p| switch (p) {
+                .try_it => |i| try w.print(":try_it:{d}", .{i}),
+                else => try w.print(":{s}", .{@tagName(p)}),
+            },
             .tab, .tab_close => |v| try w.print(":{d}:{d}", .{ v.leaf, v.idx }),
             .row, .kebab => |v| try w.print(":{s}:{d}", .{ @tagName(v.panel), v.idx }),
             .chip => |v| try w.print(":{s}:{s}", .{ @tagName(v.panel), @tagName(v.kind) }),
@@ -91,6 +113,7 @@ pub const HitTarget = union(enum) {
                 switch (v.owner) {
                     .pane => |id| try w.print(":pane:{d}", .{id}),
                     .panel => |p| try w.print(":panel:{s}", .{@tagName(p)}),
+                    .tree => try w.writeAll(":tree"),
                 }
                 try w.print(":{s}", .{@tagName(v.axis)});
             },
@@ -250,6 +273,11 @@ test "labels are the tag plus the payload" {
     try expectLabel("rail:explorer", .{ .rail = .{ .section = .explorer } });
     try expectLabel("rail:cloud_agents", .{ .rail = .{ .section = .cloud_agents } });
     try expectLabel("rail:gear", .{ .rail = .gear });
+    try expectLabel("tree_root:0", .{ .tree_root = 0 });
+    try expectLabel("tree_chip:new_file", .{ .tree_chip = .new_file });
+    try expectLabel("info_view:kebab", .{ .info_view = .kebab });
+    try expectLabel("info_view:try_it:2", .{ .info_view = .{ .try_it = 2 } });
+    try expectLabel("scrollbar:tree:v", .{ .scrollbar = .{ .owner = .tree, .axis = .v } });
 }
 
 test "rects.json shape, with a url that needs escaping" {

@@ -2618,3 +2618,72 @@ break-check.
   build: the Claude chip's quota percent (`W 99% 18m …`) — Zig's meter
   is the local 24h spend until the usage endpoint is called; the LSP
   progress (`⟳ …`), background-task spinner and `AI` suggestion chips.
+## The file tree sidebar (2026-09-06, branch `tree`) — `// changed:` notes
+
+The spec is `docs/ui-spec/rust-120x40.txt`, columns 4–29 of rows 1–37;
+`tools/ui-diff.sh` on the chrome fixture shows them identical at rest, with
+`README.md` opened, and at 80×24.
+
+- `// changed (ui):` `src/ui/tree_view.zig` paints the sidebar from a flat
+  list of items — a section header, an entry, the blank row between
+  sections, the trailing `Add workspace` row — one per screen row, every
+  hit registered with its cells. The primary header is ` ▾ ~/path/ ` (bold
+  green, italic while hidden files show, the path `…`-cut to what the
+  cluster leaves, never under four cells) with the chips right-aligned —
+  new folder `EA80`, new file `EA7F`, pull `EB40`, collapse `EAC5` /
+  expand `F0AB4`, then refresh `EB37` — dropped from the right of the
+  cluster until label, a cell, cluster, refresh and one cell of margin
+  fit (three of the four at the stock width; the refresh chip outlives
+  them). An extra root is ` ▸ name ` cut to width − 4. An entry is the
+  Rust row: one cell of the rail's ground, two cells of indent, mnml's
+  baked `│` (`F1F04`) down each ancestor level from the second that has
+  siblings to come, the Octicons chevron (`F47C` / `F460`) on a folder or
+  `│` / `└` (`F1F05`) in a file's slot under the parent's icon, the icon
+  and its colour (`src/ui/icons.zig`, nvim-web-devicons' table as comptime
+  data; folders in the theme's yellow), the name (folders bold blue, git
+  states yellow / green / red, dot entries dim, the cursor row bold on
+  `bg2`), the badge right-aligned (`M` `A` `?` `!`, the unsaved `●`
+  first). `ui.expand_indicator = .triangle` and `ui.show_workspace_dots`
+  apply as in Rust. Every glyph has its `ui.ascii_icons` twin beside it.
+- `// changed (app):` `src/app/tree.zig` builds the items and keeps the
+  state. Dot entries show by default and `H` hides them (Rust); `.git` and
+  the artifact directories never show, and `H` no longer reveals the
+  latter (Rust hides them unconditionally); each directory's `.gitignore`
+  is honoured through `gitignore.Stack` as the listing descends; names
+  sort case-blind after directories; the primary section folds on its
+  header (`primary_expanded` now empties the rows without extra roots
+  too) and the primary's top-level directories open on first sight under
+  extra roots as well. The tree asks `git.discover` / `requestStatus`
+  itself when it has no snapshot, so the badges paint without a git
+  surface open. One click opens a file (the release, so a hold is still
+  a drag), a press on a folder row folds it, a press on a header folds
+  the section (Alt folds or opens every directory with it), a chip runs
+  its command with the tree focused. The tree's scrollbar is an
+  `Owner.tree`; the wheel steps the cursor.
+- `// changed (hit):` `tree_root: u8`, `tree_chip: tree_view.Chip`,
+  `info_view: InfoPart` (`body` / `kebab` / `try_it: n`), `Owner.tree`;
+  labels `tree_root:0`, `tree_chip:new_file`, `info_view:try_it:0`,
+  `scrollbar:tree:v`. `discovery.describe` has words for each.
+- `// changed (info view):` `src/ui/info_view.zig` + `src/app/info_view.zig`
+  replace the tooltip help box. The panel's bottom `ui.hover_help_height`
+  rows are the info view whenever the panel has eight rows to spare
+  (Rust `ui/mod.rs`): the rule, the title band on `bg2` with the `⋮`
+  kebab (its menu is the one Rust row — turn the panel off), a spacer,
+  the copy wrapped at width − 2 with a one-cell gutter, `[Chord] Label`
+  rows, `→ label` links that run a command, a scrollbar when it overflows
+  (the wheel scrolls). The copy is Rust's ladder: the hovered chip / row /
+  target (the previous frame's hits), else the tree's cursor row past
+  the first (flattened with its chords), else the active pane's summary
+  (`name  ·  LANG  ·  L:C  ·  N lines`, or the identifier under the
+  cursor), else `Sidebar` / `Editor` / `Right panel`. The dictionary
+  carries Rust's tree-row entries (directories, `.d.ts`, the filename
+  rows, the extension rows) and the header chips' entries with a `Run it`
+  link. `tooltip.drawHelpBox` and `discovery.drawHelpBox` are gone.
+- `// changed (tests):` `tests/e2e-zig/tree_click_open.test` (one click
+  opens, the chevron folds), `tree_header_chip.test` (the chips prompt,
+  the header folds); `tools/pty-mouse-check.py` clicks once. Corpus
+  flips from the Rust look: `jumplist_workspaces` / `vim_ctrl_b_pages_back`
+  / `vim_leader_second_key` (the header shows the path, with the dot, not
+  the bare name), `tree_move_to_complete` (dot files show, `End` finds
+  the row), `plus_menu_kebab` (the info view's `[F2] Rename` chord is not
+  the menu's `Rename…`), `files_pane` (unchanged, still green).

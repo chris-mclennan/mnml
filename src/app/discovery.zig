@@ -3,8 +3,9 @@
 //! `describe` turns a `HitTarget` — the frame's own record of what it
 //! painted — into a one-line title and a detail line. Three things read
 //! it: the hover tooltip near the pointer (`ui.hover_tooltip`), the
-//! info box at the bottom of the left rail (`ui.hover_help`), and the
-//! F1 click-discovery overlay, which tints every registered rect,
+//! info view at the bottom of the left rail (`ui.hover_help`,
+//! `app/info_view.zig`, for the targets it has no copy of its own for),
+//! and the F1 click-discovery overlay, which tints every registered rect,
 //! labels it with the hit's own label (`row:todos:3`), and explains the
 //! next thing clicked instead of acting on it.
 //!
@@ -31,6 +32,7 @@ const md_preview = @import("md_preview.zig");
 const integrations = @import("integrations.zig");
 const command = @import("../core/command.zig");
 const activity_bar = @import("activity_bar.zig");
+const tree_mod = @import("tree.zig");
 
 pub const Tip = tooltip.Tip;
 
@@ -106,6 +108,19 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
                 .title = try f.fmt(arena, "{s}{s}", .{ row.rel, if (row.is_dir) "/" else "" }),
                 .detail = if (row.is_dir) "click expands · right-click: folder menu" else "click opens · right-click: file menu · drag to move",
             };
+        },
+        .tree_root => |root| .{
+            .title = if (root == 0) try f.fmt(arena, "Workspace: {s}", .{app.workspace}) else if (root - 1 < app.tree.roots.items.len) try f.fmt(arena, "Workspace: {s}", .{app.tree.roots.items[root - 1].path}) else "Workspace",
+            .detail = if (root == 0) "click folds the tree · alt-click folds or opens every directory" else "click opens or folds this workspace's tree",
+        },
+        .tree_chip => |c| .{
+            .title = c.label(app.tree.isFullyCollapsed()),
+            .detail = try f.fmt(arena, "click runs {s}", .{command.name(tree_mod.chipCommand(c))}),
+        },
+        .info_view => |part| switch (part) {
+            .kebab => .{ .title = "Sidebar menu", .detail = "click: turn the info panel off" },
+            .try_it => .{ .title = "Try it", .detail = "click runs the command the panel names" },
+            .body => .{ .title = "Info panel", .detail = "what the pointer or the focus is on · wheel scrolls · Settings → UI hides it" },
         },
         .script_hit => |sh| .{
             .title = try f.fmt(arena, "{s} item", .{if (app.panes.get(sh.pane)) |p| @tagName(std.meta.activeTag(p.*)) else "pane"}),
@@ -251,12 +266,6 @@ pub fn drawTooltip(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
     const h = app.hover orelse return;
     const tip = (try hoverTip(app, ui.arena)) orelse return;
     tooltip.draw(ui, screen, h.x, h.y, tip);
-}
-
-/// The rail's info box (`ui.hover_help`): the tip from the previous
-/// frame's hits, so the rail can reserve the rows before it paints.
-pub fn drawHelpBox(ui: Ui, area: Rect, tip: Tip) void {
-    tooltip.drawHelpBox(ui, area, tip);
 }
 
 // ─── the F1 overlay ─────────────────────────────────────────────────────
