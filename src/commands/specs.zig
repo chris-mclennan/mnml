@@ -974,7 +974,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "913 specs, unique ids" {
+test "914 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
