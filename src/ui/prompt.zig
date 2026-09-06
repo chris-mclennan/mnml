@@ -245,7 +245,10 @@ test "ctrl+a selects the whole line: the next character replaces it; on an empty
     _ = try handleKey(&s, gpa, Key.named(.left));
     try testing.expectEqualStrings("X", s.text());
     try testing.expect(!s.select_all);
-    _ = try handleKey(&s, gpa, Key.named(.backspace));
+    // The caret is before the X now: delete empties the line, and
+    // ctrl+a on an empty line selects nothing.
+    _ = try handleKey(&s, gpa, Key.named(.delete));
+    try testing.expectEqualStrings("", s.text());
     _ = try handleKey(&s, gpa, Key.ctrl('a'));
     try testing.expect(!s.select_all);
 }

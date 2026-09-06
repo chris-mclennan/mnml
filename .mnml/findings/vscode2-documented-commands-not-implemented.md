@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Documented, keybound commands that only toast `not implemented yet`: `search.toggle_regex`, `view.image_open`, `view.activity_integrations` (`ctrl+shift+x`)
 
@@ -31,3 +31,18 @@ Each `command_run` event reports `ok:true`. The functionality exists by other ro
 **Source pointer**: `src/commands/specs.zig` (the three ids), `src/app/cmd_app.zig` `notInBuild`; `src/app/grep.zig:75,360` (`flags.regex` inherited, never toggled in-pane).
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `feat(commands): search.toggle_regex, view.image_open and view.activity_integrations run`.
+
+- `search.toggle_regex` (`grep.zig`): flips the Search pane's regex flag
+  and reruns; toasts `search regex: on|off`.
+- `view.activity_integrations` (`integrations.zig`): the same runner as
+  `integrations.show_installed`, so `ctrl+shift+x` opens the pane.
+- `view.image_open`: `image_pane.zig` had a runner all along, but its table
+  was never listed in `command.runner_tables`; it is now, and the runner is
+  a picker of the workspace's image files (`image.isImagePath`) that opens
+  the pick as an image pane, replacing the bare path prompt.
+- `tests/e2e-zig/documented_commands.test`. `view.activity_debug` was not in
+  this finding and is untouched.

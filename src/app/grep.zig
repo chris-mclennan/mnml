@@ -34,6 +34,7 @@ const text_field = @import("../ui/text_field.zig");
 const EditOp = @import("../editor/edit_op.zig").EditOp;
 
 pub const table = .{
+    .@"search.toggle_regex" = &toggleRegexCmd,
     .@"find.grep" = &grepCmd,
     .@"find.grep_replace" = &grepReplaceCmd,
     .@"view.activity_search" = &activitySearch,
@@ -323,6 +324,18 @@ pub const GrepPane = struct {
 
 pub fn find(app: *App) ?PaneId {
     return app.panes.findKind(.grep);
+}
+
+/// `search.toggle_regex`: flip the Search pane's regex flag and rerun
+/// the query. The flag was inherited from the editor's find bar and
+/// could not be changed in the pane.
+fn toggleRegexCmd(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const id = find(app) orelse return app.diag.fail(arena, "no Search pane — find.grep opens one", .{});
+    const pane = app.panes.get(id) orelse return error.Failed;
+    pane.grep.flags.regex = !pane.grep.flags.regex;
+    app.toast("search regex: {s}", .{if (pane.grep.flags.regex) "on" else "off"});
+    try refresh(app, id);
 }
 
 /// `find.grep`: the query prompt, prefilled with the active find query

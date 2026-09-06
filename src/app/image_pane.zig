@@ -20,9 +20,14 @@ const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
 const Theme = @import("../ui/theme.zig");
 const image = @import("../image/root.zig");
+const cmd_picker = @import("cmd_picker.zig");
 
+// changed: this table was never listed in `command.runner_tables`, so
+// `view.image_open` toasted "not implemented yet" while a runner sat
+// here. It is listed now, and the runner is a picker of the
+// workspace's images rather than a bare path prompt.
 pub const table = .{
-    .@"view.image_open" = &imageOpenCmd,
+    .@"view.image_open" = &openImageCmd,
 };
 
 pub const ImagePane = struct {
@@ -84,12 +89,39 @@ pub fn open(app: *App, path: []const u8) Allocator.Error!PaneId {
     return id;
 }
 
-/// `view.image_open`: a path prompt.
-fn imageOpenCmd(app: *App) CommandError!void {
-    app.overlay.deinit(app.gpa);
-    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Open image (workspace-relative or absolute path)"), .purpose = .image_open } };
-    app.focus = .overlay;
-    app.needs_render = true;
+/// `view.image_open`: a picker of the workspace's image files (PNG /
+/// JPG / GIF / WebP / BMP …, `image.isImagePath`); the pick opens as an
+/// image pane.
+fn openImageCmd(app: *App) CommandError!void {
+    const gpa = app.gpa;
+    var all: std.ArrayListUnmanaged([]u8) = .empty;
+    defer {
+        for (all.items) |l| gpa.free(l);
+        all.deinit(gpa);
+    }
+    _ = try cmd_picker.walk(app, &all);
+    var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (labels.items) |l| gpa.free(l);
+        labels.deinit(gpa);
+    }
+    for (all.items) |rel| if (image.isImagePath(rel)) try labels.append(gpa, try gpa.dupe(u8, rel));
+    if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no image files under {s}", .{app.workspace});
+    std.mem.sort([]u8, labels.items, {}, struct {
+        fn lt(_: void, a: []u8, b: []u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    try cmd_picker.openPickerWith(app, "Images", .custom, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try gpa.alloc([]u8, 0), &.{});
+    app.overlay.picker.on_accept = &acceptImagePick;
+}
+
+fn acceptImagePick(app: *App, _: usize, label: []const u8) Allocator.Error!void {
+    const abs = try app.absPath(label);
+    _ = app.openPath(abs) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => app.toast("open {s}: {s}", .{ label, @errorName(err) }),
+    };
 }
 
 pub fn acceptOpen(app: *App, text: []const u8) Allocator.Error!void {
