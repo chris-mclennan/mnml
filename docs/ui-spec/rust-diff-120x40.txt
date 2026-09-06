@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │  main.rs 󰅖   󰹾 diff: worktree 󰅖   󰐕                                   󰅁  󰅂        
+▌ │     requests           │ 󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
+ 󰍉 │     src                │  Hunk   Inline   Split  │  Wrap                                                      ×
+ 󰊢 │     󱼅  main.rs        M │ Hunk 1/1  src/main.rs                                                Stage   Discard
+  │      .gitignore       ? │  1   1    fn main() {}
+ 󰐱 │      package.json       │  2   2    y
+ 󰎒 │     󰂺 README.md          │      3 ▏+ z
+ 󰚩 │                          │
+ 󰅣 │  mixr                   │
+  │                          │
+  │  acmeco-claude-workspa… │
+  │                          │
+ 󱘣 │  acmeco-mnml-workspace  │
+   │                          │
+   │  adx                    │
+   │                          │
+   │  acmeco-claude-plugins  │
+   │                          │
+   │  acmeco-inbox           │
+   │                          │
+   │  acmeco-mobile          │
+   │                          │
+   │  acmeco-playwright      │
+   │                          │
+   │  acmeco-site            │
+   │                          │
+   │──────────────────────────│
+   │ fn  ·  RS  ·  main.rs  ⋮ │
+   │                          │
+   │ [gd] Definition · [gr]   │                                                                                       ▎
+   │ References · [K] Hover · │                                                                                       ▎
+   │ [F2] Rename              │                                                                                       ▎
+   │                          │                                                                                       ▎
+   │                          │                                                                                       ▎
+   │                          │                        ┌─────────────────────────────────────────────────────────── × ┐
+  │                          │                        │ LSP: Failed to discover workspace.Consider adding the `Car…  │
+   │                          │                        └──────────────────────────────────────────────────────────────┘
+ VIEW   main  󰐙 2  󰛕 1  [no file]                            F 57% ▲1.0  󱼀 󰐎  LSP 1  WRAP    16:03  ws   —
+

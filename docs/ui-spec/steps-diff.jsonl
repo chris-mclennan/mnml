@@ -1,0 +1,6 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":600}
+{"cmd":"run-command","id":"git.diff"}
+{"cmd":"wait_ms","ms":1500}
