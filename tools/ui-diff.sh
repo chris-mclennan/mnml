@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# chrome-diff — run the Rust and Zig binaries headless on one workspace with
+# ui-diff — run the Rust and Zig binaries headless on one workspace with
 # the same config, dump both screens, print a row-by-row diff.
-#   chrome-diff.sh WS RS_DATA ZIG_DATA [STEPS_FILE] [COLSxROWS]
+#   ui-diff.sh WS RS_DATA ZIG_DATA [STEPS_FILE] [COLSxROWS]
 # STEPS_FILE: optional JSONL of IPC commands sent to BOTH after start.
 set -u
 WS=$1; RS=$2; ZG=$3; STEPS=${4:-}; SIZE=${5:-120x40}

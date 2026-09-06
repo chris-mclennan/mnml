@@ -2471,7 +2471,7 @@ break-check.
   `tools/pty-mouse-check.py` now drives the real binary in a pty,
   answers the probes as ghostty does, and asserts the requested mode and
   a working click / right-click / wheel.
-- `// changed (tools):` `tools/chrome-diff.sh` runs the Rust and Zig
+- `// changed (tools):` `tools/ui-diff.sh` runs the Rust and Zig
   binaries headless on one workspace with one config and diffs the two
   screens row by row. The Rust screen is the spec for how mnml-zig
-  looks; the chrome tracks use the diff as their gate.
+  looks; the UI tracks use the diff as their gate.

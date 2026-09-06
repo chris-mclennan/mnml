@@ -1,4 +1,4 @@
-# The chrome spec
+# The UI spec
 
 `rust-120x40.txt` is the Rust editor's screen — every cell, glyphs
 included — on the fixture workspace with the author's real config, at
@@ -7,7 +7,7 @@ must look like. Colours are not in the dump; for those the Rust source
 under `src/ui/` is the reference, and a side-by-side screenshot in
 ghostty is the final check.
 
-Regenerate and compare with `tools/chrome-diff.sh WS RS_DATA ZIG_DATA
+Regenerate and compare with `tools/ui-diff.sh WS RS_DATA ZIG_DATA
 STEPS` (see the script header). Out of scope until the Zig integrations
 exist: the pinned integration launcher icons in the rail and palette
 bar. Cut: now-playing / Sonos chips.
