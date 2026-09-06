@@ -71,6 +71,7 @@ const toast_mod = @import("../ui/toast.zig");
 const discovery = @import("discovery.zig");
 const image_pane = @import("image_pane.zig");
 const tree_mod = @import("tree.zig");
+const info_view_app = @import("info_view.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const request_pane = @import("request_pane.zig");
@@ -1207,6 +1208,25 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 const track = hitRect(app, m.x, m.y) orelse return;
                 try beginScrollbarDrag(app, id, track, m.y);
             },
+            .tree => if (hitRect(app, m.x, m.y)) |r| app.tree.scrollbarMouse(app, r, m),
+        },
+        // A section header folds on a press; Alt folds or opens every
+        // directory inside the primary with it (Rust `tree_toggle`).
+        .tree_root => |root| {
+            if (wheel) return treeWheel(app, m, count);
+            if (m.kind != .press or m.button != .left) return;
+            if (app.overlay != .none) closeOverlay(app);
+            try app.tree.toggleRoot(app, root, m.mods.alt);
+        },
+        .tree_chip => |c| {
+            if (wheel) return treeWheel(app, m, count);
+            if (m.kind != .press or m.button != .left) return;
+            if (app.overlay != .none) closeOverlay(app);
+            try tree_mod.chipClick(app, c);
+        },
+        .info_view => |part| {
+            if (m.kind == .press and app.overlay != .none and part != .kebab) closeOverlay(app);
+            try info_view_app.mouse(app, part, m);
         },
         .menu_item => |mi| if (m.kind == .press) {
             if (app.overlay != .menu) return;
@@ -1448,8 +1468,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     else => app.tree.cursor = idx,
                 }
             },
-            .scroll_up => app.tree.cursor -|= app.cfg.ui.wheel_lines * count,
-            .scroll_down => app.tree.cursor = @min(app.tree.cursor + app.cfg.ui.wheel_lines * count, app.tree.rows.items.len -| 1),
+            .scroll_up, .scroll_down => treeWheel(app, m, count),
             else => {},
         },
         .divider => |id| {
@@ -1768,11 +1787,20 @@ fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) void {
     e.view.pinAt(e.buf.editor.cursor);
 }
 
+/// The wheel over the tree steps its cursor.
+fn treeWheel(app: *App, m: Mouse, count: u16) void {
+    switch (m.kind) {
+        .scroll_up => app.tree.cursor -|= app.cfg.ui.wheel_lines * count,
+        .scroll_down => app.tree.cursor = @min(app.tree.cursor + app.cfg.ui.wheel_lines * count, app.tree.rows.items.len -| 1),
+        else => {},
+    }
+}
+
 fn scrollbarTrack(app: *App, id: PaneId) ?Rect {
     for (app.hits.items.items) |h| switch (h.target) {
         .scrollbar => |sb| switch (sb.owner) {
             .pane => |p| if (p == id and sb.axis == .v) return h.rect,
-            .panel => {},
+            .panel, .tree => {},
         },
         else => {},
     };

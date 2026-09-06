@@ -1,11 +1,8 @@
-//! Tooltips — the two places a hover description lands.
-//!
-//! `draw` is the popup near the pointer (`ui.hover_tooltip`): one or
-//! two lines in an overlay box, below and to the right of the cell,
-//! flipped above / left when the screen ends. `drawHelpBox` is the
-//! Ableton-style info box (`ui.hover_help`): a rule and the same lines
-//! painted into the rect the frame reserved at the bottom of the left
-//! rail. Neither registers a hit — a tip is never a click target.
+//! The hover tooltip — the popup near the pointer (`ui.hover_tooltip`):
+//! one or two lines in an overlay box, below and to the right of the
+//! cell, flipped above / left when the screen ends. It registers no
+//! hit — a tip is never a click target. (The info view at the bottom of
+//! the sidebar is `info_view.zig`.)
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -45,24 +42,6 @@ pub fn draw(ui: Ui, screen: Rect, x: u16, y: u16, tip: Tip) void {
     };
 }
 
-/// The info box at the bottom of the rail: a rule, then the lines,
-/// word-wrapped to the width.
-pub fn drawHelpBox(ui: Ui, area: Rect, tip: Tip) void {
-    if (area.isEmpty()) return;
-    const t = ui.theme;
-    ui.fill(area, t.panel_bg);
-    var xx: u16 = area.x;
-    while (xx < area.right()) : (xx += 1) _ = ui.putStr(xx, area.y, 1, if (ui.ascii) "-" else "─", Theme.onBg(t.border, t.panel_bg.bg));
-    if (area.h < 2) return;
-    const body = Rect.init(area.x + 1, area.y + 1, area.w -| 2, area.h - 1);
-    const segs = [_]vaxis.Segment{
-        .{ .text = tip.title, .style = Theme.onBg(t.fg, t.panel_bg.bg) },
-        .{ .text = if (tip.detail != null) "\n" else "", .style = t.panel_bg },
-        .{ .text = tip.detail orelse "", .style = Theme.onBg(t.muted, t.panel_bg.bg) },
-    };
-    _ = ui.canvas.text(body, &segs, .{ .wrap = .word, .trim = true });
-}
-
 // ── tests ──
 
 const testing = std.testing;
@@ -88,16 +67,4 @@ test "the popup sits below-right, flips at the edges, and registers no hit" {
     defer h.deinit();
     draw(h.ui(), h.full(), 0, 0, .{ .title = "hello world" });
     try h.expectRow(0, "");
-}
-
-test "the help box: a rule, then the wrapped lines" {
-    var f = try Fixture.init(20, 5);
-    defer f.deinit();
-    drawHelpBox(f.ui(), f.full(), .{ .title = "Tab notes.txt", .detail = "click shows · middle closes" });
-    var buf: [256]u8 = undefined;
-    try testing.expect(std.mem.startsWith(u8, f.row(0, &buf), "────"));
-    try f.expectContains("Tab notes.txt");
-    try f.expectContains("click shows");
-    try f.expectContains("middle closes");
-    try testing.expectEqual(@as(usize, 0), f.hits.items.items.len);
 }

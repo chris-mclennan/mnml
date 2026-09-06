@@ -7,8 +7,10 @@ the SGR report the parser sees, the hit map at real coordinates. This does.
 It answers the probes like ghostty (DA1, kitty keyboard, DECRQM 1016 =
 pixel mouse SUPPORTED, 2026), asserts the app still asked for cell
 coordinates (mode 1006, never 1016), dismisses the first-launch wizard,
-then clicks a tree folder twice and expects the file inside it to appear
-in the screen mirror. Exit 0 on success.
+then clicks the tree's README.md row ONCE and expects the file's text in
+the screen mirror — one click opens a file, as in the Rust editor. A
+right-click on the row must open its menu and a wheel notch must reach
+the app. Exit 0 on success.
 
     tools/pty-mouse-check.py [BIN] [WORKSPACE]
 """
@@ -68,12 +70,16 @@ if not any("1006" in m for m in mouse): fail(f"SGR cell mouse not requested: {mo
 os.write(fd, b"\x1b"); pump(0.5); os.write(fd, b"\x1b"); pump(0.5)
 rows = screen()
 if not rows: fail("no screen mirror (ipc.write_screen)")
-src = next((i for i, r in enumerate(rows) if re.search(r"\bsrc\b", r)), None)
-if src is None: fail("tree has no src row: " + repr(rows[:8]))
-x, y = 6, src + 1
+readme = next((i for i, r in enumerate(rows) if "README.md" in r[:30]), None)
+if readme is None: fail("tree has no README.md row: " + repr(rows[:8]))
+# A markdown file opens rendered: its heading shows as `demo`, past the sidebar.
+if any("demo" in r[31:] for r in rows): fail("the file's text is on screen before any click")
+# SGR reports are 1-based: the name starts at screen column 11, past the
+# activity bar and the row's indent, on the row the mirror found.
+x, y = 15, readme + 1
 click = f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode()
-os.write(fd, click); pump(0.6); os.write(fd, click); pump(0.8)
-if not any("main.zig" in r for r in screen()): fail("two clicks on the src folder did not open it")
+os.write(fd, click); pump(0.8)
+if not any("demo" in r[31:] for r in screen()): fail("one click on the README.md row did not open it: " + repr(screen()[:8]))
 os.write(fd, f"\x1b[<2;{x};{y}M\x1b[<2;{x};{y}m".encode()); pump(0.8)
 if not any(("Rename" in r) or ("New file" in r) or ("Delete" in r) for r in screen()): fail("right-click opened no menu")
 os.write(fd, b"\x1b"); pump(0.3)
@@ -82,4 +88,4 @@ os.write(fd, b"\x11"); pump(1.0)
 try: os.kill(pid, 15)
 except OSError: pass
 shutil.rmtree(tmp, ignore_errors=True)
-print(f"ok: mouse modes {mouse}; click, double-click, right-click and wheel reached the app")
+print(f"ok: mouse modes {mouse}; one click opened the file, right-click and wheel reached the app")

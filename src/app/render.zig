@@ -47,6 +47,8 @@ const Theme = @import("../ui/theme.zig");
 const Style = vaxis.Style;
 const menu_glyph = @import("../ui/menu_glyph.zig");
 const discovery = @import("discovery.zig");
+const info_view_app = @import("info_view.zig");
+const info_view_ui = @import("../ui/info_view.zig");
 const image_pane = @import("image_pane.zig");
 const command = @import("../core/command.zig");
 const todos = @import("../todos.zig");
@@ -288,12 +290,9 @@ fn screenRect(screen: *vaxis.Screen) Rect {
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
-    // The info box reads the previous frame's hits: they are what the
+    // The info view reads the previous frame's hits: they are what the
     // pointer is resting on until this frame replaces them.
-    const help_tip: ?discovery.Tip = if (app.cfg.ui.hover_help and app.tree.visible) blk: {
-        const tip = discovery.hoverTip(app, app.frame.allocator()) catch null;
-        break :blk if (tip) |tp| .{ .title = try app.frame.allocator().dupe(u8, tp.title), .detail = if (tp.detail) |d| try app.frame.allocator().dupe(u8, d) else null } else null;
-    } else null;
+    const help_copy: ?info_view_ui.Copy = if (app.cfg.ui.hover_help and app.tree.visible and !app.zen) try info_view_app.pick(app, app.frame.allocator()) else null;
     // The frame's rects read the previous frame's hits too (an `auto`
     // rail stays while the pointer rests on it).
     const fr = if (app.zen) zenRects(screenRect(screen)) else frameRects(screenRect(screen), chrome(app));
@@ -334,13 +333,15 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             while (y < fr.rail_border.bottom()) : (y += 1) ui.canvas.put(fr.rail_border.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = line });
         }
         // ── sidebar ──
-        // `ui.hover_help`: while the pointer rests on something with a
-        // description, the panel's bottom rows are its info box.
+        // `ui.hover_help`: the panel's bottom `hover_help_height` rows
+        // are the info view whenever the panel has eight rows to spare
+        // (Rust `ui/mod.rs`); the tree takes the rest.
         var side = fr.sidebar;
-        if (help_tip) |tip| if (app.cfg.ui.hover_help and side.h > app.cfg.ui.hover_help_height + 4) {
+        if (help_copy) |copy| if (side.h >= app.cfg.ui.hover_help_height + 8) {
             const parts = side.splitBottom(app.cfg.ui.hover_help_height);
             side = parts.top;
-            discovery.drawHelpBox(ui, parts.rest, tip);
+            const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll });
+            app.info_view.max_scroll = l.max_scroll;
         };
         try app.tree.draw(app, ui, side);
         drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);
@@ -1653,13 +1654,13 @@ test "ui toggles: expand_indicator and workspace dots change the tree rail" {
     app.cfg.ui.show_workspace_dots = true;
     const chev = try screenText(&app);
     defer t.allocator.free(chev);
-    try t.expect(std.mem.indexOf(u8, chev, "\u{f47c} sub") != null);
+    try t.expect(std.mem.indexOf(u8, chev, "\u{f47c} \u{f07c} sub") != null);
     try t.expect(std.mem.indexOf(u8, chev, "●") != null);
     app.cfg.ui.expand_indicator = .triangle;
     app.cfg.ui.show_workspace_dots = false;
     const tri = try screenText(&app);
     defer t.allocator.free(tri);
-    try t.expect(std.mem.indexOf(u8, tri, "▾ sub") != null);
+    try t.expect(std.mem.indexOf(u8, tri, "▾ \u{f07c} sub") != null);
     try t.expect(std.mem.indexOf(u8, tri, "●") == null);
     // the toggle runners flip the fields
     try command.run(&app, .{ .static = .@"view.toggle_workspace_dots" });

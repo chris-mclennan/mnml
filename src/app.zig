@@ -42,6 +42,7 @@ const image = @import("image/root.zig");
 const image_pane = @import("app/image_pane.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
+const info_view_app = @import("app/info_view.zig");
 const ex = @import("app/ex.zig");
 const ex_verbs = @import("app/ex_verbs.zig");
 const dispatch = @import("app/dispatch.zig");
@@ -673,6 +674,8 @@ pub const App = struct {
     docs: *DocStore,
     layouts: LayoutState,
     tree: tree_mod.Tree,
+    /// The sidebar's info view (`app/info_view.zig`).
+    info_view: info_view_app.State = .{},
     /// The right-hand panel slot (Rust's activity panel). One panel at a
     /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
     right_panel: ?PanelId = null,

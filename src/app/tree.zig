@@ -4,9 +4,12 @@
 //! navigation are index arithmetic; the file system is only touched on
 //! `refresh`.
 //!
-//! State (rows, cursor, expanded set) lives here; the draw glue paints
-//! with the Canvas directly and registers `.tree_node` hits; keys reach
-//! it through `handleKey` when `app.focus == .tree`. The file verbs
+//! State (rows, cursor, expanded set) lives here; `draw` turns the rows
+//! into the painter's items (`ui/tree_view.zig`) — the section headers,
+//! the entries with their git badges, the separators — and the painter
+//! registers the hits; keys reach it through `handleKey` when
+//! `app.focus == .tree`. Hidden files show by default and `.git` never
+//! does, as in Rust; each directory's `.gitignore` is honoured. The file verbs
 //! (new / rename / delete / move) act on the cursor row through a
 //! prompt or a confirm, so the right-click menu and the keys share them.
 
@@ -24,6 +27,9 @@ const files_pane = @import("files_pane.zig");
 const file_clipboard = @import("file_clipboard.zig");
 const trash = @import("trash.zig");
 const watch = @import("watch.zig");
+const gitignore = @import("gitignore.zig");
+const tree_view = @import("../ui/tree_view.zig");
+const Mouse = @import("../core/key.zig").Mouse;
 
 pub const table = .{
     .@"view.add_workspace" = &addWorkspace,
@@ -49,8 +55,8 @@ pub const default_width: u16 = 30;
 /// Never entered by `expand_all`; a click still opens them.
 const noisy_dirs = [_][]const u8{ ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache" };
 /// Build artifacts hidden even without a `.gitignore` — the same set
-/// the file picker skips, so the two surfaces agree. `H` (show hidden)
-/// reveals them like any dot entry.
+/// the file picker skips, so the two surfaces agree. Unlike a dot
+/// entry, `H` does not reveal them (Rust).
 pub const artifact_dirs = [_][]const u8{ "node_modules", "__pycache__", ".next", "dist", "build", "target", "vendor", ".venv", "venv", "zig-out", ".zig-cache", "zig-cache" };
 
 pub fn isArtifactDir(name: []const u8) bool {
@@ -92,7 +98,9 @@ pub const Tree = struct {
     /// window to move to.
     ctrl_w_pending: bool = false,
     width: u16 = default_width,
-    show_hidden: bool = false,
+    /// Dot entries show (Rust's default); `H` hides them. `.git` and the
+    /// artifact directories stay out either way.
+    show_hidden: bool = true,
     rows: std.ArrayListUnmanaged(Row) = .empty,
     /// Expanded directories, workspace-relative, owned keys.
     expanded: std.StringHashMapUnmanaged(void) = .empty,
@@ -246,10 +254,26 @@ pub const Tree = struct {
         self.clearRows();
         self.loaded = true;
         if (self.roots.items.len > 0) return self.refreshRoots(app);
+        // The primary section folded: no rows, the header alone.
+        if (!self.primary_expanded) {
+            self.cursor = 0;
+            return;
+        }
         try self.listInto(app, "", 0, 0);
+        if (try self.openNewTopDirs(0)) {
+            self.clearRows();
+            try self.listInto(app, "", 0, 0);
+        }
+        if (self.cursor >= self.rows.items.len) self.cursor = self.rows.items.len -| 1;
+    }
+
+    /// Expands every top-level directory of the primary (at `depth`) met
+    /// for the first time, the noisy ones excepted. True when one opened
+    /// and the rows must be read again.
+    fn openNewTopDirs(self: *Tree, depth: u8) Allocator.Error!bool {
         var opened = false;
         for (self.rows.items) |row| {
-            if (!row.is_dir or row.depth != 0 or self.seen_top.contains(row.rel)) continue;
+            if (row.header or row.root != 0 or !row.is_dir or row.depth != depth or self.seen_top.contains(row.rel)) continue;
             const key = try self.gpa.dupe(u8, row.rel);
             errdefer self.gpa.free(key);
             try self.seen_top.put(self.gpa, key, {});
@@ -257,11 +281,7 @@ pub const Tree = struct {
             try self.setExpanded(row.rel, true);
             opened = true;
         }
-        if (opened) {
-            self.clearRows();
-            try self.listInto(app, "", 0, 0);
-        }
-        if (self.cursor >= self.rows.items.len) self.cursor = self.rows.items.len -| 1;
+        return opened;
     }
 
     /// Several roots: one header per root, its entries under it (one
@@ -270,7 +290,14 @@ pub const Tree = struct {
     fn refreshRoots(self: *Tree, app: *App) Allocator.Error!void {
         const gpa = self.gpa;
         try self.rows.append(gpa, .{ .rel = try gpa.dupe(u8, ""), .depth = 0, .is_dir = true, .root = 0, .header = true });
-        if (self.primary_expanded) try self.listInto(app, "", 1, 0);
+        if (self.primary_expanded) {
+            try self.listInto(app, "", 1, 0);
+            if (try self.openNewTopDirs(1)) {
+                self.clearRows();
+                try self.rows.append(gpa, .{ .rel = try gpa.dupe(u8, ""), .depth = 0, .is_dir = true, .root = 0, .header = true });
+                try self.listInto(app, "", 1, 0);
+            }
+        }
         for (self.roots.items, 0..) |r, i| {
             try self.rows.append(gpa, .{ .rel = try gpa.dupe(u8, r.path), .depth = 0, .is_dir = true, .root = @intCast(i + 1), .header = true });
             if (r.expanded) try self.listInto(app, r.path, 1, @intCast(i + 1));
@@ -281,31 +308,66 @@ pub const Tree = struct {
     /// List `rel_dir` (workspace-relative, or absolute under an extra
     /// root) at `depth`; a listed directory that is expanded recurses.
     fn listInto(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8) Allocator.Error!void {
+        var ignores = gitignore.Stack.init(self.gpa);
+        defer ignores.deinit();
+        try self.listWith(app, rel_dir, depth, root, &ignores);
+    }
+
+    /// The path of `rel_dir` relative to its root — what a `.gitignore`
+    /// pattern is matched against. Rows under an extra root are absolute.
+    fn rootRel(self: *const Tree, app: *const App, rel_dir: []const u8, root: u8) []const u8 {
+        if (root == 0) return rel_dir;
+        const base = self.roots.items[root - 1].path;
+        _ = app;
+        if (std.mem.startsWith(u8, rel_dir, base) and rel_dir.len > base.len and rel_dir[base.len] == '/') return rel_dir[base.len + 1 ..];
+        return "";
+    }
+
+    fn listWith(self: *Tree, app: *App, rel_dir: []const u8, depth: u8, root: u8, ignores: *gitignore.Stack) Allocator.Error!void {
         const gpa = self.gpa;
-        const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(app.frame.allocator(), &.{ app.workspace, rel_dir });
+        const arena = app.frame.allocator();
+        const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
         var dir = std.Io.Dir.cwd().openDir(app.io, abs, .{ .iterate = true }) catch return;
         defer dir.close(app.io);
         try self.noteDirStamp(app, abs);
+        // This directory's `.gitignore` joins the stack while its
+        // entries are read; the rules name paths relative to the root.
+        const here = self.rootRel(app, rel_dir, root);
+        var pushed = false;
+        if (dir.readFileAlloc(app.io, ".gitignore", gpa, .limited(256 * 1024))) |text| {
+            defer gpa.free(text);
+            try ignores.push(try gitignore.Rules.parse(gpa, here, text));
+            pushed = true;
+        } else |err| if (err == error.OutOfMemory) return error.OutOfMemory;
+        defer if (pushed) {
+            var layer = ignores.layers.pop().?;
+            layer.deinit(gpa);
+        };
         var names: std.ArrayListUnmanaged(Row) = .empty;
         defer names.deinit(gpa);
         var it = dir.iterate();
         while (it.next(app.io) catch null) |entry| {
-            if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-            if (!self.show_hidden and entry.kind == .directory and isArtifactDir(entry.name)) continue;
             if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
+            const is_dir = entry.kind == .directory;
+            if (is_dir and std.mem.eql(u8, entry.name, ".git")) continue;
+            if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
+            if (is_dir and isArtifactDir(entry.name)) continue;
+            const here_rel = if (here.len == 0) entry.name else try std.fs.path.join(arena, &.{ here, entry.name });
+            if (ignores.ignored(here_rel, is_dir)) continue;
             const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
             errdefer gpa.free(rel);
-            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = entry.kind == .directory, .root = root });
+            try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root });
         }
+        // Directories first, then names folded to lower case (Rust).
         std.mem.sort(Row, names.items, {}, struct {
             fn lt(_: void, a: Row, b: Row) bool {
                 if (a.is_dir != b.is_dir) return a.is_dir;
-                return std.mem.lessThan(u8, a.name(), b.name());
+                return std.ascii.lessThanIgnoreCase(a.name(), b.name());
             }
         }.lt);
         for (names.items) |row| {
             try self.rows.append(gpa, row);
-            if (row.is_dir and self.expanded.contains(row.rel)) try self.listInto(app, row.rel, depth + 1, root);
+            if (row.is_dir and self.expanded.contains(row.rel)) try self.listWith(app, row.rel, depth + 1, root, ignores);
         }
     }
 
@@ -529,44 +591,218 @@ pub const Tree = struct {
 
     // ─── draw ───
 
+    /// Turns the rows into the painter's items — one per screen row —
+    /// keeps the cursor's item on screen, and paints. With no extra root
+    /// the primary's header is chrome, not a row; with roots the header
+    /// rows are in `rows` and entries sit one deeper.
     pub fn draw(self: *Tree, app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         if (area.isEmpty()) return;
         if (!self.loaded) try self.refresh(app);
-        ui.canvas.fill(area, app.theme.panel_bg);
-        const focused = app.focus == .tree;
-        const header = area.row(0);
-        const title = std.fs.path.basename(app.workspace);
-        // changed (ui-polish): `ui.show_workspace_dots` marks the workspace
-        // row with a dot in the accent, as the Rust rail does for its roots.
-        const dot: []const u8 = if (app.cfg.ui.show_workspace_dots) (if (ui.ascii) " *" else " ●") else "";
-        const label = try std.fmt.allocPrint(ui.arena, "{s} {s}", .{ dot, if (title.len == 0) "workspace" else title });
-        _ = ui.canvas.text(header, &.{.{ .text = label, .style = if (focused) app.theme.accent else app.theme.muted }}, .{});
-        if (area.h < 2) return;
-        const list = area.splitTop(1).rest;
-        const rows: usize = list.h;
-        if (self.cursor < self.scroll) self.scroll = self.cursor;
-        if (self.cursor >= self.scroll + rows) self.scroll = self.cursor + 1 - rows;
-        var y: u16 = 0;
-        var i = self.scroll;
-        while (i < self.rows.items.len and y < list.h) : ({
-            i += 1;
-            y += 1;
-        }) {
-            const row = self.rows.items[i];
-            const r = list.row(y);
-            const open = if (row.header) self.rootExpanded(row.root) else self.isExpanded(row.rel);
-            // changed (ui-polish): `ui.expand_indicator` picks the folder glyph —
-            // nf-oct chevrons (the default), or the small triangles.
-            const glyph: []const u8 = if (row.is_dir) expandGlyph(app.cfg.ui.expand_indicator, open, ui.ascii) else " ";
-            const shown: []const u8 = if (row.header) (if (row.root == 0) (if (title.len == 0) "workspace" else title) else self.roots.items[row.root - 1].name) else row.name();
-            const line = try std.fmt.allocPrint(ui.arena, "{s}{s} {s}", .{ try indent(ui.arena, row.depth), glyph, shown });
-            const style = if (i == self.cursor and focused) app.theme.chip_active else if (i == self.cursor) app.theme.cursor_line else if (row.is_dir) app.theme.accent else app.theme.panel_bg;
-            ui.canvas.fill(r, style);
-            _ = ui.canvas.text(r, &.{.{ .text = line, .style = style }}, .{});
-            try ui.hits.add(ui.arena, r, .{ .tree_node = @intCast(i) });
+        const arena = ui.arena;
+        const multi = self.roots.items.len > 0;
+        const states = try gitStates(app, arena);
+        var items: std.ArrayListUnmanaged(tree_view.Item) = .empty;
+        var cursor_item: ?usize = null;
+        const primary: tree_view.Section = .{
+            .root = 0,
+            .label = try wsLabel(app, arena),
+            .expanded = self.primary_expanded,
+            .italic = self.show_hidden,
+            .fully_collapsed = self.isFullyCollapsed(),
+        };
+        if (!multi) try items.append(arena, .{ .section = primary });
+        for (self.rows.items, 0..) |row, i| {
+            if (row.header) {
+                if (items.items.len > 0) try items.append(arena, .blank);
+                if (i == self.cursor) cursor_item = items.items.len;
+                const section: tree_view.Section = if (row.root == 0) primary else .{
+                    .root = row.root,
+                    .label = self.roots.items[row.root - 1].name,
+                    .expanded = self.roots.items[row.root - 1].expanded,
+                };
+                try items.append(arena, .{ .section = section });
+                continue;
+            }
+            if (i == self.cursor) cursor_item = items.items.len;
+            const abs = try app.absPath(row.rel);
+            const depth = row.depth - @as(u8, if (multi) 1 else 0);
+            try items.append(arena, .{ .entry = .{
+                .idx = @intCast(i),
+                .name = row.name(),
+                .depth = depth,
+                .is_dir = row.is_dir,
+                .expanded = row.is_dir and self.isExpanded(row.rel),
+                .git = if (row.is_dir) null else states.get(abs),
+                .dirty = !row.is_dir and dirtyInEditor(app, abs),
+                .repo = if (row.root == 0 and row.is_dir and depth == 0) repoMark(app, abs) else null,
+            } });
+        }
+        try items.append(arena, .blank);
+        try items.append(arena, .add_workspace);
+        const h: usize = area.h;
+        if (cursor_item) |ci| {
+            if (ci < self.scroll) self.scroll = ci;
+            if (ci >= self.scroll + h) self.scroll = ci + 1 - h;
+        }
+        self.scroll = @min(self.scroll, tree_view.contentLen(items.items) -| h);
+        _ = tree_view.draw(ui, area, .{
+            .items = items.items,
+            .cursor = cursor_item,
+            .focused = app.focus == .tree,
+            .scroll = self.scroll,
+            .show_dots = app.cfg.ui.show_workspace_dots,
+            .triangle = app.cfg.ui.expand_indicator == .triangle,
+        });
+    }
+
+    /// No directory open: the header's toggle chip offers expand-all.
+    pub fn isFullyCollapsed(self: *const Tree) bool {
+        return self.expanded.count() == 0;
+    }
+
+    /// A press on a section header folds it (Rust `tree_toggle` /
+    /// `extra_workspace_toggles`); Alt on the primary also folds or
+    /// opens every directory inside it.
+    pub fn toggleRoot(self: *Tree, app: *App, root: u8, alt: bool) Allocator.Error!void {
+        if (root == 0) {
+            if (alt) {
+                if (self.primary_expanded) try self.collapseAllDirs() else try self.expandAllDirs(app);
+            }
+            self.primary_expanded = !self.primary_expanded;
+        } else {
+            if (root - 1 >= self.roots.items.len) return;
+            self.roots.items[root - 1].expanded = !self.roots.items[root - 1].expanded;
+        }
+        try self.refresh(app);
+        app.needs_render = true;
+    }
+
+    fn collapseAllDirs(self: *Tree) Allocator.Error!void {
+        var it = self.expanded.keyIterator();
+        while (it.next()) |k| self.gpa.free(k.*);
+        self.expanded.clearRetainingCapacity();
+    }
+
+    fn expandAllDirs(self: *Tree, app: *App) Allocator.Error!void {
+        var again = true;
+        var guard: usize = 0;
+        while (again and guard < 64) : (guard += 1) {
+            again = false;
+            try self.refresh(app);
+            for (self.rows.items) |row| {
+                if (row.header or !row.is_dir or self.isExpanded(row.rel)) continue;
+                if (isNoisy(row.name())) continue;
+                try self.setExpanded(row.rel, true);
+                again = true;
+            }
         }
     }
+
+    /// The scrollbar in the tree's last column: a press or drag lands
+    /// the cursor proportionally; the wheel steps it.
+    pub fn scrollbarMouse(self: *Tree, app: *App, bar: Rect, m: Mouse) void {
+        const n = self.rows.items.len;
+        if (n == 0 or bar.h == 0) return;
+        switch (m.kind) {
+            .press, .drag => {
+                if (app.activeBuffer()) |b| b.input.onBlur();
+                app.focus = .tree;
+                const off: usize = m.y -| bar.y;
+                self.cursor = @min(off * n / bar.h, n - 1);
+            },
+            .scroll_up => self.cursor -|= 3,
+            .scroll_down => self.cursor = @min(self.cursor + 3, n - 1),
+            else => {},
+        }
+        app.needs_render = true;
+    }
 };
+
+/// What a header chip runs (Rust `workspace_action_chip_specs`).
+pub fn chipCommand(c: tree_view.Chip) command.CommandId {
+    return switch (c) {
+        .new_folder => .@"file.new_folder",
+        .new_file => .@"file.new",
+        .pull => .@"git.pull",
+        .collapse => .@"tree.toggle_collapse_all",
+        .refresh => .@"tree.refresh",
+        .add_workspace => .@"view.add_workspace",
+    };
+}
+
+/// A press on a header chip. The new-file / new-folder chips are the
+/// tree's own verbs: the tree takes focus first so the prompt opens on
+/// its cursor row, not on a Files pane's.
+pub fn chipClick(app: *App, c: tree_view.Chip) Allocator.Error!void {
+    if (c == .new_file or c == .new_folder) {
+        if (app.activeBuffer()) |b| b.input.onBlur();
+        app.focus = .tree;
+    }
+    try runCmd(app, chipCommand(c));
+    app.needs_render = true;
+}
+
+/// The primary header's label: the workspace path with `$HOME` as `~`
+/// and a trailing slash (neo-tree's root row).
+pub fn wsLabel(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    const full = app.workspace;
+    const home = app.homeDir() orelse app.env.get("HOME");
+    if (home) |h| if (h.len > 0 and std.mem.startsWith(u8, full, h)) return std.fmt.allocPrint(arena, "~{s}/", .{full[h.len..]});
+    return std.fmt.allocPrint(arena, "{s}/", .{full});
+}
+
+/// Absolute path → git state, from the active repo's status (Rust's
+/// `FileState` fold: conflicted, then a working-tree change, then a
+/// staged one, then untracked).
+fn gitStates(app: *App, arena: Allocator) Allocator.Error!std.StringHashMapUnmanaged(tree_view.GitState) {
+    var map: std.StringHashMapUnmanaged(tree_view.GitState) = .empty;
+    const git = @import("git.zig");
+    // The badges need a status: the tree asks for the repos and the
+    // first snapshot itself, as the rail does, so a workspace with no
+    // git surface open still gets its `?` / `M` marks.
+    if (!app.git.discovered) git.discover(app) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    const repo = app.git.activeRepo() orelse return map;
+    if (app.git.status == null and !app.git.status_pending) git.requestStatus(app) catch {};
+    const st = app.git.status orelse return map;
+    if (app.git.status_repo != repo.id) return map;
+    for (st.entries) |e| {
+        const abs = try std.fs.path.join(arena, &.{ repo.path, e.path });
+        const state: tree_view.GitState = switch (e.group) {
+            .conflicted => .conflicted,
+            .unstaged => .modified,
+            .staged => .staged,
+            .untracked => .untracked,
+        };
+        const gop = try map.getOrPut(arena, abs);
+        gop.value_ptr.* = if (gop.found_existing) foldState(gop.value_ptr.*, state) else state;
+    }
+    return map;
+}
+
+fn foldState(a: tree_view.GitState, b: tree_view.GitState) tree_view.GitState {
+    if (a == .conflicted or b == .conflicted) return .conflicted;
+    if (a == .modified or b == .modified) return .modified;
+    if (a == .staged or b == .staged) return .staged;
+    return .untracked;
+}
+
+/// An editor on `abs` with unsaved changes.
+fn dirtyInEditor(app: *App, abs: []const u8) bool {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
+        if (std.mem.eql(u8, bp, abs)) return p.dirty();
+    };
+    return false;
+}
+
+/// In a multi-repo workspace a top-level directory that is one of the
+/// repos gets the repo glyph; the active repo is the lit one.
+fn repoMark(app: *App, abs: []const u8) ?tree_view.RepoMark {
+    if (app.git.repos.items.len < 2) return null;
+    for (app.git.repos.items, 0..) |r, i| if (std.mem.eql(u8, r.path, abs)) return .{ .active = app.git.active == i };
+    return null;
+}
 
 /// A command reached from a key: `command.run` toasts the reason.
 fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
@@ -574,15 +810,6 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
         error.OutOfMemory => return error.OutOfMemory,
         else => {},
     };
-}
-
-/// The folder glyph for `ui.expand_indicator`: chevrons are the Nerd
-/// Font `oct-chevron_down` / `_right` (`v` / `>` under `--ascii`), the
-/// triangles `▾` / `▸`.
-pub fn expandGlyph(kind: app_mod.Config.ExpandIndicator, expanded: bool, ascii: bool) []const u8 {
-    if (kind == .triangle and !ascii) return if (expanded) "▾" else "▸";
-    if (expanded) return if (ascii) "v" else "\u{f47c}";
-    return if (ascii) ">" else "\u{f460}";
 }
 
 fn isNoisy(name: []const u8) bool {
@@ -989,7 +1216,7 @@ fn expandAll(app: *App) CommandError!void {
 
 const t = std.testing;
 
-test "tree: lists dirs first, expands on Enter, opens a file, hides dot entries until H" {
+test "tree: lists dirs first, expands on Enter, opens a file, shows dot entries until H hides them" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1003,29 +1230,32 @@ test "tree: lists dirs first, expands on Enter, opens a file, hides dot entries 
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
     defer app.deinit();
     try app.tree.refresh(&app);
-    // A top-level directory opens on its first refresh.
-    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    // A top-level directory opens on its first refresh; the dot file
+    // shows, sorted case-blind ahead of README.md.
+    try t.expectEqual(@as(usize, 4), app.tree.rows.items.len);
     try t.expectEqualStrings("src", app.tree.rows.items[0].rel);
     try t.expect(app.tree.rows.items[0].is_dir);
-    try t.expectEqualStrings("README.md", app.tree.rows.items[2].rel);
+    try t.expectEqualStrings(".hidden", app.tree.rows.items[2].rel);
+    try t.expectEqualStrings("README.md", app.tree.rows.items[3].rel);
     app.focus = .tree;
     // Enter closes it; Enter again re-opens it (a second refresh does not).
     try t.expect(try app.tree.handleKey(&app, Key.named(.enter)));
-    try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
-    try app.tree.refresh(&app);
-    try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
-    try t.expect(try app.tree.handleKey(&app, Key.named(.enter)));
     try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    try app.tree.refresh(&app);
+    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    try t.expect(try app.tree.handleKey(&app, Key.named(.enter)));
+    try t.expectEqual(@as(usize, 4), app.tree.rows.items.len);
     try t.expectEqualStrings("src/main.zig", app.tree.rows.items[1].rel);
     try t.expectEqual(@as(u8, 1), app.tree.rows.items[1].depth);
     _ = try app.tree.handleKey(&app, Key.char('j'));
     _ = try app.tree.handleKey(&app, Key.named(.enter));
     try t.expectEqualStrings("main.zig", app.panes.get(app.active.?).?.title());
     _ = try app.tree.handleKey(&app, Key.char('H'));
-    try t.expectEqual(@as(usize, 4), app.tree.rows.items.len);
+    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    try t.expect(app.tree.rowOf(".hidden") == null);
     try t.expect(!try app.tree.handleKey(&app, Key.ctrl('p')));
     try command.run(&app, .{ .static = .@"tree.collapse_all" });
-    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
 }
 
 test "tree file verbs: new file, new folder, rename into a folder, move by drag-confirm, delete" {
@@ -1117,7 +1347,7 @@ test "tree: F2 opens the rename prompt seeded with the row; other function keys 
     try t.expect(app.focus == .overlay);
 }
 
-test "tree: artifact directories stay out of the rows without a .gitignore; H shows them" {
+test "tree: artifact directories and .git stay out of the rows without a .gitignore, with H either way; a .gitignore hides what it names" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1128,6 +1358,7 @@ test "tree: artifact directories stay out of the rows without a .gitignore; H sh
     try tmp.dir.createDirPath(t.io, "node_modules/x");
     try tmp.dir.createDirPath(t.io, "vendor");
     try tmp.dir.createDirPath(t.io, "src");
+    try tmp.dir.createDirPath(t.io, ".git/objects");
     try tmp.dir.writeFile(t.io, .{ .sub_path = "build", .data = "a file named build stays" });
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
     defer app.deinit();
@@ -1138,9 +1369,22 @@ test "tree: artifact directories stay out of the rows without a .gitignore; H sh
     try t.expectEqual(@as(usize, 2), names.items.len);
     try t.expectEqualStrings("src", names.items[0]);
     try t.expectEqualStrings("build", names.items[1]);
-    app.tree.show_hidden = true;
+    app.tree.show_hidden = false;
     try app.tree.refresh(&app);
-    try t.expectEqual(@as(usize, 5), app.tree.rows.items.len);
+    try t.expectEqual(@as(usize, 2), app.tree.rows.items.len);
+    // A `.gitignore` in the root hides what it names — at any depth
+    // for a bare name, under its own directory for an anchored one.
+    app.tree.show_hidden = true;
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/keep.zig", .data = "k" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/gen.zig", .data = "g" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/.cache", .data = "c" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".gitignore", .data = "gen.zig\n/build\n.cache\n" });
+    try app.tree.refresh(&app);
+    try t.expect(app.tree.rowOf("src/keep.zig") != null);
+    try t.expect(app.tree.rowOf("src/gen.zig") == null);
+    try t.expect(app.tree.rowOf("src/.cache") == null);
+    try t.expect(app.tree.rowOf("build") == null);
+    try t.expect(app.tree.rowOf(".gitignore") != null);
 }
 
 test "multi-root: cfg.workspaces become collapsed sections; a header opens on enter; rows under an extra root are absolute; ← lands on the header" {
@@ -1170,40 +1414,42 @@ test "multi-root: cfg.workspaces become collapsed sections; a header opens on en
     try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
     try t.expectEqualStrings("sibling", app.tree.roots.items[0].name);
     try t.expectEqualStrings(extra_ws, app.tree.roots.items[0].path);
-    // Rows: the open `main` header + src (depth 1, closed) + the collapsed `sibling` header.
-    try t.expectEqual(@as(usize, 3), app.tree.rows.items.len);
+    // Rows: the open `main` header + src (depth 1, opened on first sight)
+    // + a.zig (depth 2) + the collapsed `sibling` header.
+    try t.expectEqual(@as(usize, 4), app.tree.rows.items.len);
     try t.expect(app.tree.rows.items[0].header);
     try t.expectEqual(@as(u8, 0), app.tree.rows.items[0].root);
     try t.expectEqualStrings("src", app.tree.rows.items[1].rel);
     try t.expectEqual(@as(u8, 1), app.tree.rows.items[1].depth);
-    try t.expect(app.tree.rows.items[2].header);
+    try t.expectEqualStrings("src/a.zig", app.tree.rows.items[2].rel);
+    try t.expect(app.tree.rows.items[3].header);
     try t.expect(!app.tree.roots.items[0].expanded);
     app.focus = .tree;
-    app.tree.cursor = 2;
+    app.tree.cursor = 3;
     try t.expect(try app.tree.handleKey(&app, Key.named(.enter)));
     try t.expect(app.tree.roots.items[0].expanded);
     // lib/ then README.md, absolute, one deeper than the header.
-    try t.expectEqual(@as(usize, 5), app.tree.rows.items.len);
-    try t.expect(std.fs.path.isAbsolute(app.tree.rows.items[3].rel));
-    try t.expectEqualStrings("lib", app.tree.rows.items[3].name());
-    try t.expectEqual(@as(u8, 1), app.tree.rows.items[3].root);
-    try t.expectEqualStrings("README.md", app.tree.rows.items[4].name());
+    try t.expectEqual(@as(usize, 6), app.tree.rows.items.len);
+    try t.expect(std.fs.path.isAbsolute(app.tree.rows.items[4].rel));
+    try t.expectEqualStrings("lib", app.tree.rows.items[4].name());
+    try t.expectEqual(@as(u8, 1), app.tree.rows.items[4].root);
+    try t.expectEqualStrings("README.md", app.tree.rows.items[5].name());
     // Open lib/, step onto b.zig, ← twice: lib, then the sibling header.
-    app.tree.cursor = 3;
-    _ = try app.tree.handleKey(&app, Key.char('l'));
-    try t.expectEqualStrings("b.zig", app.tree.rows.items[4].name());
     app.tree.cursor = 4;
+    _ = try app.tree.handleKey(&app, Key.char('l'));
+    try t.expectEqualStrings("b.zig", app.tree.rows.items[5].name());
+    app.tree.cursor = 5;
+    _ = try app.tree.handleKey(&app, Key.char('h'));
+    try t.expectEqual(@as(usize, 4), app.tree.cursor);
+    _ = try app.tree.handleKey(&app, Key.char('h'));
+    try t.expectEqual(@as(usize, 4), app.tree.cursor); // lib folds first
     _ = try app.tree.handleKey(&app, Key.char('h'));
     try t.expectEqual(@as(usize, 3), app.tree.cursor);
-    _ = try app.tree.handleKey(&app, Key.char('h'));
-    try t.expectEqual(@as(usize, 3), app.tree.cursor); // lib folds first
-    _ = try app.tree.handleKey(&app, Key.char('h'));
-    try t.expectEqual(@as(usize, 2), app.tree.cursor);
     // Enter on a file under the extra root opens it by its absolute path.
-    app.tree.cursor = 3;
-    _ = try app.tree.handleKey(&app, Key.char('l'));
-    try t.expectEqualStrings("b.zig", app.tree.rows.items[4].name());
     app.tree.cursor = 4;
+    _ = try app.tree.handleKey(&app, Key.char('l'));
+    try t.expectEqualStrings("b.zig", app.tree.rows.items[5].name());
+    app.tree.cursor = 5;
     _ = try app.tree.handleKey(&app, Key.named(.enter));
     try t.expectEqualStrings("b.zig", app.panes.get(app.active.?).?.title());
     try t.expect(std.mem.startsWith(u8, app.activeEditor().?.buf.doc.path.?, extra_ws));
@@ -1213,12 +1459,15 @@ test "multi-root: cfg.workspaces become collapsed sections; a header opens on en
     try t.expect(!app.tree.roots.items[0].expanded);
     try t.expectEqual(@as(usize, 0), app.tree.cursor);
     try t.expectEqual(app_mod.FocusId.tree, app.focus);
-    // The screen shows both headers.
+    // The screen shows both headers: the primary's path, open, with
+    // its chips; the extra's name, folded.
+    app.cfg.ui.show_workspace_dots = false;
     try app.render();
     const txt = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, "\u{f47c} main") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "\u{f47c} ") != null);
     try t.expect(std.mem.indexOf(u8, txt, "\u{f460} sibling") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "\u{EB37}") != null);
 }
 
 test "multi-root: view.add_workspace prompts, Tab completes a directory segment and cycles, enter adds the root; duplicates and files are refused" {
