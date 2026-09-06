@@ -1254,17 +1254,19 @@ fn paintMenuRows(ui: Ui, inner: Rect, items: []const command.MenuItem, cursor: u
         xx += menu_glyph.width;
         const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else th.fg.fg;
         _ = ui.putStr(xx, r.y, r.right() -| (xx + 2), ui.clipStr(it.label, r.right() -| (xx + 2)), Theme.withFg(style, label_fg));
+        var kebab_x: ?u16 = null;
         if (it.submenu.len > 0) {
             _ = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ">" else "▸", Theme.withFg(style, th.accent.fg));
         } else if (kebab and selected and it.action == .command) {
-            const kx = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
-            ui.hit(Rect.init(kx, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
+            kebab_x = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ":" else "⋯", Theme.withFg(style, th.accent.fg));
         }
-        // The kebab's own hit was registered last, so it wins the cell.
-        ui.hit(Rect.init(r.x, r.y, r.w -| 1, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
-        if (kebab and selected and it.action == .command and it.submenu.len == 0) {
-            ui.hit(Rect.init(r.right() -| 1, r.y, 1, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
-        }
+        // The row's hit stops where the kebab starts, and the kebab's
+        // cells (the glyph and its margin) are registered after it, so
+        // a click on the glyph opens the curation. Registering the
+        // glyph cell first let the row's hit cover it and run the row.
+        const row_w: u16 = if (kebab_x) |kx| kx -| r.x else r.w -| 1;
+        ui.hit(Rect.init(r.x, r.y, row_w, 1), .{ .menu_item = .{ .menu = menu_id, .idx = @intCast(i) } });
+        if (kebab_x) |kx| ui.hit(Rect.init(kx, r.y, r.right() -| kx, 1), .{ .menu_item = .{ .menu = menu_id + 2, .idx = @intCast(i) } });
         row += 1;
     }
     return offsets;

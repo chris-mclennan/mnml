@@ -733,6 +733,44 @@ test "the + menu: five ▸ sections, → opens a child beside its parent, ← st
     try t.expect(std.mem.indexOf(u8, ascii, ">") != null);
 }
 
+test "a click on the child row's kebab glyph opens the curation, not the row" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try openNewTabMenu(&app, 45, 1);
+    try app.handle(.{ .key = app_mod.Key.named(.right) }); // New ▸
+    try app.render();
+    // The glyph: the cell on the child's row 0 painting `⋯`.
+    var kebab_row: ?u16 = null;
+    for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 3 and h.target.menu_item.idx == 0) {
+        kebab_row = h.rect.y;
+    };
+    try t.expect(kebab_row != null);
+    const y = kebab_row.?;
+    var glyph_x: ?u16 = null;
+    var x: u16 = 0;
+    while (x < app.screen.width) : (x += 1) {
+        const cell = app.screen.readCell(x, y) orelse continue;
+        if (std.mem.eql(u8, cell.char.grapheme, "⋯")) glyph_x = x;
+    }
+    try t.expect(glyph_x != null);
+    // The glyph's cell resolves to the kebab, not the row under it.
+    const hit = app.hits.at(glyph_x.?, y).?;
+    try t.expect(hit == .menu_item);
+    try t.expectEqual(@as(u32, 3), hit.menu_item.menu);
+    try t.expectEqual(@as(u32, 0), hit.menu_item.idx);
+    // And the click opens Pin / Hide / Copy for that row rather than running it.
+    try app.handle(.{ .mouse = .{ .x = glyph_x.?, .y = y, .kind = .press, .button = .left } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Pin to top", app.overlay.menu.sub.?.items[0].label);
+    try t.expectEqual(command.CommandId.@"file.new", app.menu_ctx.?);
+}
+
 test "curation: → on a child row offers Pin / Hide / Copy; a pin lands on top and in the home config; a hide drops the row" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
