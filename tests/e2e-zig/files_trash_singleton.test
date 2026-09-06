@@ -1,0 +1,19 @@
+# zig-only
+# The trash view is a singleton titled for the workspace: a second
+# `files.trash` focuses the open one instead of stacking a twin, its
+# crumb is `Trash` rather than the data-root path, and `↑` / `files.up`
+# cannot climb out into `<data root>/trash` (other workspaces' hashes).
+write a.txt "aa"
+command files.open
+command files.trash
+expect pane Trash
+expect screen contains "Trash (0)"
+expect screen lacks "› trash"
+expect screen lacks "↑"
+command files.trash
+expect pane Trash
+expect screen lacks "Trash   Trash"
+command files.up
+expect pane Trash
+expect screen contains "Trash (0)"
+expect screen lacks "› trash"

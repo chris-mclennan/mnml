@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Trash view: every `files.trash` opens another `Trash` tab, and `↑` from it walks into `<data root>/trash` with the breadcrumb spelling out the data-root path
 
@@ -36,3 +36,17 @@ after `↑`:
 **Source pointer**: `src/app/files_pane.zig` `trashCmd` (always `open(app, trash_dir)`), `upCmd` (no stop at the trash root); `src/app/trash.zig` `isTrashDir`.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(files): the trash view is a singleton titled for the workspace`.
+
+- `trash.openTrashCmd` focuses and re-reads an open Trash pane instead of
+  adding another.
+- `files_pane.crumbs` shows `Trash` (then any segments below it) for a
+  directory under the workspace's trash; the data-root path never appears.
+- `FilesPane.up` is a no-op in the trash, so neither `files.up` nor the `↑`
+  chip (which the single crumb no longer paints) reaches
+  `<data root>/trash`; leaving a trashed folder re-derives `in_trash`.
+- `tests/e2e-zig/files_trash_singleton.test`. The statusline still reads
+  `TRASH <path>`; the tab and crumb are what the finding named.
