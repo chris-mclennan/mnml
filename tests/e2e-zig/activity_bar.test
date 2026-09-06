@@ -1,0 +1,34 @@
+# zig-only
+# width: 120
+# The activity bar (src/ui/activity_bar.zig): the icon rail down the
+# sidebar's left edge, columns 0..2, the `│` at column 3. Without pinned
+# launchers the twelve sections sit two rows apart from row 2 (TODOs on
+# 22, Notes on 20, Findings on 24) and the gear on the second-to-last
+# rail row (36). A left click shows the section; a right click opens its
+# menu, "Show X" first; the gear's right click is the mnml menu.
+write .mnml/notes/note-1.md "# Ship it\n"
+write .mnml/findings/f1.md "# A finding\n\nseverity: low\n"
+write a.py "# TODO: wire the thing\n"
+expect screen contains "▌"
+click 1 22
+wait 400
+expect screen contains "TODOS"
+expect screen contains "wire the thing"
+click 1 20
+wait 400
+expect screen contains "NOTES"
+expect screen contains "note-1  Ship it"
+click 1 24
+wait 400
+expect screen contains "FINDINGS"
+expect screen contains "A finding"
+rightclick 1 22
+expect screen contains "Show TODOs"
+expect screen contains "Rescan"
+key esc
+expect screen lacks "Show TODOs"
+rightclick 1 36
+expect screen contains "Settings…"
+expect screen contains "About mnml"
+key esc
+expect screen lacks "About mnml"

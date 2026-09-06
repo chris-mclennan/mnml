@@ -19,6 +19,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const MenuItem = command.MenuItem;
 const Mouse = @import("../core/key.zig").Mouse;
+const activity_bar = @import("activity_bar.zig");
 
 pub const table = .{
     .@"buffer.close_others" = &closeOthers,
@@ -237,6 +238,71 @@ pub fn openToastMenu(app: *App, at: usize, x: u16, y: u16) Allocator.Error!void 
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Toast", rows, x, y);
+}
+
+/// A right-click on an activity-bar section (Rust `mouse/right_click.rs`):
+/// "Show X" first — the id a left click runs — then the section's quick
+/// verbs. Findings has only the first row, as in Rust.
+pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocator.Error!void {
+    const Section = activity_bar.Section;
+    const show: MenuItem = .{ .label = switch (s) {
+        inline else => |tag| comptime ("Show " ++ Section.meta(tag).label),
+    }, .action = .{ .command = activity_bar.commandOf(s) } };
+    const verbs: []const MenuItem = switch (s) {
+        .explorer => &.{
+            .{ .label = "Reveal active file", .action = .{ .command = .@"view.reveal_in_tree" } },
+            .{ .label = "Refresh tree", .action = .{ .command = .@"tree.refresh" } },
+        },
+        .search => &.{.{ .label = "New search", .action = .{ .command = .@"find.grep" } }},
+        .git => &.{
+            .{ .label = "Open git graph", .action = .{ .command = .@"git.graph" } },
+            .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" } },
+            .{ .label = "Commit…", .action = .{ .command = .@"git.commit" } },
+        },
+        .debug => &.{
+            .{ .label = "Run", .action = .{ .command = .@"dap.run" } },
+            .{ .label = "Toggle breakpoint at cursor", .action = .{ .command = .@"dap.toggle_breakpoint" } },
+        },
+        .integrations => &.{
+            .{ .label = "Refresh integrations", .action = .{ .command = .@"integrations.refresh" } },
+            .{ .label = "Refresh binary cache", .action = .{ .command = .@"integrations.refresh_binary_cache" } },
+        },
+        .sessions => &.{
+            .{ .label = "+ New Claude Code session", .action = .{ .command = .@"ai.claude_code_new" } },
+            .{ .label = "+ New Codex session", .action = .{ .command = .@"ai.codex_new" } },
+        },
+        .agents => &.{.{ .label = "Open dashboard", .action = .{ .command = .@"ai.dashboard" } }},
+        .cloud_agents => &.{
+            .{ .label = "+ New cloud run", .action = .{ .command = .@"cloud_agents.new_run" } },
+            .{ .label = "+ New from wizard", .action = .{ .command = .@"cloud_agents.new_run_wizard" } },
+        },
+        .http => &.{
+            .{ .label = "+ New request", .action = .{ .command = .@"http.new" } },
+            .{ .label = "Paste curl from clipboard", .action = .{ .command = .@"http.paste_curl" } },
+        },
+        .notes => &.{.{ .label = "+ New note", .action = .{ .command = .@"notes.new" } }},
+        .todos => &.{.{ .label = "Rescan", .action = .{ .command = .@"todos.refresh" } }},
+        .findings => &.{},
+    };
+    const rows = try app.gpa.alloc(MenuItem, 1 + verbs.len);
+    errdefer app.gpa.free(rows);
+    rows[0] = show;
+    @memcpy(rows[1..], verbs);
+    try app.openMenu(s.meta().label, rows, x, y);
+}
+
+/// The activity bar's gear (Rust `open_gear_context_menu`): Settings,
+/// the palette, the cheatsheet, the theme picker, About.
+pub fn openGearMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Settings…", .action = .{ .command = .@"view.settings" } },
+        .{ .label = "Command Palette…", .action = .{ .command = .palette } },
+        .{ .label = "Cheatsheet…", .action = .{ .command = .@"view.help" } },
+        .{ .label = "Themes…", .action = .{ .command = .@"theme.pick" } },
+        .{ .label = "About mnml", .action = .{ .command = .@"view.about" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("mnml", rows, x, y);
 }
 
 // ─── the curated `+` menu ───────────────────────────────────────────────

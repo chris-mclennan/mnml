@@ -115,6 +115,10 @@ pub const PickerPosition = enum { center, top };
 pub const NowPlayingSource = enum { auto, mixr, macos };
 pub const MusicApp = enum { mixr, music, spotify };
 pub const MenuBar = enum { always, auto, hidden };
+/// // changed: the Rust activity bar had one mode (its header carried
+/// a TODO for these three, with the menu bar's vocabulary). `auto`
+/// shows the rail while the pointer is in column 0 or on the rail.
+pub const ActivityBar = enum { always, auto, hidden };
 pub const DiagStyle = enum { count, dot, off };
 pub const CoverageChipMode = enum { both, feature, code, ticker };
 pub const ExpandIndicator = enum { chevron, triangle };
@@ -209,6 +213,7 @@ pub const Ui = struct {
     /// Tilde-expanded on load. Empty disables.
     projects_dir: []const u8 = "",
     menu_bar: MenuBar = .always,
+    activity_bar: ActivityBar = .always,
     bufferline_diag_style: DiagStyle = .count,
     coverage_chip_mode: CoverageChipMode = .feature,
     expand_indicator: ExpandIndicator = .chevron,
@@ -569,6 +574,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(PickerPosition.center, c.ui.picker_position);
     try std.testing.expectEqual(NowPlayingSource.mixr, c.ui.now_playing_source);
     try std.testing.expectEqual(MenuBar.always, c.ui.menu_bar);
+    try std.testing.expectEqual(ActivityBar.always, c.ui.activity_bar);
     try std.testing.expectEqual(DiagStyle.count, c.ui.bufferline_diag_style);
     try std.testing.expectEqual(CoverageChipMode.feature, c.ui.coverage_chip_mode);
     try std.testing.expectEqual(ExpandIndicator.chevron, c.ui.expand_indicator);
