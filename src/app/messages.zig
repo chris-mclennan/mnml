@@ -2,7 +2,7 @@
 //! recorded here (`App.toastLevel` calls `record`), capped at `max`
 //! entries, oldest dropped first. `messages.show` opens a picker over
 //! the log newest first; `:messages!` (`dump`) writes the whole log into
-//! a scratch buffer; the statusline bell (`bellSegment`) counts the
+//! a scratch buffer; the statusline bell (`app/statusline.zig`) counts the
 //! warnings and errors nobody has looked at yet.
 //!
 //! The log rides along in `session.zon`, so a warning raised just
@@ -141,34 +141,35 @@ pub fn dump(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
-/// The statusline bell: `⚠ N` while unread warnings wait, `✗ N` once
-/// any unread entry is an error, nothing when there is nothing to see.
-pub fn bellSegment(app: *App, arena: Allocator, ascii: bool) Allocator.Error!?[]const u8 {
-    const u = app.messages.unread();
-    if (u.err > 0) return try std.fmt.allocPrint(arena, "{s} {d}", .{ if (ascii) "x" else "✗", u.err + u.warn });
-    if (u.warn > 0) return try std.fmt.allocPrint(arena, "{s} {d}", .{ if (ascii) "!" else "⚠", u.warn });
-    return null;
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+
+/// The screen after a frame, on the frame arena — the bell chip is on
+/// the statusline (`app/statusline.zig`), the count beside the glyph.
+fn bellRow(app: *App) ![]const u8 {
+    try app.render();
+    return @import("../ipc/screen.zig").toTestText(app.frame.allocator(), &app.screen);
+}
 
 test "messages: every toast is recorded, capped, and the bell counts unread warn/err only" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
     defer app.deinit();
     app.toast("plain", .{});
     try t.expectEqual(@as(usize, 1), app.messages.items.items.len);
-    try t.expect((try bellSegment(&app, app.frame.allocator(), true)) == null);
+    try t.expectEqual(@as(usize, 0), app.messages.unread().warn + app.messages.unread().err);
+    try t.expect(std.mem.indexOf(u8, try bellRow(&app), " \u{f0f3}  ") != null); // the quiet bell, no count
     try app.toastLevel(.warn, "careful", .{});
-    try t.expectEqualStrings("! 1", (try bellSegment(&app, app.frame.allocator(), true)).?);
+    try t.expectEqual(@as(usize, 1), app.messages.unread().warn);
+    try t.expect(std.mem.indexOf(u8, try bellRow(&app), " \u{f0f3} 1 ") != null);
     try app.toastLevel(.err, "broken", .{});
-    try t.expectEqualStrings("x 2", (try bellSegment(&app, app.frame.allocator(), true)).?);
+    try t.expectEqual(@as(usize, 1), app.messages.unread().err);
+    try t.expect(std.mem.indexOf(u8, try bellRow(&app), " \u{f0f3} 2 ") != null);
     // The picker marks everything read and lists newest first.
     try command.run(&app, .{ .static = .@"messages.show" });
     try t.expect(app.overlay == .picker);
     try t.expectEqualStrings("error  broken", app.overlay.picker.labels[0]);
-    try t.expect((try bellSegment(&app, app.frame.allocator(), true)) == null);
+    try t.expectEqual(@as(usize, 0), app.messages.unread().warn + app.messages.unread().err);
     app.overlay.deinit(app.gpa);
     // The cap drops the oldest.
     var i: usize = 0;

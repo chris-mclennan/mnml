@@ -886,20 +886,6 @@ pub fn marksFor(app: *App, arena: Allocator, path: ?[]const u8, theme: *const Th
     return out.items;
 }
 
-/// `✗ 2  ⚠ 1` for the active file, or null.
-pub fn statusSegment(app: *App, arena: Allocator, e: *EditorPane, ascii: bool) Allocator.Error!?[]const u8 {
-    const path = e.buf.doc.path orelse return null;
-    var errors: usize = 0;
-    var warnings: usize = 0;
-    for (diagnosticsFor(app, path)) |d| switch (d.severity) {
-        .err => errors += 1,
-        .warning => warnings += 1,
-        else => {},
-    };
-    if (errors == 0 and warnings == 0) return null;
-    return try std.fmt.allocPrint(arena, "{s} {d}  {s} {d}", .{ if (ascii) "E" else "✗", errors, if (ascii) "W" else "⚠", warnings });
-}
-
 /// `lsp.next_diagnostic` / `lsp.prev_diagnostic`: the cursor goes to
 /// the next start after it (wrapping), with the message toasted.
 pub fn gotoDiagnostic(app: *App, forward: bool) CommandError!void {
@@ -2402,7 +2388,12 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     try testing.expectEqual(@as(usize, 26), uls[1].start);
     const marks = try marksFor(&app, arena.allocator(), "/tmp/api.ts", &app.theme, false);
     try testing.expectEqual(@as(usize, 2), marks.len);
-    try testing.expectEqualStrings("✗ 1  ⚠ 1", (try statusSegment(&app, arena.allocator(), e, false)).?);
+    // The statusline's diagnostics chips: the error count in red, the
+    // warning count in yellow, after the file name (`app/statusline.zig`).
+    try app.render();
+    const row = try @import("../ipc/screen.zig").toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(row);
+    try testing.expect(std.mem.indexOf(u8, row, "api.ts  \u{f057} 1  ⚠ 1 ") != null);
     e.buf.editor.setCursor(0);
     try command.run(&app, .{ .static = .@"lsp.next_diagnostic" });
     try testing.expectEqual(@as(usize, 4), e.buf.editor.cursor);

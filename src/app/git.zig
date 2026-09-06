@@ -2631,21 +2631,6 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, area: Rect) v
     if (app.active == id) app.pane_rows = @max(area.h -| 2, 1);
 }
 
-/// The statusline segment: `main ↑2 ↓1 ●3`, on the frame arena.
-pub fn statusSegment(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
-    const st = &app.git;
-    const branch = st.branchLabel() orelse return null;
-    const s = st.status.?;
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    const ascii = app.cfg.ui.ascii_icons;
-    try out.print(arena, "{s}{s}", .{ if (ascii) "git:" else " ", branch });
-    if (s.ahead > 0) try out.print(arena, " {s}{d}", .{ if (ascii) "^" else "↑", s.ahead });
-    if (s.behind > 0) try out.print(arena, " {s}{d}", .{ if (ascii) "v" else "↓", s.behind });
-    const n = s.changeCount();
-    if (n > 0) try out.print(arena, " {s}{d}", .{ if (ascii) "*" else "●", n });
-    return out.items;
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -2778,7 +2763,7 @@ test "discover: every extra workspace root brings its repo, or the repos under i
 }
 
 test "handle adopts a status result for the active repo, drops one from an unknown repo, and frees both" {
-    var f = try Fixture.init(80, 20);
+    var f = try Fixture.init(120, 20);
     defer f.deinit();
     try f.tmp.dir.createDirPath(testing.io, ".git");
     try discover(&f.app);
@@ -2797,10 +2782,12 @@ test "handle adopts a status result for the active repo, drops one from an unkno
     try testing.expect(st.rows.items[0].header);
     try testing.expectEqualStrings("src/a.zig", st.rows.items[1].path);
     try testing.expectEqualStrings("new.txt", st.rows.items[3].path);
-    const seg = (try statusSegment(&f.app, f.app.frame.allocator())).?;
-    try testing.expect(std.mem.indexOf(u8, seg, "main") != null);
-    try testing.expect(std.mem.indexOf(u8, seg, "↑1") != null);
-    try testing.expect(std.mem.indexOf(u8, seg, "●2") != null);
+    // The statusline's branch chip (`app/statusline.zig`): the branch,
+    // the ahead count, then one changed file and one added.
+    try f.app.render();
+    const row = try @import("../ipc/screen.zig").toTestText(testing.allocator, &f.app.screen);
+    defer testing.allocator.free(row);
+    try testing.expect(std.mem.indexOf(u8, row, " \u{f126} main  ⇡1  \u{f0419} 1  \u{f06d5} 1 ") != null);
     // A result from a repo id nobody knows is dropped whole.
     const stale = try client.Result.create(testing.allocator, 999);
     stale.payload = .{ .status = .{ .status = try parse.parseStatus(stale.arena.allocator(), "# branch.head other\n"), .signs = &.{} } };
