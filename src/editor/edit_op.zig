@@ -1,5 +1,5 @@
 //! `EditOp` — every text-editing intent an input handler can express
-//! (D4). 138 tags. The editor applies them through one exhaustive
+//! (D4). 139 tags. The editor applies them through one exhaustive
 //! switch in `apply.zig`; nothing else mutates buffer text.
 //!
 //! Payload slices (`insert_str`, `replace_selection`, `replace_range.text`)
@@ -11,6 +11,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const CaseTransform = enum { lower, upper, toggle };
+
+/// How `gv` re-selects the remembered range: the Visual mode it was
+/// made in (`:help gv`).
+pub const SelectionShape = enum { charwise, linewise, block };
 
 pub const EditOp = union(enum) {
     // ── motion ──
@@ -99,7 +103,7 @@ pub const EditOp = union(enum) {
     select_inner_indent_block,
     select_around_indent_block,
     select_outer_indent_block,
-    restore_last_selection,
+    restore_last_selection: SelectionShape,
     swap_anchor_cursor,
     move_cursor_to_selection_start,
     normalize_linewise_selection,
@@ -161,6 +165,9 @@ pub const EditOp = union(enum) {
     transform_selection_case: CaseTransform,
     toggle_case_char,
     change_number_at_cursor: struct { delta: i64 },
+    /// `v_CTRL-A` / `v_CTRL-X`: the first number on every selected line;
+    /// `progressive` (`v_g_CTRL-A`) adds `delta`, then 2×, 3×…
+    change_numbers_in_selection: struct { delta: i64, progressive: bool },
     reflow_paragraph: struct { width: usize },
     align_selection: struct { on_char: u21 },
 
@@ -184,7 +191,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 138);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 139);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).

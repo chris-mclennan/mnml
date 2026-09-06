@@ -24,9 +24,20 @@ pub fn deleteSelectionIfAny(ed: *Editor, out: *EditOutcome) Allocator.Error!bool
     ed.cursor = sel[0];
     ed.anchor = null;
     try ed.checkpoint();
+    const linewise = ed.bytes()[sel[1] - 1] == '\n';
     try ed.splice(sel[0], sel[1], "");
+    if (linewise) clampOffPhantomLine(ed);
     out.buffer_changed = true;
     return true;
+}
+
+/// A linewise delete that took the last line's `\n` leaves the cursor
+/// at EOF, past the new last line's own `\n` — the phantom line the
+/// gutter never numbers. Vim lands on the new last line (`:help dd`);
+/// so does `dd` here.
+pub fn clampOffPhantomLine(ed: *Editor) void {
+    const n = ed.len();
+    if (ed.cursor >= n and n > 0 and ed.bytes()[n - 1] == '\n') ed.cursor = ed.lineStart(ed.lineCount() - 1);
 }
 
 /// Multi-cursor: every cursor drops its own range in one undo step.
@@ -169,6 +180,7 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
     if (end < ed.len()) {
         try ed.splice(start, end + 1, "");
         ed.cursor = @min(start, ed.len());
+        clampOffPhantomLine(ed);
     } else if (start > 0) {
         const prev_line_start = ed.lineStart(line - 1);
         try ed.splice(ed.prevBoundary(start), ed.len(), "");

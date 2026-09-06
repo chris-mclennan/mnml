@@ -1,0 +1,13 @@
+# zig-only
+# `:g/pat/normal …` reports once, for the whole `:g` — the per-line
+# sub-command output is suppressed inside `:g`, as Vim does, so the
+# summary is not buried under one `:norm — 1 line(s)` per line.
+write a.txt "a1\na2\na3\na4\na5\na6\na7\na8\na9\n"
+open a.txt
+command editor.use_vim
+
+type ":g/a/norm A;"
+key enter
+expect screen contains ":g — ran on 9 line(s)"
+expect screen lacks ":norm — 1 line(s)"
+expect screen lacks "more…"

@@ -1,0 +1,33 @@
+# zig-only
+# `/pat/e` is a search offset (`:help search-offset`), not part of the
+# pattern: `e` lands on the match's last char, `e+1` one past it, `s+2`
+# two into it, `+1` on the line below at column 1. `n` keeps the offset.
+write a.txt "alpha\njuliet kilo\nzulu\njuliet lima\n"
+open a.txt
+command editor.use_vim
+
+type "/juliet/e"
+key enter
+expect screen lacks "no matches"
+expect screen contains "Ln 2/4"
+expect screen contains "Col 6 "
+type "/juliet/e+1"
+key enter
+expect screen contains "Ln 4/4"
+expect screen contains "Col 7 "
+type gg
+type "/juliet/s+2"
+key enter
+expect screen contains "Ln 2/4"
+expect screen contains "Col 3 "
+type gg
+type "/juliet/+1"
+key enter
+expect screen contains "Ln 3/4"
+expect screen contains "Col 1 "
+type gg
+type "/juliet/e"
+key enter
+type n
+expect screen contains "Ln 4/4"
+expect screen contains "Col 6 "

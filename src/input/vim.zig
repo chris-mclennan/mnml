@@ -37,9 +37,12 @@ pub const PendingOp = enum {
     surround_add,
     @"align",
     filter,
+    /// `zf{motion}`: a manual fold over the range (`:help zf`).
+    fold,
 
     fn glyph(op: PendingOp) []const u8 {
         return switch (op) {
+            .fold => "zf",
             .delete => "d",
             .change => "c",
             .yank => "y",
@@ -151,9 +154,14 @@ pub const Vim = struct {
     ex_history_cursor: ?usize = null,
     ex_history_typing: ?[]u8 = null,
     cmdline_pending_ctrl_r: bool = false,
+    /// `c_CTRL-V`: the next key goes into the `:` line literally.
+    cmdline_literal_next: bool = false,
     /// A visual text object just set the selection to its exact range —
     /// the next operator must not widen it. Any other visual key clears it.
     visual_exact: bool = false,
+    /// The Visual mode the last selection was made in — what `gv`
+    /// comes back to (`:help gv`).
+    last_visual: VimMode = .visual,
 
     pub fn init(gpa: Allocator, cfg: input.Config) Vim {
         return .{ .gpa = gpa, .tab_width = @max(cfg.tab_width, 1), .text_width = @max(cfg.text_width, 8), .use_tabs = cfg.use_tabs };
@@ -426,6 +434,10 @@ pub const Vim = struct {
         };
     }
 
+    fn isVisual(m: VimMode) bool {
+        return m == .visual or m == .visual_line or m == .visual_block;
+    }
+
     fn isCtrlChar(key: Key, c: u21) bool {
         if (!key.mods.ctrl) return false;
         const k = charOf(key) orelse return false;
@@ -436,6 +448,7 @@ pub const Vim = struct {
 
     pub fn handleKey(self: *Vim, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         if (self.cmdline_open) return self.handleCmdline(key, arena);
+        const before = self.vmode;
         const result = switch (self.vmode) {
             .insert => try self.handleInsert(key, arena),
             .replace => try self.handleReplace(key, arena),
@@ -443,6 +456,7 @@ pub const Vim = struct {
             .visual, .visual_line => try self.handleVisual(key, ctx, arena),
             .visual_block => try self.handleVisualBlock(key, arena),
         };
+        if (isVisual(before) and !isVisual(self.vmode)) self.last_visual = before;
         // A pending `"x` routes the next register-touching op list.
         if (result == .ops and self.pending_register != null) {
             var touches = false;
@@ -474,10 +488,29 @@ pub const Vim = struct {
         const gpa = self.gpa;
         const line = &self.cmdline;
         const cur = @min(self.cmdline_cursor, line.items.len);
+        if (self.cmdline_literal_next) {
+            // `Ctrl-V Tab` is a tab character, `Ctrl-V Ctrl-X` the control
+            // char, whatever the key would otherwise do (`:help c_CTRL-V`).
+            self.cmdline_literal_next = false;
+            const lit: ?u21 = switch (key.code) {
+                .tab => '\t',
+                .enter => '\r',
+                .esc => 0x1b,
+                .char => |c| if (key.mods.ctrl and c < 0x80) @as(u21, std.ascii.toUpper(@intCast(c)) & 0x1f) else c,
+                else => null,
+            };
+            if (lit) |c| try self.insertCmdlineChar(c);
+            return .consumed;
+        }
         if (self.cmdline_pending_ctrl_r) {
             self.cmdline_pending_ctrl_r = false;
             if (isCtrlChar(key, 'w')) return .{ .app = .{ .cmdline_insert_cursor_word = false } };
             if (isCtrlChar(key, 'a')) return .{ .app = .{ .cmdline_insert_cursor_word = true } };
+            // `Ctrl-R "` / `+` / `*`: the register's text (`:help c_CTRL-R`).
+            if (charOf(key)) |c| switch (c) {
+                '"', '+', '*' => return .{ .app = .cmdline_paste_from_clipboard },
+                else => {},
+            };
         }
         if (isCtrlChar(key, 'r')) {
             self.cmdline_pending_ctrl_r = true;
@@ -505,7 +538,10 @@ pub const Vim = struct {
             self.cmdline_cursor = line.items.len;
             return .consumed;
         }
-        if (isCtrlChar(key, 'v')) return .{ .app = .cmdline_paste_from_clipboard };
+        if (isCtrlChar(key, 'v') or isCtrlChar(key, 'q')) {
+            self.cmdline_literal_next = true;
+            return .consumed;
+        }
         switch (key.code) {
             .tab => return .{ .app = .cmdline_tab_complete },
             .backtab => return .{ .app = .{ .cmdline_popup_move = -1 } },
@@ -587,15 +623,20 @@ pub const Vim = struct {
             },
             .char => |c| {
                 if (key.mods.ctrl or key.mods.alt or key.mods.super) return .consumed;
-                var buf: [4]u8 = undefined;
-                const n = std.unicode.utf8Encode(c, &buf) catch return .consumed;
-                try line.insertSlice(gpa, cur, buf[0..n]);
-                self.cmdline_cursor = cur + n;
-                self.stopHistoryWalk();
+                try self.insertCmdlineChar(c);
                 return .consumed;
             },
             else => return .consumed,
         }
+    }
+
+    fn insertCmdlineChar(self: *Vim, c: u21) Allocator.Error!void {
+        const cur = @min(self.cmdline_cursor, self.cmdline.items.len);
+        var buf: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(c, &buf) catch return;
+        try self.cmdline.insertSlice(self.gpa, cur, buf[0..n]);
+        self.cmdline_cursor = cur + n;
+        self.stopHistoryWalk();
     }
 
     fn closeCmdline(self: *Vim) void {
@@ -747,16 +788,24 @@ pub const Vim = struct {
     // ─── normal ───
 
     /// The op list an operator appends after its range is selected.
-    /// `linewise_object` = `ip`/`ap` (yank stays linewise).
+    /// `linewise_object` = `ip`/`ap`: the object names whole lines, so
+    /// the operator widens to their terminators the way `V…d` does —
+    /// `dip` leaves no empty line behind, `cip` opens one to type into
+    /// (`:help ip`, `:help v_c`).
     fn finishOperator(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx, linewise_object: bool) Allocator.Error!InputResult {
         switch (op) {
-            .delete => try b.push(.delete_selection),
+            .delete => {
+                if (linewise_object) try b.push(.normalize_linewise_selection);
+                try b.push(.delete_selection);
+            },
             .yank => {
+                if (linewise_object) try b.push(.normalize_linewise_selection);
                 try b.push(if (linewise_object) .yank_selection_linewise else .yank_selection);
                 try b.push(.select_clear);
                 try b.push(.{ .set_cursor_byte = ctx.cursor });
             },
             .change => {
+                if (linewise_object) try b.push(.normalize_linewise_selection_inner);
                 try b.push(.{ .replace_selection = "" });
                 try b.push(.continue_insert_run);
                 self.vmode = .insert;
@@ -802,6 +851,12 @@ pub const Vim = struct {
             },
             .@"align" => {
                 self.prefix = .align_char_wait;
+            },
+            // The range goes live first, as whole lines with the cursor on
+            // the last one's end; the app folds the selection.
+            .fold => {
+                try b.push(.normalize_linewise_selection_inner);
+                return .{ .app = .{ .fold_after = b.list.items } };
             },
             .filter => return .consumed, // TODO(vim-slice: filter) `!{motion}`
         }
@@ -864,10 +919,24 @@ pub const Vim = struct {
                 return .{ .app = .{ .block_replace_with = .{ .ch = c } } };
             },
             .z_fold => {
+                const n = self.count1();
                 self.resetPending();
                 const c = ch orelse return .consumed;
                 return switch (c) {
-                    'a', 'A', 'f' => runCmd(.@"editor.toggle_fold"),
+                    // `zf{motion}` is an operator (`:help zf`); `zF` folds
+                    // `count` lines from the cursor's.
+                    'f' => blk: {
+                        self.op = .fold;
+                        break :blk .consumed;
+                    },
+                    'F' => blk: {
+                        var b = Builder.init(arena);
+                        try b.push(.select_start);
+                        if (n > 1) try b.pushRepeated(.move_down, n - 1);
+                        try b.push(.normalize_linewise_selection_inner);
+                        break :blk .{ .app = .{ .fold_after = b.list.items } };
+                    },
+                    'a', 'A' => runCmd(.@"editor.toggle_fold"),
                     'o', 'O' => runCmd(.@"editor.open_fold"),
                     'c', 'C' => runCmd(.@"editor.close_fold"),
                     'R', 'E' => runCmd(.@"editor.unfold_all"),
@@ -915,16 +984,28 @@ pub const Vim = struct {
                 if (asciiLetter(ch)) |c| return .{ .app = .{ .set_mark = c } };
                 return .consumed;
             },
-            .mark_jump_line => {
+            .mark_jump_line, .mark_jump_exact => {
+                const exact = self.prefix == .mark_jump_exact;
+                const op = self.op;
                 self.resetPending();
-                if (asciiLetter(ch)) |c| return .{ .app = .{ .jump_to_mark_line = c } };
-                if (ch == '\'') return runCmd(.@"nav.jump_toggle_prev");
-                return .consumed;
-            },
-            .mark_jump_exact => {
-                self.resetPending();
-                if (asciiLetter(ch)) |c| return .{ .app = .{ .jump_to_mark_exact = c } };
-                if (ch == '`') return runCmd(.@"nav.jump_toggle_prev");
+                if (asciiLetter(ch)) |c| {
+                    // `d'a` / `` y`a `` / `c'a`: a mark is a motion (`:help
+                    // '`). The buffer holds the mark, so it builds the
+                    // range; only the buffer-local marks are targets.
+                    if (op) |o| {
+                        const glyph: u8 = switch (o) {
+                            .delete => 'd',
+                            .yank => 'y',
+                            .change => 'c',
+                            else => return .consumed,
+                        };
+                        if (c < 'a' or c > 'z') return .consumed;
+                        return .{ .app = .{ .operator_to_mark = .{ .op = glyph, .mark = c, .exact = exact } } };
+                    }
+                    return .{ .app = if (exact) .{ .jump_to_mark_exact = c } else .{ .jump_to_mark_line = c } };
+                }
+                if (ch == '\'' and !exact) return runCmd(.@"nav.jump_toggle_prev");
+                if (ch == '`' and exact) return runCmd(.@"nav.jump_toggle_prev");
                 return .consumed;
             },
             .find_char => |f| {
@@ -1002,7 +1083,8 @@ pub const Vim = struct {
                     self.is_recording_macro = true;
                     return .{ .app = .{ .macro_record_into = '@' } };
                 }
-                if (c >= 'a' and c <= 'z') {
+                // `qA` appends to `a` (`:help q`); the buffer folds the case.
+                if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
                     self.is_recording_macro = true;
                     return .{ .app = .{ .macro_record_into = @intCast(c) } };
                 }
@@ -1014,13 +1096,27 @@ pub const Vim = struct {
                 self.count = null;
                 const c = ch orelse return .consumed;
                 if (c == '@') return .{ .app = .{ .macro_replay_from = .{ .reg = '@', .count = count } } };
-                if (c >= 'a' and c <= 'z') return .{ .app = .{ .macro_replay_from = .{ .reg = @intCast(c), .count = count } } };
+                if (c >= 'a' and c <= 'z' or c >= '0' and c <= '9') return .{ .app = .{ .macro_replay_from = .{ .reg = @intCast(c), .count = count } } };
+                if (c >= 'A' and c <= 'Z') return .{ .app = .{ .macro_replay_from = .{ .reg = @intCast(c + ('a' - 'A')), .count = count } } };
                 if (c == ':') return runCmd(.@"vim.replay_last_ex");
                 return .consumed;
             },
             .window => {
+                const count = self.count;
                 self.resetPending();
                 const c = ch orelse return .consumed;
+                // `{count} Ctrl-W >` / `<` / `+` / `-`: that many cells
+                // (`:help CTRL-W_>`); the bare chord keeps its 5 % step.
+                if (count) |n| {
+                    const cells: i32 = @intCast(@min(n, 10_000));
+                    switch (c) {
+                        '>' => return .{ .app = .{ .split_resize = .{ .width = true, .cells = cells } } },
+                        '<' => return .{ .app = .{ .split_resize = .{ .width = true, .cells = -cells } } },
+                        '+' => return .{ .app = .{ .split_resize = .{ .width = false, .cells = cells } } },
+                        '-' => return .{ .app = .{ .split_resize = .{ .width = false, .cells = -cells } } },
+                        else => {},
+                    }
+                }
                 return switch (c) {
                     'w' => runCmd(.@"view.focus_next_split"),
                     'q', 'c' => runCmd(.@"view.close_split"),
@@ -1498,10 +1594,16 @@ pub const Vim = struct {
                 return .consumed;
             },
             'v' => {
-                self.vmode = .visual;
+                // Back in the mode the selection was made in (`:help gv`).
+                self.vmode = self.last_visual;
+                const shape: @import("../editor/edit_op.zig").SelectionShape = switch (self.last_visual) {
+                    .visual_line => .linewise,
+                    .visual_block => .block,
+                    else => .charwise,
+                };
                 // The remembered range was already widened when it closed.
                 self.visual_exact = true;
-                return ops(arena, &.{.restore_last_selection});
+                return ops(arena, &.{.{ .restore_last_selection = shape }});
             },
             ';' => return runCmd(.@"editor.jump_prev_edit"),
             ',' => return runCmd(.@"editor.jump_next_edit"),
@@ -1587,7 +1689,7 @@ pub const Vim = struct {
             .surround_add => c == 's',
             .@"align" => c == 'A',
             .filter => c == '!',
-            .reflow, .comment => false,
+            .reflow, .comment, .fold => false,
         } else false;
         const n = self.count1();
         self.resetPending();
@@ -1639,6 +1741,7 @@ pub const Vim = struct {
                     return ops(arena, &.{ .move_line_first_non_ws, .select_start, .move_line_end });
                 },
                 .@"align" => return .consumed, // `gAA` has no meaning
+                .fold => return .consumed, // `zfzf` has no meaning either
             }
         }
         if (ch == 's' and (op == .delete or op == .change or op == .yank)) {
@@ -1661,6 +1764,12 @@ pub const Vim = struct {
             self.op = op;
             self.prefix = .g;
             if (n > 1) self.count = n;
+            return .consumed;
+        }
+        if (ch == '\'' or ch == '`') {
+            // `d'a`, `` y`a ``: the mark letter comes next.
+            self.op = op;
+            self.prefix = if (ch == '\'') .mark_jump_line else .mark_jump_exact;
             return .consumed;
         }
         if (ch == 'G' and (op == .delete or op == .yank)) {
@@ -1763,8 +1872,16 @@ pub const Vim = struct {
         const ch = charOf(key);
         switch (self.prefix) {
             .g => {
+                const n = self.count1();
                 self.resetPending();
                 const c = ch orelse return .consumed;
+                // `v_g_CTRL-A` / `v_g_CTRL-X`: a progression down the lines.
+                if (key.mods.ctrl and (c == 'a' or c == 'x')) {
+                    self.enterNormal();
+                    const d: i64 = if (c == 'a') @intCast(n) else -@as(i64, @intCast(n));
+                    const w: EditOp = if (linewise) .normalize_linewise_selection else .make_selection_inclusive;
+                    return ops(arena, &.{ w, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = true } } });
+                }
                 switch (c) {
                     'A' => {
                         // The alignment char arrives next; widen now so
@@ -1793,7 +1910,9 @@ pub const Vim = struct {
                 const c = ch orelse return .consumed;
                 self.enterNormal();
                 return switch (c) {
-                    'f' => runCmd(.@"editor.fold_selection"),
+                    // Whole lines, the cursor on the last one's end, so the
+                    // fold reads its rows unambiguously.
+                    'f' => .{ .app = .{ .fold_after = &.{.normalize_linewise_selection_inner} } },
                     'a', 'A' => runCmd(.@"editor.toggle_fold"),
                     'o', 'O' => runCmd(.@"editor.open_fold"),
                     'c', 'C' => runCmd(.@"editor.close_fold"),
@@ -1807,12 +1926,21 @@ pub const Vim = struct {
                 self.resetPending();
                 const op = textObjectOp(key, around) orelse return .consumed;
                 self.visual_exact = true;
+                // `vip` / `vap` make the selection linewise (`:help v_ip`).
+                if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
                 return ops(arena, &.{op});
             },
             .align_char_wait => {
                 self.enterNormal();
                 const c = ch orelse return ops(arena, &.{.select_clear});
                 return ops(arena, &.{ .{ .align_selection = .{ .on_char = c } }, .select_clear });
+            },
+            .mark_jump_line, .mark_jump_exact => {
+                // `V'a`: the selection extends to the mark.
+                const exact = self.prefix == .mark_jump_exact;
+                self.resetPending();
+                const c = asciiLetter(ch) orelse return .consumed;
+                return .{ .app = if (exact) .{ .jump_to_mark_exact = c } else .{ .jump_to_mark_line = c } };
             },
             else => {},
         }
@@ -1828,6 +1956,14 @@ pub const Vim = struct {
             }
         }
         if (key.mods.ctrl) {
+            // `v_CTRL-A` / `v_CTRL-X`: every selected line's first number,
+            // then Normal — never the `a` text-object prefix.
+            if (isCtrlChar(key, 'a') or isCtrlChar(key, 'x')) {
+                const n = self.count1();
+                self.enterNormal();
+                const d: i64 = if (isCtrlChar(key, 'a')) @intCast(n) else -@as(i64, @intCast(n));
+                return ops(arena, &.{ widen, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = false } } });
+            }
             if (ch) |c| {
                 const scroll: ?EditOp = switch (std.ascii.toLower(@intCast(@min(c, 0x7F)))) {
                     'b' => .page_up,
@@ -1942,7 +2078,13 @@ pub const Vim = struct {
             },
             'p', 'P' => {
                 self.enterNormal();
+                // Nothing to put: nothing is deleted either (Vim: E353).
+                if (ctx.register_empty and self.pending_register == null) return ops(arena, &.{.select_clear});
                 return ops(arena, &.{ widen, .{ .replace_selection = "" }, .paste_before });
+            },
+            '\'', '`' => {
+                self.prefix = if (c == '\'') .mark_jump_line else .mark_jump_exact;
+                return .consumed;
             },
             '*' => {
                 self.enterNormal();

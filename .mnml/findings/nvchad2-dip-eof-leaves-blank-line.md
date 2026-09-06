@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `dip` / `dap` on the last paragraph leave an extra empty line (and `dap` does not take the preceding blank)
 
@@ -36,3 +36,7 @@ after dip (status Ln 6/6):     after dap (status Ln 6/6):
 **Actual**: both leave 6 lines: the paragraph text goes but an empty line is left where it was (the range is deleted without its trailing newline), and `dap` never touches line 5. `dG` from line 6 and `Vjjjjd` remove the lines correctly, so it is specific to the paragraph object at EOF.
 
 **Source pointer**: `src/editor/select.zig` paragraph object end (exclusive of the final `\n` when the paragraph is the last one) → `src/editor/delete.zig`.
+
+## Fix
+
+Commit `1465ffe` — `ip` / `ap` name lines; the operator widens them linewise (`dip` → no empty line, `cip` → one, `dap` at EOF takes the preceding blanks, `vip` is V-LINE). Test: `tests/e2e-zig/vim_dap_eof.test`.

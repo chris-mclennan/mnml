@@ -87,6 +87,9 @@ pub const Root = struct {
 pub const Tree = struct {
     gpa: Allocator,
     visible: bool = true,
+    /// A `Ctrl-W` arrived with the tree focused; the next key names the
+    /// window to move to.
+    ctrl_w_pending: bool = false,
     width: u16 = default_width,
     show_hidden: bool = false,
     rows: std.ArrayListUnmanaged(Row) = .empty,
@@ -308,6 +311,33 @@ pub const Tree = struct {
         // A pending `y` / `d` must not survive an unrelated key.
         const pending = self.pending;
         self.pending = null;
+        // The tree is a window to vim's `Ctrl-W` family: `w` / `l` / `h`
+        // / `j` / `k` (and `Ctrl-W Ctrl-W`) move on from it the way
+        // `Ctrl-L` does. The chord owns its second key whatever it is.
+        if (self.ctrl_w_pending) {
+            self.ctrl_w_pending = false;
+            const id: ?command.CommandId = switch (k.code) {
+                .char => |c| switch (if (k.mods.ctrl and c < 0x80) @as(u21, std.ascii.toLower(@intCast(c))) else c) {
+                    'w', 'p' => .@"view.focus_next_split",
+                    'l' => .@"view.focus_right",
+                    'h' => .@"view.focus_left",
+                    'j' => .@"view.focus_down",
+                    'k' => .@"view.focus_up",
+                    else => null,
+                },
+                .right => .@"view.focus_right",
+                .left => .@"view.focus_left",
+                .down => .@"view.focus_down",
+                .up => .@"view.focus_up",
+                else => null,
+            };
+            if (id) |cid| try runCmd(app, cid);
+            return true;
+        }
+        if (app.input_style == .vim and k.mods.ctrl and !k.mods.shift and !k.mods.alt and !k.mods.super and k.code == .char and std.ascii.toLower(@intCast(@min(k.code.char, 0x7F))) == 'w') {
+            self.ctrl_w_pending = true;
+            return true;
+        }
         // The file clipboard's chords: Ctrl+X/C/V/D in both profiles —
         // the tree never edits text, so nothing else can want them here
         // (Rust parity). Plain ctrl only: Ctrl+Shift+D is Activity: Debug

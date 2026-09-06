@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `:g/pat/normal …` and `:g/pat/s//…/` raise one toast per matching line (`:norm — 1 line(s)` ×9, `+9 more…`) on top of the `:g` summary
 
@@ -29,3 +29,7 @@ right edge of screen.txt, rows 22-36:
 **Actual**: each sub-command toasts individually; on a 300-line file that is 300 toasts collapsed into `+N more…` that hides the summary and any real error for ~5 s (toasts do expire, so this is noise not a leak). Same class as the fixed tab-switch pile-up (`5063074`). Two launches.
 
 **Source pointer**: `src/app/ex_verbs.zig` `global` — no toast-suppression / `toastReplace` around the per-line dispatch.
+
+## Fix
+
+Commit `db51eb9` — toasts are dropped while `in_global` is set; `:g` clears it before its own summary. Test: `tests/e2e-zig/vim_global_norm_one_toast.test`.

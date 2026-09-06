@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `'a` / `` `a `` go to the mark's original line number after lines are inserted or deleted above it
 
@@ -38,3 +38,7 @@ toasts: │ mark 'a set │  then  │ → 'a 5:1 │  then  │ → 'a 5:6 │
 **Actual**: the mark stays at its numeric (5,6); `'a` lands on `golf hotel india`, two lines above the marked text. `ggdd` afterwards also leaves it at 5. Both launches identical.
 
 **Source pointer**: the marks store keyed on the vim handler's `.mark_set` (`src/input/vim.zig:1402`) — positions are stored as row/col and never shifted by `Editor.splice`.
+
+## Fix
+
+Commit `ae7bee7` — lowercase marks live on the `Editor` as byte offsets and `splice` moves them with every edit; `Editor.markPos` / `setMarkPos` translate for the session file, `:marks` and the picker. Test: `tests/e2e-zig/vim_marks_follow_edits.test`.

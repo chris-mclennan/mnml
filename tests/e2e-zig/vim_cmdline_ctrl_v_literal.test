@@ -1,0 +1,23 @@
+# zig-only
+# `c_CTRL-V` inserts the next key literally on the `:` line (`:help
+# c_CTRL-V`): `Ctrl-V Tab` is a real tab character, not completion, so
+# `:s/<Tab>/…/` can be typed by hand. `Ctrl-R "` pastes the register.
+write a.txt "a\tb\n"
+open a.txt
+command editor.use_vim
+
+type ":s/"
+key ctrl+v
+key tab
+type "/X/"
+expect screen lacks "agents.new_from_pr"
+key enter
+command file.save
+expect file a.txt contains "aXb\n"
+type yiw
+type ":s/"
+key ctrl+r
+type "\"/Y/"
+key enter
+command file.save
+expect file a.txt contains "Y\n"

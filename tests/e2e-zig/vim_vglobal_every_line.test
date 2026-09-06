@@ -1,0 +1,13 @@
+# zig-only
+# `:v/pat/d` with the pattern on every line has nothing to act on; Vim's
+# message says so ("Pattern found in every line") — `E486: pattern not
+# found` is the `:g` case and would claim the opposite.
+write a.txt "alpha\nbravo\ncharlie\n"
+open a.txt
+command editor.use_vim
+
+type ":v/a/d"
+key enter
+expect screen contains "Pattern found in every line"
+expect screen lacks "E486"
+expect screen contains "charlie"

@@ -342,31 +342,144 @@ pub fn toggleLineComment(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 /// Ctrl+A / Ctrl+X: the number under or after the cursor on this line,
 /// with a leading `-` when it is not glued to an identifier. The cursor
 /// lands on the number's last digit (vim).
+const NumberKind = enum { decimal, hex, bin };
+const NumberSpan = struct { start: usize, end: usize, kind: NumberKind };
+
+fn isBinDigit(b: u8) bool {
+    return b == '0' or b == '1';
+}
+
+/// The number under or after `from` on the line `[bol, eol)`: the first
+/// one that ends past `from`. Neovim's `nrformats=bin,hex`: `0x1f` /
+/// `0b101` are read whole from any of their chars; anything else is
+/// decimal, a `-` right before the digits part of it unless glued to a
+/// word (`a-1`). Leading zeros make a decimal, not octal.
+fn numberAfter(t: []const u8, bol: usize, eol: usize, from: usize) ?NumberSpan {
+    var i = bol;
+    while (i < eol) {
+        if (!std.ascii.isDigit(t[i])) {
+            i += 1;
+            continue;
+        }
+        var span: NumberSpan = undefined;
+        if (t[i] == '0' and i + 2 < eol and (t[i + 1] == 'x' or t[i + 1] == 'X') and std.ascii.isHex(t[i + 2])) {
+            var end = i + 2;
+            while (end < eol and std.ascii.isHex(t[end])) end += 1;
+            span = .{ .start = i, .end = end, .kind = .hex };
+        } else if (t[i] == '0' and i + 2 < eol and (t[i + 1] == 'b' or t[i + 1] == 'B') and isBinDigit(t[i + 2])) {
+            var end = i + 2;
+            while (end < eol and isBinDigit(t[end])) end += 1;
+            span = .{ .start = i, .end = end, .kind = .bin };
+        } else {
+            var start = i;
+            if (start > bol and t[start - 1] == '-') {
+                const glued = start - 1 > bol and (std.ascii.isAlphanumeric(t[start - 2]) or t[start - 2] == '_');
+                if (!glued) start -= 1;
+            }
+            var end = i;
+            while (end < eol and std.ascii.isDigit(t[end])) end += 1;
+            span = .{ .start = start, .end = end, .kind = .decimal };
+        }
+        if (span.end > from) return span;
+        i = span.end;
+    }
+    return null;
+}
+
+/// Add `delta` to the number at `span`; the new span's end, or null when
+/// nothing changed. Hex and binary wrap as 64-bit unsigned and keep
+/// their digit count and letter case; a zero-padded decimal keeps its
+/// width (`007` → `006`, `000` → `-001`) — `:help CTRL-A`. The caller
+/// owns the checkpoint.
+fn bumpNumber(ed: *Editor, span: NumberSpan, delta: i64) Allocator.Error!?usize {
+    const t = ed.bytes();
+    const old = t[span.start..span.end];
+    var buf: [80]u8 = undefined;
+    const new_s: []const u8 = switch (span.kind) {
+        .decimal => blk: {
+            const n = std.fmt.parseInt(i64, old, 10) catch return null;
+            const digits = if (old[0] == '-') old[1..] else old;
+            const v = n +| delta;
+            const padded = digits.len > 1 and digits[0] == '0';
+            const body = std.fmt.bufPrint(buf[40..], "{d}", .{@abs(v)}) catch return null;
+            var w: usize = 0;
+            if (v < 0) {
+                buf[w] = '-';
+                w += 1;
+            }
+            if (padded) while (w + body.len < digits.len + @as(usize, if (v < 0) 1 else 0)) : (w += 1) {
+                buf[w] = '0';
+            };
+            @memcpy(buf[w .. w + body.len], body);
+            break :blk buf[0 .. w + body.len];
+        },
+        .hex, .bin => blk: {
+            const base: u8 = if (span.kind == .hex) 16 else 2;
+            const digits = old[2..];
+            const v = std.fmt.parseInt(u64, digits, base) catch return null;
+            const nv: u64 = if (delta >= 0) v +% @as(u64, @intCast(delta)) else v -% @as(u64, @intCast(-delta));
+            var upper = false;
+            for (digits) |c| if (std.ascii.isUpper(c)) {
+                upper = true;
+            };
+            const body = if (span.kind == .bin)
+                std.fmt.bufPrint(buf[40..], "{b}", .{nv}) catch return null
+            else if (upper)
+                std.fmt.bufPrint(buf[40..], "{X}", .{nv}) catch return null
+            else
+                std.fmt.bufPrint(buf[40..], "{x}", .{nv}) catch return null;
+            buf[0] = old[0];
+            buf[1] = old[1];
+            var w: usize = 2;
+            while (w + body.len < 2 + digits.len) : (w += 1) buf[w] = '0';
+            @memcpy(buf[w .. w + body.len], body);
+            break :blk buf[0 .. w + body.len];
+        },
+    };
+    if (std.mem.eql(u8, new_s, old)) return null;
+    try ed.splice(span.start, span.end, new_s);
+    return span.start + new_s.len;
+}
+
 pub fn changeNumberAtCursor(ed: *Editor, delta: i64, out: *EditOutcome) Allocator.Error!void {
     const line = ed.currentLine();
-    const bol = ed.lineStart(line);
-    const eol = ed.lineEnd(line);
-    const t = ed.bytes();
-    var p = @max(ed.cursor, bol);
-    while (p < eol and !std.ascii.isDigit(t[p])) p += 1;
-    if (p >= eol) return;
-    var start = p;
-    while (start > bol and std.ascii.isDigit(t[start - 1])) start -= 1;
-    if (start > bol and t[start - 1] == '-') {
-        const glued = start - 1 > bol and (std.ascii.isAlphanumeric(t[start - 2]) or t[start - 2] == '_');
-        if (!glued) start -= 1;
-    }
-    var end = p;
-    while (end < eol and std.ascii.isDigit(t[end])) end += 1;
-    const n = std.fmt.parseInt(i64, t[start..end], 10) catch return;
-    var buf: [24]u8 = undefined;
-    const new_s = std.fmt.bufPrint(&buf, "{d}", .{n +| delta}) catch return;
-    if (std.mem.eql(u8, new_s, t[start..end])) return;
+    const span = numberAfter(ed.bytes(), ed.lineStart(line), ed.lineEnd(line), ed.cursor) orelse return;
     try ed.checkpoint();
-    try ed.splice(start, end, new_s);
-    ed.cursor = start + new_s.len - 1;
+    const end = (try bumpNumber(ed, span, delta)) orelse {
+        ed.popCheckpoint();
+        return;
+    };
+    ed.cursor = end - 1;
     ed.anchor = null;
     out.buffer_changed = true;
+}
+
+/// `v_CTRL-A` / `v_CTRL-X` (`:help v_CTRL-A`): the first number on each
+/// selected line — from the selection's start on its first line — gets
+/// `delta`; `progressive` (`g CTRL-A`) gives the k-th line that has a
+/// number `k × delta`. One undo step; the cursor parks at the
+/// selection's start and the selection ends.
+pub fn changeNumbersInSelection(ed: *Editor, delta: i64, progressive: bool, out: *EditOutcome) Allocator.Error!void {
+    const sel = ed.selection() orelse return;
+    const lo = sel[0];
+    const hi = if (sel[1] > sel[0]) sel[1] - 1 else sel[1];
+    const first = ed.lineOfByte(lo);
+    const last = ed.lineOfByte(hi);
+    try ed.checkpoint();
+    var changed = false;
+    var k: i64 = 1;
+    var row = first;
+    while (row <= last) : (row += 1) {
+        const bol = ed.lineStart(row);
+        const from = if (row == first) lo else bol;
+        const span = numberAfter(ed.bytes(), bol, ed.lineEnd(row), from) orelse continue;
+        if (try bumpNumber(ed, span, if (progressive) delta * k else delta)) |_| changed = true;
+        k += 1;
+    }
+    ed.cursor = ed.snapBoundary(lo);
+    ed.anchor = null;
+    ed.goal_col = null;
+    if (changed) out.buffer_changed = true else ed.popCheckpoint();
 }
 
 /// `gq`: greedy word-wrap of the paragraph under the cursor to `width`,

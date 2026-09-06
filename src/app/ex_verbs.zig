@@ -111,7 +111,12 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     while (row <= last) : (row += 1) {
         if (lineHas(ed.lineSlice(row), &re) != invert) try targets.append(arena, ed.lineStart(row));
     }
-    if (targets.items.len == 0) return app.diag.fail(arena, "{s} — E486: pattern not found: {s}", .{ label, needle });
+    if (targets.items.len == 0) {
+        // Vim's `ex_global`: `:v` with every line matching says so;
+        // E486 is the `:g` wording and would claim the opposite.
+        if (invert) return app.diag.fail(arena, "{s} — Pattern found in every line: {s}", .{ label, needle });
+        return app.diag.fail(arena, "{s} — E486: pattern not found: {s}", .{ label, needle });
+    }
     const total = targets.items.len;
 
     if (isPrint(cmd)) {
@@ -129,6 +134,10 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
     defer leave(app);
     app.in_global = true;
     defer app.in_global = false;
+    // One `:g` is one undo step (`:help :g`, `:help undo-blocks`):
+    // every sub-command's checkpoint collapses into this one.
+    const tok = try ed.beginAtomic();
+    const head_before = ed.doc.edits.head();
     var seen = ed.doc.edits.head();
     var ran: usize = 0;
     var failed: usize = 0;
@@ -139,6 +148,7 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
         const cur = pane.buf.editor;
         // Map what is left through the edits the last command made.
         if (cur.doc.edits.lostSince(seen)) {
+            app.in_global = false;
             app.toast("{s} — stopped after {d}: the text was replaced wholesale", .{ label, ran });
             break;
         }
@@ -166,7 +176,16 @@ pub fn global(app: *App, range: ?Range, spec_in: []const u8, invert: bool) Comma
         };
         ran += 1;
     }
+    if (app.panes.editor(pane_id)) |pane| {
+        const cur = pane.buf.editor;
+        cur.endAtomic(tok);
+        // Nothing edited: no step to undo either.
+        if (cur.doc.edits.head() == head_before and !cur.doc.edits.lostSince(head_before)) cur.popCheckpoint();
+    }
     app.diag.clear();
+    // The summary is the one message the run makes; the sub-commands'
+    // were silenced while `in_global` was set.
+    app.in_global = false;
     if (failed > 0) {
         app.toast("{s} — ran on {d} line(s), {d} failed", .{ label, ran, failed });
     } else app.toast("{s} — ran on {d} line(s)", .{ label, ran });

@@ -1,0 +1,21 @@
+# zig-only
+# One `:g` is one change (`:help :g`, `:help undo-blocks`): a single `u`
+# after `:g/pat/normal …` or `:g/pat/s//…/` puts every line back.
+write a.txt "alpha\nbravo\ncharlie\ndelta\n"
+open a.txt
+command editor.use_vim
+
+type ":g/a/norm A;"
+key enter
+command file.save
+expect file a.txt contains "alpha;\nbravo;\ncharlie;\ndelta;\n"
+type u
+command file.save
+expect file a.txt contains "alpha\nbravo\ncharlie\ndelta\n"
+type ":g/a/s/a/4/g"
+key enter
+command file.save
+expect file a.txt contains "4lph4\nbr4vo\nch4rlie\ndelt4\n"
+type u
+command file.save
+expect file a.txt contains "alpha\nbravo\ncharlie\ndelta\n"

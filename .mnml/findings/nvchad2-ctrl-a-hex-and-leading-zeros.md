@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `Ctrl-A` treats `0x0f` as the decimal `0` before the `x` (→ `1x0f`) and `Ctrl-X` on `007` yields `6` (drops the width)
 
@@ -32,3 +32,7 @@ after fo Ctrl-X:  1 hex 1x0f oct 6 neg -0
 **Actual**: hex is not recognised (the `0` is incremented alone, producing `1x0f`), and a zero-padded decimal collapses to `6`. Decimal, negative (`-3`→`-2`→…→`1`), counts (`5 Ctrl-A`) and `.` are correct. Two launches (`0x0f`→`0x1f` when starting on the `x`, `009`→`8`).
 
 **Source pointer**: the number scanner used by the vim handler's `ctrl+a`/`ctrl+x` — decimal-only, formats with `%d` (no width).
+
+## Fix
+
+Commit `973bc85` — the number scanner reads `0x…` / `0b…` whole (case and width kept, unsigned wrap) and keeps a zero-padded decimal's width (`007` → `006`, `000` → `-001`). Test: `tests/e2e-zig/vim_ctrl_a_hex_zeros.test`.

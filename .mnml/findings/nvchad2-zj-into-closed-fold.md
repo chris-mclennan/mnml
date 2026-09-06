@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `zj` from a closed fold lands *inside* it (hidden line 4); `zj` / `zk` from an open fold body do nothing
 
@@ -37,3 +37,7 @@ after :20 zj:     cursor stays 20:5
 **Actual**: from the closed fold the cursor goes to hidden line 4 (the nested `while` fold's start inside the closed range — the same class as the fixed `j`-into-fold bug, `1671c9d`), and from an open body line neither `zj` nor `zk` moves. The `zk` that does move (from 13) goes to the *start* of the enclosing fold (10), not the previous fold's end. Two launches.
 
 **Source pointer**: `src/app/cmd_app.zig:336-348` `foldStep` — walks the fold list without skipping ranges hidden by a closed fold and appears to step only between folds at the cursor's nesting level. Docs: PARITY row "Fold navigation `zj` / `zk` — done".
+
+## Fix
+
+Commit `115b445` — `foldStep` walks every bracket block plus the closed folds, leaves from a closed fold's edges and skips folds a closed one hides. Test: `tests/e2e-zig/vim_zj_zk.test`.

@@ -90,9 +90,19 @@ pub const AppCommand = union(enum) {
     /// `{count}gT` (`count` pages back). Without a count the handler
     /// runs `tab.next` / `tab.prev` instead.
     tab_page: struct { count: u32, back: bool },
+    /// `d'a` / `` y`a `` / `c'a`: `op` is `d`, `y` or `c`; `exact` is the
+    /// backtick form (charwise, exclusive), else linewise to the mark's
+    /// line. The buffer owns the mark, so it builds the range.
+    operator_to_mark: struct { op: u8, mark: u8, exact: bool },
+    /// `{count} Ctrl-W >` and friends: the active window's width
+    /// (`width`) or height by `cells`, negative to shrink.
+    split_resize: struct { width: bool, cells: i32 },
+    /// `zf{motion}` / `zF`: apply these ops (they select the range),
+    /// then fold the selection. Frame arena.
+    fold_after: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 23);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 26);
     }
 };
 
@@ -108,7 +118,9 @@ pub const InputResult = union(enum) {
 };
 
 /// Read-only buffer facts a handler may consult. Intentionally tiny.
-/// // changed: D4 counted 13 scalars; the Rust struct has 12.
+/// // changed: D4 counted 13 scalars; the Rust struct has 12 — and
+/// `register_empty` makes 13 again (a Visual `p` must know before it
+/// deletes the selection).
 pub const EditCtx = struct {
     cursor: usize = 0,
     line_len: usize = 0,
@@ -125,6 +137,8 @@ pub const EditCtx = struct {
     prev_find_match: ?[2]usize = null,
     /// Text width when `[ui] wrap` is on; null aliases `gj` to `j`.
     wrap_width: ?usize = null,
+    /// The unnamed register has nothing to put (Vim's E353).
+    register_empty: bool = false,
 };
 
 /// What `Buffer.feedKey` reports back to the loop.

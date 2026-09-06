@@ -1,0 +1,26 @@
+# zig-only
+# `zf{motion}` creates a fold over the motion in Normal mode (`:help
+# zf`): `zfj` folds two lines, `zfap` a paragraph, `zf2j` three; the
+# cursor stays on the fold's first line and the motion keys are never
+# run loose (no `a` into Insert).
+write a.txt "l1\nl2\nl3\nl4\n\np1\np2\np3\n"
+open a.txt
+command editor.use_vim
+
+type zfj
+expect screen contains "lines hidden"
+expect screen lacks "   2 l2"
+expect screen contains "Ln 1/8"
+type zR
+type 6G
+type zfap
+expect screen contains "NORMAL"
+expect screen contains "lines hidden"
+expect screen lacks "   7 p2"
+expect screen lacks "   6 p1"
+expect screen contains "Ln 5/8"
+type zR
+type gg
+type zf2j
+expect screen lacks "   3 l3"
+expect screen contains "   4 l4"

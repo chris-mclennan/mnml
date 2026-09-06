@@ -1,0 +1,28 @@
+# zig-only
+# `v_CTRL-A` adds to the first number on every selected line and returns
+# to Normal; `v_g_CTRL-A` makes a progression (`:help v_CTRL-A`). The
+# chord is never read as a pending `a` text object, so one Esc is never
+# owed afterwards.
+write a.txt "item 0\nitem 0\nitem 0\nkeep 7\n"
+open a.txt
+command editor.use_vim
+
+type Vjj
+key ctrl+a
+expect screen contains "NORMAL"
+command file.save
+expect file a.txt contains "item 1\nitem 1\nitem 1\nkeep 7\n"
+type Vjjg
+key ctrl+a
+command file.save
+expect file a.txt contains "item 2\nitem 3\nitem 4\nkeep 7\n"
+type Vjj
+key ctrl+x
+command file.save
+expect file a.txt contains "item 1\nitem 2\nitem 3\nkeep 7\n"
+type 3G
+type Vj
+key ctrl+a
+expect screen contains "NORMAL"
+command file.save
+expect file a.txt contains "item 1\nitem 2\nitem 4\nkeep 8\n"

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `:tabmove`, `:resize`, `:vertical resize` are unknown commands; `{count} Ctrl-W >` ignores the count
 
@@ -37,3 +37,7 @@ divider column in screen.txt row 1:  75 → 79 after Ctrl-W <  → 75 after 5 Ct
 **Actual**: the three ex verbs are unknown (PARITY: "Panes, splits & tab pages — 20 done, 0 missing"); the `Ctrl-W` resize chords work but a count is dropped (both moves are one step of 4 columns), so precise keyboard resizing has no path. Two launches.
 
 **Source pointer**: `src/app/ex.zig` verb table (no `tabm[ove]`, `res[ize]`, `vert[ical]`); `src/input/vim.zig` `.window` `<`/`>`/`+`/`-` do not read the pending count.
+
+## Fix
+
+Commit `5506cb0` — `:tabmove [N]`, `:resize [±]N`, `:vertical resize [±]N` (and `:vertical split`); `{count} Ctrl-W >` / `<` / `+` / `-` resize by `count` cells. Test: `tests/e2e-zig/vim_tabmove_resize.test`.

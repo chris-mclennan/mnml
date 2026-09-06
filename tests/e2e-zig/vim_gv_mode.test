@@ -1,0 +1,26 @@
+# zig-only
+# `gv` brings back the last Visual selection in the mode it was made
+# (`:help gv`): a V-LINE yank of two lines comes back as V-LINE over the
+# same two lines, a V-BLOCK yank as the same rectangle — so `gvd` deletes
+# exactly what was just operated on.
+write a.txt "alpha bravo\ndelta echo\ngolf hotel\njuliet kilo\n"
+open a.txt
+command editor.use_vim
+
+type Vjy
+type gv
+expect screen contains "V-LINE"
+expect screen contains "Ln 2/4"
+type d
+command file.save
+expect file a.txt contains "golf hotel\njuliet kilo\n"
+expect file a.txt lacks "alpha"
+type u
+key ctrl+v
+type jly
+type gv
+expect screen contains "V-BLOCK"
+expect screen contains "Ln 2/4"
+type d
+command file.save
+expect file a.txt contains "pha bravo\nlta echo\ngolf hotel\n"

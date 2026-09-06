@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `/pat/e` (search offsets) is searched as the literal text `pat/e` → "no matches"
 
@@ -28,3 +28,7 @@ Workspace `/Users/chrismclennan/Projects/mnml-zig-worktrees/hunt`, launched `MNM
 **Actual**: everything after the pattern's closing `/` is part of the pattern; the search fails silently apart from the toast. Two launches (also with `/greet/e` in b.zig).
 
 **Source pointer**: `src/app/cmd_find.zig` — the `/` line hands the whole string to the finder; no split on an unescaped `/`.
+
+## Fix
+
+Commit `0653d4e` — the vim accept splits `/pat/offset` (`e[±N]`, `s[±N]`, `b[±N]`, `[±]N`), stores the offset on the find state and lands through it; `n` / `N` keep it. Test: `tests/e2e-zig/vim_search_offset.test`.

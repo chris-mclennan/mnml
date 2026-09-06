@@ -201,6 +201,9 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "tabc", "tabclose" })) return command.run(app, .{ .static = .@"tab.close" });
     if (eqAny(verb, &.{ "tabo", "tabonly" })) return command.run(app, .{ .static = .@"tab.only" });
     if (eqAny(verb, &.{"tabs"})) return command.run(app, .{ .static = .@"tab.list" });
+    if (eqAny(verb, &.{ "tabm", "tabmove" })) return @import("cmd_tab.zig").moveTo(app, args);
+    if (eqAny(verb, &.{ "res", "resize" })) return @import("cmd_view.zig").resizeCells(app, false, args);
+    if (eqAny(verb, &.{ "vert", "vertical" })) return vertical(app, args);
     if (eqAny(verb, &.{ "term", "terminal" })) return @import("cmd_term.zig").termEx(app, args);
     if (eqAny(verb, &.{"task"})) return @import("tasks.zig").runNamed(app, args);
 
@@ -208,6 +211,20 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (try ex_verbs.runUserCommand(app, range, verb, bang, args)) return;
     if (command.resolve(app, verb)) |ref| return command.run(app, ref);
     return app.diag.fail(arena, ":{s} — unknown command", .{verb});
+}
+
+/// `:vertical {cmd}` (`:help :vertical`): the width forms of `resize`
+/// and `split` — the two it modifies here.
+fn vertical(app: *App, args: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const a = std.mem.trim(u8, args, " \t");
+    var i: usize = 0;
+    while (i < a.len and std.ascii.isAlphabetic(a[i])) i += 1;
+    const sub = a[0..i];
+    const rest = std.mem.trim(u8, a[i..], " \t");
+    if (sub.len >= 3 and std.mem.startsWith(u8, "resize", sub)) return @import("cmd_view.zig").resizeCells(app, true, rest);
+    if (eqAny(sub, &.{ "sp", "split", "new" })) return splitOpen(app, .horizontal, rest);
+    return app.diag.fail(arena, ":vertical — only `resize` and `split` are supported here", .{});
 }
 
 /// `:new` / `:vnew`: a split holding a fresh scratch buffer.
@@ -422,7 +439,7 @@ const Parser = struct {
                     break :blk if (hi > 0 and hi == ed.buf.editor.lineStart(row) and row > ed.buf.editor.lineOfByte(@min(s[0], s[1]))) row - 1 else row;
                 } else return app.diag.fail(arena, "E20: mark '> not set", .{}),
                 'A'...'Z' => marks_store.rowIn(app, m, ed.buf.doc.path) orelse return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
-                else => if (ed.buf.doc.marks.get(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
+                else => if (ed.buf.doc.markPos(m)) |pos| pos.row else return app.diag.fail(arena, "E20: mark '{c} not set", .{m}),
             };
         } else if (c == '+' or c == '-') {
             base = if (e) |ed| ed.buf.editor.currentLine() else 0;
@@ -906,7 +923,7 @@ fn marks(app: *App) CommandError!void {
     std.mem.sort(u8, names.items, {}, std.sort.asc(u8));
     var parts: std.ArrayListUnmanaged(u8) = .empty;
     for (names.items, 0..) |c, i| {
-        const pos = e.buf.doc.marks.get(c).?;
+        const pos = e.buf.doc.markPos(c).?;
         try parts.print(arena, "{s}'{c}@{d}:{d}", .{ if (i > 0) "  " else "", c, pos.row + 1, pos.col + 1 });
     }
     for (globals) |c| {
@@ -1289,8 +1306,8 @@ test "ex: sort, sort u, retab, ranged delete with marks and a bare line jump" {
     try f.ex("sort!");
     try testing.expectEqualStrings("charlie\nbravo\nalpha", f.text());
     const e = f.app.activeEditor().?;
-    try e.buf.doc.marks.put(testing.allocator, 'a', .{ .row = 0, .col = 0 });
-    try e.buf.doc.marks.put(testing.allocator, 'b', .{ .row = 1, .col = 0 });
+    try e.buf.doc.setMarkPos('a', .{ .row = 0, .col = 0 });
+    try e.buf.doc.setMarkPos('b', .{ .row = 1, .col = 0 });
     try f.ex("'a,'bd");
     try testing.expectEqualStrings("alpha", f.text());
     try e.buf.editor.setText("\tfoo\nx\ty");

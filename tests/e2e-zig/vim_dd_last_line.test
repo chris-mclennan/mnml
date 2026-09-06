@@ -1,0 +1,29 @@
+# zig-only
+# Deleting the last line lands the cursor on the new last line (`Ln 8/8`,
+# never `Ln 9/8`), so a following `p` puts the line back as the last
+# line and never materialises an empty one. `3dd` reaching past EOF and
+# `V j d` ending on the last line clamp the same way.
+write a.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n"
+open a.txt
+command editor.use_vim
+
+key G
+type dd
+expect screen contains "Ln 8/8"
+expect screen lacks "   9 "
+type p
+expect screen contains "Ln 9/9"
+command file.save
+expect file a.txt contains "l7\nl8\nl9\n"
+expect file a.txt lacks "l8\n\nl9"
+key G
+type k
+type Vjd
+expect screen contains "Ln 7/7"
+key G
+type k
+type 3dd
+expect screen contains "Ln 5/5"
+command file.save
+expect file a.txt contains "l4\nl5\n"
+expect file a.txt lacks "l6"

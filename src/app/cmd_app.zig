@@ -342,19 +342,37 @@ fn foldPrev(app: *App) CommandError!void {
     return foldStep(app, false);
 }
 
+/// `zj` / `zk` (`:help zj`): to the start of the next fold, or the end
+/// of the previous one — open bracket blocks and closed folds alike. A
+/// closed fold is one line: the step leaves from its edges and never
+/// lands on a line a closed fold hides.
 fn foldStep(app: *App, forward: bool) CommandError!void {
     const e = try app.requireEditor();
     const ed = e.buf.editor;
     const row = ed.rowCol().row;
+    const here = e.buf.foldAt(row);
+    const from_start = if (here) |f| f[0] else row;
+    const from_end = if (here) |f| f[1] else row;
     var best: ?usize = null;
-    for (e.buf.editor.folds.keys()) |start| {
-        if (forward and start > row and (best == null or start < best.?)) best = start;
-        if (!forward and start < row and (best == null or start > best.?)) best = start;
-    }
-    const target = best orelse return app.diag.fail(app.frame.allocator(), "no fold {s}", .{if (forward) "below" else "above"});
+    const ranges = try @import("cmd_editor.zig").allFoldRanges(ed, app.frame.allocator());
+    for (ranges) |r| consider(e, r, forward, from_start, from_end, &best);
+    for (e.buf.editor.folds.keys(), e.buf.editor.folds.values()) |st, en| consider(e, .{ st, en }, forward, from_start, from_end, &best);
+    var target = best orelse return app.diag.fail(app.frame.allocator(), "no fold {s}", .{if (forward) "below" else "above"});
+    // A fold end inside a closed fold shows as that fold's header.
+    if (e.buf.foldAt(target)) |f| target = f[0];
     ed.setCursor(ed.firstNonWs(target));
     ed.goal_col = null;
     app.needs_render = true;
+}
+
+fn consider(e: *const EditorPane, r: [2]usize, forward: bool, from_start: usize, from_end: usize, best: *?usize) void {
+    // A fold whose start a closed fold hides is not on screen to reach.
+    if (e.buf.foldAt(r[0])) |f| if (f[0] != r[0]) return;
+    if (forward) {
+        if (r[0] > from_end and (best.* == null or r[0] < best.*.?)) best.* = r[0];
+    } else {
+        if (r[1] < from_start and (best.* == null or r[1] > best.*.?)) best.* = r[1];
+    }
 }
 
 /// `zf` over the selection: the rows it spans become one closed fold.
@@ -362,8 +380,11 @@ fn foldSelection(app: *App) CommandError!void {
     const e = try app.requireEditor();
     const ed = e.buf.editor;
     const sel = ed.selection() orelse return app.diag.fail(app.frame.allocator(), "fold: nothing selected", .{});
-    const start = ed.rowColAt(sel[0]).row;
-    const end_row = ed.rowColAt(if (sel[1] > sel[0]) sel[1] - 1 else sel[1]).row;
+    const start = ed.lineOfByte(sel[0]);
+    // A range that ends at a line's start names the line before it,
+    // unless that line is empty and the cursor simply sits on it.
+    var end_row = ed.lineOfByte(sel[1]);
+    if (sel[1] > sel[0] and end_row > start and sel[1] == ed.lineStart(end_row) and !(sel[1] < ed.len() and ed.bytes()[sel[1]] == '\n')) end_row -= 1;
     if (end_row <= start) return app.diag.fail(app.frame.allocator(), "fold: the selection is one line", .{});
     try e.buf.editor.folds.put(app.gpa, start, end_row);
     ed.setCursor(ed.firstNonWs(start));
@@ -568,7 +589,7 @@ fn pickMarks(app: *App) CommandError!void {
         details.deinit(gpa);
     }
     for (letters.items) |c| {
-        const pos = e.buf.doc.marks.get(c).?;
+        const pos = e.buf.doc.markPos(c).?;
         try labels.append(gpa, try std.fmt.allocPrint(gpa, "{c}  Ln {d}, Col {d}", .{ c, pos.row + 1, pos.col + 1 }));
         const row = @min(pos.row, e.buf.editor.lineCount() -| 1);
         const ls = e.buf.editor.lineStart(row);
@@ -587,7 +608,7 @@ fn pickMarks(app: *App) CommandError!void {
 fn acceptMark(app: *App, _: usize, label: []const u8) Allocator.Error!void {
     if (marks_store.isGlobal(label[0])) return marks_store.jump(app, label[0], true);
     const e = app.activeEditor() orelse return;
-    const pos = e.buf.doc.marks.get(label[0]) orelse return;
+    const pos = e.buf.doc.markPos(label[0]) orelse return;
     e.buf.editor.placeCursor(pos.row, pos.col);
     app.needs_render = true;
 }

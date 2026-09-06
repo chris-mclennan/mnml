@@ -1207,6 +1207,9 @@ pub const App = struct {
     }
 
     pub fn toastLevel(self: *App, level: ToastLevel, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+        // Inside `:g` the per-line sub-commands say nothing; `:g` reports
+        // once for the whole run, as Vim does.
+        if (self.in_global) return;
         const s = try std.fmt.allocPrint(self.gpa, fmt, args);
         errdefer self.gpa.free(s);
         try self.messages.record(self.gpa, s, level, self.now_ms);
@@ -1220,6 +1223,7 @@ pub const App = struct {
     /// repeats on every keystroke of a navigation (`tab 2/3`) so the
     /// column never fills with its history.
     pub fn toastReplace(self: *App, id: []const u8, comptime fmt: []const u8, args: anytype) void {
+        if (self.in_global) return;
         self.dismissToast(id);
         const s = std.fmt.allocPrint(self.gpa, fmt, args) catch return;
         errdefer self.gpa.free(s);

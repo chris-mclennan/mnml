@@ -191,16 +191,25 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     }
     // Remembered first, so a query that misses is still recallable.
     try @import("find_history.zig").push(app, q);
+    // `/pat/e`: what follows an unescaped `/` (`?` for `?`) is a search
+    // offset, not pattern (`:help search-offset`).
+    var pattern: []const u8 = q;
+    var offset: find_mod.Offset = .{};
+    if (app.input_style == .vim) if (splitOffset(q, if (reverse) '?' else '/')) |sp| {
+        pattern = sp.pattern;
+        offset = sp.offset;
+    };
     e.find.regex = fb.state.regex;
-    try e.find.setQuery(q, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
+    try e.find.setQuery(pattern, e.buf.editor.bytes(), if (fb.state.match_case) true else app.search_case);
+    e.find.offset = offset;
     if (e.find.matches.items.len == 0) {
-        if (e.find.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), q }) else app.toast("no matches for \"{s}\"", .{q});
+        if (e.find.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), pattern }) else app.toast("no matches for \"{s}\"", .{pattern});
         app.closeFindBar(false);
         return;
     }
     const idx = (if (reverse) e.find.indexBefore(e.buf.editor.cursor) else e.find.indexAtOrAfter(e.buf.editor.cursor)) orelse 0;
     e.find.current = idx;
-    e.buf.editor.setCursor(e.find.matches.items[idx].start);
+    e.buf.editor.setCursor(landing(e, idx));
     e.buf.editor.goal_col = null;
     app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
     app.closeFindBar(false);
@@ -226,10 +235,36 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
         _ = e.find.step(delta);
     }
     const idx = e.find.current.?;
-    e.buf.editor.setCursor(e.find.matches.items[idx].start);
+    e.buf.editor.setCursor(landing(e, idx));
     e.buf.editor.goal_col = null;
     app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
     app.needs_render = true;
+}
+
+/// Where match `idx` puts the cursor, the query's offset applied.
+fn landing(e: *const EditorPane, idx: usize) usize {
+    const m = e.find.matches.items[idx];
+    return e.find.offset.landing(e.buf.editor, m.start, m.end);
+}
+
+const SplitQuery = struct { pattern: []const u8, offset: find_mod.Offset };
+
+/// `pat/e+1` → the pattern and its offset; null when there is no
+/// unescaped `sep` or what follows it is not an offset (then the whole
+/// text is the pattern, as before).
+fn splitOffset(q: []const u8, sep: u8) ?SplitQuery {
+    var i: usize = 0;
+    while (i < q.len) : (i += 1) {
+        if (q[i] == '\\') {
+            i += 1;
+            continue;
+        }
+        if (q[i] == sep) {
+            const off = find_mod.Offset.parse(q[i + 1 ..]) orelse return null;
+            return .{ .pattern = q[0..i], .offset = off };
+        }
+    }
+    return null;
 }
 
 fn next(app: *App) CommandError!void {

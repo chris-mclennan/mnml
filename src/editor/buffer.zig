@@ -30,7 +30,8 @@ pub const EditCtx = input.EditCtx;
 pub const Key = input.Key;
 pub const KeyCode = input.KeyCode;
 
-pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty };
+/// `append`: `qA` — the keys go after what register `a` already holds.
+pub const Recording = struct { reg: u8, keys: std.ArrayList(Key) = .empty, append: bool = false };
 
 pub const commentTokenFor = @import("document.zig").commentTokenFor;
 pub const DiskStamp = @import("document.zig").DiskStamp;
@@ -294,7 +295,7 @@ pub const Buffer = struct {
 
     // ─── the seam ───
 
-    pub fn makeCtx(self: *const Buffer, wrap_width: ?usize) EditCtx {
+    pub fn makeCtx(self: *const Buffer, wrap_width: ?usize, clip: *Clipboard) EditCtx {
         const ed = self.editor;
         const line = ed.currentLine();
         const ls = ed.lineStart(line);
@@ -312,6 +313,7 @@ pub const Buffer = struct {
             .next_find_match = self.find_next,
             .prev_find_match = self.find_prev,
             .wrap_width = wrap_width,
+            .register_empty = clip.text().len == 0,
         };
     }
 
@@ -321,7 +323,7 @@ pub const Buffer = struct {
     pub fn feedKey(self: *Buffer, key: Key, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         if (self.doc.read_only) return .{ .unhandled = key };
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
-        const ctx = self.makeCtx(wrap_width);
+        const ctx = self.makeCtx(wrap_width, clip);
         // What a visual operator would act on, before the key resolves —
         // the shape `.` re-applies (`:help visual-repeat`).
         const visual: ?VisualShape = if (self.input.mode().isVisual()) self.visualShape() else null;
@@ -331,19 +333,22 @@ pub const Buffer = struct {
         self.syncInsertSession(undo_before);
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
-            .ops => |list| blk: {
-                // The record keeps the handler's list: `.` on another
-                // fold re-expands against that fold.
-                const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
-                try self.trackDot(list, visual, arena);
-                break :blk if (changed) .edited else .redraw;
-            },
+            .ops => |list| try self.applyHandlerOps(list, visual, clip, viewport_rows, arena),
             .consumed => .redraw,
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
         self.syncInsertSession(undo_before);
         return ev;
+    }
+
+    /// A handler's op list: applied fold-aware, then recorded for `.`.
+    /// The record keeps the handler's own list, so `.` on another fold
+    /// re-expands against that fold.
+    fn applyHandlerOps(self: *Buffer, list: []const EditOp, visual: ?VisualShape, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const changed = try self.applyOps(try self.foldAwareOps(list, arena), clip, viewport_rows, arena);
+        try self.trackDot(list, visual, arena);
+        return if (changed) .edited else .redraw;
     }
 
     /// Open / anchor / close the Insert undo session against the mode
@@ -676,15 +681,21 @@ pub const Buffer = struct {
             _ = r.keys.pop();
             const spec = try keysToSpec(self.gpa, r.keys.items);
             defer self.gpa.free(spec);
-            try clip.putMacro(r.reg, spec);
+            if (r.append and clip.macro(r.reg) != null) {
+                const joined = try std.mem.concat(self.gpa, u8, &.{ clip.macro(r.reg).?, spec });
+                defer self.gpa.free(joined);
+                try clip.putMacro(r.reg, joined);
+            } else try clip.putMacro(r.reg, spec);
             clip.last_macro = r.reg;
             r.keys.deinit(self.gpa);
             self.recording = null;
             return .redraw;
         }
         // `q<reg>` arrived before recording started, so neither key is in
-        // the register.
-        self.recording = .{ .reg = reg };
+        // the register. An uppercase name appends to the lowercase
+        // register (`:help q`).
+        const upper = reg >= 'A' and reg <= 'Z';
+        self.recording = .{ .reg = if (upper) reg + ('a' - 'A') else reg, .append = upper };
         return .redraw;
     }
 
@@ -725,12 +736,12 @@ pub const Buffer = struct {
             // Uppercase marks are the app's (a file + position).
             .set_mark => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                try self.doc.marks.put(self.gpa, c, self.editor.rowCol());
+                try self.doc.marks.put(self.gpa, c, self.editor.cursor);
                 return .redraw;
             },
             .jump_to_mark_line => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                const p = self.doc.marks.get(c) orelse return .noop;
+                const p = self.doc.markPos(c) orelse return .noop;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
                 self.editor.goal_col = null;
@@ -738,14 +749,51 @@ pub const Buffer = struct {
             },
             .jump_to_mark_exact => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
-                const p = self.doc.marks.get(c) orelse return .noop;
+                const p = self.doc.markPos(c) orelse return .noop;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },
             .macro_record_into => |reg| return self.macroToggle(reg, clip),
             .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, clip, viewport_rows, wrap_width, arena),
+            .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
             else => return .{ .app = cmd },
         }
+    }
+
+    /// `d'a` / `` y`a `` / `c'a` (`:help '`): the range from the cursor to
+    /// the mark — whole lines for `'`, charwise and exclusive for the
+    /// backtick — as the op list the operator would have built from a
+    /// motion, so folds, `.` and the registers see the usual shape. A
+    /// mark that is not set does nothing (Vim: E20).
+    fn operatorToMark(self: *Buffer, op: u8, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const ed = self.editor;
+        const mark_byte = @min(self.doc.marks.get(mark) orelse return .noop, ed.len());
+        const row = ed.lineOfByte(mark_byte);
+        var list: std.ArrayList(EditOp) = .empty;
+        if (exact) {
+            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = @min(ed.cursor, mark_byte) }, .select_start, .{ .set_cursor_byte = @max(ed.cursor, mark_byte) } });
+        } else {
+            const lo = @min(ed.currentLine(), row);
+            const hi = @max(ed.currentLine(), row);
+            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = ed.lineStart(lo) }, .select_start, .{ .set_cursor_byte = ed.lineEnd(hi) } });
+        }
+        switch (op) {
+            'd' => {
+                if (!exact) try list.append(arena, .normalize_linewise_selection);
+                try list.append(arena, .delete_selection);
+            },
+            'y' => {
+                if (!exact) try list.append(arena, .normalize_linewise_selection);
+                try list.appendSlice(arena, &.{ if (exact) .yank_selection else .yank_selection_linewise, .move_cursor_to_selection_start, .select_clear });
+            },
+            'c' => {
+                if (!exact) try list.append(arena, .normalize_linewise_selection_inner);
+                try list.appendSlice(arena, &.{ .{ .replace_selection = "" }, .continue_insert_run });
+                self.input.requestInsertMode();
+            },
+            else => return .noop,
+        }
+        return self.applyHandlerOps(list.items, null, clip, viewport_rows, arena);
     }
 };
 
@@ -1086,7 +1134,7 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("dib", "f(a, |b)", "f(|)");
     try vim("di\"", "x \"a |b\" y", "x \"|\" y");
     try vim("da\"", "x \"a |b\" y", "x | y");
-    try vim("dip", "a\n|b\n\nc", "|\n\nc"); // charwise range, Rust parity
+    try vim("dip", "a\n|b\n\nc", "|\nc"); // linewise (`:help ip`); Rust left an empty line
     try vim("dap", "a\n|b\n\nc", "|c");
     try vim("dit", "<b>hi |there</b>", "<b>|</b>");
     try vim("dat", "<b>hi |there</b>x", "|x");
@@ -1236,6 +1284,27 @@ test "closed folds are one line to j / k and to dd / yy" {
     try testing.expectEqual(@as(usize, 0), h.buf.editor.folds.count());
 }
 
+test "round two: count p, ci\" forward, dd at EOF, Visual Ctrl-A, gv linewise, d'a, marks follow edits" {
+    // `[count]p` puts the text count times in a row (`:help p`).
+    try vim("yy3p", "|a\nb", "a\n|a\na\na\nb");
+    try vim("yiw3p", "|ab", "aababab|b"); // the put leaves the cursor after the text
+    // `ci"` before the first quote takes the first quoted string after it.
+    try vim("0ci\"X<esc>", "|x = \"y\"", "x = \"|X\"");
+    // `dd` on the last line lands on the new last line, never past it.
+    try vim("Gdd", "|a\nb\n", "|a\n");
+    try vim("j3dd", "|a\nb\nc\nd\n", "|a\n");
+    try vim("G3dd", "a\n|b\nc\nd\n", "a\nb\n|c\n"); // the count takes what is there
+    // `v_CTRL-A` bumps every selected line's first number; `g` makes a progression.
+    try vim("Vj<c-a>", "|x 1\ny 1", "|x 2\ny 2");
+    try vim("Vjg<c-a>", "|x 1\ny 1", "|x 2\ny 3");
+    // `gv` comes back in the mode the selection was made in.
+    try vim("Vjygvd", "|a\nb\nc", "|c");
+    // A mark is a motion: `d'a` is linewise to the mark.
+    try vim("majjd'a", "|a\nb\nc\nd", "|d");
+    // Marks move with the text: a line opened above shifts `'a` down.
+    try vim("jjmaggOn<esc>'ax", "|a\nb\nc", "n\na\nb\n|");
+}
+
 test "vim marks, macros and visual mode" {
     try vim("majj'a", "|a\nb\nc", "|a\nb\nc");
     try vim("lmajj`a", "|ab\nb\nc", "a|b\nb\nc");
@@ -1269,7 +1338,7 @@ test "vim marks, macros and visual mode" {
     try vim("viwd", "hel|lo world", "| world");
     try vim("viwy$p", "hel|lo world", "hello worldhello|");
     try vim("viwlld", "|ab cd", "|"); // a motion after the object widens again
-    try vim("vipd", "|a\nb\n\nc", "|\n\nc"); // charwise paragraph range, Rust parity
+    try vim("vipd", "|a\nb\n\nc", "|\nc"); // `vip` is linewise (`:help v_ip`); Rust left an empty line
     try vim("vi(d", "f(a|b)", "f(|)");
     try vim("va\"d", "x \"a|b\" y", "x | y");
     try vim("vlold", "|abcd", "a|cd");
@@ -1277,7 +1346,7 @@ test "vim marks, macros and visual mode" {
     try vim("v<esc>x", "|abc", "|bc");
     try vim("vjJ", "|a\nb", "a| b");
     try vim("vlrX", "|abc", "|XXc");
-    try vim("vlp", "|abc", "|c"); // empty register: selection deleted
+    try vim("vlp", "|abc", "a|bc"); // nothing to put: nothing deleted (Vim: E353); Rust dropped the selection
     try vim("ylvlp", "|abc", "a|c");
     try vim("vVd", "a\n|b\nc", "a\n|c");
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");

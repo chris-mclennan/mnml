@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `p` over a Visual selection with an empty unnamed register deletes the selection (Vim refuses with E353)
 
@@ -31,3 +31,7 @@ after u then Normal-mode p:  Ln 1/9, unchanged (correct)
 **Actual**: the selection is replaced by nothing — three lines vanish with no message. Undoable, but a fresh-session `Vp` reflex silently deletes text. Two launches.
 
 **Source pointer**: `src/input/vim.zig` Visual `'p'` — deletes the selection before checking the register has content.
+
+## Fix
+
+Commit `fa23266` — `EditCtx.register_empty`; a Visual `p` / `P` with nothing to put ends the selection without deleting. Test: `tests/e2e-zig/vim_visual_p_empty_register.test`.

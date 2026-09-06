@@ -26,12 +26,19 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
     switch (op) {
         // ── grouping ──
         .repeat => |r| {
-            if (r.inner.isMutation() and r.count > 1) {
+            // `[count]p` is one put of the text `count` times over, not
+            // `count` puts (`:help p`); the op stays a `repeat` so
+            // `{count}.` can still replace the count.
+            if (register.isPut(r.inner.*)) return register.putRepeated(ed, r.inner.*, r.count, clip, out);
+            // `{count}dd` past the end takes what is there (`:help dd`),
+            // never a line above the one it started on.
+            const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;
+            if (r.inner.isMutation() and count > 1) {
                 const tok = try ed.beginAtomic();
                 defer ed.endAtomic(tok);
-                for (0..r.count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
+                for (0..count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
             } else {
-                for (0..r.count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
+                for (0..count) |_| try applyOne(ed, r.inner.*, vp, clip, out);
             }
         },
         .atomic => |ops| {
@@ -149,7 +156,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_inner_argument => select.argument(ed, false),
         .select_around_argument => select.argument(ed, true),
         .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block => return error.Unsupported, // TODO(vim-slice: text-objects) ii / ai / aI
-        .restore_last_selection => select.restoreLastSelection(ed),
+        .restore_last_selection => |shape| select.restoreLastSelection(ed, shape),
         .swap_anchor_cursor => select.swapAnchorCursor(ed),
         .move_cursor_to_selection_start => select.moveCursorToSelectionStart(ed),
         .normalize_linewise_selection => select.normalizeLinewiseSelection(ed),
@@ -204,6 +211,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .transform_selection_case => |k| try line.transformSelectionCase(ed, k, out),
         .toggle_case_char => try line.toggleCaseChar(ed, out),
         .change_number_at_cursor => |n| try line.changeNumberAtCursor(ed, n.delta, out),
+        .change_numbers_in_selection => |n| try line.changeNumbersInSelection(ed, n.delta, n.progressive, out),
         .reflow_paragraph => |r| try line.reflowParagraph(ed, r.width, out),
         .align_selection => |a| try line.alignSelection(ed, a.on_char, out),
 
@@ -324,7 +332,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .select_all,                                                            .select_word,                                           .select_inner_word,                                                                                              .select_around_word,
         .select_inner_big_word,                                                 .select_around_big_word,                                .{ .select_inner_quote = '"' },                                                                                  .{ .select_around_quote = '"' },
         .{ .select_inner_bracket = '(' },                                       .{ .select_around_bracket = '(' },                      .select_inner_paragraph,                                                                                         .select_around_paragraph,
-        .select_inner_tag,                                                      .select_around_tag,                                     .restore_last_selection,                                                                                         .swap_anchor_cursor,
+        .select_inner_tag,                                                      .select_around_tag,                                     .{ .restore_last_selection = .charwise },                                                                        .swap_anchor_cursor,
         .move_cursor_to_selection_start,                                        .normalize_linewise_selection,                          .normalize_linewise_selection_inner,                                                                             .make_selection_inclusive,
         .{ .insert_char = 'é' },
         .{ .insert_char = '\n' },
@@ -346,6 +354,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
         .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
         .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
+        .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

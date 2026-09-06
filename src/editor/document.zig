@@ -167,8 +167,13 @@ pub const Document = struct {
     dirty: bool = false,
     /// The text as of the last load / save — `dirty` is a comparison.
     saved_text: []u8,
-    /// `m<letter>` positions — a buffer's, in vim.
-    marks: std.AutoHashMapUnmanaged(u8, Pos) = .empty,
+    /// `m<letter>` positions — a buffer's, in vim — as byte offsets:
+    /// `spliceBy` moves them with the text (`:help mark-motions`), a
+    /// mark inside a deleted range landing at the deletion's start.
+    /// Byte-anchored here, at the one place every edit from every
+    /// window passes, so an app-level splice keeps them right as surely
+    /// as a keystroke does.
+    marks: std.AutoHashMapUnmanaged(u8, usize) = .empty,
     /// File extension used for language-specific behaviour. Owned.
     language: ?[]u8 = null,
     read_only: bool = false,
@@ -281,6 +286,21 @@ pub const Document = struct {
         try self.rebuildLineIndex();
         self.edits.markLost();
         for (self.views.items) |v| if (v != by) v.onDocumentReplaced();
+        var marks = self.marks.valueIterator();
+        while (marks.next()) |m| m.* = self.snapBoundary(m.*);
+    }
+
+    /// Mark `letter`'s (row, char col), or null when it is not set.
+    pub fn markPos(self: *const Document, letter: u8) ?Pos {
+        const b = self.marks.get(letter) orelse return null;
+        return self.rowColAt(@min(b, self.text.items.len));
+    }
+
+    /// Set (or move) mark `letter` to a (row, char col) — a session
+    /// restore, `:k`; the vim `m` sets it at the cursor byte directly.
+    pub fn setMarkPos(self: *Document, letter: u8, pos: Pos) Allocator.Error!void {
+        const row = @min(pos.row, self.lineCount() - 1);
+        try self.marks.put(self.gpa, letter, self.byteAtCol(row, pos.col));
     }
 
     /// THE mutation chokepoint. Replaces `[start, end)` with `new` and
@@ -320,6 +340,14 @@ pub const Document = struct {
         }
         const delta: isize = @as(isize, @intCast(new.len)) - @as(isize, @intCast(end - start));
         for (ls.items[lo + nl_new ..]) |*e| e.* = @intCast(@as(isize, @intCast(e.*)) + delta);
+        var marks = self.marks.valueIterator();
+        while (marks.next()) |m| {
+            if (m.* >= end) {
+                m.* = m.* - end + start + new.len;
+            } else if (m.* > start) {
+                m.* = start;
+            }
+        }
 
         if (self.edits.items.items.len >= EditLog.cap) self.edits.markLost();
         const new_end = start + new.len;

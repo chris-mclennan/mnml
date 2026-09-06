@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const editor = @import("editor.zig");
+const edit_op = @import("edit_op.zig");
 const Editor = editor.Editor;
 const classOf = editor.classOf;
 const isSpace = editor.isSpace;
@@ -101,8 +102,11 @@ pub fn aroundWord(ed: *Editor, big: bool) void {
     ed.cursor = hi;
 }
 
-/// The Nth pair of `q` on the cursor's line that contains the cursor.
-/// Backslash-escaped quotes do not count.
+/// The pair of `q` on the cursor's line that contains the cursor, or —
+/// with the cursor before any quote — the first pair after it (`:help
+/// i"`: "when the cursor is not inside a quoted string, the first one
+/// after it on the line is used"). Pairs are counted from the line
+/// start; backslash-escaped quotes do not count.
 pub fn enclosingQuotePairOnLine(ed: *const Editor, q: u21) ?[2]usize {
     const line = ed.currentLine();
     const ls = ed.lineStart(line);
@@ -113,7 +117,7 @@ pub fn enclosingQuotePairOnLine(ed: *const Editor, q: u21) ?[2]usize {
         if (ed.charAt(i) != q) continue;
         if (i > ls and ed.bytes()[i - 1] == '\\') continue;
         if (open) |o| {
-            if (ed.cursor >= o and ed.cursor <= i) return .{ o, i };
+            if (ed.cursor <= i) return .{ o, i };
             open = null;
         } else open = i;
     }
@@ -195,28 +199,37 @@ pub fn bracket(ed: *Editor, open: u21, around: bool) void {
     }
 }
 
-/// Byte range of the paragraph under the cursor; `around` pulls in the
-/// trailing blank lines (and their terminator).
+/// Byte range of the paragraph under the cursor, from its first line's
+/// start to its last line's end — the last `\n` excluded, so the range
+/// names lines the way a Visual `V` does and an operator widens it
+/// (`normalize_linewise_selection`) to take the terminators. `around`
+/// (`:help ap`) adds the blank lines after the paragraph; when none
+/// follow — the paragraph ends the file — the blank lines before it
+/// instead. On a blank line, `ip` is the run of blank lines and `ap`
+/// that run plus the paragraph after it.
 pub fn paragraphBounds(ed: *const Editor, around: bool) [2]usize {
     const n = ed.lineCount();
     const cur = ed.currentLine();
     var start = cur;
+    var end = cur;
     if (ed.lineIsBlank(cur)) {
         while (start > 0 and ed.lineIsBlank(start - 1)) start -= 1;
-        var end = cur;
         while (end + 1 < n and ed.lineIsBlank(end + 1)) end += 1;
+        if (around) {
+            while (end + 1 < n and !ed.lineIsBlank(end + 1)) end += 1;
+        }
         return .{ ed.lineStart(start), ed.lineEnd(end) };
     }
     while (start > 0 and !ed.lineIsBlank(start - 1)) start -= 1;
-    var end = cur;
     while (end + 1 < n and !ed.lineIsBlank(end + 1)) end += 1;
     if (around) {
-        while (end + 1 < n and ed.lineIsBlank(end + 1)) end += 1;
+        if (end + 1 < n) {
+            while (end + 1 < n and ed.lineIsBlank(end + 1)) end += 1;
+        } else {
+            while (start > 0 and ed.lineIsBlank(start - 1)) start -= 1;
+        }
     }
-    const lo = ed.lineStart(start);
-    var hi = ed.lineEnd(end);
-    if (around and hi < ed.len() and ed.lineIsBlank(end)) hi += 1;
-    return .{ lo, hi };
+    return .{ ed.lineStart(start), ed.lineEnd(end) };
 }
 
 pub fn paragraph(ed: *Editor, around: bool) void {
@@ -374,10 +387,27 @@ pub fn tag(ed: *Editor, around: bool) void {
     }
 }
 
-pub fn restoreLastSelection(ed: *Editor) void {
+/// `gv`: the remembered range back, in the shape it was made (`:help
+/// gv`). A linewise range closed one past its last line's `\n`, so the
+/// cursor steps back onto that line; a block range sets the block
+/// anchor rather than the charwise one.
+pub fn restoreLastSelection(ed: *Editor, shape: edit_op.SelectionShape) void {
     const s = ed.last_selection orelse return;
-    ed.anchor = ed.snapBoundary(s[0]);
-    ed.cursor = ed.snapBoundary(s[1]);
+    const a = ed.snapBoundary(s[0]);
+    var c = ed.snapBoundary(s[1]);
+    switch (shape) {
+        .charwise => {},
+        .linewise => if (c > a and c == ed.lineStart(ed.lineOfByte(c))) {
+            c = ed.prevBoundary(c);
+        },
+        .block => {
+            ed.block_anchor = a;
+            ed.block_eol = false;
+        },
+    }
+    ed.anchor = a;
+    ed.cursor = c;
+    ed.goal_col = null;
 }
 
 pub fn swapAnchorCursor(ed: *Editor) void {
@@ -500,7 +530,17 @@ test "paragraphs and tags" {
     paragraph(ed, false);
     try std.testing.expectEqualStrings("p1a\np1b", sel(ed));
     paragraph(ed, true);
-    try std.testing.expectEqualStrings("p1a\np1b\n\n\n", sel(ed));
+    try std.testing.expectEqualStrings("p1a\np1b\n\n", sel(ed));
+    // The last paragraph has no blank line after it: `ap` takes the ones
+    // before it. On a blank line `ap` is the blanks plus the paragraph.
+    ed.cursor = 10;
+    paragraph(ed, true);
+    try std.testing.expectEqualStrings("\n\np2", sel(ed));
+    ed.cursor = 8;
+    paragraph(ed, false);
+    try std.testing.expectEqualStrings("\n", sel(ed));
+    paragraph(ed, true);
+    try std.testing.expectEqualStrings("\n\np2", sel(ed));
     const ed2 = try Editor.init(std.testing.allocator, "<div><p class=x>hi <b>there</b></p><br/></div>");
     defer ed2.deinit();
     ed2.cursor = 17;
@@ -524,8 +564,15 @@ test "line-to-end, inclusive, linewise normalize, swap, gv" {
     try std.testing.expectEqualStrings("ab\ncd\n", sel(ed));
     selectClear(ed);
     try std.testing.expect(ed.anchor == null);
-    restoreLastSelection(ed);
+    restoreLastSelection(ed, .charwise);
     try std.testing.expectEqualStrings("ab\ncd\n", sel(ed));
+    // Linewise: the cursor comes back on the last selected line, not on
+    // the line after it; block: the block anchor is set.
+    restoreLastSelection(ed, .linewise);
+    try std.testing.expectEqual(@as(usize, 1), ed.lineOfByte(ed.cursor));
+    restoreLastSelection(ed, .block);
+    try std.testing.expectEqual(@as(?usize, 0), ed.block_anchor);
+    ed.block_anchor = null;
     ed.anchor = 3;
     ed.cursor = 4;
     makeSelectionInclusive(ed);

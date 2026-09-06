@@ -247,6 +247,30 @@ fn moveBy(app: *App, delta: i32) CommandError!void {
     app.needs_render = true;
 }
 
+/// `:tabmove [N]` (`:help :tabmove`): the page goes after page N — N
+/// counted with this page taken out — `0` makes it the first, no N the
+/// last, `+N` / `-N` move it relative to where it is.
+pub fn moveTo(app: *App, args: []const u8) CommandError!void {
+    const ls = &app.layouts;
+    const n = ls.layouts.items.len;
+    const a = std.mem.trim(u8, args, " \t");
+    if (a.len > 0 and (a[0] == '+' or a[0] == '-')) {
+        const d = std.fmt.parseInt(i32, a, 10) catch return app.diag.fail(app.frame.allocator(), ":tabmove — not a number: {s}", .{a});
+        return moveBy(app, d);
+    }
+    if (n < 2) return;
+    var target: usize = n - 1;
+    if (a.len > 0) target = std.fmt.parseInt(usize, a, 10) catch return app.diag.fail(app.frame.allocator(), ":tabmove — not a number: {s}", .{a});
+    target = @min(target, n - 1);
+    const cur = ls.active;
+    if (target == cur) return;
+    const page = ls.layouts.orderedRemove(cur);
+    ls.layouts.insertAssumeCapacity(target, page);
+    ls.active = target;
+    app.toastReplace(tab_toast, "tab {d}/{d}", .{ target + 1, n });
+    app.needs_render = true;
+}
+
 fn tabMoveLeft(app: *App) CommandError!void {
     return moveBy(app, -1);
 }

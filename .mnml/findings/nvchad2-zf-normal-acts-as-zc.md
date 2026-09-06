@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `zf{motion}` in Normal mode closes the fold under the cursor and then runs the motion loose (`zf3j` = `zc` + `3j`, `zfap` ends in Insert)
 
@@ -30,3 +30,7 @@ after :10 zfap:  "mode":"INSERT","cursor":{"line":10,"col":3};  10 ppub fn fn2(a
 **Actual**: `zf` behaves as `zc` (closes the syntax fold at the cursor) and the motion keys are then executed on their own: `j` moves to line 18, `a` enters Insert and `p` is typed into the buffer. `zf` in Visual (`Vjjjzf`) does fold the selection. Two launches.
 
 **Source pointer**: `src/input/vim.zig` `z` prefix: `f` is mapped to the close-fold command in Normal mode instead of arming an operator-pending state; PARITY says "Code folding — manual — done" and only documents `zf` for Visual.
+
+## Fix
+
+Commit `e8de7d8` — `zf` is a pending operator; the range goes live as whole lines and the app folds it (`fold_after`); `zF` folds `count` lines; the Visual `zf` takes the same route. Test: `tests/e2e-zig/vim_zf_operator.test`.

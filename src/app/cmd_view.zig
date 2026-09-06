@@ -344,6 +344,13 @@ fn focusNextSplit(app: *App) CommandError!void {
     const cur = app.active orelse return error.NoActivePane;
     const layout = app.layouts.current();
     const leaves = try layout.leaves(app.frame.allocator());
+    // From the sidebar the cycle continues into the first window.
+    if (app.focus == .tree and leaves.len > 0) {
+        app.setActive(layout.leaf(leaves[0]).?.active);
+        app.focus = .{ .pane = app.active orelse cur };
+        app.needs_render = true;
+        return;
+    }
     const mine = layout.leafOf(cur) orelse return;
     const idx = std.mem.indexOfScalar(layout_mod.NodeId, leaves, mine) orelse return;
     if (idx + 1 == leaves.len and app.tree.visible) {
@@ -1121,6 +1128,44 @@ fn resize(app: *App, dir: layout_mod.SplitDir, grow: bool) CommandError!void {
     const next: i32 = std.math.clamp(@as(i32, s.ratio) + delta, 10, 90);
     app.layouts.current().setRatio(s.id, @intCast(next));
     app.needs_render = true;
+}
+
+/// `:resize N` / `:vertical resize N` / `{count} Ctrl-W >`: the active
+/// window's height or width in cells — absolute, `+N` / `-N` relative,
+/// empty = as much as the split allows — as the ratio of its enclosing
+/// split that gives that many cells (`:help :resize`).
+pub fn resizeCells(app: *App, width: bool, spec: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const s = try enclosingSplit(app, if (width) .horizontal else .vertical);
+    const cur = app.active orelse return error.NoActivePane;
+    const rects = try app.layouts.current().computeRects(app.panes_area, arena);
+    var have: ?i32 = null;
+    for (rects.panes) |pr| if (pr.pane == cur) {
+        have = if (width) pr.rect.w else pr.rect.h;
+    };
+    var all: ?i32 = null;
+    for (rects.dividers) |d| if (d.split == s.id) {
+        all = if (width) d.area.w else d.area.h;
+    };
+    const mine = have orelse return error.NoActivePane;
+    const total = all orelse return app.diag.fail(arena, "no split to resize", .{});
+    const a = std.mem.trim(u8, spec, " \t");
+    const want: i32 = if (a.len == 0)
+        total
+    else if (a[0] == '+' or a[0] == '-')
+        mine + (std.fmt.parseInt(i32, a, 10) catch return app.diag.fail(arena, ":resize — not a number: {s}", .{a}))
+    else
+        std.fmt.parseInt(i32, a, 10) catch return app.diag.fail(arena, ":resize — not a number: {s}", .{a});
+    var ratio: i32 = @divTrunc(std.math.clamp(want, 1, total) * 100, @max(total, 1));
+    if (!s.first) ratio = 100 - ratio;
+    app.layouts.current().setRatio(s.id, @intCast(std.math.clamp(ratio, 10, 90)));
+    app.needs_render = true;
+}
+
+pub fn resizeByCells(app: *App, width: bool, cells: i32) CommandError!void {
+    var buf: [16]u8 = undefined;
+    const spec = std.fmt.bufPrint(&buf, "{s}{d}", .{ if (cells >= 0) "+" else "", cells }) catch return;
+    return resizeCells(app, width, spec);
 }
 
 fn splitGrowWidth(app: *App) CommandError!void {

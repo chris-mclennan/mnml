@@ -1,0 +1,17 @@
+# zig-only
+# `ci"` with the cursor before the first quote on the line uses the first
+# quoted string after it (`:help i"`); `di"` / `yi"` the same.
+write a.txt "name = \"world\";\nx = 'a' + 'b';\n"
+open a.txt
+command editor.use_vim
+
+type 0ci"X
+key esc
+command file.save
+expect file a.txt contains "name = \"X\";\n"
+type j0di'
+command file.save
+expect file a.txt contains "x = '' + 'b';\n"
+type 0f+yi'$p
+command file.save
+expect file a.txt contains "x = '' + 'b';b\n"
