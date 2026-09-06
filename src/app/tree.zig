@@ -23,6 +23,7 @@ const Ui = context;
 const files_pane = @import("files_pane.zig");
 const file_clipboard = @import("file_clipboard.zig");
 const trash = @import("trash.zig");
+const watch = @import("watch.zig");
 
 pub const table = .{
     .@"view.add_workspace" = &addWorkspace,
@@ -97,6 +98,10 @@ pub const Tree = struct {
     expanded: std.StringHashMapUnmanaged(void) = .empty,
     /// Top-level directories a refresh has already met (owned keys).
     seen_top: std.StringHashMapUnmanaged(void) = .empty,
+    /// Every directory the rows were read from, by absolute path
+    /// (owned keys), stamped as it was read. `watch.check` refreshes
+    /// the tree when one of them moves on disk.
+    dir_stamps: std.StringHashMapUnmanaged(watch.DiskStamp) = .empty,
     /// Extra roots, in section order. With none, the tree is the
     /// primary workspace alone and paints no headers.
     roots: std.ArrayListUnmanaged(Root) = .empty,
@@ -118,6 +123,7 @@ pub const Tree = struct {
     pub fn deinit(self: *Tree) void {
         self.clearRows();
         self.rows.deinit(self.gpa);
+        self.dir_stamps.deinit(self.gpa);
         var it = self.expanded.keyIterator();
         while (it.next()) |k| self.gpa.free(k.*);
         self.expanded.deinit(self.gpa);
@@ -198,6 +204,35 @@ pub const Tree = struct {
     fn clearRows(self: *Tree) void {
         for (self.rows.items) |r| self.gpa.free(r.rel);
         self.rows.clearRetainingCapacity();
+        self.clearDirStamps();
+    }
+
+    fn clearDirStamps(self: *Tree) void {
+        var it = self.dir_stamps.keyIterator();
+        while (it.next()) |k| self.gpa.free(k.*);
+        self.dir_stamps.clearRetainingCapacity();
+    }
+
+    fn noteDirStamp(self: *Tree, app: *App, abs: []const u8) Allocator.Error!void {
+        const st = watch.stamp(app.io, abs) orelse return;
+        if (self.dir_stamps.getPtr(abs)) |slot| {
+            slot.* = st;
+            return;
+        }
+        const key = try self.gpa.dupe(u8, abs);
+        errdefer self.gpa.free(key);
+        try self.dir_stamps.put(self.gpa, key, st);
+    }
+
+    /// Whether any listed directory's mtime moved since it was read —
+    /// an entry another tool added, removed or renamed.
+    pub fn dirsChanged(self: *const Tree, io: std.Io) bool {
+        var it = self.dir_stamps.iterator();
+        while (it.next()) |kv| {
+            const now_st = watch.stamp(io, kv.key_ptr.*) orelse return true;
+            if (now_st.mtime_ns != kv.value_ptr.mtime_ns) return true;
+        }
+        return false;
     }
 
     /// Rebuild the rows from disk: the root's entries, then each
@@ -250,6 +285,7 @@ pub const Tree = struct {
         const abs = if (rel_dir.len == 0) app.workspace else if (std.fs.path.isAbsolute(rel_dir)) rel_dir else try std.fs.path.join(app.frame.allocator(), &.{ app.workspace, rel_dir });
         var dir = std.Io.Dir.cwd().openDir(app.io, abs, .{ .iterate = true }) catch return;
         defer dir.close(app.io);
+        try self.noteDirStamp(app, abs);
         var names: std.ArrayListUnmanaged(Row) = .empty;
         defer names.deinit(gpa);
         var it = dir.iterate();

@@ -21,6 +21,8 @@ const todos = @import("../todos.zig");
 pub const interval_ms: i64 = 2000;
 
 /// What is on disk for `path` right now, or null when it cannot be read.
+pub const DiskStamp = pane_mod.DiskStamp;
+
 pub fn stamp(io: Io, path: []const u8) ?pane_mod.DiskStamp {
     const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
     return .{ .mtime_ns = st.mtime.toNanoseconds(), .size = st.size };
@@ -75,6 +77,28 @@ pub fn check(app: *App) Allocator.Error!void {
             },
         };
         app.toast("{s} reloaded", .{rel});
+    }
+    try checkDirs(app);
+}
+
+/// The listings: a Files pane whose directory's mtime moved re-reads
+/// (an entry added, removed or renamed outside mnml — git checkout, a
+/// build, another editor), and the tree refreshes when any directory
+/// it lists did. The 2 s pass is the debounce; a burst of writes is
+/// one re-read.
+fn checkDirs(app: *App) Allocator.Error!void {
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .files => |*f| if (f.dir_stamp) |known| {
+            const now_st = stamp(app.io, f.cwd) orelse continue;
+            if (now_st.mtime_ns == known.mtime_ns) continue;
+            try f.reload(app.io);
+            app.needs_render = true;
+        },
+        else => {},
+    };
+    if (app.tree.loaded and app.tree.dirsChanged(app.io)) {
+        try app.tree.refresh(app);
+        app.needs_render = true;
     }
 }
 
@@ -175,6 +199,34 @@ test "a clean buffer reloads when the file changes on disk; the cursor row survi
     try f.app.runEx("e!");
     try t.expectEqualStrings("changed again\n", e.buf.editor.bytes());
     try t.expect(!e.buf.doc.dirty);
+}
+
+test "a Files pane and the tree re-read when a file appears in their directory outside mnml" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a" });
+    try @import("../core/command.zig").run(&f.app, .{ .static = .@"files.open" });
+    try f.app.tree.refresh(&f.app);
+    const files = &f.app.panes.get(f.app.active.?).?.files;
+    try t.expectEqual(@as(usize, 1), files.count());
+    try t.expect(files.dir_stamp != null);
+    try t.expect(f.app.tree.dir_stamps.count() >= 1);
+    const rows_before = f.app.tree.rows.items.len;
+    // Nothing changed: the pass is quiet.
+    f.app.last_watch_ms = 0;
+    try tick(&f.app, interval_ms);
+    try t.expectEqual(@as(usize, 1), files.count());
+    // A file lands from outside; the directory's mtime moves. A
+    // same-nanosecond stamp is the one thing this cannot see, so the
+    // stamp is nudged back to stand for "read earlier".
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "zzz-external.txt", .data = "" });
+    files.dir_stamp.?.mtime_ns -= 1;
+    var it = f.app.tree.dir_stamps.valueIterator();
+    while (it.next()) |v| v.mtime_ns -= 1;
+    try tick(&f.app, 2 * interval_ms);
+    try t.expectEqual(@as(usize, 2), files.count());
+    try t.expect(f.app.tree.rows.items.len > rows_before);
+    try t.expect(f.app.tree.rowOf("zzz-external.txt") != null);
 }
 
 test "a save restamps the file so the writer's own change is not reported" {

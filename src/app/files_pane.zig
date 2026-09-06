@@ -36,6 +36,7 @@ const cmd_view = @import("cmd_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const git_app = @import("git.zig");
 const trash = @import("trash.zig");
+const watch = @import("watch.zig");
 
 pub const Hit = files_view.Hit;
 
@@ -137,6 +138,10 @@ pub const FilesPane = struct {
     loaded: bool = false,
     /// The workspace trash: the title says so and delete is permanent.
     in_trash: bool = false,
+    /// `cwd` as it was when the listing was read (`watch.check`
+    /// re-reads when the directory's mtime moves — an entry added,
+    /// removed or renamed by another tool).
+    dir_stamp: ?watch.DiskStamp = null,
 
     pub fn init(gpa: Allocator, dir: []const u8) Allocator.Error!FilesPane {
         return .{
@@ -182,6 +187,7 @@ pub const FilesPane = struct {
         self.entries = &.{};
         const arena = self.snapshot.allocator();
         var out: std.ArrayListUnmanaged(Entry) = .empty;
+        self.dir_stamp = watch.stamp(io, self.cwd);
         var dir = Io.Dir.cwd().openDir(io, self.cwd, .{ .iterate = true }) catch |err| {
             self.err = try gpa.dupe(u8, @errorName(err));
             self.visible.clearRetainingCapacity();
