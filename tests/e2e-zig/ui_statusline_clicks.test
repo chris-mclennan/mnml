@@ -1,26 +1,22 @@
 # zig-only
 # The statusline is clickable end to end: the position chip opens the
-# go-to-line prompt, the input-style chip toggles the keymap (the mode
-# chip follows), the indent chip prompts for a tab width. At 120x40 the
-# statusline is row 38; the right cluster from the edge is utf-8 (7),
-# the indent chip (5), the clock (7), the idle bell (3), the input
-# style (10 as `standard`, 5 as `vim` — column 95 is inside both), then
-# the position chip (15).
+# go-to-line prompt, the mode chip toggles the keymap (the vim chip grows
+# its glyph), the language chip says what the file is. At 120x40 the
+# statusline is row 38; the right lane from the edge is the language chip
+# (6 plus its arrow), the workspace (the runner's 41-character temp name
+# plus the folder glyph, 44), the clock (7), the idle bell (4), the
+# position (14) and the size (6): the position chip spans columns 44–57,
+# the language chip 114–119, the mode chip 0–5.
 write notes.txt hello world
 open notes.txt
 expect screen contains "EDIT"
-expect screen contains "standard"
-expect screen contains "utf-8"
-click 85 38
+expect screen contains "Ln 1/1 Col 1"
+click 50 38
 expect screen contains "Go to line"
 key esc
-click 95 38
+click 2 38
 expect screen contains "NORMAL"
-expect screen contains "vim"
-click 95 38
+click 2 38
 expect screen contains "EDIT"
-click 110 38
-expect screen contains "Tab width"
-key backspace
-type "8\n"
-expect screen contains "tab width: 8"
+click 116 38
+expect screen contains "language: txt"

@@ -2529,3 +2529,68 @@ break-check.
   over the section's glyph on Rust's pulse (four seconds glyph, one
   second count — `app.now_ms`), `•` for one, the digit to nine, `+` past
   it. Same keys as `ipc/effects.known_sections`.
+
+## Statusline (2026-09-06, branch `statusline`) — `// changed:` notes
+
+- `// changed (ui):` `statusline.Info` is two lanes of `Seg` plus the
+  centred pending chord: `Seg{ text, fg, bg, bold, hit, sticky, accent,
+  tail }`. The component paints powerline arrows (U+E0B0 / U+E0B2)
+  wherever two neighbours' grounds differ — the colour hand-off — and
+  none between two on one ground, so a two-seg chip (the vim glyph and
+  its label) is one pill. `draw` registers every `Seg.hit` as
+  `.statusline_seg`. The fixed ids are `seg_mode = 0`, `seg_file = 1`,
+  `seg_position = 2`, `seg_language = 3`, `seg_restricted = 4`;
+  `seg_app_base = 16` up is the app's (`app/statusline.zig` `SegId`),
+  `seg_dyn_base + i` a host segment's slot. `seg_input_style` is gone —
+  the mode chip is where the keymap is toggled, as in Rust. Overflow:
+  the right lane is measured whole, the longest left chip clips (floor
+  three cells), then right chips drop leftmost-first, a `sticky` one
+  (Ln/Col) last; Rust instead lets the screen edge cut the right lane
+  (the 60-column dump loses ` ws` and the language).
+- `// changed (app):` `app/statusline.zig` builds the lanes — mode,
+  host segments, branch (`⇡N ⇣N` + NvChad file counts), PR, file glyph
+  + name + `●`, diagnostics, symbol, macro, find | host segments,
+  tests, Claude, Codex, coverage (`F 57% ▲1.0` with the tinted delta),
+  transfer, LSP, RESTRICTED, WRAP, autosave, size, Ln/Col, Sel, stress,
+  bell, clock, workspace, language — and `render.drawStatusline` is one
+  call into it. `render.SegId` is an alias of `statusline.SegId`.
+  `modeOf` is the one paint-side read of the editing mode: TREE / PANEL
+  / EDIT / VIEW for the standard profile (a Pty, Files or HTTP pane is
+  VIEW, as Rust), the vim mode with the U+E7C5 glyph otherwise. The
+  replaced builders are deleted: `lsp.statusSegment`,
+  `git.statusSegment`, `ai.meterSegment`, `messages.bellSegment`
+  (their tests now read the painted row). The WRAP chip reads the
+  active editor's own wrap (`EditorPane.wrap`) before the config's, so
+  its click (`view.toggle_wrap`) is visible on the chip.
+  `coverage.shown` / `delta` / `featureAt` / `codePrev` give the chip
+  its ▲▼± deltas (feature: seven days back; code: the previous point).
+  `git.tick` runs `discover` on the first tick so the branch chip shows
+  before any git pane is opened.
+- `// changed (app):` `dispatch.mouse` routes every chip: mode →
+  keymap toggle / menu, position → go to line, file → the Buffer menu
+  on the right button (left does nothing, as Rust; the "Reveal in
+  tree" row waits on a `view.reveal_in_tree` runner — the id is spec'd
+  with none, and `-Dpartial` hides that), language → a toast, branch →
+  status pane / git menu, PR → the browser, symbol → outline, macro →
+  stop, find → the find bar, tests → the pane, AI → spend report,
+  coverage → toast / mode menu, LSP → symbols, WRAP → toggle, autosave
+  / size → toasts, bell → history / menu, clock → local ⇄ UTC / menu,
+  workspace → switch workspace (or repo, with several), a host
+  segment → its `click_command`. `discovery.describe` has words for
+  each. `context_menus.openFileChipMenu` is new.
+- `// changed (ui):` `ui/file_glyph.zig` is the file chip's devicon
+  lookup (name, then extension, in the language's colour). The tree
+  track is building the full table as `ui/icons.zig`; this folds into
+  it at the merge — same codepoints, same colours.
+- `// changed (tools):` `tools/ui-diff.sh` snapshots `$WS/.mnml/
+  session*` before each run and restores it after, so a STEPS file
+  that opens a file is not restored by the next run. `docs/ui-spec/
+  rust-80x24.txt` is the Rust screen at 80×24; both dumps are embedded
+  (`build.zig`, `ui_spec_rust_120x40` / `ui_spec_rust_80x24`) and the
+  statusline tests compare the painted row with the spec's — clock
+  normalised, the cut now-playing cluster removed (or put back at the
+  component level, where the 80-column row is Rust's cell for cell).
+- Cut, per the spec: the now-playing / Sonos clusters. Not in this
+  build: the Claude chip's quota percent (`W 99% 18m …`) — Zig's meter
+  is the local 24h spend until the usage endpoint is called; the LSP
+  progress (`⟳ …`), background-task spinner and `AI` suggestion chips.

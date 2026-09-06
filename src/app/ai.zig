@@ -1567,17 +1567,6 @@ fn chipAllTicker(app: *App) CommandError!void {
     return setMeterMode(app, .ticker);
 }
 
-/// The statusline's AI segment, on the frame arena; null hides it.
-pub fn meterSegment(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
-    const m = app.ai.meter orelse return null;
-    var buf: [16]u8 = undefined;
-    return switch (app.cfg.ai.claude_meter_mode) {
-        .off => null,
-        .compact => try std.fmt.allocPrint(arena, "AI ${d:.2}", .{m.cost_usd}),
-        .ticker => try std.fmt.allocPrint(arena, "AI {s} · ${d:.2}", .{ transcript.fmtTokens(&buf, m.tokens), m.cost_usd }),
-    };
-}
-
 // ─── cloud agents ───────────────────────────────────────────────────────
 
 fn cloudNotInBuild(app: *App) CommandError!void {

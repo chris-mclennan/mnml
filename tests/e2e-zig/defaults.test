@@ -5,9 +5,11 @@
 # on purpose, in the same commit as this file.
 write a.txt hello\nworld
 
-# editor.input_style = standard: the statusline's input-style chip.
+# editor.input_style = standard: the statusline's mode chip is the
+# standard handler's context label, not a vim mode.
 open a.txt
-expect screen contains "standard"
+expect screen contains "EDIT"
+expect screen lacks "NORMAL"
 
 # ui.line_numbers = true: the gutter numbers the rows.
 expect screen contains "1 hello"

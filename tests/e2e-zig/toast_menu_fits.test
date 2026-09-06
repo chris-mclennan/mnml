@@ -9,4 +9,6 @@ rightclick 108 35
 expect screen contains "Dismiss"
 expect screen contains "Copy text"
 expect screen contains "Dismiss all"
-expect screen contains "Ln 0/0 Col 0  standard"
+# The statusline under it is whole: the mode chip and the file chip.
+expect screen contains " TREE "
+expect screen contains "[no file]"

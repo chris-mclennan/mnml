@@ -23,6 +23,7 @@ const Ui = @import("../ui/context.zig");
 const Theme = @import("../ui/theme.zig");
 const tooltip = @import("../ui/tooltip.zig");
 const statusline = @import("../ui/statusline.zig");
+const statusline_app = @import("statusline.zig");
 const toast_mod = @import("../ui/toast.zig");
 const integrations_view = @import("../ui/integrations_view.zig");
 const render = @import("render.zig");
@@ -162,30 +163,59 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             .title = try std.fmt.allocPrint(arena, "Mode — {s} keymap", .{@tagName(app.input_style)}),
             .detail = "click: toggle vim ⇄ standard · right-click: keymap menu",
         },
-        statusline.seg_file => return .{ .title = "File", .detail = "right-click: copy the path" },
+        statusline.seg_file => return .{ .title = "File", .detail = "the open file, ● when unsaved · right-click: copy the path / close the buffer" },
         statusline.seg_position => return .{ .title = "Position", .detail = "click: go to line" },
-        statusline.seg_input_style => return .{ .title = "Input style", .detail = "click: toggle vim ⇄ standard · right-click: keymap menu" },
+        statusline.seg_language => return .{ .title = "Language", .detail = "the file's language, by extension · click says so" },
         statusline.seg_restricted => return .{
             .title = "RESTRICTED — this workspace's exec-bearing settings are off",
             .detail = "click reviews what it wants to run (workspace.review_trust)",
         },
         else => {},
     }
-    const id = render.SegId.of(seg) orelse return null;
+    if (seg >= statusline.seg_dyn_base) return .{ .title = "Integration segment", .detail = "click runs the segment's command" };
+    const id = statusline_app.SegId.of(seg) orelse return null;
     return switch (id) {
         .branch => blk: {
             var detail: std.ArrayListUnmanaged(u8) = .empty;
             try detail.appendSlice(arena, "click: status pane · right-click: git menu");
-            if (app.git.status) |s| {
-                if (s.ahead > 0) try detail.print(arena, " · ↑{d} ahead", .{s.ahead});
-                if (s.behind > 0) try detail.print(arena, " · ↓{d} behind", .{s.behind});
-                const n = s.changeCount();
-                if (n > 0) try detail.print(arena, " · ●{d} changed", .{n});
+            if (app.git.status) |st| {
+                if (st.ahead > 0) try detail.print(arena, " · ⇡{d} ahead", .{st.ahead});
+                if (st.behind > 0) try detail.print(arena, " · ⇣{d} behind", .{st.behind});
+                const c = statusline_app.fileCounts(st);
+                if (c.added > 0) try detail.print(arena, " · {d} added", .{c.added});
+                if (c.changed > 0) try detail.print(arena, " · {d} changed", .{c.changed});
+                if (c.removed > 0) try detail.print(arena, " · {d} removed", .{c.removed});
+                if (c.conflicts > 0) try detail.print(arena, " · {d} in conflict", .{c.conflicts});
             }
             break :blk .{ .title = try std.fmt.allocPrint(arena, "Branch {s}", .{app.git.branchLabel() orelse "?"}), .detail = detail.items };
         },
+        .pr => .{ .title = "Pull request on this branch", .detail = "click opens it in the browser" },
         .diagnostics => .{ .title = "Diagnostics in this file", .detail = "click: the panel · right-click: next / previous / filter" },
-        .ai_meter => .{ .title = "AI spend", .detail = "click: today's report" },
+        .symbol => .{ .title = "Enclosing symbol", .detail = "click: the outline pane" },
+        .macro => .{ .title = "Recording a macro", .detail = "click stops it (q)" },
+        .find => .{ .title = "Find", .detail = "the query and the match under the cursor · click reopens the find bar" },
+        .test_run => .{ .title = "Test run", .detail = "click focuses the tests pane" },
+        .ai_claude => .{ .title = "Claude — 24h spend", .detail = "click: today's report" },
+        .ai_codex => .{ .title = "Codex — 24h spend", .detail = "click: today's report" },
+        .coverage => .{ .title = "Coverage", .detail = "feature (F) and code (C) coverage from the trends files, with the move since last week / last commit · click toasts both · right-click picks the mode" },
+        .transfer => .{ .title = "File transfers", .detail = "progress of the running copies · right-click: cancel all" },
+        .lsp => .{ .title = "Language servers running", .detail = "click: the symbols in this file" },
+        .wrap => .{ .title = "WRAP — long lines wrap", .detail = "click turns wrapping off" },
+        .autosave => .{ .title = try std.fmt.allocPrint(arena, "Autosave every {d}s", .{app.cfg.editor.autosave_secs}), .detail = "`[editor] autosave_secs` sets it" },
+        .filesize => .{ .title = "File size", .detail = "the buffer's bytes in memory · click: bytes and lines" },
+        .sel => .{ .title = "Selection", .detail = "characters selected" },
+        .stress => blk: {
+            const st = app.stress.stats() orelse break :blk .{ .title = "Frame time", .detail = "no frames sampled yet" };
+            break :blk .{
+                .title = try std.fmt.allocPrint(arena, "Frame time — p50 {d}.{d}ms · p95 {d}.{d}ms · max {d}.{d}ms · n={d}", .{
+                    st.p50_us / 1000, (st.p50_us % 1000) / 100,
+                    st.p95_us / 1000, (st.p95_us % 1000) / 100,
+                    st.max_us / 1000, (st.max_us % 1000) / 100,
+                    st.count,
+                }),
+                .detail = "click toasts the numbers · right-click: copy / reset / hide",
+            };
+        },
         .bell => blk: {
             const u = app.messages.unread();
             break :blk .{
@@ -193,23 +223,8 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
                 .detail = "click: the history · right-click: clear",
             };
         },
-        .stress => blk: {
-            const s = app.stress.stats() orelse break :blk .{ .title = "Frame time", .detail = "no frames sampled yet" };
-            break :blk .{
-                .title = try std.fmt.allocPrint(arena, "Frame time — p50 {d}.{d}ms · p95 {d}.{d}ms · max {d}.{d}ms · n={d}", .{
-                    s.p50_us / 1000, (s.p50_us % 1000) / 100,
-                    s.p95_us / 1000, (s.p95_us % 1000) / 100,
-                    s.max_us / 1000, (s.max_us % 1000) / 100,
-                    s.count,
-                }),
-                .detail = "click toasts the numbers · right-click: copy / reset / hide",
-            };
-        },
-        .indent => .{ .title = try std.fmt.allocPrint(arena, "Indent — {d} columns per tab", .{app.cfg.editor.tab_width}), .detail = "click: set the tab width" },
-        .encoding => .{ .title = "Encoding — utf-8", .detail = "the only encoding in this build" },
-        .transfer => .{ .title = "File transfers", .detail = "progress of the running copies · right-click: cancel all" },
-        .clock => .{ .title = "Clock", .detail = "local time (a Z is UTC) · click: local / UTC / hide" },
-        .coverage => .{ .title = "Coverage", .detail = "feature (F) and code (C) coverage from the trends files · click toasts both · right-click picks the mode" },
+        .clock => .{ .title = "Clock", .detail = "local time (a Z is UTC) · click: local ⇄ UTC · right-click: local / UTC / hide" },
+        .workspace => .{ .title = "Workspace", .detail = "click: switch workspace (or the active repo, with several)" },
         _ => null,
     };
 }
@@ -330,9 +345,9 @@ test "describe: every hit kind has words; the statusline ids each say what a cli
     try t.expect(std.mem.indexOf(u8, mode.detail.?, "toggle vim") != null);
     const restricted = (try describe(&app, arena, .{ .statusline_seg = statusline.seg_restricted })).?;
     try t.expect(std.mem.indexOf(u8, restricted.detail.?, "review_trust") != null);
-    const indent = (try describe(&app, arena, .{ .statusline_seg = @intFromEnum(render.SegId.indent) })).?;
-    try t.expect(std.mem.indexOf(u8, indent.title, "4 columns") != null);
-    const stress = (try describe(&app, arena, .{ .statusline_seg = @intFromEnum(render.SegId.stress) })).?;
+    const wrap = (try describe(&app, arena, .{ .statusline_seg = statusline_app.SegId.wrap.raw() })).?;
+    try t.expect(std.mem.indexOf(u8, wrap.title, "WRAP") != null);
+    const stress = (try describe(&app, arena, .{ .statusline_seg = statusline_app.SegId.stress.raw() })).?;
     try t.expect(std.mem.indexOf(u8, stress.title, "p95") != null);
     const tab = (try describe(&app, arena, .{ .tab = .{ .leaf = 0, .idx = 0 } })).?;
     try t.expect(std.mem.indexOf(u8, tab.title, "[scratch]") != null);

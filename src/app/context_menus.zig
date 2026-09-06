@@ -217,6 +217,22 @@ pub fn openDiagnosticsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 }
 
 /// The bell: the history picker and its clear.
+/// The statusline's file chip: Rust's "Buffer" menu, less the rows
+/// whose runners this build lacks (reveal in the tree / in the OS).
+pub fn openFileChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const e = app.activeEditor() orelse return;
+    if (e.buf.doc.path == null) {
+        app.toast("no saved file", .{});
+        return;
+    }
+    const rows = try items(app, &.{
+        .{ .label = "Copy path", .action = .{ .command = .@"file.copy_path" } },
+        .{ .label = "Close buffer", .action = .{ .command = .@"buffer.close" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Buffer", rows, x, y);
+}
+
 pub fn openBellMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Show messages", .action = .{ .command = .@"messages.show" } },

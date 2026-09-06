@@ -827,18 +827,25 @@ fn drawEditor(uictx: Ui, area: Rect, g: *Gallery, matches: ?[]const ui.editor_vi
     }
 
     const sel: ?usize = if (g.anchor) |a| (if (a > g.cursor) a - g.cursor else g.cursor - a) else null;
+    const P = &uictx.theme.palette;
+    const Seg = ui.statusline.Seg;
+    const mode_bg = ui.statusline.modeBg(uictx.theme, if (g.anchor != null) .visual else .normal);
+    const left = [_]Seg{
+        Seg.init(if (uictx.ascii) " V " else " \u{e7c5} ", P.orange, mode_bg).strong().withHit(ui.statusline.seg_mode),
+        Seg.init(if (g.anchor != null) "VISUAL " else "NORMAL ", P.bg_darker, mode_bg).strong().withHit(ui.statusline.seg_mode),
+        Seg.init(if (uictx.ascii) " z " else " \u{e6a9} ", ui.Theme.rgb(0xf7a41d), P.statusline).withHit(ui.statusline.seg_file),
+        Seg.init("gallery.zig ● ", P.fg, P.statusline).withHit(ui.statusline.seg_file),
+    };
+    var right: std.ArrayListUnmanaged(Seg) = .empty;
+    try right.append(uictx.arena, Seg.init(uictx.fmt(" Ln {d}/{d} Col {d} ", .{ cur_line + 1, lines.count(), cur_col + 1 }), P.fg, P.bg2).withHit(ui.statusline.seg_position));
+    if (sel) |n| try right.append(uictx.arena, Seg.init(uictx.fmt(" Sel {d} ", .{n}), P.bg_darker, P.yellow));
+    try right.append(uictx.arena, Seg.init(if (uictx.ascii) " ! " else " \u{f0f3} ", P.comment, P.bg2));
+    try right.append(uictx.arena, Seg.init(if (uictx.ascii) " gallery " else "\u{f07b} gallery ", P.blue, P.bg3).strong());
+    try right.append(uictx.arena, Seg.init("  zig ", P.bg_darker, P.blue).strong().withHit(ui.statusline.seg_language));
     ui.statusline.draw(uictx, status.rest, .{
-        .mode_label = if (g.anchor != null) "VISUAL" else "NORMAL",
-        .mode_kind = if (g.anchor != null) .visual else .normal,
-        .file = "gallery.zig",
-        .dirty = true,
-        .line = cur_line + 1,
-        .col = @intCast(cur_col + 1),
-        .total_lines = lines.count(),
-        .input_style = "vim",
-        .selection_chars = sel,
-        .pending = if (g.screen == .which_key) "space" else null,
-        .right = &.{ .{ .text = "utf-8" }, .{ .text = "zig" } },
+        .left = &left,
+        .right = right.items,
+        .middle = if (g.screen == .which_key) "space" else null,
     });
     return caret;
 }

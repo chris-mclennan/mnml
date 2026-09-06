@@ -3,7 +3,10 @@
 `rust-120x40.txt` is the Rust editor's screen — every cell, glyphs
 included — on the fixture workspace with the author's real config, at
 120×40, after the first-run overlay is dismissed. It is what mnml-zig
-must look like. Colours are not in the dump; for those the Rust source
+must look like. `rust-80x24.txt` is the same screen at 80×24 — the
+statusline's overflow rule (the branch chip clipped to `main …`). Both
+are embedded into the test binary (`build.zig`, `ui_spec_rust_*`) so
+the statusline tests compare the painted row with the spec's. Colours are not in the dump; for those the Rust source
 under `src/ui/` is the reference, and a side-by-side screenshot in
 ghostty is the final check.
 

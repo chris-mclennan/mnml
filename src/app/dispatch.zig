@@ -57,6 +57,7 @@ const context_menus = @import("context_menus.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const script_pane = @import("script_pane.zig");
 const render = @import("render.zig");
+const statusline_app = @import("statusline.zig");
 const layout_mod = @import("layout.zig");
 const select = @import("../editor/select.zig");
 const scrollbar = @import("../ui/scrollbar.zig");
@@ -1462,21 +1463,42 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.overlay != .none) closeOverlay(app);
             const right = m.button == .right;
             switch (seg) {
-                statusline.seg_mode, statusline.seg_input_style => if (right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
+                statusline.seg_mode => if (right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
                 statusline.seg_position => try runCmd(app, .@"editor.goto_line"),
-                statusline.seg_file => if (right) try runCmd(app, .@"file.copy_path"),
+                // The file chip is words on hover and a menu on the right
+                // button; a left click does nothing, as in Rust.
+                statusline.seg_file => if (right) try context_menus.openFileChipMenu(app, m.x, m.y),
+                statusline.seg_language => {
+                    const lang: []const u8 = if (app.activeEditor()) |e| (e.buf.doc.language orelse "—") else "—";
+                    app.toast("language: {s} (via file extension)", .{lang});
+                },
                 statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
-                else => if (render.SegId.of(seg)) |id| switch (id) {
+                else => if (statusline_app.SegId.of(seg)) |id| switch (id) {
                     .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y) else try runCmd(app, .@"git.status_pane"),
+                    .pr => if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
                     .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.diagnostics"),
-                    .ai_meter => try runCmd(app, .@"ai.spend_today"),
-                    .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
-                    .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
-                    .clock => try clock_mod.openMenu(app, m.x, m.y),
+                    .symbol => try runCmd(app, .@"outline.show"),
+                    .macro => try runCmd(app, .@"vim.macro_toggle"),
+                    .find => try runCmd(app, .@"find.find"),
+                    .test_run => if (tests_pane.find(app)) |id_pane| {
+                        app.setActive(id_pane);
+                        app.focus = .{ .pane = id_pane };
+                    },
+                    .ai_claude, .ai_codex => try runCmd(app, .@"ai.spend_today"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
-                    .indent => try runCmd(app, .@"editor.set_tab_width"),
-                    .encoding => app.toast("utf-8 is the only encoding in this build", .{}),
                     .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
+                    .lsp => try runCmd(app, .@"lsp.symbols"),
+                    .wrap => try runCmd(app, .@"view.toggle_wrap"),
+                    .autosave => app.toast("autosave: {d}s (`[editor] autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
+                    .filesize => if (app.activeEditor()) |e| {
+                        const n = e.buf.editor.bytes().len;
+                        app.toast("{s}: {d} byte{s} · {d} line{s}", .{ if (e.buf.doc.path) |pth| std.fs.path.basename(pth) else "[scratch]", n, if (n == 1) "" else "s", e.buf.editor.lineCount(), if (e.buf.editor.lineCount() == 1) "" else "s" });
+                    },
+                    .sel => {},
+                    .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
+                    .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
+                    .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
+                    .workspace => try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
                     _ => {},
                 } else if (seg >= statusline.seg_dyn_base and !right) {
                     // A host's segment: its `click_command`, on a left click.

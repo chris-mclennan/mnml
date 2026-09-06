@@ -296,6 +296,11 @@ pub fn build(b: *std.Build) void {
     // The app runs the same audit in-process (`integrations.audit_glyphs`,
     // `menu.glyph_audit`, the `bake_*` ids — `src/app/glyph_audit.zig`).
     root_module.addImport("glyph_audit", glyph_mod);
+    // ── the UI spec ─────────────────────────────────────────────────────
+    // The Rust editor's screen dumps (`docs/ui-spec/`), embedded so the
+    // statusline tests compare the painted row with the spec's row.
+    root_module.addAnonymousImport("ui_spec_rust_120x40", .{ .root_source_file = b.path("docs/ui-spec/rust-120x40.txt") });
+    root_module.addAnonymousImport("ui_spec_rust_80x24", .{ .root_source_file = b.path("docs/ui-spec/rust-80x24.txt") });
     const glyph_exe = b.addExecutable(.{ .name = "glyph-audit", .root_module = glyph_mod });
     const glyph_bake = b.addRunArtifact(glyph_exe);
     glyph_bake.addArg("bake");

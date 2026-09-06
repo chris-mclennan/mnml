@@ -1,26 +1,36 @@
-//! Statusline — the bottom row. Left: the mode chip, the file (with `●`
-//! when dirty), a pending chord, the macro-recording chip. Right: the
-//! position ` Ln {line}/{total} Col {col} ` (exact — the gate asserts
-//! `"Ln 3"`), ` Sel N ` while a selection exists, the caller's extra
-//! segments, and the input style.
+//! Statusline — the bottom row as two lanes of powerline chips.
 //!
-//! Right-hand segments are dropped from the outside in when the row is
-//! too narrow; the position chip goes last. The left side is clipped
-//! rather than dropped: the mode and the file name are what the eye
-//! looks for.
+//! A chip is a `Seg`: its text, its own foreground and background, and
+//! the hit it registers. The left lane runs from the left edge, the
+//! right lane ends at the right edge, and between two chips of
+//! different backgrounds sits a powerline arrow (U+E0B0 on the left,
+//! U+E0B2 on the right) painted in the two backgrounds — the
+//! colour hand-off. Two neighbours on the same ground get no arrow,
+//! so a chip built from several segs (a glyph and its label) reads as
+//! one pill. The component knows nothing about what a chip means: the
+//! app builds the two lists (`app/statusline.zig`) and routes the hits.
 //!
-//! // changed: every chip registers a `.statusline_seg` hit — the mode
-//! chip, the file name and the position chip (`seg_mode` / `seg_file` /
-//! `seg_position`), and each right-hand segment with the id its
-//! builder gave it (`Seg.id`), so the app can route a click on the
-//! branch, the diagnostics, the bell, the stress bar… without the
-//! component knowing what any of them mean. The `RESTRICTED` chip
-//! (`Info.restricted`) says the workspace's exec-bearing config is off.
-//! // changed (ipc-tier2): `Info.dyn_left` / `dyn_right` are a host's
-//! `statusline-set-segment` chips — each with its own colour and a
-//! `.statusline_seg = seg_dyn_base + index` hit. The left lane ends
-//! the left cluster; the right lane is the innermost of the right
-//! cluster after the selection chip, so it drops before the position.
+//! Overflow, in this order: the right lane is measured whole; if the
+//! left lane would then not fit with four cells of air, its longest chip
+//! is clipped with an ellipsis (never below three cells) — a long file
+//! name, a long branch. If the row is still too narrow, right-lane
+//! chips are dropped leftmost-first: the far-right chips (the clock, the
+//! workspace, the language) are the ones the eye finds there, the inner
+//! ones are the first to give way — except a `sticky` chip (the cursor
+//! position), which outlives every neighbour that is not. Each drop
+//! re-clips the left lane against what remains, so a branch loses no
+//! more of its counts than the chips that stay demand.
+//!
+//! Every glyph is the codepoint the Rust statusline paints — the
+//! terminal maps U+F1B00–U+F20FF onto mnml's own baked symbols, so a
+//! lookalike renders as a box.
+//!
+//! // changed: `Info` is the two lanes plus the centred pending chord;
+//! every chip carries its hit id (`Seg.hit`), so the mode chip, the file
+//! name, the branch and a host's `statusline-set-segment` chip register
+//! `.statusline_seg` from one paint loop. The fixed ids below are the
+//! component's; `seg_app_base` and up are the app's (`app/statusline.zig`
+//! `SegId`), `seg_dyn_base + index` a host segment's.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -29,91 +39,261 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 
 const Style = vaxis.Style;
-
-pub const ModeKind = enum { none, normal, insert, visual, replace, edit };
+const Color = vaxis.Color;
 
 pub const seg_mode: u32 = 0;
 pub const seg_file: u32 = 1;
 pub const seg_position: u32 = 2;
-/// The input-style chip (`vim` / `standard`), always last.
-pub const seg_input_style: u32 = 3;
+/// The language chip at the far right (`  rs `, `  — ` for none).
+pub const seg_language: u32 = 3;
 /// `RESTRICTED` — the workspace's exec-bearing config is stripped.
 pub const seg_restricted: u32 = 4;
-/// Ids the app's builders use for the right-hand segments; anything
-/// at or above `seg_app_base` (and below `seg_dyn_base`) is the app's
-/// to define.
+/// Ids the app defines start here (and stay below `seg_dyn_base`).
 pub const seg_app_base: u32 = 16;
-/// `seg_dyn_base + i` is `Info.dyn_*[…].index` — the host segment's slot.
+/// `seg_dyn_base + i` is a host segment's slot in `ipc/effects.zig`.
 pub const seg_dyn_base: u32 = 0x100;
 
-/// A host-set segment (`ipc/effects.zig`'s `Rendered`, resolved).
-pub const DynSeg = struct {
-    text: []const u8,
-    /// The chip's foreground; the muted colour when null.
-    fg: ?vaxis.Color = null,
-    /// The hit payload minus `seg_dyn_base`.
-    index: u32,
-};
+/// Powerline hard dividers; nothing under `--ascii`, where the chips
+/// meet edge to edge.
+pub const pl_right_nerd = "\u{e0b0}";
+pub const pl_right_ascii = "";
+pub const pl_left_nerd = "\u{e0b2}";
+pub const pl_left_ascii = "";
 
-/// One right-aligned segment: its text, the hit it registers (null
-/// registers nothing — a script's segment), and an optional style.
+/// The glyphs the chips share, each with its `--ascii` twin. Every one
+/// is the codepoint the Rust statusline paints.
+/// nf-custom-vim, before a vim mode label.
+pub const vim_glyph = "\u{e7c5}";
+pub const vim_ascii = "";
+/// nf-fa-code_fork — the branch when the remote names no forge.
+pub const branch_glyph = "\u{f126}";
+pub const branch_ascii = "";
+/// nf-fa-github / nf-fa-gitlab / nf-dev-bitbucket / nf-md-microsoft_azure / nf-dev-git.
+pub const github_glyph = "\u{f09b}";
+pub const github_ascii = "";
+pub const gitlab_glyph = "\u{f296}";
+pub const gitlab_ascii = "";
+pub const bitbucket_glyph = "\u{e703}";
+pub const bitbucket_ascii = "";
+pub const azure_glyph = "\u{f0805}";
+pub const azure_ascii = "";
+pub const forge_glyph = "\u{e702}";
+pub const forge_ascii = "";
+/// nf-md-plus_circle_outline / pencil_circle_outline / minus_circle_outline — the file counts.
+pub const added_glyph = "\u{f0419}";
+pub const added_ascii = "+";
+pub const changed_glyph = "\u{f06d5}";
+pub const changed_ascii = "~";
+pub const removed_glyph = "\u{f0374}";
+pub const removed_ascii = "-";
+/// nf-fa-times_circle, before the error count.
+pub const errors_glyph = "\u{f057}";
+pub const errors_ascii = "E";
+/// nf-oct-graph — the coverage chip when no integration names one.
+pub const coverage_glyph = "\u{f437}";
+pub const coverage_ascii = "";
+/// nf-md-shield_lock_outline, before RESTRICTED.
+pub const restricted_glyph = "\u{f033e}";
+pub const restricted_ascii = "";
+/// nf-md-content_save, before the autosave interval.
+pub const autosave_glyph = "\u{f0193}";
+pub const autosave_ascii = "save";
+/// nf-fa-bell.
+pub const bell_glyph = "\u{f0f3}";
+pub const bell_ascii = "!";
+/// nf-fa-folder, before the workspace name.
+pub const folder_glyph = "\u{f07b}";
+pub const folder_ascii = "";
+/// The Claude / Codex marks — mnml's own baked glyphs (U+F1B00–U+F20FF).
+pub const claude_glyph = "\u{F1E00}";
+pub const claude_ascii = "\u{2733}";
+pub const codex_glyph = "\u{F1E01}";
+pub const codex_ascii = "\u{25c8}";
+
+/// Rust's floor for a clipped left chip.
+pub const min_left_chip: u16 = 3;
+/// Cells kept between the lanes before the left one is clipped.
+pub const lane_gap: u16 = 4;
+
+/// One chip.
 pub const Seg = struct {
     text: []const u8,
-    id: ?u32 = null,
-    /// Null paints muted on the statusline ground.
-    style: ?Style = null,
-    /// A low-priority segment sits outside the input-style chip and is
-    /// dropped before it when the row is narrow (the indent and
-    /// encoding chips, the idle bell).
-    low: bool = false,
+    fg: Color,
+    bg: Color,
+    bold: bool = false,
+    /// The `.statusline_seg` payload; null registers nothing.
+    hit: ?u32 = null,
+    /// Dropped only after every non-sticky right-lane chip: the cursor
+    /// position, which the corpus reads and a user never wants to lose
+    /// to a clock.
+    sticky: bool = false,
+    /// A run after `text` in its own foreground — the coverage delta's
+    /// tier colour — then `tail` in `fg` again. The three paint as one
+    /// pill on `bg`.
+    accent: ?Accent = null,
+    tail: []const u8 = "",
+
+    pub const Accent = struct { text: []const u8, fg: Color };
+
+    pub fn init(text: []const u8, fg: Color, bg: Color) Seg {
+        return .{ .text = text, .fg = fg, .bg = bg };
+    }
+
+    pub fn withHit(s: Seg, id: u32) Seg {
+        var out = s;
+        out.hit = id;
+        return out;
+    }
+
+    pub fn strong(s: Seg) Seg {
+        var out = s;
+        out.bold = true;
+        return out;
+    }
+
+    fn style(s: Seg) Style {
+        return .{ .fg = s.fg, .bg = s.bg, .bold = s.bold };
+    }
+
+    fn cols(s: Seg, ui: Ui) u16 {
+        var w = ui.width(s.text);
+        if (s.accent) |a| w += ui.width(a.text);
+        return w + ui.width(s.tail);
+    }
 };
 
 pub const Info = struct {
-    /// "NORMAL" / "INSERT" / "REPLACE" / "VISUAL" / "V-LINE" / "V-BLOCK",
-    /// or "EDIT" for the standard handler; null hides the chip.
-    mode_label: ?[]const u8,
-    mode_kind: ModeKind,
-    file: ?[]const u8,
-    dirty: bool,
-    /// 1-based.
-    line: u32,
-    col: u32,
-    total_lines: u32,
-    /// "vim" | "standard"
-    input_style: []const u8,
-    /// Renders ` Sel N `.
-    selection_chars: ?usize = null,
-    /// A vim pending chord, e.g. `"a` or `2d`.
-    pending: ?[]const u8 = null,
-    /// ` ● rec @q `
-    macro_recording: ?u8 = null,
-    /// Extra right-aligned segments, painted before the input style.
+    left: []const Seg = &.{},
     right: []const Seg = &.{},
-    /// Paint the `RESTRICTED` chip after the file name.
-    restricted: bool = false,
-    /// Host segments: the left lane after the pending chord, the
-    /// right lane innermost of the right cluster.
-    dyn_left: []const DynSeg = &.{},
-    dyn_right: []const DynSeg = &.{},
+    /// A vim chord in progress (`d`, `2d`, `"a`), centred in the gap.
+    middle: ?[]const u8 = null,
 };
 
-fn dynStyle(t: *const Theme, s: DynSeg, bg: vaxis.Color) Style {
-    return Theme.onBg(if (s.fg) |c| Style{ .fg = c } else t.muted, bg);
-}
+/// What the mode chip says about where the keys go — the one place the
+/// editing mode is read for paint. `tree` / `view` / `edit` / `panel` are
+/// the standard handler's context labels; the rest are vim's.
+pub const ModeKind = enum { normal, insert, visual, replace, edit, view, tree, panel };
 
-pub fn modeStyle(t: *const Theme, kind: ModeKind) Style {
+/// The mode chip's ground (NvChad's `st_modes`).
+pub fn modeBg(t: *const Theme, kind: ModeKind) Color {
     return switch (kind) {
-        .none, .edit => t.mode_edit,
-        .normal => t.mode_normal,
-        .insert => t.mode_insert,
-        .visual => t.mode_visual,
-        .replace => t.mode_replace,
+        .normal => t.mode_normal.bg,
+        .insert => t.mode_insert.bg,
+        .visual => t.mode_visual.bg,
+        .replace => t.mode_replace.bg,
+        .edit => t.mode_edit.bg,
+        .tree => t.palette.blue,
+        .view, .panel => t.palette.cyan,
     };
 }
 
-/// The exact position chip text.
-pub fn positionText(ui: Ui, info: Info) []const u8 {
-    return ui.fmt(" Ln {d}/{d} Col {d} ", .{ info.line, info.total_lines, info.col });
+/// `123B`, `4.2K`, `12M` — a buffer's size for its chip.
+pub fn formatByteSize(buf: []u8, bytes: usize) []const u8 {
+    if (bytes < 1024) return std.fmt.bufPrint(buf, "{d}B", .{bytes}) catch "?";
+    const kb = @as(f64, @floatFromInt(bytes)) / 1024.0;
+    if (kb < 10.0) return std.fmt.bufPrint(buf, "{d:.1}K", .{kb}) catch "?";
+    if (bytes < 1024 * 1024) return std.fmt.bufPrint(buf, "{d}K", .{bytes / 1024}) catch "?";
+    const mb = kb / 1024.0;
+    if (mb < 10.0) return std.fmt.bufPrint(buf, "{d:.1}M", .{mb}) catch "?";
+    return std.fmt.bufPrint(buf, "{d}M", .{bytes / (1024 * 1024)}) catch "?";
+}
+
+// ─── measuring ───────────────────────────────────────────────────────────
+
+fn arrowsOn(ui: Ui) bool {
+    return !ui.ascii;
+}
+
+/// The left lane's cells: each chip, then an arrow where the next
+/// ground differs (the lane's own ground after the last chip).
+fn leftWidth(ui: Ui, segs: []const Seg, ground: Color) u16 {
+    var w: u16 = 0;
+    for (segs, 0..) |s, i| {
+        w += s.cols(ui);
+        const next = if (i + 1 < segs.len) segs[i + 1].bg else ground;
+        if (arrowsOn(ui) and !Color.eql(next, s.bg)) w += 1;
+    }
+    return w;
+}
+
+/// The right lane's cells: an arrow before each chip whose ground
+/// differs from the one before it (the lane's ground before the first).
+fn rightWidth(ui: Ui, segs: []const Seg, ground: Color) u16 {
+    var w: u16 = 0;
+    var prev = ground;
+    for (segs) |s| {
+        if (arrowsOn(ui) and !Color.eql(prev, s.bg)) w += 1;
+        w += s.cols(ui);
+        prev = s.bg;
+    }
+    return w;
+}
+
+/// The lanes after the overflow rule: the left chips (one perhaps
+/// clipped) and the right chips that survive.
+const Fitted = struct { left: []const Seg, right: []const Seg };
+
+fn fit(ui: Ui, width: u16, info: Info, ground: Color) Fitted {
+    var right = info.right;
+    var kept: ?[]Seg = null;
+    while (true) {
+        const left = clipLeft(ui, width, info.left, rightWidth(ui, right, ground), ground);
+        if (right.len == 0 or leftWidth(ui, left, ground) + rightWidth(ui, right, ground) <= width) return .{ .left = left, .right = right };
+        // Drop the leftmost right-lane chip — a sticky one only once
+        // nothing else is left — and clip the left lane again against
+        // what remains: a branch that lost its counts to a coverage chip
+        // gets them back when that chip goes.
+        const k = kept orelse (ui.arena.dupe(Seg, info.right) catch return .{ .left = left, .right = right });
+        kept = k;
+        const n = right.len;
+        var drop: usize = 0;
+        while (drop < n and k[drop].sticky) drop += 1;
+        if (drop == n) drop = 0;
+        std.mem.copyForwards(Seg, k[drop .. n - 1], k[drop + 1 .. n]);
+        right = k[0 .. n - 1];
+    }
+}
+
+/// Rust's rule: the longest left chip gives way to the right lane plus
+/// the gap, down to three cells. A clipped copy lives on the arena; OOM
+/// keeps the lane as given and the paint clips it.
+fn clipLeft(ui: Ui, width: u16, segs: []const Seg, right_w: u16, ground: Color) []const Seg {
+    _ = ground;
+    var left_cols: u16 = 0;
+    var longest: ?usize = null;
+    var longest_cols: u16 = 0;
+    for (segs, 0..) |s, i| {
+        const c = s.cols(ui);
+        left_cols += c;
+        if (longest == null or c > longest_cols) {
+            longest = i;
+            longest_cols = c;
+        }
+    }
+    const avail = width -| (right_w + lane_gap);
+    if (left_cols <= avail) return segs;
+    const idx = longest orelse return segs;
+    const overshoot = left_cols - avail;
+    const target = @max(longest_cols -| overshoot, min_left_chip);
+    if (target >= longest_cols) return segs;
+    const copy = ui.arena.dupe(Seg, segs) catch return segs;
+    copy[idx].text = ui.clipStr(copy[idx].text, target);
+    return copy;
+}
+
+// ─── painting ────────────────────────────────────────────────────────────
+
+/// Paints one chip at `x` and registers its hit; returns the cells used.
+fn paintSeg(ui: Ui, x: u16, y: u16, max_w: u16, s: Seg) u16 {
+    var used = ui.putStr(x, y, max_w, s.text, s.style());
+    if (s.accent) |a| {
+        var st = s.style();
+        st.fg = a.fg;
+        used += ui.putStr(x + used, y, max_w -| used, a.text, st);
+    }
+    used += ui.putStr(x + used, y, max_w -| used, s.tail, s.style());
+    if (s.hit) |id| ui.hit(Rect.init(x, y, used, 1), .{ .statusline_seg = id });
+    return used;
 }
 
 pub fn draw(ui: Ui, area: Rect, info: Info) void {
@@ -121,228 +301,277 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     ui.fill(area, t.statusline);
     if (area.isEmpty()) return;
     const y = area.y;
+    const ground = t.statusline.bg;
     const right_edge = area.right();
-    const base_bg = t.statusline.bg;
+    const lanes = fit(ui, area.w, info, ground);
+    const arrows = arrowsOn(ui);
+    const pl_right = if (ui.ascii) pl_right_ascii else pl_right_nerd;
+    const pl_left = if (ui.ascii) pl_left_ascii else pl_left_nerd;
 
-    // ── left ──
+    // ── left, with an arrow after each chip whose ground changes ──
     var x = area.x;
-    if (info.mode_label) |label| {
-        const chip = ui.fmt(" {s} ", .{label});
-        const w = ui.putStr(x, y, right_edge - x, chip, modeStyle(t, info.mode_kind));
-        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_mode });
-        x += w;
-    }
-    if (info.file) |file| {
-        const name = if (info.dirty) ui.fmt(" {s} ● ", .{file}) else ui.fmt(" {s} ", .{file});
-        const w = ui.putStr(x, y, right_edge - x, name, t.statusline);
-        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_file });
-        x += w;
-    }
-    if (info.macro_recording) |reg| {
-        const chip = ui.fmt(" ● rec @{c} ", .{reg});
-        x += ui.putStr(x, y, right_edge - x, chip, Theme.onBg(t.error_fg, base_bg));
-    }
-    if (info.pending) |p| {
-        if (p.len > 0) {
-            const chip = ui.fmt(" {s} ", .{p});
-            x += ui.putStr(x, y, right_edge - x, chip, Theme.onBg(t.warn_fg, base_bg));
+    for (lanes.left, 0..) |s, i| {
+        x += paintSeg(ui, x, y, right_edge -| x, s);
+        const next = if (i + 1 < lanes.left.len) lanes.left[i + 1].bg else ground;
+        if (arrows and !Color.eql(next, s.bg)) {
+            x += ui.putStr(x, y, right_edge -| x, pl_right, .{ .fg = s.bg, .bg = next });
         }
-    }
-    if (info.restricted) {
-        var st = Theme.onBg(t.warn_fg, base_bg);
-        st.bold = true;
-        const w = ui.putStr(x, y, right_edge - x, " RESTRICTED ", st);
-        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_restricted });
-        x += w;
-    }
-    for (info.dyn_left) |d| {
-        const chip = ui.fmt(" {s} ", .{d.text});
-        const w = ui.putStr(x, y, right_edge - x, chip, dynStyle(t, d, base_bg));
-        ui.hit(Rect.init(x, y, w, 1), .{ .statusline_seg = seg_dyn_base + d.index });
-        x += w;
     }
     const left_end = x;
 
-    // ── right: collect, then paint what fits from the inside out ──
-    const Painted = struct { text: []const u8, style: Style, id: ?u32 };
-    var segs: std.ArrayListUnmanaged(Painted) = .empty;
-    // Innermost (painted furthest left, dropped last) first.
-    segs.append(ui.arena, .{ .text = positionText(ui, info), .style = t.statusline, .id = seg_position }) catch return;
-    if (info.selection_chars) |n| {
-        segs.append(ui.arena, .{ .text = ui.fmt(" Sel {d} ", .{n}), .style = Theme.onBg(t.warn_fg, base_bg), .id = null }) catch return;
+    // ── right, from where the lane starts, an arrow before a new ground ──
+    const right_w = rightWidth(ui, lanes.right, ground);
+    var rx = right_edge -| right_w;
+    var prev = ground;
+    for (lanes.right) |s| {
+        if (arrows and !Color.eql(prev, s.bg)) {
+            rx += ui.putStr(rx, y, right_edge -| rx, pl_left, .{ .fg = s.bg, .bg = prev });
+        }
+        rx += paintSeg(ui, rx, y, right_edge -| rx, s);
+        prev = s.bg;
     }
-    for (info.dyn_right) |d| {
-        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{d.text}), .style = dynStyle(t, d, base_bg), .id = seg_dyn_base + d.index }) catch return;
-    }
-    for (info.right) |r| if (!r.low) {
-        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{r.text}), .style = r.style orelse Theme.onBg(t.muted, base_bg), .id = r.id }) catch return;
-    };
-    segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{info.input_style}), .style = Theme.onBg(t.chip, base_bg), .id = seg_input_style }) catch return;
-    for (info.right) |r| if (r.low) {
-        segs.append(ui.arena, .{ .text = ui.fmt(" {s} ", .{r.text}), .style = r.style orelse Theme.onBg(t.muted, base_bg), .id = r.id }) catch return;
-    };
 
-    // Budget from the right edge; a segment that does not fit beside the
-    // left side is dropped, and so is everything outside it.
-    var avail: u16 = right_edge -| left_end;
-    var keep: usize = 0;
-    var used: u16 = 0;
-    for (segs.items) |s| {
-        const w = ui.width(s.text);
-        if (used + w > avail) break;
-        used += w;
-        keep += 1;
-    }
-    avail = right_edge - used;
-    var rx = avail;
-    for (segs.items[0..keep]) |s| {
-        const w = ui.putStr(rx, y, right_edge - rx, s.text, s.style);
-        if (s.id) |id| ui.hit(Rect.init(rx, y, w, 1), .{ .statusline_seg = id });
-        rx += w;
-    }
+    // ── middle: the pending chord, centred in what is left ──
+    const mid_start = left_end;
+    const mid_end = right_edge -| right_w;
+    if (info.middle) |m| if (m.len > 0 and mid_end > mid_start) {
+        const avail = mid_end - mid_start;
+        const text = ui.clipStr(ui.fmt(" {s} ", .{m}), avail);
+        const w = ui.width(text);
+        const mx = mid_start + (avail - w) / 2;
+        _ = ui.putStr(mx, y, avail, text, .{ .fg = t.palette.yellow, .bg = ground, .bold = true });
+    };
 }
 
-// ── tests ──
+// ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 
-fn sample() Info {
-    return .{
-        .mode_label = "NORMAL",
-        .mode_kind = .normal,
-        .file = "notes.txt",
-        .dirty = false,
-        .line = 3,
-        .col = 7,
-        .total_lines = 12,
-        .input_style = "vim",
-    };
+const P = Theme.default.palette;
+
+/// The fixture screen's chips, as the Rust editor painted them at
+/// 120×40 (`docs/ui-spec/rust-120x40.txt`, row 38) — minus the cut
+/// now-playing cluster, which `withCluster` puts back for the overflow
+/// rows that Rust laid out with it present.
+const spec_left = [_]Seg{
+    Seg.init(" TREE ", P.bg_darker, P.blue).strong().withHit(seg_mode),
+    Seg.init(" " ++ branch_glyph ++ " main  " ++ added_glyph ++ " 1 ", P.green, P.bg2).withHit(seg_app_base),
+    Seg.init(" [no file] ", P.comment, P.statusline),
+};
+const spec_right = [_]Seg{
+    .{ .text = " " ++ coverage_glyph ++ " F 57%", .fg = P.bg_darker, .bg = P.teal, .accent = .{ .text = " ▲1.0", .fg = P.green }, .tail = " ", .hit = seg_app_base + 1 },
+    Seg.init(" WRAP ", P.bg_darker, P.purple).withHit(seg_app_base + 2),
+    Seg.init(" " ++ bell_glyph ++ " ", P.comment, P.bg2).withHit(seg_app_base + 3),
+    Seg.init(" 23:58 ", P.comment, P.bg2).withHit(seg_app_base + 4),
+    Seg.init(folder_glyph ++ " ws ", P.blue, P.bg3).strong().withHit(seg_app_base + 5),
+    Seg.init("  — ", P.bg_darker, P.blue).strong().withHit(seg_language),
+};
+
+/// The cut now-playing cluster: the mnml-baked Beatport mark and
+/// nf-md-play_box_outline, as the Rust row had them.
+pub const cluster_brand_glyph = "\u{f1f00}";
+pub const cluster_brand_ascii = "B";
+pub const cluster_play_glyph = "\u{f040e}";
+pub const cluster_play_ascii = ">";
+
+fn withCluster(arena: std.mem.Allocator) ![]Seg {
+    const out = try arena.alloc(Seg, spec_right.len + 2);
+    out[0] = spec_right[0];
+    out[1] = Seg.init(" " ++ cluster_brand_glyph ++ " ", Theme.rgb(0), Theme.rgb(0xa6e22e));
+    out[2] = Seg.init(cluster_play_glyph ++ " ", Theme.rgb(0), Theme.rgb(0xa6e22e));
+    @memcpy(out[3..], spec_right[1..]);
+    return out;
 }
 
-test "the position chip is exact and the mode chip carries its color" {
-    var f = try Fixture.init(60, 1);
-    defer f.deinit();
-    draw(f.ui(), f.full(), sample());
-    try f.expectRow(0, " NORMAL  notes.txt                       Ln 3/12 Col 7  vim");
-    try f.expectContains(" Ln 3/12 Col 7 ");
-    try testing.expectEqual(seg_mode, f.hits.at(3, 0).?.statusline_seg);
-    try testing.expectEqual(seg_file, f.hits.at(12, 0).?.statusline_seg);
-    try testing.expectEqual(seg_position, f.hits.at(45, 0).?.statusline_seg);
-    try testing.expectEqual(seg_input_style, f.hits.at(57, 0).?.statusline_seg);
-    try testing.expect(f.hits.at(25, 0) == null);
-    try testing.expect(f.bgEql(1, 0, f.theme.mode_normal));
-    try testing.expect(f.bgEql(9, 0, f.theme.statusline));
-    var i = sample();
-    i.mode_kind = .insert;
-    i.mode_label = "INSERT";
-    draw(f.ui(), f.full(), i);
-    try testing.expect(f.bgEql(1, 0, f.theme.mode_insert));
-    i.mode_kind = .visual;
-    i.mode_label = "V-BLOCK";
-    draw(f.ui(), f.full(), i);
-    try testing.expect(f.bgEql(1, 0, f.theme.mode_visual));
-    try f.expectContains("V-BLOCK");
-    i.mode_kind = .edit;
-    i.mode_label = "EDIT";
-    i.input_style = "standard";
-    draw(f.ui(), f.full(), i);
-    try testing.expect(f.bgEql(1, 0, f.theme.mode_edit));
-    try f.expectContains(" standard");
-}
+// The rows below are the Rust dumps with the arrows written as their
+// codepoints, so the glyph audit reads each as a test of the row.
+const row_left = " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ " main  " ++ added_glyph ++ " 1 " ++ pl_right_nerd ++ " [no file]";
+const row_right = pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ pl_left_nerd ++ " WRAP " ++ pl_left_nerd ++ " " ++ bell_glyph ++ "  23:58 " ++ pl_left_nerd ++ folder_glyph ++ " ws " ++ pl_left_nerd ++ "  —";
+const row_cluster = pl_left_nerd ++ " " ++ cluster_brand_glyph ++ " " ++ cluster_play_glyph ++ " ";
+const row_tail = pl_left_nerd ++ " WRAP " ++ pl_left_nerd ++ " " ++ bell_glyph ++ "  23:58 " ++ pl_left_nerd ++ folder_glyph ++ " ws " ++ pl_left_nerd ++ "  —";
 
-test "dirty, selection, macro and pending chips" {
-    var f = try Fixture.init(70, 1);
+test "row 38 at 120 columns is the Rust dump, less the cut chips: arrows hand the colour over, same-ground neighbours fuse" {
+    var f = try Fixture.init(120, 1);
     defer f.deinit();
-    var i = sample();
-    i.dirty = true;
-    i.selection_chars = 12;
-    i.macro_recording = 'q';
-    i.pending = "2d";
-    draw(f.ui(), f.full(), i);
-    try f.expectContains(" notes.txt ● ");
-    try f.expectContains(" ● rec @q ");
-    try f.expectContains(" 2d ");
-    try f.expectContains(" Sel 12 ");
-    try f.expectContains("Sel ");
-    try f.expectLacks("Sel 5 ");
-    i.selection_chars = null;
-    draw(f.ui(), f.full(), i);
-    try f.expectLacks("Sel ");
-}
-
-test "no mode chip when the label is null; extra right segments appear before the input style" {
-    var f = try Fixture.init(70, 1);
-    defer f.deinit();
-    var i = sample();
-    i.mode_label = null;
-    i.mode_kind = .none;
-    i.right = &.{ .{ .text = "utf-8", .id = seg_app_base + 1 }, .{ .text = "LF" } };
-    draw(f.ui(), f.full(), i);
-    try f.expectRow(0, " notes.txt                              Ln 3/12 Col 7  utf-8  LF  vim");
-    // The segment with an id is a hit; the one without registers nothing.
-    try testing.expectEqual(seg_app_base + 1, f.hits.at(56, 0).?.statusline_seg);
-    try testing.expect(f.hits.at(63, 0) == null);
-    // A low-priority segment sits outside the input style and drops first.
-    i.right = &.{ .{ .text = "utf-8", .low = true }, .{ .text = "LF" } };
-    draw(f.ui(), f.full(), i);
-    try f.expectRow(0, " notes.txt                              Ln 3/12 Col 7  LF  vim  utf-8");
-    var g = try Fixture.init(40, 1);
+    draw(f.ui(), f.full(), .{ .left = &spec_left, .right = &spec_right });
+    try f.expectRow(0, row_left ++ " " ** 45 ++ row_right);
+    // The arrow after TREE is blue on bg2; after the branch, bg2 on the ground.
+    try testing.expect(Color.eql(f.style(6, 0).fg, P.blue));
+    try testing.expect(Color.eql(f.style(6, 0).bg, P.bg2));
+    try testing.expect(Color.eql(f.style(20, 0).fg, P.bg2));
+    try testing.expect(Color.eql(f.style(20, 0).bg, P.statusline));
+    // The bell and the clock share bg2: no arrow between them.
+    try testing.expect(Color.eql(f.style(100, 0).bg, P.bg2));
+    try testing.expect(Color.eql(f.style(103, 0).bg, P.bg2));
+    // The coverage delta is tinted; the rest of the chip is not.
+    try testing.expect(Color.eql(f.style(82, 0).fg, P.bg_darker));
+    try testing.expect(Color.eql(f.style(87, 0).fg, P.green));
+    try testing.expect(f.style(1, 0).bold);
+    // With the cluster back, the row is the dump cell for cell.
+    var g = try Fixture.init(120, 1);
     defer g.deinit();
-    draw(g.ui(), g.full(), i);
-    try g.expectRow(0, " notes.txt       Ln 3/12 Col 7  LF  vim");
+    const ui = g.ui();
+    draw(ui, g.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
+    try g.expectRow(0, row_left ++ " " ** 39 ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ row_tail);
 }
 
-test "the RESTRICTED chip follows the file name and is a hit" {
-    var f = try Fixture.init(70, 1);
+test "every chip is a hit over exactly its cells; arrows and the gap are not" {
+    var f = try Fixture.init(120, 1);
     defer f.deinit();
-    var i = sample();
-    i.restricted = true;
-    draw(f.ui(), f.full(), i);
-    try f.expectContains(" notes.txt  RESTRICTED ");
-    try testing.expectEqual(seg_restricted, f.hits.at(22, 0).?.statusline_seg);
-    try testing.expect(f.fgEql(22, 0, f.theme.warn_fg));
-    i.restricted = false;
-    draw(f.ui(), f.full(), i);
-    try f.expectLacks("RESTRICTED");
+    draw(f.ui(), f.full(), .{ .left = &spec_left, .right = &spec_right });
+    try testing.expectEqual(seg_mode, f.hits.at(0, 0).?.statusline_seg);
+    try testing.expectEqual(seg_mode, f.hits.at(5, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(6, 0) == null);
+    try testing.expectEqual(seg_app_base, f.hits.at(7, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base, f.hits.at(19, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(20, 0) == null);
+    try testing.expect(f.hits.at(25, 0) == null); // [no file] carries no hit
+    try testing.expect(f.hits.at(60, 0) == null);
+    try testing.expectEqual(seg_app_base + 1, f.hits.at(80, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base + 2, f.hits.at(93, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base + 3, f.hits.at(100, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base + 4, f.hits.at(106, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base + 5, f.hits.at(111, 0).?.statusline_seg);
+    try testing.expectEqual(seg_language, f.hits.at(119, 0).?.statusline_seg);
 }
 
-test "host segments: the left lane ends the left cluster, the right lane sits inside, each with its colour and hit" {
+/// The Rust editor's screen at 80×24 on the same fixture
+/// (`docs/ui-spec/rust-80x24.txt`, row 22): its coverage ticker was on
+/// the code half and its clock read 09:36 when it was dumped; the two
+/// are the same width as the 120×40 spec's, so they are rewritten to
+/// those before the compare.
+const spec_80x24 = @embedFile("ui_spec_rust_80x24");
+
+fn specRow80(arena: std.mem.Allocator) ![]const u8 {
+    var it = std.mem.splitScalar(u8, spec_80x24, '\n');
+    var i: usize = 0;
+    const row = while (it.next()) |line| : (i += 1) {
+        if (i == 22) break line;
+    } else return error.NoRow22;
+    const coverage = try std.mem.replaceOwned(u8, arena, row, "C 74% ±0.0", "F 57% ▲1.0");
+    return std.mem.replaceOwned(u8, arena, coverage, "09:36", "23:58");
+}
+
+test "at 80 columns the longest left chip is clipped to make room, as Rust clipped it" {
     var f = try Fixture.init(80, 1);
     defer f.deinit();
-    var i = sample();
-    i.right = &.{.{ .text = "utf-8" }};
-    i.dyn_left = &.{.{ .text = "JIRA 3", .fg = f.theme.palette.cyan, .index = 4 }};
-    i.dyn_right = &.{ .{ .text = "CI ok", .index = 0 }, .{ .text = "q", .index = 9 } };
-    draw(f.ui(), f.full(), i);
-    // 27 cells of left cluster, 37 of right: the position chip starts at 43.
-    try f.expectRow(0, " NORMAL  notes.txt  JIRA 3                  Ln 3/12 Col 7  CI ok  q  utf-8  vim");
-    try testing.expectEqual(seg_dyn_base + 4, f.hits.at(21, 0).?.statusline_seg);
-    try testing.expectEqual(seg_dyn_base + 0, f.hits.at(63, 0).?.statusline_seg);
-    try testing.expectEqual(seg_dyn_base + 9, f.hits.at(66, 0).?.statusline_seg);
-    try testing.expectEqual(seg_position, f.hits.at(50, 0).?.statusline_seg);
-    try testing.expect(f.fgEql(21, 0, Style{ .fg = f.theme.palette.cyan }));
-    try testing.expect(f.fgEql(63, 0, f.theme.muted));
-    // Narrow: the right lane drops before the position chip does.
-    var g = try Fixture.init(45, 1);
-    defer g.deinit();
-    draw(g.ui(), g.full(), i);
-    try g.expectRow(0, " NORMAL  notes.txt  JIRA 3     Ln 3/12 Col 7");
+    const ui = f.ui();
+    draw(ui, f.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
+    // The Rust 80×24 row on the same fixture: the branch chip lost its counts.
+    const rust = try specRow80(ui.arena);
+    try f.expectRow(0, std.mem.trimEnd(u8, rust, " "));
+    try testing.expect(std.mem.indexOf(u8, rust, " main …" ++ pl_right_nerd) != null);
+    // The clipped chip is still the branch's hit, over its new width.
+    try testing.expectEqual(seg_app_base, f.hits.at(7, 0).?.statusline_seg);
+    try testing.expectEqual(seg_app_base, f.hits.at(15, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(16, 0) == null);
 }
 
-test "right segments drop from the outside in when the row is narrow" {
-    var f = try Fixture.init(34, 1);
+// At 60 columns Rust paints the whole right lane from where it would
+// start and lets the screen's edge cut it — the dump on the same
+// fixture ends `WRAP    09:36`, the workspace and the language gone.
+// Zig drops inner chips instead, so the far-right ones always show.
+test "at 60 columns the right lane drops leftmost-first once the left lane is at its floor" {
+    var f = try Fixture.init(60, 1);
     defer f.deinit();
-    var i = sample();
-    i.right = &.{.{ .text = "utf-8" }};
-    draw(f.ui(), f.full(), i);
-    // 34 cells: " NORMAL " (8) + " notes.txt " (11) = 19; the position
-    // chip (15) fits exactly, nothing else does.
-    try f.expectRow(0, " NORMAL  notes.txt  Ln 3/12 Col 7");
-    try f.expectLacks("vim");
-    var g = try Fixture.init(12, 1);
+    const ui = f.ui();
+    draw(ui, f.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
+    // The right lane whole is 50: the left would clip to its floor and
+    // still not fit, so the coverage chip (15 with its arrow) goes; against
+    // the 35 that remain the branch keeps four cells. 23 + 35 fits.
+    try f.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ " …" ++ pl_right_nerd ++ " [no file]   " ++ row_cluster ++ row_tail);
+    try testing.expectEqual(seg_app_base, f.hits.at(8, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(23, 0) == null);
+    try testing.expect(f.hits.at(27, 0) == null);
+    // Narrower still: everything right goes, then the row itself clips.
+    var g = try Fixture.init(24, 1);
     defer g.deinit();
-    draw(g.ui(), g.full(), i);
-    try g.expectRow(0, " NORMAL  not");
-    draw(g.ui(), Rect.empty, i);
+    draw(g.ui(), g.full(), .{ .left = &spec_left, .right = &spec_right });
+    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file]");
+    var h = try Fixture.init(10, 1);
+    defer h.deinit();
+    draw(h.ui(), h.full(), .{ .left = &spec_left, .right = &spec_right });
+    try h.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…");
+    draw(h.ui(), Rect.empty, .{ .left = &spec_left, .right = &spec_right });
+}
+
+test "a sticky chip outlives its neighbours: the position stays while the clock and the workspace go" {
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    const left = [_]Seg{ Seg.init(" EDIT ", P.bg_darker, P.green).strong(), Seg.init(" notes.txt ", P.fg, P.statusline) };
+    var right = [_]Seg{
+        Seg.init(" 11B ", P.comment, P.bg2),
+        Seg.init(" Ln 2/2 Col 3 ", P.fg, P.bg2).withHit(seg_position),
+        Seg.init(" " ++ bell_glyph ++ " ", P.comment, P.bg2),
+        Seg.init(" 23:58 ", P.comment, P.bg2),
+        Seg.init(folder_glyph ++ " tmp ", P.blue, P.bg3).strong(),
+        Seg.init("  — ", P.bg_darker, P.blue).strong(),
+    };
+    draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
+    // The size chip (6) goes, then the position (15): against the 23 that
+    // remain the name clips to ` notes…` and the row is 14 + 3 + 23.
+    try f.expectRow(0, " EDIT " ++ pl_right_nerd ++ " notes…" ++ " " ** 3 ++ pl_left_nerd ++ " " ++ bell_glyph ++ "  23:58 " ++ pl_left_nerd ++ folder_glyph ++ " tmp " ++ pl_left_nerd ++ "  —");
+    try testing.expect(f.hits.at(20, 0) == null);
+    right[1].sticky = true;
+    draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
+    // Sticky: the size goes, then the bell and the clock — never the
+    // position; the name pays with its floor. 10 + 3 + 27.
+    try f.expectRow(0, " EDIT " ++ pl_right_nerd ++ " n…" ++ " " ** 3 ++ pl_left_nerd ++ " Ln 2/2 Col 3 " ++ pl_left_nerd ++ folder_glyph ++ " tmp " ++ pl_left_nerd ++ "  —");
+    try testing.expectEqual(seg_position, f.hits.at(20, 0).?.statusline_seg);
+}
+
+test "--ascii: no arrows, the chips meet edge to edge, the ellipsis is dots" {
+    var f = try Fixture.init(120, 1);
+    defer f.deinit();
+    f.ascii = true;
+    draw(f.ui(), f.full(), .{ .left = &spec_left, .right = &spec_right });
+    try f.expectRow(0, " TREE  " ++ branch_glyph ++ " main  " ++ added_glyph ++ " 1  [no file]" ++ " " ** 52 ++ " " ++ coverage_glyph ++ " F 57% ▲1.0  WRAP  " ++ bell_glyph ++ "  23:58 " ++ folder_glyph ++ " ws   —");
+    var g = try Fixture.init(70, 1);
+    defer g.deinit();
+    g.ascii = true;
+    draw(g.ui(), g.full(), .{ .left = &spec_left, .right = &spec_right });
+    // 70 - 39 - 4 = 27 for a 30-cell left lane: the branch chip clips to 10.
+    try g.expectRow(0, " TREE  " ++ branch_glyph ++ " main... [no file]      " ++ coverage_glyph ++ " F 57% ▲1.0  WRAP  " ++ bell_glyph ++ "  23:58 " ++ folder_glyph ++ " ws   —");
+}
+
+test "the pending chord sits centred in the gap, bold yellow; a two-seg mode chip fuses on one ground" {
+    var f = try Fixture.init(60, 1);
+    defer f.deinit();
+    const left = [_]Seg{
+        Seg.init(" " ++ vim_glyph ++ " ", P.orange, P.red).strong().withHit(seg_mode),
+        Seg.init("NORMAL ", P.bg_darker, P.red).strong().withHit(seg_mode),
+        Seg.init(" notes.txt ● ", P.fg, P.statusline).withHit(seg_file),
+    };
+    const right = [_]Seg{Seg.init(" Ln 3/12 Col 7 ", P.fg, P.bg2).withHit(seg_position)};
+    draw(f.ui(), f.full(), .{ .left = &left, .right = &right, .middle = "2d" });
+    // 60 - 24 - 16 = 20 cells of gap; ` 2d ` sits 8 in from either side.
+    try f.expectRow(0, " " ++ vim_glyph ++ " NORMAL " ++ pl_right_nerd ++ " notes.txt ●          2d         " ++ pl_left_nerd ++ " Ln 3/12 Col 7");
+    try testing.expect(Color.eql(f.style(34, 0).fg, P.yellow));
+    try testing.expect(f.style(34, 0).bold);
+    // One arrow after the label, none between the glyph and the label.
+    try testing.expect(Color.eql(f.style(2, 0).bg, P.red));
+    try testing.expect(Color.eql(f.style(9, 0).bg, P.red));
+    try testing.expectEqual(seg_mode, f.hits.at(1, 0).?.statusline_seg);
+    try testing.expectEqual(seg_mode, f.hits.at(8, 0).?.statusline_seg);
+    try testing.expectEqual(seg_file, f.hits.at(12, 0).?.statusline_seg);
+    try testing.expectEqual(seg_position, f.hits.at(50, 0).?.statusline_seg);
+    try testing.expect(f.hits.at(34, 0) == null);
+}
+
+test "mode grounds follow the theme roles; byte sizes pick their unit" {
+    const t = &Theme.default;
+    try testing.expect(Color.eql(modeBg(t, .normal), t.mode_normal.bg));
+    try testing.expect(Color.eql(modeBg(t, .insert), t.palette.green));
+    try testing.expect(Color.eql(modeBg(t, .visual), t.palette.purple));
+    try testing.expect(Color.eql(modeBg(t, .replace), t.palette.orange));
+    try testing.expect(Color.eql(modeBg(t, .tree), t.palette.blue));
+    try testing.expect(Color.eql(modeBg(t, .view), t.palette.cyan));
+    try testing.expect(Color.eql(modeBg(t, .edit), t.palette.green));
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("13B", formatByteSize(&buf, 13));
+    try testing.expectEqualStrings("1.5K", formatByteSize(&buf, 1536));
+    try testing.expectEqualStrings("12K", formatByteSize(&buf, 12 * 1024 + 7));
+    try testing.expectEqualStrings("2.5M", formatByteSize(&buf, 2621440));
+    try testing.expectEqualStrings("40M", formatByteSize(&buf, 40 * 1024 * 1024 + 1));
 }
