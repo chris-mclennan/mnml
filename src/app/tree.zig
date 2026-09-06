@@ -700,9 +700,16 @@ fn rename(app: *App) CommandError!void {
     app.overlay.deinit(app.gpa);
     var state = app_mod.Prompt.init(app.gpa, "Rename to (workspace-relative)");
     try state.setText(app.gpa, rel);
-    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel } } };
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .return_focus = promptReturnFocus(app) } };
     app.focus = .overlay;
     app.needs_render = true;
+}
+
+/// A prompt the tree opened hands focus back to the tree — Esc and
+/// Enter both — so the next arrow key moves the tree cursor, not the
+/// editor's. Opened from anywhere else, the active pane takes it.
+fn promptReturnFocus(app: *App) ?app_mod.FocusId {
+    return if (app.focus == .tree) .tree else null;
 }
 
 pub const move_choices = [_]app_mod.Confirm.Choice{ .{ .key = 'm', .label = "Move" }, .{ .key = 'c', .label = "Cancel" } };
@@ -731,7 +738,7 @@ fn moveTo(app: *App) CommandError!void {
     var state = app_mod.Prompt.init(app.gpa, title);
     errdefer app_mod.Prompt.deinit(&state, app.gpa);
     if (std.fs.path.dirname(row.rel)) |parent| try state.setText(app.gpa, try std.fmt.allocPrint(app.frame.allocator(), "{s}/", .{parent}));
-    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .title_owned = title } };
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .rename = rel }, .title_owned = title, .return_focus = promptReturnFocus(app) } };
     app.focus = .overlay;
     app.needs_render = true;
 }
