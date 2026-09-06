@@ -25,3 +25,8 @@ Same look, Zig internals: the Rust modules are a behaviour reference,
 not a template. Build on the component system (`Ui`, `HitMap`,
 `Canvas`, `ListPanel`), register every click target in the same
 statement that paints it, and add nothing the Rust screen does not show.
+
+`rust-80x24.txt` is the same screen at 80×24 — the narrow rule: only
+the brand menu fits before the ` » `, the browser chip is dropped from
+the gap, the right cluster is the compact one. `src/ui/menu_bar.zig`
+pins row 0 of both dumps as `rust_row_120` / `rust_row_80`.

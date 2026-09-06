@@ -2529,3 +2529,82 @@ break-check.
   over the section's glyph on Rust's pulse (four seconds glyph, one
   second count — `app.now_ms`), `•` for one, the digit to nine, `+` past
   it. Same keys as `ipc/effects.known_sections`.
+
+## Menu bar + chrome row (2026-09-06, branch `menu-bar`) — `// changed:` notes
+
+- `// changed (ui):` new `src/ui/menu_bar.zig` paints row 0 as the Rust
+  `draw_palette_bar` does, cell for cell against `docs/ui-spec/
+  rust-120x40.txt` and the new `rust-80x24.txt`: the menu words
+  (` ❯_  mnml  File  Edit …`, ` » ` once one no longer fits — Rust's
+  50-cell cluster estimate and 3-cell overflow slot), the centred 48-cell
+  nav cluster (sidebar toggle · ` ← ` ` → ` · `  󰍉  <workspace padded to
+  24>  ` · ` ▾ ` · right-panel toggle), the chip alone below 48 columns.
+  Props in, `Layout` out (`palette_right_edge`, `first_hidden`,
+  `words_end`, each word's x); every element registers the `.button`
+  the caller names. The old painter in `render.drawPaletteBar` — the
+  `search files · run commands` label, the git / IPC badges, the stress
+  copy, the green Marketplace `+`, the AI chips on row 0 — is gone; the
+  Rust row shows none of them.
+- `// changed (ui):` `bufferline.zig` gains Rust's right cluster
+  (`Cluster` / `drawCluster` / `clusterWidth` / `pickCluster`: ` + `,
+  ` TABS ` and a chip per tab page with ` × ` on the active one in the
+  full mode, the theme pill `●━ `, the ` × ` that quits; compact drops
+  the label and shows chips from the second page; `ui.top_bar_cluster_
+  mode` picks as Rust's `pick_cluster_mode_tiered`) and the strip's split
+  buttons (`drawSplitButtons`: the enabled AI chips, ` $ `, `  `, `  `
+  at the right end of the strip in the body's top-right corner — Rust's
+  `paint_split_buttons`). The strip's `+` is nf-md-plus `󰐕` (`+` under
+  `--ascii`), as Rust paints it; three `.test` files that expected the
+  ASCII `+` on the strip were updated.
+- `// changed (app):` `src/app/menu_bar.zig` holds the ten menus —
+  brand, File, Edit, Selection, View, Go, Run, Terminal, Window, Help —
+  with Rust's rows, glyphs (each with a one-character `--ascii` twin) and
+  commands, mapped to Zig ids. Left out, with a note in the source: rows
+  whose id has no runner yet (`view.toggle_bottom_panel`,
+  `view.commands_reference`, `layout.merge_to_tabs`,
+  `layout.spread_to_splits`, `view.ai_layout_grid` / `_tabs`). The File
+  menu's "Open recent file" submenu is built per open from `app.recent`
+  (`file.open_recent_N`, "Clear recent files"); every command row carries
+  its first chord under the active profile as `MenuItem.hint`. `App.
+  menu_bar: menu_bar.State` replaces `menu_bar_open` / `menu_bar_x`
+  (the open menu, each word's x, the `»`'s first hidden index, an arena
+  for the per-open rows). `ui.menu_bar = auto` also shows the words while
+  the pointer rests on the row (Rust 2026-09-03).
+- `// changed (keys):` F10 opens File (not while a DAP session owns
+  step-over, an overlay is up, or a pty pane has focus); Alt+<letter>
+  opens the menu with that initial (`m` is the brand menu; Shift / Ctrl
+  combinations are left to the keymap); ← / → step between menus while
+  one is open, → on a submenu row opens it. `dispatch.keyInner` calls
+  `menu_bar.interceptKey` after the flash intercept; the `.menu` overlay
+  prong calls `menu_bar.menuKey` first.
+- `// changed (core):` `command.MenuItem.hint: ?[]const u8` (painted
+  right-aligned in the muted colour by `render.paintMenuRows`; `menuSize`
+  widens for it) and `MenuAction.menu_bar: u8` (a row of the ` » `
+  overflow menu opens that menu-bar menu; `runMenuAction` prong). Both
+  additive.
+- `// changed (ids):` `render.Button` is renumbered: `back` / `forward`
+  / `dropdown` / `new_tab_page` / `tabs_label` / `theme_toggle` /
+  `window_close` / `split_term` / `split_right` / `split_down` join;
+  `add_integration` and `stress` (the row-0 stress copy) go; tab-page
+  chips are `tab_page_base + i` (0x40) and their `×` `tab_page_close_base
+  + i` (0x60), so `integrations_view.max_chips` shrinks to 0x30. Clicks:
+  back / forward → `buffer.prev` / `buffer.next`, dropdown →
+  `picker.recent`, `+` → `tab.new`, TABS → `tab.picker`, a page chip →
+  `cmd_tab.switchTab`, its `×` → `tab.close`, the pill → `theme.toggle`
+  (or `theme.pick` without `ui.theme_toggle`), `×` → `app.quit`, the
+  split buttons → `term.shell` / `view.split_right` / `view.split_down`.
+  The gap between the toggle and the cluster paints the enabled
+  integration chips on Rust's 5-cell stride (`render.drawGapChips`; the
+  browser globe by default) — `integrations.chipClick` unchanged.
+- `// changed (help):` `discovery.describeButton` routes the bar's ids to
+  `menu_bar.describeButton` — Rust `tooltip.rs`'s copy for the words
+  (with the Alt accelerator), the `»`, the toggles, the arrows (disabled
+  copy with one buffer), the chip, the dropdown, the cluster and the
+  split buttons.
+- Tests: `ui/menu_bar.zig` pins row 0 at 120 and 80 columns
+  (`rust_row_120` / `rust_row_80`, built from the glyph constants) and
+  every hit; `render.zig` pins the whole row against both dumps including
+  the globe and the cluster, the strip's `+` at 32 / 1 and the split
+  buttons; `app/menu_bar.zig` walks every row of every menu for a
+  runner; `tests/e2e-zig/menu_bar_top_row.test` clicks the chip, the
+  `+`, File, a row, the `»` and a hidden menu.

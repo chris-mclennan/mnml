@@ -33,6 +33,7 @@ const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
 const menu_bar = @import("menu_bar.zig");
+const ui_menu_bar = @import("../ui/menu_bar.zig");
 const bufferline = @import("../ui/bufferline.zig");
 const prompt_mod = @import("../ui/prompt.zig");
 const confirm_mod = @import("../ui/confirm.zig");
@@ -102,38 +103,72 @@ const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
 const rail_mod = @import("../ui/activity_bar.zig");
 
-/// Below this width the palette bar row is not painted (Rust parity).
-/// Below this the palette bar is not painted at all (a tiny screen).
+/// Below this width the palette bar row is not painted at all (a tiny
+/// screen); Rust's chrome row needs its 48-cell cluster or shows the
+/// workspace chip alone.
 pub const palette_bar_min_width: u16 = 40;
-/// Below this the bar is narrow: the right cluster drops its extras
-/// (the badges, the AI chips, the stress copy) and the palette chip is
-/// the icon — the bar itself stays. Rust: "drops TABS rather than
-/// vanishing entirely".
-pub const palette_bar_narrow_width: u16 = 80;
 /// The divider hit ids the split tree does not use (`.divider` is
 /// otherwise an index into the split tree's dividers).
 pub const tree_divider_id: u32 = std.math.maxInt(u32);
 pub const right_divider_id: u32 = std.math.maxInt(u32) - 1;
 
-/// `.button` ids the frame registers. `new_tab_base + leaf` is the `+`
-/// on that leaf's strip; toasts own `toast.button_base` and up.
+/// `.button` ids the frame registers. The chrome row's fixed buttons
+/// are 1..0x10; the integration chips own 0x10..0x40
+/// (`integrations_view.chip_base`); the right cluster's tab-page chips
+/// 0x40..0x80; `new_tab_base + leaf` is the `+` on that leaf's strip;
+/// toasts own `toast.button_base` and up.
 pub const Button = enum(u32) {
+    /// The workspace chip: the command palette.
     palette = 1,
     toggle_tree = 2,
     toggle_right_panel = 3,
-    /// `ui.tab_bar_ai_icon`: the brand chips in the bar's right cluster.
+    /// The strip's AI chips, when the integrations are enabled.
     ai_claude = 4,
     ai_codex = 5,
-    /// The green ` + ` after the integration chips: the Marketplace.
-    add_integration = 6,
-    /// The stress meter's bufferline copy.
-    stress = 7,
+    /// ` ← ` / ` → ` beside the chip: the previous / next buffer.
+    back = 6,
+    forward = 7,
+    /// The ` ▾ ` on the chip: the recent-files picker.
+    dropdown = 8,
+    /// The right cluster: ` + ` (a tab page), ` TABS `, the theme pill, ` × `.
+    new_tab_page = 9,
+    tabs_label = 10,
+    theme_toggle = 11,
+    window_close = 12,
+    /// The strip's right end: a shell, split right, split down.
+    split_term = 13,
+    split_right = 14,
+    split_down = 15,
+    /// The right cluster's tab-page chips and their `×`, 32 pages each.
+    tab_page_base = 0x40,
+    tab_page_close_base = 0x60,
     /// The tab strip's `‹` / `›` overflow markers, one pair per leaf
     /// (`tabScroll`); leaves 0..63.
     tab_scroll_left_base = 0x80,
     tab_scroll_right_base = 0xC0,
     new_tab_base = 0x100,
     _,
+
+    pub fn tabPage(page: usize) u32 {
+        return @intFromEnum(Button.tab_page_base) + @as(u32, @intCast(@min(page, 31)));
+    }
+
+    pub fn tabPageClose(page: usize) u32 {
+        return @intFromEnum(Button.tab_page_close_base) + @as(u32, @intCast(@min(page, 31)));
+    }
+
+    /// The tab page a chip id names, if it is one.
+    pub fn tabPageOf(id: u32) ?usize {
+        const b: u32 = @intFromEnum(Button.tab_page_base);
+        if (id < b or id >= @intFromEnum(Button.tab_page_close_base)) return null;
+        return id - b;
+    }
+
+    pub fn tabPageCloseOf(id: u32) ?usize {
+        const b: u32 = @intFromEnum(Button.tab_page_close_base);
+        if (id < b or id >= @intFromEnum(Button.tab_scroll_left_base)) return null;
+        return id - b;
+    }
 
     pub const ScrollDir = enum { left, right };
     pub const TabScroll = struct { leaf: usize, dir: ScrollDir };
@@ -379,146 +414,133 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try discovery.drawTooltip(app, ui, full);
 }
 
-/// `[≡]` toggles the tree, the centred chip opens the palette, `[▤]`
-/// toggles the right panel — VS Code's title row, one line tall.
+// ── palette bar ──
+
+/// The chrome row, as the Rust editor paints it: the menu words at the
+/// left (`ui/menu_bar.zig`), the centred nav cluster and workspace chip,
+/// the right cluster (`bufferline.drawCluster`) and, in the gap between
+/// them, the enabled integration chips — the browser globe by default.
 fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
     if (bar.isEmpty()) return;
-    const th = ui.theme;
-    const bg = th.bufferline;
-    ui.fill(bar, bg);
-    const y = bar.y;
-    const btn = Theme.onBg(th.muted, bg.bg);
-    // The sidebar toggles are a matched codicon pair — `layout-sidebar-
-    // left-off` / `layout-sidebar-right-off` — with `=` / `#` as their
-    // ASCII twins.
-    const tree_glyph: []const u8 = if (ui.ascii) " " ++ tree_codicon_ascii ++ " " else " " ++ tree_codicon ++ " ";
-    var w0 = ui.putStr(bar.x, y, bar.w, tree_glyph, if (app.tree.visible) Theme.onBg(th.accent, bg.bg) else btn);
-    ui.hit(Rect.init(bar.x, y, w0, 1), .{ .button = @intFromEnum(Button.toggle_tree) });
-    // The menu bar's words, after the sidebar toggle (`app/menu_bar.zig`).
-    if (menu_bar.shown(app) and bar.w >= palette_bar_narrow_width) {
-        var mx = bar.x + w0 + 1;
-        app.menu_bar_x = mx;
-        for (menu_bar.Menu.all) |m| {
-            const word = ui.fmt(" {s} ", .{m.label()});
-            const ww = ui.width(word);
-            if (mx + ww > bar.x + bar.w / 3) break;
-            const open = app.menu_bar_open == m;
-            _ = ui.putStr(mx, y, ww, word, if (open) Theme.onBg(th.accent, bg.bg) else btn);
-            ui.hit(Rect.init(mx, y, ww, 1), .{ .button = menu_bar.button_base + @as(u32, @intFromEnum(m)) });
-            mx += ww;
-        }
-        w0 = mx - bar.x;
+    const words = menu_bar.shown(app, bar.y);
+    const layout = ui_menu_bar.draw(ui, bar, .{
+        .labels = if (words) &menu_bar.labels else &.{},
+        .open = if (app.menu_bar.open) |m| @intFromEnum(m) else null,
+        .workspace = std.fs.path.basename(app.workspace),
+        .tree_open = app.tree.visible,
+        .right_open = app.right_panel != null,
+        .nav_enabled = app.panes.count() > 1,
+    }, .{
+        .word_base = menu_bar.button_base,
+        .overflow = menu_bar.overflow_button,
+        .sidebar = @intFromEnum(Button.toggle_tree),
+        .back = @intFromEnum(Button.back),
+        .forward = @intFromEnum(Button.forward),
+        .chip = @intFromEnum(Button.palette),
+        .dropdown = @intFromEnum(Button.dropdown),
+        .right_panel = @intFromEnum(Button.toggle_right_panel),
+    });
+    menu_bar.notePainted(app, bar.y, layout.word_x, layout.first_hidden, layout.words_end);
+    const right_edge = layout.palette_right_edge orelse return;
+    // The right cluster: the tab pages, the theme pill, the quit `×`.
+    const pages = app.layouts.layouts.items;
+    const dirty = try ui.arena.alloc(bool, pages.len);
+    for (pages, dirty) |*l, *d| {
+        d.* = false;
+        for (try l.allPanes(ui.arena)) |id| if (app.panes.get(id)) |p| if (p.dirty()) {
+            d.* = true;
+        };
     }
-    const right_glyph: []const u8 = if (ui.ascii) " " ++ right_panel_codicon_ascii ++ " " else " " ++ right_panel_codicon ++ " ";
-    const rw = ui.width(right_glyph);
-    const narrow = bar.w < palette_bar_narrow_width;
-    var cluster_left = bar.right();
-    if (bar.w > w0 + rw + 4) {
-        const rx = ui.putStrRight(bar.right(), y, rw, right_glyph, if (app.right_panel != null) Theme.onBg(th.accent, bg.bg) else btn);
-        ui.hit(Rect.init(rx, y, rw, 1), .{ .button = @intFromEnum(Button.toggle_right_panel) });
-        cluster_left = rx;
-    }
-    if (!narrow and bar.w > w0 + rw + 4) {
-        const rx = cluster_left;
-        // The git badge: changed files in the active repo, Rust's
-        // `set_activity_badge("git", n)` — a host's own `git` badge
-        // replaces it. Then every other section's badge, summed, as
-        // `•N` in the accent (`set-activity-badge` over IPC).
-        var bx = rx;
-        const host_git = app.ipc_fx.badge("git");
-        const badge = if (host_git > 0) host_git else app.git.badge();
-        if (badge > 0) {
-            const label = ui.fmt("{d}", .{badge});
-            const bw = ui.width(label);
-            if (bx > w0 + bw + 2) bx = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.warn_fg, bg.bg));
-        }
-        const others = app.ipc_fx.badgeTotal("git");
-        if (others > 0) {
-            const label = ui.fmt("{s}{d} ", .{ @as([]const u8, if (ui.ascii) "*" else "•"), others });
-            const bw = ui.width(label);
-            if (bx > w0 + bw + 2) bx = ui.putStrRight(bx, y, bw, label, Theme.onBg(th.accent, bg.bg));
-        }
-        cluster_left = bx;
-        // `ui.tab_bar_ai_icon`: the brand chips, a click opens the session.
-        const ai = app.cfg.ui.tab_bar_ai_icon;
-        if (ai == .codex or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .codex);
-        if (ai == .claude_code or ai == .both) cluster_left = drawAiChip(app, ui, cluster_left, y, .claude);
-        // The stress meter's copy in the cluster: the same four blocks
-        // and p95 as the statusline's, hidden when idle.
-        if (try stress.segment(app, ui.arena, ui.ascii)) |txt| {
-            const sw = ui.width(txt) + 2;
-            if (cluster_left > w0 + sw + 2) {
-                const sx = ui.putStrRight(cluster_left, y, sw, ui.fmt(" {s} ", .{txt}), Theme.onBg(th.warn_fg, bg.bg));
-                ui.hit(Rect.init(sx, y, sw, 1), .{ .button = @intFromEnum(Button.stress) });
-                cluster_left = sx;
-            }
-        }
-    }
-    // `ui.top_bar_cluster_mode`: the palette chip's label — the full
-    // hint, or the icon alone; `auto` keeps the hint on a wide bar. A
-    // narrow bar is always the icon.
-    const compact = narrow or switch (app.cfg.ui.top_bar_cluster_mode) {
-        .compact => true,
-        .expanded => false,
-        .auto => bar.w < 100,
+    var cluster: bufferline.Cluster = .{
+        .pages = @intCast(pages.len),
+        .active = @intCast(app.layouts.active),
+        .dirty = dirty,
+        .on_alt = if (app.cfg.ui.theme_toggle) |alt| std.ascii.eqlIgnoreCase(app.theme.name, alt) else false,
     };
-    const label: []const u8 = if (compact) (if (ui.ascii) " > " else " ⌘ ") else (if (ui.ascii) "  search files - run commands  " else "  search files · run commands  ");
-    const lw = @min(ui.width(label), bar.w -| (w0 + (bar.right() - cluster_left) + 2));
-    var chip_right = cluster_left -| 1;
-    const min_chip: u16 = if (compact) 3 else 8;
-    if (lw >= min_chip) {
-        const x = bar.x + (bar.w - lw) / 2;
-        const chip = Rect.init(x, y, lw, 1);
-        ui.fill(chip, th.chip);
-        _ = ui.putStr(x, y, lw, ui.clipStr(label, lw), Theme.onBg(th.muted, th.chip.bg));
-        ui.hit(chip, .{ .button = @intFromEnum(Button.palette) });
-        // The add-integration ` + ` (the Marketplace) sits at the right
-        // end of the chip strip, then the integration chips between it
-        // and the palette chip; whatever does not fit is dropped whole.
-        const plus: []const u8 = if (ui.ascii) " " ++ add_codicon_ascii ++ " " else " " ++ add_codicon ++ " ";
-        const pw = ui.width(plus);
-        if (chip_right > x + lw + pw + 1) {
-            const px = ui.putStrRight(chip_right, y, pw, plus, .{ .fg = th.palette.green, .bg = bg.bg, .bold = true });
-            ui.hit(Rect.init(px, y, pw, 1), .{ .button = @intFromEnum(Button.add_integration) });
-            chip_right = px -| 1;
-        }
-        const strip = try integrations.chips(app, ui.arena);
-        const props = try ui.arena.alloc(integrations_view.ChipProps, @min(strip.len, integrations_view.max_chips));
-        for (props, 0..) |*cp, i| cp.* = .{ .glyph = strip[i].glyph, .fallback = strip[i].fallback, .color = strip[i].color, .enabled = strip[i].enabled };
-        chip_right = integrations_view.drawChips(ui, chip_right, y, x + lw + 1, bg, props);
+    const pref: bufferline.ClusterPref = switch (app.cfg.ui.top_bar_cluster_mode) {
+        .auto => .auto,
+        .expanded => .expanded,
+        .compact => .compact,
+    };
+    const fit = bufferline.pickCluster(bar, right_edge, cluster, pref) orelse return;
+    cluster.compact = fit.compact;
+    const cluster_area = Rect.init(bar.right() - fit.w, bar.y, fit.w, 1);
+    bufferline.drawCluster(ui, cluster_area, cluster, .{
+        .new_tab = @intFromEnum(Button.new_tab_page),
+        .tabs_label = @intFromEnum(Button.tabs_label),
+        .page_base = @intFromEnum(Button.tab_page_base),
+        .page_close_base = @intFromEnum(Button.tab_page_close_base),
+        .theme = @intFromEnum(Button.theme_toggle),
+        .close = @intFromEnum(Button.window_close),
+    });
+    try drawGapChips(app, ui, right_edge, cluster_area.x, bar.y);
+}
+
+/// The integration chips between the right-panel toggle and the right
+/// cluster, Rust's `paint_integration_chips_in_gap`: from the toggle's
+/// right edge, ` glyph ` every five cells, in the muted colour on the
+/// bar's ground, a three-cell slot left at the cluster's end; the AI
+/// chips paint on the strip instead. A click is `integrations.chipClick`.
+fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocator.Error!void {
+    const th = ui.theme;
+    const right = cluster_left -| 1;
+    if (right <= left) return;
+    const avail = right - left;
+    if (avail < 3) return;
+    const room = (avail - 3) / 5;
+    if (room == 0) return;
+    const strip = try integrations.chips(app, ui.arena);
+    var x = left;
+    var painted: usize = 0;
+    for (strip, 0..) |chip, i| {
+        if (i >= integrations_view.max_chips or painted >= room) break;
+        if (!chip.enabled) continue;
+        if (std.mem.eql(u8, chip.id, "claude_code") or std.mem.eql(u8, chip.id, "codex")) continue;
+        const glyph = if (ui.nerd_font and !ui.ascii and chip.glyph.len > 0) chip.glyph else chip.fallback;
+        if (glyph.len == 0) continue;
+        const r = Rect.init(x, y, 3, 1);
+        _ = ui.putStr(x + 1, y, 1, glyph, .{ .fg = th.palette.comment, .bg = th.palette.bg_dark });
+        ui.hit(r, .{ .button = integrations_view.chip_base + @as(u32, @intCast(i)) });
+        x += 5;
+        painted += 1;
     }
 }
 
-/// codicon `layout-sidebar-left-off` / `layout-sidebar-right-off` / `add`,
-/// each with the one-char twin `--ascii` paints (the glyph audit pairs
-/// `<x>_codicon` with `<x>_codicon_ascii`).
-pub const tree_codicon = "\u{ec02}";
-pub const tree_codicon_ascii = "=";
-pub const right_panel_codicon = "\u{ec00}";
-pub const right_panel_codicon_ascii = "#";
-pub const add_codicon = "\u{ea7c}";
-pub const add_codicon_ascii = "+";
-
-pub const AiBrand = enum { claude, codex };
-
-/// Claude's asterisk / Codex's prompt glyph (the `default_integration_icons`
-/// fallbacks under `--ascii`), lit when a session is running. Returns
-/// the x it started at.
-fn drawAiChip(app: *App, ui: Ui, right_x: u16, y: u16, brand: AiBrand) u16 {
-    const th = ui.theme;
-    const bg = th.bufferline;
-    const glyph: []const u8 = switch (brand) {
-        .claude => if (ui.ascii) " * " else " \u{2733} ",
-        .codex => if (ui.ascii) " > " else " \u{276F}_ ",
-    };
-    const live = ai_app.findSession(app, if (brand == .claude) .claude else .codex) != null;
-    const style = if (live) Theme.onBg(th.accent, bg.bg) else Theme.onBg(th.muted, bg.bg);
-    const w = ui.width(glyph);
-    if (right_x < w + 4) return right_x;
-    const x = ui.putStrRight(right_x, y, w, glyph, style);
-    ui.hit(Rect.init(x, y, w, 1), .{ .button = @intFromEnum(if (brand == .claude) Button.ai_claude else Button.ai_codex) });
-    return x;
+/// The strip's AI chips: Claude / Codex when `ui.tab_bar_ai_icon`
+/// names them and the integration is enabled — mnml's own marks under
+/// `ui.ai_chip_use_mnml_glyphs`, lit while a session runs.
+fn aiChips(app: *App, ui: Ui) Allocator.Error![]const bufferline.AiChip {
+    const want = app.cfg.ui.tab_bar_ai_icon;
+    if (want == .none) return &.{};
+    var out: std.ArrayListUnmanaged(bufferline.AiChip) = .empty;
+    const mnml = app.cfg.ui.ai_chip_use_mnml_glyphs;
+    const claude_live = ai_app.findSession(app, .claude) != null;
+    const codex_live = ai_app.findSession(app, .codex) != null;
+    const claude_glyph: []const u8 = if (mnml) "\u{F1E00}" else "\u{2733}"; // .fallback = "*"
+    const codex_glyph: []const u8 = if (mnml) "\u{F1E01}" else "\u{276F}"; // .fallback = ">"
+    if ((want == .claude_code or want == .both) and integrationEnabled(app, "claude_code")) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_claude), .glyph = claude_glyph, .fallback = "*", .live = claude_live });
+    if ((want == .codex or want == .both) and integrationEnabled(app, "codex")) try out.append(ui.arena, .{ .id = @intFromEnum(Button.ai_codex), .glyph = codex_glyph, .fallback = ">", .live = codex_live });
+    return out.items;
 }
+
+fn integrationEnabled(app: *const App, id: []const u8) bool {
+    for (app.cfg.ui.integration_icons) |ic| if (std.mem.eql(u8, ic.id, id)) return ic.enabled;
+    return false;
+}
+
+/// The split buttons at the right end of the strip that touches the
+/// body's top-right corner (Rust paints them at the bufferline's right
+/// end); returns the width they took off it.
+fn drawSplitButtons(app: *App, ui: Ui, strip: Rect) Allocator.Error!u16 {
+    return bufferline.drawSplitButtons(ui, strip, .{
+        .term = @intFromEnum(Button.split_term),
+        .right = @intFromEnum(Button.split_right),
+        .down = @intFromEnum(Button.split_down),
+        .ai = try aiChips(app, ui),
+    });
+}
+
+// ── end palette bar ──
 
 fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
     const dragging = if (app.drag) |d| switch (d) {
@@ -661,7 +683,11 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     if (layout.isEmpty()) {
         // An empty frame keeps the strip row so the `+` is where the
         // first tab will land.
-        if (body.h >= 2) _ = bufferline.draw(ui, body.row(0), &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0) });
+        if (body.h >= 2) {
+            var strip = body.row(0);
+            strip.w -|= try drawSplitButtons(app, ui, strip);
+            _ = bufferline.draw(ui, strip, &.{}, .{ .leaf = 0, .new_tab = Button.newTab(0) });
+        }
         const msg = "mnml-zig — ctrl+p opens a file, ctrl+q quits";
         const w: u16 = @intCast(@min(std.unicode.utf8CountCodepoints(msg) catch msg.len, body.w));
         const r = Rect.init(body.x + (body.w -| w) / 2, body.y + body.h / 2, w, 1);
@@ -687,10 +713,14 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
         var rect = pr.rect;
         if (rect.h >= 2 and !app.zen) {
             const s = rect.splitTop(1);
-            drawStrip(app, ui, layout, pr.leaf, li, s.top);
+            var strip = s.top;
+            // The strip in the body's top-right corner carries the
+            // split buttons (Rust: the bufferline's right end).
+            if (strip.y == body.y and strip.right() == body.right()) strip.w -|= try drawSplitButtons(app, ui, strip);
+            drawStrip(app, ui, layout, pr.leaf, li, strip);
             if (app.active == pr.pane) {
-                const md_w = drawMdChip(app, ui, s.top);
-                if (app.cfg.editor.breadcrumb) drawBreadcrumb(app, ui, pane, s.top, md_w);
+                const md_w = drawMdChip(app, ui, strip);
+                if (app.cfg.editor.breadcrumb) drawBreadcrumb(app, ui, pane, strip, md_w);
             }
             rect = s.rest;
         }
@@ -1347,7 +1377,8 @@ fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem) MenuSiz
     var widest: u16 = if (title) |tt| ui.width(tt) + 2 else 4;
     var rows: u16 = 0;
     for (items) |it| {
-        widest = @max(widest, ui.width(it.label));
+        // A chord hint sits two cells past the label.
+        widest = @max(widest, ui.width(it.label) + if (it.hint) |h| ui.width(h) + 2 else 0);
         rows += 1;
         if (it.separator_before) rows += 1;
     }
@@ -1380,7 +1411,17 @@ fn paintMenuRows(ui: Ui, inner: Rect, items: []const command.MenuItem, cursor: u
         _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), Theme.withFg(style, th.muted.fg));
         xx += menu_glyph.width;
         const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else th.fg.fg;
-        _ = ui.putStr(xx, r.y, r.right() -| (xx + 2), ui.clipStr(it.label, r.right() -| (xx + 2)), Theme.withFg(style, label_fg));
+        // The chord hint, right-aligned before the marker column; the
+        // label gives way to it.
+        var label_max = r.right() -| (xx + 2);
+        if (it.hint) |h| {
+            const hw = ui.width(h);
+            if (hw + 1 < label_max) {
+                _ = ui.putStrRight(r.right() -| 2, r.y, hw, h, Theme.withFg(style, th.muted.fg));
+                label_max -= hw + 1;
+            }
+        }
+        _ = ui.putStr(xx, r.y, label_max, ui.clipStr(it.label, label_max), Theme.withFg(style, label_fg));
         var kebab_x: ?u16 = null;
         if (it.submenu.len > 0) {
             _ = ui.putStrRight(r.right() -| 1, r.y, 1, if (ui.ascii) ">" else "▸", Theme.withFg(style, th.accent.fg));
@@ -1505,9 +1546,10 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.split_right" });
     try app.render();
-    try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(60, 0).?.button);
-    try t.expectEqual(@intFromEnum(Button.toggle_tree), app.hits.at(1, 0).?.button);
-    try t.expectEqual(@intFromEnum(Button.toggle_right_panel), app.hits.at(118, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(50, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.toggle_tree), app.hits.at(37, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.toggle_right_panel), app.hits.at(82, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.window_close), app.hits.at(118, 0).?.button);
     try t.expectEqual(@as(u32, 0), app.hits.at(3, 1).?.tab.leaf);
     try t.expectEqual(@as(u32, 1), app.hits.at(64, 1).?.tab.leaf);
     try t.expect(app.hits.at(60, 10).? == .divider);
@@ -1595,22 +1637,24 @@ test "menuTop: below when it fits, flipped onto the pointer when it does not, cl
 
 // ── ui toggles: the frame-level ones, one cell each ──
 
-test "ui toggles: cluster mode shrinks the palette chip, the AI icon registers its button" {
+test "ui toggles: cluster mode picks the full or compact right cluster; the AI chips sit on the strip when their integrations are enabled" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     app.cfg.ui.tab_bar_ai_icon = .none;
     const wide = try screenText(&app);
     defer t.allocator.free(wide);
-    try t.expect(std.mem.indexOf(u8, wide, "search files · run commands") != null);
+    try t.expect(std.mem.indexOf(u8, wide[0..std.mem.indexOfScalar(u8, wide, '\n').?], " TABS ") != null);
     app.cfg.ui.top_bar_cluster_mode = .compact;
     const compact = try screenText(&app);
     defer t.allocator.free(compact);
-    try t.expect(std.mem.indexOf(u8, compact, "search files") == null);
-    try t.expect(std.mem.indexOf(u8, compact, "⌘") != null);
-    // no AI chip while the icon is off
+    try t.expect(std.mem.indexOf(u8, compact[0..std.mem.indexOfScalar(u8, compact, '\n').?], " TABS ") == null);
+    // No AI chip while the icon is off, nor while the integrations are disabled.
     for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
     app.cfg.ui.tab_bar_ai_icon = .both;
+    try app.render();
+    for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
+    app.cfg.ui.integration_icons = &.{ .{ .id = "claude_code", .enabled = true }, .{ .id = "codex", .enabled = true } };
     try app.render();
     var claude: ?Rect = null;
     var codex: ?Rect = null;
@@ -1619,7 +1663,9 @@ test "ui toggles: cluster mode shrinks the palette chip, the AI icon registers i
         if (h.target.button == @intFromEnum(Button.ai_codex)) codex = h.rect;
     };
     try t.expect(claude != null and codex != null);
-    try t.expect(claude.?.y == 0 and claude.?.right() <= codex.?.x);
+    // On the strip, left of the split buttons.
+    try t.expect(claude.?.y == 1 and claude.?.right() <= codex.?.x);
+    try t.expectEqual(@intFromEnum(Button.split_term), app.hits.at(codex.?.right() + 1, 1).?.button);
     app.cfg.ui.tab_bar_ai_icon = .codex;
     try app.render();
     for (app.hits.items.items) |h| try t.expect(!(h.target == .button and h.target.button == @intFromEnum(Button.ai_claude)));
@@ -1670,75 +1716,85 @@ test "ui toggles: expand_indicator and workspace dots change the tree rail" {
     try t.expectEqual(@as(u16, 80), app.cfg.ui.color_column);
 }
 
-test "the palette bar: codicons with ASCII twins, the + chip opens the Marketplace, the cluster's extras drop below 80 columns, the stress copy" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+test "the chrome row is the Rust dump's, cell for cell, at 120 and 80 columns; every element is a hit; the strip carries the + and the split buttons; ASCII twins" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(t.io, "ws", .default_dir);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const ws = try std.fmt.allocPrint(t.allocator, "{s}/ws", .{buf[0..n]});
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 120, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
-    app.cfg.ui.tab_bar_ai_icon = .claude_code;
+    // The author's config: the compact cluster.
+    app.cfg.ui.top_bar_cluster_mode = .compact;
     const wide = try screenText(&app);
     defer t.allocator.free(wide);
     const row0 = wide[0..std.mem.indexOfScalar(u8, wide, '\n').?];
-    try t.expect(std.mem.indexOf(u8, row0, tree_codicon) != null);
-    try t.expect(std.mem.indexOf(u8, row0, right_panel_codicon) != null);
-    try t.expect(std.mem.indexOf(u8, row0, add_codicon) != null);
-    try t.expect(std.mem.indexOf(u8, row0, "search files") != null);
-    var plus: ?u16 = null;
-    var ai: ?u16 = null;
-    var x: u16 = 0;
-    while (x < 120) : (x += 1) {
-        const h = app.hits.at(x, 0) orelse continue;
-        if (h != .button) continue;
-        if (h.button == @intFromEnum(Button.add_integration)) plus = x;
-        if (h.button == @intFromEnum(Button.ai_claude)) ai = x;
-    }
-    try t.expect(plus != null and ai != null);
-    // The stress copy joins the cluster once the meter has samples.
-    app.cfg.ui.stress_meter = true;
-    var i: usize = 0;
-    while (i < 20) : (i += 1) app.stress.push(30_000);
-    const stressed = try screenText(&app);
-    defer t.allocator.free(stressed);
-    const srow = stressed[0..std.mem.indexOfScalar(u8, stressed, '\n').?];
-    try t.expect(std.mem.indexOf(u8, srow, "ms") != null);
-    var stress_hit = false;
-    x = 0;
-    while (x < 120) : (x += 1) if (app.hits.at(x, 0)) |h| if (h == .button and h.button == @intFromEnum(Button.stress)) {
-        stress_hit = true;
-    };
-    try t.expect(stress_hit);
-    // The + chip routes to integrations.show_marketplace — proved by its
-    // refusal when the marketplace is off (no fetch in a test). The chip
-    // moved left when the stress copy joined the cluster: find it again.
-    plus = null;
-    x = 0;
-    while (x < 120) : (x += 1) if (app.hits.at(x, 0)) |h| if (h == .button and h.button == @intFromEnum(Button.add_integration)) {
-        plus = x;
-    };
-    app.cfg.marketplace.enabled = false;
-    app.diag.clear();
-    try app.handle(.{ .mouse = .{ .x = plus.?, .y = 0, .kind = .press, .button = .left } });
-    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "marketplace: disabled") != null);
-    // Narrow: the bar stays, the palette chip is the icon, the AI chip and the + are gone.
-    try app.resize(60, 12);
+    const gap = " " ** 25;
+    try t.expectEqualStrings(ui_menu_bar.rust_row_120 ++ "  \u{EB01}" ++ gap ++ "\u{F0415}  \u{25CF}\u{2501}  \u{F0156}", std.mem.trimEnd(u8, row0, " "));
+    // Every element registers: the words, the », the nav cluster, the
+    // chip, the globe, the right cluster.
+    try t.expectEqual(menu_bar.button_base, app.hits.at(5, 0).?.button);
+    try t.expectEqual(menu_bar.button_base + 1, app.hits.at(12, 0).?.button);
+    try t.expectEqual(menu_bar.overflow_button, app.hits.at(23, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.toggle_tree), app.hits.at(37, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.back), app.hits.at(40, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.forward), app.hits.at(43, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(48, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.dropdown), app.hits.at(78, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.toggle_right_panel), app.hits.at(82, 0).?.button);
+    try t.expectEqual(integrations_view.chip_base, app.hits.at(85, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.new_tab_page), app.hits.at(111, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.theme_toggle), app.hits.at(114, 0).?.button);
+    try t.expectEqual(@intFromEnum(Button.window_close), app.hits.at(118, 0).?.button);
+    // Row 1: the strip's + at 32 with the sidebar, at 1 without; the
+    // split buttons at the right end.
+    const row1 = wide[row0.len + 1 ..];
+    try t.expect(std.mem.startsWith(u8, row1, " \u{F0415}"));
+    try t.expect(std.mem.indexOf(u8, row1[0..std.mem.indexOfScalar(u8, row1, '\n').?], "\u{EA85}  \u{EB56}  \u{EB57}") != null);
+    try t.expectEqual(Button.newTab(0), app.hits.at(1, 1).?.button);
+    try t.expectEqual(@intFromEnum(Button.split_term), app.hits.at(112, 1).?.button);
+    try t.expectEqual(@intFromEnum(Button.split_right), app.hits.at(115, 1).?.button);
+    try t.expectEqual(@intFromEnum(Button.split_down), app.hits.at(118, 1).?.button);
+    app.tree.visible = true;
+    try app.render();
+    try t.expectEqual(Button.newTab(0), app.hits.at(32, 1).?.button);
+    app.tree.visible = false;
+    // The full cluster (`auto` at 120 columns): + TABS 1 × ●━ ×.
+    app.cfg.ui.top_bar_cluster_mode = .auto;
+    const full = try screenText(&app);
+    defer t.allocator.free(full);
+    try t.expect(std.mem.indexOf(u8, full[0..std.mem.indexOfScalar(u8, full, '\n').?], "\u{F0415}  TABS  1 \u{F0156}  \u{25CF}\u{2501}  \u{F0156}") != null);
+    try t.expectEqual(@intFromEnum(Button.tabs_label), app.hits.at(104, 0).?.button);
+    try t.expectEqual(Button.tabPage(0), app.hits.at(109, 0).?.button);
+    try t.expectEqual(Button.tabPageClose(0), app.hits.at(111, 0).?.button);
+    // 80 columns: the brand and the » alone, no globe, the compact cluster.
+    app.cfg.ui.top_bar_cluster_mode = .compact;
+    try app.resize(80, 12);
     const narrow = try screenText(&app);
     defer t.allocator.free(narrow);
     const nrow = narrow[0..std.mem.indexOfScalar(u8, narrow, '\n').?];
-    try t.expect(std.mem.indexOf(u8, nrow, tree_codicon) != null);
-    try t.expect(std.mem.indexOf(u8, nrow, right_panel_codicon) != null);
-    try t.expect(std.mem.indexOf(u8, nrow, "search files") == null);
-    try t.expect(std.mem.indexOf(u8, nrow, "⌘") != null);
-    x = 0;
-    while (x < 60) : (x += 1) if (app.hits.at(x, 0)) |h| if (h == .button) {
-        try t.expect(h.button != @intFromEnum(Button.ai_claude));
-        try t.expect(h.button != @intFromEnum(Button.stress));
-    };
+    try t.expectEqualStrings(ui_menu_bar.rust_row_80 ++ "        \u{F0415}  \u{25CF}\u{2501}  \u{F0156}", std.mem.trimEnd(u8, nrow, " "));
+    try t.expectEqual(menu_bar.overflow_button, app.hits.at(11, 0).?.button);
+    try t.expect(app.hits.at(65, 0) == null);
+    // Below the cluster's 48 cells only the chip paints, centred.
+    try app.resize(44, 12);
+    const tiny = try screenText(&app);
+    defer t.allocator.free(tiny);
+    const trow = tiny[0..std.mem.indexOfScalar(u8, tiny, '\n').?];
+    try t.expect(std.mem.indexOf(u8, trow, "\u{F0349}  ws") != null);
+    try t.expect(std.mem.indexOf(u8, trow, "\u{EA9B}") == null);
+    try t.expectEqual(@intFromEnum(Button.palette), app.hits.at(12, 0).?.button);
     // ASCII twins.
+    try app.resize(120, 12);
     app.cfg.ui.ascii_icons = true;
     const ascii = try screenText(&app);
     defer t.allocator.free(ascii);
     const arow = ascii[0..std.mem.indexOfScalar(u8, ascii, '\n').?];
-    try t.expect(std.mem.indexOf(u8, arow, " = ") != null);
-    try t.expect(std.mem.indexOf(u8, arow, " # ") != null);
+    try t.expect(std.mem.indexOf(u8, arow, "|  <  >    ?  ws") != null);
+    try t.expect(std.mem.indexOf(u8, arow, "+  \u{25CF}\u{2501}  x") != null);
 }
 
 test "ui.click_echo: a left press underlines the word under it for 120 ms; off, nothing" {

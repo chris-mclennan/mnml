@@ -1,0 +1,24 @@
+ ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
+   │  ~/Pr…              │ 󰐕                                           
+▌ │     src                │                                        _
+ 󰍉 │     󱼅  main.rs          │        _ __ ___    _ __    _ __ ___   | |
+ 󰊢 │      .gitignore       ? │       | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+  │      package.json       │       | | | | | | | | | | | | | | | | | |
+ 󰐱 │     󰂺 README.md          │       |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰎒 │                          │
+ 󰚩 │  mixr                   │                 workspace · ws
+ 󰅣 │                          │                     on main
+  │  acmeco-claude-workspa… │
+  │──────────────────────────│                    Shortcuts
+  │ Sidebar                ⋮ │                 ──────────────
+ 󱘣 │                          │                 ^P     find file
+   │ Arrows or j/k walk rows. │                ^R     recent files
+   │ Enter opens the          │               ^K     which-key menu
+   │ selection. Ctrl+Shift+P  │                  ^N     new file
+   │ opens the palette.       │                ^B     toggle tree
+   │                          │                    ^Q     quit
+   │                          │
+  │                          │             mnml 0.2.21 · 9d5049b52
+   │                          │
+ TREE   main … [no file]     C 74% ±0.0  󱼀 󰐎  WRAP    10:27  ws   —
+

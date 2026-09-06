@@ -9,4 +9,4 @@ expect screen contains "› sub"
 command files.open_split
 # Each group's strip shows one `sub` tab; the duplicate would sit beside it.
 expect screen lacks "sub   sub"
-expect screen contains "sub   +"
+expect screen contains "sub   󰐕"

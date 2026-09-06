@@ -1,19 +1,22 @@
 # zig-only
-# `ui.menu_bar = always` (the default) paints File / Edit / View / Go /
-# Help on the palette-bar row; a click drops the menu. The View menu's
-# auto-equalize row flips ui.auto_equalize_splits.
+# `ui.menu_bar = always` (the default) paints the menu words on the
+# chrome row — at 120 columns the brand, File and Edit fit before the
+# » ; a click drops the menu. The Window menu's auto-equalize row flips
+# ui.auto_equalize_splits.
 write a.txt alpha
 open a.txt
 expect screen contains " File "
-expect screen contains " Help "
-click 5 0
+expect screen contains " » "
+click 12 0
 expect screen contains "╭ File"
 expect screen contains "New file"
-expect screen contains "Reopen closed tab"
+expect screen contains "Open recent file"
 key esc
 expect screen lacks "╭ File"
 command view.toggle_auto_equalize_splits
 expect screen contains "auto-equalize splits: on"
+# The pointer leaves the row first: an `auto` bar shows its words while it rests there.
+click 60 20
 command view.menu_bar_cycle
 expect screen contains "menu bar: auto"
 expect screen lacks " File "

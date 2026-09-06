@@ -751,10 +751,8 @@ pub const App = struct {
     clock: clock.State = .{},
     /// The statusline coverage chip (`app/coverage.zig`).
     coverage: coverage.State = .{},
-    /// The menu-bar menu that is open, if one is (`app/menu_bar.zig`).
-    menu_bar_open: ?menu_bar.Menu = null,
-    /// Where the bar painted its first word last frame (`view.menu_bar_open`).
-    menu_bar_x: u16 = 4,
+    /// The menu bar: the open menu, where its words painted (`app/menu_bar.zig`).
+    menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
     click_echo: ?ClickEcho = null,
     /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
@@ -1100,6 +1098,7 @@ pub const App = struct {
         self.lsp.deinit(gpa, self.io);
         self.snippets.deinit();
         self.overlay.deinit(gpa);
+        self.menu_bar.deinit();
         if (self.find_bar) |*fb| {
             fb.state.deinit(gpa);
             if (fb.snapshot) |*s| s.deinit();

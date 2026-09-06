@@ -122,6 +122,8 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // editor could do with it: a label jumps, Esc disarms, anything
     // else disarms and carries on below.
     if (app.flash != null and flash.interceptKey(app, k)) return;
+    // F10 / Alt+<letter> summon a menu-bar menu (`app/menu_bar.zig`).
+    if (try menu_bar.interceptKey(app, k)) return;
     // The completion / hover / peek popups take their keys first: an
     // open completion popup owns Tab / Enter ahead of a ghost's Tab. An
     // accept that edited the text leaves any ghost stale — drop it.
@@ -755,6 +757,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .dock_set => |s| dock.setSetting(app, s.id, s.setting),
         .toggle_auto_refresh => |p| try auto_refresh.toggle(app, p),
         .set_coverage_mode => |m| try coverage.setMode(app, m),
+        .menu_bar => |i| try menu_bar.openIndex(app, i),
         .none => {},
     }
 }
@@ -832,6 +835,8 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
         .wizard => try first_launch.key(app, k),
         .info => closeOverlay(app),
         .menu => |*m| {
+            // A menu-bar menu: ← / → step to the neighbouring menu.
+            if (try menu_bar.menuKey(app, k)) return;
             // The child owns the keys while it is open: ← / h step back
             // out of it, Enter / → / l run its row.
             if (m.sub) |*sub| {
@@ -1525,6 +1530,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
                 return menu_bar.open(app, which, r.x, m.y + 1);
             }
+            if (id == menu_bar.overflow_button) {
+                const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                return menu_bar.openOverflow(app, r.x, m.y + 1);
+            }
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
                 if (m.button == .right) return context_menus.openNewTabMenu(app, m.x, m.y);
                 const layout = app.layouts.current();
@@ -1534,14 +1543,31 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 _ = app.openScratch() catch return error.OutOfMemory;
                 return;
             }
+            // The right cluster's tab-page chips: a chip shows its page,
+            // the `×` on the active one closes it.
+            if (render.Button.tabPageOf(id)) |page| return cmd_tab.switchTab(app, page);
+            if (render.Button.tabPageCloseOf(id)) |page| {
+                cmd_tab.switchTab(app, page);
+                return runCmd(app, .@"tab.close");
+            }
             switch (@as(render.Button, @enumFromInt(id))) {
                 .palette => try runCmd(app, .palette),
                 .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
                 .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
+                .back => try runCmd(app, .@"buffer.prev"),
+                .forward => try runCmd(app, .@"buffer.next"),
+                .dropdown => try runCmd(app, .@"picker.recent"),
+                .new_tab_page => try runCmd(app, .@"tab.new"),
+                .tabs_label => try runCmd(app, .@"tab.picker"),
+                // The pill swaps to the configured alternate; without one
+                // it opens the picker so the click never dead-ends.
+                .theme_toggle => try runCmd(app, if (app.cfg.ui.theme_toggle != null) .@"theme.toggle" else .@"theme.pick"),
+                .window_close => try runCmd(app, .@"app.quit"),
+                .split_term => try runCmd(app, .@"term.shell"),
+                .split_right => try runCmd(app, .@"view.split_right"),
+                .split_down => try runCmd(app, .@"view.split_down"),
                 .ai_claude => try runCmd(app, .@"ai.claude_code"),
                 .ai_codex => try runCmd(app, .@"ai.codex"),
-                .add_integration => try runCmd(app, .@"integrations.show_marketplace"),
-                .stress => if (m.button == .right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
                 else => {},
             }
         },

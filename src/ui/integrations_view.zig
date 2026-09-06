@@ -20,10 +20,10 @@ const Style = vaxis.Style;
 const Color = vaxis.Color;
 
 /// `.button` ids of the palette-bar chips: `chip_base + index`. Kept
-/// under `render.Button.new_tab_base` (0x100), which owns everything
+/// under `render.Button.tab_page_base` (0x40), which owns the ids
 /// above it.
 pub const chip_base: u32 = 0x10;
-pub const max_chips: u32 = 0x100 - chip_base;
+pub const max_chips: u32 = 0x40 - chip_base;
 
 pub const Detail = struct {
     description: []const u8,
