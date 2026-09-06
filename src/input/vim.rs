@@ -910,8 +910,10 @@ impl VimInputHandler {
         }
         match key.code {
             KeyCode::Esc => {
+                // `:help i_<Esc>` — one left, never onto the previous
+                // line (`R<CR><Esc>` stays on the new line).
                 self.enter_normal();
-                InputResult::Ops(vec![MoveLeft])
+                InputResult::Ops(vec![MoveLeftNoCrossLine])
             }
             KeyCode::Char('c') if ctrl => {
                 self.enter_normal();
@@ -1068,9 +1070,13 @@ impl VimInputHandler {
                 InputResult::Ops(vec![InsertCharFromLine { above: false }])
             }
             KeyCode::Esc => {
-                // vim drifts the cursor one left when leaving Insert.
+                // vim drifts the cursor one left when leaving Insert —
+                // `cursor = max(line_start, cursor - 1)` (`:help
+                // i_<Esc>`), so `o<Esc>` sits on the opened line and
+                // `i<Esc>` at column 0 stays. A plain MoveLeft crossed
+                // back onto the previous line's newline.
                 self.enter_normal();
-                InputResult::Ops(vec![MoveLeft])
+                InputResult::Ops(vec![MoveLeftNoCrossLine])
             }
             KeyCode::Char('c') if ctrl => {
                 self.enter_normal();
@@ -1083,7 +1089,7 @@ impl VimInputHandler {
             // Mirror the plain Esc arm above.
             KeyCode::Char('[') if ctrl => {
                 self.enter_normal();
-                InputResult::Ops(vec![MoveLeft])
+                InputResult::Ops(vec![MoveLeftNoCrossLine])
             }
             // Insert-mode chords (vim canonical):
             // Ctrl+W ⇒ delete previous word
@@ -4862,9 +4868,31 @@ mod tests {
             ops(v.handle_key(k('a'), &ctx())),
             vec![EditOp::InsertChar('a')]
         );
+        // `:help i_<Esc>` — one left, never onto the previous line.
         assert_eq!(
             ops(v.handle_key(kc(KeyCode::Esc), &ctx())),
-            vec![EditOp::MoveLeft]
+            vec![EditOp::MoveLeftNoCrossLine]
+        );
+        assert_eq!(v.mode(), EditingMode::Normal);
+    }
+
+    /// Insert's `Ctrl+[` and Replace's Esc leave the same way as
+    /// Insert's Esc: `MoveLeftNoCrossLine`, so `o<Esc>` / `R<CR><Esc>`
+    /// stay on the new line instead of stepping back onto the newline.
+    #[test]
+    fn ctrl_bracket_and_replace_esc_never_cross_a_line_start() {
+        let mut v = h();
+        v.handle_key(k('i'), &ctx());
+        assert_eq!(
+            ops(v.handle_key(kctrl('['), &ctx())),
+            vec![EditOp::MoveLeftNoCrossLine]
+        );
+        assert_eq!(v.mode(), EditingMode::Normal);
+        v.handle_key(k('R'), &ctx());
+        assert_eq!(v.mode(), EditingMode::Replace);
+        assert_eq!(
+            ops(v.handle_key(kc(KeyCode::Esc), &ctx())),
+            vec![EditOp::MoveLeftNoCrossLine]
         );
         assert_eq!(v.mode(), EditingMode::Normal);
     }

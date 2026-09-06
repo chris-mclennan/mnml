@@ -2193,6 +2193,21 @@ impl Editor {
                 self.move_horizontal(-1, false);
                 self.move_extras_horizontal(-1);
             }
+            MoveLeftNoCrossLine => {
+                // `:help i_<Esc>` — one left, clamped to the line start.
+                let line_start = self.line_start(self.current_line());
+                if self.cursor > line_start {
+                    self.cursor = self.prev_char_boundary(self.cursor);
+                }
+                self.move_extras_with(|ed, p| {
+                    let line_start = ed.line_start(ed.line_of_byte(p));
+                    if p > line_start {
+                        ed.prev_char_boundary(p)
+                    } else {
+                        p
+                    }
+                });
+            }
             MoveRight => {
                 self.move_horizontal(1, false);
                 self.move_extras_horizontal(1);
@@ -7910,6 +7925,51 @@ mod page_down_eof_tests {
         ed.apply(EditOp::PageDown, 40, &mut clip);
         assert_eq!(ed.current_line(), 2, "should land on 'c'");
         assert_eq!(ed.cursor, ed.text.len(), "and at its end");
+    }
+
+    /// `MoveLeftNoCrossLine` is `cursor = max(line_start, cursor - 1)`:
+    /// from the end of a line it steps onto the last char, from column 0
+    /// it stays, and it never lands on the previous line's newline.
+    #[test]
+    fn move_left_no_cross_line_stops_at_the_line_start() {
+        let mut ed = Editor::new("ab\ncd\n", 4);
+        let mut clip = Clipboard::detached();
+        ed.set_cursor_byte(5); // after 'd' (A<Esc> position)
+        ed.apply(EditOp::MoveLeftNoCrossLine, 10, &mut clip);
+        assert_eq!(ed.cursor, 4, "onto the 'd'");
+        ed.set_cursor_byte(3); // column 0 of line 2 (i<Esc> / o<Esc> position)
+        ed.apply(EditOp::MoveLeftNoCrossLine, 10, &mut clip);
+        assert_eq!(
+            ed.cursor, 3,
+            "stays — MoveLeft would cross onto the newline"
+        );
+        ed.set_cursor_byte(0);
+        ed.apply(EditOp::MoveLeftNoCrossLine, 10, &mut clip);
+        assert_eq!(ed.cursor, 0);
+        // Multi-byte: steps back over a whole char.
+        let mut ed = Editor::new("é\n", 4);
+        ed.set_cursor_byte(2);
+        ed.apply(EditOp::MoveLeftNoCrossLine, 10, &mut clip);
+        assert_eq!(ed.cursor, 0);
+    }
+
+    /// Extra cursors follow the same rule, each against its own line.
+    #[test]
+    fn move_left_no_cross_line_fans_out_over_extra_cursors() {
+        let mut ed = Editor::new("ab\ncd\nef\n", 4);
+        let mut clip = Clipboard::detached();
+        ed.set_cursor_byte(2); // end of "ab"
+        ed.add_extra_cursor(3); // column 0 of "cd"
+        ed.add_extra_cursor(8); // end of "ef"
+        ed.apply(EditOp::MoveLeftNoCrossLine, 10, &mut clip);
+        assert_eq!(ed.cursor, 1);
+        let mut extras = ed.extra_cursors.clone();
+        extras.sort_unstable();
+        assert_eq!(
+            extras,
+            vec![3, 7],
+            "col-0 extra stays; the other steps left"
+        );
     }
 }
 

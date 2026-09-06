@@ -1905,6 +1905,78 @@ mod tests {
         assert_eq!(b.editor.cursor(), 4);
     }
 
+    fn vim_buf(d: &tempfile::TempDir, body: &str) -> Buffer {
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let p = d.path().join("esc.txt");
+        fs::write(&p, body).unwrap();
+        let b = Buffer::open(&p, &cfg).unwrap();
+        assert_eq!(b.editing_mode(), EditingMode::Normal);
+        b
+    }
+
+    fn vim_keys(b: &mut Buffer, keys: &[ratatui::crossterm::event::KeyCode]) {
+        let mut clip = Clipboard::new();
+        for &code in keys {
+            let key = KeyEvent::new(code, ratatui::crossterm::event::KeyModifiers::NONE);
+            b.feed_key(key, &mut clip, 10, None);
+        }
+    }
+
+    /// `:help i_<Esc>` — leaving Insert is `cursor = max(line_start,
+    /// cursor - 1)`: one left, never onto the previous line.
+    #[test]
+    fn vim_esc_from_append_lands_on_the_last_char() {
+        use ratatui::crossterm::event::KeyCode::{Char, Esc};
+        let d = tempfile::tempdir().unwrap();
+        let mut b = vim_buf(&d, "abc\n");
+        vim_keys(&mut b, &[Char('A'), Esc]);
+        assert_eq!(b.editing_mode(), EditingMode::Normal);
+        assert_eq!(b.editor.cursor(), 2, "on the 'c'");
+    }
+
+    #[test]
+    fn vim_esc_from_insert_at_column_zero_stays() {
+        use ratatui::crossterm::event::KeyCode::{Char, Esc};
+        let d = tempfile::tempdir().unwrap();
+        let mut b = vim_buf(&d, "abc\ndef\n");
+        b.editor.place_cursor(1, 0);
+        vim_keys(&mut b, &[Char('i'), Esc]);
+        assert_eq!(b.editor.row_col(), (1, 0), "still at column 0 of line 2");
+        assert_eq!(b.editor.cursor(), 4);
+    }
+
+    #[test]
+    fn vim_esc_after_open_line_stays_on_the_new_line() {
+        use ratatui::crossterm::event::KeyCode::{Char, Esc};
+        let d = tempfile::tempdir().unwrap();
+        let mut b = vim_buf(&d, "abc\n");
+        vim_keys(&mut b, &[Char('o'), Esc]);
+        assert_eq!(b.editor.text(), "abc\n\n");
+        assert_eq!(
+            b.editor.row_col(),
+            (1, 0),
+            "on the opened line, not back on 'c'"
+        );
+    }
+
+    #[test]
+    fn vim_esc_from_replace_never_crosses_a_line_start() {
+        use ratatui::crossterm::event::KeyCode::{Char, Enter, Esc};
+        let d = tempfile::tempdir().unwrap();
+        let mut b = vim_buf(&d, "abc\n");
+        // `R` `X` overwrites the 'a'; Enter opens a line under it.
+        vim_keys(&mut b, &[Char('R'), Char('X'), Enter, Esc]);
+        assert_eq!(b.editor.text(), "X\nbc\n");
+        assert_eq!(b.editor.row_col(), (1, 0), "stays on the new line");
+        // And the plain overwrite: `R` `!` from the last char then Esc
+        // sits on the `!` — the vim_replace_mode.test chain in miniature.
+        let mut b = vim_buf(&d, "abc\n");
+        vim_keys(&mut b, &[Char('A'), Esc, Char('R'), Char('!'), Esc]);
+        assert_eq!(b.editor.text(), "ab!\n");
+        assert_eq!(b.editor.cursor(), 2);
+    }
+
     #[test]
     fn edit_history_dedups_nearby_positions() {
         let mut b = buf_with_lines(10);

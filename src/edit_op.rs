@@ -7,6 +7,13 @@
 pub enum EditOp {
     // ── motion (moves the selection head too if a selection is active) ──
     MoveLeft,
+    /// One char left, clamped to the start of the cursor's line — never
+    /// onto the previous line's newline. `:help i_<Esc>`: leaving Insert
+    /// or Replace is `cursor = max(line_start, cursor - 1)`, so `o<Esc>`
+    /// stays on the opened line and `i<Esc>` at column 0 stays put.
+    /// Emitted by the vim handler's Esc / `Ctrl+[`; `h` keeps the
+    /// cross-line `MoveLeft`. Fans out over extra cursors like `h`.
+    MoveLeftNoCrossLine,
     MoveRight,
     MoveUp,
     MoveDown,
@@ -534,6 +541,7 @@ impl EditOp {
         use EditOp::*;
         match self {
             MoveLeft
+            | MoveLeftNoCrossLine
             | MoveRight
             | MoveUp
             | MoveDown

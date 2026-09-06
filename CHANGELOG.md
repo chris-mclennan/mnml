@@ -25,7 +25,10 @@ block); this file is the curated, user-facing summary.
   the appended `\n` used to park it on a phantom line below the last one
   (`Ln 2/1`), so a vim `A` / `o` from there edited the wrong place. Cursor,
   selection and sticky column all stay put; a vim Normal cursor sitting past
-  the last character steps back onto it.
+  the last character steps back onto it. And vim's Esc from Insert or Replace
+  now stops at the start of the line (`:help i_<Esc>`) instead of crossing
+  onto the line above — `o<Esc>` stays on the opened line, `i<Esc>` at
+  column 0 stays put, `A<Esc>` lands on the last character.
 
 ## [0.2.21](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.20...mnml-rs-v0.2.21) - 2026-09-01
 
