@@ -1592,11 +1592,11 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     app.tree.visible = false;
     const empty = try screenText(&app);
     defer t.allocator.free(empty);
-    // No pane: the welcome pane (`ui/welcome.zig`), the word standing in
-    // for the logo on six rows.
-    try t.expect(std.mem.indexOf(u8, empty, "mnml") != null);
-    try t.expect(std.mem.indexOf(u8, empty, "workspace · tmp") != null);
-    try t.expect(std.mem.indexOf(u8, empty, "^P     find file") != null);
+    // No pane: the welcome pane (`ui/welcome.zig`) — whose ladder starts
+    // at six rows; the four this frame leaves it paint only the ground.
+    try t.expect(std.mem.indexOf(u8, empty, "ctrl+p opens") == null);
+    try t.expect(std.mem.indexOf(u8, empty, "Shortcuts") == null);
+    try t.expect(std.mem.indexOf(u8, empty, "tmp") == null);
     // Row 0 is the (narrow) palette bar at 48 columns; the strip is row 1.
     try t.expectEqual(@intFromEnum(Button.toggle_tree), app.hits.at(1, 0).?.button);
     try t.expectEqual(Button.newTab(0), app.hits.at(1, 1).?.button);
@@ -1898,4 +1898,88 @@ test "ui.click_echo: a left press underlines the word under it for 120 ms; off, 
     try t.expect(app.click_echo == null);
     try app.render();
     try t.expect(app.screen.readCell(x, y).?.style.ul_style != .double);
+}
+
+test "welcome: the shortcut rows follow the profile — standard's six, vim's four" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const std_rows = try welcomeShortcuts(&app, arena.allocator());
+    try t.expectEqual(@as(usize, 6), std_rows.len);
+    const std_chords = [_][]const u8{ "^P", "^R", "^K", "^N", "^B", "^Q" };
+    for (std_rows, std_chords) |row, chord| try t.expectEqualStrings(chord, row.chord);
+    try t.expectEqual(command.CommandId.@"view.toggle_tree", std_rows[4].command);
+
+    var cfg: app_mod.Config = .{};
+    cfg.editor.input_style = .vim;
+    var vim = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer vim.deinit();
+    const vim_rows = try welcomeShortcuts(&vim, arena.allocator());
+    try t.expectEqual(@as(usize, 4), vim_rows.len);
+    const vim_chords = [_][]const u8{ "^P", "SPC", "^N", "^Q" };
+    const vim_labels = [_][]const u8{ "find file", "which-key menu", "toggle tree", "quit" };
+    for (vim_rows, vim_chords, vim_labels) |row, chord, label| {
+        try t.expectEqualStrings(chord, row.chord);
+        try t.expectEqualStrings(label, row.label);
+    }
+    // The frame paints vim's column.
+    const txt = try screenText(&vim);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "SPC     which-key menu") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "recent files") == null);
+}
+
+test "welcome: a recent file is a row that opens on a press; a shortcut row runs its command" {
+    const dispatch = @import("dispatch.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &pbuf);
+    const root = pbuf[0..n];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "r.txt", .data = "recent text\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const r = try std.fs.path.join(t.allocator, &.{ root, "r.txt" });
+    defer t.allocator.free(r);
+    try app.noteRecent(r);
+    const before = try screenText(&app);
+    defer t.allocator.free(before);
+    try t.expect(std.mem.indexOf(u8, before, "Recent Files") != null);
+    try t.expect(std.mem.indexOf(u8, before, "  r.txt") != null);
+    // The rows are hits hugging their text; the pane is 89 wide from
+    // column 31 with the tree up, so `  r.txt` (7 cells) starts at 72.
+    var recent_hit: ?Rect = null;
+    var toggle_hit: ?Rect = null;
+    for (app.hits.items.items) |h| switch (h.target) {
+        .welcome => |w| switch (w.kind) {
+            .recent => if (w.idx == 0) {
+                recent_hit = h.rect;
+            },
+            .shortcut => if (w.idx == 4) {
+                toggle_hit = h.rect;
+            },
+        },
+        else => {},
+    };
+    try t.expect(recent_hit.?.eql(Rect.init(72, 19, 7, 1)));
+    try t.expect(app.hits.at(74, 19).?.welcome.kind == .recent);
+    try t.expect(app.hits.at(71, 19) == null);
+    // A press on the toggle-tree row hides the tree.
+    try t.expect(app.tree.visible);
+    try dispatch.mouse(&app, .{ .x = toggle_hit.?.x + 3, .y = toggle_hit.?.y, .kind = .press, .button = .left }, 1);
+    try t.expect(!app.tree.visible);
+    // The pane spans the screen now; the recent row moved with it.
+    const wide = try screenText(&app);
+    defer t.allocator.free(wide);
+    try t.expect(app.hits.at(74, 19) == null);
+    try t.expect(app.hits.at(58, 19).?.welcome.kind == .recent);
+    // A press on it opens the file.
+    try dispatch.mouse(&app, .{ .x = 58, .y = 19, .kind = .press, .button = .left }, 1);
+    const e = app.activeEditor() orelse return error.TestUnexpectedResult;
+    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, "r.txt"));
+    const after = try screenText(&app);
+    defer t.allocator.free(after);
+    try t.expect(std.mem.indexOf(u8, after, "recent text") != null);
+    try t.expect(std.mem.indexOf(u8, after, "Shortcuts") == null);
 }
