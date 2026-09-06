@@ -1470,6 +1470,101 @@ test "multi-root: cfg.workspaces become collapsed sections; a header opens on en
     try t.expect(std.mem.indexOf(u8, txt, "\u{EB37}") != null);
 }
 
+test "mouse: one click opens a file (Rust), a click on a folder row folds it, the header folds the section, a chip prompts, the wheel steps the cursor" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "src");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "src/main.zig", .data = "x" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.render();
+    const Hit = struct {
+        fn of(a: *App, want: @import("../ui/hit.zig").HitTarget) ?Rect {
+            for (a.hits.items.items) |e| if (std.meta.eql(e.target, want)) return e.rect;
+            return null;
+        }
+    };
+    // Press and release on notes.txt: the pane opens on the release.
+    const notes = Hit.of(&app, .{ .tree_node = @intCast(app.tree.rowOf("notes.txt").?) }).?;
+    try app.handle(.{ .mouse = .{ .x = notes.x + 8, .y = notes.y, .kind = .press, .button = .left } });
+    try t.expect(app.active == null);
+    try app.handle(.{ .mouse = .{ .x = notes.x + 8, .y = notes.y, .kind = .release, .button = .left } });
+    try t.expectEqualStrings("notes.txt", app.panes.get(app.active.?).?.title());
+    // A press on the folder row folds it at once; another opens it.
+    try app.render();
+    const src = Hit.of(&app, .{ .tree_node = @intCast(app.tree.rowOf("src").?) }).?;
+    try app.handle(.{ .mouse = .{ .x = src.x + 3, .y = src.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = src.x + 3, .y = src.y, .kind = .release, .button = .left } });
+    try t.expect(app.tree.rowOf("src/main.zig") == null);
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = src.x + 3, .y = src.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = src.x + 3, .y = src.y, .kind = .release, .button = .left } });
+    try t.expect(app.tree.rowOf("src/main.zig") != null);
+    // The header row folds the primary section: no rows, then back.
+    try app.render();
+    const header = Hit.of(&app, .{ .tree_root = 0 }).?;
+    try app.handle(.{ .mouse = .{ .x = header.x + 5, .y = header.y, .kind = .press, .button = .left } });
+    try t.expect(!app.tree.primary_expanded);
+    try t.expectEqual(@as(usize, 0), app.tree.rows.items.len);
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = header.x + 5, .y = header.y, .kind = .press, .button = .left } });
+    try t.expect(app.tree.primary_expanded);
+    try t.expect(app.tree.rowOf("notes.txt") != null);
+    // The new-file chip prompts, with the tree focused; the refresh chip is the last on the row.
+    try app.render();
+    const chip = Hit.of(&app, .{ .tree_chip = .new_file }).?;
+    try t.expectEqual(header.y, chip.y);
+    try t.expect(Hit.of(&app, .{ .tree_chip = .refresh }).?.x > chip.x);
+    try app.handle(.{ .mouse = .{ .x = chip.x + 1, .y = chip.y, .kind = .press, .button = .left } });
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqualStrings("New file (workspace-relative)", app.overlay.prompt.state.title);
+    try app.handle(.{ .key = Key.named(.esc) });
+    // The wheel over a row steps the cursor by `wheel_lines`.
+    try app.render();
+    app.tree.cursor = 0;
+    try app.handle(.{ .mouse = .{ .x = notes.x + 2, .y = notes.y, .kind = .scroll_down, .button = .none } });
+    try app.tick(app.now_ms + 100);
+    try t.expect(app.tree.cursor > 0);
+}
+
+test "a top-level directory the user folded stays folded when a root is added or the roots re-list — seen once is seen for good" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = try t.allocator.dupe(u8, buf[0..n]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "extra/lib");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "extra/lib/c.txt", .data = "c" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "a" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    try t.expect(app.tree.rowOf("extra/lib") != null);
+    try app.render();
+    app.focus = .tree;
+    app.tree.cursor = app.tree.rowOf("extra").?;
+    _ = try app.tree.handleKey(&app, Key.char('h'));
+    try t.expect(app.tree.rowOf("extra/lib") == null);
+    try app.render();
+    try app.tick(app.now_ms + 1000);
+    try t.expect(app.tree.rowOf("extra/lib") == null);
+    try acceptAddWorkspace(&app, "extra/");
+    try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
+    try t.expect(app.tree.rowOf("extra/lib") == null);
+    try app.render();
+    try app.tick(app.now_ms + 2000);
+    try app.render();
+    try t.expect(app.tree.rowOf("extra/lib") == null);
+    try app.tree.refresh(&app);
+    try t.expect(app.tree.rowOf("extra/lib") == null);
+}
+
 test "multi-root: view.add_workspace prompts, Tab completes a directory segment and cycles, enter adds the root; duplicates and files are refused" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

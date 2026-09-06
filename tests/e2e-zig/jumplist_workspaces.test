@@ -25,15 +25,23 @@ expect pane b.txt
 command nav.forward
 expect screen contains "nothing to go forward to"
 # A second root: `ext` + Tab completes to `extra/`; enter adds it, folded.
+# The primary's own `extra/` opens on first sight (a refresh — the
+# writes above landed after the first listing) and is folded here, so
+# ` lib` can only come from the new section.
+command tree.refresh
+command view.focus_tree
+key home
+key left
+expect screen lacks " lib"
 command view.add_workspace
 type ext
 key tab
 key enter
 expect screen contains "workspace added: extra"
-expect screen contains " extra"
+expect screen contains " ○ extra"
 expect screen lacks " lib"
 command view.switch_workspace
 type extra
 key enter
-expect screen contains " extra"
+expect screen contains " ○ extra"
 expect screen contains " lib"
