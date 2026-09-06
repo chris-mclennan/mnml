@@ -124,6 +124,13 @@ pub fn init(self: *Term, io: Io, gpa: std.mem.Allocator, env: *std.process.Envir
         .explicit_width = self.vx.caps.explicit_width,
     };
 
+    // Cell coordinates, never pixels. ghostty (and kitty, WezTerm)
+    // answer the DECRQM 1016 probe, and vaxis would then ask for pixel
+    // reports and map them through the winsize's pixel dimensions — a
+    // mapping the parser never gets (our reader hands it bare reports),
+    // so every click landed nowhere. The Rust editor took cells from
+    // crossterm; a terminal IDE has no use for sub-cell positions.
+    self.vx.caps.sgr_pixels = false;
     if (opts.mouse) try self.vx.setMouseMode(w, true);
     if (opts.bracketed_paste) try self.vx.setBracketedPaste(w, true);
 

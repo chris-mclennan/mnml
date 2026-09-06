@@ -2457,3 +2457,21 @@ break-check.
   `Leaf` holds `strip_first` / `strip_anchor` / `strip_hidden_right`; a
   wheel over the strip (a gap between tabs routes through the pane's strip
   row) and a marker click step it a tab at a time (`dispatch.tabStripStep`).
+
+## The real terminal (2026-09-06, on `main`) — `// changed:` notes
+
+- `// changed (tui):` `Term.init` forces `caps.sgr_pixels = false` before
+  enabling the mouse. ghostty, kitty and WezTerm answer the DECRQM 1016
+  probe, vaxis then requested pixel-coordinate reports (mode 1016), and
+  the loop's `translateMouse` — which never calls vaxis's pixel→cell
+  `translateMouse` — treated pixels as cells: every click landed off
+  screen. Cell coordinates (1006) always; the Rust editor took cells
+  from crossterm and mnml has no use for sub-cell positions. This shipped
+  because every mouse test injected clicks through the IPC channel;
+  `tools/pty-mouse-check.py` now drives the real binary in a pty,
+  answers the probes as ghostty does, and asserts the requested mode and
+  a working click / right-click / wheel.
+- `// changed (tools):` `tools/chrome-diff.sh` runs the Rust and Zig
+  binaries headless on one workspace with one config and diffs the two
+  screens row by row. The Rust screen is the spec for how mnml-zig
+  looks; the chrome tracks use the diff as their gate.
