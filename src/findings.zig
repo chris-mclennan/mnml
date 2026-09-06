@@ -514,7 +514,9 @@ pub fn acceptNew(app: *App, dir: []const u8, text_in: []const u8) Allocator.Erro
             Io.Dir.cwd().writeFile(app.io, .{ .sub_path = abs, .data = body }) catch {};
         };
     }
-    try tree_mod.acceptNewFile(app, dir, text_in);
+    // The same `.md` name the file was written under: a bare name used
+    // to open (and create) an extension-less twin beside it.
+    try tree_mod.acceptNewFile(app, dir, text);
     if (app.findings.scanned_once) refresh(app) catch {};
 }
 

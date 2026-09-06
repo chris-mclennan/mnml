@@ -1,0 +1,17 @@
+# zig-only
+# `findings.new` with a bare name writes `<name>.md` with the frontmatter
+# template and opens THAT file — it used to also create an empty,
+# extension-less twin and open the twin (src/findings.zig acceptNew).
+write alpha.zig "x\n"
+open alpha.zig
+command view.activity_findings
+wait 300
+command findings.new
+expect screen contains "New finding"
+type vs-probe2
+key enter
+wait 300
+expect pane vs-probe2.md
+expect screen contains "severity: medium"
+expect file .mnml/findings/vs-probe2.md contains "# vs-probe2"
+expect screen lacks "vs-probe2   +"
