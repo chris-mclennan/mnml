@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `Ctrl+Q` during a Files-pane copy quits immediately — the `:qa` transfer guard only exists on the ex path, so the standard profile's only quit leaves a half-written tree behind
 
@@ -31,3 +31,15 @@ status: open
 **Source pointer**: `src/app/cmd_app.zig:140-146` (`quit`: no `app.transfersRunning()` check); the guard that should be shared lives at `src/app/ex.zig:112-115` (`src/app/transfers.zig:16` documents it as `:qa`-only).
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(app): Ctrl+Q asks the transfer guard :qa already had`.
+
+`transfers.quitGuard(app, force)` is the one guard; `cmd_app.quit` calls it
+before the dirty check (so the Save/Discard box can never be a way past
+it). `ex.zig`'s `:qa` keeps its inline check, byte-for-byte the same
+message, because that file belongs to the live `vim-round2` track — fold
+it onto `quitGuard` once that lands. Unit test in `transfers.zig` (a 400-file
+copy, `app.quit` refused, `cancel_all` then quits); `tests/e2e-zig/quit_transfer_guard.test`
+pastes a 3000-file tree and sends Ctrl+Q while it copies.
