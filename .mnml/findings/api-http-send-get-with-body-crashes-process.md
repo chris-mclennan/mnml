@@ -1,6 +1,6 @@
 ---
 severity: SEV-1
-status: open
+status: fixed
 ---
 # `http.send` crashes the whole process for ANY GET (or other bodyless-method) block that has trailing `# @assert` / `# @capture` directives — i.e. the documented directive syntax itself triggers it
 
@@ -137,3 +137,27 @@ explain it).
 - Not independently re-fired: HEAD / DELETE / OPTIONS / TRACE + body
   (same code path as GET, so very likely, but only GET was actually
   driven through the crash this session).
+
+## Fix
+
+Fixed in two commits on `fix-http-parse`:
+
+- `fd4fae7` — `http: directive lines are never body bytes`. `parseHttp`
+  cuts `# @…` / `// @…` lines out of the body region wherever they sit,
+  so a GET with trailing directives has no body (bug #1 / #2 above).
+- `94beb18` — `http: follow redirects by hand; a body on GET never
+  reaches std's assert`. `sendInner` guards on `method.requestHasBody()`:
+  a body on GET / HEAD / DELETE / OPTIONS / TRACE goes out with its
+  `content-length`, the bytes written past `sendBodilessUnflushed` —
+  what curl and reqwest (Rust mnml) send. The mirror (a POST with no
+  body hit `sendBodiless`'s assert) is `content-length: 0`. No user
+  input reaches a std assert from `http.send`, `mnml-zig run` or
+  `chain run`.
+
+Tests: `parse.zig` "directives after the body boundary are script, never
+body: a GET keeps no body"; `client.zig` "send: a body on a bodyless
+method never reaches std's assert …" (four methods + the bodyless POST)
+and "send: thirty malformed blocks parse and go out (or fail soft); none
+aborts"; `cli.zig` "run: a GET with trailing directives goes out without
+a body …" (was exit 134); `app/http.zig` "send: a GET with trailing
+directives sends no body …"; `tests/e2e-zig/http_directives_not_body.test`.

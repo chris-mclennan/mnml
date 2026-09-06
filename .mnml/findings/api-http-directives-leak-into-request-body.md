@@ -1,6 +1,6 @@
 ---
 severity: SEV-1
-status: open
+status: fixed
 ---
 # `# @assert` / `# @capture` post-request directives are silently appended to the actual request body sent over the wire
 
@@ -87,3 +87,23 @@ still contains them.
   confirms the extra ~58 bytes (`# @assert status == 200\n# @capture
   origin = body.json.hello\n`) were physically part of the sent body,
   not a display-only artifact.
+
+## Fix
+
+Fixed in `fd4fae7` — `http: directive lines are never body bytes`
+(branch `fix-http-parse`). `parseHttp` now filters the body region:
+a `# @…` / `// @…` line is a directive wherever it sits in the block
+and is cut before `req.body` is set; every other byte after the
+boundary is body verbatim, CR included, so a JSON body is
+byte-identical to the source. Plain `#` / `//` comment lines after the
+boundary stay body, as in Rust mnml (`parse_block` pushes every line
+past the blank line) — the departure from Rust is for directive lines
+only.
+
+Tests: `parse.zig` "directives after a POST body: the body is
+byte-identical to the JSON, the directives are script" (directives
+before, after, CRLF, a body of only directives, a plain comment kept);
+thirty malformed shapes; a `std.testing.fuzz` over `parse`; `cli.zig`
+"run: … a POST's body is the JSON alone" checks `content-length` and
+the bytes on the wire; `tests/e2e-zig/http_directives_not_body.test`
+checks the Body tab.

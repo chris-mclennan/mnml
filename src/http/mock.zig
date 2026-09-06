@@ -160,6 +160,10 @@ pub const Canned = struct {
     chunks: ?[]const []const u8 = null,
     chunk_delay_ms: u32 = 0,
     chunked: bool = false,
+    /// The answer to the request after this one (a redirect hop, then
+    /// its target). The last link of the chain answers every request
+    /// from then on.
+    next: ?*const Canned = null,
 };
 
 /// One accept loop on its own thread. Every connection gets the canned
@@ -257,28 +261,30 @@ pub const Server = struct {
             self.last.clearRetainingCapacity();
             try self.last.appendSlice(self.gpa, req.items);
         }
-        _ = self.served.fetchAdd(1, .monotonic);
+        const nth = self.served.fetchAdd(1, .monotonic);
+        var canned: *const Canned = &self.canned;
+        for (0..nth) |_| canned = canned.next orelse break;
         var wbuf: [16 * 1024]u8 = undefined;
         var writer = Io.net.Stream.Writer.init(stream, io, &wbuf);
         const w = &writer.interface;
-        try w.print("HTTP/1.1 {d} {s}\r\n", .{ self.canned.status, self.canned.status_text });
-        for (self.canned.headers) |h| try w.print("{s}: {s}\r\n", .{ h.name, h.value });
-        if (self.canned.chunks) |chunks| {
-            if (self.canned.chunked) try w.writeAll("transfer-encoding: chunked\r\n");
+        try w.print("HTTP/1.1 {d} {s}\r\n", .{ canned.status, canned.status_text });
+        for (canned.headers) |h| try w.print("{s}: {s}\r\n", .{ h.name, h.value });
+        if (canned.chunks) |chunks| {
+            if (canned.chunked) try w.writeAll("transfer-encoding: chunked\r\n");
             try w.writeAll("connection: close\r\n\r\n");
             try w.flush();
             for (chunks) |c| {
                 if (self.stopping.load(.acquire)) return;
-                if (self.canned.chunk_delay_ms > 0) Io.sleep(io, .fromMilliseconds(self.canned.chunk_delay_ms), .awake) catch {};
-                if (self.canned.chunked) try w.print("{x}\r\n{s}\r\n", .{ c.len, c }) else try w.writeAll(c);
+                if (canned.chunk_delay_ms > 0) Io.sleep(io, .fromMilliseconds(canned.chunk_delay_ms), .awake) catch {};
+                if (canned.chunked) try w.print("{x}\r\n{s}\r\n", .{ c.len, c }) else try w.writeAll(c);
                 try w.flush();
             }
-            if (self.canned.chunked) try w.writeAll("0\r\n\r\n");
+            if (canned.chunked) try w.writeAll("0\r\n\r\n");
             try w.flush();
             return;
         }
-        try w.print("content-length: {d}\r\nconnection: close\r\n\r\n", .{self.canned.body.len});
-        try w.writeAll(self.canned.body);
+        try w.print("content-length: {d}\r\nconnection: close\r\n\r\n", .{canned.body.len});
+        try w.writeAll(canned.body);
         try w.flush();
     }
 };

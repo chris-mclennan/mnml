@@ -2313,3 +2313,47 @@ goal.
   src/editor/buffer.zig 's/else @min(cursor, n);/else @max(cursor, n + 1);/'`
   and `tools/break-check.sh "vim inserts, opens and appends" src/input/vim.zig
   's/break :blk ops(arena, &.{.move_left_no_cross_line});/break :blk ops(arena, \&.{.move_left});/'`.
+## The `fix-http-parse` track (2026-09-05) — `// changed:` notes
+
+Three findings from the API-developer hunt (`.mnml/findings/api-*.md`).
+
+- `// changed (http.parse):` a `# @…` / `// @…` line is a directive
+  wherever it sits in a block — before the request line, among the
+  headers, or after the body — and is cut from the body region before
+  `req.body` is set. Rust mnml's `parse_block` keeps every line past
+  the blank line, directives included; that rule is kept for plain
+  `#` / `//` comment lines after the boundary (a text body may carry
+  one on purpose, and Rust ships it) and departed from for directive
+  lines only, since the documented placement of `@assert` / `@capture`
+  is after the body. `script.isDirectiveLine` is the one predicate.
+- `// changed (http.client):` redirects are followed in `sendInner`
+  with `.redirect_behavior = .unhandled`, not by the std client — its
+  auto-follow consumes each hop's `Set-Cookie` before the caller sees
+  the head. `Response.hop_cookies` (`HopCookie{host, value}`) carries
+  every hop's cookies keyed by the hop's host; `HeadInfo` and
+  `StreamChunk.head` carry them for a streamed send; `afterResponse`
+  jars them by that host before the final response's own. Rules:
+  `Location` resolves against the hop (`Uri.resolveInPlace`); 303, and
+  301 / 302 on POST, become GET without the body (RFC 9110 §15.4, what
+  browsers and curl do); 307 / 308 resend method and body;
+  `max_redirects = 10`, then `redirect: TooManyHttpRedirects`. A cookie
+  set by a hop rides to the next hop on the same host; a hop to another
+  host carries neither the jar's `Cookie`, nor `Authorization`, nor a
+  pinned `Host`. Rust (reqwest) also follows ten hops and rewrites
+  303 / 301 / 302 the same way; it never jarred hop cookies either.
+- `// changed (http.client):` a body on a bodyless method (GET, HEAD,
+  DELETE, OPTIONS, TRACE) goes out with its `content-length`, the
+  bytes written on the connection past `sendBodilessUnflushed` — std's
+  `sendBodyUnflushed` asserts `requestHasBody()` and aborted the
+  process; curl and reqwest (Rust mnml) send it, and Elasticsearch-style
+  `DELETE` bodies are real. A POST with no body is `content-length: 0`
+  (std's `sendBodiless` asserts the mirror). No user input reaches a
+  std assert from `send`, `mnml-zig run` or `chain run`.
+- `// changed (http.mock):` `Canned.next` chains answers so a test
+  server can say 302 then 200; the last link answers every request
+  after it.
+- `// changed (tests):` `tests/e2e-zig/http_directives_not_body.test`
+  — the GET with trailing directives opens with an empty Body tab and
+  fails soft on a closed port (it took the runner down before); the
+  POST shows its JSON alone. Break-checks in the commit bodies of
+  `fd4fae7` (parser) and the client commit.

@@ -784,3 +784,9 @@ test "resolveJsonPath and jsonTypeName walk objects and arrays" {
     try testing.expectEqualStrings("object", jsonTypeName(root, "a").?);
     try testing.expect(jsonTypeName(root, "nope") == null);
 }
+
+/// True for a `# @…` / `// @…` line — a directive wherever it sits in
+/// a block, never a body byte.
+pub fn isDirectiveLine(raw: []const u8) bool {
+    return directiveOf(raw) != null;
+}

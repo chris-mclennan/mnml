@@ -897,7 +897,9 @@ fn onStreamHead(ctx: *anyopaque, head: client.HeadInfo) bool {
         headers[filled].value = gpa.dupe(u8, h.value) catch return false;
         filled += 1;
     }
-    const chunk = client.StreamChunk.create(gpa, job.id, job.pane, .{ .head = .{ .status = head.status, .status_text = status_text, .headers = headers, .is_sse = head.is_sse, .chunked = head.chunked } }) catch return false;
+    const hop_cookies = client.cloneHopCookies(gpa, head.hop_cookies) catch return false;
+    errdefer client.freeHopCookies(gpa, hop_cookies);
+    const chunk = client.StreamChunk.create(gpa, job.id, job.pane, .{ .head = .{ .status = head.status, .status_text = status_text, .headers = headers, .is_sse = head.is_sse, .chunked = head.chunked, .hop_cookies = hop_cookies } }) catch return false;
     job.streamed = true;
     job.events.post(job.io, .{ .sse = chunk });
     return true;
@@ -968,7 +970,7 @@ pub fn handleStream(app: *App, c: *client.StreamChunk) Allocator.Error!void {
     switch (c.kind) {
         .head => |*h| {
             if (rp.state != .sending or rp.state.sending != c.job) return;
-            var head: Response = .{ .status = h.status, .status_text = h.status_text, .final_url = try app.gpa.dupe(u8, rp.request.url), .headers = h.headers, .body = &.{} };
+            var head: Response = .{ .status = h.status, .status_text = h.status_text, .final_url = try app.gpa.dupe(u8, rp.request.url), .headers = h.headers, .body = &.{}, .hop_cookies = h.hop_cookies };
             // Adopted: the box must not free them.
             c.kind = .{ .done = .{ .timing = .{}, .bytes = 0, .truncated = false } };
             errdefer head.deinit(app.gpa);
@@ -1883,6 +1885,70 @@ test "directives: @set-* reach the wire, @assert rows land on the Tests tab, @ca
     defer testing.allocator.free(out);
     try testing.expect(std.mem.startsWith(u8, out, "# @set-var PROBE = yes\n"));
     try testing.expect(std.mem.indexOf(u8, out, "# @capture TRACE = header x-request-id\nGET http://127.0.0.1:") != null);
+}
+
+test "send: a GET with trailing directives sends no body, and a 302's Set-Cookie lands in the jar" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    const final: mock.Canned = .{ .status = 200, .headers = &.{.{ .name = "content-type", .value = "application/json" }}, .body = "{\"cookies\":{}}" };
+    var server = try mock.Server.start(testing.allocator, testing.io, .{
+        .status = 302,
+        .status_text = "Found",
+        .headers = &.{ .{ .name = "set-cookie", .value = "session=abc123; Path=/" }, .{ .name = "set-cookie", .value = "user=chris" }, .{ .name = "location", .value = "/cookies" } },
+        .next = &final,
+    });
+    defer server.stop(testing.io);
+    // The documented shape: the directives after the blank line.
+    const src = try std.fmt.allocPrint(testing.allocator,
+        \\### get-json
+        \\GET http://127.0.0.1:{d}/cookies/set?session=abc123
+        \\Accept: application/json
+        \\
+        \\# @assert status == 200
+        \\# @capture origin = body.cookies
+        \\
+    , .{server.port});
+    defer testing.allocator.free(src);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "c.http", .data = src });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "c.http" });
+    defer testing.allocator.free(path);
+    const id = try app.openPath(path);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try testing.expect(rp.request.body == null);
+    try testing.expectEqual(@as(usize, 0), rp.body.items.len);
+    try command.run(&app, .{ .static = .@"http.send" });
+    try pumpUntil(&app, rp, struct {
+        fn f(p: *RequestPane) bool {
+            return p.state == .done or p.state == .failed;
+        }
+    }.f, 300);
+    try testing.expect(rp.state == .done);
+    try testing.expectEqual(@as(u16, 200), rp.response().?.status);
+    // The wire saw a plain GET: no body, no length, no directive text.
+    const seen = server.lastRequest();
+    try testing.expect(std.mem.startsWith(u8, seen, "GET /cookies HTTP/1.1\r\n"));
+    try testing.expect(std.mem.indexOf(u8, seen, "@assert") == null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "content-length:") == null);
+    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "cookie: session=abc123; user=chris\r\n") != null);
+    // The hop's cookies are in the jar, keyed by the host that set them.
+    const j = try @import("cmd_http.zig").jar(&app);
+    try testing.expectEqual(@as(usize, 2), j.total());
+    const line = (try j.cookieHeaderFor(testing.allocator, "127.0.0.1")).?;
+    defer testing.allocator.free(line);
+    try testing.expectEqualStrings("session=abc123; user=chris", line);
+    const saved = try tmp.dir.readFileAlloc(testing.io, ".mnml/cookies.json", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(saved);
+    try testing.expect(std.mem.indexOf(u8, saved, "abc123") != null);
+    // The directive rows ran against the final response.
+    var ok_row = false;
+    for (rp.tests.items) |line_| if (std.mem.eql(u8, line_, "✓ status == 200")) {
+        ok_row = true;
+    };
+    try testing.expect(ok_row);
 }
 
 test "vars: tokens classify against the env, a secret masks in the tip, the jump lands on the key's line or at the end" {
