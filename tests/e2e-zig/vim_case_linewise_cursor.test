@@ -21,3 +21,11 @@ key j
 key .
 expect screen contains "CHARLIE THREE"
 expect screen contains "delta four"
+# A count covers that many lines and puts the cursor back where it was.
+type gg
+type 2l
+type 2guu
+expect screen contains "alpha one"
+expect screen contains "bravo two"
+expect screen contains "CHARLIE THREE"
+expect screen contains "Ln 1/4 Col 3"

@@ -1730,10 +1730,23 @@ pub const Vim = struct {
                         .upper => .upper,
                         else => .toggle,
                     };
-                    // The cursor stays on the line it changed (`:help g~~`:
-                    // vim's `3G3|g~~` ends at 3:1), so `gUUj.` reaches the
-                    // next line rather than the one after.
-                    return ops(arena, &.{ .select_line, .move_line_end, .{ .transform_selection_case = kind }, .move_cursor_to_selection_start, .select_clear });
+                    // `{n}gUU` covers n lines like `{n}cc`. The cursor stays
+                    // on the changed line: without a count vim lands on its
+                    // first non-blank (`1G9|g~~` on `    Hello` ends at 1:5);
+                    // with one, the original cursor comes back whole
+                    // (`1G5|2gUU` ends at 1:5). So `gUUj.` reaches the next
+                    // line rather than the one after.
+                    var b = Builder.init(arena);
+                    try b.push(.select_line);
+                    try b.push(.move_line_end);
+                    for (1..n) |_| {
+                        try b.push(.move_down);
+                        try b.push(.move_line_end);
+                    }
+                    try b.push(.{ .transform_selection_case = kind });
+                    try b.push(.select_clear);
+                    try b.push(if (n > 1) .{ .set_cursor_byte = ctx.cursor } else .move_line_first_non_ws);
+                    return b.finish();
                 },
                 .filter => return .{ .app = .{ .filter_lines_from_cursor = .{ .count = n } } },
                 .reflow => return ops(arena, &.{.{ .reflow_paragraph = .{ .width = self.text_width } }}),
