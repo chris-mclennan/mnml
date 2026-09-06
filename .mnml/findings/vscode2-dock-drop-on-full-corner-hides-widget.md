@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # Dragging a dock widget onto a corner that already stacks two widgets makes it vanish — still counted by `dock.close_all`, never painted, no hit
 
@@ -38,3 +38,17 @@ status: open
 **Source pointer**: the corner stacking / drop in `src/app/dock.zig` (`move`/`stackAt` for `.bottom_left` when two widgets already occupy it); painter `src/ui/dock_view.zig`.
 
 Seed (all under `vscode-scratch/`): `alpha.zig` (the 15-line zig file with `alpha`/`beta`/`gamma`), `bravo.txt` (`bravo line 1..3`), `charlie.txt`, `t1.txt`…`t15.txt`. Launch: `MNML_DATA_ROOT=<fresh dir> MNML_COLS=120 MNML_ROWS=40 mnml-zig --headless --input standard <workspace>`.
+
+## Fix
+
+Commit `fix(dock): a drop on a full corner parks the widget where there is room`.
+
+- `dock.layout` no longer drops a widget its corner has no room for: an
+  overflow pass places it in the next corner clockwise with room
+  (`placeInCorner`), so nothing that some corner can hold is ever unpainted.
+- `applyDrop` asks `cornerWithRoom` first: a full corner snaps the widget to
+  the nearest corner with room and toasts `dock: Bottom-left is full — parked
+  Top-left`; with no room anywhere the widget stays put and the toast says
+  so. `dock.move_corner_next` uses the same check.
+- Unit tests in `dock.zig` (layout overflow, `cornerWithRoom`, the drop);
+  `tests/e2e-zig/dock_drop_full_corner.test` is the finding's repro.

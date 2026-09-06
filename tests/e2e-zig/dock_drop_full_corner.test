@@ -1,0 +1,28 @@
+# zig-only
+# Dropping a dock widget on a corner whose stack is full (two mediums
+# already take the half-body cap) used to park it off the paintable
+# area: no rect, no hit, only dock.close_all knew it existed. The drop
+# now snaps to the nearest corner with room and says so; the layout
+# never drops a widget that some corner can hold.
+command dock.add_preset
+key enter
+expect screen contains "Clock"
+command dock.add_preset
+key down
+key down
+key enter
+expect screen contains "Log: run.log"
+command dock.add_preset
+key down
+key down
+key down
+key enter
+type remember
+key enter
+expect screen contains "Note"
+expect screen contains "remember"
+drag 100 1 40 30
+expect screen contains "Clock"
+expect screen contains "Bottom-left is full"
+expect screen contains "remember"
+expect screen contains "Log: run.log"

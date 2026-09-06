@@ -265,7 +265,9 @@ pub const Placed = struct {
 
 pub const Strips = struct { top: u16 = 0, bottom: u16 = 0 };
 
-fn widgetSize(area: Rect, w: Widget) struct { w: u16, h: u16 } {
+const Wh = struct { w: u16, h: u16 };
+
+fn widgetSize(area: Rect, w: Widget) Wh {
     const wp = std.math.clamp(w.w_pct, types.min_pct, types.max_pct);
     const hp = std.math.clamp(w.h_pct, types.min_pct, types.max_pct);
     return .{
@@ -330,22 +332,72 @@ pub fn layout(arena: Allocator, area: Rect, widgets: []const Widget, hidden: boo
 
     // Overlay corners. Bottom corners stack upward: the first widget
     // sits at the very bottom, so the list is walked in order and each
-    // next one lands above it. Top corners stack downward.
+    // next one lands above it. Top corners stack downward. A widget its
+    // corner has no room for (the stack is capped at half the body)
+    // overflows to the next corner with room, clockwise — a drop on a
+    // full corner used to leave it unpainted, with no rect and no hit.
     const max_stack = body.h / 2;
-    for (Corner.all) |corner| {
-        var used: u16 = 0;
-        for (widgets) |w| {
-            if (w.placement != .overlay or w.corner != corner) continue;
-            const sz = widgetSize(body, w);
-            if (sz.w < min_w or sz.h < min_h) continue;
-            if (used + sz.h > max_stack) break;
-            const x = if (corner.isRight()) body.right() - sz.w else body.x;
-            const y = if (corner.isBottom()) body.bottom() - used - sz.h else body.y + used;
-            try out.append(arena, .{ .id = w.id, .rect = Rect.init(x, y, sz.w, sz.h), .inline_strip = false });
-            used += sz.h;
+    var used = std.EnumArray(Corner, u16).initFill(0);
+    var overflow: std.ArrayListUnmanaged(usize) = .empty;
+    for (widgets, 0..) |w, i| {
+        if (w.placement != .overlay) continue;
+        const sz = widgetSize(body, w);
+        if (sz.w < min_w or sz.h < min_h) continue;
+        if (!try placeInCorner(&out, arena, body, &used, max_stack, w.id, sz, w.corner)) try overflow.append(arena, i);
+    }
+    for (overflow.items) |i| {
+        const w = widgets[i];
+        const sz = widgetSize(body, w);
+        var corner = w.corner.next();
+        var tries: u8 = 0;
+        while (tries < 3) : ({
+            corner = corner.next();
+            tries += 1;
+        }) {
+            if (try placeInCorner(&out, arena, body, &used, max_stack, w.id, sz, corner)) break;
         }
     }
     return out.toOwnedSlice(arena);
+}
+
+const CornerUsed = std.EnumArray(Corner, u16);
+
+/// One widget into `corner`'s stack when the cap leaves room for it.
+fn placeInCorner(out: *std.ArrayListUnmanaged(Placed), arena: Allocator, body: Rect, used: *CornerUsed, max_stack: u16, id: u32, sz: Wh, corner: Corner) Allocator.Error!bool {
+    const u = used.get(corner);
+    if (u + sz.h > max_stack) return false;
+    const x = if (corner.isRight()) body.right() - sz.w else body.x;
+    const y = if (corner.isBottom()) body.bottom() - u - sz.h else body.y + u;
+    try out.append(arena, .{ .id = id, .rect = Rect.init(x, y, sz.w, sz.h), .inline_strip = false });
+    used.set(corner, u + sz.h);
+    return true;
+}
+
+/// The corner with room for widget `id` (its stack cap counted without
+/// it): `want` itself, else the next corners clockwise. Null when no
+/// corner can hold it.
+pub fn cornerWithRoom(body: Rect, widgets: []const Widget, id: u32, want: Corner) ?Corner {
+    const moving = for (widgets) |w| {
+        if (w.id == id) break w;
+    } else return null;
+    const sz = widgetSize(body, moving);
+    const max_stack = body.h / 2;
+    var used = CornerUsed.initFill(0);
+    for (widgets) |w| {
+        if (w.id == id or w.placement != .overlay) continue;
+        const s = widgetSize(body, w);
+        if (s.w < min_w or s.h < min_h) continue;
+        used.set(w.corner, used.get(w.corner) + s.h);
+    }
+    var corner = want;
+    var tries: u8 = 0;
+    while (tries < 4) : ({
+        corner = corner.next();
+        tries += 1;
+    }) {
+        if (used.get(corner) + sz.h <= max_stack) return corner;
+    }
+    return null;
 }
 
 pub fn placedOf(placed: []const Placed, id: u32) ?Placed {
@@ -380,12 +432,32 @@ pub fn dropTarget(st: *const State, placed: []const Placed, body: Rect, id: u32,
     return .{ .corner = if (bottom) (if (right) .bottom_right else .bottom_left) else (if (right) .top_right else .top_left) };
 }
 
-/// Apply a drop: the corner, and the slot beside the snapped widget.
+/// Apply a drop: the corner, and the slot beside the snapped widget. A
+/// corner whose stack is full takes nothing: the widget parks in the
+/// nearest corner with room and the toast says which; with no room
+/// anywhere it stays where it was.
 pub fn applyDrop(app: *App, id: u32, drop: Drop) Allocator.Error!void {
     const st = &app.dock;
     const from = st.indexOf(id) orelse return;
+    var corner = drop.corner;
+    const area = app.dock_area;
+    if (area.w >= 12 and area.h >= 4) {
+        const body = bodyAfterStrips(area, strips(area, st.widgets.items, st.hidden));
+        if (cornerWithRoom(body, st.widgets.items, id, drop.corner)) |c| {
+            if (c != drop.corner) app.toast("dock: {s} is full — parked {s}", .{ drop.corner.label(), c.label() });
+            corner = c;
+        } else {
+            app.toast("dock: no corner has room for {s} — it stays {s}", .{ st.widgets.items[from].title, st.widgets.items[from].corner.label() });
+            return;
+        }
+    }
     var w = st.widgets.orderedRemove(from);
-    w.corner = drop.corner;
+    w.corner = corner;
+    if (corner != drop.corner) {
+        try st.widgets.append(app.gpa, w);
+        app.needs_render = true;
+        return;
+    }
     if (drop.before orelse drop.after) |anchor| {
         const at = st.indexOf(anchor) orelse st.widgets.items.len;
         const slot = if (drop.before != null) at else at + 1;
@@ -650,7 +722,13 @@ fn closeAll(app: *App) CommandError!void {
 
 fn moveCornerNext(app: *App) CommandError!void {
     const w = app.dock.target() orelse return app.diag.fail(app.frame.allocator(), "dock: no widget", .{});
-    w.corner = w.corner.next();
+    const area = app.dock_area;
+    const want = w.corner.next();
+    w.corner = if (area.w >= 12 and area.h >= 4)
+        cornerWithRoom(bodyAfterStrips(area, strips(area, app.dock.widgets.items, app.dock.hidden)), app.dock.widgets.items, w.id, want) orelse
+            return app.diag.fail(app.frame.allocator(), "dock: no corner has room for {s}", .{w.title})
+    else
+        want;
     app.needs_render = true;
     app.toast("dock: {s}", .{w.corner.label()});
 }
@@ -952,13 +1030,22 @@ test "layout: four corners anchor, a corner stacks inward, the stack stops at ha
     try testing.expect(placedOf(placed, 3).?.rect.eql(Rect.init(10, 5, 50, 10)));
     try testing.expect(placedOf(placed, 4).?.rect.eql(Rect.init(60, 5, 50, 10)));
     // Three mediums in one bottom corner: 10 + 10 fit under the 20-row
-    // cap; the third stops the stack. The first sits at the very bottom.
+    // cap; the third overflows clockwise to the next corner with room
+    // (top-left) instead of vanishing. The first sits at the very bottom.
     const stack = [_]Widget{ mk(1, .bottom_left, .medium, .overlay), mk(2, .bottom_left, .medium, .overlay), mk(3, .bottom_left, .medium, .overlay) };
     const p2 = try layout(arena, area, &stack, false);
-    try testing.expectEqual(@as(usize, 2), p2.len);
+    try testing.expectEqual(@as(usize, 3), p2.len);
     try testing.expectEqual(@as(u16, 35), placedOf(p2, 1).?.rect.y);
     try testing.expectEqual(@as(u16, 25), placedOf(p2, 2).?.rect.y);
-    try testing.expect(placedOf(p2, 3) == null);
+    try testing.expect(placedOf(p2, 3).?.rect.eql(Rect.init(10, 5, 50, 10)));
+    // Every corner full: the fifth has nowhere to go and is the only one unplaced.
+    const full = [_]Widget{ mk(1, .bottom_left, .medium, .overlay), mk(2, .bottom_left, .medium, .overlay), mk(3, .bottom_right, .medium, .overlay), mk(4, .bottom_right, .medium, .overlay), mk(5, .top_left, .medium, .overlay), mk(6, .top_left, .medium, .overlay), mk(7, .top_right, .medium, .overlay), mk(8, .top_right, .medium, .overlay), mk(9, .bottom_left, .medium, .overlay) };
+    const p4 = try layout(arena, area, &full, false);
+    try testing.expectEqual(@as(usize, 8), p4.len);
+    try testing.expect(placedOf(p4, 9) == null);
+    try testing.expectEqual(Corner.top_left, cornerWithRoom(area, &stack, 3, .bottom_left).?);
+    try testing.expectEqual(Corner.bottom_left, cornerWithRoom(area, stack[0..2], 2, .bottom_left).?);
+    try testing.expect(cornerWithRoom(area, &full, 9, .bottom_left) == null);
     // Top corners stack downward.
     const top = [_]Widget{ mk(1, .top_right, .small, .overlay), mk(2, .top_right, .small, .overlay) };
     const p3 = try layout(arena, area, &top, false);
@@ -1160,6 +1247,29 @@ test "the title drags: a release far away lands in that quadrant, a release near
     try f.app.handle(.{ .mouse = .{ .x = title_a2.?.x + 1, .y = title_a2.?.y, .kind = .press, .button = .left } });
     try f.app.handle(.{ .mouse = .{ .x = title_a2.?.x + 1, .y = title_a2.?.y, .kind = .release, .button = .left } });
     try testing.expectEqual(Corner.top_right, f.app.dock.find(a).?.corner);
+}
+
+test "a drop on a corner whose stack is full parks the widget in the next corner with room, toasts, and keeps it painted" {
+    var f = try Fixture.init(120, 40);
+    defer f.deinit();
+    f.app.tree.visible = false;
+    const a = try add(&f.app, .{ .corner = .bottom_left, .title = "A", .content = .{ .text = "a" } });
+    const b = try add(&f.app, .{ .corner = .bottom_left, .title = "B", .content = .{ .text = "b" } });
+    const c = try add(&f.app, .{ .corner = .top_right, .title = "Clock", .content = .clock, .size = .small });
+    try f.app.render();
+    // Two mediums fill the bottom-left cap; the drop parks the Clock in
+    // the next corner clockwise with room, top-left, and says so.
+    try applyDrop(&f.app, c, .{ .corner = .bottom_left });
+    try testing.expectEqual(Corner.top_left, f.app.dock.find(c).?.corner);
+    try testing.expect(std.mem.indexOf(u8, f.app.toasts.items[f.app.toasts.items.len - 1].text, "Bottom-left is full — parked Top-left") != null);
+    try f.app.render();
+    var painted = false;
+    for (f.app.hits.items.items) |h| if (h.target == .dock and h.target.dock.id == c) {
+        painted = true;
+    };
+    try testing.expect(painted);
+    _ = a;
+    _ = b;
 }
 
 test "a log tail reads the file's last lines on the worker, the title says how many more there are, and an edit re-points it" {
