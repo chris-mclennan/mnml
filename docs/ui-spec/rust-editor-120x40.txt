@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │  main.rs 󰅖   󰐕                                                                    
+▌ │     requests           │ src › main.rs
+ 󰍉 │     src                │   1 fn main() {}
+ 󰊢 │     󱼅  main.rs          │   2 y
+  │      .gitignore       ? │
+ 󰐱 │      package.json       │
+ 󰎒 │     󰂺 README.md          │
+ 󰚩 │                          │
+ 󰅣 │  mixr                   │
+  │                          │
+  │  acmeco-claude-workspa… │
+  │                          │
+ 󱘣 │  acmeco-mnml-workspace  │
+   │                          │
+   │  adx                    │
+   │                          │
+   │  acmeco-claude-plugins  │
+   │                          │
+   │  acmeco-inbox           │
+   │                          │
+   │  acmeco-mobile          │
+   │                          │
+   │  acmeco-playwright      │
+   │                          │
+   │  acmeco-site            │
+   │                          │
+   │──────────────────────────│
+   │ fn  ·  RS  ·  main.rs  ⋮ │
+   │                          │
+   │ [gd] Definition · [gr]   │
+   │ References · [K] Hover · │
+   │ [F2] Rename              │
+   │                          │
+   │                          │
+   │                          │                        ┌─────────────────────────────────────────────────────────── × ┐
+  │                          │                        │ LSP: Failed to discover workspace.Consider adding the `Car…  │
+   │                          │                        └──────────────────────────────────────────────────────────────┘
+ EDIT   main  󰐙 2   main.rs  › main     C 74% ±0.0  󱼀 󰐎  LSP 1  WRAP  15B  Ln 1/2 Col 1    16:03  ws   rs
+

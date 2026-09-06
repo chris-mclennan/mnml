@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │  git status 󰅖   󰐕                                                                 
+▌ │     src                │  on main   1 unstaged · 0 staged                                                       █
+ 󰍉 │     󱼅  main.rs          │  s/u stage·unstage  space toggle  a/A all  ⏎ diff  c commit  C ai-commit  r refresh    █
+ 󰊢 │      .gitignore       ? │  Unstaged changes (1)                                                                  █
+  │      package.json       │  ▶ ? .gitignore                                                                        █
+ 󰐱 │     󰂺 README.md          │                                                                                        █
+ 󰎒 │                          │  Staged changes (0)                                                                    █
+ 󰚩 │  mixr                   │    (none)                                                                              █
+ 󰅣 │                          │                                                                                        █
+  │  acmeco-claude-workspa… │                                                                                        █
+  │                          │                                                                                        █
+  │  acmeco-mnml-workspace  │                                                                                        █
+ 󱘣 │                          │                                                                                        █
+   │  adx                    │                                                                                        █
+   │                          │                                                                                        █
+   │  acmeco-claude-plugins  │                                                                                        █
+   │                          │                                                                                        █
+   │  acmeco-inbox           │                                                                                        █
+   │                          │                                                                                        █
+   │  acmeco-mobile          │                                                                                        █
+   │                          │                                                                                        █
+   │  acmeco-playwright      │                                                                                        █
+   │                          │                                                                                        █
+   │  acmeco-site            │                                                                                        █
+   │                          │                                                                                        █
+   │  example.net             │                                                                                        █
+   │──────────────────────────│                                                                                        █
+   │ git status             ⋮ │                                                                                        █
+   │                          │                                                                                        █
+   │                          │                                                                                        █
+   │                          │                                                                                        █
+   │                          │                                                                                        █
+   │                          │                                                                                        █
+   │                          │                                                                                        █
+   │                          │                                                                                        █
+  │                          │                                                                                        █
+   │                          │                                                                                        █
+ VIEW   main  󰐙 1  [no file]                                         C 74% ±0.0  󱼀 󰐎  WRAP    16:02  ws   —
+

@@ -1,0 +1,4 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"run-command","id":"git.status_pane"}
+{"cmd":"wait_ms","ms":1500}
