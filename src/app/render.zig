@@ -1,6 +1,7 @@
 //! One frame. Row 0 is the palette bar (on a screen at least 80 wide),
 //! the last two rows are the statusline and the `:` line, and between
-//! them sit the tree rail, the split tree and the right panel. Every
+//! them sit the sidebar — the activity bar down its left edge, a `│`,
+//! then the tree — the split tree and the right panel. Every
 //! leaf of the split tree carries its own tab strip on its first row —
 //! a tab is dragged between leaves, so the strip belongs to the leaf,
 //! not to the frame. Then the overlay and the toasts, in that order, so
@@ -98,6 +99,8 @@ const integrations_view = @import("../ui/integrations_view.zig");
 const ipc = @import("../ipc/root.zig");
 const files_pane = @import("files_pane.zig");
 const transfers = @import("transfers.zig");
+const activity_bar = @import("activity_bar.zig");
+const rail_mod = @import("../ui/activity_bar.zig");
 
 /// Below this width the palette bar row is not painted (Rust parity).
 /// Below this the palette bar is not painted at all (a tiny screen).
@@ -185,13 +188,53 @@ pub const SegId = enum(u32) {
     }
 };
 
-/// The rows of the frame for a screen.
-pub const FrameRects = struct { bar: Rect, upper: Rect, status: Rect, cmdline: Rect };
+/// The rows of the frame for a screen, and the columns of its sidebar.
+pub const FrameRects = struct {
+    bar: Rect,
+    upper: Rect,
+    status: Rect,
+    cmdline: Rect,
+    /// The activity bar (`ui/activity_bar.zig`), carved off the
+    /// sidebar's left edge; empty when it is hidden or there is no sidebar.
+    rail: Rect = Rect.empty,
+    /// The `│` column between the rail and the sidebar's panel.
+    rail_border: Rect = Rect.empty,
+    /// The sidebar's panel (the tree); empty when the sidebar is hidden.
+    sidebar: Rect = Rect.empty,
+    /// The one-cell resize divider on the sidebar's right (`tree_divider_id`).
+    sidebar_divider: Rect = Rect.empty,
+    /// What `upper` leaves for the panes, the right panel and the dock.
+    body: Rect,
+};
+
+/// What `frameRects` is told about the sidebar — it reads no app.
+pub const Chrome = struct {
+    /// The sidebar's width when it is visible. Rust's `tree_width`: the
+    /// rail and its border are carved from it, not added to it.
+    sidebar: ?u16 = null,
+    /// Whether the activity bar paints (`activity_bar.shown`).
+    rail: bool = true,
+};
+
+/// The frame's `Chrome` for this app, this frame.
+pub fn chrome(app: *const App) Chrome {
+    return .{
+        .sidebar = if (!app.zen and app.tree.visible) app.tree.width else null,
+        .rail = activity_bar.shown(app),
+    };
+}
 
 /// Palette bar on top when wide enough; the statusline and the `:`
 /// line at the bottom; the rest in between. A tiny screen gives up the
 /// `:` line, then the bar, before it gives up the statusline.
-pub fn frameRects(full: Rect) FrameRects {
+///
+/// The sidebar takes its width (clamped so the panes keep 21 columns,
+/// never under 8) plus a one-cell divider off the left of `upper`; the
+/// rail takes its three cells off the sidebar's left, then a border
+/// column when the sidebar has more than two cells to spare (Rust
+/// `ui/mod.rs`). The tree's `│` divider therefore stays where it was
+/// with or without the rail.
+pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     var r = full;
     var bar = Rect.empty;
     if (full.w >= palette_bar_min_width and full.h >= 5) {
@@ -206,14 +249,41 @@ pub fn frameRects(full: Rect) FrameRects {
         r = s.top;
     }
     const s = r.splitBottom(1);
-    return .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline };
+    var fr: FrameRects = .{ .bar = bar, .upper = s.top, .status = s.rest, .cmdline = cmdline, .body = s.top };
+    // ── rail ──
+    if (ch.sidebar) |tw| if (fr.upper.w > 12) {
+        const w: u16 = @max(@min(tw, fr.upper.w -| 21), 8);
+        const cols = fr.upper.splitLeft(w);
+        const div = cols.rest.splitLeft(1);
+        var side = cols.left;
+        if (ch.rail) {
+            const bar_w: u16 = @min(rail_mod.width, side.w);
+            const rs = side.splitLeft(bar_w);
+            fr.rail = rs.left;
+            side = rs.rest;
+            if (w > bar_w + 2) {
+                const bs = side.splitLeft(1);
+                fr.rail_border = bs.left;
+                side = bs.rest;
+            }
+        }
+        fr.sidebar = side;
+        fr.sidebar_divider = div.left;
+        fr.body = div.rest;
+    };
+    return fr;
 }
 
 /// Zen: only the `:` line is kept (a vim user leaves through it).
 pub fn zenRects(full: Rect) FrameRects {
-    if (full.h < 2) return .{ .bar = Rect.empty, .upper = full, .status = Rect.empty, .cmdline = Rect.empty };
+    if (full.h < 2) return .{ .bar = Rect.empty, .upper = full, .status = Rect.empty, .cmdline = Rect.empty, .body = full };
     const s = full.splitBottom(1);
-    return .{ .bar = Rect.empty, .upper = s.top, .status = Rect.empty, .cmdline = s.rest };
+    return .{ .bar = Rect.empty, .upper = s.top, .status = Rect.empty, .cmdline = s.rest, .body = s.top };
+}
+
+/// The whole screen as a rect.
+fn screenRect(screen: *vaxis.Screen) Rect {
+    return Rect.init(0, 0, screen.width, screen.height);
 }
 
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
@@ -224,6 +294,9 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         const tip = discovery.hoverTip(app, app.frame.allocator()) catch null;
         break :blk if (tip) |tp| .{ .title = try app.frame.allocator().dupe(u8, tp.title), .detail = if (tp.detail) |d| try app.frame.allocator().dupe(u8, d) else null } else null;
     } else null;
+    // The frame's rects read the previous frame's hits too (an `auto`
+    // rail stays while the pointer rests on it).
+    const fr = if (app.zen) zenRects(screenRect(screen)) else frameRects(screenRect(screen), chrome(app));
     app.hits.reset();
     // The image paints are the frame's too (`Term.paintImages` reads
     // them after the cells are out).
@@ -245,25 +318,32 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
 
     // Zen: the panes fill everything above the `:` line — no bar, no
     // tree, no right panel, no strips, no statusline (`zen.zig`).
-    const fr = if (app.zen) zenRects(full) else frameRects(full);
     try drawPaletteBar(app, ui, fr.bar);
-    // The tree takes its width plus a one-cell divider (Rust `ui/mod.rs`).
-    // `ui.hover_help`: while the pointer rests on something with a
-    // description, the rail's bottom rows are its info box.
-    var panes_area = fr.upper;
-    if (!app.zen and app.tree.visible and panes_area.w > 12) {
-        const w: u16 = @max(@min(app.tree.width, panes_area.w -| 21), 8);
-        const cols = panes_area.splitLeft(w);
-        const div = cols.rest.splitLeft(1);
-        var rail = cols.left;
-        if (help_tip) |tip| if (app.cfg.ui.hover_help and rail.h > app.cfg.ui.hover_help_height + 4) {
-            const parts = rail.splitBottom(app.cfg.ui.hover_help_height);
-            rail = parts.top;
+    var panes_area = fr.body;
+    if (!fr.sidebar.isEmpty()) {
+        // ── rail ──
+        // The activity bar down the sidebar's left edge, and the `│`
+        // between it and the tree — `t.line` on the rail's ground, as
+        // Rust paints it, so no panel fill butts against the icons.
+        if (!fr.rail.isEmpty()) rail_mod.draw(ui, fr.rail, activity_bar.props(app));
+        if (!fr.rail_border.isEmpty()) {
+            const pal = app.theme.palette;
+            const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
+            ui.canvas.fill(fr.rail_border, line);
+            var y: u16 = fr.rail_border.y;
+            while (y < fr.rail_border.bottom()) : (y += 1) ui.canvas.put(fr.rail_border.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = line });
+        }
+        // ── sidebar ──
+        // `ui.hover_help`: while the pointer rests on something with a
+        // description, the panel's bottom rows are its info box.
+        var side = fr.sidebar;
+        if (help_tip) |tip| if (app.cfg.ui.hover_help and side.h > app.cfg.ui.hover_help_height + 4) {
+            const parts = side.splitBottom(app.cfg.ui.hover_help_height);
+            side = parts.top;
             discovery.drawHelpBox(ui, parts.rest, tip);
         };
-        try app.tree.draw(app, ui, rail);
-        drawDivider(app, ui, div.left, tree_divider_id);
-        panes_area = div.rest;
+        try app.tree.draw(app, ui, side);
+        drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);
     }
     // The right panel takes its width plus a divider off the far side.
     if (app.right_panel) |which| if (!app.zen and panes_area.w > 21 + 8) {
@@ -1330,28 +1410,57 @@ fn screenText(app: *App) ![]u8 {
 }
 
 test "frameRects: the bar needs 40 columns (narrow below 80), the cmdline row needs 4 rows, the statusline is last to go" {
-    const wide = frameRects(Rect.init(0, 0, 120, 40));
+    const wide = frameRects(Rect.init(0, 0, 120, 40), .{});
     try t.expect(wide.bar.eql(Rect.init(0, 0, 120, 1)));
     try t.expect(wide.upper.eql(Rect.init(0, 1, 120, 37)));
     try t.expect(wide.status.eql(Rect.init(0, 38, 120, 1)));
     try t.expect(wide.cmdline.eql(Rect.init(0, 39, 120, 1)));
     // 40 columns: the bar stays (narrow — the cluster's extras drop).
-    const narrow = frameRects(Rect.init(0, 0, 40, 8));
+    try t.expect(wide.body.eql(wide.upper));
+    try t.expect(wide.rail.isEmpty() and wide.sidebar.isEmpty());
+    const narrow = frameRects(Rect.init(0, 0, 40, 8), .{});
     try t.expect(narrow.bar.eql(Rect.init(0, 0, 40, 1)));
     try t.expect(narrow.upper.eql(Rect.init(0, 1, 40, 5)));
     try t.expect(narrow.status.eql(Rect.init(0, 6, 40, 1)));
     try t.expect(narrow.cmdline.eql(Rect.init(0, 7, 40, 1)));
-    const slim = frameRects(Rect.init(0, 0, 39, 8));
+    const slim = frameRects(Rect.init(0, 0, 39, 8), .{});
     try t.expect(slim.bar.isEmpty());
     try t.expect(slim.upper.eql(Rect.init(0, 0, 39, 6)));
-    const tiny = frameRects(Rect.init(0, 0, 100, 3));
+    const tiny = frameRects(Rect.init(0, 0, 100, 3), .{});
     try t.expect(tiny.bar.isEmpty());
     try t.expect(tiny.cmdline.isEmpty());
     try t.expect(tiny.upper.eql(Rect.init(0, 0, 100, 2)));
     try t.expect(tiny.status.eql(Rect.init(0, 2, 100, 1)));
-    const one = frameRects(Rect.init(0, 0, 100, 1));
+    const one = frameRects(Rect.init(0, 0, 100, 1), .{});
     try t.expect(one.upper.isEmpty());
     try t.expect(one.status.eql(Rect.init(0, 0, 100, 1)));
+}
+
+test "frameRects: the rail and its border come off the sidebar's own 30 columns — the tree's divider stays at column 30 (the Rust dump); hidden hands the tree the cells back; a narrow sidebar keeps the rail, loses the border" {
+    const with = frameRects(Rect.init(0, 0, 120, 40), .{ .sidebar = 30 });
+    try t.expect(with.rail.eql(Rect.init(0, 1, 3, 37)));
+    try t.expect(with.rail_border.eql(Rect.init(3, 1, 1, 37)));
+    try t.expect(with.sidebar.eql(Rect.init(4, 1, 26, 37)));
+    try t.expect(with.sidebar_divider.eql(Rect.init(30, 1, 1, 37)));
+    try t.expect(with.body.eql(Rect.init(31, 1, 89, 37)));
+    const without = frameRects(Rect.init(0, 0, 120, 40), .{ .sidebar = 30, .rail = false });
+    try t.expect(without.rail.isEmpty() and without.rail_border.isEmpty());
+    try t.expect(without.sidebar.eql(Rect.init(0, 1, 30, 37)));
+    try t.expect(without.sidebar_divider.eql(Rect.init(30, 1, 1, 37)));
+    try t.expect(without.body.eql(with.body));
+    // 80x24: the sidebar keeps its 30; the rail spans rows 1..21.
+    const small = frameRects(Rect.init(0, 0, 80, 24), .{ .sidebar = 30 });
+    try t.expect(small.rail.eql(Rect.init(0, 1, 3, 21)));
+    try t.expect(small.sidebar_divider.eql(Rect.init(30, 1, 1, 21)));
+    // The sidebar's floor is 8: rail 3, border 1, four cells of tree.
+    const slim = frameRects(Rect.init(0, 0, 120, 40), .{ .sidebar = 4 });
+    try t.expect(slim.rail.eql(Rect.init(0, 1, 3, 37)));
+    try t.expect(slim.rail_border.eql(Rect.init(3, 1, 1, 37)));
+    try t.expect(slim.sidebar.eql(Rect.init(4, 1, 4, 37)));
+    // A screen too narrow for a sidebar has none, rail included.
+    const none = frameRects(Rect.init(0, 0, 12, 10), .{ .sidebar = 30 });
+    try t.expect(none.sidebar.isEmpty() and none.rail.isEmpty());
+    try t.expect(none.body.eql(none.upper));
 }
 
 test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane hit under the text" {
@@ -1458,7 +1567,7 @@ test "a toast's menu opens above the pointer, over the toast, and never on the s
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, "Copy text") != null);
     try t.expect(std.mem.indexOf(u8, text, "Dismiss all") != null);
-    const fr = frameRects(Rect.init(0, 0, app.screen.width, app.screen.height));
+    const fr = frameRects(Rect.init(0, 0, app.screen.width, app.screen.height), chrome(&app));
     var rows: usize = 0;
     for (app.hits.items.items) |h| if (h.target == .menu_item) {
         rows += 1;

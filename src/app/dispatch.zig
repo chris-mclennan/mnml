@@ -27,6 +27,7 @@ const auto_refresh = @import("auto_refresh.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
 const menu_bar = @import("menu_bar.zig");
+const activity_bar = @import("activity_bar.zig");
 const browser_open = @import("browser_open.zig");
 const ex = @import("ex.zig");
 const find_mod = @import("find.zig");
@@ -1484,6 +1485,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
+        .rail => |part| try activity_bar.mouse(app, part, m),
         .button => |id| {
             // The strip's markers and `+`: a wheel scrolls the strip, a
             // press on a marker steps it.

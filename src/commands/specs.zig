@@ -83,6 +83,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_color_column", .title = "Toggle line-length color column (vim :set cc=80)", .group = "view" },
     .{ .id = "view.toggle_wrap", .title = "Toggle line wrapping (vim :set wrap)", .group = "view" },
     .{ .id = "view.menu_bar_cycle", .title = "Cycle menu bar visibility (always → auto-hide → hidden)", .group = "view" },
+    .{ .id = "view.activity_bar_cycle", .title = "Cycle activity bar visibility (always → auto-hide → hidden)", .group = "view" },
     .{ .id = "view.toggle_todo_highlight", .title = "Toggle TODO/FIXME/HACK/XXX keyword highlight", .group = "view" },
     .{ .id = "view.toggle_render_markdown", .title = "Toggle inline-rendered markdown (render-markdown.nvim style)", .group = "view" },
     .{ .id = "view.toggle_sticky_context", .title = "Toggle sticky scope context (treesitter-context-style header)", .group = "view" },
@@ -985,6 +986,6 @@ test "913 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 913), specs.len);
+    try std.testing.expectEqual(@as(usize, 914), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

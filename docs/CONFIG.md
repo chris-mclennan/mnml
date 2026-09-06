@@ -135,6 +135,7 @@ otherwise. Copy what you need; leave the rest out.
         .mixr_auto_play_on_open = true,
         .projects_dir = "", // "~/code"; ~ is expanded
         .menu_bar = .always, // .always | .auto | .hidden
+        .activity_bar = .always, // .always | .auto (pointer in column 0 reveals) | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
         // The coverage chip reads `.tattle-claude-artifacts` under
         // `MNML_ARTIFACTS_HOME` when that is set, else your home directory.

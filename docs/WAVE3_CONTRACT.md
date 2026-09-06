@@ -2475,3 +2475,57 @@ break-check.
   binaries headless on one workspace with one config and diffs the two
   screens row by row. The Rust screen is the spec for how mnml-zig
   looks; the UI tracks use the diff as their gate.
+
+## The activity bar (2026-09-06, branch `rail`) — `// changed:` notes
+
+- `// changed (render):` `FrameRects` gained the sidebar's columns —
+  `rail`, `rail_border`, `sidebar`, `sidebar_divider`, `body` — and
+  `frameRects(full, Chrome)` takes what it needs to lay them out
+  (`Chrome{ sidebar: ?u16, rail: bool }`, `render.chrome(app)` builds
+  it). The rail (3 cells) and its `│` (1) are carved from the sidebar's
+  own `tree_width`, as Rust's `ui/mod.rs` carves them from `tree_area`:
+  the tree's divider stays at column 30 with or without the rail, the
+  tree's text moves right by four. `render` paints the sidebar from
+  those rects; the `// ── rail ──` block in `frameRects` and in `render`
+  is the whole of it. `zenRects` fills `body` too.
+- `// changed (ui):` `src/ui/activity_bar.zig` — `Section` (Rust's
+  twelve builtins, Rust's order and codepoints, an ASCII twin each),
+  `layout` (Rust's rows: sections from `y + 1`, step 2 or 1 by the
+  density rule, the gear on `bottom - 2`, nothing below `bottom - 3`),
+  `draw(ui, area, Props)`. The pinned launcher slots are not painted —
+  they need the integrations — but `Props.extra_items` counts them so a
+  config that packs the Rust rail packs this one the same way (the
+  fixture's six pins put the sections on rows 2..13, not 2,4,..24).
+- `// changed (hit):` `HitTarget.rail: activity_bar.Part` (`section: Section`
+  / `gear`), labelled `rail:todos` / `rail:gear`. One prong in
+  `dispatch.mouse` → `app/activity_bar.mouse`.
+- `// changed (app):` `src/app/activity_bar.zig`. Rust keeps
+  `active_section` as state and swaps the sidebar on it; here the
+  sections already have surfaces (the tree, the right-panel slot, a
+  pane), so `active(app)` reads the mark off them — the focused surface,
+  then the open right panel, then the tree. A click runs the section's
+  `view.activity_*` id, the same one the right-click menu's first row
+  names. `view.activity_debug` (the DAP pane), `view.activity_agents`
+  (the agents dashboard) and `view.activity_cloud_agents` (the honest
+  "not in this build") had specs and no runners; they run here. A click
+  on the active section does not collapse the sidebar — Rust's
+  `set_activity_section` only ever shows it, and this follows Rust.
+- `// changed (menus):` `context_menus.openRailMenu` (Rust
+  `right_click.rs`: "Show X" + the section's quick verbs; Explorer's
+  reveal row is `view.reveal_in_tree`, the in-app reveal Rust moved to)
+  and `openGearMenu` (Settings / Command Palette / Cheatsheet / Themes /
+  About). `discovery.describe` has a `.rail` arm (Rust `tooltip.rs`'s
+  click hint + what the section holds) so the hover tooltip, the info
+  box and the F1 overlay all explain the rail.
+- `// changed (config):` `ui.activity_bar: .always | .auto | .hidden`
+  (`Config.ActivityBar`, the menu bar's three words per the Rust
+  header's TODO). `hidden` hands the tree its four columns back; `auto`
+  paints the rail while the pointer is in column 0 or resting on the
+  rail (the previous frame's hits, read before the frame resets them);
+  a menu opened from it may see it go when the pointer leaves for the
+  menu. Settings row "Activity bar"; `view.activity_bar_cycle` (Zig-only,
+  the twin of `view.menu_bar_cycle`; the spec count pin is 914).
+- `// changed (badges):` a host's `set-activity-badge` count paints
+  over the section's glyph on Rust's pulse (four seconds glyph, one
+  second count — `app.now_ms`), `•` for one, the digit to nine, `+` past
+  it. Same keys as `ipc/effects.known_sections`.

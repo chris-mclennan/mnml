@@ -16,6 +16,7 @@ const std = @import("std");
 const Rect = @import("rect.zig");
 const ids = @import("../core/ids.zig");
 const panel = @import("../core/panel.zig");
+const activity_bar = @import("activity_bar.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -68,6 +69,9 @@ pub const HitTarget = union(enum) {
     editor_cell: struct { pane: PaneId, line: u32, col: u32 },
     overlay_item: u32,
     dock: struct { id: u32, part: DockPart },
+    /// A row of the activity bar (`ui/activity_bar.zig`): a section's
+    /// icon, or the settings gear at the bottom.
+    rail: activity_bar.Part,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -91,6 +95,10 @@ pub const HitTarget = union(enum) {
             .script_hit => |v| try w.print(":{d}:{d}", .{ v.pane, v.id }),
             .editor_cell => |v| try w.print(":{d}:{d}:{d}", .{ v.pane, v.line, v.col }),
             .dock => |v| try w.print(":{d}:{s}", .{ v.id, @tagName(v.part) }),
+            .rail => |v| switch (v) {
+                .section => |s| try w.print(":{s}", .{@tagName(s)}),
+                .gear => try w.writeAll(":gear"),
+            },
         }
     }
 };
@@ -234,6 +242,9 @@ test "labels are the tag plus the payload" {
     try expectLabel("tree_node:8", .{ .tree_node = 8 });
     try expectLabel("divider:0", .{ .divider = 0 });
     try expectLabel("button:6", .{ .button = 6 });
+    try expectLabel("rail:explorer", .{ .rail = .{ .section = .explorer } });
+    try expectLabel("rail:cloud_agents", .{ .rail = .{ .section = .cloud_agents } });
+    try expectLabel("rail:gear", .{ .rail = .gear });
 }
 
 test "rects.json shape, with a url that needs escaping" {

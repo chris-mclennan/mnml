@@ -29,6 +29,7 @@ const render = @import("render.zig");
 const md_preview = @import("md_preview.zig");
 const integrations = @import("integrations.zig");
 const command = @import("../core/command.zig");
+const activity_bar = @import("activity_bar.zig");
 
 pub const Tip = tooltip.Tip;
 
@@ -114,6 +115,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .detail = "click places the cursor · drag selects · right-click: editor menu",
         },
         .overlay_item => .{ .title = "Overlay item", .detail = "click chooses it" },
+        .rail => |part| activity_bar.describe(part),
     };
 }
 
