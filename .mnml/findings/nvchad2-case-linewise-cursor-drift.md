@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: deferred
+status: fixed
 ---
 # `g~~`, `gUU`, `guu` change the line correctly but leave the cursor one line *below* it
 
@@ -52,3 +52,6 @@ op, which holds under both editors), land the one-liner with the test
 history (`git log --all -- tests/e2e-zig/vim_case_linewise_cursor.test`
 has none — recreate: `3l g~~` expects `Ln 1/4 Col 1`, then `j gUU j .`
 uppercases the next line, not the one after).
+
+## Fix
+Landed on `main` after the user chose to correct the Rust corpus line (`tests/e2e/vim_case_ops.test` now moves with `j` between doubled ops): the doubled forms end in `.move_cursor_to_selection_start` before `.select_clear`; `tests/e2e-zig/vim_case_linewise_cursor.test` is the repro.

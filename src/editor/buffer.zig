@@ -1163,9 +1163,12 @@ test "vim deletes and changes with motions, counts and text objects" {
     try vim("gJ", "|a\n  b", "a|  b");
     try vim("guiw", "|ABC def", "|abc def");
     try vim("gUiw", "|abc def", "|ABC def");
-    try vim("guu", "|ABC\nD", "abc\n|D"); // cursor lands on the next line (Rust parity)
-    try vim("gUU", "|abc\nd", "ABC\n|d");
-    try vim("g~~", "|aBc\nd", "AbC\n|d");
+    // A doubled case operator keeps the cursor on its own line, at the
+    // line start (`:help g~~`: vim's `3G3|g~~` ends at 3:1).
+    try vim("guu", "|ABC\nD", "|abc\nD");
+    try vim("gUU", "|abc\nd", "|ABC\nd");
+    try vim("g~~", "|aBc\nd", "|AbC\nd");
+    try vim("ll" ++ "g~~", "|aBc\nd", "|AbC\nd");
     try vim("g~iw", "a|Bc d", "|AbC d");
     try vim(">>", "|a\nb", " |   a\nb"); // cursor keeps its column (Rust parity)
     try vim("<<", "    a|b\nc", "ab|\nc");

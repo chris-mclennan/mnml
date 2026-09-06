@@ -1,0 +1,23 @@
+# zig-only
+# A doubled case operator leaves the cursor on the line it changed
+# (`:help g~~`: vim's `3G3|g~~` ends at 3:1), so `gUU j .` reaches the
+# next line rather than the one after.
+write words.txt "alpha one\nbravo two\ncharlie three\ndelta four"
+open words.txt
+command editor.use_vim
+type 3l
+key g
+key ~
+key ~
+expect screen contains "ALPHA ONE"
+expect screen contains "Ln 1/4 Col 1"
+key j
+key g
+key U
+key U
+expect screen contains "BRAVO TWO"
+expect screen contains "Ln 2/4"
+key j
+key .
+expect screen contains "CHARLIE THREE"
+expect screen contains "delta four"

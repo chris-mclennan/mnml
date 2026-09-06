@@ -1730,7 +1730,10 @@ pub const Vim = struct {
                         .upper => .upper,
                         else => .toggle,
                     };
-                    return ops(arena, &.{ .select_line, .move_line_end, .{ .transform_selection_case = kind }, .select_clear, .move_down, .move_line_start });
+                    // The cursor stays on the line it changed (`:help g~~`:
+                    // vim's `3G3|g~~` ends at 3:1), so `gUUj.` reaches the
+                    // next line rather than the one after.
+                    return ops(arena, &.{ .select_line, .move_line_end, .{ .transform_selection_case = kind }, .move_cursor_to_selection_start, .select_clear });
                 },
                 .filter => return .{ .app = .{ .filter_lines_from_cursor = .{ .count = n } } },
                 .reflow => return ops(arena, &.{.{ .reflow_paragraph = .{ .width = self.text_width } }}),
