@@ -45,7 +45,7 @@ test "zen: the frame drops the tree, the strip and the statusline; a second togg
     const before = try screen.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(before);
     try t.expect(std.mem.indexOf(u8, before, "[scratch]") != null); // the tab strip
-    try t.expect(std.mem.indexOf(u8, before, "standard") != null); // the statusline
+    try t.expect(std.mem.indexOf(u8, before, "EDIT") != null); // the statusline's mode chip
     try t.expect(app.panes_area.x > 0); // the tree takes the left
     try command.run(&app, .{ .static = .@"view.zen" });
     try t.expect(app.zen);
@@ -54,7 +54,7 @@ test "zen: the frame drops the tree, the strip and the statusline; a second togg
     const zen = try screen.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(zen);
     try t.expect(std.mem.indexOf(u8, zen, "[scratch]") == null);
-    try t.expect(std.mem.indexOf(u8, zen, "standard") == null);
+    try t.expect(std.mem.indexOf(u8, zen, "EDIT") == null);
     try t.expectEqual(@as(u16, 0), app.panes_area.x); // no tree
     try t.expectEqual(@as(u16, 100), app.panes_area.w);
     try t.expectEqual(@as(u16, 0), app.panes_area.y); // no palette bar
@@ -64,5 +64,5 @@ test "zen: the frame drops the tree, the strip and the statusline; a second togg
     try app.render();
     const after = try screen.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(after);
-    try t.expect(std.mem.indexOf(u8, after, "standard") != null);
+    try t.expect(std.mem.indexOf(u8, after, "EDIT") != null);
 }

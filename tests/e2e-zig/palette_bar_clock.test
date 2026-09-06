@@ -2,7 +2,8 @@
 # The statusline carries a clock beside the bell: its menu offers Local
 # / UTC / Hide, and clock.utc / hide / local switch it. (The menu is
 # opened first: the switches' toasts stack over the corner it anchors
-# in.)
+# in.) The UTC chip reads `HH:MMZ ` — the Z, its pad, then the
+# workspace chip's arrow.
 write a.txt alpha
 open a.txt
 command clock.menu
@@ -13,9 +14,9 @@ key esc
 expect screen lacks "╭ Clock"
 command clock.utc
 expect screen contains "clock: UTC"
-expect screen contains "Z  "
+expect screen contains "Z "
 command clock.hide
 expect screen contains "clock: hidden"
-expect screen lacks "Z  "
+expect screen lacks "Z "
 command clock.local
 expect screen contains "clock: local time"

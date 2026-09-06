@@ -1,0 +1,508 @@
+//! The statusline's chips — everything the app knows that the bottom
+//! row shows, built into `ui/statusline.zig` `Seg`s each frame. The
+//! component paints the two lanes; this module decides what is in them,
+//! in the Rust editor's order, glyphs and colours:
+//!
+//!   left   mode · host segments · branch · PR · file (glyph, name, `●`)
+//!          · diagnostics · enclosing symbol · macro · find
+//!   right  host segments · tests · Claude · Codex · coverage · transfer
+//!          · LSP · RESTRICTED · WRAP · autosave · size · Ln/Col · Sel ·
+//!          stress · bell · clock · workspace · language
+//!
+//! Every chip registers a `.statusline_seg` hit with an id from here
+//! (`SegId`) or from the component's fixed set; `dispatch.mouse` routes
+//! them, `discovery.describe` explains them. The mode chip is the one
+//! place the editing mode is read for paint (`modeOf`).
+//!
+//! // changed: the row is Rust mnml's statusline, not the plain
+//! `Ln 0/0 Col 0  standard  ○  23:58` the first pass painted. Gone with
+//! it: the indent (`⇥ 4`) and encoding (`utf-8`) chips and the
+//! input-style chip — the Rust screen has none; the keymap is what the
+//! mode chip cycles, and the far-right chip is the language. The
+//! now-playing and Sonos clusters are cut. What Zig has that Rust lacks
+//! stays: the transfer chip, a Lua script's segments, and the drop rule
+//! for a right lane that still does not fit after the left is clipped.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const Rect = @import("../ui/rect.zig");
+const Ui = @import("../ui/context.zig");
+const Theme = @import("../ui/theme.zig");
+const Color = Theme.Color;
+const sl = @import("../ui/statusline.zig");
+const Seg = sl.Seg;
+const file_glyph = @import("../ui/file_glyph.zig");
+const integrations_view = @import("../ui/integrations_view.zig");
+const ipc = @import("../ipc/root.zig");
+const remote = @import("../git/remote.zig");
+const parse = @import("../git/parse.zig");
+const lsp = @import("lsp.zig");
+const transcript = @import("../ai/transcript.zig");
+const coverage = @import("coverage.zig");
+const transfers = @import("transfers.zig");
+const stress = @import("stress.zig");
+const clock_mod = @import("clock.zig");
+const tests_pane = @import("tests_pane.zig");
+const outline = @import("outline.zig");
+const ids = @import("../core/ids.zig");
+
+pub const FocusId = ids.FocusId;
+
+/// The app's hit ids, from `seg_app_base`.
+pub const SegId = enum(u32) {
+    branch = sl.seg_app_base,
+    /// The open PR on this branch (`GH#42`).
+    pr,
+    /// The error / warning counts after the file name.
+    diagnostics,
+    /// The enclosing symbol (` › main `).
+    symbol,
+    /// ` ● rec @q ` while a macro records.
+    macro,
+    /// ` /query 2/9 ` while a find has matches.
+    find,
+    /// The test runner's pane, while one is open.
+    test_run,
+    ai_claude,
+    ai_codex,
+    coverage,
+    transfer,
+    /// ` LSP 2 ` — running language servers.
+    lsp,
+    wrap,
+    autosave,
+    filesize,
+    sel,
+    stress,
+    bell,
+    clock,
+    workspace,
+    _,
+
+    pub fn of(id: u32) ?SegId {
+        if (id < sl.seg_app_base or id > @intFromEnum(SegId.workspace)) return null;
+        return @enumFromInt(id);
+    }
+
+    pub fn raw(s: SegId) u32 {
+        return @intFromEnum(s);
+    }
+};
+
+/// Anthropic's coral, when the icon table carries no colour.
+const claude_brand = Theme.rgb(0xd16d51);
+/// Near-black — readable on the coral whatever the theme.
+const claude_ink = Theme.rgb(0x1a1a1a);
+
+/// The largest buffer the symbol chip scans per frame without a server.
+pub const symbol_scan_max: usize = 64 * 1024;
+
+/// Rust's per-side cap on host segments: a third of the row, at least 20.
+pub fn dynamicLaneBudget(width: u16) usize {
+    return @max(width / 3, 20);
+}
+
+// ─── the mode ────────────────────────────────────────────────────────────
+
+pub const Mode = struct { label: []const u8, kind: sl.ModeKind, vim: bool };
+
+/// Where the keys go under an overlay: the prompt's or the menu's way
+/// back, else the active pane (the tree when there is none).
+fn focusUnder(app: *const App) FocusId {
+    const fallback: FocusId = if (app.active != null) .{ .pane = app.active.? } else .tree;
+    return switch (app.focus) {
+        .overlay => switch (app.overlay) {
+            .prompt => |p| p.return_focus orelse fallback,
+            .menu => |m| m.return_focus,
+            else => fallback,
+        },
+        else => app.focus,
+    };
+}
+
+/// The vim mode when a pane with a buffer has focus; else the context
+/// label — TREE, PANEL, EDIT for a writable buffer, VIEW for anything
+/// else the pane shows (Rust `mode_chip`).
+pub fn modeOf(app: *App) Mode {
+    const focus = focusUnder(app);
+    const editor = if (focus == .pane) app.activeEditor() else null;
+    if (editor) |e| {
+        const m = e.buf.input.mode();
+        if (m.label()) |label| return .{ .label = label, .kind = switch (m) {
+            .normal => .normal,
+            .insert => .insert,
+            .replace => .replace,
+            .visual, .visual_line, .visual_block => .visual,
+            .none => unreachable,
+        }, .vim = true };
+    }
+    return switch (focus) {
+        .tree => .{ .label = "TREE", .kind = .tree, .vim = false },
+        .panel => .{ .label = "PANEL", .kind = .panel, .vim = false },
+        .pane, .overlay => if (editor) |e|
+            (if (e.buf.doc.read_only) Mode{ .label = "VIEW", .kind = .view, .vim = false } else Mode{ .label = "EDIT", .kind = .edit, .vim = false })
+        else
+            .{ .label = "VIEW", .kind = .view, .vim = false },
+    };
+}
+
+// ─── building ────────────────────────────────────────────────────────────
+
+const Lane = std.ArrayListUnmanaged(Seg);
+
+fn push(lane: *Lane, arena: Allocator, seg: Seg) Allocator.Error!void {
+    try lane.append(arena, seg);
+}
+
+/// Rec.601 luma under 0.5 — white text goes on it.
+fn isDark(c: Color) bool {
+    return switch (c) {
+        .rgb => |v| (0.299 * @as(f32, @floatFromInt(v[0])) + 0.587 * @as(f32, @floatFromInt(v[1])) + 0.114 * @as(f32, @floatFromInt(v[2]))) < 128.0,
+        else => false,
+    };
+}
+
+/// A host segment: its named colour as the ground (the muted colour
+/// when it names none), dark or light text for contrast, its slot as
+/// the hit.
+fn dynSeg(ui: Ui, r: ipc.effects.Rendered) Seg {
+    const p = &ui.theme.palette;
+    const bg = if (r.color) |c| integrations_view.paletteColor(ui.theme, c) else p.comment;
+    const fg = if (isDark(bg)) p.fg else p.bg_darker;
+    return Seg.init(ui.fmt(" {s} ", .{r.text}), fg, bg).withHit(sl.seg_dyn_base + r.index);
+}
+
+/// The counts the branch chip shows, NvChad style: a file is added,
+/// changed or removed once, by the more decisive of its two sides
+/// (the staged entry is listed first; an unstaged entry for the same
+/// path is the same file).
+pub const FileCounts = struct { added: u32 = 0, changed: u32 = 0, removed: u32 = 0, conflicts: u32 = 0 };
+
+pub fn fileCounts(s: parse.Status) FileCounts {
+    var out: FileCounts = .{};
+    var prev_path: ?[]const u8 = null;
+    for (s.entries) |e| {
+        defer prev_path = e.path;
+        if (prev_path) |pp| if (std.mem.eql(u8, pp, e.path)) continue;
+        switch (e.group) {
+            .conflicted => out.conflicts += 1,
+            .untracked => out.added += 1,
+            .staged, .unstaged => switch (e.code) {
+                'A' => out.added += 1,
+                'D' => out.removed += 1,
+                'M', 'R', 'C', 'T' => out.changed += 1,
+                else => {},
+            },
+        }
+    }
+    return out;
+}
+
+/// The forge glyph before the branch name.
+fn providerGlyph(p: remote.Provider) []const u8 {
+    return switch (p) {
+        .github => sl.github_glyph,
+        .gitlab => sl.gitlab_glyph,
+        .bitbucket => sl.bitbucket_glyph,
+        .azure => sl.azure_glyph,
+        .other => sl.forge_glyph,
+        .none => sl.branch_glyph,
+    };
+}
+
+fn hostTag(p: remote.Provider) []const u8 {
+    return switch (p) {
+        .github => "GH#",
+        .gitlab => "GL!",
+        .bitbucket => "BB#",
+        .azure => "AZ#",
+        .other, .none => "#",
+    };
+}
+
+fn branchSeg(app: *App, ui: Ui) Allocator.Error!?Seg {
+    const st = &app.git;
+    const branch = st.branchLabel() orelse return null;
+    const s = st.status.?;
+    const p = &ui.theme.palette;
+    const nerd = !ui.ascii;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    if (nerd) try out.print(ui.arena, " {s} {s}", .{ providerGlyph(st.provider), branch }) else try out.print(ui.arena, " {s}", .{branch});
+    if (s.ahead > 0) try out.print(ui.arena, "  {s}{d}", .{ if (ui.ascii) "^" else "⇡", s.ahead });
+    if (s.behind > 0) try out.print(ui.arena, " {s}{d}", .{ if (ui.ascii) "v" else "⇣", s.behind });
+    const c = fileCounts(s);
+    if (c.added > 0) try out.print(ui.arena, "  {s} {d}", .{ if (ui.ascii) sl.added_ascii else sl.added_glyph, c.added });
+    if (c.changed > 0) try out.print(ui.arena, "  {s} {d}", .{ if (ui.ascii) sl.changed_ascii else sl.changed_glyph, c.changed });
+    if (c.removed > 0) try out.print(ui.arena, "  {s} {d}", .{ if (ui.ascii) sl.removed_ascii else sl.removed_glyph, c.removed });
+    if (c.conflicts > 0) try out.print(ui.arena, "  {s}{d}", .{ if (ui.ascii) "!" else "⚠", c.conflicts });
+    try out.append(ui.arena, ' ');
+    return Seg.init(out.items, p.green, p.bg2).withHit(SegId.branch.raw());
+}
+
+/// The open PR on the current branch, when the branch rail has fetched one.
+pub fn currentPr(app: *const App) ?parse.Pr {
+    const branch = app.git.branchLabel() orelse return null;
+    for (app.git.rail_prs) |pr| if (std.mem.eql(u8, pr.branch, branch)) return pr;
+    return null;
+}
+
+/// The icon table's entry for a built-in integration, when it is on.
+fn enabledIcon(app: *const App, id: []const u8) ?@import("../config/Config.zig").IntegrationIcon {
+    for (app.cfg.ui.integration_icons) |ic| if (std.mem.eql(u8, ic.id, id) and ic.enabled) return ic;
+    return null;
+}
+
+fn iconColor(ui: Ui, ic: anytype, fallback: Color) Color {
+    return if (ic.color.len > 0) integrations_view.paletteColor(ui.theme, ic.color) else fallback;
+}
+
+/// Builds the frame's lanes on the frame arena.
+pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
+    const arena = ui.arena;
+    const t = ui.theme;
+    const p = &t.palette;
+    const nerd = !ui.ascii;
+    var left: Lane = .empty;
+    var right: Lane = .empty;
+    var middle: ?[]const u8 = null;
+
+    // ── mode ──
+    const mode = modeOf(app);
+    const mode_bg = sl.modeBg(t, mode.kind);
+    if (mode.vim and nerd) {
+        // NvChad's vim accent: the diamond-V in orange, dark on orange
+        // would vanish (REPLACE), so it goes near-black there.
+        const glyph_fg = if (Color.eql(mode_bg, p.orange)) p.bg_darker else p.orange;
+        try push(&left, arena, Seg.init(" " ++ sl.vim_glyph ++ " ", glyph_fg, mode_bg).strong().withHit(sl.seg_mode));
+        try push(&left, arena, Seg.init(ui.fmt("{s} ", .{mode.label}), p.bg_darker, mode_bg).strong().withHit(sl.seg_mode));
+    } else {
+        try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{mode.label}), p.bg_darker, mode_bg).strong().withHit(sl.seg_mode));
+    }
+
+    // ── host segments, left lane ──
+    const budget = dynamicLaneBudget(area.w);
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| try push(&left, arena, dynSeg(ui, r));
+
+    // ── branch, PR ──
+    if (try branchSeg(app, ui)) |s| try push(&left, arena, s);
+    if (currentPr(app)) |pr| {
+        try push(&left, arena, Seg.init(ui.fmt("  {s}{d} ", .{ hostTag(app.git.provider), pr.number }), p.purple, p.bg2).withHit(SegId.pr.raw()));
+    }
+
+    // ── file: glyph in its colour, name, dirty dot; then what the file says ──
+    const editor = app.activeEditor();
+    if (editor) |e| {
+        const path = e.buf.doc.path;
+        const name = if (path) |pth| std.fs.path.basename(pth) else "[scratch]";
+        const icon = file_glyph.forName(name);
+        try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{if (nerd) icon.glyph else icon.fallback}), icon.color, p.statusline).withHit(sl.seg_file));
+        try push(&left, arena, Seg.init(ui.fmt("{s}{s} ", .{ name, if (e.buf.doc.dirty) " ●" else "" }), p.fg, p.statusline).withHit(sl.seg_file));
+        if (path) |pth| {
+            var errors: u32 = 0;
+            var warnings: u32 = 0;
+            for (lsp.diagnosticsFor(app, pth)) |d| switch (d.severity) {
+                .err => errors += 1,
+                .warning => warnings += 1,
+                else => {},
+            };
+            if (errors > 0) try push(&left, arena, Seg.init(ui.fmt(" {s} {d} ", .{ if (ui.ascii) sl.errors_ascii else sl.errors_glyph, errors }), p.red, p.statusline).withHit(SegId.diagnostics.raw()));
+            if (warnings > 0) try push(&left, arena, Seg.init(ui.fmt(" {s} {d} ", .{ if (ui.ascii) "W" else "⚠", warnings }), p.yellow, p.statusline).withHit(SegId.diagnostics.raw()));
+            // The enclosing symbol: the last one placed at or above the
+            // cursor's line — the server's when it has sent them, else the
+            // outline's line scan, kept to files small enough to read
+            // every frame (the Rust chip regex-scanned a 13k-line file per
+            // frame and paid 45 ms for it).
+            const row: u32 = @intCast(e.buf.editor.rowCol().row);
+            var pick: ?[]const u8 = null;
+            if (app.lsp.symbols.get(pth)) |set| {
+                for (set.items) |sym| if (sym.line <= row) {
+                    pick = sym.name;
+                };
+            } else if (e.buf.doc.language) |key| if (e.buf.editor.bytes().len <= symbol_scan_max) {
+                for (try outline.fallback(arena, e.buf.editor.bytes(), key)) |sym| if (sym.line <= row) {
+                    pick = sym.name;
+                };
+            };
+            if (pick) |sym_name| try push(&left, arena, Seg.init(ui.fmt(" › {s} ", .{ui.clipStr(sym_name, 40)}), p.purple, p.statusline).withHit(SegId.symbol.raw()));
+        }
+        if (e.buf.recording) |r| try push(&left, arena, Seg.init(ui.fmt(" ● rec @{c} ", .{r.reg}), p.bg_darker, p.red).withHit(SegId.macro.raw()));
+        if (e.find.matches.items.len > 0) {
+            const q = e.find.query.items;
+            const shown = ui.clipStr(q, 24);
+            const cur = if (e.find.current) |i| i + 1 else 0;
+            try push(&left, arena, Seg.init(ui.fmt(" /{s} {d}/{d} ", .{ shown, cur, e.find.matches.items.len }), p.bg_darker, p.yellow).withHit(SegId.find.raw()));
+        }
+        if (try e.buf.input.pendingDisplay(arena)) |pend| if (pend.len > 0 and pend[0] != ':') {
+            middle = pend;
+        };
+    } else {
+        try push(&left, arena, Seg.init(" [no file] ", p.comment, p.statusline));
+    }
+
+    // ── right lane ──
+    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| try push(&right, arena, dynSeg(ui, r));
+    for (try app.script().segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
+    if (tests_pane.find(app)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
+        .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
+        else => {},
+    };
+    // The AI meters, each while its integration is on. Zig's meter is
+    // the local 24h spend (`ai.refresh_usage`); the quota percent the
+    // Rust chip showed needs an endpoint this build does not call.
+    if (enabledIcon(app, "claude_code")) |ic| {
+        const glyph = if (ui.ascii) sl.claude_ascii else sl.claude_glyph;
+        var buf: [16]u8 = undefined;
+        const text: ?[]const u8 = if (app.ai.meter) |m| switch (app.cfg.ai.claude_meter_mode) {
+            .off => null,
+            .compact => ui.fmt(" {s} ${d:.2} ", .{ glyph, m.cost_usd }),
+            .ticker => ui.fmt(" {s} {s} · ${d:.2} ", .{ glyph, transcript.fmtTokens(&buf, m.tokens), m.cost_usd }),
+        } else ui.fmt(" {s} … ", .{glyph});
+        if (text) |txt| try push(&right, arena, Seg.init(txt, claude_ink, iconColor(ui, ic, claude_brand)).withHit(SegId.ai_claude.raw()));
+    }
+    if (enabledIcon(app, "codex")) |_| {
+        const glyph = if (ui.ascii) sl.codex_ascii else sl.codex_glyph;
+        var buf: [16]u8 = undefined;
+        const seg = if (app.ai.meter) |m|
+            Seg.init(ui.fmt(" {s} {s} ", .{ glyph, transcript.fmtTokens(&buf, m.tokens) }), p.bg_darker, p.cyan)
+        else
+            Seg.init(ui.fmt(" {s} … ", .{glyph}), p.comment, p.cyan);
+        try push(&right, arena, seg.withHit(SegId.ai_codex.raw()));
+    }
+    if (coverage.shown(app)) |shown| {
+        const glyph = if (ui.ascii) sl.coverage_ascii else if (enabledIcon(app, "acmeco_coverage")) |ic| (if (ic.glyph.len > 0) ic.glyph else sl.coverage_glyph) else sl.coverage_glyph;
+        var seg = Seg.init("", p.bg_darker, p.teal).withHit(SegId.coverage.raw());
+        var head: std.ArrayListUnmanaged(u8) = .empty;
+        try head.print(arena, " {s} ", .{glyph});
+        var tail: std.ArrayListUnmanaged(u8) = .empty;
+        if (shown.feature) |f| {
+            try head.appendSlice(arena, try coverage.pct(arena, "F", f.now));
+            const d = try coverage.delta(arena, f);
+            seg.accent = .{ .text = d.text, .fg = switch (d.dir) {
+                .up => p.green,
+                .down => p.red,
+                .flat, .none => p.bg_darker,
+            } };
+            if (shown.code) |c| {
+                try tail.print(arena, " · {s}{s}", .{ try coverage.pct(arena, "C", c.now), (try coverage.delta(arena, c)).text });
+            }
+        } else if (shown.code) |c| {
+            try head.appendSlice(arena, try coverage.pct(arena, "C", c.now));
+            const d = try coverage.delta(arena, c);
+            seg.accent = .{ .text = d.text, .fg = switch (d.dir) {
+                .up => p.green,
+                .down => p.red,
+                .flat, .none => p.bg_darker,
+            } };
+        }
+        try tail.append(arena, ' ');
+        seg.text = head.items;
+        seg.tail = tail.items;
+        try push(&right, arena, seg);
+    }
+    if (try transfers.chip(app, arena, ui.ascii)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.cyan).withHit(SegId.transfer.raw()));
+    var servers: u32 = 0;
+    for (app.lsp.servers.items) |s| if (!s.transport.isDead()) {
+        servers += 1;
+    };
+    if (servers > 0) try push(&right, arena, Seg.init(ui.fmt(" LSP {d} ", .{servers}), p.bg_darker, p.blue).withHit(SegId.lsp.raw()));
+    if (app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null) {
+        try push(&right, arena, Seg.init(if (nerd) " " ++ sl.restricted_glyph ++ " RESTRICTED " else " RESTRICTED ", p.bg_darker, p.yellow).withHit(sl.seg_restricted));
+    }
+    // WRAP: the active editor's own setting when it has one (a click
+    // flips that), else the config's.
+    const wrap_on = if (editor) |e| (e.wrap orelse app.cfg.ui.wrap) else app.cfg.ui.wrap;
+    if (wrap_on) try push(&right, arena, Seg.init(" WRAP ", p.bg_darker, p.purple).withHit(SegId.wrap.raw()));
+    if (app.cfg.editor.autosave_secs > 0) {
+        try push(&right, arena, Seg.init(ui.fmt(" {s} {d}s ", .{ if (nerd) sl.autosave_glyph else sl.autosave_ascii, app.cfg.editor.autosave_secs }), p.bg_darker, p.green).withHit(SegId.autosave.raw()));
+    }
+    if (editor) |e| {
+        var buf: [16]u8 = undefined;
+        try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{sl.formatByteSize(&buf, e.buf.editor.bytes().len)}), p.comment, p.bg2).withHit(SegId.filesize.raw()));
+        const pos = e.buf.editor.rowCol();
+        try push(&right, arena, Seg.init(ui.fmt(" Ln {d}/{d} Col {d} ", .{ pos.row + 1, e.buf.editor.lineCount(), pos.col + 1 }), p.fg, p.bg2).withHit(sl.seg_position));
+        right.items[right.items.len - 1].sticky = true;
+        if (e.buf.editor.selection()) |sel| if (sel[1] > sel[0]) {
+            const n = std.unicode.utf8CountCodepoints(e.buf.editor.bytes()[sel[0]..sel[1]]) catch sel[1] - sel[0];
+            try push(&right, arena, Seg.init(ui.fmt(" Sel {d} ", .{n}), p.bg_darker, p.yellow).withHit(SegId.sel.raw()));
+        };
+    }
+    if (try stress.segment(app, arena, ui.ascii)) |text| {
+        const level = if (app.stress.stats()) |s| stress.Meter.level(s.p95_us) else 0;
+        const fg = switch (level) {
+            0 => p.comment,
+            1 => p.green,
+            2 => p.yellow,
+            3 => p.orange,
+            else => p.red,
+        };
+        try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), fg, p.bg2).withHit(SegId.stress.raw()));
+    }
+    // The bell is always there; colour carries the level.
+    {
+        const u = app.messages.unread();
+        const glyph = if (ui.ascii) sl.bell_ascii else sl.bell_glyph;
+        const seg = if (u.err > 0)
+            Seg.init(ui.fmt(" {s} {d} ", .{ glyph, u.err + u.warn }), p.bg_darker, p.red)
+        else if (u.warn > 0)
+            Seg.init(ui.fmt(" {s} {d} ", .{ glyph, u.warn }), p.bg_darker, p.yellow)
+        else
+            Seg.init(ui.fmt(" {s} ", .{glyph}), p.comment, p.bg2);
+        try push(&right, arena, seg.withHit(SegId.bell.raw()));
+    }
+    if (try clock_mod.segment(app, arena)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.comment, p.bg2).withHit(SegId.clock.raw()));
+    for (try app.script().segmentTexts(arena, .right)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
+    // The workspace — the active repo's name when there are several.
+    {
+        const ws_name = std.fs.path.basename(app.workspace);
+        const label = if (app.git.repos.items.len > 1) (if (app.git.activeRepo()) |r| r.name else ws_name) else ws_name;
+        const text = if (nerd) ui.fmt("{s} {s} ", .{ sl.folder_glyph, label }) else ui.fmt(" {s} ", .{label});
+        try push(&right, arena, Seg.init(text, p.blue, p.bg3).strong().withHit(SegId.workspace.raw()));
+    }
+    {
+        const lang: []const u8 = if (editor) |e| (e.buf.doc.language orelse "—") else "—";
+        try push(&right, arena, Seg.init(ui.fmt("  {s} ", .{lang}), p.bg_darker, p.blue).strong().withHit(sl.seg_language));
+    }
+
+    return .{ .left = left.items, .right = right.items, .middle = middle };
+}
+
+/// `render.drawStatusline`: build, then paint.
+pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    sl.draw(ui, area, try build(app, ui, area));
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "file counts: a file is added, changed or removed once, by its staged side; untracked is added; conflicts stand apart" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const porcelain = "# branch.head main\n" ++
+        "1 A. N... 100644 100644 100644 0000000 1111111 new.zig\n" ++
+        "1 AM N... 100644 100644 100644 0000000 1111111 both.zig\n" ++
+        "1 .M N... 100644 100644 100644 1111111 1111111 edited.zig\n" ++
+        "1 D. N... 100644 000000 000000 1111111 0000000 gone.zig\n" ++
+        "2 R. N... 100644 100644 100644 1111111 1111111 R100 moved.zig\told.zig\n" ++
+        "u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 clash.zig\n" ++
+        "? stray.txt\n";
+    const s = try parse.parseStatus(arena_state.allocator(), porcelain);
+    const c = fileCounts(s);
+    try testing.expectEqual(@as(u32, 3), c.added); // new, both (once), stray
+    try testing.expectEqual(@as(u32, 2), c.changed); // edited, moved
+    try testing.expectEqual(@as(u32, 1), c.removed);
+    try testing.expectEqual(@as(u32, 1), c.conflicts);
+    try testing.expectEqual(@as(usize, 20), dynamicLaneBudget(30));
+    try testing.expectEqual(@as(usize, 40), dynamicLaneBudget(120));
+}
+
+test "SegId.of covers the app's ids and nothing else" {
+    try testing.expectEqual(SegId.branch, SegId.of(sl.seg_app_base).?);
+    try testing.expectEqual(SegId.workspace, SegId.of(SegId.workspace.raw()).?);
+    try testing.expect(SegId.of(sl.seg_mode) == null);
+    try testing.expect(SegId.of(SegId.workspace.raw() + 1) == null);
+    try testing.expect(SegId.of(sl.seg_dyn_base) == null);
+}
+

@@ -28,6 +28,7 @@ const context = @import("../ui/context.zig");
 const Ui = context;
 const editor_view = @import("../ui/editor_view.zig");
 const statusline = @import("../ui/statusline.zig");
+const statusline_app = @import("statusline.zig");
 const messages = @import("messages.zig");
 const stress = @import("stress.zig");
 const clock_mod = @import("clock.zig");
@@ -164,29 +165,8 @@ pub const Button = enum(u32) {
     }
 };
 
-/// The right-hand statusline segments the app builds, by hit id
-/// (`statusline.seg_app_base` and up). `dispatch.mouse` routes a click
-/// on each; `discovery.describe` explains each.
-pub const SegId = enum(u32) {
-    branch = statusline.seg_app_base,
-    diagnostics,
-    ai_meter,
-    bell,
-    stress,
-    indent,
-    encoding,
-    transfer,
-    /// The clock beside the bell (`app/clock.zig`).
-    clock,
-    /// The coverage chip (`app/coverage.zig`).
-    coverage,
-    _,
-
-    pub fn of(id: u32) ?SegId {
-        if (id < statusline.seg_app_base or id > @intFromEnum(SegId.coverage)) return null;
-        return @enumFromInt(id);
-    }
-};
+/// The statusline's hit ids live with the chips: `app/statusline.zig`.
+pub const SegId = statusline_app.SegId;
 
 /// The rows of the frame for a screen, and the columns of its sidebar.
 pub const FrameRects = struct {
@@ -1092,147 +1072,13 @@ fn drawListPane(app: *App, l: *app_mod.ListPane, ui: Ui, pane: PaneId, area: Rec
     }
 }
 
+// ── statusline ──
+/// The bottom row: `app/statusline.zig` builds the chips, the
+/// component paints the lanes.
 fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
-    var info: statusline.Info = .{
-        .mode_label = null,
-        .mode_kind = .none,
-        .file = null,
-        .dirty = false,
-        .line = 0,
-        .col = 0,
-        .total_lines = 0,
-        .input_style = @tagName(app.input_style),
-    };
-    var lsp_seg: ?[]const u8 = null;
-    if (app.activeEditor()) |e| {
-        const ed = e.buf.editor;
-        const mode = e.buf.input.mode();
-        info.mode_label = mode.label() orelse "EDIT";
-        info.mode_kind = switch (mode) {
-            .none => .edit,
-            .normal => .normal,
-            .insert => .insert,
-            .replace => .replace,
-            .visual, .visual_line, .visual_block => .visual,
-        };
-        info.file = if (e.buf.doc.path) |p| app.relPath(p) else "[scratch]";
-        info.dirty = e.buf.doc.dirty;
-        const pos = ed.rowCol();
-        info.line = @intCast(pos.row + 1);
-        info.col = @intCast(pos.col + 1);
-        info.total_lines = @intCast(ed.lineCount());
-        if (ed.selection()) |sel| if (sel[1] > sel[0]) {
-            info.selection_chars = std.unicode.utf8CountCodepoints(ed.bytes()[sel[0]..sel[1]]) catch sel[1] - sel[0];
-        };
-        info.pending = try e.buf.input.pendingDisplay(ui.arena);
-        if (e.buf.recording) |r| info.macro_recording = r.reg;
-        lsp_seg = try lsp.statusSegment(app, ui.arena, e, ui.ascii);
-    } else if (app.active) |id| if (app.panes.pty(id)) |p| {
-        info.mode_label = if (p.exit == null) "TERM" else "EXITED";
-        info.mode_kind = .edit;
-        info.file = p.childTitle() orelse p.label;
-        // The grid was refreshed by drawBody; its cursor is pane-relative.
-        if (pty_pane.supported) if (p.grid.cursor()) |c| {
-            info.line = c.y + 1;
-            info.col = c.x + 1;
-        };
-        info.total_lines = p.rows;
-    } else if (app.panes.get(id)) |p| if (p.asFiles()) |f| {
-        info.mode_label = if (f.in_trash) "TRASH" else "FILES";
-        info.mode_kind = .edit;
-        info.file = app.relPath(f.cwd);
-        info.line = @intCast(f.cursor + 1);
-        info.total_lines = @intCast(f.count());
-    } else if (p.asRequest()) |rp| {
-        info.mode_label = if (rp.isSending()) "SENDING" else "HTTP";
-        info.mode_kind = .edit;
-        info.file = if (rp.source_path) |sp| app.relPath(sp) else rp.title();
-        info.dirty = rp.edited;
-    } else if (p.asWebsocket()) |w| {
-        info.mode_label = "WS";
-        info.mode_kind = .edit;
-        info.file = w.url;
-    } else if (p.asBrowser()) |b| {
-        info.mode_label = "CDP";
-        info.mode_kind = .edit;
-        info.file = b.url;
-    };
-    // The branch segment (`main ↑2 ↓1 ●3`), the diagnostics chip
-    // (`✗ 2  ⚠ 1`), then the AI meter, before the input style.
-    const branch_seg = try git_app.statusSegment(app, ui.arena);
-    const meter_seg = try ai_app.meterSegment(app, ui.arena);
-    // The transfer chip: progress and speed while a copy runs, nothing at rest.
-    const transfer_seg = try transfers.chip(app, ui.arena, ui.ascii);
-    // A script's segments (`mnml.statusline.segment`): the `left` ones
-    // sit at the inner edge of the right cluster, the `right` ones after
-    // the built-in chips. Then the unread-messages bell and the frame-time
-    // bar (`:messages`, `ui.stress_meter`), nearest the input style.
-    const lua_left = try app.script().segmentTexts(ui.arena, .left);
-    const lua_right = try app.script().segmentTexts(ui.arena, .right);
-    // The bell is always drawn: quiet (`○`) when nothing is unread, the
-    // count in yellow or red otherwise (`messages.bellSegment`).
-    const th = ui.theme;
-    const bell_text = try messages.bellSegment(app, ui.arena, ui.ascii);
-    const bell_style: ?Style = if (bell_text == null) Theme.onBg(th.muted, th.statusline.bg) else if (std.mem.startsWith(u8, bell_text.?, if (ui.ascii) "x" else "✗")) Theme.onBg(th.error_fg, th.statusline.bg) else Theme.onBg(th.warn_fg, th.statusline.bg);
-    const bell_seg: statusline.Seg = .{ .text = bell_text orelse (if (ui.ascii) "o" else "○"), .id = @intFromEnum(SegId.bell), .style = bell_style, .low = bell_text == null };
-    const stress_seg = try stress.segment(app, ui.arena, ui.ascii);
-    const clock_seg: ?statusline.Seg = if (try clock_mod.segment(app, ui.arena)) |txt| .{ .text = txt, .id = @intFromEnum(SegId.clock), .low = true } else null;
-    const coverage_seg: ?statusline.Seg = if (try coverage.segment(app, ui.arena)) |txt| .{ .text = txt, .id = @intFromEnum(SegId.coverage), .low = true } else null;
-    // A host's `statusline-set-segment` chips, packed by priority into
-    // what is left beside the built-ins (`ipc/effects.zig`).
-    const budget: usize = area.w -| 40;
-    info.dyn_left = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .left, budget / 2, ui.ascii));
-    info.dyn_right = try dynSegs(ui, try ipc.effects.pack(ui.arena, app.ipc_fx.segments.items, .right, budget / 2, ui.ascii));
-    // The indent and encoding chips only make sense on a text buffer.
-    const editor_chips = app.activeEditor() != null;
-    const indent_seg: ?statusline.Seg = if (editor_chips) .{ .text = ui.fmt("{s} {d}", .{ if (ui.ascii) "tab" else "⇥", app.cfg.editor.tab_width }), .id = @intFromEnum(SegId.indent), .low = true } else null;
-    const encoding_seg: ?statusline.Seg = if (editor_chips) .{ .text = "utf-8", .id = @intFromEnum(SegId.encoding), .low = true } else null;
-    const maybes = [_]?statusline.Seg{
-        if (branch_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.branch) } else null,
-        if (lsp_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.diagnostics) } else null,
-        if (meter_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.ai_meter) } else null,
-        if (transfer_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.transfer) } else null,
-        coverage_seg,
-        bell_seg,
-        clock_seg,
-        if (stress_seg) |txt| .{ .text = txt, .id = @intFromEnum(SegId.stress) } else null,
-        indent_seg,
-        encoding_seg,
-    };
-    var extra: usize = lua_left.len + lua_right.len;
-    for (maybes) |m| extra += @intFromBool(m != null);
-    if (extra > 0) {
-        const segs = try ui.arena.alloc(statusline.Seg, info.right.len + extra);
-        @memcpy(segs[0..info.right.len], info.right);
-        var n = info.right.len;
-        for (lua_left) |seg| {
-            segs[n] = .{ .text = seg };
-            n += 1;
-        }
-        for (maybes) |maybe| if (maybe) |seg| {
-            segs[n] = seg;
-            n += 1;
-        };
-        for (lua_right) |seg| {
-            segs[n] = .{ .text = seg };
-            n += 1;
-        }
-        info.right = segs;
-    }
-    info.restricted = app.loaded != null and !app.workspace_trusted and app.loaded.?.trust_prompt != null;
-    statusline.draw(ui, area, info);
+    try statusline_app.draw(app, ui, area);
 }
-
-/// The packed host segments with their colour names resolved.
-fn dynSegs(ui: Ui, packed_segs: []const ipc.effects.Rendered) Allocator.Error![]statusline.DynSeg {
-    const out = try ui.arena.alloc(statusline.DynSeg, packed_segs.len);
-    for (packed_segs, 0..) |r, i| out[i] = .{
-        .text = r.text,
-        .fg = if (r.color) |c| integrations_view.paletteColor(ui.theme, c) else null,
-        .index = r.index,
-    };
-    return out;
-}
+// ── statusline ──
 
 /// The `:` line while it is open; blank otherwise (vim's cmdline row).
 fn drawCmdline(app: *App, ui: Ui, area: Rect) void {
@@ -1240,10 +1086,12 @@ fn drawCmdline(app: *App, ui: Ui, area: Rect) void {
     ui.fill(area, app.theme.bg);
     const e = app.activeEditor() orelse return;
     const line = e.buf.input.cmdlineGet() orelse return;
-    const caret = e.buf.input.cmdlineCaret() orelse line.len;
-    const shown = ui.fmt(":{s}", .{line});
+    const caret = @min(e.buf.input.cmdlineCaret() orelse line.len, line.len);
+    // The caret is drawn (`▏`, as Rust's cmdline bar drew it — the
+    // corpus reads `:▏wq`) and the terminal cursor sits on it.
+    const shown = ui.fmt(":{s}{s}{s}", .{ line[0..caret], if (ui.ascii) "|" else "▏", line[caret..] });
     _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(shown, area.w), app.theme.fg);
-    const cx: u16 = area.x + 1 + @as(u16, @intCast(@min(ui.width(line[0..@min(caret, line.len)]), area.w -| 1)));
+    const cx: u16 = area.x + 1 + @as(u16, @intCast(@min(ui.width(line[0..caret]), area.w -| 1)));
     app.cursor_pos = .{ .x = cx, .y = area.y };
 }
 
@@ -1483,7 +1331,7 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
     try t.expect(std.mem.indexOf(u8, txt, "1 hello") != null);
     try t.expect(std.mem.indexOf(u8, txt, "2 world") != null);
     try t.expect(std.mem.indexOf(u8, txt, "Ln 2/2 Col 3") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "standard") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "EDIT") != null); // the mode chip: a writable buffer has focus
     try t.expect(app.hits.at(5, 3).? == .editor_cell);
     try t.expect(app.hits.at(5, 1).? == .tab);
     try t.expectEqual(@as(u32, 0), app.hits.at(5, 1).?.tab.leaf);
@@ -1579,7 +1427,7 @@ test "a toast's menu opens above the pointer, over the toast, and never on the s
     };
     try t.expectEqual(@as(usize, 3), rows);
     // The statusline is intact under it.
-    try t.expect(std.mem.indexOf(u8, text, "standard") != null);
+    try t.expect(std.mem.indexOf(u8, text, "TREE") != null); // no pane: the tree's label
 }
 
 test "menuTop: below when it fits, flipped onto the pointer when it does not, clamped otherwise" {

@@ -11,7 +11,7 @@ key esc
 expect screen lacks "Click Discovery"
 key f1
 # The position chip (row 38): explained, not acted on — no prompt opens.
-click 85 38
+click 50 38
 expect screen lacks "Click Discovery"
 expect screen lacks "Go to line"
 expect screen contains "click: go to line"
