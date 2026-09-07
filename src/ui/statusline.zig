@@ -109,6 +109,24 @@ pub const claude_glyph = "\u{F1E00}";
 pub const claude_ascii = "\u{2733}";
 pub const codex_glyph = "\u{F1E01}";
 pub const codex_ascii = "\u{25c8}";
+/// The now-playing cluster's marks: mnml's baked Beatport B (mixr),
+/// nf-fa-apple (Music), nf-fa-spotify (Spotify) as the idle brand;
+/// nf-md-play_box_outline as the idle play chip; nf-md-pause /
+/// nf-md-play / nf-md-skip_next as the transport.
+pub const cluster_brand_glyph = "\u{f1f00}";
+pub const cluster_brand_ascii = "B";
+pub const apple_glyph = "\u{e711}";
+pub const apple_ascii = "A";
+pub const spotify_glyph = "\u{f1bc}";
+pub const spotify_ascii = "S";
+pub const cluster_play_glyph = "\u{f040e}";
+pub const cluster_play_ascii = ">";
+pub const np_pause_glyph = "\u{f03e4}";
+pub const np_pause_ascii = "||";
+pub const np_play_glyph = "\u{f040a}";
+pub const np_play_ascii = ">";
+pub const np_next_glyph = "\u{f04ad}";
+pub const np_next_ascii = ">|";
 
 /// Rust's floor for a clipped left chip.
 pub const min_left_chip: u16 = 3;
@@ -370,11 +388,6 @@ const spec_right = [_]Seg{
 
 /// The cut now-playing cluster: the mnml-baked Beatport mark and
 /// nf-md-play_box_outline, as the Rust row had them.
-pub const cluster_brand_glyph = "\u{f1f00}";
-pub const cluster_brand_ascii = "B";
-pub const cluster_play_glyph = "\u{f040e}";
-pub const cluster_play_ascii = ">";
-
 fn withCluster(arena: std.mem.Allocator) ![]Seg {
     const out = try arena.alloc(Seg, spec_right.len + 2);
     out[0] = spec_right[0];

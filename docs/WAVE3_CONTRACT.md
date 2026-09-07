@@ -2636,10 +2636,37 @@ break-check.
   statusline tests compare the painted row with the spec's — clock
   normalised, the cut now-playing cluster removed (or put back at the
   component level, where the 80-column row is Rust's cell for cell).
-- Cut, per the spec: the now-playing / Sonos clusters. Not in this
-  build: the Claude chip's quota percent (`W 99% 18m …`) — Zig's meter
-  is the local 24h spend until the usage endpoint is called; the LSP
-  progress (`⟳ …`), background-task spinner and `AI` suggestion chips.
+- `// changed (app, 2026-09-07):` the now-playing cluster is back —
+  `app/now_playing.zig`. Rust always paints it: idle it is the preferred
+  player's mark (`ui.preferred_music_app`: mnml's baked Beatport B /
+  nf-fa-apple / nf-fa-spotify) and nf-md-play_box_outline on the
+  player's colour, the `󱼀 󰐎` every Rust dump carries; with a track it is
+  the transport (nf-md-pause or play, nf-md-skip_next, `artist - title`
+  cut at 28 with `…` or scrolled under `ui.now_playing_marquee`). The
+  poller is an `Io.Group` task the terminal loop alone starts
+  (`native_notify`): mixr's `~/.mixr/quick.txt` when fresh, `osascript`
+  for Music / Spotify on macOS, `auto` prefers whichever plays, the
+  ten-second mixr stickiness kept. Headless and the tests paint the idle
+  form, so the dumps compare; `MNML_NOW_PLAYING="<track>|playing|
+  <source>|<detail>"` puts a track on the row (Rust has no such
+  override — the name is Zig's), and a `.test` sets it with a `# env:
+  NAME=value` header line (`e2e/parser.zig` `Header.env`, applied per
+  file in `e2e/runner.zig`). Clicks are Rust's: the transport chips
+  drive a macOS player by `osascript`, the brand / title open it
+  (`mixr.show` / `activate`), the idle play chip starts it
+  (`mixr.play_now` / `playpause`), the right button is the player menu
+  with the preferred-app radio rows. `mixr.set_preferred_*` and
+  `mixr.copy_track` now run (they left `cmd_app.zig`'s cut table); the
+  mixr transport, `mixr.show*`, `play_now` and `show_auth_status` stay
+  cut, so on a machine preferring mixr the idle clicks toast the cut.
+  `SegId` gains `np_brand` / `np_play` / `np_next` / `np_track`;
+  `--ascii` paints `B` / `A` / `S`, `>`, `||`, `>|` and Rust's one-cell
+  breather. docs/PARITY.md's "now-playing cut" entry is the docs
+  track's to amend.
+- Cut, per the spec: the Sonos cluster. Not in this build: the Claude
+  chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
+  spend until the usage endpoint is called; the LSP progress (`⟳ …`),
+  background-task spinner and `AI` suggestion chips.
 ## The file tree sidebar (2026-09-06, branch `tree`) — `// changed:` notes
 
 The spec is `docs/ui-spec/rust-120x40.txt`, columns 4–29 of rows 1–37;

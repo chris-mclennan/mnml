@@ -1,0 +1,14 @@
+# The now-playing cluster in the statusline. Headless runs paint the
+# idle pair (the preferred player's mark and a play box) as the Rust dumps
+# show it; `# env: MNML_NOW_PLAYING` puts a track on the row instead —
+# the transport: pause, skip, `artist - title` — and a click on the play
+# chip drives that player (mixr's transport is cut in this build: the
+# toast says so). Row 38 is the statusline at 120x40; the cluster sits
+# left of WRAP in the right lane.
+# env: MNML_NOW_PLAYING=Karma Police|playing|mixr|Radiohead
+write notes.txt hello
+open notes.txt
+expect screen contains "Karma Police"
+expect screen lacks "󱼀"
+click 23 38
+expect screen contains "cut from mnml-zig"

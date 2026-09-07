@@ -26,6 +26,7 @@ const find_history = @import("find_history.zig");
 const auto_refresh = @import("auto_refresh.zig");
 const clock_mod = @import("clock.zig");
 const coverage = @import("coverage.zig");
+const now_playing = @import("now_playing.zig");
 const menu_bar = @import("menu_bar.zig");
 const activity_bar = @import("activity_bar.zig");
 const browser_open = @import("browser_open.zig");
@@ -1563,6 +1564,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     },
                     .ai_claude, .ai_codex => try runCmd(app, .@"ai.spend_today"),
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
+                    // The now-playing cluster: the right button is the player
+                    // menu on every chip; the left drives the player.
+                    .np_brand, .np_track => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .label),
+                    .np_play => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .play),
+                    .np_next => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .next),
                     .transfer => if (right) try runCmd(app, .@"transfer.cancel_all"),
                     .lsp => try runCmd(app, .@"lsp.symbols"),
                     .wrap => try runCmd(app, .@"view.toggle_wrap"),

@@ -161,13 +161,23 @@ const Run = struct {
         // The driver gets its own leak-checking allocator: a leak anywhere
         // in the App is this file's failure, not a note at process exit.
         var dbg: std.heap.DebugAllocator(.{ .safety = true, .thread_safe = true, .enable_memory_limit = true }) = .init;
+        // `# env: NAME=value` lines: the App's environment is the run's
+        // (or the process's) plus those, for this file only.
+        const header = parser.parseHeader(text);
+        var file_env: ?std.process.Environ.Map = null;
+        defer if (file_env) |*m| m.deinit();
+        if (header.env_len > 0) {
+            var m = (if (self.opts.env) |e| e.clone(gpa) else std.process.Environ.Map.init(gpa)) catch return self.fail("out of memory", .{});
+            for (header.envPairs()) |pair| m.put(pair.key, pair.value) catch return self.fail("out of memory", .{});
+            file_env = m;
+        }
         const outcome = blk: {
             const d = self.factory.make(dbg.allocator(), io, .{
                 .workspace = self.workspace,
                 .data_root = self.opts.data_root,
                 .cols = self.size.cols,
                 .rows = self.size.rows,
-                .env = self.opts.env,
+                .env = if (file_env) |*m| m else self.opts.env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
             const result = self.runScript(&script);

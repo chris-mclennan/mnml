@@ -112,6 +112,7 @@ const runner_tables = .{
     @import("../app/settings.zig"),
     @import("../app/cheatsheet.zig"),
     @import("../app/cmd_term.zig"),
+    @import("../app/now_playing.zig"),
     @import("../app/runners.zig"),
     @import("../app/tasks.zig"),
     @import("../app/cmd_git.zig"),

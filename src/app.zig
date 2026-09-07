@@ -108,6 +108,7 @@ const find_history = @import("app/find_history.zig");
 const auto_refresh = @import("app/auto_refresh.zig");
 const clock = @import("app/clock.zig");
 const coverage = @import("app/coverage.zig");
+const now_playing = @import("app/now_playing.zig");
 const menu_bar = @import("app/menu_bar.zig");
 const marks_store = @import("app/marks_store.zig");
 const update = @import("app/update.zig");
@@ -792,6 +793,7 @@ pub const App = struct {
     clock: clock.State = .{},
     /// The statusline coverage chip (`app/coverage.zig`).
     coverage: coverage.State = .{},
+    now_playing: now_playing.State = .{},
     /// The menu bar: the open menu, where its words painted (`app/menu_bar.zig`).
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
@@ -1134,6 +1136,7 @@ pub const App = struct {
         self.transfers.deinit(gpa, self.io);
         self.update.deinit(gpa, self.io);
         self.ai.deinit(gpa, self.io);
+        self.now_playing.deinit(self.io);
         self.todos.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
@@ -1987,6 +1990,7 @@ pub const App = struct {
         todos.tick(self, now);
         sessions.tick(self, now);
         clock.tick(self);
+        now_playing.tick(self, now);
         if (self.click_echo) |e| if (now >= e.until_ms) {
             self.click_echo = null;
             self.needs_render = true;
@@ -2022,6 +2026,7 @@ pub const App = struct {
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (now_playing.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -2239,6 +2244,7 @@ test {
     _ = @import("app/auto_refresh.zig");
     _ = @import("app/clock.zig");
     _ = @import("app/coverage.zig");
+    _ = @import("app/now_playing.zig");
     _ = @import("app/menu_bar.zig");
     _ = @import("app/browser_open.zig");
     _ = @import("app/glyph_audit.zig");
