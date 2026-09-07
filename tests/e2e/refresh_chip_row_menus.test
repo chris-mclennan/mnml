@@ -5,6 +5,12 @@ write src/a.zig "const alpha = 1;\nconst beta = alpha + alpha;\n"
 write TODO.md "- TODO: one thing\n"
 open src/a.zig
 command view.activity_todos
+# TODOS is a left section; its 26-cell header keeps no ⟳. On the right,
+# with the column dragged out to 40 (the divider from 87 to 79), the
+# header sits under the column's strip row with the ⟳ at (118, 2), and
+# the body keeps the geometry the SEARCH split below is aimed at.
+command view.move_section_right
+drag 87 5 79 5
 command find.grep
 type alpha
 key enter
@@ -16,15 +22,15 @@ expect screen contains "Skip this hit on replace"
 expect screen contains "Replace in files…"
 key esc
 expect screen lacks "Skip this hit on replace"
-# The TODOS header's ⟳ chip, at the right end of the right panel.
-rightclick 118 1
+# The TODOS header's ⟳ chip, at the right end of the right column.
+rightclick 118 2
 expect screen contains "╭ TODOS"
 expect screen contains "Refresh now"
 expect screen contains "Auto-refresh"
 expect screen contains "✓"
-click 105 4
+click 105 5
 expect screen contains "TODOS: auto-refresh off"
-rightclick 118 1
+rightclick 118 2
 expect screen contains "Auto-refresh"
 expect screen lacks "✓"
 key esc

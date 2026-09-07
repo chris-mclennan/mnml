@@ -5,7 +5,11 @@ write a.txt alpha
 open a.txt
 command view.activity_http
 expect screen contains "HTTP (0)"
-click 114 1
+# HTTP is a left section; on the right (32 cells, below the column's
+# strip row) its header keeps the `+` at column 116.
+command view.move_section_right
+expect screen contains "HTTP (0)"
+click 116 2
 expect screen contains "new request"
 expect screen contains "Send"
 # The Body content is row 9 (the Request box's strip is rows 7 / 8);
