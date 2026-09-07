@@ -1,0 +1,17 @@
+# The kebab on a hovered row: a click on a TODOS row selects it and
+# leaves the pointer there, so the `⋯` appears at the row's right end;
+# a click on the kebab opens the row's menu.
+
+write src/a.zig "// TODO: fix\n"
+command view.activity_todos
+command todos.refresh
+wait 500
+expect screen contains "fix"
+click 10 6
+expect screen contains "⋯"
+click 28 6
+expect screen contains "Open"
+expect screen contains "Mark done"
+expect screen contains "Copy path"
+key esc
+expect screen lacks "Mark done"

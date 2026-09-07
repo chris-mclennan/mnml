@@ -448,6 +448,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             if (st.selected()) |row| runToast(app, activate(app, row));
             return true;
         },
+        .new_activate => {},
         .ignored => {},
     }
     if (st.list.filter_focused) return false;

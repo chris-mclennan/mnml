@@ -441,6 +441,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
         .panel => {
             const out = try Todos.handleKey(&g.panel, g.gpa, key);
             switch (out) {
+                .new_activate => {},
                 .activate => |i| g.setNote("activated row {d}", .{i}),
                 .filter_changed => g.setNote("filter: {s}", .{g.panel.filterText()}),
                 .ignored => if (key.code == .char and key.code.char == 'q') {

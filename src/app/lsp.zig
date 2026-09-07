@@ -993,6 +993,7 @@ pub fn panelKey(app: *App, k: Key) Allocator.Error!bool {
             if (i < rows.len) try openRow(app, rows[i]);
             return true;
         },
+        .new_activate => {},
         .ignored => {},
     }
     if (st.panel.filter_focused) return false;

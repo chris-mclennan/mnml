@@ -69,15 +69,24 @@ workspace at 120×40:
 
 - `todos` / `notes` / `findings` — `view.activity_<x>`: the section in
   the sidebar's 26 cells (rail 3 + border + 26, the divider at 30), the
-  info box titled with it, the mode chip `TREE`. The Zig columns match;
-  the rows inside (the filter row, the `+ New` row, the chip forms at
-  26 cells, the info box's curated copy) are the panel track's.
+  info box titled with it, the mode chip `TREE`. The Zig columns match,
+  and the `+ New todo` / `+ New note` / `+ New finding` row is Rust's
+  (`ListPanel.Props.new_label`). The rest of the rows are Zig's by the
+  user's decision (2026-09-07), so these three stay at residue —
+  todos 24, notes 26, findings 26 differing lines — and the hunks are
+  the accepted ones: a blank row directly under the filter (the user's
+  ask; Rust has none, so every row below sits one lower), the filter
+  pill (`󰍉 / filter` vs `󰍉 type to filter…▏`), the header's count
+  spacing (`TODOS (0)` vs `TODOS  (0)`), the empty state's `…` clip
+  (Rust clips hard), the info box's copy, the version line, and the
+  statusline's stock / now-playing chips.
 - `outline` — `src/main.rs` open, `view.toggle_right_panel`,
   `outline.show`: the outline in the right panel at Rust's 32 cells (the
-  divider at 87), a strip row above it (`main.rs … ×`), the keys left in
-  the editor (`EDIT`), the rail still marking the explorer. The Zig
-  right column matches those; the strip's `⌥1` / `+`, the outline's
-  scrollbar column and its `/ filter` hint are the outline pane's.
+  divider at 87), a strip row above it (`main.rs ⌥1   󰐕 … ×`,
+  `ui/side_strip.zig`), the keys left in the editor (`EDIT`), the rail
+  still marking the explorer. At residue: 8 differing lines, all the
+  LSP toast (no server for Zig in the fixture) and the statusline's
+  stock / now-playing / `LSP 1` chips.
 
 ## The debugger (Zig-authored, 2026-09-07)
 
