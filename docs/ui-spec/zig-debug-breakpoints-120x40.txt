@@ -36,5 +36,5 @@
    │ [F2] Rename              │
   │                          │
    │                          │
- TREE   prog.dbg                                            F 57% ▲1.0  111B  Ln 9/10 Col 1    16:20  ws   dbg
+ TREE   prog.dbg                                      F 57% ▲1.0  󱼀 󰐎  111B  Ln 9/10 Col 1    19:52  ws   dbg
 

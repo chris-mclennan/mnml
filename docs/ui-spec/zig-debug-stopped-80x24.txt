@@ -20,5 +20,5 @@
    │ gutter: breakpoints      │                        │
   │                          │                        │
    │                          │                        │ > expression — Tab comp
- VIEW  [no file]                            F 57% ▲1.0    16:20  ws   —
+ VIEW  [no file]                      F 57% ▲1.0  󱼀 󰐎    19:53  ws   —
 

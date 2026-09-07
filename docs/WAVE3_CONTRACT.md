@@ -2716,6 +2716,16 @@ break-check.
   fixture configs to `coverage_chip_mode = .feature` would make the
   sweep deterministic (the fixture is the harness's, not this track's).
   `State.ticker_clock_ms` pins the clock in tests.
+- `// changed (residue, 2026-09-07):` with the fixture's ticker pinned
+  to `feature`, `tools/ui-diff.sh` on every steps file loses its two
+  statusline lines (esc 4 → 2, http / graph2 2 → 0, palette 34 → 32,
+  picker 4 → 2, discovery 4 → 2, help 6 → 4, todos 24 → 22, notes 26 →
+  24, findings 26 → 24, whichkey 0); the seven that open `main.rs`
+  (editor, diff, goto, close, delete, rename, outline) keep exactly one
+  pair, Rust's ` LSP 1 ` — the lsp-fixture track's rust-analyzer. The
+  three `zig-debug-*` dumps (and the 80×24 one) are regenerated with the
+  cluster on row 38. Unpinned, the ticker straddles the dumps' start
+  times as it would for two Rust editors five seconds apart.
 - Cut, per the spec: the Sonos cluster. Not in this build: the Claude
   chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
   spend until the usage endpoint is called; the LSP progress (`⟳ …`),
