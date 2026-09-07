@@ -294,7 +294,7 @@ test "the box is Rust's: 84×32 at 120×40, the filter row, headers with counts,
     try f.expectRow(7, " " ** 18 ++ "│  NORMAL    vim normal mode (red)" ++ " " ** 49 ++ "│");
     try f.expectRow(10, " " ** 18 ++ "│  ctrl+q    Quit mnml" ++ " " ** 61 ++ "│");
     try f.expectRow(11, " " ** 18 ++ "│  ·         Restart mnml (rebuild + relaunch via run.sh)" ++ " " ** 26 ++ "│");
-    try f.expectRow(34, " " ** 18 ++ "│" ++ hint_rest ++ " " ** 5 ++ "│");
+    try f.expectRow(34, " " ** 18 ++ "│" ++ hint_rest ++ " " ** 6 ++ "│");
     try f.expectRow(35, " " ** 18 ++ "└" ++ "─" ** 82 ++ "┘");
     // The headers are the hits, by their row index; a chord is the accent.
     try testing.expectEqual(@as(u32, 0), f.hits.at(30, 6).?.overlay_item);
