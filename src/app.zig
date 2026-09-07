@@ -31,6 +31,7 @@ const editorconfig = @import("editor/editorconfig.zig");
 const edit_op = @import("editor/edit_op.zig");
 const edit_op_editor = @import("editor/editor.zig");
 const pane_mod = @import("app/pane.zig");
+const side_mod = @import("app/side.zig");
 const layout_mod = @import("app/layout.zig");
 const find_mod = @import("app/find.zig");
 const syntax = @import("app/syntax.zig");
@@ -701,9 +702,13 @@ pub const App = struct {
     tree: tree_mod.Tree,
     /// The sidebar's info view (`app/info_view.zig`).
     info_view: info_view_app.State = .{},
-    /// The right-hand panel slot (Rust's activity panel). One panel at a
-    /// time; null hides it. `view.activity_todos` / `view.toggle_right_panel`.
-    right_panel: ?PanelId = null,
+    /// Which side each activity section lives on and what each column
+    /// shows (`app/side.zig`). Seeded from the config in `init`.
+    side: side_mod.State,
+    /// The outline drawn in a column (`PanelId.outline`): a pane kept in
+    /// the store, outside the layout. `outline.show` routes here when
+    /// the outline's column is open.
+    outline_panel: ?PaneId = null,
     todos: todos.State,
     notes: notes.State,
     findings: findings.State,
@@ -752,7 +757,6 @@ pub const App = struct {
     /// The split tree's area at the last render — what a divider drag
     /// and the focus motions measure against.
     panes_area: Rect = .{},
-    right_panel_width: u16 = 40,
     /// Files opened, newest last (`picker.recent`). Owned paths.
     recent: std.ArrayListUnmanaged([]u8) = .empty,
     /// The `:` lines run, oldest first (`q:`). Owned.
@@ -921,6 +925,7 @@ pub const App = struct {
             .docs = docs,
             .layouts = layouts,
             .tree = tree_mod.Tree.init(gpa),
+            .side = side_mod.State.init(&opts.cfg),
             .todos = todos.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.todos_sort)),
             .notes = notes.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.notes_sort)),
             .findings = findings.State.init(gpa, panel_mod.ListSort.fromConfig(opts.cfg.ui.findings_sort)),
@@ -977,10 +982,17 @@ pub const App = struct {
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
         app.tree.width = app.cfg.ui.tree_width;
-        // `ui.right_panel_visible` / `ui.right_panel_width` seed the slot;
-        // a restored session (the `startup` hook) then overrides both.
-        app.right_panel_width = @max(app.cfg.ui.right_panel_width, 8);
-        if (app.cfg.ui.right_panel_visible) app.right_panel = .todos;
+        // The sides come from the config; the explorer opens in its
+        // column; `ui.right_panel_visible` opens the right column on
+        // the first section that lives there. A restored session (the
+        // `startup` hook) then overrides all of it.
+        app.side = side_mod.State.init(&app.cfg);
+        side_mod.place(&app, .explorer, false);
+        if (app.cfg.ui.right_panel_visible) {
+            var sbuf: [side_mod.Section.all.len]side_mod.Section = undefined;
+            const on_right = side_mod.sectionsOn(&app, .right, &sbuf);
+            if (on_right.len > 0) side_mod.place(&app, on_right[0], false);
+        }
         try app.seedPlusMenu();
         auto_refresh.seed(&app);
         clock.seed(&app);
@@ -1697,6 +1709,7 @@ pub const App = struct {
         if (closed_path) |p| lsp.onClose(self, id, p);
         files_pane.onPaneClosed(self, id);
         if (self.last_editor == id) self.last_editor = null;
+        if (self.outline_panel == id) self.outline_panel = null;
         if (std.mem.indexOfScalar(PaneId, self.pane_mru.items, id)) |at| _ = self.pane_mru.orderedRemove(at);
         if (self.prev_active == id) self.prev_active = null;
         if (self.active == id) {

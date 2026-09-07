@@ -49,6 +49,7 @@ const format_app = @import("lsp_format.zig");
 const rename_app = @import("lsp_rename.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const cmd_view = @import("cmd_view.zig");
+const side = @import("side.zig");
 const layout_mod = @import("layout.zig");
 const find_mod = @import("find.zig");
 
@@ -1062,9 +1063,9 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
     }
 }
 
-/// `lsp.diagnostics`: the panel in the right slot.
+/// `lsp.diagnostics`: the panel in its column (the right, by default).
 pub fn showDiagnostics(app: *App) CommandError!void {
-    cmd_view.showRightPanel(app, .diagnostics);
+    side.place(app, .diagnostics, true);
 }
 
 pub fn cycleFilter(app: *App) CommandError!void {
@@ -2406,7 +2407,7 @@ test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the st
     try testing.expectEqual(@as(usize, 26), e.buf.editor.cursor);
     // The panel in the right slot lists both, the filter narrows to errors.
     try command.run(&app, .{ .static = .@"lsp.diagnostics" });
-    try testing.expectEqual(app_mod.PanelId.diagnostics, app.right_panel.?);
+    try testing.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
     try app.render();
     const txt = try screen_mod.toTestText(testing.allocator, &app.screen);
     defer testing.allocator.free(txt);

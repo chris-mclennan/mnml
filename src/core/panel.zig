@@ -10,7 +10,9 @@ const ConfigSort = @import("../config/Config.zig").ListSort;
 /// // changed (lsp): `diagnostics` — the LSP problems list lives in the
 /// right slot like the other list panels.
 /// // changed (http-more): `http` — the seven-section HTTP sidebar.
-pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http };
+/// // changed (section-side): `outline` — the symbol outline drawn in a
+/// column (`App.outline_panel` is its pane) when its column is open.
+pub const PanelId = enum { todos, notes, findings, sessions, git, diagnostics, http, outline };
 
 /// How a list panel orders its rows. Every key is paired with its
 /// reverse; the four are what the right-click menu lists and what the

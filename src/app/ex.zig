@@ -16,6 +16,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const side = @import("side.zig");
 const marks_store = @import("marks_store.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
@@ -165,6 +166,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "delm", "delmarks" })) return delmarks(app, args, bang);
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
     if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
+    if (eqAny(verb, &.{"sidebar"})) return sidebar(app, args);
     if (eqAny(verb, &.{ "mes", "messages", "Messages" })) {
         if (bang) return @import("messages.zig").dump(app);
         return command.run(app, .{ .static = .@"messages.show" });
@@ -1002,8 +1004,8 @@ fn set(app: *App, args: []const u8) CommandError!void {
             app.toast(":set {s}={d}", .{ name, n });
         } else if (eqAny(name, &.{ "rightpanel", "rightpanel!", "invrightpanel" })) {
             const toggle = std.mem.endsWith(u8, name, "!") or std.mem.startsWith(u8, name, "inv");
-            const want = if (toggle) app.right_panel == null else !off;
-            if (want != (app.right_panel != null)) try command.run(app, .{ .static = .@"view.toggle_right_panel" });
+            const want = if (toggle) side.shown(app, .right) == null else !off;
+            if (want != (side.shown(app, .right) != null)) try command.run(app, .{ .static = .@"view.toggle_right_panel" });
         } else if (eqAny(name, &.{ "hls", "hlsearch", "is", "incsearch", "et", "expandtab" })) {
             // Accepted for muscle memory; nothing is behind them.
             app.toast(":set {s} — noted", .{opt});
@@ -1191,6 +1193,15 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
         }
     }.lt);
     return try out.toOwnedSlice(gpa);
+}
+
+/// `:sidebar left` / `:sidebar right`: the focused section (else the
+/// rail's mark) goes to that side — Neovim's `Ctrl-W H` / `L` as words.
+fn sidebar(app: *App, args: []const u8) CommandError!void {
+    const a = std.mem.trim(u8, args, " \t");
+    if (eqAny(a, &.{ "l", "left" })) return command.run(app, .{ .static = .@"view.move_section_left" });
+    if (eqAny(a, &.{ "r", "right" })) return command.run(app, .{ .static = .@"view.move_section_right" });
+    return app.diag.fail(app.frame.allocator(), ":sidebar left|right", .{});
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

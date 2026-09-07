@@ -28,6 +28,7 @@ const CommandError = command.CommandError;
 const MenuItem = command.MenuItem;
 const settings = @import("settings.zig");
 const render = @import("render.zig");
+const side = @import("side.zig");
 const search_glyph = @import("../ui/menu_bar.zig").search_glyph;
 
 pub const table = .{
@@ -441,7 +442,7 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
     return switch (@as(render.Button, @enumFromInt(id))) {
         .palette => .{ .title = "command palette", .detail = "click: open files, commands, recent (Ctrl+P)" },
         .toggle_tree => .{ .title = if (app.tree.visible) "file tree: open" else "file tree: off", .detail = "click: toggle file tree (Ctrl+B)" },
-        .toggle_right_panel => .{ .title = if (app.right_panel != null) "right panel: open" else "right panel: off", .detail = "click: toggle right side panel (Ctrl+Shift+B)" },
+        .toggle_right_panel => .{ .title = if (side.shown(app, .right) != null) "right column: open" else "right column: off", .detail = "click: toggle the right column (Ctrl+Shift+B)" },
         .back => .{
             .title = if (n <= 1) "back to previous buffer (Ctrl+[)" else try std.fmt.allocPrint(arena, "click: prev buffer (MRU) · {d} open", .{n}),
             .detail = if (n <= 1) "disabled — no other buffers" else null,

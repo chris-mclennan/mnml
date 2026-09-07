@@ -11,6 +11,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PanelId = app_mod.PanelId;
 const command = @import("../core/command.zig");
+const side = @import("side.zig");
 const MenuItem = command.MenuItem;
 const settings = @import("settings.zig");
 
@@ -50,6 +51,7 @@ fn label(panel: PanelId) []const u8 {
         .git => "GIT",
         .diagnostics => "DIAGNOSTICS",
         .http => "HTTP",
+        .outline => "OUTLINE",
     };
 }
 
@@ -62,6 +64,7 @@ fn refreshId(panel: PanelId) command.CommandId {
         .git => .@"git.refresh",
         .diagnostics => .@"lsp.diagnostics",
         .http => .@"http.refresh",
+        .outline => .@"outline.show",
     };
 }
 
@@ -106,7 +109,7 @@ test "auto-refresh: the config seeds the set; off stops the save-hook and the ca
     todos.noteFileChanged(&app);
     try testing.expect(app.todos.rescan_at_ms == null);
     // SESSIONS: the cadence is silent while off.
-    app.right_panel = .sessions;
+    side.place(&app, .sessions, false);
     app.sessions.scanned_once = true;
     app.sessions.last_scan_ms = 0;
     sessions.tick(&app, 100_000);

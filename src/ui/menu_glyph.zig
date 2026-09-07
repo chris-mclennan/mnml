@@ -78,6 +78,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .set_coverage_mode => if (ascii) "%" else "\u{f0e4}", // fa-dashboard
         .menu_bar => if (ascii) "=" else "\u{f0c9}", // fa-bars: a menu-bar menu
         .git_palette => if (ascii) "g" else "\u{e702}", // dev-git: a palette row's action
+        .move_section => |ms| if (ms.side == .right) (if (ascii) ">" else "\u{f061}") else (if (ascii) "<" else "\u{f060}"), // fa-arrow_right / _left
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }

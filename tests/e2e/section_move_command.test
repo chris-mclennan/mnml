@@ -1,0 +1,37 @@
+# Every activity section has a side (src/app/side.zig). TODOS is a left
+# section (Rust's placement): opening it takes the tree's column. The
+# `view.move_section_right` command moves the focused section to the
+# right column and the tree comes back on the left — both on screen —
+# and `view.move_section_left` brings it back. The right column carries
+# a strip row titled with the section (`TODOs` padded to the `×`); the
+# left has none, so that word plus two spaces is the right column's
+# fingerprint (the move's toast reads `TODOs → …`).
+write treemarker.txt "a file the tree lists\n"
+write src/a.zig "// TODO: alpha marker\n"
+open src/a.zig
+expect screen contains "treemarker.txt"
+command view.activity_todos
+command todos.refresh
+expect screen contains "TODOS"
+expect screen contains "alpha marker"
+expect screen lacks "treemarker.txt"
+expect screen lacks "TODOs  "
+
+command view.move_section_right
+expect screen contains "TODOs  "
+expect screen contains "alpha marker"
+expect screen contains "treemarker.txt"
+# The keys stayed with the section: / opens its filter.
+key /
+type alpha
+expect screen contains "(1 of 1)"
+key esc
+key esc
+
+command view.move_section_left
+expect screen lacks "TODOs  "
+expect screen contains "alpha marker"
+expect screen lacks "treemarker.txt"
+# A pane section has no side: the command says so and nothing moves.
+command view.activity_explorer
+expect screen contains "treemarker.txt"

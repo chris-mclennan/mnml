@@ -957,8 +957,10 @@ test "headless: the panel lists findings with severity tags; d resolves the sele
     defer f.deinit();
     try f.write(".mnml/findings/finding-1.md", "---\nseverity: high\nstatus: open\n---\n# Picker panics\n");
     f.app.tree.visible = false;
-    // Room for the count and the full chip side by side.
-    f.app.right_panel_width = 56;
+    // Room for the count and the full chip side by side: on the right,
+    // 56 wide.
+    f.app.side.of.set(.findings, .right);
+    f.app.side.right_width = 56;
     try command.run(&f.app, .{ .static = .@"view.activity_findings" });
     // Through the registry, not the first draw: a table left out of
     // `command.runner_tables` fails here instead of passing silently.
@@ -1055,7 +1057,8 @@ test "the sort chip at 26 / 30 / 34 cells and the shipped 40 is icon-only and li
         defer f.deinit();
         try f.write(".mnml/findings/a.md", "# A\n");
         f.app.tree.visible = false;
-        f.app.right_panel_width = panel_w;
+        f.app.side.of.set(.findings, .right);
+        f.app.side.right_width = panel_w;
         try command.run(&f.app, .{ .static = .@"view.activity_findings" });
         try f.app.render();
         try f.settle(2000);

@@ -5,6 +5,10 @@
 write .mnml/findings/finding-1.md "---\nseverity: high\nstatus: open\n---\n# Picker panics below 30 cols\n"
 write .mnml/findings/r2.md "# Plain report\n\n**Severity:** low\n"
 command view.activity_findings
+# The panel lives on the left (Rust's placement) in the tree's 30
+# columns, where the header keeps only the chips' icons; drag the
+# column's divider out to 60 so the rows read in full.
+drag 30 5 60 5
 wait 400
 expect screen contains FINDINGS
 expect screen contains "(2 open of 2)"

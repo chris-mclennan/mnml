@@ -119,6 +119,26 @@ pub const MenuBar = enum { always, auto, hidden };
 /// a TODO for these three, with the menu bar's vocabulary). `auto`
 /// shows the rail while the pointer is in column 0 or on the rail.
 pub const ActivityBar = enum { always, auto, hidden };
+/// // changed (section-side): which column an activity section lives
+/// in. `ui.sidebar_side` is the side sections take when nothing says
+/// otherwise; `ui.section_side` overrides it per section.
+pub const Side = enum { left, right };
+/// One optional side per section that owns a column surface (the tree,
+/// git mode's palette, a list panel). The field names are the rail's
+/// section tags; a pane-backed section (search, debug, …) has no side.
+/// // changed (section-side): a typed struct, not a map — `std.zon`
+/// has no map type, and the loader's `Patch` overlays it field by field.
+pub const SectionSide = struct {
+    explorer: ?Side = null,
+    git: ?Side = null,
+    sessions: ?Side = null,
+    http: ?Side = null,
+    notes: ?Side = null,
+    todos: ?Side = null,
+    findings: ?Side = null,
+    diagnostics: ?Side = null,
+    outline: ?Side = null,
+};
 pub const DiagStyle = enum { count, dot, off };
 pub const CoverageChipMode = enum { both, feature, code, ticker };
 pub const ExpandIndicator = enum { chevron, triangle };
@@ -148,10 +168,17 @@ pub const Ui = struct {
     ascii_icons: bool = false,
     /// Clamped to `tree_width_min..max` on load.
     tree_width: u16 = 30,
+    /// The right column opens at start (on the last section it showed,
+    /// else the first section whose side is right).
     right_panel_visible: bool = false,
-    /// 40, not the Rust 32: the Zig right panel hosts the panels the
-    /// Rust rail shows in ~26 cells, and their chrome is tuned to 40.
-    right_panel_width: u16 = 40,
+    /// The right column's width (Rust's right panel: 32); `tree_width`
+    /// is the left column's.
+    right_panel_width: u16 = 32,
+    /// // changed (section-side): the side a section takes when
+    /// `section_side` does not name it. The Rust right-panel panes
+    /// (outline, diagnostics) take the other side.
+    sidebar_side: Side = .left,
+    section_side: SectionSide = .{},
     auto_hide_narrow_width: u16 = 0,
     auto_equalize_splits: bool = false,
     relative_line_numbers: bool = false,
@@ -559,7 +586,7 @@ test "defaults are the shipped values" {
     // ui
     try std.testing.expectEqualStrings("onedark", c.ui.theme);
     try std.testing.expectEqual(@as(u16, 30), c.ui.tree_width);
-    try std.testing.expectEqual(@as(u16, 40), c.ui.right_panel_width);
+    try std.testing.expectEqual(@as(u16, 32), c.ui.right_panel_width);
     try std.testing.expect(c.ui.line_numbers);
     try std.testing.expect(!c.ui.relative_line_numbers);
     try std.testing.expect(c.ui.clock);

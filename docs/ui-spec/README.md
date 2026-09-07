@@ -60,3 +60,21 @@ matching `steps-<name>.jsonl`, on the fixture workspace (which now has
 - `discovery` — `view.discovery`: the click-discovery panel.
 - `close` — `src/main.rs` open, type `x`, `ctrl+w`: the unsaved-changes
   prompt (the buffer is never saved; the quit discards it).
+
+## Sections and their sides (2026-09-07)
+
+Every activity section has a side (`src/app/side.zig`); these are the
+Rust screens the columns are measured against, on the fixture
+workspace at 120×40:
+
+- `todos` / `notes` / `findings` — `view.activity_<x>`: the section in
+  the sidebar's 26 cells (rail 3 + border + 26, the divider at 30), the
+  info box titled with it, the mode chip `TREE`. The Zig columns match;
+  the rows inside (the filter row, the `+ New` row, the chip forms at
+  26 cells, the info box's curated copy) are the panel track's.
+- `outline` — `src/main.rs` open, `view.toggle_right_panel`,
+  `outline.show`: the outline in the right panel at Rust's 32 cells (the
+  divider at 87), a strip row above it (`main.rs … ×`), the keys left in
+  the editor (`EDIT`), the rail still marking the explorer. The Zig
+  right column matches those; the strip's `⌥1` / `+`, the outline's
+  scrollbar column and its `/ filter` hint are the outline pane's.

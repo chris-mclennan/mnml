@@ -94,6 +94,7 @@ const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
 const git_app = @import("git.zig");
 const git_palette = @import("git_palette.zig");
+const side = @import("side.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
@@ -144,7 +145,19 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
-    if (app.focus == .panel and (app.right_panel != null or (app.focus.panel == .git and app.git_palette.active))) {
+    if (app.focus == .panel and side.isShown(app, side.sectionOfPanel(app.focus.panel))) {
+        // A column is a window to vim's `Ctrl-W` family (the tree keeps
+        // its own flag in `Tree.handleKey`); the chord owns its second
+        // key whatever it is.
+        if (app.side.ctrl_w_pending) {
+            app.side.ctrl_w_pending = false;
+            if (side.ctrlWCommand(k)) |id| try runCmd(app, id);
+            return;
+        }
+        if (side.isCtrlW(app, k)) {
+            app.side.ctrl_w_pending = true;
+            return;
+        }
         const took = switch (app.focus.panel) {
             .todos => try todos.handleKey(app, k),
             .notes => try notes.handleKey(app, k),
@@ -153,6 +166,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
             .sessions => try sessions.handleKey(app, k),
+            .outline => if (app.outline_panel) |id| try outline.handleKey(app, id, k) else false,
         };
         if (took) return;
         _ = try chordChain(app, k);
@@ -661,7 +675,7 @@ fn closeOverlay(app: *App) void {
     app.overlay.deinit(app.gpa);
     if (back) |f| {
         app.focus = f;
-        if (f == .panel and app.right_panel == null) restoreFocus(app);
+        if (f == .panel and !side.isShown(app, side.sectionOfPanel(f.panel))) restoreFocus(app);
     } else restoreFocus(app);
 }
 
@@ -747,11 +761,15 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .move_section => |ms| side.move(app, ms.section, ms.side) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .set_panel_sort => |s| switch (s.panel) {
             .todos => try todos.setSort(app, s.sort),
             .notes => try notes.setSort(app, s.sort),
             .findings => try findings.setSort(app, s.sort),
-            .sessions, .git, .diagnostics, .http => {},
+            .sessions, .git, .diagnostics, .http, .outline => {},
         },
         .ai_profile => |a| launch_profiles.menuAction(app, a) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1182,6 +1200,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => try git_palette.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
+            .outline => {},
         },
         .kebab => |pr| switch (pr.panel) {
             .todos => try todos.kebabMouse(app, pr.idx, m),
@@ -1190,7 +1209,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .sessions => try sessions.kebabMouse(app, pr.idx, m),
             .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
-            .diagnostics => {},
+            .diagnostics, .outline => {},
         },
         .chip => |c| switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
@@ -1200,6 +1219,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => try git_palette.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
+            .outline => {},
         },
         .filter_input => |p| switch (p) {
             .todos => todos.filterMouse(app, m),
@@ -1209,6 +1229,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .git => git_palette.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
+            .outline => {},
         },
         .scrollbar => |sb| switch (sb.owner) {
             .panel => |p| switch (p) {
@@ -1219,6 +1240,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .git => if (hitRect(app, m.x, m.y)) |r| git_palette.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
+                .outline => {},
             },
             .pane => |id| {
                 // The picker's bar: the wheel walks the cursor, a press
@@ -1676,6 +1698,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .palette => try runCmd(app, .palette),
                 .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
                 .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
+                .right_close => try runCmd(app, .@"view.right_panel_close_tab"),
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),
@@ -1979,7 +2002,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
             app.tree.width = std.math.clamp(m.x, 8, upper_w -| 22);
         },
         .right_divider => if (m.kind == .drag) {
-            app.right_panel_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
+            app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
         .select => |sel| {

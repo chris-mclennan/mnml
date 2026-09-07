@@ -9,6 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
+const side = @import("side.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
@@ -272,17 +273,20 @@ fn openSettingsFile(app: *App) CommandError!void {
     };
 }
 
-/// tree → pane → right panel → tree, skipping what is not on screen.
+/// left column → pane → right column → left column, skipping what is
+/// not on screen.
 fn focusCycle(app: *App) CommandError!void {
-    const has_tree = app.tree.visible and !app.zen;
-    const has_panel = app.right_panel != null and !app.zen;
-    const panel: app_mod.FocusId = if (app.right_panel) |p| .{ .panel = p } else .tree;
-    app.focus = switch (app.focus) {
-        .tree => if (app.active) |a| .{ .pane = a } else if (has_panel) panel else .tree,
-        .pane => if (has_panel) panel else if (has_tree) .tree else app.focus,
-        .panel => if (has_tree) .tree else if (app.active) |a| .{ .pane = a } else app.focus,
-        else => if (app.active) |a| .{ .pane = a } else .tree,
-    };
+    const left: ?app_mod.FocusId = if (!app.zen) (if (side.shown(app, .left)) |s| side.focusOf(s) else null) else null;
+    const right: ?app_mod.FocusId = if (!app.zen) (if (side.shown(app, .right)) |s| side.focusOf(s) else null) else null;
+    const pane: ?app_mod.FocusId = if (app.active) |a| .{ .pane = a } else null;
+    const in_left = left != null and std.meta.eql(app.focus, left.?);
+    const in_right = right != null and std.meta.eql(app.focus, right.?);
+    app.focus = if (in_left)
+        pane orelse right orelse app.focus
+    else if (in_right)
+        left orelse pane orelse app.focus
+    else
+        right orelse left orelse pane orelse app.focus;
     app.needs_render = true;
 }
 

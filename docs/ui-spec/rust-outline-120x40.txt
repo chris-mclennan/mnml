@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │  ~/Pr…              │  main.rs 󰅖   󰐕                                    │ main.rs ⌥1   󰐕               ×
+▌ │     requests           │ src › main.rs                                          │  ⌥ main.rs   1 symbol         █
+ 󰍉 │     src                │   1 fn main() {}                                       │  ⏎ jump · / filter · esc back █
+ 󰊢 │     󱼅  main.rs          │   2 y                                                  │                               █
+  │      .gitignore       ? │                                                        │▶         fn main:1            █
+ 󰐱 │      package.json       │                                                        │                               █
+ 󰎒 │     󰂺 README.md          │                                                        │                               █
+ 󰚩 │                          │                                                        │                               █
+ 󰅣 │  mixr                   │                                                        │                               █
+  │                          │                                                        │                               █
+  │  acmeco-claude-workspa… │                                                        │                               █
+  │                          │                                                        │                               █
+ 󱘣 │  acmeco-mnml-workspace  │                                                        │                               █
+   │                          │                                                        │                               █
+   │  adx                    │                                                        │                               █
+   │                          │                                                        │                               █
+   │  acmeco-claude-plugins  │                                                        │                               █
+   │                          │                                                        │                               █
+   │  acmeco-inbox           │                                                        │                               █
+   │                          │                                                        │                               █
+   │  acmeco-mobile          │                                                        │                               █
+   │                          │                                                        │                               █
+   │  acmeco-playwright      │                                                        │                               █
+   │                          │                                                        │                               █
+   │  acmeco-site            │                                                        │                               █
+   │                          │                                                        │                               █
+   │──────────────────────────│                                                        │                               █
+   │ fn  ·  RS  ·  main.rs  ⋮ │                                                        │                               █
+   │                          │                                                        │                               █
+   │ [gd] Definition · [gr]   │                                                        │                               █
+   │ References · [K] Hover · │                                                        │                               █
+   │ [F2] Rename              │                                                        │                               █
+   │                          │                                                        │                               █
+   │                          │                                                        │                               █
+   │                          │                        ┌─────────────────────────────────────────────────────────── × ┐█
+  │                          │                        │ LSP: Failed to discover workspace.Consider adding the `Car…  │█
+   │                          │                        └──────────────────────────────────────────────────────────────┘█
+ EDIT   main  󰐙 2   main.rs  › main     F 57% ▲1.0  󱼀 󰐎  LSP 1  WRAP  15B  Ln 1/2 Col 1    12:40  ws   rs
+

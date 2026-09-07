@@ -1,7 +1,8 @@
 //! One frame. Row 0 is the palette bar (on a screen at least 80 wide),
 //! the last two rows are the statusline and the `:` line, and between
-//! them sit the sidebar — the activity bar down its left edge, a `│`,
-//! then the tree — the split tree and the right panel. Every
+//! them sit the left column — the activity bar down its edge, a `│`,
+//! then the section it shows — the split tree and the right column
+//! (`app/side.zig`: every section has a side). Every
 //! leaf of the split tree carries its own tab strip on its first row —
 //! a tab is dragged between leaves, so the strip belongs to the leaf,
 //! not to the frame. Then the overlay and the toasts, in that order, so
@@ -110,6 +111,7 @@ const ipc = @import("../ipc/root.zig");
 const files_pane = @import("files_pane.zig");
 const transfers = @import("transfers.zig");
 const activity_bar = @import("activity_bar.zig");
+const side_mod = @import("side.zig");
 const rail_mod = @import("../ui/activity_bar.zig");
 const icons = @import("../ui/icons.zig");
 
@@ -152,6 +154,8 @@ pub const Button = enum(u32) {
     split_max = 16,
     /// The strip's ` +N hidden ` chip: the buffer picker.
     hidden_tabs = 17,
+    /// The right column's strip: its `×` closes the column.
+    right_close = 18,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -215,7 +219,7 @@ pub const Button = enum(u32) {
 /// The statusline's hit ids live with the chips: `app/statusline.zig`.
 pub const SegId = statusline_app.SegId;
 
-/// The rows of the frame for a screen, and the columns of its sidebar.
+/// The rows of the frame for a screen, and its two columns.
 pub const FrameRects = struct {
     bar: Rect,
     upper: Rect,
@@ -226,19 +230,26 @@ pub const FrameRects = struct {
     rail: Rect = Rect.empty,
     /// The `│` column between the rail and the sidebar's panel.
     rail_border: Rect = Rect.empty,
-    /// The sidebar's panel (the tree); empty when the sidebar is hidden.
+    /// The left column's panel (the section it shows); empty when the
+    /// column is closed.
     sidebar: Rect = Rect.empty,
-    /// The one-cell resize divider on the sidebar's right (`tree_divider_id`).
+    /// The one-cell resize divider on the left column's right (`tree_divider_id`).
     sidebar_divider: Rect = Rect.empty,
-    /// What `upper` leaves for the panes, the right panel and the dock.
+    /// The right column's panel; empty when the column is closed.
+    right: Rect = Rect.empty,
+    /// The one-cell resize divider on the right column's left (`right_divider_id`).
+    right_divider: Rect = Rect.empty,
+    /// What `upper` leaves for the panes and the dock.
     body: Rect,
 };
 
-/// What `frameRects` is told about the sidebar — it reads no app.
+/// What `frameRects` is told about the columns — it reads no app.
 pub const Chrome = struct {
-    /// The sidebar's width when it is visible. Rust's `tree_width`: the
+    /// The left column's width when it is open. Rust's `tree_width`: the
     /// rail and its border are carved from it, not added to it.
     sidebar: ?u16 = null,
+    /// The right column's width when it is open (`ui.right_panel_width`).
+    right: ?u16 = null,
     /// Whether the activity bar paints (`activity_bar.shown`).
     rail: bool = true,
 };
@@ -246,7 +257,8 @@ pub const Chrome = struct {
 /// The frame's `Chrome` for this app, this frame.
 pub fn chrome(app: *const App) Chrome {
     return .{
-        .sidebar = if (!app.zen and app.tree.visible) app.tree.width else null,
+        .sidebar = if (!app.zen and side_mod.shown(app, .left) != null) app.tree.width else null,
+        .right = if (!app.zen and side_mod.shown(app, .right) != null) app.side.right_width else null,
         .rail = activity_bar.shown(app),
     };
 }
@@ -255,12 +267,14 @@ pub fn chrome(app: *const App) Chrome {
 /// line at the bottom; the rest in between. A tiny screen gives up the
 /// `:` line, then the bar, before it gives up the statusline.
 ///
-/// The sidebar takes its width (clamped so the panes keep 21 columns,
-/// never under 8) plus a one-cell divider off the left of `upper`; the
-/// rail takes its three cells off the sidebar's left, then a border
-/// column when the sidebar has more than two cells to spare (Rust
-/// `ui/mod.rs`). The tree's `│` divider therefore stays where it was
-/// with or without the rail.
+/// The left column takes its width (clamped so the panes keep 21
+/// columns, never under 8) plus a one-cell divider off the left of
+/// `upper`; the rail takes its three cells off the column's left, then
+/// a border column when the column has more than two cells to spare
+/// (Rust `ui/mod.rs`). The tree's `│` divider therefore stays where it
+/// was with or without the rail. The right column takes its width plus
+/// a divider off the far side of what is left, under the same clamp
+/// (Rust's right panel).
 pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
     var r = full;
     var bar = Rect.empty;
@@ -298,6 +312,15 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         fr.sidebar_divider = div.left;
         fr.body = div.rest;
     };
+    // ── right column ──
+    if (ch.right) |rw| if (fr.body.w > 21 + 8) {
+        const w: u16 = @max(@min(rw, fr.body.w -| 21), 8);
+        const cols = fr.body.splitRight(w);
+        const div = cols.left.splitRight(1);
+        fr.body = div.left;
+        fr.right_divider = div.rest;
+        fr.right = cols.rest;
+    };
     return fr;
 }
 
@@ -317,7 +340,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     app.frame.begin();
     // The info view reads the previous frame's hits: they are what the
     // pointer is resting on until this frame replaces them.
-    const help_copy: ?info_view_ui.Copy = if (app.cfg.ui.hover_help and app.tree.visible and !app.zen) try info_view_app.pick(app, app.frame.allocator()) else null;
+    const help_copy: ?info_view_ui.Copy = if (app.cfg.ui.hover_help and side_mod.shown(app, .left) != null and !app.zen) try info_view_app.pick(app, app.frame.allocator()) else null;
     // The frame's rects read the previous frame's hits too (an `auto`
     // rail stays while the pointer rests on it).
     const fr = if (app.zen) zenRects(screenRect(screen)) else frameRects(screenRect(screen), chrome(app));
@@ -357,10 +380,10 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             var y: u16 = fr.rail_border.y;
             while (y < fr.rail_border.bottom()) : (y += 1) ui.canvas.put(fr.rail_border.x, y, .{ .char = .{ .grapheme = if (ui.ascii) "|" else "│", .width = 1 }, .style = line });
         }
-        // ── sidebar ──
-        // `ui.hover_help`: the panel's bottom `hover_help_height` rows
-        // are the info view whenever the panel has eight rows to spare
-        // (Rust `ui/mod.rs`); the tree takes the rest.
+        // ── left column ──
+        // `ui.hover_help`: the column's bottom `hover_help_height` rows
+        // are the info view whenever the column has eight rows to spare
+        // (Rust `ui/mod.rs`); the section takes the rest.
         var side = fr.sidebar;
         if (help_copy) |copy| if (side.h >= app.cfg.ui.hover_help_height + 8) {
             const parts = side.splitBottom(app.cfg.ui.hover_help_height);
@@ -368,20 +391,24 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll });
             app.info_view.max_scroll = l.max_scroll;
         };
-        // Git mode: the palette takes the tree's place (Rust `ui/mod.rs`
-        // on `ActivitySection::Git`).
-        if (app.git_palette.active) try git_palette.draw(app, ui, side) else try app.tree.draw(app, ui, side);
+        if (side_mod.shown(app, .left)) |s| try drawColumn(app, ui, side, s);
         drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);
     }
-    // The right panel takes its width plus a divider off the far side.
-    if (app.right_panel) |which| if (!app.zen and panes_area.w > 21 + 8) {
-        const w: u16 = @max(@min(app.right_panel_width, panes_area.w -| 21), 8);
-        const cols = panes_area.splitRight(w);
-        const div = cols.left.splitRight(1);
-        panes_area = div.left;
-        drawDivider(app, ui, div.rest, right_divider_id);
-        try drawRightPanel(app, ui, cols.rest, which);
-    };
+    // ── right column ──
+    // Rust's right panel carries a strip row above its content — the
+    // pane's title and a `×` — so the section lands one row down.
+    if (!fr.right.isEmpty()) {
+        drawDivider(app, ui, fr.right_divider, right_divider_id);
+        if (side_mod.shown(app, .right)) |s| {
+            var area = fr.right;
+            if (area.h >= 2) {
+                const parts = area.splitTop(1);
+                drawRightStrip(app, ui, parts.top, s);
+                area = parts.rest;
+            }
+            try drawColumn(app, ui, area, s);
+        }
+    }
     // The dock's inline strips come off the body; its widgets paint
     // over whatever the panes drew.
     const dock_area = panes_area;
@@ -421,7 +448,7 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
         .open = if (app.menu_bar.open) |m| @intFromEnum(m) else null,
         .workspace = std.fs.path.basename(app.workspace),
         .tree_open = app.tree.visible,
-        .right_open = app.right_panel != null,
+        .right_open = side_mod.shown(app, .right) != null,
         .nav_enabled = app.panes.count() > 1,
     }, .{
         .word_base = menu_bar.button_base,
@@ -538,8 +565,33 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 
 /// The panel in the right slot. Only TODOS draws today; the others
 /// name themselves until their module lands.
-fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocator.Error!void {
-    switch (which) {
+/// The right column's strip: ` <title>` and a `×` at the far end (Rust
+/// `right_panel` strip, less the tab chord and the `+` that mean
+/// nothing here). The outline is titled with its file, the rest with
+/// the section's label.
+fn drawRightStrip(app: *App, ui: Ui, row: Rect, s: side_mod.Section) void {
+    const pal = app.theme.palette;
+    const bg = pal.bg_darker;
+    const base = Theme.onBg(app.theme.fg, bg);
+    ui.canvas.fill(row, base);
+    const title: []const u8 = blk: {
+        if (s == .outline) if (app.outline_panel) |id| if (app.panes.get(id)) |p| if (p.asOutline()) |o| break :blk o.title;
+        break :blk s.meta().label;
+    };
+    _ = ui.putStr(row.x + 1, row.y, row.w -| 3, title, base);
+    if (row.w >= 2) {
+        const close = Rect.init(row.right() - 1, row.y, 1, 1);
+        _ = ui.putStr(close.x, close.y, 1, if (ui.ascii) "x" else "\u{D7}", Theme.withFg(base, pal.comment));
+        ui.hit(close, .{ .button = @intFromEnum(Button.right_close) });
+    }
+}
+
+/// One column's section, in the column's rect. The painters take a
+/// rect and do not care which side they land on. Git mode: the palette
+/// takes the tree's place (Rust `ui/mod.rs` on `ActivitySection::Git`).
+fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Error!void {
+    switch (s) {
+        .explorer => try app.tree.draw(app, ui, area),
         .todos => try todos.draw(app, ui, area),
         .notes => try notes.draw(app, ui, area),
         .findings => try findings.draw(app, ui, area),
@@ -547,6 +599,9 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
         .diagnostics => try lsp.drawPanel(app, ui, area),
         .http => try http_panel.draw(app, ui, area),
         .sessions => try sessions.draw(app, ui, area),
+        .outline => try outline.drawPanel(app, ui, area),
+        // Pane-backed sections never own a column (`side.surface`).
+        .search, .debug, .integrations, .agents, .cloud_agents => unreachable,
     }
 }
 
@@ -876,7 +931,7 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             .editor => |*e| try drawEditor(app, ui, pr.pane, e, rect),
             .outline => |*o| {
                 if (app.active == pr.pane) app.pane_rows = @max(rect.h, 1);
-                try outline.draw(app, ui, pr.pane, o, rect);
+                try outline.draw(app, ui, pr.pane, o, rect, app.active == pr.pane);
             },
             .md_preview => |*m| try md_preview.draw(app, ui, pr.pane, m, rect),
             .cheatsheet => |*c| try cheatsheet.draw(app, c, ui, pr.pane, rect),

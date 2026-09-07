@@ -1,0 +1,32 @@
+# vim: with a section focused, `Ctrl-W L` moves it to the right edge and
+# `Ctrl-W H` to the left — Neovim's window moves, no toggle. In an
+# editor the same chords keep their split meaning (ctrl_w_move.test).
+write treemarker.txt "a file the tree lists\n"
+write src/a.zig "// TODO: alpha marker\n"
+open src/a.zig
+command editor.use_vim
+command view.activity_todos
+command todos.refresh
+expect screen contains "alpha marker"
+expect screen lacks "TODOs  "
+key ctrl+w
+key L
+expect screen contains "TODOs  "
+expect screen contains "treemarker.txt"
+expect screen contains "alpha marker"
+key ctrl+w
+key H
+expect screen lacks "TODOs  "
+expect screen lacks "treemarker.txt"
+expect screen contains "alpha marker"
+# The tree is a window too: Ctrl-W L from it moves the explorer.
+command view.activity_explorer
+expect screen contains "treemarker.txt"
+key ctrl+w
+key L
+expect screen contains "Explorer  "
+expect screen contains "treemarker.txt"
+key ctrl+w
+key H
+expect screen lacks "Explorer  "
+expect screen contains "treemarker.txt"

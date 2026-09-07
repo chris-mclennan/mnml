@@ -183,6 +183,8 @@ pub const specs = [_]Spec{
     .{ .id = "view.move_split_right", .title = "Move active split to the right of its parent (vim `Ctrl+W L`)", .group = "view" },
     .{ .id = "view.move_split_up", .title = "Move active split to the top of its parent (vim `Ctrl+W K`)", .group = "view" },
     .{ .id = "view.move_split_down", .title = "Move active split to the bottom of its parent (vim `Ctrl+W J`)", .group = "view" },
+    .{ .id = "view.move_section_left", .title = "Move the focused activity section to the left side (vim `Ctrl+W H` in a section; `:sidebar left`)", .group = "view" },
+    .{ .id = "view.move_section_right", .title = "Move the focused activity section to the right side (vim `Ctrl+W L` in a section; `:sidebar right`)", .group = "view" },
     .{ .id = "view.split_grow_height", .title = "Grow active split's height (vim `Ctrl+W +`)", .group = "view" },
     .{ .id = "view.split_shrink_height", .title = "Shrink active split's height (vim `Ctrl+W -`)", .group = "view" },
     .{ .id = "view.split_grow_width", .title = "Grow active split's width (vim `Ctrl+W >`)", .group = "view" },
@@ -232,14 +234,14 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_hover_help", .title = "Toggle the Ableton-style hover-help info box (bottom of left panel)", .group = "view" },
     .{ .id = "view.toggle_hover_tooltip", .title = "Toggle the popup hover tooltip (small popup near the cursor)", .group = "view" },
     .{ .id = "view.toggle_workspace_dots", .title = "Toggle workspace dots (● / ○ dots on workspace-root rows)", .group = "view" },
-    .{ .id = "view.toggle_right_panel", .title = "Toggle the right side panel", .group = "view", .keys = .{ .both = &.{"Ctrl+Shift+B"} } },
+    .{ .id = "view.toggle_right_panel", .title = "Toggle the right column (the sections on the right side)", .group = "view", .keys = .{ .both = &.{"Ctrl+Shift+B"} } },
     .{ .id = "view.toggle_bottom_panel", .title = "Toggle the bottom panel", .group = "view", .keys = .{ .both = &.{"Ctrl+Shift+J"} } },
     .{ .id = "view.host_active_in_bottom_panel", .title = "View: dock active pane into bottom panel", .group = "view" },
-    .{ .id = "view.focus_right_panel", .title = "Focus the right side panel", .group = "view", .keys = .{ .standard = &.{"ctrl+k r"} } },
+    .{ .id = "view.focus_right_panel", .title = "Focus the right column (opening it when closed)", .group = "view", .keys = .{ .standard = &.{"ctrl+k r"} } },
     .{ .id = "view.context_menu_at_focus", .title = "Open the context menu for the focused element (Shift+F10)", .group = "view", .keys = .{ .both = &.{"shift+f10"} } },
-    .{ .id = "view.right_panel_next_tab", .title = "Right panel: switch to next tab", .group = "view" },
-    .{ .id = "view.right_panel_prev_tab", .title = "Right panel: switch to previous tab", .group = "view" },
-    .{ .id = "view.right_panel_close_tab", .title = "Right panel: close the active tab", .group = "view", .keys = .{ .both = &.{"ctrl+alt+w"} } },
+    .{ .id = "view.right_panel_next_tab", .title = "Right column: the next section on the right side", .group = "view" },
+    .{ .id = "view.right_panel_prev_tab", .title = "Right column: the previous section on the right side", .group = "view" },
+    .{ .id = "view.right_panel_close_tab", .title = "Right column: close it", .group = "view", .keys = .{ .both = &.{"ctrl+alt+w"} } },
     .{ .id = "integrations.toggle_enabled", .title = "Integrations: enable / disable a chip (picker)", .group = "integrations" },
     .{ .id = "integrations.edit", .title = "Integrations: edit a chip (picker)", .group = "integrations" },
     .{ .id = "integrations.remove", .title = "Integrations: remove a chip (picker)", .group = "integrations" },
@@ -974,7 +976,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "914 specs, unique ids" {
+test "916 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -986,6 +988,6 @@ test "914 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 914), specs.len);
+    try std.testing.expectEqual(@as(usize, 916), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

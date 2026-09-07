@@ -139,6 +139,7 @@ const runner_tables = .{
     @import("../app/coverage.zig"),
     @import("../app/menu_bar.zig"),
     @import("../app/activity_bar.zig"),
+    @import("../app/side.zig"),
     @import("../app/glyph_audit.zig"),
     @import("../app/update.zig"),
     @import("../app/cmd_session.zig"),
@@ -558,6 +559,9 @@ pub const MenuAction = union(enum) {
     menu_bar: u8,
     /// A git palette row menu's action (`app/git_palette.zig`).
     git_palette: GitPaletteAct,
+    /// The rail menu's "Move to <side> side": the section the menu was
+    /// opened on, not the focused one (`app/side.zig`).
+    move_section: struct { section: @import("../ui/activity_bar.zig").Section, side: @import("../config/Config.zig").Side },
     none,
 };
 
@@ -592,7 +596,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 914), count);
+    try std.testing.expectEqual(@as(usize, 916), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

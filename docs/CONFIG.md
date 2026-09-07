@@ -66,7 +66,17 @@ otherwise. Copy what you need; leave the rest out.
         .ascii_icons = false,
         .tree_width = 30, // clamped to 10..80
         .right_panel_visible = false,
-        .right_panel_width = 40, // the Rust default is 32; the Zig panels are tuned to 40
+        .right_panel_width = 32, // the right column (the Rust right panel's width)
+        // Every activity section lives in the left or the right column
+        // (`view.move_section_left` / `_right`, the rail's right-click,
+        // vim `Ctrl-W H` / `L` in a section, `:sidebar left|right`).
+        // `sidebar_side` is the side a section takes when `section_side`
+        // does not name it — the Rust right-panel panes (outline,
+        // diagnostics) take the other side of it. Sections that open a
+        // pane (search, debug, …) have no side. The session keeps the
+        // sides a user moved; these are the starting point.
+        .sidebar_side = .left, // .left | .right (the Settings row "Default sidebar side")
+        .section_side = .{}, // per section: .explorer / .git / .sessions / .http / .notes / .todos / .findings / .diagnostics / .outline = .left | .right
         .auto_hide_narrow_width = 0, // 0 = never auto-hide the tree
         .auto_equalize_splits = false,
         .relative_line_numbers = false,

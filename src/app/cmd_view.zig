@@ -14,6 +14,7 @@ const Config = app_mod.Config;
 const Layout = app_mod.Layout;
 const layout_mod = @import("layout.zig");
 const activity_bar = @import("activity_bar.zig");
+const side = @import("side.zig");
 const git_palette = @import("git_palette.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
@@ -163,62 +164,47 @@ fn toggleKeymap(app: *App) CommandError!void {
     app.toast("keymap: {s}", .{@tagName(next)});
 }
 
-// ─── the right panel ────────────────────────────────────────────────────
-// One slot, one panel at a time (`App.right_panel`). `activity_<x>`
-// shows and focuses a panel; toggle hides it or brings the last one
-// back. Panels without a module in this build name themselves.
-
-pub fn showRightPanel(app: *App, which: app_mod.PanelId) void {
-    app.right_panel = which;
-    if (app.activeBuffer()) |b| b.input.onBlur();
-    app.focus = .{ .panel = which };
-    app.needs_render = true;
-}
-
-fn hideRightPanel(app: *App) void {
-    app.right_panel = null;
-    if (app.focus == .panel) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
-    app.needs_render = true;
-}
+// ─── the columns ────────────────────────────────────────────────────────
+// Every section has a side (`app/side.zig`); `activity_<x>` places the
+// section in its column and focuses it. The `right_panel_*` ids kept
+// their names: they act on the right column.
 
 fn toggleRightPanel(app: *App) CommandError!void {
-    if (app.right_panel != null) hideRightPanel(app) else showRightPanel(app, .todos);
+    return side.toggleColumn(app, .right);
 }
 
 fn focusRightPanel(app: *App) CommandError!void {
-    showRightPanel(app, app.right_panel orelse .todos);
+    if (side.shown(app, .right) == null) try side.toggleColumn(app, .right);
+    if (side.shown(app, .right)) |s| side.focusSection(app, s);
 }
 
 fn closeRightPanel(app: *App) CommandError!void {
-    hideRightPanel(app);
+    side.hideColumn(app, .right);
 }
 
 fn activityTodos(app: *App) CommandError!void {
     activity_bar.enter(app, .todos);
-    showRightPanel(app, .todos);
+    side.place(app, .todos, true);
 }
 
 fn activityNotes(app: *App) CommandError!void {
     activity_bar.enter(app, .notes);
-    showRightPanel(app, .notes);
+    side.place(app, .notes, true);
 }
 
 fn activityFindings(app: *App) CommandError!void {
     activity_bar.enter(app, .findings);
-    showRightPanel(app, .findings);
+    side.place(app, .findings, true);
 }
 
 fn activitySessions(app: *App) CommandError!void {
     activity_bar.enter(app, .sessions);
-    showRightPanel(app, .sessions);
+    side.place(app, .sessions, true);
 }
 
 fn activityExplorer(app: *App) CommandError!void {
     activity_bar.enter(app, .explorer);
-    app.tree.visible = true;
-    if (app.activeBuffer()) |b| b.input.onBlur();
-    app.focus = .tree;
-    app.needs_render = true;
+    side.place(app, .explorer, true);
 }
 
 /// Panels whose module is a later phase: say so, change nothing.
@@ -228,7 +214,7 @@ fn notInBuild(app: *App, what: []const u8) CommandError!void {
 
 fn activityHttp(app: *App) CommandError!void {
     activity_bar.enter(app, .http);
-    showRightPanel(app, .http);
+    side.place(app, .http, true);
 }
 
 /// Git mode (`app/git_palette.zig`): the palette in the sidebar, one
@@ -1227,25 +1213,11 @@ fn moveSplitDown(app: *App) CommandError!void {
 // ─── right panel tabs ────────────────────────────────────────────────────
 
 /// The panels that are in this build, in tab order.
-const panel_order = [_]app_mod.PanelId{ .todos, .git, .diagnostics };
-
 fn rightPanelNext(app: *App) CommandError!void {
-    return rightPanelStep(app, 1);
+    return side.step(app, .right, 1);
 }
 fn rightPanelPrev(app: *App) CommandError!void {
-    return rightPanelStep(app, panel_order.len - 1);
-}
-
-fn rightPanelStep(app: *App, by: usize) CommandError!void {
-    const cur = app.right_panel orelse {
-        showRightPanel(app, panel_order[0]);
-        return;
-    };
-    var idx: usize = 0;
-    for (panel_order, 0..) |p, i| if (p == cur) {
-        idx = i;
-    };
-    showRightPanel(app, panel_order[(idx + by) % panel_order.len]);
+    return side.step(app, .right, -1);
 }
 
 test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right panel tabs" {
@@ -1303,13 +1275,15 @@ test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right
     const first_before = layout.node(pid).split.first;
     try command.run(&app, .{ .static = .@"view.rotate_splits" });
     try t.expectEqual(first_before, layout.node(pid).split.second);
-    // Right panel tabs cycle the panels this build has.
+    // The right column's tabs walk the sections on the right side
+    // (`side.zig` has the walk itself).
     try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
-    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    try t.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
     try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
-    try t.expectEqual(app_mod.PanelId.git, app.right_panel.?);
+    try t.expectEqual(side.Section.outline, side.shown(&app, .right).?);
     try command.run(&app, .{ .static = .@"view.right_panel_prev_tab" });
-    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    try t.expectEqual(side.Section.diagnostics, side.shown(&app, .right).?);
+    try command.run(&app, .{ .static = .@"view.right_panel_close_tab" });
     // A scratch in a fresh split beside the current pane.
     const before = app.active.?;
     try command.run(&app, .{ .static = .@"view.split_new_scratch" });
@@ -1366,9 +1340,10 @@ test "view.close_split on the last window closes its buffer: the layout goes emp
 test "project.todos opens the TODOS panel — the palette's name for view.activity_todos, not a stub" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
     defer app.deinit();
-    try t.expect(app.right_panel == null);
+    try t.expect(!side.isShown(&app, .todos));
     try command.run(&app, .{ .static = .@"project.todos" });
-    try t.expectEqual(app_mod.PanelId.todos, app.right_panel.?);
+    try t.expect(side.isShown(&app, .todos));
+    try t.expectEqual(side.Section.todos, side.shown(&app, .left).?);
     try t.expect(app.lastToast() == null or std.mem.indexOf(u8, app.lastToast().?, "not implemented") == null);
 }
 

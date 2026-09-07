@@ -3108,3 +3108,66 @@ marker, below) plus the statusline's live cells.
   spec's rows at 89 and 49 cells, hits, colours, scroll, ASCII) and
   `app/git.zig` (`statusFiles`); e2e `git_status_{stage_keys,toggle,
   all,enter_diff,click}.test`; `git_status_pane.test` unchanged.
+
+## Section sides (2026-09-07, branch `section-side`) — `// changed:` notes
+
+Every activity section has a side; the frame has a left column (the
+rail down its edge) and a right column, and each shows one section.
+Rust's sidebar + tabbed right panel became one idea.
+
+- `// changed (model):` `app/side.zig` — `Side`, `surface(s)` (the
+  tree, git mode's palette, a list panel; null for the pane-backed
+  sections), `State { of, open, last, prev, right_width }` on
+  `App.side`. `tree.visible` stays the explorer's own open flag (Rust's
+  `tree_visible`); `shown(side)` reconciles it. `place` / `remove` are
+  the only writes. `App.right_panel` and `App.right_panel_width` are
+  gone; `render.frameRects` carves both columns (`Chrome.right`,
+  `FrameRects.right` / `right_divider`) under Rust's 21-column clamp.
+- `// changed (defaults):` TODOS / NOTES / FINDINGS start on the left
+  (Rust's `ActivitySection`); the outline and the diagnostics on the
+  right (Rust's `right_panel_panes`). `ui.right_panel_width` is Rust's
+  32 now, not 40 — the panels' 40-cell chrome is the panel track's.
+- `// changed (sections):` `Section` gained `diagnostics` and `outline`
+  — a side and a column, no rail row (`Section.rail` is what paints);
+  `PanelId.outline`. `outline.show` keeps Rust's rule (the column when
+  it is open, else a split) through `App.outline_panel`, a pane in the
+  store outside the layout; the right column's walk always uses the
+  column (`outline.showInColumn`). `lsp.diagnostics` places its section.
+- `// changed (commands):` `view.move_section_left` / `_right` act on
+  the focused section, else the rail's mark; a shown section closes on
+  one side and opens on the other with the keys, and the vacated
+  column falls back to what it showed before (the explorer). The
+  `view.toggle_right_panel` / `focus_right_panel` /
+  `right_panel_{next,prev,close}_tab` ids act on the right column; a
+  toggle and a tab walk leave the keys where they are (Rust's panel).
+  `view.toggle_tree` toggles the left column whatever it shows.
+- `// changed (ui):` the rail menu's second row is "Move to right side"
+  / "Move to left side" (`MenuAction.move_section` names the section the
+  menu was opened on); the palette lists the pair; vim `Ctrl-W H` / `L`
+  in a section or the tree move it (`side.ctrlWCommand`, shared with the
+  tree's pending flag; an editor keeps the split moves); which-key
+  `+split` `H` / `L`; `:sidebar left|right`. A left-column section reads
+  `TREE` in the mode chip and `tree` on the wire (Rust's sidebar), the
+  right column `PANEL`; the info box is titled with the section. The
+  right column carries Rust's strip row — the title and a `×`
+  (`Button.right_close`) — so its content lands where Rust's does.
+- `// changed (config / session):` `ui.sidebar_side` (the Settings row
+  "Default sidebar side", beside the width rows) and `ui.section_side`
+  (a typed struct of optional sides, the loader's `Patch` overlays it);
+  `session.zon` keeps every section's side (`sides`) and both columns
+  (`left` / `right`, `tree_visible` still the explorer's).
+- `// changed (git):` git mode places its section: on the right the
+  snap takes the right column to a fifth and the palette paints there;
+  leaving puts the explorer back only in its own column. `steps-graph2`
+  stays at 2.
+- `// changed (specs):` `steps-{todos,notes,findings,outline}.jsonl` +
+  `rust-*-120x40.txt`; the columns match, the rows inside are the
+  panel track's (`docs/ui-spec/README.md`).
+- `// changed (tests):` `app/side.zig` (defaults, config resolution,
+  move, the right column's walk and focus rules, the layout with
+  sections on one side / both / none, the vim chords, git on the
+  right), `activity_bar.zig` (the menu rows), `session.zig` and
+  `settings.zig` re-aimed; `tests/e2e/section_move_{command,
+  rail_rightclick,vim_ctrl_w,ex_sidebar}.test`. The `todos_panel` /
+  `notes_panel` / `findings_panel` corpus files drag the left column
+  out to 60 (the 26-cell header keeps only the chips' icons).

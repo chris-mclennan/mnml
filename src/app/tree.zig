@@ -19,6 +19,7 @@ const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
 const command = @import("../core/command.zig");
+const side = @import("side.zig");
 const CommandError = command.CommandError;
 const Rect = @import("../ui/rect.zig");
 const context = @import("../ui/context.zig");
@@ -428,25 +429,10 @@ pub const Tree = struct {
         // `Ctrl-L` does. The chord owns its second key whatever it is.
         if (self.ctrl_w_pending) {
             self.ctrl_w_pending = false;
-            const id: ?command.CommandId = switch (k.code) {
-                .char => |c| switch (if (k.mods.ctrl and c < 0x80) @as(u21, std.ascii.toLower(@intCast(c))) else c) {
-                    'w', 'p' => .@"view.focus_next_split",
-                    'l' => .@"view.focus_right",
-                    'h' => .@"view.focus_left",
-                    'j' => .@"view.focus_down",
-                    'k' => .@"view.focus_up",
-                    else => null,
-                },
-                .right => .@"view.focus_right",
-                .left => .@"view.focus_left",
-                .down => .@"view.focus_down",
-                .up => .@"view.focus_up",
-                else => null,
-            };
-            if (id) |cid| try runCmd(app, cid);
+            if (side.ctrlWCommand(k)) |cid| try runCmd(app, cid);
             return true;
         }
-        if (app.input_style == .vim and k.mods.ctrl and !k.mods.shift and !k.mods.alt and !k.mods.super and k.code == .char and std.ascii.toLower(@intCast(@min(k.code.char, 0x7F))) == 'w') {
+        if (side.isCtrlW(app, k)) {
             self.ctrl_w_pending = true;
             return true;
         }
@@ -1233,19 +1219,14 @@ pub fn acceptDelete(app: *App, rel: []const u8) Allocator.Error!void {
     try trash.deletePaths(app, &.{abs}, false);
 }
 
+/// `view.toggle_tree` (Ctrl+B): the left column — whatever section it
+/// shows — closes, or comes back on what it showed last.
 fn toggle(app: *App) CommandError!void {
-    app.tree.visible = !app.tree.visible;
-    if (!app.tree.visible and app.focus == .tree) {
-        app.focus = if (app.active) |a| .{ .pane = a } else .tree;
-    }
-    app.needs_render = true;
+    return side.toggleColumn(app, .left);
 }
 
 fn focus(app: *App) CommandError!void {
-    app.tree.visible = true;
-    if (app.activeBuffer()) |b| b.input.onBlur();
-    app.focus = .tree;
-    app.needs_render = true;
+    side.place(app, .explorer, true);
 }
 
 fn toggleHidden(app: *App) CommandError!void {

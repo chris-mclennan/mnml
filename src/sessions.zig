@@ -24,6 +24,7 @@ const vaxis = @import("vaxis");
 const app_mod = @import("app.zig");
 const App = app_mod.App;
 const auto_refresh = @import("app/auto_refresh.zig");
+const side = @import("app/side.zig");
 const Key = app_mod.Key;
 const key_mod = @import("core/key.zig");
 const Mouse = key_mod.Mouse;
@@ -377,14 +378,14 @@ pub fn setSort(app: *App, sort: SessionsSort) Allocator.Error!void {
 /// Every tick: a shown panel rescans on the dashboard's cadence.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
-    if (app.right_panel != .sessions or st.scanning or !st.scanned_once or !auto_refresh.on(app, .sessions)) return;
+    if (!side.isShown(app, .sessions) or st.scanning or !st.scanned_once or !auto_refresh.on(app, .sessions)) return;
     if (now - st.last_scan_ms < refresh_ms) return;
     refresh(app) catch {};
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.sessions;
-    if (app.right_panel != .sessions or !st.scanned_once) return null;
+    if (!side.isShown(app, .sessions) or !st.scanned_once) return null;
     if (st.scanning) return app.now_ms + 80;
     return st.last_scan_ms + refresh_ms;
 }
@@ -962,7 +963,9 @@ test "headless: the panel lists every workspace's sessions after w, J adopts the
     defer f.deinit();
     try f.seedHome();
     f.app.tree.visible = false;
-    f.app.right_panel_width = 56;
+    // The panel on the right, 56 wide (the chrome the test reads).
+    f.app.side.of.set(.sessions, .right);
+    f.app.side.right_width = 56;
     try command.run(&f.app, .{ .static = .@"view.activity_sessions" });
     try f.app.render();
     try f.settle(2000);
@@ -1059,7 +1062,7 @@ test "tick rescans a shown panel on the cadence and leaves a hidden one alone" {
     st.last_scan_ms = 0;
     tick(&f.app, refresh_ms + 1); // hidden: nothing
     try testing.expectEqual(@as(u32, 0), st.generation);
-    f.app.right_panel = .sessions;
+    side.place(&f.app, .sessions, false);
     f.app.now_ms = refresh_ms - 1;
     tick(&f.app, refresh_ms - 1);
     try testing.expectEqual(@as(u32, 0), st.generation);

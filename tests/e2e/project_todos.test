@@ -2,6 +2,8 @@
 # "not implemented yet" stub — the same panel as view.activity_todos.
 write a.py "# TODO: wire the thing\n"
 command project.todos
+# The panel takes the sidebar's 26 cells; drag the divider out so the row reads in full.
+drag 30 5 60 5
 expect screen lacks "not implemented"
 expect screen contains "TODOS"
 wait 500
