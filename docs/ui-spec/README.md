@@ -31,6 +31,12 @@ statement that paints it, and add nothing the Rust screen does not show.
 
 `rust-git-120x40.txt` / `rust-git-80x24.txt` are git mode (`steps-graph2.jsonl`).
 
+`rust-git-status-120x40.txt` / `rust-git-status-80x24.txt` are the
+staging pane (`steps-status.jsonl`: `git.status_pane` from the resting
+screen), re-cut 2026-09-07 on the fixture's two untracked entries
+(`.gitignore`, `requests/`). The 80×24 cut shows the hint row clipped
+at the pane's edge (`⏎ di█`), not dropped word by word.
+
 `rust-80x24.txt` is the same screen at 80×24 — the narrow rule: only
 the brand menu fits before the ` » `, the browser chip is dropped from
 the gap, the right cluster is the compact one. `src/ui/menu_bar.zig`
