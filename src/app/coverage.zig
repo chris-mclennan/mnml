@@ -232,12 +232,40 @@ pub fn delta(arena: Allocator, r: Reading) Allocator.Error!Delta {
         .up => "▲",
         .down, .none => "▼",
     };
-    return .{ .text = try std.fmt.allocPrint(arena, " {s}{d:.1}", .{ arrow, @abs(d) }), .dir = dir };
+    const tenths = roundScaled(@abs(d), 10);
+    return .{ .text = try std.fmt.allocPrint(arena, " {s}{d}.{d}", .{ arrow, tenths / 10, tenths % 10 }), .dir = dir };
 }
 
 /// `F 83%` — the letter and the rounded percent.
 pub fn pct(arena: Allocator, letter: []const u8, v: f64) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(arena, "{s} {d}%", .{ letter, @as(u64, @intFromFloat(@round(std.math.clamp(v, 0, 100)))) });
+    return std.fmt.allocPrint(arena, "{s} {d}%", .{ letter, roundScaled(std.math.clamp(v, 0, 100), 1) });
+}
+
+/// Rust's `{:.0}` / `{:.1}` of a non-negative double: `v × scale`
+/// rounded to the nearest integer on the EXACT value, ties to even —
+/// `56.5` reads `56`, `0.15` (a hair under) reads `0.1`, `0.25` reads
+/// `0.2`. `std.fmt`'s `{d:.1}` rounds the shortest decimal half away
+/// from zero and reads `0.2`, `0.3` — a chip that disagrees with Rust's
+/// by a digit at every tie. The value is `m × 2^e`; the round is
+/// integer arithmetic on `m × scale` against the half at `2^(-e-1)`.
+pub fn roundScaled(v: f64, scale: u64) u64 {
+    if (!(v > 0) or v > 1.0e12) return 0;
+    const bits: u64 = @bitCast(v);
+    const exp_raw: u64 = (bits >> 52) & 0x7ff;
+    var mant: u128 = bits & ((@as(u64, 1) << 52) - 1);
+    const e: i32 = if (exp_raw == 0) -1074 else blk: {
+        mant |= @as(u128, 1) << 52;
+        break :blk @as(i32, @intCast(exp_raw)) - 1075;
+    };
+    const num: u128 = mant * scale;
+    if (e >= 0) return @intCast(num << @intCast(e));
+    const shift: u32 = @intCast(-e);
+    if (shift >= 127) return 0;
+    const q = num >> @intCast(shift);
+    const rem = num - (q << @intCast(shift));
+    const half = @as(u128, 1) << @intCast(shift - 1);
+    const up = rem > half or (rem == half and (q & 1) == 1);
+    return @intCast(if (up) q + 1 else q);
 }
 
 /// The chip's whole text for the mode (`F 79% ▲43.8 · C 75% ±0.0`),
@@ -378,4 +406,38 @@ test "the seven-day lookback walks ISO dates across a month boundary; a falling 
     try t.expectEqualStrings(" ±0.0", (try delta(a, .{ .now = 74.2, .prev = 74.21 })).text);
     try t.expectEqualStrings("", (try delta(a, .{ .now = 74.2 })).text);
     try t.expectEqual(Direction.none, (try delta(a, .{ .now = 74.2 })).dir);
+}
+
+test "the chip's numbers round as Rust's `{:.0}` / `{:.1}` do: the exact value, ties to even" {
+    // `rustc`, 2026-09-07: 56.5→56 57.5→58 0.5→0 2.5→2; 0.05→0.1
+    // 0.15→0.1 0.25→0.2 1.05→1.1 56.49→56.5.
+    try t.expectEqual(@as(u64, 56), roundScaled(56.5, 1));
+    try t.expectEqual(@as(u64, 58), roundScaled(57.5, 1));
+    try t.expectEqual(@as(u64, 0), roundScaled(0.5, 1));
+    try t.expectEqual(@as(u64, 2), roundScaled(2.5, 1));
+    try t.expectEqual(@as(u64, 57), roundScaled(56.51, 1));
+    try t.expectEqual(@as(u64, 1), roundScaled(0.05, 10));
+    try t.expectEqual(@as(u64, 1), roundScaled(0.15, 10));
+    try t.expectEqual(@as(u64, 2), roundScaled(0.25, 10));
+    try t.expectEqual(@as(u64, 11), roundScaled(1.05, 10));
+    try t.expectEqual(@as(u64, 565), roundScaled(56.49, 10));
+    try t.expectEqual(@as(u64, 10), roundScaled(1.0, 10));
+    try t.expectEqual(@as(u64, 0), roundScaled(0.0, 10));
+    try t.expectEqual(@as(u64, 0), roundScaled(-0.3, 10));
+    try t.expectEqual(@as(u64, 0), roundScaled(1.0e-30, 10));
+    try t.expectEqual(@as(u64, 1000), roundScaled(100.0, 10));
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The chip's text on fixed inputs: the letter, a space, the percent,
+    // then the delta — an arrow or ± and one decimal — after one space.
+    try t.expectEqualStrings("F 57%", try pct(a, "F", 57.0));
+    try t.expectEqualStrings("F 56%", try pct(a, "F", 56.5));
+    try t.expectEqualStrings("C 74%", try pct(a, "C", 74.2));
+    try t.expectEqualStrings("C 100%", try pct(a, "C", 250.0));
+    try t.expectEqualStrings(" ▲1.0", (try delta(a, .{ .now = 57.0, .prev = 56.0 })).text);
+    try t.expectEqualStrings(" ±0.0", (try delta(a, .{ .now = 74.2, .prev = 74.21 })).text);
+    try t.expectEqualStrings(" ▲0.2", (try delta(a, .{ .now = 10.25, .prev = 10.0 })).text);
+    try t.expectEqualStrings(" ▼43.8", (try delta(a, .{ .now = 35.4, .prev = 79.2 })).text);
+    try t.expectEqualStrings(" ▲12.0", (try delta(a, .{ .now = 62.0, .prev = 50.0 })).text);
 }

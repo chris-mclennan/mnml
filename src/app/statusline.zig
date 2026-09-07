@@ -910,6 +910,46 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
 }
 
+// ─── the coverage chip on fixed inputs ───────────────────────────────────
+
+test "the coverage chip's text and width on fixed inputs are Rust's: ` <glyph> F 57% ▲1.0 `, 14 cells; the code half after ` · `" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    try b.onMain("# branch.head main\n? stray.txt\n");
+    b.app.focus = .tree;
+    // The fixture's file says F 57% ▲1.0; pin the numbers instead.
+    coverage.ensureLoaded(&b.app);
+    b.app.coverage.feature = 57.0;
+    b.app.coverage.feature_prev = 56.0;
+    b.app.coverage.code = 74.2;
+    b.app.coverage.code_prev = 74.21;
+    const ui = b.app.frameUi();
+    var info = try build(&b.app, ui, Rect.init(0, 38, 120, 1));
+    const chip = blk: {
+        for (info.right) |sg| if (sg.hit == SegId.coverage.raw()) break :blk sg;
+        return error.NoCoverageChip;
+    };
+    try testing.expectEqualStrings(" " ++ sl.coverage_glyph ++ " F 57%", chip.text);
+    try testing.expectEqualStrings(" ▲1.0", chip.accent.?.text);
+    try testing.expectEqualStrings(" ", chip.tail);
+    try testing.expectEqual(@as(u16, 14), ui.width(chip.text) + ui.width(chip.accent.?.text) + ui.width(chip.tail));
+    // `both`: the code reading after ` · `, its own delta — 27 cells.
+    b.app.cfg.ui.coverage_chip_mode = .both;
+    info = try build(&b.app, ui, Rect.init(0, 38, 120, 1));
+    for (info.right) |sg| if (sg.hit == SegId.coverage.raw()) {
+        try testing.expectEqualStrings(" · C 74% ±0.0 ", sg.tail);
+        try testing.expectEqual(@as(u16, 27), ui.width(sg.text) + ui.width(sg.accent.?.text) + ui.width(sg.tail));
+    };
+    // `code`: `C 74% ±0.0` in the chip's own ink (a flat delta is not tinted).
+    b.app.cfg.ui.coverage_chip_mode = .code;
+    info = try build(&b.app, ui, Rect.init(0, 38, 120, 1));
+    for (info.right) |sg| if (sg.hit == SegId.coverage.raw()) {
+        try testing.expectEqualStrings(" " ++ sl.coverage_glyph ++ " C 74%", sg.text);
+        try testing.expectEqualStrings(" ±0.0", sg.accent.?.text);
+        try testing.expect(Color.eql(sg.accent.?.fg, b.app.theme.palette.bg_darker));
+    };
+}
+
 // ─── the now-playing cluster ─────────────────────────────────────────────
 
 const now_playing_mod = @import("now_playing.zig");
