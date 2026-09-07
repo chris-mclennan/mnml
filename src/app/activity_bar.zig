@@ -117,7 +117,9 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
         .debug, .dap_repl => .debug,
         .claude_agents => .agents,
         .integrations => .integrations,
-        .git_status, .git_graph => .git,
+        // Rust keeps the rail marker on Files for the status pane; only
+        // the graph (git mode) moves it to Git.
+        .git_graph => .git,
         else => null,
     };
 }
