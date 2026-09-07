@@ -433,6 +433,10 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             runToast(app, openSelected(app));
             return true;
         },
+        .new_activate => {
+            runToast(app, newCmd(app));
+            return true;
+        },
         .ignored => {},
     }
     if (st.list.filter_focused) return false;
@@ -473,6 +477,7 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
             if (idx >= st.filtered.items.len) return;
             focusPanel(app);
             st.list.cursor = idx;
+            st.list.on_new = false;
             if (m.button == .right) return openRowMenu(app, m.x, m.y);
             if (m.button != .left) return;
             const again = if (st.last_click) |lc| lc.idx == idx and app.now_ms - lc.at_ms <= double_click_ms else false;
@@ -492,6 +497,7 @@ pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press or idx >= app.notes.filtered.items.len) return;
     focusPanel(app);
     app.notes.list.cursor = idx;
+    app.notes.list.on_new = false;
     try openRowMenu(app, m.x, m.y);
 }
 
@@ -582,6 +588,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .paintRow = paintRow,
         .has_kebab = true,
         .empty = empty,
+        .new_label = "+ New note",
     });
     if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
     if (st.scanning) list_panel.paintSpinner(ui, area, "NOTES", app.now_ms);

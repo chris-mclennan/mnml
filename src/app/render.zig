@@ -37,6 +37,7 @@ const coverage = @import("coverage.zig");
 const menu_bar = @import("menu_bar.zig");
 const ui_menu_bar = @import("../ui/menu_bar.zig");
 const bufferline = @import("../ui/bufferline.zig");
+const side_strip = @import("../ui/side_strip.zig");
 const welcome = @import("../ui/welcome.zig");
 const keymap = @import("../core/keymap.zig");
 const update = @import("update.zig");
@@ -156,8 +157,11 @@ pub const Button = enum(u32) {
     split_max = 16,
     /// The strip's ` +N hidden ` chip: the buffer picker.
     hidden_tabs = 17,
-    /// The right column's strip: its `×` closes the column.
+    /// The right column's strip: its `×` closes the column, its chip
+    /// focuses the column, its ` 󰐕 ` opens the add-panel menu.
     right_close = 18,
+    right_tab = 19,
+    right_new = 20,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -405,7 +409,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             var area = fr.right;
             if (area.h >= 2) {
                 const parts = area.splitTop(1);
-                drawRightStrip(app, ui, parts.top, s);
+                try drawRightStrip(app, ui, parts.top, s);
                 area = parts.rest;
             }
             try drawColumn(app, ui, area, s);
@@ -571,21 +575,17 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 /// `right_panel` strip, less the tab chord and the `+` that mean
 /// nothing here). The outline is titled with its file, the rest with
 /// the section's label.
-fn drawRightStrip(app: *App, ui: Ui, row: Rect, s: side_mod.Section) void {
-    const pal = app.theme.palette;
-    const bg = pal.bg_darker;
-    const base = Theme.onBg(app.theme.fg, bg);
-    ui.canvas.fill(row, base);
+fn drawRightStrip(app: *App, ui: Ui, row: Rect, s: side_mod.Section) Allocator.Error!void {
     const title: []const u8 = blk: {
-        if (s == .outline) if (app.outline_panel) |id| if (app.panes.get(id)) |p| if (p.asOutline()) |o| break :blk o.title;
+        if (s == .outline) if (app.outline_panel) |id| if (app.panes.get(id)) |p| if (p.asOutline()) |o| break :blk try o.tabTitle(ui.arena);
         break :blk s.meta().label;
     };
-    _ = ui.putStr(row.x + 1, row.y, row.w -| 3, title, base);
-    if (row.w >= 2) {
-        const close = Rect.init(row.right() - 1, row.y, 1, 1);
-        _ = ui.putStr(close.x, close.y, 1, if (ui.ascii) "x" else "\u{D7}", Theme.withFg(base, pal.comment));
-        ui.hit(close, .{ .button = @intFromEnum(Button.right_close) });
-    }
+    _ = side_strip.draw(ui, row, .{
+        .title = title,
+        .chip_hit = .{ .button = @intFromEnum(Button.right_tab) },
+        .plus_hit = .{ .button = @intFromEnum(Button.right_new) },
+        .close_hit = .{ .button = @intFromEnum(Button.right_close) },
+    });
 }
 
 /// One column's section, in the column's rect. The painters take a

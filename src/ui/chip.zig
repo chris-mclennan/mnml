@@ -79,6 +79,12 @@ pub fn newStyle(t: *const Theme, bg: vaxis.Color) Style {
     return .{ .fg = t.palette.green, .bg = bg, .bold = true };
 }
 
+/// The ` + New … ` action row: dark bold text on the green fill —
+/// Rust's `action_button::primary`.
+pub fn newRowStyle(t: *const Theme) Style {
+    return .{ .fg = t.chip_active.fg, .bg = t.palette.green, .bold = true };
+}
+
 /// Paints `text` at `(x, y)` in `style` and registers the chip target
 /// for exactly the cells it took. Returns the painted rect (empty when
 /// nothing fit) so a caller can lay out the next chip beside it.

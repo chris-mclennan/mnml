@@ -1,0 +1,20 @@
+# Typing in the filter narrows the list and grows the count into
+# `(1 of 2)` — without deleting the header's refresh chip (the Rust
+# bug: the wider subtitle took the chip's cells mid-keystroke). The
+# chip still answers a right-click afterwards.
+
+write src/a.zig "// TODO: alpha\n// FIXME: beta\n"
+command view.activity_todos
+command todos.refresh
+wait 500
+expect screen contains "alpha"
+expect screen contains ""
+key /
+type bet
+expect screen contains "(1 of 2)"
+expect screen lacks "alpha"
+expect screen contains "beta"
+expect screen contains ""
+rightclick 28 1
+expect screen contains "Refresh now"
+key esc

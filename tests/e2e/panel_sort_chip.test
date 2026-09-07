@@ -1,0 +1,20 @@
+# The `sort:` chip at the shipped 26-cell sidebar: the icon rung at
+# (24, 1). A click cycles the mode (the toast says which) and persists
+# it as `ui.todos_sort` in the workspace config; a right-click lists
+# every mode with the current one ticked.
+
+write src/a.zig "// TODO: one\n// FIXME: two\n"
+command view.activity_todos
+command todos.refresh
+wait 500
+expect screen contains "one"
+click 24 1
+expect screen contains "sort: Oldest first"
+expect file .mnml/config.zon contains "todos_sort"
+rightclick 24 1
+expect screen contains "Sort by"
+expect screen contains "Newest first"
+expect screen contains "Oldest first"
+expect screen contains "✓"
+key esc
+expect screen lacks "Sort by"

@@ -287,6 +287,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             try activateRow(app);
             return true;
         },
+        .new_activate => {},
         .ignored => {},
     }
     if (st.list.filter_focused) return false;

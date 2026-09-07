@@ -1,6 +1,8 @@
 //! ListPanel(Row) — the generic activity panel: a caps header with the
-//! sort chip and the refresh glyph, a filter pill, a scrolling list of
-//! rows with a selection marker, a scrollbar when the list is longer
+//! sort chip and the refresh glyph, a filter pill, an optional
+//! ` + New … ` action row (Rust's `action_button::primary` chip, a
+//! blank row on either side of it), a scrolling list of rows with a
+//! selection marker, a scrollbar when the list is longer
 //! than the panel, a kebab on the hovered row, and an empty state when
 //! there is nothing to list. TODOS, NOTES, FINDINGS and SESSIONS are
 //! all this type with a different `Row` and `paintRow`.
@@ -124,9 +126,13 @@ pub fn ListPanel(comptime Row: type) type {
             filter: text_field.Buf = .empty,
             filter_caret: usize = 0,
             filter_focused: bool = false,
+            /// The cursor sits on the ` + New … ` row above row 0.
+            on_new: bool = false,
             /// Set by `draw`, read by `handleKey` (paging, clamping).
             visible: usize = 0,
             total: usize = 0,
+            /// Set by `draw`: the panel paints a New row this frame.
+            has_new: bool = false,
 
             pub fn deinit(s: *State, gpa: Allocator) void {
                 s.filter.deinit(gpa);
@@ -159,6 +165,11 @@ pub fn ListPanel(comptime Row: type) type {
             show_refresh: bool = true,
             /// A green ` + ` chip before the refresh glyph (`ChipKind.new`).
             new_chip: bool = false,
+            /// `+ New todo`: the action row under the filter — a blank row,
+            /// the chip ` label ` on the green fill at `x + 1`, a blank row.
+            /// Its hit is `.chip{panel, .new}`; the cursor reaches it from
+            /// row 0 with `k` / `↑`, and `⏎` there is `Outcome.new_activate`.
+            new_label: ?[]const u8 = null,
         };
 
         pub const Outcome = union(enum) {
@@ -168,6 +179,8 @@ pub fn ListPanel(comptime Row: type) type {
             filter_changed,
             /// Enter on a row.
             activate: usize,
+            /// Enter on the ` + New … ` row.
+            new_activate,
         };
 
         /// Paints the panel and returns the filter's caret when it has
@@ -206,6 +219,33 @@ pub fn ListPanel(comptime Row: type) type {
                 rest = fr.rest;
             }
 
+            // The ` + New … ` row with a blank row on either side: the
+            // filter, air, the chip, air, the list.
+            st.has_new = p.new_label != null;
+            if (p.new_label) |label| {
+                if (rest.h > 0) rest = rest.splitTop(1).rest;
+                if (rest.h > 0) {
+                    const nr = rest.splitTop(1);
+                    const row_rect = nr.top;
+                    rest = nr.rest;
+                    const style = rowStyle(t, st.on_new);
+                    ui.fill(row_rect, style);
+                    if (st.on_new) {
+                        const marker = if (ui.ascii) marker_ascii else marker_glyph;
+                        const mstyle = Theme.withFg(style, if (ui.isFocused(.{ .panel = p.panel })) t.accent.fg else t.muted.fg);
+                        _ = ui.putStr(row_rect.x, row_rect.y, marker_w, marker, mstyle);
+                    }
+                    const text = ui.fmt(" {s} ", .{label});
+                    const cw = @min(ui.width(text), row_rect.w -| 1);
+                    if (cw > 0) {
+                        const cr = Rect.init(row_rect.x + 1, row_rect.y, cw, 1);
+                        _ = ui.putStr(cr.x, cr.y, cw, ui.clipStr(text, cw), chip.newRowStyle(t));
+                        ui.hit(cr, .{ .chip = .{ .panel = p.panel, .kind = .new } });
+                    }
+                }
+                if (rest.h > 0) rest = rest.splitTop(1).rest;
+            } else st.on_new = false;
+
             // Rows.
             st.total = p.rows.len;
             if (st.cursor >= p.rows.len) st.cursor = p.rows.len -| 1;
@@ -230,7 +270,7 @@ pub fn ListPanel(comptime Row: type) type {
             while (i < win.visible) : (i += 1) {
                 const idx = win.first + i;
                 const row_rect = list.row(@intCast(i));
-                const selected = idx == st.cursor;
+                const selected = idx == st.cursor and !st.on_new;
                 const style = rowStyle(t, selected);
                 ui.fill(row_rect, style);
                 if (selected) {
@@ -255,10 +295,33 @@ pub fn ListPanel(comptime Row: type) type {
             return caret;
         }
 
+        /// Up by `n`: from row 0 the cursor climbs onto the New row when
+        /// there is one; from the New row it stays.
+        fn moveUp(st: *State, n: usize) void {
+            if (st.on_new) return;
+            if (st.cursor == 0 and st.has_new) {
+                st.on_new = true;
+                return;
+            }
+            st.cursor -|= n;
+        }
+
+        /// Down by `n`: from the New row the cursor drops to row 0.
+        fn moveDown(st: *State, n: usize, last: usize) void {
+            if (st.on_new) {
+                st.on_new = false;
+                st.cursor = 0;
+                return;
+            }
+            st.cursor = @min(st.cursor + n, last);
+        }
+
         /// Keys for the panel: `/` focuses the filter, j/k and the arrows
-        /// move, g/G and home/end jump, page keys page, enter activates.
-        /// In the filter: esc clears then blurs, enter blurs, the arrows
-        /// still move the selection, everything else edits the text.
+        /// move (up from row 0 reaches the ` + New … ` row), g/G and
+        /// home/end jump, page keys page, enter activates the row — or
+        /// the New row. In the filter: esc clears then blurs, enter blurs,
+        /// the arrows still move the selection, everything else edits
+        /// the text.
         pub fn handleKey(st: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
             const total = st.total;
             const last = total -| 1;
@@ -280,15 +343,15 @@ pub fn ListPanel(comptime Row: type) type {
                         return .consumed;
                     },
                     .up => {
-                        st.cursor -|= 1;
+                        moveUp(st, 1);
                         return .consumed;
                     },
                     .down => {
-                        st.cursor = @min(st.cursor + 1, last);
+                        moveDown(st, 1, last);
                         return .consumed;
                     },
                     .char => |c| if (m.ctrl and (c == 'n' or c == 'p')) {
-                        if (c == 'n') st.cursor = @min(st.cursor + 1, last) else st.cursor -|= 1;
+                        if (c == 'n') moveDown(st, 1, last) else moveUp(st, 1);
                         return .consumed;
                     },
                     else => {},
@@ -298,38 +361,55 @@ pub fn ListPanel(comptime Row: type) type {
                     .moved => .consumed,
                     .changed => blk: {
                         st.cursor = 0;
+                        st.on_new = false;
                         break :blk .filter_changed;
                     },
                 };
             }
             switch (key.code) {
-                .up => st.cursor -|= 1,
-                .down => st.cursor = @min(st.cursor + 1, last),
-                .home => st.cursor = 0,
-                .end => st.cursor = last,
-                .page_up => st.cursor -|= page,
-                .page_down => st.cursor = @min(st.cursor + page, last),
-                .enter => return if (total > 0) .{ .activate = st.cursor } else .ignored,
+                .up => moveUp(st, 1),
+                .down => moveDown(st, 1, last),
+                .home => {
+                    st.cursor = 0;
+                    st.on_new = false;
+                },
+                .end => {
+                    st.cursor = last;
+                    st.on_new = false;
+                },
+                .page_up => moveUp(st, page),
+                .page_down => moveDown(st, page, last),
+                .enter => {
+                    if (st.on_new) return .new_activate;
+                    return if (total > 0) .{ .activate = st.cursor } else .ignored;
+                },
                 .esc => {
                     if (st.filter.items.len == 0) return .ignored;
                     st.filter.clearRetainingCapacity();
                     st.filter_caret = 0;
                     st.cursor = 0;
+                    st.on_new = false;
                     return .filter_changed;
                 },
                 .char => |c| {
                     if (m.ctrl) switch (c) {
-                        'n' => st.cursor = @min(st.cursor + 1, last),
-                        'p' => st.cursor -|= 1,
-                        'd' => st.cursor = @min(st.cursor + page / 2, last),
-                        'u' => st.cursor -|= page / 2,
+                        'n' => moveDown(st, 1, last),
+                        'p' => moveUp(st, 1),
+                        'd' => moveDown(st, page / 2, last),
+                        'u' => moveUp(st, page / 2),
                         else => return .ignored,
                     } else switch (c) {
                         '/' => st.filter_focused = true,
-                        'j' => st.cursor = @min(st.cursor + 1, last),
-                        'k' => st.cursor -|= 1,
-                        'g' => st.cursor = 0,
-                        'G' => st.cursor = last,
+                        'j' => moveDown(st, 1, last),
+                        'k' => moveUp(st, 1),
+                        'g' => {
+                            st.cursor = 0;
+                            st.on_new = false;
+                        },
+                        'G' => {
+                            st.cursor = last;
+                            st.on_new = false;
+                        },
                         else => return .ignored,
                     }
                 },
@@ -567,4 +647,94 @@ test "narrow and short areas never panic and register nothing off-screen" {
         _ = Todos.draw(&st, f.ui(), f.full(), props(rows));
         for (f.hits.items.items) |e| try testing.expect(f.full().intersect(e.rect).eql(e.rect));
     }
+}
+
+test "the + New row: under the filter with a blank row after it, in the empty and the populated state; its hit is the chip; it takes the cursor from row 0" {
+    var f = try Fixture.init(30, 12);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = try forty(f.arena_state.allocator());
+    var p = props(rows);
+    p.new_label = "+ New todo";
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    try f.expectRow(1, "  \u{F0349} / filter");
+    try f.expectRow(2, "");
+    try f.expectRow(3, "  + New todo");
+    try f.expectRow(4, "");
+    try f.expectRow(5, "\u{258c}[x] todo 1" ++ " " ** 18 ++ "█");
+    try testing.expectEqual(@as(usize, 7), st.visible);
+    // The chip: ` + New todo ` at x + 1 on the green fill, the hit over it alone.
+    try testing.expect(vaxis.Color.eql(f.style(1, 3).bg, f.theme.palette.green));
+    try testing.expect(f.style(2, 3).bold);
+    try testing.expectEqual(hit.ChipKind.new, f.hits.at(1, 3).?.chip.kind);
+    try testing.expectEqual(hit.ChipKind.new, f.hits.at(12, 3).?.chip.kind);
+    try testing.expect(f.hits.at(13, 3) == null);
+    try testing.expect(f.hits.at(5, 2) == null);
+    try testing.expect(f.hits.at(5, 4) == null);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
+    // Keys: k from row 0 climbs onto the row; the marker moves with it.
+    const gpa = testing.allocator;
+    try testing.expectEqual(Todos.Outcome.consumed, try Todos.handleKey(&st, gpa, Key.char('k')));
+    try testing.expect(st.on_new);
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    try f.expectRow(3, "\u{258c} + New todo");
+    try f.expectRow(5, " [x] todo 1" ++ " " ** 18 ++ "█");
+    try testing.expect(f.bgEql(20, 3, f.theme.cursor_line));
+    try testing.expect(f.bgEql(20, 5, f.theme.panel_bg));
+    try testing.expectEqual(Todos.Outcome.new_activate, try Todos.handleKey(&st, gpa, Key.named(.enter)));
+    // k again stays; j drops back to row 0; G / g / home leave it.
+    _ = try Todos.handleKey(&st, gpa, Key.named(.up));
+    try testing.expect(st.on_new);
+    try testing.expectEqual(Todos.Outcome.consumed, try Todos.handleKey(&st, gpa, Key.char('j')));
+    try testing.expect(!st.on_new);
+    try testing.expectEqual(@as(usize, 0), st.cursor);
+    _ = try Todos.handleKey(&st, gpa, Key.named(.page_up));
+    try testing.expect(st.on_new);
+    _ = try Todos.handleKey(&st, gpa, Key.char('G'));
+    try testing.expect(!st.on_new);
+    try testing.expectEqual(@as(usize, 39), st.cursor);
+    _ = try Todos.handleKey(&st, gpa, Key.ctrl('p'));
+    try testing.expectEqual(@as(usize, 38), st.cursor);
+    _ = try Todos.handleKey(&st, gpa, Key.char('g'));
+    _ = try Todos.handleKey(&st, gpa, Key.ctrl('p'));
+    try testing.expect(st.on_new);
+    // The filter's arrows reach it too, and typing puts the cursor back on row 0.
+    _ = try Todos.handleKey(&st, gpa, Key.named(.down));
+    _ = try Todos.handleKey(&st, gpa, Key.char('/'));
+    _ = try Todos.handleKey(&st, gpa, Key.named(.up));
+    try testing.expect(st.on_new);
+    try testing.expectEqual(Todos.Outcome.filter_changed, try Todos.handleKey(&st, gpa, Key.char('t')));
+    try testing.expect(!st.on_new);
+    _ = try Todos.handleKey(&st, gpa, Key.named(.esc));
+    _ = try Todos.handleKey(&st, gpa, Key.named(.esc));
+    // Empty state: the row stays, the cursor reaches it, enter is the New action.
+    f.hits.reset();
+    _ = Todos.draw(&st, f.ui(), f.full(), .{
+        .panel = .todos,
+        .label = "TODOS",
+        .rows = &.{},
+        .paintRow = paintTodo,
+        .empty = .{ .message = "No todos yet", .hint = "n adds one" },
+        .new_label = "+ New todo",
+    });
+    try f.expectRow(2, "");
+    try f.expectRow(3, "  + New todo");
+    try f.expectRow(4, "");
+    try f.expectRow(5, "  No todos yet");
+    try testing.expectEqual(hit.ChipKind.new, f.hits.at(3, 3).?.chip.kind);
+    try testing.expectEqual(Todos.Outcome.ignored, try Todos.handleKey(&st, gpa, Key.named(.enter)));
+    _ = try Todos.handleKey(&st, gpa, Key.char('k'));
+    try testing.expect(st.on_new);
+    try testing.expectEqual(Todos.Outcome.new_activate, try Todos.handleKey(&st, gpa, Key.named(.enter)));
+    // Without a label there is no row and the flag clears.
+    _ = Todos.draw(&st, f.ui(), f.full(), props(rows));
+    try testing.expect(!st.on_new and !st.has_new);
+    try f.expectRow(2, "\u{258c}[x] todo 1" ++ " " ** 18 ++ "█");
+    // Narrow: the chip clips to the row, nothing off-screen.
+    var g = try Fixture.init(6, 6);
+    defer g.deinit();
+    _ = Todos.draw(&st, g.ui(), g.full(), p);
+    try g.expectRow(3, "  + N…");
+    for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
 }

@@ -36,6 +36,7 @@ const lsp = @import("lsp.zig");
 const lsp_types = @import("../lsp/types.zig");
 const side = @import("side.zig");
 const empty_state = @import("../ui/empty_state.zig");
+const fuzzy = @import("../ui/fuzzy.zig");
 
 pub const table = .{
     .@"outline.show" = &show,
@@ -57,8 +58,13 @@ pub const OutlinePane = struct {
     /// Owned: the source's basename.
     title: []u8,
     items: std.ArrayListUnmanaged(Symbol) = .empty,
+    /// An index into the FILTERED view (`visible`), Rust's `selected`.
     cursor: usize = 0,
     scroll: usize = 0,
+    /// The fuzzy filter; empty shows every symbol.
+    query: std.ArrayListUnmanaged(u8) = .empty,
+    /// Keys build `query` instead of moving; `⏎` / `esc` leave it.
+    filter_mode: bool = false,
 
     pub fn init(gpa: Allocator, source: PaneId, title: []const u8) Allocator.Error!OutlinePane {
         return .{ .gpa = gpa, .source = source, .title = try gpa.dupe(u8, title) };
@@ -67,6 +73,7 @@ pub const OutlinePane = struct {
     pub fn deinit(self: *OutlinePane) void {
         self.clear();
         self.items.deinit(self.gpa);
+        self.query.deinit(self.gpa);
         self.gpa.free(self.title);
     }
 
@@ -82,6 +89,51 @@ pub const OutlinePane = struct {
             best = i;
         };
         return best;
+    }
+
+    /// Indices of the items that pass the query, in source order (so
+    /// nesting depth stays readable), on `arena`.
+    pub fn visible(self: *const OutlinePane, arena: Allocator) Allocator.Error![]usize {
+        var out: std.ArrayListUnmanaged(usize) = .empty;
+        for (self.items.items, 0..) |s, i| {
+            if (self.query.items.len > 0 and fuzzy.score(self.query.items, s.name) == null) continue;
+            try out.append(arena, i);
+        }
+        return out.items;
+    }
+
+    /// Where item `idx` sits in the filtered view, if it passes.
+    pub fn visibleIndexOf(self: *const OutlinePane, arena: Allocator, idx: usize) Allocator.Error!?usize {
+        for (try self.visible(arena), 0..) |item, vi| if (item == idx) return vi;
+        return null;
+    }
+
+    /// The tab's label — Rust's `tab_title`: `main.rs ⌥3`, or `main.rs ⌥`
+    /// for an empty list.
+    pub fn tabTitle(self: *const OutlinePane, arena: Allocator) Allocator.Error![]const u8 {
+        const n = self.items.items.len;
+        if (n == 0) return std.fmt.allocPrint(arena, "{s} \u{2325}", .{self.title});
+        return std.fmt.allocPrint(arena, "{s} \u{2325}{d}", .{ self.title, n });
+    }
+
+    fn clampCursor(self: *OutlinePane, n: usize) void {
+        if (self.cursor >= n) self.cursor = n -| 1;
+    }
+
+    /// Esc in filter mode, or with a filter held: drop both.
+    fn clearFilter(self: *OutlinePane) void {
+        self.query.clearRetainingCapacity();
+        self.filter_mode = false;
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
+    fn popQuery(self: *OutlinePane) void {
+        const q = self.query.items;
+        if (q.len == 0) return;
+        var i = q.len - 1;
+        while (i > 0 and (q[i] & 0xC0) == 0x80) i -= 1;
+        self.query.shrinkRetainingCapacity(i);
     }
 };
 
@@ -202,7 +254,7 @@ pub fn refresh(app: *App, id: PaneId) Allocator.Error!void {
         const syms = try fallback(a, src.buf.editor.bytes(), key);
         for (syms) |s| try o.items.append(o.gpa, .{ .name = try o.gpa.dupe(u8, s.name), .kind = s.kind.label(), .line = s.line, .col = s.col, .depth = s.depth });
     }
-    if (o.cursor >= o.items.items.len) o.cursor = o.items.items.len -| 1;
+    o.clampCursor((try o.visible(a)).len);
     app.needs_render = true;
 }
 
@@ -213,13 +265,20 @@ fn languageKey(path: ?[]const u8, buf: []u8) []const u8 {
     return std.ascii.lowerString(buf[0 .. ext.len - 1], ext[1..]);
 }
 
-/// Put the source cursor on item `idx` and focus the source.
-pub fn jump(app: *App, id: PaneId, idx: usize) void {
+/// Put the source cursor on the filtered view's row `vi` and focus the
+/// source.
+pub fn jump(app: *App, id: PaneId, vi: usize) Allocator.Error!void {
     const pane = app.panes.get(id) orelse return;
     const o = pane.asOutline() orelse return;
+    const vis = try o.visible(app.frame.allocator());
+    if (vi >= vis.len) return;
+    o.cursor = vi;
+    jumpItem(app, o, vis[vi]);
+}
+
+fn jumpItem(app: *App, o: *OutlinePane, idx: usize) void {
     if (idx >= o.items.items.len) return;
     const s = o.items.items[idx];
-    o.cursor = idx;
     const src = app.panes.editor(o.source) orelse return;
     src.buf.editor.anchor = null;
     src.buf.editor.placeCursor(@min(s.line, @as(u32, @intCast(src.buf.editor.lineCount() - 1))), s.col);
@@ -227,10 +286,13 @@ pub fn jump(app: *App, id: PaneId, idx: usize) void {
 }
 
 /// A click on a row: the hit names the source line/col; find the item.
-pub fn clickRow(app: *App, id: PaneId, line: u32, col: u32) void {
+pub fn clickRow(app: *App, id: PaneId, line: u32, col: u32) Allocator.Error!void {
     const pane = app.panes.get(id) orelse return;
     const o = pane.asOutline() orelse return;
-    for (o.items.items, 0..) |s, i| if (s.line == line and s.col == col) return jump(app, id, i);
+    for (o.items.items, 0..) |s, i| if (s.line == line and s.col == col) {
+        if (try o.visibleIndexOf(app.frame.allocator(), i)) |vi| o.cursor = vi;
+        return jumpItem(app, o, i);
+    };
 }
 
 pub fn close(app: *App, id: PaneId) Allocator.Error!void {
@@ -244,11 +306,32 @@ pub fn close(app: *App, id: PaneId) Allocator.Error!void {
 }
 
 /// Keys while the outline has focus. False lets the chord chain see it.
+/// Filter mode takes every plain key first: it builds the query, `⏎`
+/// leaves it holding the filter, `esc` clears and leaves. Outside it
+/// `/` enters, and `esc` with a filter held clears it before a second
+/// `esc` returns to the source (Rust's rule).
 pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
     if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
     const pane = app.panes.get(id) orelse return false;
     const o = pane.asOutline() orelse return false;
-    const n = o.items.items.len;
+    if (o.filter_mode) {
+        switch (k.code) {
+            .esc => o.clearFilter(),
+            .enter => o.filter_mode = false,
+            .backspace => o.popQuery(),
+            .char => |c| {
+                var buf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(c, &buf) catch return true;
+                try o.query.appendSlice(o.gpa, buf[0..n]);
+            },
+            else => return true,
+        }
+        o.cursor = 0;
+        o.clampCursor((try o.visible(app.frame.allocator())).len);
+        app.needs_render = true;
+        return true;
+    }
+    const n = (try o.visible(app.frame.allocator())).len;
     const page = @max(app.pane_rows -| outline_view.header_rows, 1);
     switch (k.code) {
         .down => o.cursor = @min(o.cursor + 1, n -| 1),
@@ -257,13 +340,14 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
         .end => o.cursor = n -| 1,
         .page_down => o.cursor = @min(o.cursor + page, n -| 1),
         .page_up => o.cursor -|= page,
-        .enter => jump(app, id, o.cursor),
-        .esc => focusSource(app, o.source),
+        .enter => try jump(app, id, o.cursor),
+        .esc => if (o.query.items.len > 0) o.clearFilter() else focusSource(app, o.source),
         .char => |c| switch (c) {
             'j' => o.cursor = @min(o.cursor + 1, n -| 1),
             'k' => o.cursor -|= 1,
             'g' => o.cursor = 0,
             'G' => o.cursor = n -| 1,
+            '/' => o.filter_mode = true,
             'r' => try refresh(app, id),
             'q' => try close(app, id),
             else => return false,
@@ -275,20 +359,34 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
 }
 
 /// One frame of the pane: refresh when the source changed since the
-/// last frame, then paint with the source cursor's item highlighted.
+/// last frame, then paint the filtered view with the source cursor's
+/// item highlighted.
 pub fn draw(app: *App, ui: Ui, id: PaneId, o: *OutlinePane, area: Rect, focused: bool) Allocator.Error!void {
     var current: ?usize = null;
     if (app.panes.editor(o.source)) |src| {
         if (src.syntax.dirty or o.items.items.len == 0) try refresh(app, id);
-        current = o.itemAt(@intCast(src.buf.editor.currentLine()));
+        if (o.itemAt(@intCast(src.buf.editor.currentLine()))) |item| current = try o.visibleIndexOf(ui.arena, item);
         // Follow the source cursor when the outline is not being driven.
-        if (!focused) if (current) |c| {
+        if (!focused and !o.filter_mode) if (current) |c| {
             o.cursor = c;
         };
     }
-    const rows = try ui.arena.alloc(outline_view.Row, o.items.items.len);
-    for (o.items.items, 0..) |s, i| rows[i] = .{ .name = s.name, .kind = s.kind, .line = s.line, .col = s.col, .depth = s.depth };
-    outline_view.draw(ui, id, area, &o.scroll, .{ .title = o.title, .rows = rows, .cursor = o.cursor, .current = current, .focused = focused });
+    const vis = try o.visible(ui.arena);
+    const rows = try ui.arena.alloc(outline_view.Row, vis.len);
+    for (vis, 0..) |item, i| {
+        const s = o.items.items[item];
+        rows[i] = .{ .name = s.name, .kind = s.kind, .line = s.line, .col = s.col, .depth = s.depth };
+    }
+    outline_view.draw(ui, id, area, &o.scroll, .{
+        .title = o.title,
+        .rows = rows,
+        .total = o.items.items.len,
+        .cursor = o.cursor,
+        .current = current,
+        .focused = focused,
+        .query = o.query.items,
+        .filter_mode = o.filter_mode,
+    });
 }
 
 // ── the line-shape fallback ────────────────────────────────────────────
@@ -578,4 +676,42 @@ test "outline.show opens a split beside the source, jumps on enter, and refreshe
     try app.handle(.{ .key = Key.char('q') });
     try testing.expectEqual(@as(usize, 1), app.panes.count());
     try testing.expectEqual(src, app.active.?);
+}
+
+test "the right column's strip: the outline's live title, the plus opens Add panel, the close closes the column" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.setPath("/tmp/code.rs");
+    e.syntax.setLanguage("/tmp/code.rs", "");
+    try e.buf.editor.setText("fn alpha() {}\n\nfn beta() {}\n");
+    try command.run(&app, .{ .static = .@"view.toggle_right_panel" });
+    try command.run(&app, .{ .static = .@"outline.show" });
+    try app.render();
+    const screen_mod = @import("../ipc/screen.zig");
+    var txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+    try testing.expect(std.mem.indexOf(u8, txt, "code.rs \u{2325}2   \u{F0415}") != null);
+    testing.allocator.free(txt);
+    const plus = app.hits.at(102, 1).?;
+    try testing.expectEqual(@as(u32, 20), plus.button);
+    try app.handle(.{ .mouse = .{ .x = 102, .y = 1, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = 102, .y = 1, .kind = .release, .button = .left } });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Add panel", app.overlay.menu.title);
+    try app.render();
+    txt = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "Add panel") != null);
+    // Esc puts the menu away; the `×` one cell in from the edge closes
+    // the column with its outline.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try app.render();
+    try testing.expectEqual(@as(u32, 18), app.hits.at(118, 1).?.button);
+    try app.handle(.{ .mouse = .{ .x = 118, .y = 1, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = 118, .y = 1, .kind = .release, .button = .left } });
+    try app.render();
+    const after = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(after);
+    try testing.expect(std.mem.indexOf(u8, after, "\u{2325}2") == null);
 }

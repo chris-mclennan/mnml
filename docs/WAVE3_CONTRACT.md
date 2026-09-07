@@ -3269,3 +3269,94 @@ never driven by anyone, so `docs/ui-spec/zig-debug-*.txt` are the spec
   120×40: picker 12 → 4, delete 24 → 10, rename 24 → 10, discovery
   12 → 4, palette 42 → 34, help 16 → 6; the editor screen's 8 were never
   the box (the LSP toast and the statusline's chips).
+## The outline pane and the right column's strip (2026-09-07)
+
+`docs/ui-spec/rust-outline-120x40.txt` at residue: 76 → 8 differing
+lines, all of them the LSP toast and the statusline's stock / now-playing
+/ `LSP 1` chips (the fixture has no server for Zig).
+
+- `// changed (outline):` `ui/outline_view.zig` is Rust's
+  `outline_view.rs` cell for cell — the two-cell arrow column (`▶` the
+  pane's cursor, `●` the row the source cursor is in, in Rust's purple
+  / yellow), the kind right-aligned in ten cells in its family's colour
+  (`kindColor`), the name bold on the selected row, the hint in Rust's
+  three width tiers (`hint`: `⏎ jump   r refresh   / filter   esc back`
+  ≥ 52, `⏎ jump · / filter · esc back` ≥ 30, `⏎ / r / esc`), the
+  `  / query█` line while a filter is typed or held, `(no symbols)` /
+  `(no matches)`, and a scrollbar column reserved down the whole right
+  edge from eight cells (`bar_min_w`) so the body never reflows. The
+  one departure: the header stays put and the list scrolls under it
+  (Rust scrolls the header lines off with the rows); the bar measures
+  the list alone.
+- `// changed (outline / keys):` `OutlinePane.query` + `filter_mode`
+  (Rust's `/` type-to-narrow): `/` enters; in filter mode `⏎` leaves
+  holding the filter, `esc` clears and leaves, Backspace pops a
+  character, everything else appends; outside it `esc` with a filter
+  held clears it before a second `esc` returns to the source. The
+  cursor is an index into the filtered view (`visible`, `fuzzy.score`
+  on the name); `jump` / `clickRow` resolve through it. `q` closes
+  (Zig's; Rust has no key for it).
+- `// changed (section-side / strip):` `ui/side_strip.zig` paints the
+  right column's strip row as Rust's tab strip: the chip ` title `
+  (bold on `bg2`, the outline's live `tabTitle` — `main.rs ⌥1`, `main.rs
+  ⌥` when empty), a one-cell gap, the green ` 󰐕 ` on `bg_dark`, the
+  `bg2` bridge from the chip to the `×` one cell in from the edge, the
+  edge cell on the column's ground; a chip that does not fit clips to
+  ` lab… `. Hits: the chip → `Button.right_tab` (`view.focus_right_panel`
+  — one section shows at a time, so the chip focuses rather than
+  selects), the plus → `Button.right_new` (`context_menus.openAddPanelMenu`:
+  Rust's five rows Outline / Problems / AI chat / Grep / Tests), the
+  `×` → `Button.right_close`. `render.drawRightStrip` is the one call.
+- `// changed (buttons):` `integrations_view.chip_base` moves from
+  `0x10` to `0x0300` (`max_chips` stays 0x30). Dispatch tests the chip
+  range before the `Button` switch, so ids 16..63 — `split_max`,
+  `hidden_tabs`, `right_close` and the two new strip buttons — were
+  routed to the palette bar's integration chips; every chip id is
+  `chip_base + i`, so nothing else moves.
+- `// changed (tests):` `outline_view.zig`'s three tests re-aimed at
+  the two-cell arrow / ten-cell kind / always-reserved bar (the old
+  `▶       fn` / `selection` bg on the current row); new: the hint
+  tiers, the query line, the empty states, `side_strip.zig` at 32 / 14
+  / 12 / 4 cells, the strip through `App` (title, plus → menu, close);
+  e2e `outline_filter_jump.test`, `right_strip_add_panel.test`.
+
+## TODOS / NOTES / FINDINGS — the `+ New …` row (2026-09-07)
+
+The user kept Zig's rows on the three list panels (the `󰍉 / filter`
+pill, the `TODOS (0)` spacing, the one-line empty state, the info
+copy); the one addition is Rust's `+ New …` action row, with a blank
+row directly under the filter (the user's ask) and Rust's blank row
+after the chip. So the three specs stay at residue, not zero:
+`steps-todos` 22 → 24, `steps-notes` 24 → 26, `steps-findings` 24 → 26
+— the row shift from the extra blank, the filter pill, the header
+spacing, the empty state's `…` clip, the info copy, the version and
+the statusline chips. `docs/ui-spec/README.md` lists the hunks.
+
+- `// changed (list-panel):` `ListPanel.Props.new_label` paints the
+  row once for every panel that asks (`ui/list_panel.zig`): a blank
+  row, ` label ` on the green fill at `x + 1` (`chip.newRowStyle`,
+  Rust's `action_button::primary`), a blank row, then the list; in
+  the empty state too. Its hit is `.chip{panel, .new}` over the chip
+  cells alone (Rust's rect), which the panels already route to
+  `todos.new` / `notes.new` / `findings.new`. `State.on_new` is the
+  cursor on the row: `k` / `↑` / `PgUp` / `Ctrl-p` from row 0 climb
+  onto it (in the filter too), `j` / `↓` / `Ctrl-n` drop back to row
+  0, `g` / `G` / Home / End leave it, typing in the filter puts the
+  cursor back on row 0, and `⏎` there is `Outcome.new_activate` — the
+  three panels run their `newCmd` (the prompt), the other five
+  `ListPanel` users get a no-op arm. A row click clears `on_new`
+  (`rowMouse` / `kebabMouse`).
+- `// changed (verified, no change):` the `sort:` chip family was
+  already Rust's — click cycles (`todos.sort` …), right-click lists
+  every mode with a ✓ (`openSortMenu`), the icon rung under the full
+  form's width (`header.zig`'s ladder, tested at 26 / 30 / 34 and 60),
+  persisted as `ui.<panel>_sort` and read back at `App.init`.
+- `// changed (tests):` `list_panel.zig` gains the New-row test
+  (paint, hit, the cursor ladder, the empty state, a 6-cell clip);
+  e2e `panel_new_row` (keys + click, all three panels, empty and
+  populated), `panel_sort_chip` (click cycles + persists
+  `ui.todos_sort`, the right-click menu with ✓), `panel_filter_keeps_refresh`
+  (typing grows the count without deleting the ⟳), `panel_kebab_menu`
+  (a click on a row leaves the pointer there; the kebab opens the row
+  menu). `panel_new_row` was break-checked (the todos label removed →
+  "screen does not contain `+ New todo`").

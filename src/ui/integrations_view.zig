@@ -20,10 +20,11 @@ const Style = vaxis.Style;
 const Color = vaxis.Color;
 
 /// `.button` ids of the palette-bar chips: `chip_base + index`. Kept
-/// under `render.Button.tab_page_base` (0x40), which owns the ids
-/// above it.
-pub const chip_base: u32 = 0x10;
-pub const max_chips: u32 = 0x40 - chip_base;
+/// clear of `render.Button`'s small values and its `0x40`.. bases —
+/// dispatch tests this range before the `Button` switch, so a base of
+/// `0x10` swallowed `split_max` / `hidden_tabs` / `right_close`.
+pub const chip_base: u32 = 0x0300;
+pub const max_chips: u32 = 0x30;
 
 pub const Detail = struct {
     description: []const u8,

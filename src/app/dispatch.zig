@@ -1670,6 +1670,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
                 .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
                 .right_close => try runCmd(app, .@"view.right_panel_close_tab"),
+                .right_tab => try runCmd(app, .@"view.focus_right_panel"),
+                .right_new => try context_menus.openAddPanelMenu(app, m.x, m.y),
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),
@@ -2147,7 +2149,7 @@ fn editorCellMouse(app: *App, cell: CellHit, m: Mouse, count: u16, wheel: bool) 
         .outline => {
             if (m.button == .left) {
                 if (app.overlay != .none) closeOverlay(app);
-                outline.clickRow(app, cell.pane, cell.line, cell.col);
+                try outline.clickRow(app, cell.pane, cell.line, cell.col);
             }
             return;
         },

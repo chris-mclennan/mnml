@@ -1,0 +1,37 @@
+# The `+ New …` row under the filter on TODOS / NOTES / FINDINGS (Rust's
+# `action_button::primary` chip): `k` from the first row climbs onto it
+# and `⏎` opens the same prompt `todos.new` / `notes.new` /
+# `findings.new` open; a click on the chip opens it too; the row is
+# there in the empty state as well.
+
+write src/a.zig "// TODO: fix\n"
+command view.activity_todos
+command todos.refresh
+wait 500
+expect screen contains "+ New todo"
+expect screen contains "fix"
+key k
+key enter
+expect screen contains "New TODO (appended to TODO.md)"
+key esc
+expect screen lacks "New TODO (appended to TODO.md)"
+click 6 4
+expect screen contains "New TODO (appended to TODO.md)"
+key esc
+
+# NOTES, empty: the chip, a click.
+command view.activity_notes
+wait 300
+expect screen contains "+ New note"
+click 6 4
+expect screen contains "New note in .mnml/notes/"
+key esc
+
+# FINDINGS, empty: the keys.
+command view.activity_findings
+wait 300
+expect screen contains "+ New finding"
+key k
+key enter
+expect screen contains "New finding in .mnml/findings/"
+key esc

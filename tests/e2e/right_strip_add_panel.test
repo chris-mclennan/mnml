@@ -1,0 +1,23 @@
+# The right column's strip row: the section's chip carries the outline's
+# live title (`code.rs ⌥4`, Rust's `tab_title`), the green `+` opens the
+# "Add panel" menu, and the `×` closes the column.
+
+write code.rs "fn alpha() {}\n\nfn beta() {}\n\nstruct Gamma {\n    x: u32,\n}\n"
+open code.rs
+command view.toggle_right_panel
+command outline.show
+expect screen contains "4 symbols"
+expect screen contains "⏎ jump · / filter · esc back"
+
+# The `+` (one cell past the chip's gap) opens Rust's five-row menu.
+click 102 1
+expect screen contains "Add panel"
+expect screen contains "Outline"
+expect screen contains "Problems"
+expect screen contains "Tests"
+key esc
+expect screen lacks "Add panel"
+
+# The `×` one cell in from the edge closes the column.
+click 118 1
+expect screen lacks "code.rs ⌥4"

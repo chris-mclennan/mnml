@@ -1,0 +1,42 @@
+# The outline's `/` filter: typing narrows the list and the header
+# counts `n/total symbol(s)`; `⏎` leaves filter mode holding the
+# filter (the `/ …` line stays, without its caret); `⏎` again jumps to
+# the selected symbol in the source; `esc` with a filter held clears
+# it before a second `esc` returns to the source.
+
+write code.rs "fn alpha() {\n    println!(\"a\");\n}\n\nfn beta() {\n    println!(\"b\");\n}\n\nstruct Gamma {\n    x: u32,\n}\n"
+open code.rs
+command outline.show
+expect screen contains "fn alpha:1"
+expect screen contains "struct Gamma:9"
+expect screen contains "4 symbols"
+
+# `/` enters filter mode; the hint swaps to the filter's; typing narrows.
+key /
+expect screen contains "esc clear"
+type gam
+expect screen contains "/ gam"
+expect screen contains "1/4 symbol(s)"
+expect screen contains "struct Gamma:9"
+expect screen lacks "fn alpha:1"
+
+# Backspace edits the query.
+key backspace
+expect screen contains "/ ga"
+expect screen lacks "/ gam"
+
+# ⏎ leaves filter mode, the filter held; ⏎ again jumps.
+key enter
+expect screen contains "/ ga"
+expect screen contains "/ filter"
+key enter
+expect pane "code.rs"
+expect screen contains "Ln 9/"
+
+# Back in the outline, esc clears the held filter first.
+command outline.show
+expect screen contains "/ ga"
+key esc
+expect screen lacks "/ ga"
+expect screen contains "4 symbols"
+expect screen contains "fn alpha:1"
