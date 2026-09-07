@@ -1,0 +1,42 @@
+# DAP session — next / stepIn / stepOut move the frame. Stopped on the
+# `call f` line, stepIn lands on the function's first line with two
+# frames on the stack; next runs one line inside it (y appears); stepOut
+# returns to the line after the call with x already multiplied; next
+# moves one more line in main.
+write prog.dbg "let x = 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\nexit 0\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+
+# Line 6: `call f`.
+type 5j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 6"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+# The stop's jump to the line (the ▶ in the gutter) lands after the toast;
+# the panes below are opened once it has, so the jump does not take focus back.
+expect screen contains "▶"
+command dap.show
+expect screen contains "prog.dbg:6  main"
+
+command dap.step_in
+expect screen contains "dap: stopped (step)"
+expect screen contains "prog.dbg:3  f"
+expect screen contains "prog.dbg:6  main"
+
+command dap.next
+expect screen contains "prog.dbg:4  f"
+expect screen contains "y: int = 10"
+
+command dap.step_out
+expect screen contains "prog.dbg:7  main"
+expect screen lacks "prog.dbg:4  f"
+expect screen contains "x: int = 10"
+
+command dap.next
+expect screen contains "prog.dbg:8  main"
+
+command dap.terminate
+expect screen contains "dap: terminated"

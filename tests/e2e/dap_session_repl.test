@@ -1,0 +1,48 @@
+# DAP session — the REPL evaluates against the stopped frame, and
+# setVariable writes a new value back. An expression lands with its type,
+# a struct value renders with its fields, an unknown name is an error
+# row. In the debug pane, Tab moves to VARIABLES, j selects `x`, and
+# dap.set_variable's prompt (seeded with the current value) takes 42:
+# the row updates, and the program prints 43 when it continues.
+write prog.dbg "let x = 5\nlet p = struct{a=1,b=2}\nx = x + 1\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+
+key j
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 3"
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+# The stop's jump to the line (the ▶ in the gutter) lands after the toast;
+# the panes below are opened once it has, so the jump does not take focus back.
+expect screen contains "▶"
+
+command dap.repl
+expect pane "DAP REPL"
+type "x * 2"
+key enter
+expect screen contains "= 10 : int"
+type "p"
+key enter
+expect screen contains "= {a=1, b=2} : struct"
+type "nope"
+key enter
+expect screen contains "err: no such variable"
+
+command dap.show
+expect pane "Debug"
+expect screen contains "x: int = 5"
+key tab
+key j
+command dap.set_variable
+expect screen contains "Set x ="
+key ctrl+u
+type "42"
+key enter
+expect screen contains "set = 42"
+expect screen contains "x: int = 42"
+
+command dap.continue
+expect screen contains "dap: exited (code 0)"

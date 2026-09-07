@@ -1,0 +1,29 @@
+# DAP session — output events. Every `print` is one stdout line; the
+# debug pane's OUTPUT section lists them in order while the program is
+# stopped on its last line. continue runs `exit 7`: the exit code is
+# reported and the session ends.
+write prog.dbg "print \"one\"\nprint \"two\"\nlet s = \"three\"\nprint s\nexit 7\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+
+type 4j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 5"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+# The stop's jump to the line (the ▶ in the gutter) lands after the toast;
+# the panes below are opened once it has, so the jump does not take focus back.
+expect screen contains "▶"
+command dap.show
+expect screen contains "OUTPUT"
+expect screen contains "one"
+expect screen contains "two"
+expect screen contains "three"
+expect screen contains "s: string = \"three\""
+
+command dap.continue
+expect screen contains "dap: exited (code 7)"
+command dap.show
+expect screen contains "(no session"

@@ -1,0 +1,34 @@
+# DAP session — a watch evaluates at the stop and again after every
+# step. `x * 100` is 100 at the first stop; next runs `x = x + 1` and the
+# watch shows 200; another next multiplies x by 10 and it shows 2000.
+write prog.dbg "let x = 1\nx = x + 1\nx = x * 10\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 2"
+
+command dap.add_watch
+expect screen contains "Watch expression"
+type "x * 100"
+key enter
+expect screen contains "watch: + x * 100"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+# The stop's jump to the line (the ▶ in the gutter) lands after the toast;
+# the panes below are opened once it has, so the jump does not take focus back.
+expect screen contains "▶"
+command dap.show
+expect screen contains "x * 100 = 100 : int"
+
+command dap.next
+expect screen contains "x * 100 = 200 : int"
+
+command dap.next
+expect screen contains "x * 100 = 2000 : int"
+
+command dap.terminate
+expect screen contains "dap: terminated"

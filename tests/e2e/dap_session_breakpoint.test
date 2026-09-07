@@ -1,0 +1,40 @@
+# DAP session — a real stop. The workspace config names mnml-fake-dap
+# (tools/fake_dap/, reached through `$MNML_FAKE_DAP`, which `mnml-zig
+# test` exports) as the adapter for `.dbg` files; the program is the
+# file being debugged. A breakpoint on line 4 stops before it runs: the
+# debug pane shows the stop reason, the frame, the locals with their
+# types and values, and the output printed so far. The thread picker
+# lists the adapter's one thread. terminate ends the session.
+write prog.dbg "let x = 1\nlet name = \"mnml\"\nprint \"hello\"\nx = x + 1\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+
+# Cursor on line 4 (0-based 3); toggle a breakpoint there.
+key j
+key j
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 4"
+
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+# The stop's jump to the line (the ▶ in the gutter) lands after the toast;
+# the panes below are opened once it has, so the jump does not take focus back.
+expect screen contains "▶"
+
+command dap.show
+expect pane "Debug"
+expect screen contains "stopped (breakpoint)"
+expect screen contains "prog.dbg:4  main"
+expect screen contains "x: int = 1"
+expect screen contains "name: string = \"mnml\""
+expect screen contains "hello"
+
+command dap.pick_thread
+expect screen contains "Switch thread"
+expect screen contains "main"
+key esc
+
+command dap.terminate
+expect screen contains "dap: terminated"
