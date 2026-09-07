@@ -3242,3 +3242,30 @@ never driven by anyone, so `docs/ui-spec/zig-debug-*.txt` are the spec
   `dap_repl_selection`, `dap_session_output`, `dap_session_terminate`);
   ten `debug_*.test` scripts; `render.zig`'s hit test reads the gutter
   as `.gutter`; two settings tests run taller (the UI section grew).
+
+## Info view focus rule (2026-09-07, branch `info-view`) — `// changed:` notes
+
+- `// changed (info view):` the ladder in `src/app/info_view.zig` reads
+  the surface under an overlay — `focusUnder`: the prompt's, the
+  confirm's or the menu's way back, else the active pane, else the tree
+  — where it used to return nothing on `.overlay` and fall to the
+  `Editor` one-liner. Rust has no overlay focus (`app.focus` stays on the
+  surface while a picker or a confirm is up), so its box keeps the
+  `Sidebar` line under the picker / discovery / palette / help with
+  nothing open, and the walked row's doc under the tree's delete and
+  rename boxes. A file open with the tree focused at its first row still
+  falls through to the editor's summary — that is Rust's ladder too
+  (`describe_focus_target` says nothing at cursor 0), checked on the
+  Rust binary. The `.overlay` arm of the one-liner is unreachable now.
+  Residue: the picker's own way back is the pane (`cmd_picker`), so a
+  picker over a tree walked past its first row with a file open shows
+  the file's summary where Rust shows the row's doc.
+- `// changed (tests):` a unit test for each rung under an overlay (the
+  picker with nothing open, the delete confirm with and without a way
+  back, the kebab's menu from the tree, a hovered chip over a walked
+  row, the file open at the first row and past it, the pane, the git
+  palette from its panel and from a prompt over it);
+  `tests/e2e/info_view_focus_under_overlay.test`. `ui-diff` box rows at
+  120×40: picker 12 → 4, delete 24 → 10, rename 24 → 10, discovery
+  12 → 4, palette 42 → 34, help 16 → 6; the editor screen's 8 were never
+  the box (the LSP toast and the statusline's chips).
