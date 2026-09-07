@@ -11,11 +11,11 @@ expect screen contains " INSERT "
 expect screen contains "Col 12 "
 key ctrl+o
 key 0
-expect screen lacks "╭ Files"
+expect screen lacks "┌ Open file"
 expect screen contains " INSERT "
 expect screen contains "Col 1 "
 key esc
 expect screen contains " NORMAL "
 key ctrl+o
-expect screen lacks "╭ Files"
+expect screen lacks "┌ Open file"
 expect screen contains " NORMAL "

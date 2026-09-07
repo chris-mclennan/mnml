@@ -21,9 +21,9 @@ type " e"
 expect screen contains " "
 expect screen contains "Col 1 "
 type " ff"
-expect screen contains "╭ Files"
+expect screen contains "┌ Open file"
 key esc
-expect screen lacks "╭ Files"
+expect screen lacks "┌ Open file"
 key space
 key esc
 wait 700

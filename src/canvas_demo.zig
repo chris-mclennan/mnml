@@ -467,7 +467,7 @@ fn handleScreenKey(g: *Gallery, key: Key) !void {
         },
         .which_key => if (key.code == .esc) g.setNote("esc closes the popup", .{}),
         .picker => {
-            const order = try ui.picker.rank(g.gpa, g.picker.queryText(), &commands);
+            const order = try ui.picker.rank(g.gpa, g.picker.queryText(), &commands, .{});
             defer g.gpa.free(order);
             switch (try ui.picker.handleKey(&g.picker, g.gpa, key, order.len)) {
                 .accept => |i| g.setNote("accepted: {s}", .{commands[order[i]].label}),
@@ -716,7 +716,7 @@ fn draw(term: *Term, g: *Gallery, arena: std.mem.Allocator) !void {
         },
         .picker => {
             _ = try drawEditor(uictx, body, g, null, .{ .current = null, .total = 0 });
-            const order = try ui.picker.rank(arena, g.picker.queryText(), &commands);
+            const order = try ui.picker.rank(arena, g.picker.queryText(), &commands, .{});
             const items = try ui.picker.gather(arena, &commands, order);
             caret = ui.picker.draw(uictx, body, &g.picker, items);
         },

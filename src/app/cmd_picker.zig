@@ -6,6 +6,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const gitignore = @import("gitignore.zig");
+const tree_mod = @import("tree.zig");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
@@ -77,21 +79,155 @@ fn pushBuffer(app: *App, labels: *std.ArrayListUnmanaged([]u8), panes: *std.Arra
     try panes.append(gpa, id);
 }
 
+/// `Open file` — Rust's list: the workspace's recent files first,
+/// then every file the tree would list, in the tree's order
+/// (directories first, names folded), then recents from other
+/// workspaces (their name alone, the directory as the detail, a tier
+/// below). The detail is the file's directory.
 fn files(app: *App) CommandError!void {
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var details: std.ArrayListUnmanaged([]u8) = .empty;
+    var prio: std.ArrayListUnmanaged(u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
+        for (details.items) |d| gpa.free(d);
+        details.deinit(gpa);
+        prio.deinit(gpa);
     }
-    const truncated = try walk(app, &labels);
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(gpa);
+    // The recents, newest first, those inside the workspace.
+    var i = app.recent.items.len;
+    while (i > 0) {
+        i -= 1;
+        const path = app.recent.items[i];
+        if (!inWorkspace(app, path) or isNoise(app.relPath(path))) continue;
+        if (!exists(app, path)) continue;
+        if (seen.contains(path)) continue;
+        try seen.put(gpa, path, {});
+        try pushFile(gpa, &labels, &details, &prio, app.relPath(path), 2);
+    }
+    // The tree's files, in its order.
+    var tree_files: std.ArrayListUnmanaged([]u8) = .empty;
+    defer {
+        for (tree_files.items) |f| gpa.free(f);
+        tree_files.deinit(gpa);
+    }
+    const truncated = try walkTree(app, &tree_files);
+    for (tree_files.items) |rel| {
+        const abs = try app.absPath(rel);
+        if (seen.contains(abs)) continue;
+        try seen.put(gpa, try app.frame.allocator().dupe(u8, abs), {});
+        try pushFile(gpa, &labels, &details, &prio, rel, 2);
+    }
+    // Recents from elsewhere, a tier below.
+    i = app.recent.items.len;
+    while (i > 0) {
+        i -= 1;
+        const path = app.recent.items[i];
+        if (inWorkspace(app, path) or seen.contains(path) or !exists(app, path)) continue;
+        try seen.put(gpa, path, {});
+        try labels.append(gpa, try gpa.dupe(u8, std.fs.path.basename(path)));
+        try details.append(gpa, try gpa.dupe(u8, std.fs.path.dirname(path) orelse ""));
+        try prio.append(gpa, 1);
+    }
     if (labels.items.len == 0) return app.diag.fail(app.frame.allocator(), "no files under {s}", .{app.workspace});
-    std.mem.sort([]u8, labels.items, {}, struct {
-        fn lt(_: void, a: []u8, b: []u8) bool {
-            return std.mem.lessThan(u8, a, b);
+    try openPickerWith(app, if (truncated) "Open file (first 5000)" else "Open file", .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
+    app.overlay.picker.priority = try prio.toOwnedSlice(gpa);
+    try dispatch.refilterPicker(app);
+}
+
+fn pushFile(gpa: Allocator, labels: *std.ArrayListUnmanaged([]u8), details: *std.ArrayListUnmanaged([]u8), prio: *std.ArrayListUnmanaged(u8), rel: []const u8, tier: u8) Allocator.Error!void {
+    const label = try gpa.dupe(u8, rel);
+    errdefer gpa.free(label);
+    const dir = try gpa.dupe(u8, std.fs.path.dirname(rel) orelse "");
+    errdefer gpa.free(dir);
+    try labels.append(gpa, label);
+    try details.append(gpa, dir);
+    try prio.append(gpa, tier);
+}
+
+fn inWorkspace(app: *App, path: []const u8) bool {
+    return std.mem.startsWith(u8, path, app.workspace) and path.len > app.workspace.len and path[app.workspace.len] == '/';
+}
+
+fn exists(app: *App, path: []const u8) bool {
+    _ = std.Io.Dir.cwd().statFile(app.io, path, .{}) catch return false;
+    return true;
+}
+
+/// Rust's `is_noise`: what Ctrl+P never lists, whatever the tree shows.
+fn isNoise(rel: []const u8) bool {
+    var it = std.mem.splitScalar(u8, rel, '/');
+    while (it.next()) |part| {
+        for ([_][]const u8{ ".git", ".mnml", "node_modules", "target", ".next", "dist", "build" }) |n| if (std.mem.eql(u8, part, n)) return true;
+    }
+    return false;
+}
+
+/// Every file the tree would list, in the tree's order — directories
+/// first, names folded to lower case, each directory's `.gitignore`
+/// honoured, the artifact directories and Rust's noise skipped, hidden
+/// entries as the tree shows them. Returns whether the cap hit.
+pub fn walkTree(app: *App, out: *std.ArrayListUnmanaged([]u8)) CommandError!bool {
+    var ignores = gitignore.Stack.init(app.gpa);
+    defer ignores.deinit();
+    return walkDir(app, out, "", &ignores);
+}
+
+fn walkDir(app: *App, out: *std.ArrayListUnmanaged([]u8), rel_dir: []const u8, ignores: *gitignore.Stack) CommandError!bool {
+    const gpa = app.gpa;
+    const arena = app.frame.allocator();
+    const abs = if (rel_dir.len == 0) app.workspace else try std.fs.path.join(arena, &.{ app.workspace, rel_dir });
+    var dir = std.Io.Dir.cwd().openDir(app.io, abs, .{ .iterate = true }) catch return false;
+    defer dir.close(app.io);
+    var pushed = false;
+    if (dir.readFileAlloc(app.io, ".gitignore", gpa, .limited(256 * 1024))) |text| {
+        defer gpa.free(text);
+        try ignores.push(try gitignore.Rules.parse(gpa, rel_dir, text));
+        pushed = true;
+    } else |err| if (err == error.OutOfMemory) return error.OutOfMemory;
+    defer if (pushed) {
+        var layer = ignores.layers.pop().?;
+        layer.deinit(gpa);
+    };
+    const Entry = struct { rel: []u8, is_dir: bool };
+    var names: std.ArrayListUnmanaged(Entry) = .empty;
+    defer {
+        for (names.items) |n| gpa.free(n.rel);
+        names.deinit(gpa);
+    }
+    var it = dir.iterate();
+    while (it.next(app.io) catch null) |entry| {
+        if (entry.kind != .directory and entry.kind != .file and entry.kind != .sym_link) continue;
+        const is_dir = entry.kind == .directory;
+        if (!app.tree.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
+        if (is_dir and (tree_mod.isArtifactDir(entry.name) or isNoise(entry.name))) continue;
+        const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
+        errdefer gpa.free(rel);
+        if (ignores.ignored(rel, is_dir)) {
+            gpa.free(rel);
+            continue;
+        }
+        try names.append(gpa, .{ .rel = rel, .is_dir = is_dir });
+    }
+    std.mem.sort(Entry, names.items, {}, struct {
+        fn lt(_: void, a: Entry, b: Entry) bool {
+            if (a.is_dir != b.is_dir) return a.is_dir;
+            return std.ascii.lessThanIgnoreCase(std.fs.path.basename(a.rel), std.fs.path.basename(b.rel));
         }
     }.lt);
-    try openPicker(app, if (truncated) "Files (first 5000)" else "Files", .files, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+    for (names.items) |n| {
+        if (n.is_dir) {
+            if (try walkDir(app, out, n.rel, ignores)) return true;
+        } else {
+            if (out.items.len >= max_files) return true;
+            try out.append(gpa, try gpa.dupe(u8, n.rel));
+        }
+    }
+    return false;
 }
 
 /// Every regular file under the workspace, workspace-relative, hidden
@@ -132,7 +268,8 @@ pub fn openPicker(app: *App, title: []const u8, kind: app_mod.PickerKind, labels
 /// (both owned; empty slices when the picker has none).
 pub fn openPickerWith(app: *App, title: []const u8, kind: app_mod.PickerKind, labels: [][]u8, panes: []PaneId, details: [][]u8, hints: [][]u8) CommandError!void {
     app.overlay.deinit(app.gpa);
-    app.overlay = .{ .picker = .{ .state = .{ .title = title }, .kind = kind, .labels = labels, .panes = panes, .details = details, .hints = hints, .filtered = .empty } };
+    const anchor: @import("../ui/overlay.zig").Anchor = if (app.cfg.ui.picker_position == .top) .top else .center;
+    app.overlay = .{ .picker = .{ .state = .{ .title = title, .anchor = anchor }, .kind = kind, .labels = labels, .panes = panes, .details = details, .hints = hints, .filtered = .empty } };
     try dispatch.refilterPicker(app);
     app.focus = .overlay;
     app.needs_render = true;
@@ -161,48 +298,87 @@ fn recent(app: *App) CommandError!void {
     try openPicker(app, "Recent files", .recent, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
 }
 
-/// `Command palette` — every static command and every registered one,
-/// title first, id as the detail, its first chord as the hint. The
-/// pick's index maps back through `commandAt`.
+/// `Command palette` — every static command and every registered one
+/// as Rust lists them: the row is `group  ·  title  ·  id` (the id in
+/// the row is what lets a typed id find it), the detail its default
+/// chords joined by ` / `. Commands of the active pane's family score
+/// twenty more, Rust's pane-scoped nudge. The pick's index maps back
+/// through `commandAt`.
 fn palette(app: *App) CommandError!void {
     const gpa = app.gpa;
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
     var details: std.ArrayListUnmanaged([]u8) = .empty;
-    var hints: std.ArrayListUnmanaged([]u8) = .empty;
+    var bonus: std.ArrayListUnmanaged(i64) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
         for (details.items) |d| gpa.free(d);
         details.deinit(gpa);
-        for (hints.items) |h| gpa.free(h);
-        hints.deinit(gpa);
+        bonus.deinit(gpa);
     }
-    var buf: [64]u8 = undefined;
+    const namespaces = paneNamespaces(app);
     var i: usize = 0;
     while (i < command.count) : (i += 1) {
         const id: command.CommandId = @enumFromInt(i);
-        try labels.append(gpa, try gpa.dupe(u8, command.title(id)));
-        try details.append(gpa, try gpa.dupe(u8, command.name(id)));
-        try hints.append(gpa, try gpa.dupe(u8, firstChord(app, command.spec(id).keys, &buf)));
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}  ·  {s}", .{ command.group(id), command.title(id), command.name(id) }));
+        try details.append(gpa, try chordHint(app, gpa, command.spec(id).keys));
+        try bonus.append(gpa, if (inNamespaces(command.name(id), namespaces)) 20 else 0);
     }
     for (app.dyn_commands.list.items, app.dyn_commands.live.items) |c, alive| {
         if (!alive) continue;
-        try labels.append(gpa, try gpa.dupe(u8, c.title));
-        try details.append(gpa, try gpa.dupe(u8, c.id));
-        try hints.append(gpa, try gpa.dupe(u8, if (c.keys.len > 0) c.keys[0] else ""));
+        try labels.append(gpa, try std.fmt.allocPrint(gpa, "{s}  ·  {s}", .{ c.group, c.title }));
+        try details.append(gpa, try std.mem.join(gpa, " / ", c.keys));
+        try bonus.append(gpa, 0);
     }
-    try openPickerWith(app, "Command palette", .commands, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), try hints.toOwnedSlice(gpa));
+    try openPickerWith(app, "Command palette", .commands, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
+    app.overlay.picker.score_bonus = try bonus.toOwnedSlice(gpa);
+    try dispatch.refilterPicker(app);
 }
 
-/// The first default chord of a spec under the active profile, in its
-/// canonical spelling.
-fn firstChord(app: *App, keys: command.Keys, buf: []u8) []const u8 {
+/// The default chords of a spec under the active profile (`both` and
+/// the profile's own), joined by ` / ` — Rust's `key_hint`.
+fn chordHint(app: *App, gpa: Allocator, keys: command.Keys) Allocator.Error![]u8 {
     const own = switch (App.profileOf(app.input_style)) {
         .vim => keys.vim,
         .standard => keys.standard,
     };
-    const spec: []const u8 = if (keys.both.len > 0) keys.both[0] else if (own.len > 0) own[0] else return "";
-    return keymap.normalizeSpec(spec, buf) orelse spec;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for ([_][]const []const u8{ keys.both, own }) |list| for (list) |spec| {
+        if (out.items.len > 0) try out.appendSlice(gpa, " / ");
+        var buf: [64]u8 = undefined;
+        try out.appendSlice(gpa, keymap.normalizeSpec(spec, &buf) orelse spec);
+    };
+    return out.toOwnedSlice(gpa);
+}
+
+/// The id prefixes Rust nudges for the active pane's kind.
+fn paneNamespaces(app: *App) []const []const u8 {
+    const p = app.panes.get(app.active orelse return &.{}) orelse return &.{};
+    return switch (p.*) {
+        .pty => &.{ "term.", "pty.", "session." },
+        .editor => &.{ "editor.", "buffer.", "lsp.", "vim." },
+        .request => &.{ "http.", "chain." },
+        .diff => &.{ "diff.", "git." },
+        .md_preview => &.{ "md.", "editor." },
+        else => &.{},
+    };
+}
+
+fn inNamespaces(id: []const u8, namespaces: []const []const u8) bool {
+    for (namespaces) |ns| if (std.mem.startsWith(u8, id, ns)) return true;
+    return false;
+}
+
+/// The command ids of the palette's rows, for `Picker.rank`'s boosts.
+pub fn commandIds(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+    const p = &app.overlay.picker;
+    const out = try arena.alloc([]const u8, p.labels.len);
+    for (out, 0..) |*slot, i| slot.* = if (commandAt(app, i)) |ref| switch (ref) {
+        .static => |id| command.name(id),
+        .dyn => |slot_i| app.dyn_commands.list.items[slot_i].id,
+    } else "";
+    return out;
 }
 
 /// The command a palette row (unfiltered index) names.
@@ -420,11 +596,21 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try t.expect(app.overlay == .none);
     try t.expectEqualStrings("a.txt", app.panes.get(app.active.?).?.title());
 
+    // Open file: the recents first (c, b, a — newest first), then the
+    // tree's order (src/ before the root's files), a dotfile included.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".env", .data = "x" });
     try command.run(&app, .{ .static = .@"picker.files" });
+    try t.expectEqualStrings("Open file", app.overlay.picker.state.title);
     const labels = app.overlay.picker.labels;
-    try t.expectEqual(@as(usize, 5), labels.len);
-    try t.expectEqualStrings("README.md", labels[0]);
+    try t.expectEqual(@as(usize, 7), labels.len);
+    try t.expectEqualStrings("c.txt", labels[0]);
+    try t.expectEqualStrings("a.txt", labels[2]);
+    try t.expectEqualStrings("src/.hidden/no.zig", labels[3]);
     try t.expectEqualStrings("src/main.zig", labels[4]);
+    try t.expectEqualStrings("src", app.overlay.picker.details[4]);
+    try t.expectEqualStrings(".env", labels[5]);
+    try t.expectEqualStrings("README.md", labels[6]);
+    try t.expectEqualStrings("", app.overlay.picker.details[6]);
     for ("main") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expectEqualStrings("main.zig", app.panes.get(app.active.?).?.title());
@@ -442,10 +628,13 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try command.run(&app, .{ .static = .palette });
     try t.expectEqualStrings("Command palette", app.overlay.picker.state.title);
     try t.expectEqual(command.count, app.overlay.picker.labels.len);
-    try t.expectEqualStrings("app.quit", app.overlay.picker.details[0]);
-    try t.expectEqualStrings("ctrl+q", app.overlay.picker.hints[0]);
+    try t.expectEqualStrings("app  ·  Quit mnml  ·  app.quit", app.overlay.picker.labels[0]);
+    try t.expectEqualStrings("ctrl+q", app.overlay.picker.details[0]);
+    // An editor is active: its family scores twenty more.
+    try t.expectEqual(@as(i64, 0), app.overlay.picker.score_bonus[0]);
+    try t.expectEqual(@as(i64, 20), app.overlay.picker.score_bonus[@intFromEnum(command.CommandId.@"editor.undo")]);
     for ("view.toggle_wrap") |c| try app.handle(.{ .key = Key.char(c) });
-    try t.expectEqualStrings("view.toggle_wrap", app.overlay.picker.details[app.overlay.picker.filtered.items[0]]);
+    try t.expectEqualStrings("view  ·  Toggle line wrapping (vim :set wrap)  ·  view.toggle_wrap", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expectEqual(true, app.activeEditor().?.wrap.?);

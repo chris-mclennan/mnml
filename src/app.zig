@@ -412,6 +412,13 @@ pub const Overlay = union(enum) {
         /// Parallel to `labels`: the chord hint after the label; an
         /// empty string paints nothing.
         hints: [][]u8 = &.{},
+        /// Parallel to `labels` (or empty): Rust's `PickerItem.priority`
+        /// — a tier that always beats the score (the file picker pins
+        /// workspace files over cross-workspace recents with it).
+        priority: []u8 = &.{},
+        /// Parallel to `labels` (or empty): Rust's `score_bonus`, added
+        /// to the fuzzy score (the palette's pane-scoped +20).
+        score_bonus: []i64 = &.{},
         /// Indices into `labels` in filtered order.
         filtered: std.ArrayListUnmanaged(u32),
         /// The themes picker previews as the cursor moves; Esc puts
@@ -454,6 +461,8 @@ pub const Overlay = union(enum) {
                 gpa.free(p.details);
                 for (p.hints) |h| gpa.free(h);
                 gpa.free(p.hints);
+                gpa.free(p.priority);
+                gpa.free(p.score_bonus);
                 p.filtered.deinit(gpa);
             },
         }
