@@ -15,6 +15,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const git = @import("git.zig");
 const client = @import("../git/client.zig");
+const git_palette = @import("git_palette.zig");
 
 pub const table = .{
     .@"git.status_pane" = &statusPane,
@@ -85,7 +86,7 @@ pub const table = .{
     .@"git.next_repo" = &nextRepo,
     .@"git.prev_repo" = &prevRepo,
     .@"git.refresh_repos" = &refreshRepos,
-    .@"git.reopen_repo" = &notInBuild,
+    .@"git.reopen_repo" = &reopenRepo,
     .@"git.worktree_add" = &worktreeAdd,
     .@"git.worktree_list" = &worktreeList,
     .@"git.worktree_remove" = &worktreeRemove,
@@ -94,10 +95,6 @@ pub const table = .{
 
 fn arena(app: *App) std.mem.Allocator {
     return app.frame.allocator();
-}
-
-fn notInBuild(app: *App) CommandError!void {
-    return app.diag.fail(arena(app), "not in this build yet", .{});
 }
 
 /// The active editor's path, repo-relative, or the reason there is none.
@@ -265,7 +262,6 @@ fn blameToggle(app: *App) CommandError!void {
 
 /// The rail's or the status pane's selected row when one has focus.
 fn selectedRow(app: *App) ?git.Row {
-    if (app.focus == .panel and app.focus.panel == .git) return app.git.selectedRow();
     const id = app.active orelse return null;
     const p = app.panes.get(id) orelse return null;
     return switch (p.*) {
@@ -337,8 +333,9 @@ fn aiRecompose(app: *App) CommandError!void {
     try git.askAi(app, if (on_commit_prompt) .staged else .head, .claude);
 }
 
+/// In and out of git mode (the Rust rail's toggle).
 fn branchRailToggle(app: *App) CommandError!void {
-    try git.toggleRail(app);
+    try git_palette.toggle(app);
 }
 
 // ─── branches ───────────────────────────────────────────────────────────
@@ -498,9 +495,14 @@ fn redo(app: *App) CommandError!void {
 
 // ─── the graph ──────────────────────────────────────────────────────────
 
+/// Git mode: the palette in the sidebar, one graph tab per repo.
 fn graph(app: *App) CommandError!void {
-    const repo = try git.requireRepo(app);
-    _ = try git.openGraph(app, repo);
+    _ = try git.requireRepo(app);
+    try git_palette.enter(app);
+}
+
+fn reopenRepo(app: *App) CommandError!void {
+    try git_palette.openReopenPicker(app);
 }
 
 fn requireGraph(app: *App) CommandError!*git.GraphPane {

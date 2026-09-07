@@ -77,6 +77,7 @@ const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_pane = @import("pty_pane.zig");
 const git_app = @import("git.zig");
+const git_palette = @import("git_palette.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
@@ -365,7 +366,9 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll });
             app.info_view.max_scroll = l.max_scroll;
         };
-        try app.tree.draw(app, ui, side);
+        // Git mode: the palette takes the tree's place (Rust `ui/mod.rs`
+        // on `ActivitySection::Git`).
+        if (app.git_palette.active) try git_palette.draw(app, ui, side) else try app.tree.draw(app, ui, side);
         drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);
     }
     // The right panel takes its width plus a divider off the far side.
@@ -538,7 +541,7 @@ fn drawRightPanel(app: *App, ui: Ui, area: Rect, which: app_mod.PanelId) Allocat
         .todos => try todos.draw(app, ui, area),
         .notes => try notes.draw(app, ui, area),
         .findings => try findings.draw(app, ui, area),
-        .git => try git_app.draw(app, ui, area),
+        .git => try git_palette.draw(app, ui, area),
         .diagnostics => try lsp.drawPanel(app, ui, area),
         .http => try http_panel.draw(app, ui, area),
         .sessions => try sessions.draw(app, ui, area),

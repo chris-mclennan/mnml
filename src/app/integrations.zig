@@ -426,6 +426,7 @@ pub fn chipClick(app: *App, idx: usize, m: Mouse) Allocator.Error!void {
 // ─── the pane ───────────────────────────────────────────────────────────
 
 fn showInstalled(app: *App) CommandError!void {
+    @import("activity_bar.zig").enter(app, .integrations);
     if (!app.integrations.scanned) try refresh(app);
     if (app.panes.findKind(.integrations)) |id| {
         app.showPane(id);

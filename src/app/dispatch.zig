@@ -91,6 +91,7 @@ const cmd_browser = @import("cmd_browser.zig");
 const cmd_http = @import("cmd_http.zig");
 const runners = @import("runners.zig");
 const git_app = @import("git.zig");
+const git_palette = @import("git_palette.zig");
 const ai_app = @import("ai.zig");
 const agents = @import("agents.zig");
 const spend = @import("spend.zig");
@@ -141,12 +142,12 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
-    if (app.focus == .panel and app.right_panel != null) {
+    if (app.focus == .panel and (app.right_panel != null or (app.focus.panel == .git and app.git_palette.active))) {
         const took = switch (app.focus.panel) {
             .todos => try todos.handleKey(app, k),
             .notes => try notes.handleKey(app, k),
             .findings => try findings.handleKey(app, k),
-            .git => try git_app.handleKey(app, k),
+            .git => try git_palette.handleKey(app, k),
             .diagnostics => try lsp.panelKey(app, k),
             .http => try http_panel.handleKey(app, k),
             .sessions => try sessions.handleKey(app, k),
@@ -760,6 +761,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .toggle_auto_refresh => |p| try auto_refresh.toggle(app, p),
         .set_coverage_mode => |m| try coverage.setMode(app, m),
         .menu_bar => |i| try menu_bar.openIndex(app, i),
+        .git_palette => |a| try git_palette.menuAction(app, a),
         .none => {},
     }
 }
@@ -1167,7 +1169,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .notes => try notes.rowMouse(app, pr.idx, m),
             .findings => try findings.rowMouse(app, pr.idx, m),
             .sessions => try sessions.rowMouse(app, pr.idx, m),
-            .git => try git_app.rowMouse(app, pr.idx, m),
+            .git => try git_palette.rowMouse(app, pr.idx, m),
             .diagnostics => try lsp.rowMouse(app, pr.idx, m),
             .http => try http_panel.rowMouse(app, pr.idx, m),
         },
@@ -1176,7 +1178,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .notes => try notes.kebabMouse(app, pr.idx, m),
             .findings => try findings.kebabMouse(app, pr.idx, m),
             .sessions => try sessions.kebabMouse(app, pr.idx, m),
-            .git => try git_app.kebabMouse(app, pr.idx, m),
+            .git => {},
             .http => try http_panel.kebabMouse(app, pr.idx, m),
             .diagnostics => {},
         },
@@ -1185,7 +1187,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .notes => try notes.chipMouse(app, c.kind, m),
             .findings => try findings.chipMouse(app, c.kind, m),
             .sessions => try sessions.chipMouse(app, c.kind, m),
-            .git => try git_app.chipMouse(app, c.kind, m),
+            .git => try git_palette.chipMouse(app, c.kind, m),
             .diagnostics => try lsp.chipMouse(app, m),
             .http => try http_panel.chipMouse(app, c.kind, m),
         },
@@ -1194,7 +1196,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .notes => notes.filterMouse(app, m),
             .findings => findings.filterMouse(app, m),
             .sessions => sessions.filterMouse(app, m),
-            .git => git_app.filterMouse(app, m),
+            .git => git_palette.filterMouse(app, m),
             .diagnostics => lsp.filterMouse(app, m),
             .http => http_panel.filterMouse(app, m),
         },
@@ -1204,7 +1206,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .notes => if (hitRect(app, m.x, m.y)) |r| notes.scrollbarMouse(app, r, m),
                 .findings => if (hitRect(app, m.x, m.y)) |r| findings.scrollbarMouse(app, r, m),
                 .sessions => if (hitRect(app, m.x, m.y)) |r| sessions.scrollbarMouse(app, r, m),
-                .git => if (hitRect(app, m.x, m.y)) |r| git_app.scrollbarMouse(app, r, m),
+                .git => if (hitRect(app, m.x, m.y)) |r| git_palette.scrollbarMouse(app, r, m),
                 .diagnostics => if (hitRect(app, m.x, m.y)) |r| lsp.scrollbarMouse(app, r, m),
                 .http => if (hitRect(app, m.x, m.y)) |r| http_panel.scrollbarMouse(app, r, m),
             },
@@ -1541,6 +1543,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .rail => |part| try activity_bar.mouse(app, part, m),
+        .git_palette => |part| try git_palette.partMouse(app, part, m),
         .welcome => |row| {
             // The welcome pane: a recent file opens, a shortcut row runs
             // its command.
@@ -1604,6 +1607,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
                 if (m.button == .right) return context_menus.openNewTabMenu(app, m.x, m.y);
+                // Git mode's `+` brings a closed repo back (Rust `git.reopen_repo`).
+                if (app.git_palette.active) return runCmd(app, .@"git.reopen_repo");
                 const layout = app.layouts.current();
                 if (try layout.leafAt(app.frame.allocator(), leaf_idx)) |lid| {
                     if (layout.leaf(lid)) |leaf| app.setActive(leaf.active);

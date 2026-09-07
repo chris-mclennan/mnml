@@ -128,6 +128,8 @@ fn markEdge(cells: []Cell, me: usize, k: usize, closing: bool) void {
 pub const State = struct {
     scroll: usize = 0,
     detail_scroll: usize = 0,
+    /// A jump landed off screen: centre it on the next paint.
+    center_next: bool = false,
 };
 
 pub const SortCol = enum {

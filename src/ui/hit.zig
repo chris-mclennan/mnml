@@ -18,6 +18,7 @@ const ids = @import("../core/ids.zig");
 const panel = @import("../core/panel.zig");
 const activity_bar = @import("activity_bar.zig");
 const tree_view = @import("tree_view.zig");
+const git_palette = @import("git_palette.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -96,6 +97,9 @@ pub const HitTarget = union(enum) {
     /// icon, or the settings gear at the bottom.
     rail: activity_bar.Part,
     welcome: WelcomeRow,
+    /// The git palette's repo pill and branch row (`ui/git_palette.zig`);
+    /// its list rows are `.row{ .git }`.
+    git_palette: git_palette.Part,
 
     /// `@tagName` plus the payload, colon-separated: `row:todos:3`,
     /// `editor_cell:0:12:4`, `scrollbar:panel:notes:v`.
@@ -132,6 +136,7 @@ pub const HitTarget = union(enum) {
                 .gear => try w.writeAll(":gear"),
             },
             .welcome => |v| try w.print(":{s}:{d}", .{ @tagName(v.kind), v.idx }),
+            .git_palette => |v| try w.print(":{s}", .{@tagName(v)}),
         }
     }
 };
@@ -280,6 +285,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("rail:explorer", .{ .rail = .{ .section = .explorer } });
     try expectLabel("rail:cloud_agents", .{ .rail = .{ .section = .cloud_agents } });
     try expectLabel("rail:gear", .{ .rail = .gear });
+    try expectLabel("git_palette:repo", .{ .git_palette = .repo });
     try expectLabel("tree_root:0", .{ .tree_root = 0 });
     try expectLabel("tree_chip:new_file", .{ .tree_chip = .new_file });
     try expectLabel("info_view:kebab", .{ .info_view = .kebab });

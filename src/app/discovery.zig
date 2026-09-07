@@ -127,6 +127,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = c.label(app.tree.isFullyCollapsed()),
             .detail = try f.fmt(arena, "click runs {s}", .{command.name(tree_mod.chipCommand(c))}),
         },
+        .git_palette => |part| switch (part) {
+            .repo => .{ .title = "Repo", .detail = "click: switch repo · reopen a closed one · add a workspace" },
+            .branch => .{ .title = "Branch", .detail = "click opens the checkout picker" },
+        },
         .info_view => |part| switch (part) {
             .kebab => .{ .title = "Sidebar menu", .detail = "click: turn the info panel off" },
             .try_it => .{ .title = "Try it", .detail = "click runs the command the panel names" },

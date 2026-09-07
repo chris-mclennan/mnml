@@ -647,7 +647,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
         .panel => |which| {
             const cursor: usize = switch (which) {
                 .todos => app.todos.list.cursor,
-                .git => app.git.rail.cursor,
+                .git => app.git_palette.cursor,
                 .http => app.http_panel.list.cursor,
                 .diagnostics => app.lsp.panel.cursor,
                 .notes, .findings, .sessions => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
@@ -656,7 +656,7 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
             const m: Mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = .left };
             switch (which) {
                 .todos => try @import("../todos.zig").kebabMouse(app, @intCast(cursor), m),
-                .git => try @import("git.zig").kebabMouse(app, @intCast(cursor), m),
+                .git => try @import("git_palette.zig").openRowMenu(app, cursor, r.x, r.y),
                 .http => try @import("http_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .diagnostics => try @import("lsp.zig").rowMouse(app, @intCast(cursor), .{ .x = r.x, .y = r.y, .kind = .press, .button = .right }),
                 .notes, .findings, .sessions => {},

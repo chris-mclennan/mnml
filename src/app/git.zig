@@ -43,10 +43,9 @@ const git_toolbar = @import("../ui/git_toolbar.zig");
 const graph_view = @import("../ui/git_graph_view.zig");
 const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
+const git_palette = @import("git_palette.zig");
 
 pub const Row = status_view.Row;
-pub const RailSection = status_view.RailSection;
-pub const Panel = list_panel.ListPanel(Row);
 
 /// How long a status snapshot is trusted before `tick` asks again.
 pub const status_ttl_ms: i64 = 3000;
@@ -76,6 +75,8 @@ pub const Pick = enum {
     worktree_shell,
     switch_repo,
     file_history,
+    /// The palette's closed-repo picker.
+    reopen_repo,
 };
 
 pub const PromptKind = enum {
@@ -206,6 +207,8 @@ pub const Detail = struct {
 pub const GraphPane = struct {
     gpa: Allocator,
     repo: u32,
+    /// The repo's name — the tab's title. Owned.
+    name: []u8,
     arena: std.heap.ArenaAllocator,
     commits: []parse.Commit = &.{},
     lanes: []graph_view.Lane = &.{},
@@ -234,6 +237,7 @@ pub const GraphPane = struct {
     body: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
 
     pub fn deinit(self: *GraphPane) void {
+        self.gpa.free(self.name);
         self.filter.deinit(self.gpa);
         self.detail_arena.deinit();
         self.arena.deinit();
@@ -290,10 +294,9 @@ pub const State = struct {
     marks: std.StringHashMapUnmanaged([]const parse.GutterMark) = .empty,
     status_at_ms: i64 = 0,
     status_pending: bool = false,
-    /// Rail rows built from `status`; `path` borrows the snapshot.
+    /// The status pane's rows, built from `status`; `path` borrows
+    /// the snapshot.
     rows: std.ArrayListUnmanaged(Row) = .empty,
-    filtered: std.ArrayListUnmanaged(u32) = .empty,
-    rail: Panel.State = .{},
     collapsed: std.enums.EnumSet(parse.Group) = .initEmpty(),
     blames: std.AutoHashMapUnmanaged(PaneId, Blame) = .empty,
     /// The pane a blame was asked for, until it lands.
@@ -319,9 +322,7 @@ pub const State = struct {
     /// A message body the AI returned, appended to the prompt's subject
     /// line at accept. Owned.
     ai_body: ?[]u8 = null,
-    /// The branch rail: open or folded, its own snapshot, and which of
-    /// its sections are folded.
-    rail_open: bool = false,
+    /// The palette's data (`app/git_palette.zig`): its own snapshot.
     rail_pending: bool = false,
     rail_snapshot: alloc.SnapshotArena,
     rail_branches: []parse.Branch = &.{},
@@ -330,7 +331,6 @@ pub const State = struct {
     /// The rail was asked for without `gh`; said once.
     rail_gh_toasted: bool = false,
     rail_loaded: bool = false,
-    rail_folded: std.enums.EnumSet(RailSection) = .initEmpty(),
 
     pub fn init(gpa: Allocator) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .rail_snapshot = alloc.SnapshotArena.init(gpa) };
@@ -345,8 +345,6 @@ pub const State = struct {
         self.blames.deinit(gpa);
         self.marks.deinit(gpa);
         self.rows.deinit(gpa);
-        self.filtered.deinit(gpa);
-        self.rail.deinit(gpa);
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
         self.rail_snapshot.deinit();
@@ -367,12 +365,6 @@ pub const State = struct {
     pub fn indexOfId(self: *const State, id: u32) ?usize {
         for (self.repos.items, 0..) |r, i| if (r.id == id) return i;
         return null;
-    }
-
-    /// The rail row under the cursor, in display order.
-    pub fn selectedRow(self: *const State) ?Row {
-        if (self.rail.cursor >= self.filtered.items.len) return null;
-        return self.rows.items[self.filtered.items[self.rail.cursor]];
     }
 
     /// The branch for the statusline: the name, `@sha` when detached,
@@ -914,7 +906,6 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 st.rail_gh_toasted = true;
                 app.toast("open PRs need `gh` on PATH", .{});
             }
-            try rebuildRows(app);
         },
         .head_sha => |sha| {
             if (sha.len == 0) return;
@@ -945,7 +936,7 @@ pub fn afterChange(app: *App, repo: *client.Repo) Allocator.Error!void {
     if (st.activeRepo()) |a| if (a.id == repo.id) {
         st.status_pending = false;
         requestStatus(app) catch {};
-        if (st.rail_open) requestRail(app) catch {};
+        if (app.git_palette.active) requestRail(app) catch {};
     };
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
         .diff => |*dp| if (dp.repo == repo.id and dp.scope != .commit) refreshDiff(app, dp) catch {},
@@ -969,7 +960,6 @@ fn clearStatus(app: *App) void {
     st.rail_snapshot.reset();
     st.marks.clearRetainingCapacity();
     st.rows.clearRetainingCapacity();
-    st.filtered.clearRetainingCapacity();
     st.snapshot.reset();
     app.needs_render = true;
 }
@@ -994,57 +984,12 @@ fn rebuildRows(app: *App) Allocator.Error!void {
             try st.rows.append(app.gpa, .{ .header = false, .group = g, .code = e.code, .path = e.path, .entry = @intCast(i) });
         };
     }
-    if (st.rail_open) try appendRailRows(app);
-    try refilter(app);
-}
-
-/// The branch rail below the status groups: three section headers,
-/// each folding its rows. Before the data lands the sections say so.
-fn appendRailRows(app: *App) Allocator.Error!void {
-    const st = &app.git;
-    const gpa = app.gpa;
-    const g: parse.Group = .unstaged;
-    for ([_]RailSection{ .branches, .worktrees, .prs }) |sec| {
-        const folded = st.rail_folded.contains(sec);
-        const count: u32 = switch (sec) {
-            .branches => @intCast(st.rail_branches.len),
-            .worktrees => @intCast(st.rail_worktrees.len),
-            .prs => @intCast(st.rail_prs.len),
-        };
-        try st.rows.append(gpa, .{ .header = true, .group = g, .kind = .section, .section = sec, .count = count, .folded = folded });
-        if (folded) continue;
-        if (!st.rail_loaded) {
-            try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .note, .section = sec, .path = if (st.rail_pending) "loading…" else "press r to load" });
-            continue;
-        }
-        switch (sec) {
-            .branches => for (st.rail_branches, 0..) |b, i| {
-                const detail: []const u8 = if (b.gone) "gone" else if (b.ahead > 0 and b.behind > 0)
-                    try std.fmt.allocPrint(st.rail_snapshot.allocator(), "↑{d} ↓{d}", .{ b.ahead, b.behind })
-                else if (b.ahead > 0)
-                    try std.fmt.allocPrint(st.rail_snapshot.allocator(), "↑{d}", .{b.ahead})
-                else if (b.behind > 0)
-                    try std.fmt.allocPrint(st.rail_snapshot.allocator(), "↓{d}", .{b.behind})
-                else
-                    "";
-                try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .branch, .section = sec, .path = b.name, .detail = detail, .current = b.current, .remote = b.remote, .entry = @intCast(i) });
-            },
-            .worktrees => for (st.rail_worktrees, 0..) |w, i| {
-                const sep = std.mem.indexOfScalar(u8, w, '\x1f');
-                const path = if (sep) |x| w[0..x] else w;
-                const branch = if (sep) |x| w[x + 1 ..] else "";
-                try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .worktree, .section = sec, .path = path, .detail = branch, .current = i == 0, .entry = @intCast(i) });
-            },
-            .prs => {
-                if (st.rail_prs.len == 0) {
-                    try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .note, .section = sec, .path = if (cmd_app.onPath(app, "gh")) "no open PRs" else "needs `gh` on PATH" });
-                }
-                for (st.rail_prs) |pr| {
-                    try st.rows.append(gpa, .{ .header = false, .group = g, .kind = .pr, .section = sec, .path = pr.title, .detail = pr.branch, .entry = pr.number });
-                }
-            },
-        }
-    }
+    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
+        .git_status => |*s| if (s.cursor >= st.rows.items.len) {
+            s.cursor = st.rows.items.len -| 1;
+        },
+        else => {},
+    };
 }
 
 /// Ask the active repo for the rail's data, unless it is on the way.
@@ -1058,58 +1003,6 @@ pub fn requestRail(app: *App) CommandError!void {
         return err;
     };
     try rebuildRows(app);
-}
-
-/// Show or fold the branch rail; showing it fetches the data.
-pub fn toggleRail(app: *App) CommandError!void {
-    const st = &app.git;
-    _ = try requireRepo(app);
-    st.rail_open = !st.rail_open;
-    if (st.rail_open) try requestRail(app) else try rebuildRows(app);
-    app.needs_render = true;
-}
-
-/// The filter is a case-insensitive substring over the path; headers
-/// stay while their group has a visible row.
-pub fn refilter(app: *App) Allocator.Error!void {
-    const st = &app.git;
-    st.filtered.clearRetainingCapacity();
-    const q = st.rail.filterText();
-    var i: usize = 0;
-    while (i < st.rows.items.len) : (i += 1) {
-        const row = st.rows.items[i];
-        if (row.header) {
-            if (q.len == 0) {
-                try st.filtered.append(app.gpa, @intCast(i));
-                continue;
-            }
-            var any = false;
-            var j = i + 1;
-            while (j < st.rows.items.len and !st.rows.items[j].header) : (j += 1) {
-                if (st.rows.items[j].kind != .note and containsIgnoreCase(st.rows.items[j].path, q)) any = true;
-            }
-            if (any) try st.filtered.append(app.gpa, @intCast(i));
-            continue;
-        }
-        if (q.len == 0 or (row.kind != .note and containsIgnoreCase(row.path, q))) try st.filtered.append(app.gpa, @intCast(i));
-    }
-    if (st.rail.cursor >= st.filtered.items.len) st.rail.cursor = st.filtered.items.len -| 1;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .git_status => |*s| if (s.cursor >= st.rows.items.len) {
-            s.cursor = st.rows.items.len -| 1;
-        },
-        else => {},
-    };
-}
-
-fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > hay.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= hay.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(hay[i .. i + needle.len], needle)) return true;
-    }
-    return false;
 }
 
 /// Marks for the editor gutter of `abs_path`, from the active repo's
@@ -1285,22 +1178,27 @@ pub fn diffHome(dp: *DiffPane, end: bool) void {
     dp.cursor = if (end) shown[shown.len - 1] else shown[0];
 }
 
-pub fn openGraph(app: *App, repo: *client.Repo) CommandError!PaneId {
+/// The graph pane on `repo`, made when there is none, its log asked
+/// for again. The layout is left alone: git mode places the tabs.
+pub fn ensureGraphPane(app: *App, repo: *client.Repo) CommandError!PaneId {
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
         .git_graph => |*g| if (g.repo == repo.id) {
-            const id: PaneId = @intCast(i);
-            app.showPane(id);
             try refreshGraph(app, g);
-            return id;
+            return @intCast(i);
         },
         else => {},
     };
-    var g: GraphPane = .{ .gpa = app.gpa, .repo = repo.id, .arena = .init(app.gpa), .detail_arena = .init(app.gpa) };
+    var g: GraphPane = .{ .gpa = app.gpa, .repo = repo.id, .name = try app.gpa.dupe(u8, repo.name), .arena = .init(app.gpa), .detail_arena = .init(app.gpa) };
     errdefer g.deinit();
     const id = try app.panes.add(.{ .git_graph = g });
     g = undefined;
-    app.showPane(id);
     try refreshGraph(app, &app.panes.get(id).?.git_graph);
+    return id;
+}
+
+pub fn openGraph(app: *App, repo: *client.Repo) CommandError!PaneId {
+    const id = try ensureGraphPane(app, repo);
+    app.showPane(id);
     return id;
 }
 
@@ -1518,6 +1416,7 @@ pub fn acceptPick(app: *App, label_in: []const u8, detail_in: []const u8) Comman
         .switch_repo => {
             for (st.repos.items, 0..) |r, i| if (std.mem.eql(u8, r.name, label)) return switchTo(app, i);
         },
+        .reopen_repo => try git_palette.acceptReopen(app, detail),
         .checkout, .recent => {
             const repo = try requireRepo(app);
             // A remote branch checks out as a local tracking branch of
@@ -1713,46 +1612,10 @@ pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
     const gpa = app.gpa;
     if (row.header) {
         if (what == .open) {
-            if (row.kind == .section) st.rail_folded.toggle(row.section) else st.collapsed.toggle(row.group);
+            st.collapsed.toggle(row.group);
             try rebuildRows(app);
         }
         return;
-    }
-    switch (row.kind) {
-        .status => {},
-        .branch => {
-            if (row.entry >= st.rail_branches.len) return;
-            const b = st.rail_branches[row.entry];
-            switch (what) {
-                .open => {
-                    if (b.current) return app.diag.fail(app.frame.allocator(), "{s} is checked out", .{b.name});
-                    // A remote branch checks out as a local one of the same short name.
-                    const name = if (b.remote) (if (std.mem.indexOfScalar(u8, b.name, '/')) |x| b.name[x + 1 ..] else b.name) else b.name;
-                    try openConfirm(app, .{ .checkout = try gpa.dupe(u8, name) }, try std.fmt.allocPrint(gpa, "  Checkout {s}?", .{name}));
-                },
-                .discard => {
-                    if (b.current) return app.diag.fail(app.frame.allocator(), "cannot delete the checked-out branch", .{});
-                    if (b.remote) return app.diag.fail(app.frame.allocator(), "remote branches are not deleted from here", .{});
-                    try openConfirm(app, .{ .delete_branch = try gpa.dupe(u8, b.name) }, try std.fmt.allocPrint(gpa, "  Delete branch {s}? (git branch -D)", .{b.name}));
-                },
-                .stage, .unstage => {},
-            }
-            return;
-        },
-        .worktree => {
-            if (what == .open) app.toast("worktree: {s}", .{row.path});
-            return;
-        },
-        .pr => {
-            if (what != .open) return;
-            for (st.rail_prs) |pr| if (pr.number == row.entry) {
-                openExternal(app, pr.url);
-                app.toast("{s}", .{pr.url});
-                return;
-            };
-            return;
-        },
-        .section, .note => return,
     }
     const repo = st.activeRepo() orelse return error.NoRepo;
     switch (what) {
@@ -1777,36 +1640,6 @@ pub fn openRowFile(app: *App, row: Row) CommandError!void {
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
-/// The rail's keys: the list's own first, then `s u x a A c r o`.
-pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
-    const st = &app.git;
-    switch (try Panel.handleKey(&st.rail, app.gpa, k)) {
-        .consumed => return true,
-        .filter_changed => {
-            try refilter(app);
-            return true;
-        },
-        .activate => |i| {
-            st.rail.cursor = i;
-            if (st.selectedRow()) |row| runToast(app, actOnRow(app, row, .open));
-            return true;
-        },
-        .ignored => {},
-    }
-    if (st.rail.filter_focused) return false;
-    switch (k.code) {
-        .esc => {
-            if (app.active) |a| app.focus = .{ .pane = a };
-            return true;
-        },
-        .char => |c| {
-            if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
-            return rowLetter(app, c, st.selectedRow());
-        },
-        else => return false,
-    }
-}
-
 /// The letters the rail and the status pane share.
 pub fn rowLetter(app: *App, c: u21, row: ?Row) Allocator.Error!bool {
     switch (c) {
@@ -1818,11 +1651,7 @@ pub fn rowLetter(app: *App, c: u21, row: ?Row) Allocator.Error!bool {
         'A' => runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })),
         'c' => runToast(app, command.run(app, .{ .static = .@"git.commit" })),
         'n' => runToast(app, command.run(app, .{ .static = .@"git.new_branch" })),
-        'b' => runToast(app, toggleRail(app)),
-        'r' => {
-            runToast(app, requestStatus(app));
-            if (app.git.rail_open) runToast(app, requestRail(app));
-        },
+        'r' => runToast(app, requestStatus(app)),
         else => return false,
     }
     return true;
@@ -2408,72 +2237,6 @@ pub fn runToast(app: *App, result: CommandError!void) void {
 
 // ─── mouse (D6) ─────────────────────────────────────────────────────────
 
-pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
-    const st = &app.git;
-    switch (m.kind) {
-        .press => {
-            if (idx >= st.filtered.items.len) return;
-            focusPanel(app);
-            st.rail.cursor = idx;
-            if (m.button == .right) return openRowMenu(app, m.x, m.y);
-            if (m.button != .left) return;
-            const again = if (st.last_click) |lc| lc.idx == idx and app.now_ms - lc.at_ms <= double_click_ms else false;
-            st.last_click = .{ .idx = idx, .at_ms = app.now_ms };
-            if (again) {
-                st.last_click = null;
-                if (st.selectedRow()) |row| runToast(app, actOnRow(app, row, .open));
-            }
-        },
-        .scroll_up => st.rail.cursor -|= 3,
-        .scroll_down => st.rail.cursor = @min(st.rail.cursor + 3, st.filtered.items.len -| 1),
-        else => {},
-    }
-}
-
-pub fn kebabMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
-    if (m.kind != .press or idx >= app.git.filtered.items.len) return;
-    focusPanel(app);
-    app.git.rail.cursor = idx;
-    try openRowMenu(app, m.x, m.y);
-}
-
-pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
-    if (m.kind != .press) return;
-    switch (kind) {
-        .refresh => runToast(app, requestStatus(app)),
-        .new => runToast(app, command.run(app, .{ .static = .@"git.commit" })),
-        .sort, .view => {},
-    }
-}
-
-pub fn filterMouse(app: *App, m: Mouse) void {
-    if (m.kind != .press) return;
-    focusPanel(app);
-    app.git.rail.filter_focused = true;
-}
-
-pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
-    const st = &app.git;
-    const total = st.filtered.items.len;
-    if (total == 0 or bar.h == 0) return;
-    switch (m.kind) {
-        .press, .drag => {
-            focusPanel(app);
-            const off: usize = m.y -| bar.y;
-            st.rail.cursor = @min(off * total / bar.h, total - 1);
-        },
-        .scroll_up => st.rail.cursor -|= 3,
-        .scroll_down => st.rail.cursor = @min(st.rail.cursor + 3, total - 1),
-        else => {},
-    }
-}
-
-pub fn focusPanel(app: *App) void {
-    if (app.activeBuffer()) |b| b.input.onBlur();
-    app.focus = .{ .panel = .git };
-    app.needs_render = true;
-}
-
 /// A status-pane row was clicked (`.script_hit`): select, a second
 /// click opens the diff, right opens the row menu.
 pub fn statusPaneClick(app: *App, sp: *StatusPane, idx: u32, m: Mouse) Allocator.Error!void {
@@ -2490,8 +2253,6 @@ pub fn statusPaneClick(app: *App, sp: *StatusPane, idx: u32, m: Mouse) Allocator
 }
 
 fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const st = &app.git;
-    if (st.selectedRow()) |row| if (row.kind != .status) return openRailMenu(app, x, y);
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "Open diff", .action = .{ .command = .@"git.diff_file" } },
         .{ .label = "Open file", .action = .{ .command = .@"git.open_file" } },
@@ -2506,74 +2267,7 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Git", items, x, y);
 }
 
-fn openRailMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const items = try app.gpa.dupe(command.MenuItem, &.{
-        .{ .label = "Checkout…", .action = .{ .command = .@"git.checkout" } },
-        .{ .label = "New branch…", .action = .{ .command = .@"git.new_branch" } },
-        .{ .label = "Delete branch…", .action = .{ .command = .@"git.delete_branch" } },
-        .{ .label = "Merge into current…", .action = .{ .command = .@"git.merge" }, .separator_before = true },
-        .{ .label = "Rebase onto…", .action = .{ .command = .@"git.rebase" } },
-        .{ .label = "Add worktree…", .action = .{ .command = .@"git.worktree_add" }, .separator_before = true },
-        .{ .label = "Remove worktree…", .action = .{ .command = .@"git.worktree_remove" } },
-        .{ .label = "Fetch", .action = .{ .command = .@"git.fetch" }, .separator_before = true },
-        .{ .label = "Hide branch rail", .action = .{ .command = .@"git.branch_rail_toggle" }, .separator_before = true },
-    });
-    errdefer app.gpa.free(items);
-    try app.openMenu("Branches", items, x, y);
-}
-
 // ─── draw (D6) ──────────────────────────────────────────────────────────
-
-const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
-const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
-
-/// The rail (the right panel's `.git`).
-pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
-    const st = &app.git;
-    if (!st.discovered) discover(app) catch {};
-    if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
-    if (st.rail_open and !st.rail_loaded and !st.rail_pending and st.activeRepo() != null) requestRail(app) catch {};
-    const rows = try ui.arena.alloc(Row, st.filtered.items.len);
-    for (st.filtered.items, 0..) |idx, i| rows[i] = st.rows.items[idx];
-    const repo_name: []const u8 = if (st.activeRepo()) |r| r.name else "";
-    const branch = st.branchLabel() orelse "";
-    const prov = st.provider.label();
-    const subtitle = if (st.repos.items.len > 1)
-        ui.fmt(" {s} · {s} ({d}){s}{s}", .{ repo_name, branch, st.badge(), if (prov.len > 0) " · " else "", prov })
-    else
-        ui.fmt(" {s} ({d}){s}{s}", .{ branch, st.badge(), if (prov.len > 0) " · " else "", prov });
-    const empty: list_panel.EmptyState = if (st.activeRepo() == null)
-        .{ .message = "Not a git repository.", .hint = "git init, or open a workspace with one." }
-    else if (st.status == null)
-        .{ .message = "Reading git status…", .hint = "" }
-    else if (st.rows.items.len == 0)
-        .{ .message = "Working tree clean.", .hint = "Nothing to stage or commit." }
-    else
-        .{ .message = "No matches — Esc clears" };
-    const caret = Panel.draw(&st.rail, ui, area, .{
-        .panel = .git,
-        .label = "GIT",
-        .subtitle = subtitle,
-        .rows = rows,
-        .paintRow = status_view.paintRow,
-        .has_kebab = true,
-        .empty = empty,
-    });
-    if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
-    if (st.busy > 0 or st.status_pending) paintSpinner(app, ui, area, 3);
-}
-
-/// The refresh chip's three cells show a spinner while git runs.
-fn paintSpinner(app: *App, ui: Ui, area: Rect, label_w: u16) void {
-    if (area.w < label_w + 3 + 3 or area.h == 0) return;
-    const frames: []const []const u8 = if (ui.ascii) &spinner_ascii else &spinner_frames;
-    const idx: usize = @intCast(@mod(@divFloor(app.now_ms, 80), @as(i64, @intCast(frames.len))));
-    const style = chip.refreshStyle(ui.theme, ui.theme.panel_bg.bg);
-    const x = area.right() - 3;
-    _ = ui.putStr(x, area.y, 1, " ", style);
-    _ = ui.putStr(x + 1, area.y, 1, frames[idx], style);
-    _ = ui.putStr(x + 2, area.y, 1, " ", style);
-}
 
 /// `Pane.git_status`.
 pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect) Allocator.Error!void {
@@ -2869,19 +2563,15 @@ test "headless smoke: git init → the rail lists an untracked file; stage moves
     try testing.expectEqual(@as(u32, 1), st.badge());
     var txt = try f.screen();
     try testing.expect(std.mem.indexOf(u8, txt, "GIT") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Untracked (1)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "new.txt") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "WIP @") != null);
     testing.allocator.free(txt);
 
-    // Stage everything: the file moves to the Staged group.
+    // Stage everything: the status says so.
     try command.run(&f.app, .{ .static = .@"git.stage_all" });
     try f.settle(2000);
     try f.settle(2000);
-    txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "Staged (1)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Untracked") == null);
-    try testing.expect(std.mem.indexOf(u8, txt, "A new.txt") != null);
-    testing.allocator.free(txt);
+    try testing.expectEqual(@as(u32, 1), st.status.?.staged);
+    try testing.expectEqual(@as(u32, 0), st.status.?.untracked);
 
     // A modified tracked file: its diff pane shows the +/- lines and the
     // gutter mark lands on the editor.
@@ -2930,6 +2620,7 @@ test "the graph pane lays out the log, and enter opens the commit's diff" {
     f.app.tree.visible = false;
     try command.run(&f.app, .{ .static = .@"git.graph" });
     try f.settle(2000);
+    f.app.focus = .{ .pane = f.app.active.? };
     const g = activeGraph(&f.app).?;
     try testing.expectEqual(@as(usize, 2), g.commits.len);
     try testing.expectEqualStrings("second commit", g.commits[0].subject);
@@ -2981,6 +2672,7 @@ test "the WIP row: a dirty tree puts it first, its buttons stage / unstage throu
     try command.run(&f.app, .{ .static = .@"git.graph" });
     try requestStatus(&f.app);
     try f.settle(2000);
+    f.app.focus = .{ .pane = f.app.active.? };
     const g = activeGraph(&f.app).?;
     try testing.expect(g.has_wip);
     try testing.expectEqual(@as(usize, 2), g.totalRows());
@@ -3016,64 +2708,59 @@ test "cleanCommitMessage strips fences and splits the subject from the body" {
     try testing.expectEqual(@as(usize, 0), bare.body.len);
 }
 
-test "the branch rail: toggling it lists the branches with their tracking counts, worktrees and the PR note; a section folds; a branch row asks before checkout" {
-    var f = try Fixture.init(100, 30);
+test "git mode: entering lists the branches and the worktree in the palette, one graph tab per repo; a branch row asks nothing and jumps; leaving puts the layout back" {
+    var f = try Fixture.init(120, 40);
     defer f.deinit();
     try f.sh(&.{ "init", "-q", "-b", "main" });
     try f.write("a.txt", "one\n");
     try f.sh(&.{ "add", "a.txt" });
     try f.sh(&.{ "commit", "-q", "-m", "first" });
     try f.sh(&.{ "branch", "feature" });
-    f.app.tree.visible = false;
     const st = &f.app.git;
+    try f.write("b.txt", "two\n");
+    const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "b.txt" });
+    defer testing.allocator.free(abs);
+    const editor = try f.app.openPath(abs);
     try command.run(&f.app, .{ .static = .@"view.activity_git" });
-    try command.run(&f.app, .{ .static = .@"git.refresh" });
-    try f.settle(2000);
-    try testing.expect(!st.rail_open);
-    try command.run(&f.app, .{ .static = .@"git.branch_rail_toggle" });
-    try testing.expect(st.rail_open);
+    try testing.expect(f.app.git_palette.active);
+    try testing.expect(f.app.focus == .panel and f.app.focus.panel == .git);
     try f.settle(2000);
     try testing.expect(st.rail_loaded);
     try testing.expectEqual(@as(usize, 2), st.rail_branches.len);
     try testing.expectEqual(@as(usize, 1), st.rail_worktrees.len);
+    // The sidebar snapped to a fifth of the screen; the layout is the one graph tab.
+    try testing.expectEqual(@as(u16, 24), f.app.tree.width);
+    const panes = try f.app.layouts.current().allPanes(f.app.frame.allocator());
+    try testing.expectEqual(@as(usize, 1), panes.len);
+    try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "Branches (2)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "* main") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "feature") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Worktrees (1)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Pull requests (0)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, " GIT ") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} LOCAL         2") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25CB} feature") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25CF} main") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{25BE} WORKTREES     1") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "git graph") == null);
     testing.allocator.free(txt);
-    // Fold the branches section: its rows go, the header stays.
-    var branches_row: ?usize = null;
+    // Enter on the feature row selects it and keeps the palette's focus.
+    const rows = try git_palette.rows(&f.app, f.app.frame.allocator());
     var feature_row: ?usize = null;
-    for (st.rows.items, 0..) |r, i| {
-        if (r.kind == .section and r.section == .branches) branches_row = i;
-        if (r.kind == .branch and std.mem.eql(u8, r.path, "feature")) feature_row = i;
-    }
-    try testing.expect(feature_row != null);
-    try actOnRow(&f.app, st.rows.items[branches_row.?], .open);
-    txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "▸ Branches (2)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "feature") == null);
-    testing.allocator.free(txt);
-    try actOnRow(&f.app, st.rows.items[branches_row.?], .open);
-    // Enter on `feature` asks first; yes checks it out through the worker.
-    feature_row = null;
-    for (st.rows.items, 0..) |r, i| if (r.kind == .branch and std.mem.eql(u8, r.path, "feature")) {
+    for (rows, 0..) |r, i| if (r == .branch and std.mem.eql(u8, r.branch.name, "feature")) {
         feature_row = i;
     };
-    try actOnRow(&f.app, st.rows.items[feature_row.?], .open);
-    try testing.expect(f.app.overlay == .confirm);
-    try testing.expect(st.confirm == .checkout);
-    try acceptConfirm(&f.app, 0);
-    try f.settle(2000);
-    try f.settle(2000);
-    try testing.expectEqualStrings("feature", st.branchLabel().?);
-    // Hiding the rail drops its rows.
-    try command.run(&f.app, .{ .static = .@"git.branch_rail_toggle" });
+    try git_palette.activate(&f.app, feature_row.?);
+    try testing.expectEqualStrings("feature", f.app.git_palette.selected.?);
+    try testing.expect(f.app.focus == .panel);
+    // Leaving through another section restores the editor.
+    try command.run(&f.app, .{ .static = .@"view.activity_explorer" });
+    try testing.expect(!f.app.git_palette.active);
+    try testing.expectEqual(editor, f.app.active.?);
     txt = try f.screen();
-    try testing.expect(std.mem.indexOf(u8, txt, "Branches (") == null);
+    try testing.expect(std.mem.indexOf(u8, txt, "LOCAL") == null);
     testing.allocator.free(txt);
+    // Back in: the same pane, no second one.
+    try command.run(&f.app, .{ .static = .@"git.graph" });
+    const again = try f.app.layouts.current().allPanes(f.app.frame.allocator());
+    try testing.expectEqualSlices(PaneId, panes, again);
 }
 
 test "git.worktree_add: Tab completes the path — the first word — and leaves the branch after it alone" {

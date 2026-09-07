@@ -556,7 +556,16 @@ pub const MenuAction = union(enum) {
     /// // changed (menu-bar): a row of the ` » ` overflow menu — opens
     /// menu-bar menu `index` (`app/menu_bar.zig`).
     menu_bar: u8,
+    /// A git palette row menu's action (`app/git_palette.zig`).
+    git_palette: GitPaletteAct,
     none,
+};
+
+/// What a git palette menu row does, with the index of the row it
+/// names (a rail branch, a worktree, a PR, a repo, a closed repo).
+pub const GitPaletteAct = struct {
+    what: enum { checkout, merge, rebase, new_branch, delete_branch, copy_name, worktree_shell, worktree_copy_path, worktree_remove, pr_open, pr_copy, switch_repo, reopen_repo },
+    idx: u32,
 };
 
 pub const MenuItem = struct {
