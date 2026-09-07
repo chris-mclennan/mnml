@@ -2705,6 +2705,17 @@ break-check.
   read `V-LI…`) where Rust's runner never reaches that width.
   `ui_statusline_clicks.test` and `statusline_now_playing.test` carry
   the recomputed columns (the position chip is 70–83 now).
+- `// changed (app, 2026-09-07):` the coverage chip's `ticker` flips on
+  the wall clock, as Rust's does (`SystemTime` seconds / 4 % 2 —
+  `coverage.wallMs`): `app.now_ms` is monotonic since boot, so the two
+  editors on one machine showed opposite halves at the same moment and
+  every `ui-diff` on the fixture (whose config is the ticker) read `F
+  57% ▲1.0` against `C 74% ±0.0`. They now agree whenever both dumps
+  fall in one four-second window; the tool starts them about five
+  seconds apart, so a run can still straddle a flip — pinning the
+  fixture configs to `coverage_chip_mode = .feature` would make the
+  sweep deterministic (the fixture is the harness's, not this track's).
+  `State.ticker_clock_ms` pins the clock in tests.
 - Cut, per the spec: the Sonos cluster. Not in this build: the Claude
   chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
   spend until the usage endpoint is called; the LSP progress (`⟳ …`),

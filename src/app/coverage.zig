@@ -13,6 +13,7 @@
 //! mode. `shown` hands the app the readings; `segment` is the text.
 
 const std = @import("std");
+const Io = std.Io;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -27,6 +28,8 @@ pub const ticker_ms: i64 = 4000;
 pub const artifacts_dir = ".tattle-claude-artifacts";
 
 pub const State = struct {
+    /// A test's wall clock for the ticker; null reads the real one.
+    ticker_clock_ms: ?i64 = null,
     feature: ?f64 = null,
     code: ?f64 = null,
     /// The feature number seven days before its latest point.
@@ -220,8 +223,16 @@ pub fn shown(app: *App) ?Shown {
         .feature => .{ .feature = f, .code = if (f == null) c else null },
         .code => .{ .code = c, .feature = if (c == null) f else null },
         .both => .{ .feature = f, .code = c },
-        .ticker => if (f != null and c != null) (if (@mod(@divTrunc(app.now_ms, ticker_ms), 2) == 0) Shown{ .feature = f } else Shown{ .code = c }) else Shown{ .feature = f, .code = c },
+        .ticker => if (f != null and c != null) (if (@mod(@divTrunc(wallMs(app), ticker_ms), 2) == 0) Shown{ .feature = f } else Shown{ .code = c }) else Shown{ .feature = f, .code = c },
     };
+}
+
+/// The ticker's clock: the wall clock, as Rust's (`SystemTime` seconds
+/// / 4 % 2), so two editors on one machine show the same half at the
+/// same moment — `app.now_ms` is monotonic since boot and put them out
+/// of phase. Tests pin it through `State.ticker_clock_ms`.
+fn wallMs(app: *const App) i64 {
+    return app.coverage.ticker_clock_ms orelse Io.Timestamp.now(app.io, .real).toMilliseconds();
 }
 
 pub const Direction = enum { up, down, flat, none };
@@ -296,7 +307,8 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.coverage;
     if (st.feature == null and st.code == null) return null;
     if (app.cfg.ui.coverage_chip_mode == .ticker and st.feature != null and st.code != null) {
-        return (@divTrunc(app.now_ms, ticker_ms) + 1) * ticker_ms;
+        // The next flip on the wall clock, as a moment on `now_ms`.
+        return app.now_ms + (ticker_ms - @mod(wallMs(app), ticker_ms));
     }
     return null;
 }
@@ -383,11 +395,12 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     app.cfg.ui.coverage_chip_mode = .both;
     try t.expectEqualStrings("F 79% ▲43.8 · C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
     app.cfg.ui.coverage_chip_mode = .ticker;
-    app.now_ms = 400_000; // an even slot
+    app.coverage.ticker_clock_ms = 400_000; // an even slot on the wall clock
     try t.expectEqualStrings("F 79% ▲43.8", (try segment(&app, app.frame.allocator())).?);
-    app.now_ms += ticker_ms;
+    app.coverage.ticker_clock_ms.? += ticker_ms + 1000;
     try t.expectEqualStrings("C 75% ±0.0", (try segment(&app, app.frame.allocator())).?);
-    try t.expectEqual(@as(i64, 408_000), nextDeadlineMs(&app).?);
+    // 3 s into the odd slot: the flip is 1 s away on `now_ms`.
+    try t.expectEqual(app.now_ms + 3000, nextDeadlineMs(&app).?);
     // The chip is on the statusline, and the click toasts both.
     app.cfg.ui.coverage_chip_mode = .both;
     try app.render();
