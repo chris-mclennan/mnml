@@ -1,0 +1,26 @@
+# The git status pane: space stages an unstaged row and unstages a
+# staged one; `r` re-reads the status after a change made outside.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+write new.txt "hello\n"
+command git.status_pane
+wait 800
+expect screen contains "▶ ? new.txt"
+key space
+wait 1500
+expect screen contains "Staged changes (1)"
+expect screen contains "▶ A new.txt"
+key space
+wait 1500
+expect screen contains "Unstaged changes (1)"
+expect screen contains "▶ ? new.txt"
+# A change the pane did not make: `r` picks it up.
+write other.txt "more\n"
+key r
+wait 1500
+expect screen contains "Unstaged changes (2)"
+expect screen contains "? other.txt"
