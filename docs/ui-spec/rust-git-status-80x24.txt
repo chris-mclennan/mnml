@@ -1,0 +1,24 @@
+ ❯_  mnml  »             󰍉  ws                                    󰐕  ●━  󰅖
+   │  ~/Pr…              │  git status 󰅖   󰐕                         
+▌ │     requests           │  on main   2 unstaged · 0 staged               █
+ 󰍉 │     src                │  s/u stage·unstage  space toggle  a/A all  ⏎ di█
+ 󰊢 │     󱼅  main.rs          │  Unstaged changes (2)                          █
+  │      .gitignore       ? │  ▶ ? .gitignore                                █
+ 󰐱 │      package.json       │    ? requests/                                 █
+ 󰎒 │     󰂺 README.md          │                                                █
+ 󰚩 │                          │  Staged changes (0)                            █
+ 󰅣 │  mixr                   │    (none)                                      █
+  │                          │                                                █
+  │──────────────────────────│                                                █
+  │ git status             ⋮ │                                                █
+ 󱘣 │                          │                                                █
+   │                          │                                                █
+   │                          │                                                █
+   │                          │                                                █
+   │                          │                                                █
+   │                          │                                                █
+   │                          │                                                █
+  │                          │                                                █
+   │                          │                                                █
+ VIEW   main … [no file]     F 57% ▲1.0  󱼀 󰐎  WRAP    12:04  ws   —
+

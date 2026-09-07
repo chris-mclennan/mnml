@@ -46,7 +46,9 @@ const editor_view = @import("../ui/editor_view.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const git_palette = @import("git_palette.zig");
 
-pub const Row = status_view.Row;
+/// A file the status pane lists (`ui/git_status_view.zig`): its
+/// porcelain letter and which section it sits in.
+pub const Row = status_view.Entry;
 
 /// How long a status snapshot is trusted before `tick` asks again.
 pub const status_ttl_ms: i64 = 3000;
@@ -302,10 +304,6 @@ pub const State = struct {
     marks: std.StringHashMapUnmanaged([]const parse.GutterMark) = .empty,
     status_at_ms: i64 = 0,
     status_pending: bool = false,
-    /// The status pane's rows, built from `status`; `path` borrows
-    /// the snapshot.
-    rows: std.ArrayListUnmanaged(Row) = .empty,
-    collapsed: std.enums.EnumSet(parse.Group) = .initEmpty(),
     blames: std.AutoHashMapUnmanaged(PaneId, Blame) = .empty,
     /// The pane a blame was asked for, until it lands.
     blame_pending: ?PaneId = null,
@@ -352,7 +350,6 @@ pub const State = struct {
         while (it.next()) |b| b.arena.deinit();
         self.blames.deinit(gpa);
         self.marks.deinit(gpa);
-        self.rows.deinit(gpa);
         self.confirm.deinit(gpa);
         if (self.ai_body) |b| gpa.free(b);
         self.rail_snapshot.deinit();
@@ -794,7 +791,6 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
                 const marks = try parse.gutterMarks(st.snapshot.allocator(), f);
                 try st.marks.put(gpa, f.path(), marks);
             }
-            try rebuildRows(app);
             // Graph panes on this repo show or drop their WIP row now.
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
                 .git_graph => |*g| if (g.repo == repo.id) syncWip(app, g),
@@ -967,37 +963,68 @@ fn clearStatus(app: *App) void {
     st.rail_pending = false;
     st.rail_snapshot.reset();
     st.marks.clearRetainingCapacity();
-    st.rows.clearRetainingCapacity();
     st.snapshot.reset();
     app.needs_render = true;
 }
 
-// ─── rail rows ──────────────────────────────────────────────────────────
+// ─── the status pane's lists ────────────────────────────────────────────
 
-/// Group headers then their entries, in the order the rail lists them.
-/// A collapsed group keeps its header.
-fn rebuildRows(app: *App) Allocator.Error!void {
-    const st = &app.git;
-    st.rows.clearRetainingCapacity();
-    const status = st.status orelse return;
-    for ([_]parse.Group{ .conflicted, .staged, .unstaged, .untracked }) |g| {
-        var count: u32 = 0;
-        for (status.entries) |e| if (e.group == g) {
-            count += 1;
-        };
-        if (count == 0) continue;
-        try st.rows.append(app.gpa, .{ .header = true, .group = g, .count = count });
-        if (st.collapsed.contains(g)) continue;
-        for (status.entries, 0..) |e, i| if (e.group == g) {
-            try st.rows.append(app.gpa, .{ .header = false, .group = g, .code = e.code, .path = e.path, .entry = @intCast(i) });
-        };
+pub const Files = struct {
+    unstaged: []Row,
+    staged: []Row,
+
+    pub fn len(f: Files) usize {
+        return f.unstaged.len + f.staged.len;
     }
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .git_status => |*s| if (s.cursor >= st.rows.items.len) {
-            s.cursor = st.rows.items.len -| 1;
-        },
-        else => {},
+
+    /// The `flat`-th row: the unstaged first, then the staged.
+    pub fn at(f: Files, flat: usize) ?Row {
+        if (flat < f.unstaged.len) return f.unstaged[flat];
+        if (flat - f.unstaged.len < f.staged.len) return f.staged[flat - f.unstaged.len];
+        return null;
+    }
+};
+
+/// Rust `git::stage::lists`: the snapshot's entries in porcelain order,
+/// untracked (`?`) and conflicted (`U`) files unstaged, a file changed
+/// on both sides in both lists. The graph's detail column (`wipFiles`)
+/// wants the same split with the untracked directory's slash dropped,
+/// `!` on a conflict and each list A–Z.
+fn collectFiles(app: *App, arena: Allocator, for_graph: bool) Allocator.Error!Files {
+    var un: std.ArrayListUnmanaged(Row) = .empty;
+    var st: std.ArrayListUnmanaged(Row) = .empty;
+    if (app.git.status) |status| for (status.entries) |e| {
+        switch (e.group) {
+            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true }),
+            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false }),
+            .untracked => try un.append(arena, .{ .path = if (for_graph) std.mem.trimEnd(u8, e.path, "/") else e.path, .letter = '?', .staged = false }),
+            .conflicted => try un.append(arena, .{ .path = e.path, .letter = if (for_graph) '!' else 'U', .staged = false }),
+        }
     };
+    if (for_graph) {
+        std.mem.sort(Row, un.items, {}, byPath);
+        std.mem.sort(Row, st.items, {}, byPath);
+    }
+    return .{ .unstaged = un.items, .staged = st.items };
+}
+
+fn byPath(_: void, a: Row, b: Row) bool {
+    return std.mem.lessThan(u8, a.path, b.path);
+}
+
+/// The status pane's two lists.
+pub fn statusFiles(app: *App, arena: Allocator) Allocator.Error!Files {
+    return collectFiles(app, arena, false);
+}
+
+/// Every entry of the snapshot is one row of the pane.
+pub fn statusFlatLen(app: *App) usize {
+    return if (app.git.status) |s| s.entries.len else 0;
+}
+
+/// The status pane's cursor row.
+pub fn statusPaneRow(app: *App, sp: *const StatusPane) Allocator.Error!?Row {
+    return (try statusFiles(app, app.frame.allocator())).at(sp.cursor);
 }
 
 /// Ask the active repo for the rail's data, unless it is on the way.
@@ -1010,7 +1037,6 @@ pub fn requestRail(app: *App) CommandError!void {
         st.rail_pending = false;
         return err;
     };
-    try rebuildRows(app);
 }
 
 /// Marks for the editor gutter of `abs_path`, from the active repo's
@@ -1612,31 +1638,22 @@ pub fn overlayClosing(app: *App) void {
 
 pub const RowAction = enum { open, stage, unstage, discard };
 
-/// Act on a rail / status-pane row. Headers toggle their group; a
-/// branch checks out after a yes (`x` deletes after one); a worktree
-/// row says where it is; a PR opens on the remote.
+/// Open the row's diff (the index side for a staged row), or stage /
+/// unstage / discard its file through the worker.
 pub fn actOnRow(app: *App, row: Row, what: RowAction) CommandError!void {
     const st = &app.git;
     const gpa = app.gpa;
-    if (row.header) {
-        if (what == .open) {
-            st.collapsed.toggle(row.group);
-            try rebuildRows(app);
-        }
-        return;
-    }
     const repo = st.activeRepo() orelse return error.NoRepo;
     switch (what) {
-        .open => _ = try openDiff(app, repo, if (row.group == .staged) .staged else .file, row.path, null, null),
+        .open => _ = try openDiff(app, repo, if (row.staged) .staged else .file, row.path, null, null),
         .stage => try submitOp(app, repo, .{ .stage = try gpa.dupe(u8, row.path) }),
         .unstage => try submitOp(app, repo, .{ .unstage = try gpa.dupe(u8, row.path) }),
         .discard => try openConfirm(app, .{ .discard = try gpa.dupe(u8, row.path) }, try std.fmt.allocPrint(gpa, "  Discard changes to {s}? This cannot be undone.", .{row.path})),
     }
 }
 
-/// Open the selected row's file in an editor (a double click / `o`).
+/// Open the selected row's file in an editor (`git.open_file`).
 pub fn openRowFile(app: *App, row: Row) CommandError!void {
-    if (row.header) return;
     const repo = app.git.activeRepo() orelse return error.NoRepo;
     const arena = app.frame.allocator();
     const abs = try std.fs.path.join(arena, &.{ repo.path, row.path });
@@ -1648,45 +1665,98 @@ pub fn openRowFile(app: *App, row: Row) CommandError!void {
 
 // ─── keys ───────────────────────────────────────────────────────────────
 
-/// The letters the rail and the status pane share.
-pub fn rowLetter(app: *App, c: u21, row: ?Row) Allocator.Error!bool {
-    switch (c) {
-        's' => if (row) |r| runToast(app, actOnRow(app, r, .stage)),
-        'u' => if (row) |r| runToast(app, actOnRow(app, r, .unstage)),
-        'x' => if (row) |r| runToast(app, actOnRow(app, r, .discard)),
-        'o' => if (row) |r| runToast(app, openRowFile(app, r)),
-        'a' => runToast(app, command.run(app, .{ .static = .@"git.stage_all" })),
-        'A' => runToast(app, command.run(app, .{ .static = .@"git.unstage_all" })),
-        'c' => runToast(app, command.run(app, .{ .static = .@"git.commit" })),
-        'n' => runToast(app, command.run(app, .{ .static = .@"git.new_branch" })),
-        'r' => runToast(app, requestStatus(app)),
-        else => return false,
+pub const StatusAction = status_view.Action;
+
+/// What the status pane's keys and hint words do (Rust
+/// `git_stage_selected` and friends): `s` on a staged row and `u` on an
+/// unstaged one only say so, space picks the side, enter opens the
+/// diff — which an untracked file does not have yet.
+pub fn statusAct(app: *App, sp: *StatusPane, a: StatusAction) CommandError!void {
+    const row = try statusPaneRow(app, sp);
+    switch (a) {
+        .stage => if (row) |r| {
+            if (r.staged) return app.toast("already staged \u{2014} `u` to unstage", .{});
+            try actOnRow(app, r, .stage);
+        },
+        .unstage => if (row) |r| {
+            if (!r.staged) return app.toast("not staged \u{2014} `s` to stage", .{});
+            try actOnRow(app, r, .unstage);
+        },
+        .toggle => if (row) |r| try actOnRow(app, r, if (r.staged) .unstage else .stage),
+        .stage_all => try command.run(app, .{ .static = .@"git.stage_all" }),
+        .unstage_all => try command.run(app, .{ .static = .@"git.unstage_all" }),
+        .diff => if (row) |r| {
+            if (r.letter == '?') return app.toast("no diff for that file (untracked? \u{2014} stage it to see it)", .{});
+            try actOnRow(app, r, .open);
+        },
+        .commit => try command.run(app, .{ .static = .@"git.commit" }),
+        .ai_commit => try command.run(app, .{ .static = .@"git.ai_commit" }),
+        .refresh => {
+            app.git.status_pending = false;
+            try requestStatus(app);
+        },
     }
-    return true;
 }
 
-/// The status pane: j/k move over the rows, enter opens the diff, the
-/// shared letters act; `q` / esc close.
+/// Rust `move_selection`: `delta` rows, clamped into the flat list.
+pub fn moveStatusCursor(sp: *StatusPane, n: usize, delta: isize) void {
+    if (n == 0) return;
+    const cur: isize = @intCast(sp.cursor);
+    const max: isize = @intCast(n - 1);
+    sp.cursor = @intCast(std.math.clamp(cur +| delta, 0, max));
+}
+
+/// The wheel over the pane moves the cursor `n` rows.
+pub fn statusPaneWheel(app: *App, sp: *StatusPane, down: bool, n: usize) void {
+    const d: isize = @intCast(n);
+    moveStatusCursor(sp, statusFlatLen(app), if (down) d else -d);
+}
+
+/// Esc: back to the tree when it is showing, else the pane closes.
+fn leaveStatusPane(app: *App, id: PaneId) Allocator.Error!void {
+    if (app.tree.visible) {
+        if (app.activeBuffer()) |b| b.input.onBlur();
+        app.focus = .tree;
+    } else try app.closePane(id, true);
+}
+
+/// The status pane's keys, Rust's `Pane::GitStatus` arm: `j k ↑ ↓`
+/// move, page up / down by the pane, `g G home end` to the ends,
+/// `space s u a A ⏎ c C r` act, `b B w` open the checkout / new-branch
+/// / worktree pickers, esc goes back to the tree.
 pub fn statusPaneKey(app: *App, id: PaneId, sp: *StatusPane, k: Key) Allocator.Error!bool {
-    const st = &app.git;
-    const n = st.rows.items.len;
-    const row: ?Row = if (sp.cursor < n) st.rows.items[sp.cursor] else null;
+    const n = statusFlatLen(app);
+    const page: isize = @intCast(@max(app.pane_rows, 1));
+    const top = std.math.minInt(isize) / 2;
+    const bottom = std.math.maxInt(isize) / 2;
     switch (k.code) {
-        .up => sp.cursor -|= 1,
-        .down => sp.cursor = @min(sp.cursor + 1, n -| 1),
-        .home => sp.cursor = 0,
-        .end => sp.cursor = n -| 1,
-        .enter => if (row) |r| runToast(app, actOnRow(app, r, .open)),
-        .esc => try app.closePane(id, true),
+        .up => moveStatusCursor(sp, n, -1),
+        .down => moveStatusCursor(sp, n, 1),
+        .page_up => moveStatusCursor(sp, n, -page),
+        .page_down => moveStatusCursor(sp, n, page),
+        .home => moveStatusCursor(sp, n, top),
+        .end => moveStatusCursor(sp, n, bottom),
+        .enter => runToast(app, statusAct(app, sp, .diff)),
+        .esc => try leaveStatusPane(app, id),
         .char => |c| {
             if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
             switch (c) {
-                'j' => sp.cursor = @min(sp.cursor + 1, n -| 1),
-                'k' => sp.cursor -|= 1,
-                'g' => sp.cursor = 0,
-                'G' => sp.cursor = n -| 1,
-                'q' => try app.closePane(id, true),
-                else => return rowLetter(app, c, row),
+                'j' => moveStatusCursor(sp, n, 1),
+                'k' => moveStatusCursor(sp, n, -1),
+                'g' => moveStatusCursor(sp, n, top),
+                'G' => moveStatusCursor(sp, n, bottom),
+                ' ' => runToast(app, statusAct(app, sp, .toggle)),
+                's' => runToast(app, statusAct(app, sp, .stage)),
+                'u' => runToast(app, statusAct(app, sp, .unstage)),
+                'a' => runToast(app, statusAct(app, sp, .stage_all)),
+                'A' => runToast(app, statusAct(app, sp, .unstage_all)),
+                'c' => runToast(app, statusAct(app, sp, .commit)),
+                'C' => runToast(app, statusAct(app, sp, .ai_commit)),
+                'r' => runToast(app, statusAct(app, sp, .refresh)),
+                'b' => runToast(app, command.run(app, .{ .static = .@"git.checkout" })),
+                'B' => runToast(app, command.run(app, .{ .static = .@"git.new_branch" })),
+                'w' => runToast(app, command.run(app, .{ .static = .@"git.worktrees" })),
+                else => return false,
             }
         },
         else => return false,
@@ -2178,30 +2248,12 @@ fn detailKey(app: *App, id: PaneId, g: *GraphPane, k: Key) Allocator.Error!bool 
 }
 
 /// A working-tree file as the detail column lists it.
-pub const WipRef = struct { path: []const u8, letter: u8, staged: bool };
+pub const WipRef = Row;
 
 /// The working tree's files in the detail column's order: unstaged
 /// (modified, untracked, conflicted) then staged, each A–Z by path.
-pub fn wipFiles(app: *App, arena: Allocator) Allocator.Error!struct { unstaged: []WipRef, staged: []WipRef } {
-    var un: std.ArrayListUnmanaged(WipRef) = .empty;
-    var st: std.ArrayListUnmanaged(WipRef) = .empty;
-    if (app.git.status) |status| for (status.entries) |e| {
-        switch (e.group) {
-            .staged => try st.append(arena, .{ .path = e.path, .letter = e.code, .staged = true }),
-            .unstaged => try un.append(arena, .{ .path = e.path, .letter = e.code, .staged = false }),
-            // An untracked directory's entry ends in `/`; Rust shows the name.
-            .untracked => try un.append(arena, .{ .path = std.mem.trimEnd(u8, e.path, "/"), .letter = '?', .staged = false }),
-            .conflicted => try un.append(arena, .{ .path = e.path, .letter = '!', .staged = false }),
-        }
-    };
-    const Ctx = struct {
-        fn lt(_: void, a: WipRef, b: WipRef) bool {
-            return std.mem.lessThan(u8, a.path, b.path);
-        }
-    };
-    std.mem.sort(WipRef, un.items, {}, Ctx.lt);
-    std.mem.sort(WipRef, st.items, {}, Ctx.lt);
-    return .{ .unstaged = un.items, .staged = st.items };
+pub fn wipFiles(app: *App, arena: Allocator) Allocator.Error!Files {
+    return collectFiles(app, arena, true);
 }
 
 fn wipRow(app: *App, g: *GraphPane, idx: usize) Allocator.Error!?WipRef {
@@ -2381,19 +2433,19 @@ pub fn runToast(app: *App, result: CommandError!void) void {
 
 // ─── mouse (D6) ─────────────────────────────────────────────────────────
 
-/// A status-pane row was clicked (`.script_hit`): select, a second
-/// click opens the diff, right opens the row menu.
+/// A click in the status pane (`.script_hit`): a hint word runs its
+/// action; a row takes the cursor, a second click on it opens the
+/// diff, a right click opens the row menu.
 pub fn statusPaneClick(app: *App, sp: *StatusPane, idx: u32, m: Mouse) Allocator.Error!void {
-    const st = &app.git;
-    if (idx == status_view.badge_id) {
-        if (m.kind == .press and m.button == .left) runToast(app, command.run(app, .{ .static = .@"git.browse_commit" }));
+    if (status_view.hintOf(idx)) |a| {
+        if (m.button == .left) runToast(app, statusAct(app, sp, a));
         return;
     }
-    if (idx >= st.rows.items.len) return;
+    if (idx >= statusFlatLen(app)) return;
     const was = sp.cursor;
     sp.cursor = idx;
     if (m.button == .right) return openRowMenu(app, m.x, m.y);
-    if (was == idx) runToast(app, actOnRow(app, st.rows.items[idx], .open));
+    if (was == idx) runToast(app, statusAct(app, sp, .diff));
 }
 
 fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
@@ -2417,12 +2469,16 @@ fn openRowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, area: Rect) Allocator.Error!void {
     const st = &app.git;
     if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
-    const repo_name: []const u8 = if (st.repoById(sp.repo)) |r| r.name else "";
-    const branch = st.branchLabel() orelse "…";
-    const header = ui.fmt(" {s} · {s} · {d} change{s}   ·   s stage · u unstage · x discard · a all · c commit · b branches · enter diff ", .{ repo_name, branch, st.badge(), if (st.badge() == 1) "" else "s" });
-    const focused = app.active == id and app.focus == .pane;
-    status_view.drawPane(ui, id, area, .{ .header = header, .rows = st.rows.items, .cursor = sp.cursor, .focused = focused, .empty = if (st.status == null) "Reading git status…" else "Working tree clean.", .badge = st.provider.label() }, &sp.scroll);
-    if (app.active == id) app.pane_rows = @max(area.h -| 1, 1);
+    const files = try statusFiles(app, ui.arena);
+    if (files.len() > 0) sp.cursor = @min(sp.cursor, files.len() - 1);
+    status_view.draw(ui, id, area, .{
+        .branch = if (st.status) |s| s.branch else null,
+        .unstaged = files.unstaged,
+        .staged = files.staged,
+        .cursor = sp.cursor,
+        .ai_pending = if (st.ai_wait) |w| w.what == .commit else false,
+    }, &sp.scroll);
+    if (app.active == id) app.pane_rows = @max(area.h, 1);
 }
 
 /// `Pane.diff`.
@@ -2698,11 +2754,15 @@ test "handle adopts a status result for the active repo, drops one from an unkno
     try testing.expect(!st.status_pending);
     try testing.expectEqualStrings("main", st.branchLabel().?);
     try testing.expectEqual(@as(u32, 2), st.badge());
-    // Rows: Changes header, a.zig, Untracked header, new.txt.
-    try testing.expectEqual(@as(usize, 4), st.rows.items.len);
-    try testing.expect(st.rows.items[0].header);
-    try testing.expectEqualStrings("src/a.zig", st.rows.items[1].path);
-    try testing.expectEqualStrings("new.txt", st.rows.items[3].path);
+    // The status pane's lists: a.zig then new.txt unstaged, nothing staged.
+    const files = try statusFiles(&f.app, f.app.frame.allocator());
+    try testing.expectEqual(@as(usize, 2), files.unstaged.len);
+    try testing.expectEqual(@as(usize, 0), files.staged.len);
+    try testing.expectEqualStrings("src/a.zig", files.unstaged[0].path);
+    try testing.expectEqual(@as(u8, 'M'), files.unstaged[0].letter);
+    try testing.expectEqualStrings("new.txt", files.unstaged[1].path);
+    try testing.expectEqual(@as(u8, '?'), files.unstaged[1].letter);
+    try testing.expectEqual(@as(usize, 2), statusFlatLen(&f.app));
     // The statusline's branch chip (`app/statusline.zig`): the branch,
     // the ahead count, then one changed file and one added.
     try f.app.render();

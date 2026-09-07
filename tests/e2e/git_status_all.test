@@ -1,0 +1,35 @@
+# The git status pane: `a` stages everything, `A` unstages everything.
+# j / k / G / g move the cursor over the flat list.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+write a.txt "a\n"
+write b.txt "b\n"
+command git.status_pane
+wait 800
+expect screen contains "Unstaged changes (2)"
+expect screen contains "▶ ? a.txt"
+key j
+expect screen contains "▶ ? b.txt"
+expect screen lacks "▶ ? a.txt"
+key k
+expect screen contains "▶ ? a.txt"
+key G
+expect screen contains "▶ ? b.txt"
+key g
+expect screen contains "▶ ? a.txt"
+key a
+wait 1500
+expect screen contains "on main   0 unstaged · 2 staged"
+expect screen contains "Staged changes (2)"
+expect screen contains "A a.txt"
+expect screen contains "A b.txt"
+key A
+wait 1500
+expect screen contains "on main   2 unstaged · 0 staged"
+expect screen contains "Unstaged changes (2)"
+expect screen contains "? a.txt"
+expect screen contains "? b.txt"

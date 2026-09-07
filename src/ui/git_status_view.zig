@@ -1,151 +1,250 @@
-//! The git status rows of the status pane. A row is a group header
-//! (`Staged (2)`) or an entry (`M src/a.zig`), the letter coloured by
-//! what it means.
+//! The staging view (`Pane.git_status`) — the Rust editor's
+//! `git_status_view.rs` cell for cell (`docs/ui-spec/rust-git-status-*.txt`):
+//!
+//! ```text
+//!   on main   2 unstaged · 0 staged                                          █
+//!   s/u stage·unstage  space toggle  a/A all  ⏎ diff  c commit  C ai-commit  r refresh
+//!   Unstaged changes (2)                                                     █
+//!   ▶ ? .gitignore                                                           █
+//!     ? requests/                                                            █
+//!                                                                            █
+//!   Staged changes (0)                                                       █
+//!     (none)                                                                 █
+//! ```
+//!
+//! Two sections, the cursor row's text on the `bg2` band with a `▶`,
+//! and a one-cell scrollbar on the right whenever the pane is at
+//! least eight cells wide and lists something. The hint row is clipped
+//! at the pane's edge, never dropped word by word (`rust-git-status-80x24`).
+//! Every entry row is a `.script_hit{ pane, id = flat index }`; every
+//! hint word is a `.script_hit{ pane, id = hintId(action) }`, so a click
+//! on `s` stages the cursor's file the way the key does.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
-const list_panel = @import("list_panel.zig");
-const parse = @import("../git/parse.zig");
+const scrollbar = @import("scrollbar.zig");
 const ids = @import("../core/ids.zig");
 
+const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
+const Color = vaxis.Color;
 const PaneId = ids.PaneId;
 
-pub const Row = struct {
-    header: bool,
-    group: parse.Group,
-    /// The porcelain letter (`M A D R ? U`); 0 on a header.
-    code: u8 = 0,
-    /// Repo-relative; borrowed from the status snapshot.
-    path: []const u8 = "",
-    /// Index into `Status.entries`.
-    entry: u32 = 0,
-    /// Entries in the group (headers only).
-    count: u32 = 0,
-};
+/// A file the pane lists: its porcelain letter (`M A D R C U ?`) and
+/// which section it sits in. A file changed on both sides is one
+/// entry per section.
+pub const Entry = struct { path: []const u8, letter: u8, staged: bool };
 
-/// The colour of a status letter: added green, deleted red, modified
-/// yellow, untracked muted, a conflict in the error colour.
-pub fn codeStyle(t: *const Theme, code: u8, base: Style) Style {
-    var s = Theme.withFg(base, switch (code) {
-        'A' => t.syntax.string.fg,
-        'D' => t.error_fg.fg,
-        'M', 'R', 'C', 'T' => t.warn_fg.fg,
-        'U' => t.error_fg.fg,
-        else => t.muted.fg,
-    });
-    s.bold = code != '?';
-    return s;
-}
-
-pub fn groupStyle(t: *const Theme, group: parse.Group, base: Style) Style {
-    var s = Theme.withFg(base, switch (group) {
-        .staged => t.syntax.string.fg,
-        .unstaged => t.warn_fg.fg,
-        .untracked => t.muted.fg,
-        .conflicted => t.error_fg.fg,
-    });
-    s.bold = true;
-    return s;
-}
-
-/// `Staged (2)` for a header; `M path/to/file` for an entry, the
-/// directory dimmed and the file name bright. When the path does not
-/// fit its head is clipped so the name stays.
-pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
-    const t = ui.theme;
-    const base = list_panel.rowStyle(t, selected);
-    if (row.header) {
-        const label = ui.fmt("{s} ({d})", .{ row.group.label(), row.count });
-        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(label, r.w), groupStyle(t, row.group, base));
-        return;
-    }
-    var x = r.x + 1;
-    const end = r.right();
-    // The cell keeps the slice it is given: the letter must outlive
-    // this call, so it lives on the frame arena, not the stack.
-    x += ui.putStr(x, r.y, end -| x, ui.fmt("{c}", .{row.code}), codeStyle(t, row.code, base));
-    x += ui.putStr(x, r.y, end -| x, " ", base);
-    const avail: u16 = end -| x;
-    const shown = clipLeft(ui, row.path, avail);
-    const slash = std.mem.lastIndexOfScalar(u8, shown, '/');
-    if (slash) |s| {
-        x += ui.putStr(x, r.y, end -| x, shown[0 .. s + 1], Theme.onBg(t.muted, base.bg));
-        _ = ui.putStr(x, r.y, end -| x, shown[s + 1 ..], Theme.onBg(t.fg, base.bg));
-    } else {
-        _ = ui.putStr(x, r.y, end -| x, shown, Theme.onBg(t.fg, base.bg));
-    }
-}
-
-/// `s` cut to `max` cells keeping its END, with the ellipsis in front.
-fn clipLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
-    if (ui.width(s) <= max) return s;
-    const ell: []const u8 = if (ui.ascii) "..." else "…";
-    const ell_w = ui.width(ell);
-    if (max <= ell_w) return "";
-    var start: usize = 0;
-    while (start < s.len and ui.width(s[start..]) > max - ell_w) {
-        start += std.unicode.utf8ByteSequenceLength(s[start]) catch 1;
-    }
-    return ui.fmt("{s}{s}", .{ ell, s[start..] });
-}
-
-pub const PaneDoc = struct {
-    header: []const u8,
-    rows: []const Row,
+pub const Doc = struct {
+    /// Null paints `(detached)`.
+    branch: ?[]const u8,
+    unstaged: []const Entry,
+    staged: []const Entry,
+    /// Flat index: the unstaged entries, then the staged.
     cursor: usize,
-    focused: bool,
-    empty: []const u8,
-    /// The provider badge on the header's right edge; empty = none.
-    badge: []const u8 = "",
+    /// An AI commit message is on its way: the hint row says so.
+    ai_pending: bool = false,
 };
 
-/// The badge's hit id; rows stay below it.
-pub const badge_id: u32 = 0xF000_0001;
+/// What a hint word does; the keys share the table.
+pub const Action = enum(u8) { stage, unstage, toggle, stage_all, unstage_all, diff, commit, ai_commit, refresh };
 
-/// The status pane: a header row (the provider badge at its right
-/// edge, clickable), then the rows with the cursor row banded. Every
-/// row registers `.script_hit{ pane, id = row index }`.
-pub fn drawPane(ui: Ui, pane: PaneId, area: Rect, doc: PaneDoc, scroll: *usize) void {
-    const t = ui.theme;
-    ui.fill(area, t.bg);
-    if (area.isEmpty()) return;
-    var head_w = area.w;
-    if (doc.badge.len > 0) {
-        const label = ui.fmt(" {s} ", .{doc.badge});
-        const w = ui.width(label);
-        if (area.w > w + 8) {
-            const br = Rect.init(area.right() - w, area.y, w, 1);
-            _ = ui.putStr(br.x, br.y, w, label, Theme.onBg(t.chip, t.bg.bg));
-            ui.hit(br, .{ .script_hit = .{ .pane = pane, .id = badge_id } });
-            head_w = area.w - w - 1;
-        }
+/// Hint ids sit above any flat row index.
+pub const hint_base: u32 = 0xF000_0100;
+const action_count: u32 = @typeInfo(Action).@"enum".fields.len;
+
+pub fn hintId(a: Action) u32 {
+    return hint_base + @intFromEnum(a);
+}
+
+pub fn hintOf(id: u32) ?Action {
+    if (id < hint_base or id >= hint_base + action_count) return null;
+    return @enumFromInt(id - hint_base);
+}
+
+/// One painted row of the pane, top to bottom.
+pub const Line = union(enum) {
+    header,
+    hint,
+    blank,
+    clean,
+    section: struct { staged: bool, count: usize },
+    none,
+    entry: struct { flat: usize, e: Entry },
+};
+
+/// Rust's `lines`: header, hint, then either the clean note or the
+/// two sections, each `(none)` when empty, a blank row between them.
+pub fn lines(arena: Allocator, doc: Doc) Allocator.Error![]const Line {
+    var out: std.ArrayListUnmanaged(Line) = .empty;
+    try out.append(arena, .header);
+    try out.append(arena, .hint);
+    if (doc.unstaged.len + doc.staged.len == 0) {
+        try out.append(arena, .blank);
+        try out.append(arena, .clean);
+        return out.items;
     }
-    _ = ui.putStr(area.x, area.y, head_w, ui.clipStr(doc.header, head_w), Theme.onBg(t.accent, t.bg.bg));
-    if (area.h < 2) return;
-    const list = area.splitTop(1).rest;
-    if (doc.rows.len == 0) {
-        _ = ui.putStr(list.x + 2, list.y + 1, list.w -| 2, ui.clipStr(doc.empty, list.w -| 2), Theme.onBg(t.muted, t.bg.bg));
+    try out.append(arena, .{ .section = .{ .staged = false, .count = doc.unstaged.len } });
+    if (doc.unstaged.len == 0) try out.append(arena, .none);
+    for (doc.unstaged, 0..) |e, i| try out.append(arena, .{ .entry = .{ .flat = i, .e = e } });
+    try out.append(arena, .blank);
+    try out.append(arena, .{ .section = .{ .staged = true, .count = doc.staged.len } });
+    if (doc.staged.len == 0) try out.append(arena, .none);
+    for (doc.staged, 0..) |e, i| try out.append(arena, .{ .entry = .{ .flat = doc.unstaged.len + i, .e = e } });
+    return out.items;
+}
+
+/// The row holding the cursor's entry; 0 when there is none.
+pub fn cursorLine(ls: []const Line, cursor: usize) usize {
+    for (ls, 0..) |l, i| switch (l) {
+        .entry => |e| if (e.flat == cursor) return i,
+        else => {},
+    };
+    return 0;
+}
+
+/// Rust's scroll rule: the cursor's row is pulled into the `h`-row
+/// window, then the window is clamped to the end.
+pub fn scrollTo(scroll: *usize, cursor_row: usize, total: usize, h: usize) void {
+    if (cursor_row < scroll.*) {
+        scroll.* = cursor_row;
+    } else if (cursor_row >= scroll.* + h) {
+        scroll.* = cursor_row + 1 - h;
+    }
+    const max_scroll = total - @min(h, total);
+    if (scroll.* > max_scroll) scroll.* = max_scroll;
+}
+
+/// Rust paints a scrollbar column from eight cells up.
+pub const min_scrollbar_width: u16 = 8;
+
+const Seg = struct { text: []const u8, action: ?Action };
+
+// The hint row, word by word, so each word can be a hit.
+const hint_segs = [_]Seg{
+    .{ .text = "  ", .action = null },
+    .{ .text = "s", .action = .stage },
+    .{ .text = "/", .action = null },
+    .{ .text = "u", .action = .unstage },
+    .{ .text = " ", .action = null },
+    .{ .text = "stage", .action = .stage },
+    .{ .text = "\u{B7}", .action = null },
+    .{ .text = "unstage", .action = .unstage },
+    .{ .text = "  ", .action = null },
+    .{ .text = "space toggle", .action = .toggle },
+    .{ .text = "  ", .action = null },
+    .{ .text = "a", .action = .stage_all },
+    .{ .text = "/", .action = null },
+    .{ .text = "A", .action = .unstage_all },
+    .{ .text = " all", .action = null },
+    .{ .text = "  ", .action = null },
+    .{ .text = "\u{23CE} diff", .action = .diff },
+    .{ .text = "  ", .action = null },
+    .{ .text = "c commit", .action = .commit },
+    .{ .text = "  ", .action = null },
+    .{ .text = "C ai-commit", .action = .ai_commit },
+    .{ .text = "  ", .action = null },
+    .{ .text = "r refresh", .action = .refresh },
+};
+const ascii_enter = "enter diff";
+const ai_hint = "  \u{2726} asking Claude for a commit message\u{2026}";
+const ai_hint_ascii = "  * asking Claude for a commit message...";
+const clean_note = "  \u{2713} working tree clean";
+const clean_note_ascii = "  v working tree clean";
+
+/// The letter's colour: added green, modified yellow, deleted red,
+/// renamed blue, copied cyan, a conflict red, untracked muted.
+pub fn letterColor(p: Theme.Palette, letter: u8) Color {
+    return switch (letter) {
+        'A' => p.green,
+        'M' => p.yellow,
+        'D' => p.red,
+        'R' => p.blue,
+        'C' => p.cyan,
+        'U' => p.red,
+        else => p.comment,
+    };
+}
+
+/// Paints the pane and registers its hits; `scroll` is the pane's own
+/// and follows the cursor.
+pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) void {
+    const p = ui.theme.palette;
+    const ground: Style = .{ .bg = p.bg_dark };
+    ui.fill(area, ground);
+    if (area.isEmpty()) return;
+    const n = doc.unstaged.len + doc.staged.len;
+    const sb_w: u16 = if (area.w >= min_scrollbar_width) 1 else 0;
+    const body = Rect.init(area.x, area.y, area.w - sb_w, area.h);
+    const ls = lines(ui.arena, doc) catch return;
+    const h: usize = area.h;
+    if (n == 0) {
+        // Rust paints the four rows from the top and no scrollbar.
+        for (ls, 0..) |l, i| {
+            if (i >= h) break;
+            paintLine(ui, pane, body.row(@intCast(i)), doc, l);
+        }
         return;
     }
-    const win = list_panel.scrollWindow(scroll, doc.cursor, doc.rows.len, list.h);
+    scrollTo(scroll, cursorLine(ls, doc.cursor), ls.len, h);
     var y: u16 = 0;
-    var i = win.first;
-    while (i < doc.rows.len and y < list.h) : ({
+    var i = scroll.*;
+    while (i < ls.len and y < h) : ({
         i += 1;
         y += 1;
     }) {
-        const r = list.row(y);
-        const sel = i == doc.cursor and doc.focused;
-        if (sel) ui.fill(r, t.cursor_line);
-        const marker: []const u8 = if (i == doc.cursor) (if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph) else " ";
-        _ = ui.putStr(r.x, r.y, 1, marker, Theme.onBg(t.accent, if (sel) t.cursor_line.bg else t.bg.bg));
-        const content = Rect.init(r.x + 1, r.y, r.w -| 1, 1);
-        paintRow(ui.withClip(content), content, doc.rows[i], sel);
-        ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(i) } });
+        const r = body.row(y);
+        paintLine(ui, pane, r, doc, ls[i]);
+        switch (ls[i]) {
+            .entry => |e| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(e.flat) } }),
+            else => {},
+        }
+    }
+    if (sb_w > 0) scrollbar.drawVertical(ui, Rect.init(area.right() - 1, area.y, 1, area.h), .{ .pane = pane }, ls.len, h, scroll.*);
+}
+
+fn paintLine(ui: Ui, pane: PaneId, r: Rect, doc: Doc, l: Line) void {
+    const p = ui.theme.palette;
+    const comment: Style = .{ .fg = p.comment, .bg = p.bg_dark };
+    const end = r.right();
+    var x = r.x;
+    switch (l) {
+        .header => {
+            x += ui.putStr(x, r.y, end -| x, "  on ", comment);
+            x += ui.putStr(x, r.y, end -| x, doc.branch orelse "(detached)", .{ .fg = p.blue, .bg = p.bg_dark, .bold = true });
+            _ = ui.putStr(x, r.y, end -| x, ui.fmt("   {d} unstaged \u{B7} {d} staged", .{ doc.unstaged.len, doc.staged.len }), comment);
+        },
+        .hint => {
+            if (doc.ai_pending) {
+                _ = ui.putStr(x, r.y, end -| x, if (ui.ascii) ai_hint_ascii else ai_hint, comment);
+                return;
+            }
+            for (hint_segs) |seg| {
+                if (x >= end) break;
+                const text = if (ui.ascii and seg.action == .diff) ascii_enter else seg.text;
+                const w = ui.putStr(x, r.y, end -| x, text, comment);
+                if (seg.action) |a| ui.hit(Rect.init(x, r.y, w, 1), .{ .script_hit = .{ .pane = pane, .id = hintId(a) } });
+                x += w;
+            }
+        },
+        .blank => {},
+        .clean => _ = ui.putStr(x, r.y, end -| x, if (ui.ascii) clean_note_ascii else clean_note, .{ .fg = p.green, .bg = p.bg_dark }),
+        .section => |s| {
+            const label = ui.fmt("  {s} changes ({d})", .{ if (s.staged) "Staged" else "Unstaged", s.count });
+            _ = ui.putStr(x, r.y, end -| x, label, .{ .fg = if (s.staged) p.green else p.yellow, .bg = p.bg_dark, .bold = true });
+        },
+        .none => _ = ui.putStr(x, r.y, end -| x, "    (none)", comment),
+        .entry => |e| {
+            const sel = e.flat == doc.cursor;
+            const bg = if (sel) p.bg2 else p.bg_dark;
+            const marker: []const u8 = if (!sel) "    " else if (ui.ascii) "  > " else "  \u{25B6} ";
+            x += ui.putStr(x, r.y, end -| x, marker, .{ .fg = p.yellow, .bg = bg });
+            x += ui.putStr(x, r.y, end -| x, ui.fmt("{c} ", .{e.e.letter}), .{ .fg = letterColor(p, e.e.letter), .bg = bg, .bold = true });
+            _ = ui.putStr(x, r.y, end -| x, e.e.path, .{ .fg = p.fg, .bg = bg });
+        },
     }
 }
 
@@ -154,39 +253,199 @@ pub fn drawPane(ui: Ui, pane: PaneId, area: Rect, doc: PaneDoc, scroll: *usize) 
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 
-test "paintRow: a header shows the group and count; an entry its letter and a name-first clip" {
-    var f = try Fixture.init(20, 2);
-    defer f.deinit();
-    const ui = f.ui();
-    paintRow(ui, Rect.init(0, 0, 20, 1), .{ .header = true, .group = .staged, .count = 2 }, false);
-    try f.expectRow(0, "Staged (2)");
-    paintRow(ui, Rect.init(0, 1, 12, 1), .{ .header = false, .group = .unstaged, .code = 'M', .path = "src/deep/dir/a.zig" }, false);
-    try f.expectRow(1, " M …ir/a.zig");
+const fixture_unstaged = [_]Entry{
+    .{ .path = ".gitignore", .letter = '?', .staged = false },
+    .{ .path = "requests/", .letter = '?', .staged = false },
+};
+
+fn fixtureDoc() Doc {
+    return .{ .branch = "main", .unstaged = &fixture_unstaged, .staged = &.{}, .cursor = 0 };
 }
 
-test "drawPane: header, rows with hits, the cursor row banded" {
-    var f = try Fixture.init(30, 5);
+// `docs/ui-spec/rust-git-status-120x40.txt`, rows 3..10, columns 31..120
+// (the pane is 89 cells): the text, then the scrollbar's `█` on the last.
+const spec_rows = [_][]const u8{
+    "  on main   2 unstaged \u{B7} 0 staged",
+    "  s/u stage\u{B7}unstage  space toggle  a/A all  \u{23CE} diff  c commit  C ai-commit  r refresh",
+    "  Unstaged changes (2)",
+    "  \u{25B6} ? .gitignore",
+    "    ? requests/",
+    "",
+    "  Staged changes (0)",
+    "    (none)",
+};
+
+/// `text` padded to `w - 1` cells with the scrollbar glyph on the last.
+fn withBar(arena: Allocator, text: []const u8, w: usize) ![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(arena, text);
+    var cells = std.unicode.utf8CountCodepoints(text) catch text.len;
+    while (cells < w - 1) : (cells += 1) try out.append(arena, ' ');
+    try out.appendSlice(arena, "\u{2588}");
+    return out.items;
+}
+
+test "lines: the two sections with (none) for an empty one; the clean note when nothing changed" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const ls = try lines(arena, fixtureDoc());
+    try testing.expectEqual(@as(usize, 8), ls.len);
+    try testing.expect(ls[0] == .header and ls[1] == .hint);
+    try testing.expectEqual(@as(usize, 2), ls[2].section.count);
+    try testing.expect(!ls[2].section.staged);
+    try testing.expectEqual(@as(usize, 1), ls[4].entry.flat);
+    try testing.expect(ls[5] == .blank and ls[6].section.staged and ls[7] == .none);
+    try testing.expectEqual(@as(usize, 4), cursorLine(ls, 1));
+    try testing.expectEqual(@as(usize, 0), cursorLine(ls, 9));
+
+    const staged = [_]Entry{.{ .path = "a.zig", .letter = 'A', .staged = true }};
+    const both = try lines(arena, .{ .branch = "main", .unstaged = &fixture_unstaged, .staged = &staged, .cursor = 2 });
+    try testing.expectEqual(@as(usize, 8), both.len);
+    try testing.expectEqual(@as(usize, 2), both[7].entry.flat);
+    try testing.expectEqual(@as(usize, 7), cursorLine(both, 2));
+
+    const clean = try lines(arena, .{ .branch = "main", .unstaged = &.{}, .staged = &.{}, .cursor = 0 });
+    try testing.expectEqual(@as(usize, 4), clean.len);
+    try testing.expect(clean[2] == .blank and clean[3] == .clean);
+}
+
+test "draw: the spec's rows cell for cell at 89 wide, every entry and hint word a hit, the scrollbar on the edge" {
+    var f = try Fixture.init(89, 9);
     defer f.deinit();
     var scroll: usize = 0;
-    const rows = [_]Row{
-        .{ .header = true, .group = .untracked, .count = 1 },
-        .{ .header = false, .group = .untracked, .code = '?', .path = "new.txt" },
+    draw(f.ui(), 3, Rect.init(0, 0, 89, 9), fixtureDoc(), &scroll);
+    const arena = f.arena_state.allocator();
+    for (spec_rows, 0..) |want, y| try f.expectRow(@intCast(y), try withBar(arena, want, 89));
+    try f.expectRow(8, try withBar(arena, "", 89));
+    // Entry rows carry their flat index across the body.
+    try testing.expectEqual(@as(u32, 0), f.hits.at(2, 3).?.script_hit.id);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(60, 4).?.script_hit.id);
+    try testing.expectEqual(@as(PaneId, 3), f.hits.at(60, 4).?.script_hit.pane);
+    try testing.expect(f.hits.at(60, 2) == null);
+    try testing.expect(f.hits.at(60, 0) == null);
+    // The hint words: `s` `u` `stage` `unstage` `space toggle` `a` `A`
+    // `⏎ diff` `c commit` `C ai-commit` `r refresh`; the separators none.
+    try testing.expectEqual(hintId(.stage), f.hits.at(2, 1).?.script_hit.id);
+    try testing.expect(f.hits.at(3, 1) == null);
+    try testing.expectEqual(hintId(.unstage), f.hits.at(4, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.stage), f.hits.at(8, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.unstage), f.hits.at(15, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.toggle), f.hits.at(25, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.stage_all), f.hits.at(35, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.unstage_all), f.hits.at(37, 1).?.script_hit.id);
+    try testing.expect(f.hits.at(40, 1) == null);
+    try testing.expectEqual(hintId(.diff), f.hits.at(44, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.commit), f.hits.at(53, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.ai_commit), f.hits.at(63, 1).?.script_hit.id);
+    try testing.expectEqual(hintId(.refresh), f.hits.at(78, 1).?.script_hit.id);
+    try testing.expectEqual(@as(?Action, .refresh), hintOf(hintId(.refresh)));
+    try testing.expectEqual(@as(?Action, null), hintOf(1));
+    try testing.expectEqual(@as(?Action, null), hintOf(hint_base + action_count));
+    const sb = f.hits.at(88, 5).?;
+    try testing.expect(sb == .scrollbar);
+    try testing.expectEqual(@as(PaneId, 3), sb.scrollbar.owner.pane);
+    // Colours: the cursor's text on bg2 and only its text; the branch
+    // blue and bold; the section headers yellow / green; `?` muted.
+    try testing.expect(f.bgEql(2, 3, .{ .bg = f.theme.palette.bg2 }));
+    try testing.expect(f.bgEql(15, 3, .{ .bg = f.theme.palette.bg2 }));
+    try testing.expect(f.bgEql(16, 3, .{ .bg = f.theme.palette.bg_dark }));
+    try testing.expect(f.bgEql(4, 4, .{ .bg = f.theme.palette.bg_dark }));
+    try testing.expect(f.fgEql(5, 0, .{ .fg = f.theme.palette.blue }));
+    try testing.expect(f.style(5, 0).bold);
+    try testing.expect(f.fgEql(2, 2, .{ .fg = f.theme.palette.yellow }));
+    try testing.expect(f.fgEql(2, 6, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.fgEql(4, 3, .{ .fg = f.theme.palette.comment }));
+    try testing.expect(f.fgEql(2, 3, .{ .fg = f.theme.palette.yellow }));
+}
+
+test "draw at 49 wide (rust-git-status-80x24) clips the hint row at the edge and keeps the scrollbar" {
+    var f = try Fixture.init(49, 8);
+    defer f.deinit();
+    var scroll: usize = 0;
+    draw(f.ui(), 1, Rect.init(0, 0, 49, 8), fixtureDoc(), &scroll);
+    const arena = f.arena_state.allocator();
+    try f.expectRow(0, try withBar(arena, "  on main   2 unstaged \u{B7} 0 staged", 49));
+    try f.expectRow(1, try withBar(arena, "  s/u stage\u{B7}unstage  space toggle  a/A all  \u{23CE} di", 49));
+    try f.expectRow(3, try withBar(arena, "  \u{25B6} ? .gitignore", 49));
+    // The clipped `⏎ di` is still the diff hit; the words past the
+    // edge are not registered.
+    try testing.expectEqual(hintId(.diff), f.hits.at(46, 1).?.script_hit.id);
+    var found = false;
+    for (f.hits.items.items) |h| if (h.target == .script_hit and h.target.script_hit.id == hintId(.commit)) {
+        found = true;
     };
-    drawPane(f.ui(), 3, Rect.init(0, 0, 30, 5), .{ .header = " main · 1 change ", .rows = &rows, .cursor = 1, .focused = true, .empty = "" }, &scroll);
-    try f.expectRow(0, " main · 1 change");
-    try f.expectRow(1, " Untracked (1)");
-    try f.expectRow(2, "▌ ? new.txt");
-    const h = f.hits.at(4, 2).?;
-    try testing.expect(h == .script_hit);
-    try testing.expectEqual(@as(u32, 1), h.script_hit.id);
-    try testing.expectEqual(@as(PaneId, 3), h.script_hit.pane);
+    try testing.expect(!found);
 }
 
-test "drawPane paints the provider badge on the header's right edge and registers its hit" {
-    var f = try Fixture.init(40, 2);
+test "draw: the letter colours; a narrow pane has no scrollbar; ASCII twins" {
+    var f = try Fixture.init(7, 8);
     defer f.deinit();
     var scroll: usize = 0;
-    drawPane(f.ui(), 3, Rect.init(0, 0, 40, 2), .{ .header = " main ", .rows = &.{}, .cursor = 0, .focused = true, .empty = "clean", .badge = "GitHub" }, &scroll);
-    try f.expectRow(0, " main                            GitHub");
-    try testing.expectEqual(badge_id, f.hits.at(35, 0).?.script_hit.id);
+    const mixed = [_]Entry{
+        .{ .path = "m.zig", .letter = 'M', .staged = false },
+        .{ .path = "d.zig", .letter = 'D', .staged = false },
+    };
+    const staged = [_]Entry{.{ .path = "a.zig", .letter = 'A', .staged = true }};
+    draw(f.ui(), 1, f.full(), .{ .branch = null, .unstaged = &mixed, .staged = &staged, .cursor = 2 }, &scroll);
+    try f.expectRow(0, "  on (d");
+    try f.expectRow(3, "    M m");
+    try f.expectRow(7, "  \u{25B6} A a");
+    try testing.expect(f.fgEql(4, 3, .{ .fg = f.theme.palette.yellow }));
+    try testing.expect(f.fgEql(4, 4, .{ .fg = f.theme.palette.red }));
+    try testing.expect(f.fgEql(4, 7, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.hits.at(6, 5) == null);
+    var g = try Fixture.init(60, 4);
+    defer g.deinit();
+    g.ascii = true;
+    draw(g.ui(), 1, g.full(), .{ .branch = "main", .unstaged = &.{}, .staged = &.{}, .cursor = 0, .ai_pending = true }, &scroll);
+    try g.expectRow(1, ai_hint_ascii);
+    try g.expectRow(3, clean_note_ascii);
+    try testing.expectEqual(@as(usize, 0), g.hits.items.items.len);
+    draw(g.ui(), 1, g.full(), .{ .branch = "main", .unstaged = &mixed, .staged = &.{}, .cursor = 1 }, &scroll);
+    try g.expectContains("enter diff");
+    try g.expectRow(3, "  > D d.zig                                                |");
+}
+
+test "draw: the clean state paints the note and no scrollbar; the cursor row scrolls into view" {
+    var f = try Fixture.init(40, 6);
+    defer f.deinit();
+    var scroll: usize = 0;
+    draw(f.ui(), 1, f.full(), .{ .branch = "main", .unstaged = &.{}, .staged = &.{}, .cursor = 0 }, &scroll);
+    try f.expectRow(0, "  on main   0 unstaged \u{B7} 0 staged");
+    try f.expectRow(2, "");
+    try f.expectRow(3, clean_note);
+    try testing.expect(f.fgEql(2, 3, .{ .fg = f.theme.palette.green }));
+    try testing.expect(f.hits.at(39, 3) == null);
+
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var many: [12]Entry = undefined;
+    for (&many, 0..) |*e, i| e.* = .{ .path = try std.fmt.allocPrint(arena, "f{d}.zig", .{i}), .letter = 'M', .staged = false };
+    // 12 entries + header, hint, section = 15 rows before the blank;
+    // the cursor on the last entry (row 14) puts the window at 9..15.
+    draw(f.ui(), 1, f.full(), .{ .branch = "main", .unstaged = &many, .staged = &.{}, .cursor = 11 }, &scroll);
+    try testing.expectEqual(@as(usize, 9), scroll);
+    try f.expectRow(0, "    M f6.zig                           \u{2588}");
+    try f.expectRow(5, "  \u{25B6} M f11.zig                          \u{2588}");
+    try testing.expectEqual(@as(u32, 11), f.hits.at(3, 5).?.script_hit.id);
+    // Back to the top: the window follows the cursor up, its row first.
+    draw(f.ui(), 1, f.full(), .{ .branch = "main", .unstaged = &many, .staged = &.{}, .cursor = 0 }, &scroll);
+    try testing.expectEqual(@as(usize, 3), scroll);
+    try f.expectRow(0, "  \u{25B6} M f0.zig                           \u{2588}");
+}
+
+test "scrollTo: pulls the cursor row in from either side and clamps to the end" {
+    var s: usize = 0;
+    scrollTo(&s, 7, 20, 5);
+    try testing.expectEqual(@as(usize, 3), s);
+    scrollTo(&s, 1, 20, 5);
+    try testing.expectEqual(@as(usize, 1), s);
+    s = 30;
+    scrollTo(&s, 19, 20, 5);
+    try testing.expectEqual(@as(usize, 15), s);
+    s = 4;
+    scrollTo(&s, 2, 3, 10);
+    try testing.expectEqual(@as(usize, 0), s);
 }

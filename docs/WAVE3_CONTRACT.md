@@ -3062,3 +3062,49 @@ help,discovery,close}-120x40.txt` (the steps beside each).
   `app/help.zig`, `app/discovery.zig`, `app/trash.zig`, `cmd_picker.zig`;
   e2e `overlay_{help,palette,picker,prompts,whichkey}.test`,
   `ui_discovery_f1.test` re-aimed.
+
+## Git status (2026-09-07, branch `git-status`) — `// changed:` notes
+
+The staging pane painted as the Rust editor paints it
+(`docs/ui-spec/rust-git-status-120x40.txt` and `-80x24.txt`, from
+`steps-status.jsonl`). Status diff 74 → 2 lines at 120×40 (the rail
+marker, below) plus the statusline's live cells.
+
+- `// changed (git status view):` `ui/git_status_view.zig` is Rust's
+  `git_status_view.rs` cell for cell: `on <branch>   N unstaged · M
+  staged`, the hint row — clipped at the pane's edge, never dropped
+  word by word (Rust at 80 columns shows `⏎ di█`) — `Unstaged changes
+  (N)` / `Staged changes (N)` with `(none)`, `▶ X path` on the cursor's
+  row with only its text on `bg2`, the scrollbar column from eight
+  cells, `✓ working tree clean`. Every entry row is `.script_hit{ pane,
+  flat index }`; every hint word is `.script_hit{ pane, hintId(action)
+  }` — Rust registers no hint hits, this one does, so a click on `s`
+  is the key. The provider badge, the rail's grouped rows (headers,
+  collapsed groups) and `Reading git status…` went with the pane that
+  painted them.
+- `// changed (git status keys):` `app/git.zig` `statusPaneKey` is
+  Rust's `Pane::GitStatus` arm: `j k ↑ ↓`, page up / down, `g G home
+  end`, `space s u a A ⏎ c C r`, `b B w` (checkout / new branch /
+  worktrees), esc back to the tree (the pane closes instead when the
+  tree is hidden). `s` on a staged row and `u` on an unstaged one toast
+  Rust's words; enter on an untracked file toasts `no diff for that
+  file`. The cursor keeps its flat index across a stage (Rust's
+  `selected`). The old `x o n q` letters are gone.
+- `// changed (git status model):` `app/git.zig` `collectFiles` is one
+  pass over the snapshot for both the status pane (`statusFiles`:
+  porcelain order, `?` / `U`) and the graph's detail column
+  (`wipFiles`: A–Z, `!`, the untracked directory's slash dropped);
+  `Row` is `git_status_view.Entry` (`path`, `letter`, `staged`).
+  `State.rows`, `collapsed` and `rebuildRows` are deleted; `cmd_git`'s
+  `selectedRow` reads the pane's cursor through `statusPaneRow`.
+- `// changed (dispatch):` the wheel arm for `.git_status` calls
+  `statusPaneWheel` (the flat count, not the old rail rows) — one line.
+- Residue: the rail marker. `app/activity_bar.zig` `sectionOfPane`
+  maps `.git_status` to `.git`; Rust leaves the marker on Files for
+  the status pane (only the graph moves it). One line, section-side's
+  file. At 80×24 also the info view's `Sidebar` hover text and the
+  statusline's narrow branch chip, both other tracks'.
+- `// changed (tests):` unit tests in `git_status_view.zig` (lines, the
+  spec's rows at 89 and 49 cells, hits, colours, scroll, ASCII) and
+  `app/git.zig` (`statusFiles`); e2e `git_status_{stage_keys,toggle,
+  all,enter_diff,click}.test`; `git_status_pane.test` unchanged.

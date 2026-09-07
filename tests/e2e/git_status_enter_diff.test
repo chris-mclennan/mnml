@@ -1,0 +1,28 @@
+# The git status pane: enter opens the cursor file's diff; on an
+# untracked file it says there is no diff yet instead.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+write seed.txt "seed\nchanged line\n"
+write new.txt "hello\n"
+command git.status_pane
+wait 800
+# Porcelain lists the tracked change first, the untracked file after.
+expect screen contains "Unstaged changes (2)"
+expect screen contains "▶ M seed.txt"
+expect screen contains "? new.txt"
+key j
+expect screen contains "▶ ? new.txt"
+key enter
+wait 300
+expect screen contains "no diff for that file"
+key k
+expect screen contains "▶ M seed.txt"
+key enter
+wait 1500
+expect screen contains "diff: seed.txt"
+expect screen contains "Hunk 1/1  seed.txt"
+expect screen contains "+ changed line"

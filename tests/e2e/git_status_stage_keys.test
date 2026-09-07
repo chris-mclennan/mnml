@@ -1,0 +1,38 @@
+# The git status pane (src/ui/git_status_view.zig): `s` stages the
+# cursor's file through the worker and the pane refreshes on the result
+# — the file moves from Unstaged to Staged with an `A` — and `u` brings
+# it back. `s` on an already staged row only says so.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+write new.txt "hello\n"
+command git.status_pane
+wait 800
+expect screen contains "on main   1 unstaged · 0 staged"
+expect screen contains "s/u stage·unstage  space toggle  a/A all  ⏎ diff  c commit  C ai-commit  r refresh"
+expect screen contains "Unstaged changes (1)"
+expect screen contains "▶ ? new.txt"
+expect screen contains "Staged changes (0)"
+expect screen contains "(none)"
+key s
+wait 1500
+expect screen contains "staged new.txt"
+expect screen contains "on main   0 unstaged · 1 staged"
+expect screen contains "Unstaged changes (0)"
+expect screen contains "Staged changes (1)"
+expect screen contains "▶ A new.txt"
+expect screen lacks "? new.txt"
+key s
+wait 300
+expect screen contains "already staged"
+key u
+wait 1500
+expect screen contains "unstaged new.txt"
+expect screen contains "on main   1 unstaged · 0 staged"
+expect screen contains "▶ ? new.txt"
+key u
+wait 300
+expect screen contains "not staged"

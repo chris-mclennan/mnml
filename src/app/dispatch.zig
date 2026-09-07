@@ -1873,7 +1873,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         },
         .md_preview => |*mp| md_preview.scrollBy(app, mp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .pty => |*p| p.scrollBy(if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
-        .git_status => |*s| s.cursor = if (down) @min(s.cursor + n, app.git.rows.items.len -| 1) else s.cursor -| n,
+        .git_status => |*s| git_app.statusPaneWheel(app, s, down, n),
         .diff => |*d| git_app.stepDiff(d, if (down) @as(isize, @intCast(n)) else -@as(isize, @intCast(n))),
         .git_graph => |*g| g.cursor = if (down) @min(g.cursor + n, g.totalRows() -| 1) else g.cursor -| n,
         .ai => |*a| ai_app.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
