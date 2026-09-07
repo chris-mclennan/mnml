@@ -5,12 +5,12 @@
 shell git init -q -b main
 shell git config user.email "test@mnml.dev"
 shell git config user.name "mnml test"
-write .gitignore ".mnml/\n"
+write .gitignore ".mnml/\nremote.git/\n"
 write a.txt "one\n"
 shell git add .gitignore a.txt
 shell git commit -q -m "init"
-shell git init -q --bare ../remote.git
-shell git remote add origin ../remote.git
+shell git init -q --bare remote.git
+shell git remote add origin ./remote.git
 shell git push -q -u origin main main:hotfix
 command view.activity_git
 wait 1000
