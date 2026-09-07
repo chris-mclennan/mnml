@@ -1,0 +1,18 @@
+# zig-only
+# The which-key popup as Rust paints it: `<leader>` on the top edge,
+# group labels with their `+`, the keys typed so far in the title of a
+# sub-popup, `esc to cancel` at the bottom.
+key ctrl+k
+expect screen contains "┌ <leader> "
+expect screen contains "f → +find"
+expect screen contains "e → explorer"
+expect screen contains "q → close buffer"
+expect screen contains "w → write/save"
+expect screen contains "P → +pr"
+expect screen contains "esc to cancel"
+type f
+expect screen contains "┌ <leader> f "
+expect screen contains "f → files"
+expect screen contains "g → grep"
+key esc
+expect screen lacks "<leader>"

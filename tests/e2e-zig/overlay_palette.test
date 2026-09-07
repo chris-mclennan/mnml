@@ -1,0 +1,17 @@
+# zig-only
+# The command palette as Rust paints it: the row is `group · title · id`
+# with the chord as the detail, the count is `N of M`, the exact id
+# pins its row, and Enter runs it.
+write a.txt "alpha\n"
+open a.txt
+key ctrl+shift+p
+expect screen contains "┌ Command palette "
+# An editor is active: its family leads the empty query (Rust's +20).
+expect screen contains "editor  ·  Go to line… (1-based)  ·  editor.goto_line"
+expect screen contains " ctrl+g "
+type view.toggle_wrap
+expect screen contains "▌view  ·  Toggle line wrapping (vim :set wrap)  ·  view.toggle_wrap"
+expect screen contains " of "
+key enter
+expect screen lacks "┌ Command palette "
+expect screen contains "WRAP"

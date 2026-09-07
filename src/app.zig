@@ -38,6 +38,7 @@ const doc_store = @import("app/doc_store.zig");
 pub const DocStore = doc_store.DocStore;
 const snippets = @import("app/snippets.zig");
 const md_preview = @import("app/md_preview.zig");
+const discovery_app = @import("app/discovery.zig");
 const image = @import("image/root.zig");
 const image_pane = @import("app/image_pane.zig");
 const whichkey = @import("app/whichkey.zig");
@@ -132,6 +133,7 @@ pub const AppEvent = event.AppEvent;
 pub const Prompt = prompt_mod;
 pub const Confirm = confirm_mod;
 pub const Picker = picker_mod;
+pub const HelpUi = @import("ui/help_overlay.zig");
 pub const FindBar = find_bar_mod;
 pub const FindState = find_mod.FindState;
 
@@ -371,7 +373,7 @@ pub const PickerAccept = *const fn (app: *App, idx: usize, label: []const u8) Al
 
 /// The on-demand read-only overlays: `view.welcome` / `view.about` /
 /// `view.discovery`. A click anywhere dismisses them.
-pub const InfoKind = enum { welcome, about, discovery };
+pub const InfoKind = enum { welcome, about };
 
 pub const Overlay = union(enum) {
     none,
@@ -397,6 +399,11 @@ pub const Overlay = union(enum) {
         return_focus: ?FocusId = null,
     },
     info: InfoKind,
+    /// `view.discovery`: the click-target panel (`app/discovery.zig`).
+    discovery,
+    /// `view.help` / F1: the keymap reference (`ui/help_overlay.zig`,
+    /// rows from `app/help.zig`).
+    help: HelpUi.State,
     which_key: whichkey.State,
     picker: struct {
         state: Picker.State,
@@ -436,7 +443,8 @@ pub const Overlay = union(enum) {
 
     pub fn deinit(self: *Overlay, gpa: Allocator) void {
         switch (self.*) {
-            .none, .which_key, .info, .wizard => {},
+            .none, .which_key, .info, .discovery, .wizard => {},
+            .help => |*h| h.deinit(gpa),
             .settings => |*s| s.deinit(gpa),
             .menu => |*m| {
                 m.closeSub(gpa);
@@ -792,6 +800,9 @@ pub const App = struct {
     /// at the top of `render`).
     image_paints: std.ArrayListUnmanaged(image.PaintRequest) = .empty,
     overlay: Overlay = .none,
+    /// The click-discovery panel's flash: the family a row press lit,
+    /// until when (`discovery.flashRow`).
+    discovery_flash: ?discovery_app.Flash = null,
     /// The pane the tree's arrow-preview opened last (`openPreview`):
     /// the next preview replaces it while it is clean, so browsing
     /// the tree leaves one tab behind, not one per file.
@@ -1967,6 +1978,7 @@ pub const App = struct {
         try update.tick(self);
         session.tick(self, now);
         trash.tick(self, now);
+        discovery_app.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.

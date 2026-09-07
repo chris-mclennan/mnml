@@ -1,17 +1,23 @@
 # zig-only
-# F1 opens the click-discovery overlay: every registered rect is
-# labelled with its hit label, the next click explains its target
-# instead of acting on it, and Esc closes it without a word.
+# F1 opens the help overlay (Rust's keymap reference) and closes it
+# again; view.discovery opens the click-discovery panel — the families
+# of click targets with their on-screen counts — and a click on a row
+# flashes the family instead of acting on it; Esc closes both.
 write notes.txt hello
 open notes.txt
 key f1
-expect screen contains "Click Discovery"
-expect screen contains "tab:0:0"
+expect screen contains "┌ Help "
+expect screen contains "/ filter…"
+expect screen contains "▾ ── modes ── (10)"
+expect screen contains "NORMAL"
+expect screen contains "Esc close"
+key f1
+expect screen lacks "┌ Help "
+command view.discovery
+expect screen contains "Click Discovery — F1 / Esc to close · click row to flash"
+expect screen contains "[1]  Mode chip  click: toggle vim/standard · right-click: input menu"
+expect screen contains "[1]  Bufferline tabs  click: focus · middle: close · right-click: tab menu"
+expect screen contains "green count = visible now · click row to flash rects"
 key esc
 expect screen lacks "Click Discovery"
-key f1
-# The position chip (row 38): explained, not acted on — no prompt opens.
-click 50 38
-expect screen lacks "Click Discovery"
 expect screen lacks "Go to line"
-expect screen contains "click: go to line"

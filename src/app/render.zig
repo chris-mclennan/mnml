@@ -52,6 +52,8 @@ const Theme = @import("../ui/theme.zig");
 const Style = vaxis.Style;
 const menu_glyph = @import("../ui/menu_glyph.zig");
 const discovery = @import("discovery.zig");
+const help_app = @import("help.zig");
+const help_ui = @import("../ui/help_overlay.zig");
 const info_view_app = @import("info_view.zig");
 const info_view_ui = @import("../ui/info_view.zig");
 const image_pane = @import("image_pane.zig");
@@ -1373,10 +1375,9 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
             const full = ui.canvas.full();
             wizard_ui.draw(ui, Rect.init(full.x, full.y + 1, full.w, full.h -| 2), &w.ui, first_launch.model(app));
         },
-        .info => |kind| switch (kind) {
-            .discovery => discovery.drawOverlay(app, ui, ui.canvas.full()),
-            else => cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
-        },
+        .info => |kind| cmd_view.drawInfo(app, ui, ui.canvas.full(), kind),
+        .discovery => discovery.drawOverlay(app, ui, ui.canvas.full()),
+        .help => |*h| help_ui.draw(ui, ui.canvas.full(), h, try help_app.rows(app, ui.arena)),
     }
 }
 

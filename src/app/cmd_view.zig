@@ -553,7 +553,10 @@ fn about(app: *App) CommandError!void {
 }
 
 fn discovery(app: *App) CommandError!void {
-    openInfo(app, .discovery);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .discovery;
+    app.focus = .overlay;
+    app.needs_render = true;
 }
 
 /// The `.overlay_item` id a panel registers for its own body, so a
@@ -578,19 +581,16 @@ pub fn drawInfo(app: *App, ui: Ui, screen: Rect, kind: app_mod.InfoKind) void {
     const title: []const u8 = switch (kind) {
         .welcome => "Welcome to mnml — Esc / click outside to dismiss",
         .about => "About mnml — Esc / click outside to dismiss",
-        .discovery => "Click Discovery — F1 / Esc to close",
     };
     const w: u16 = @min(@max(ui.width(title) + 4, 56), screen.w);
     const h: u16 = @min(switch (kind) {
         .welcome => welcome_rows.len + 4,
         .about => 8,
-        .discovery => @as(u16, 20),
     }, screen.h);
     const inner = overlay_mod.box(ui, screen, w, h, title, .center);
     if (inner.isEmpty()) return;
     ui.hit(Rect.init(inner.x - 1, inner.y - 1, inner.w + 2, inner.h + 2), .{ .overlay_item = panel_item });
     const fg = Theme.onBg(th.fg, th.overlay_bg.bg);
-    const dim = Theme.onBg(th.muted, th.overlay_bg.bg);
     const acc = Theme.onBg(th.accent, th.overlay_bg.bg);
     var row: u16 = 0;
     switch (kind) {
@@ -619,23 +619,6 @@ pub fn drawInfo(app: *App, ui: Ui, screen: Rect, kind: app_mod.InfoKind) void {
                 const r = inner.row(row);
                 _ = ui.putStr(r.x + 2, r.y, r.w -| 2, ui.clipStr(l, r.w -| 2), if (row == 0) acc else fg);
                 row += 1;
-            }
-        },
-        .discovery => {
-            // What the frame under this box registered, by kind — the
-            // map of everything a click can reach right now.
-            const Tag = std.meta.Tag(@import("../ui/hit.zig").HitTarget);
-            var counts = std.enums.EnumArray(Tag, u32).initFill(0);
-            for (app.hits.items.items) |e| counts.getPtr(std.meta.activeTag(e.target)).* += 1;
-            _ = ui.putStr(inner.x + 2, inner.y, inner.w -| 2, "clickable regions on this frame:", fg);
-            row = 2;
-            inline for (@typeInfo(Tag).@"enum".fields) |f| {
-                const n = counts.get(@enumFromInt(f.value));
-                if (n > 0 and row < inner.h) {
-                    const r = inner.row(row);
-                    _ = ui.putStr(r.x + 2, r.y, r.w -| 2, ui.fmt("{s:<16} {d}", .{ f.name, n }), if (row % 2 == 0) fg else dim);
-                    row += 1;
-                }
             }
         },
     }
@@ -1086,9 +1069,9 @@ fn hscroll(app: *App, sign: i8, half: bool) CommandError!void {
     app.needs_render = true;
 }
 
-/// F1: the cheatsheet pane is the help.
+/// F1: the help overlay (`app/help.zig`), toggled.
 fn help(app: *App) CommandError!void {
-    return command.run(app, .{ .static = .@"view.cheatsheet" });
+    @import("help.zig").toggle(app);
 }
 
 // ─── splits ──────────────────────────────────────────────────────────────
