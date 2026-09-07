@@ -119,6 +119,9 @@ pub const MenuBar = enum { always, auto, hidden };
 /// a TODO for these three, with the menu bar's vocabulary). `auto`
 /// shows the rail while the pointer is in column 0 or on the rail.
 pub const ActivityBar = enum { always, auto, hidden };
+/// // changed (debug-ui): the step toolbar strip over the editor —
+/// `auto` while a debug session is live, `always`, or never.
+pub const DebugToolbar = enum { auto, always, hidden };
 /// // changed (section-side): which column an activity section lives
 /// in. `ui.sidebar_side` is the side sections take when nothing says
 /// otherwise; `ui.section_side` overrides it per section.
@@ -241,6 +244,7 @@ pub const Ui = struct {
     projects_dir: []const u8 = "",
     menu_bar: MenuBar = .always,
     activity_bar: ActivityBar = .always,
+    debug_toolbar: DebugToolbar = .auto,
     bufferline_diag_style: DiagStyle = .count,
     coverage_chip_mode: CoverageChipMode = .feature,
     expand_indicator: ExpandIndicator = .chevron,

@@ -1,9 +1,11 @@
-# DAP session — the REPL evaluates against the stopped frame, and
-# setVariable writes a new value back. An expression lands with its type,
-# a struct value renders with its fields, an unknown name is an error
-# row. In the debug pane, Tab moves to VARIABLES, j selects `x`, and
-# dap.set_variable's prompt (seeded with the current value) takes 42:
+# DAP session — the debug console evaluates against the stopped frame,
+# and setVariable writes a new value back. An expression lands with its
+# type, a struct value renders with its fields, an unknown name is an
+# error row. In the DEBUG section, the `x` row under VARIABLES takes
+# dap.set_variable's prompt (seeded with the current value) with 42:
 # the row updates, and the program prints 43 when it continues.
+# Re-aimed (debug-ui): the REPL pane is the console inside the Debug
+# pane; the variables live in the sidebar section.
 write prog.dbg "let x = 5\nlet p = struct{a=1,b=2}\nx = x + 1\nprint x\n"
 write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
 open prog.dbg
@@ -20,21 +22,22 @@ expect screen contains "dap: stopped (breakpoint)"
 expect screen contains "▶"
 
 command dap.repl
-expect pane "DAP REPL"
+expect pane "Debug"
 type "x * 2"
 key enter
-expect screen contains "= 10 : int"
+expect screen contains "10 : int"
 type "p"
 key enter
-expect screen contains "= {a=1, b=2} : struct"
+expect screen contains "{a=1, b=2} : struct"
 type "nope"
 key enter
 expect screen contains "err: no such variable"
 
-command dap.show
-expect pane "Debug"
+command view.activity_debug
 expect screen contains "x: int = 5"
-key tab
+# The status row, the VARIABLES header, Locals, then x.
+key j
+key j
 key j
 command dap.set_variable
 expect screen contains "Set x ="

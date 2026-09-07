@@ -17,7 +17,6 @@ expect screen contains "dap: stopped (breakpoint)"
 # the panes below are opened once it has, so the jump does not take focus back.
 expect screen contains "▶"
 command dap.show
-expect screen contains "OUTPUT"
 expect screen contains "one"
 expect screen contains "two"
 expect screen contains "three"
@@ -26,4 +25,4 @@ expect screen contains "s: string = \"three\""
 command dap.continue
 expect screen contains "dap: exited (code 7)"
 command dap.show
-expect screen contains "(no session"
+expect screen contains "no session"

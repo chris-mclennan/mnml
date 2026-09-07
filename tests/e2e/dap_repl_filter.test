@@ -7,6 +7,7 @@ write code.rs "fn main() {}\n"
 open code.rs
 
 command dap.repl
+expect pane "Debug"
 
 # Seed three history entries.
 type "alpha"
@@ -20,24 +21,9 @@ key enter
 expect screen contains "alpha"
 expect screen contains "bravo"
 expect screen contains "charlie"
-
-# `/` while input is empty enters filter mode.
-key /
-type "alp"
-# Filter mode shows the typed query.
-expect screen contains "filter: alp"
-# Narrowed list — only the alpha entry should match.
-expect screen contains "alpha"
+# The console has no filter (it is a scrollback); Ctrl+L clears it.
+key ctrl+l
+expect screen lacks "alpha"
 expect screen lacks "bravo"
 expect screen lacks "charlie"
-
-# Enter exits filter mode but keeps the narrow.
-key enter
-expect screen contains "alpha"
-expect screen lacks "bravo"
-
-# Esc clears the filter — all three visible again.
-key escape
-expect screen contains "alpha"
-expect screen contains "bravo"
-expect screen contains "charlie"
+expect screen contains "Debug console"

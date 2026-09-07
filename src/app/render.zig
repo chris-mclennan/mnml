@@ -96,6 +96,7 @@ const flaky = @import("flaky.zig");
 const flaky_view = @import("../ui/flaky_view.zig");
 const grep_view = @import("../ui/grep_view.zig");
 const dap = @import("dap.zig");
+const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const lsp = @import("lsp.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
@@ -633,7 +634,6 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .script => kindIcon(ascii, "\u{276F}", "\u{EB15}", p.comment),
         .cheatsheet => kindIcon(ascii, "?", "\u{F128}", p.yellow),
         .debug => kindIcon(ascii, "\u{1F41B}", "\u{F188}", p.red),
-        .dap_repl => kindIcon(ascii, ">", "\u{F018D}", p.cyan),
         .image => kindIcon(ascii, "\u{25A4}", "\u{F021F}", p.purple),
         .claude_agents => kindIcon(ascii, "\u{25C6}", "\u{F06A9}", p.purple),
         .websocket => kindIcon(ascii, "\u{25C7}", "\u{F0317}", p.teal),
@@ -953,7 +953,6 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 grep_view.draw(ui, pr.pane, rect, g, app.active == pr.pane and app.focus == .pane);
             },
             .debug => |*d| try dap.drawDebug(app, ui, pr.pane, d, rect),
-            .dap_repl => |*r| try dap.drawRepl(app, ui, pr.pane, r, rect),
             .request => |*rp| try request_pane.draw(app, ui, pr.pane, rp, rect),
             .websocket => |*w| try ws_pane.draw(app, ui, pr.pane, w, rect),
             .browser => |*b| try browser_pane.draw(app, ui, pr.pane, b, rect),
@@ -1194,6 +1193,13 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
             editor_view.drawBreadcrumb(ui, id, s.top, names);
             rect = s.rest;
         }
+    };
+    // The debugger's step toolbar, docked over the editor while a
+    // session is live (`ui.debug_toolbar`).
+    if (rect.h >= 3) if (dap.stripPane(app)) |sp| if (sp == id) {
+        const s = rect.splitTop(1);
+        _ = debug_toolbar.draw(ui, s.top, .{ .pane = id, .state = dap.sessionState(app) });
+        rect = s.rest;
     };
     // The find bar docks under the pane it belongs to.
     var bar: ?Rect = null;

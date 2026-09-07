@@ -144,7 +144,7 @@ pub fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
         },
         .variable => |v| {
             const vr = v.row;
-            x += 2 + @as(u16, vr.depth) * 2;
+            x += @as(u16, vr.depth) * 2;
             if (x >= end) return;
             const chev: []const u8 = if (vr.expandable) chevron(ui, vr.expanded) else "  ";
             x += ui.putStr(x, r.y, end -| x, chev, Theme.withFg(base, t.accent.fg));
@@ -273,8 +273,8 @@ test "every row kind paints its shape at the shipped width (26 cells) and regist
     try f.expectContains("DEBUG");
     try f.expectRow(2, "▌● stopped at prog.dbg:3 …");
     try f.expectRow(3, " ▾ VARIABLES (2)");
-    try f.expectRow(4, "   ▾ Locals");
-    try f.expectRow(5, "       x: int = 7");
+    try f.expectRow(4, " ▾ Locals");
+    try f.expectRow(5, "     x: int = 7");
     try f.expectRow(7, "   ⌖ x * 100 = 700");
     try f.expectRow(9, "   ● thread main");
     try f.expectRow(10, "   ▶ prog.dbg:3  main");
@@ -282,7 +282,7 @@ test "every row kind paints its shape at the shipped width (26 cells) and regist
     try f.expectRow(12, "   [x] prog.dbg:3  when i…");
     try f.expectRow(13, "   [x] Uncaught errors");
     // The changed value is the warning colour; the frame's ▶ too.
-    try testing.expect(f.fgEql(16, 5, f.theme.warn_fg));
+    try testing.expect(f.fgEql(14, 5, f.theme.warn_fg));
     try testing.expectEqual(@as(u32, 3), f.hits.at(5, 5).?.row.idx);
     try testing.expectEqual(list_panel.PanelId.debug, f.hits.at(5, 5).?.row.panel);
 }

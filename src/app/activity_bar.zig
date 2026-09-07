@@ -112,7 +112,7 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
     const p = app.panes.get(id) orelse return null;
     return switch (p.*) {
         .grep => .search,
-        .debug, .dap_repl => .debug,
+        .debug => .debug,
         .claude_agents => .agents,
         .integrations => .integrations,
         // Rust keeps the rail marker on Files for the status pane; only

@@ -1,4 +1,4 @@
-//! Every command mnml-zig knows about — 797 Rust ids plus 55 Zig-only, titles, palette groups
+//! Every command mnml-zig knows about — 797 Rust ids plus 56 Zig-only, titles, palette groups
 //! and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
@@ -600,7 +600,7 @@ pub const specs = [_]Spec{
     .{ .id = "dap.step_back", .title = "DAP: step backward (reverse — requires record-replay adapter)", .group = "dap" },
     .{ .id = "dap.reverse_continue", .title = "DAP: reverse-continue to previous breakpoint", .group = "dap" },
     .{ .id = "dap.terminate", .title = "DAP: terminate session", .group = "dap" },
-    .{ .id = "dap.show", .title = "DAP: show debug pane (call stack + output)", .group = "dap" },
+    .{ .id = "dap.show", .title = "DAP: show the DEBUG section and the debug console", .group = "dap" },
     .{ .id = "dap.add_watch", .title = "DAP: add a watch expression", .group = "dap" },
     .{ .id = "dap.set_variable", .title = "DAP: set the value of the selected variable", .group = "dap" },
     .{ .id = "dap.remove_watch", .title = "DAP: remove a watch expression (→ picker)", .group = "dap" },
@@ -608,7 +608,7 @@ pub const specs = [_]Spec{
     .{ .id = "dap.toggle_breakpoint_conditional", .title = "DAP: toggle conditional breakpoint at cursor", .group = "dap", .keys = .{ .both = &.{"shift+f9"} } },
     .{ .id = "dap.attach", .title = "DAP: attach to a running process (→ picker)", .group = "dap" },
     .{ .id = "dap.pick_thread", .title = "DAP: switch to a different thread (→ picker)", .group = "dap" },
-    .{ .id = "dap.repl", .title = "DAP: open the REPL pane (evaluate expressions)", .group = "dap" },
+    .{ .id = "dap.repl", .title = "DAP: focus the debug console (evaluate expressions)", .group = "dap" },
     .{ .id = "dap.exceptions", .title = "DAP: toggle exception breakpoints (→ picker)", .group = "dap" },
     .{ .id = "dap.set_breakpoint_hit_count", .title = "DAP: set hit-count on breakpoint (e.g. >= 5, % 10)", .group = "dap" },
     // Zig-only (debug-ui): the DEBUG section, its row verbs, the
@@ -628,6 +628,7 @@ pub const specs = [_]Spec{
     .{ .id = "dap.set_breakpoint_log_message", .title = "DAP: set a log message on the breakpoint (a logpoint)", .group = "dap" },
     .{ .id = "dap.enable_all_breakpoints", .title = "DAP: enable every breakpoint", .group = "dap" },
     .{ .id = "dap.disable_all_breakpoints", .title = "DAP: disable every breakpoint", .group = "dap" },
+    .{ .id = "dap.clear_console", .title = "DAP: clear the debug console", .group = "dap" },
     .{ .id = "dap.evaluate_hover", .title = "DAP: evaluate the word under the cursor into the hover box", .group = "dap" },
     .{ .id = "lsp.code_action", .title = "LSP: code actions at cursor (→ picker)", .group = "lsp", .keys = .{ .both = &.{"ctrl+."} } },
     .{ .id = "lsp.quick_fix", .title = "LSP: quick fix (auto-apply first code action)", .group = "lsp", .keys = .{ .both = &.{"alt+enter"} } },
@@ -994,7 +995,7 @@ pub const specs = [_]Spec{
     .{ .id = "files.empty_trash", .title = "Files: empty the workspace trash…", .group = "files" },
 };
 
-test "932 specs, unique ids" {
+test "933 specs, unique ids" {
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + two script commands + eight cutover-prep commands + four var
     // commands + three HTTP panel commands + six Playwright commands
@@ -1006,6 +1007,6 @@ test "932 specs, unique ids" {
     // + nine ui-polish commands + `view.only`.
     // + eight SEARCH row commands + the menu bar's summon + two coverage
     // chip commands.
-    try std.testing.expectEqual(@as(usize, 932), specs.len);
+    try std.testing.expectEqual(@as(usize, 933), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }

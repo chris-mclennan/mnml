@@ -18,6 +18,7 @@ pub const table = .{
     .@"dap.remove_breakpoint" = &dap.removeBreakpoint,
     .@"dap.restart" = &dap.restart,
     .@"dap.evaluate_hover" = &dap.evaluateHover,
+    .@"dap.clear_console" = &dap.clearConsole,
     .@"dap.run" = &dap.run,
     .@"dap.attach" = &attach,
     .@"dap.continue" = &cont,

@@ -6,7 +6,7 @@ write code.rs "fn main() {}\n"
 open code.rs
 
 command dap.repl
-expect pane "DAP REPL"
+expect pane "Debug"
 
 # Type an expression + submit.
 type "x + 1"

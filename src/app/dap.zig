@@ -4,7 +4,10 @@
 //! exception filters, `launch`, `configurationDone`), what a `stopped`
 //! event sets in motion (threads, the stack, scopes, variables, the
 //! watches, the ▶ mark in the gutter), and the two panes — `Pane.debug`
-//! (call stack, variables, output) and `Pane.dap_repl` (evaluate).
+//! and the console pane — `Pane.debug`: the step toolbar and the Debug
+//! Console (output + evaluations in one scrollback). The sidebar
+//! section (variables, watch, call stack, breakpoints) is
+//! `debug_panel.zig`.
 //!
 //! Everything here works without an adapter: breakpoints toggle, the
 //! REPL keeps its history (an entry lands as "no DAP session"), watches
@@ -29,7 +32,7 @@ const editor_view = @import("../ui/editor_view.zig");
 const text_field = @import("../ui/text_field.zig");
 const fuzzy = @import("../ui/fuzzy.zig");
 const dap_view = @import("../ui/dap_view.zig");
-const repl_view = @import("../ui/dap_repl_view.zig");
+const toolbar = @import("../ui/debug_toolbar.zig");
 const jsonrpc = @import("../rpc/jsonrpc.zig");
 const client = @import("../dap/client.zig");
 const types = @import("../dap/types.zig");
@@ -50,48 +53,77 @@ pub const Breakpoint = types.Breakpoint;
 /// Where execution stopped: the ▶ in the gutter. Owned path, 0-based line.
 pub const Arrow = struct { path: []u8, line: u32 };
 
-/// `Pane.debug`: cursors only — the data is the session's.
-pub const DebugPane = struct {
-    section: dap_view.Section = .stack,
-    stack_cursor: usize = 0,
-    vars_cursor: usize = 0,
-    scrolls: dap_view.Scrolls = .{},
+/// `Pane.debug`: the console pane. Its scrollback and input live in
+/// `State.console` so they outlive the pane (and land while it is closed).
+pub const DebugPane = struct {};
+
+/// One line of the Debug Console's scrollback.
+pub const ConsoleEntry = union(enum) {
+    /// A program `output` event line (`stdout` / `stderr` / `console`).
+    output: struct { category: []u8, text: []u8 },
+    /// An evaluation: the `> expr` echo and its result.
+    eval: types.ReplEntry,
+    /// A session note (`── started prog.dbg ──`).
+    note: []u8,
+
+    pub fn deinit(self: *ConsoleEntry, gpa: Allocator) void {
+        switch (self.*) {
+            .output => |o| {
+                gpa.free(o.category);
+                gpa.free(o.text);
+            },
+            .eval => |*e| e.deinit(gpa),
+            .note => |n| gpa.free(n),
+        }
+    }
 };
 
-/// `Pane.dap_repl`: the input line, the history, the filter.
-pub const DapReplPane = struct {
-    gpa: Allocator,
+/// The Debug Console: the scrollback, the input row, the history
+/// (`↑` / `↓`) and the Tab completion in flight.
+pub const Console = struct {
+    entries: std.ArrayListUnmanaged(ConsoleEntry) = .empty,
     input: text_field.Buf = .empty,
     caret: usize = 0,
-    history: std.ArrayListUnmanaged(types.ReplEntry) = .empty,
     /// What was submitted, for ↑/↓ — failed evaluations included, as a
     /// typo is what one most wants back.
     commands: std.ArrayListUnmanaged([]u8) = .empty,
     cmd_idx: ?usize = null,
-    /// Index into the visible entries, or `repl_view.scroll_tail`.
-    scroll: usize = repl_view.scroll_tail,
-    /// The history entry `o` and Esc act on; null = the input has focus.
-    selected: ?usize = null,
-    filter: text_field.Buf = .empty,
-    filter_mode: bool = false,
+    /// What was typed before ↑ started walking — ↓ past the newest
+    /// puts it back (vim's cmdline convention). Owned.
+    typed: ?[]u8 = null,
+    /// Lines hidden past the bottom; 0 follows the tail.
+    scroll: usize = 0,
+    /// A Tab in progress: the fragment's start, the names that begin
+    /// with it (owned), which one is in.
+    completion: ?struct { start: usize, candidates: [][]u8, idx: usize } = null,
 
-    pub fn deinit(self: *DapReplPane) void {
-        self.input.deinit(self.gpa);
-        for (self.history.items) |*e| e.deinit(self.gpa);
-        self.history.deinit(self.gpa);
-        for (self.commands.items) |c| self.gpa.free(c);
-        self.commands.deinit(self.gpa);
-        self.filter.deinit(self.gpa);
+    pub const max_entries = 4000;
+
+    pub fn deinit(self: *Console, gpa: Allocator) void {
+        for (self.entries.items) |*e| e.deinit(gpa);
+        self.entries.deinit(gpa);
+        self.input.deinit(gpa);
+        for (self.commands.items) |c| gpa.free(c);
+        self.commands.deinit(gpa);
+        if (self.typed) |t| gpa.free(t);
+        self.clearCompletion(gpa);
     }
 
-    /// History indices whose expression fuzzy-matches the filter; every
-    /// index when the filter is empty. Frame arena.
-    pub fn visible(self: *const DapReplPane, arena: Allocator) Allocator.Error![]usize {
-        var out: std.ArrayListUnmanaged(usize) = .empty;
-        for (self.history.items, 0..) |e, i| {
-            if (self.filter.items.len == 0 or fuzzy.score(self.filter.items, e.expression) != null) try out.append(arena, i);
+    pub fn clearCompletion(self: *Console, gpa: Allocator) void {
+        const comp = self.completion orelse return;
+        for (comp.candidates) |c| gpa.free(c);
+        gpa.free(comp.candidates);
+        self.completion = null;
+    }
+
+    /// The last evaluation (tests).
+    pub fn lastEval(self: *const Console) ?*const types.ReplEntry {
+        var i = self.entries.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.entries.items[i] == .eval) return &self.entries.items[i].eval;
         }
-        return out.items;
+        return null;
     }
 };
 
@@ -112,6 +144,7 @@ pub const State = struct {
     last_file: ?[]u8 = null,
     /// Where the pending `evaluate_hover` shows its answer.
     hover_at: ?struct { pane: PaneId, byte: usize } = null,
+    console: Console = .{},
 
     pub fn deinit(self: *State, gpa: Allocator) void {
         if (self.session) |s| s.deinit();
@@ -128,6 +161,7 @@ pub const State = struct {
         self.watches.deinit(gpa);
         if (self.arrow) |a| gpa.free(a.path);
         if (self.last_file) |f| gpa.free(f);
+        self.console.deinit(gpa);
     }
 
     pub fn bpsFor(self: *const State, path: []const u8) []const Breakpoint {
@@ -629,6 +663,7 @@ pub fn startSession(app: *App, cfg: app_mod.Config.DapAdapter, file: []const u8,
     const remembered = try app.gpa.dupe(u8, file);
     if (app.dap.last_file) |old| app.gpa.free(old);
     app.dap.last_file = remembered;
+    try consoleNote(app, "started {s}", .{std.fs.path.basename(file)});
     app.toast("dap: spawned {s} adapter", .{cfg.cmd});
 }
 
@@ -858,7 +893,7 @@ fn handleResponse(app: *App, s: *Session, kind: client.ReqKind, ctx: u64, succes
         .evaluate_repl => {
             const expr = s.takeEval(ctx) orelse return;
             defer app.gpa.free(expr);
-            try replResult(app, expr, success, message, body);
+            try consoleResult(app, expr, success, message, body);
         },
         .evaluate_watch => {
             const expr = s.takeEval(ctx) orelse return;
@@ -928,6 +963,7 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
         const category = jsonrpc.getStr(b, "category") orelse "console";
         const text = jsonrpc.getStr(b, "output") orelse "";
         try s.appendOutput(category, text);
+        try consoleOutput(app, category, text);
         if (std.mem.eql(u8, category, "stderr") or std.mem.eql(u8, category, "important")) {
             const first = std.mem.trimEnd(u8, text[0..(std.mem.indexOfScalar(u8, text, '\n') orelse text.len)], "\r");
             if (first.len > 0) app.toast("dap[{s}]: {s}", .{ category, first[0..@min(first.len, 80)] });
@@ -935,10 +971,14 @@ fn handleEvent(app: *App, s: *Session, name: []const u8, body: ?jsonrpc.Value) A
     } else if (std.mem.eql(u8, name, "exited")) {
         const code = if (body) |b| jsonrpc.getInt(b, "exitCode") orelse 0 else 0;
         app.toast("dap: exited (code {d})", .{code});
+        try consoleNote(app, "exited (code {d})", .{code});
         s.exited = true;
         clearArrow(app);
     } else if (std.mem.eql(u8, name, "terminated")) {
-        if (!s.exited) app.toast("dap: session ended", .{});
+        if (!s.exited) {
+            app.toast("dap: session ended", .{});
+            try consoleNote(app, "session ended", .{});
+        }
         s.exited = true;
         endSession(app);
     }
@@ -961,9 +1001,9 @@ fn jumpTo(app: *App, path: []const u8, line: u32) Allocator.Error!void {
     }
 }
 
-// ─── the panes ──────────────────────────────────────────────────────────
+// ─── the console pane ───────────────────────────────────────────────────
 
-/// Open `pane` beside the active one, or reveal the one of `tag`.
+/// Open (or reveal) the debug pane beside the active one.
 fn openSingleton(app: *App, tag: std.meta.Tag(app_mod.Pane), pane: app_mod.Pane) CommandError!void {
     if (app.panes.findKind(tag)) |id| {
         app.showPane(id);
@@ -988,100 +1028,144 @@ pub fn showDebug(app: *App) CommandError!void {
     return openSingleton(app, .debug, .{ .debug = .{} });
 }
 
+/// `dap.repl`: focus the console (its input row).
 pub fn openRepl(app: *App) CommandError!void {
-    return openSingleton(app, .dap_repl, .{ .dap_repl = .{ .gpa = app.gpa } });
+    return openSingleton(app, .debug, .{ .debug = .{} });
 }
 
-fn statusLine(app: *App, arena: Allocator) Allocator.Error![]const u8 {
-    const s = app.dap.session orelse return "(no session — dap.run starts one)";
-    if (s.stopped) |st| return std.fmt.allocPrint(arena, "● stopped ({s}) · thread {d}", .{ st.label(), st.thread_id });
-    if (s.exited) return "○ exited";
-    if (s.running) return "▶ running";
-    return "… starting";
+/// `dap.clear_console`.
+pub fn clearConsole(app: *App) CommandError!void {
+    const c = &app.dap.console;
+    for (c.entries.items) |*e| e.deinit(app.gpa);
+    c.entries.clearRetainingCapacity();
+    c.scroll = 0;
+    app.needs_render = true;
+}
+
+fn consoleAppend(app: *App, entry: ConsoleEntry) Allocator.Error!void {
+    const c = &app.dap.console;
+    if (c.entries.items.len >= Console.max_entries) {
+        var first = c.entries.orderedRemove(0);
+        first.deinit(app.gpa);
+    }
+    try c.entries.append(app.gpa, entry);
+    app.needs_render = true;
+}
+
+/// A session note: `── started prog.dbg ──`.
+fn consoleNote(app: *App, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+    const text = try std.fmt.allocPrint(app.gpa, "\u{2500}\u{2500} " ++ fmt ++ " \u{2500}\u{2500}", args);
+    errdefer app.gpa.free(text);
+    try consoleAppend(app, .{ .note = text });
+}
+
+/// Every non-empty line of an `output` event.
+fn consoleOutput(app: *App, category: []const u8, text: []const u8) Allocator.Error!void {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        const cat = try app.gpa.dupe(u8, category);
+        errdefer app.gpa.free(cat);
+        const copy = try app.gpa.dupe(u8, line);
+        errdefer app.gpa.free(copy);
+        try consoleAppend(app, .{ .output = .{ .category = cat, .text = copy } });
+    }
+}
+
+/// What the toolbar shows for the session.
+pub fn sessionState(app: *const App) toolbar.SessionState {
+    const s = app.dap.session orelse return .none;
+    if (s.stopped != null) return .stopped;
+    return .running;
+}
+
+/// The editor pane that carries the toolbar strip this frame, or
+/// null: `ui.debug_toolbar` hidden, `auto` without a session, or no
+/// editor to carry it. The active editor; else the one showing the
+/// stopped file.
+pub fn stripPane(app: *App) ?PaneId {
+    switch (app.cfg.ui.debug_toolbar) {
+        .hidden => return null,
+        .auto => if (app.dap.session == null) return null,
+        .always => {},
+    }
+    if (app.active) |a| if (app.panes.editor(a) != null) return a;
+    if (app.dap.arrow) |ar| return app.panes.findPath(ar.path);
+    return null;
+}
+
+/// A toolbar button, from the pane or the editor's strip.
+pub fn toolbarAction(app: *App, action: toolbar.Action) CommandError!void {
+    const id: command.CommandId = switch (action) {
+        .@"continue" => switch (sessionState(app)) {
+            .none => .@"dap.run",
+            .running => .@"dap.pause",
+            .stopped => .@"dap.continue",
+        },
+        .step_over => .@"dap.next",
+        .step_into => .@"dap.step_in",
+        .step_out => .@"dap.step_out",
+        .restart => .@"dap.restart",
+        .stop => .@"dap.terminate",
+    };
+    return command.run(app, .{ .static = id });
+}
+
+/// The scrollback flattened to painted lines. Frame arena.
+fn consoleLines(app: *App, arena: Allocator) Allocator.Error![]dap_view.Line {
+    var out: std.ArrayListUnmanaged(dap_view.Line) = .empty;
+    for (app.dap.console.entries.items, 0..) |e, i| {
+        const idx: u32 = @intCast(i);
+        switch (e) {
+            .output => |o| try out.append(arena, .{
+                .kind = if (std.mem.eql(u8, o.category, "stderr")) .stderr else if (std.mem.eql(u8, o.category, "stdout")) .stdout else .console,
+                .text = o.text,
+            }),
+            .note => |n| try out.append(arena, .{ .kind = .note, .text = n }),
+            .eval => |ev| {
+                try out.append(arena, .{ .kind = .echo, .text = ev.expression, .entry = idx });
+                if (ev.pending) {
+                    try out.append(arena, .{ .kind = .pending, .text = "  (evaluating\u{2026})", .entry = idx });
+                } else if (ev.err) |err| {
+                    try out.append(arena, .{ .kind = .err, .text = try std.fmt.allocPrint(arena, "  err: {s}", .{err}), .entry = idx });
+                } else {
+                    const chev: []const u8 = if (ev.variables_ref > 0) (if (ev.expanded) "\u{25BE} " else "\u{25B8} ") else "";
+                    const text = if (ev.ty) |ty| try std.fmt.allocPrint(arena, "  {s}{s} : {s}", .{ chev, ev.value, ty }) else try std.fmt.allocPrint(arena, "  {s}{s}", .{ chev, ev.value });
+                    try out.append(arena, .{ .kind = .result, .text = text, .entry = idx });
+                    if (ev.expanded and ev.variables_ref > 0) {
+                        if (app.dap.session) |s| if (s.variables.get(ev.variables_ref)) |kids| {
+                            for (kids) |k| {
+                                const kl = if (k.ty) |ty| try std.fmt.allocPrint(arena, "      {s} : {s} = {s}", .{ k.name, ty, k.value }) else try std.fmt.allocPrint(arena, "      {s} = {s}", .{ k.name, k.value });
+                                try out.append(arena, .{ .kind = .child, .text = kl, .entry = idx });
+                            }
+                            continue;
+                        };
+                        try out.append(arena, .{ .kind = .pending, .text = "      (fetching children\u{2026})", .entry = idx });
+                    }
+                }
+            },
+        }
+    }
+    return out.items;
 }
 
 pub fn drawDebug(app: *App, ui: Ui, id: PaneId, p: *DebugPane, area: Rect) Allocator.Error!void {
-    const arena = ui.arena;
-    const s = app.dap.session;
-    var frames: std.ArrayListUnmanaged(dap_view.Frame) = .empty;
-    if (s) |ss| for (ss.frames) |f| {
-        const src = if (f.source) |sp| app.relPath(sp) else "?";
-        try frames.append(arena, .{ .label = try std.fmt.allocPrint(arena, "{s}:{d}  {s}", .{ src, f.line, f.name }) });
-    };
-    var watches: std.ArrayListUnmanaged(dap_view.Watch) = .empty;
-    for (app.dap.watches.items) |w| {
-        const r: ?types.WatchResult = if (s) |ss| ss.watch_results.get(w) else null;
-        const value: []const u8, const is_err: bool = if (r) |res| (if (res.err) |e| .{ try std.fmt.allocPrint(arena, "err: {s}", .{e}), true } else if (res.ty) |t| .{ try std.fmt.allocPrint(arena, "{s} : {s}", .{ res.value, t }), false } else .{ res.value, false }) else .{ "(no value)", false };
-        try watches.append(arena, .{ .expression = w, .value = value, .is_err = is_err });
-    }
-    const vars: []const types.VarRow = if (s) |ss| try ss.variableRows(arena) else &.{};
-    var output: std.ArrayListUnmanaged([]const u8) = .empty;
-    if (s) |ss| for (ss.output.items) |o| try output.append(arena, o.text);
-    const total_vars = watches.items.len + vars.len;
-    if (p.vars_cursor >= total_vars) p.vars_cursor = total_vars -| 1;
-    if (p.stack_cursor >= frames.items.len) p.stack_cursor = frames.items.len -| 1;
+    _ = p;
+    const c = &app.dap.console;
+    const lines = try consoleLines(app, ui.arena);
+    if (c.scroll > lines.len -| 1) c.scroll = lines.len -| 1;
     if (app.active == id) app.pane_rows = @max(area.h, 1);
-    dap_view.draw(ui, id, area, &p.scrolls, .{
-        .status = try statusLine(app, arena),
-        .stopped = if (s) |ss| ss.stopped != null else false,
-        .has_session = s != null,
-        .frames = frames.items,
-        .stack_cursor = p.stack_cursor,
-        .watches = watches.items,
-        .vars = vars,
-        .vars_cursor = p.vars_cursor,
-        .output = output.items,
-        .section = p.section,
+    const caret = dap_view.draw(ui, id, area, .{
+        .lines = lines,
+        .scroll = c.scroll,
+        .input = c.input.items,
+        .caret = c.caret,
+        .state = sessionState(app),
         .focused = app.active == id and app.focus == .pane,
     });
-}
-
-pub fn drawRepl(app: *App, ui: Ui, id: PaneId, p: *DapReplPane, area: Rect) Allocator.Error!void {
-    const arena = ui.arena;
-    const vis = try p.visible(arena);
-    const entries = try arena.alloc(repl_view.Entry, vis.len);
-    for (vis, 0..) |hi, i| {
-        const e = p.history.items[hi];
-        var children: ?[]const repl_view.Child = null;
-        if (e.expanded and e.variables_ref > 0) if (app.dap.session) |s| if (s.variables.get(e.variables_ref)) |kids| {
-            const out = try arena.alloc(repl_view.Child, kids.len);
-            for (kids, 0..) |k, j| out[j] = .{ .name = k.name, .ty = k.ty, .value = k.value };
-            children = out;
-        };
-        entries[i] = .{
-            .index = @intCast(hi),
-            .expression = e.expression,
-            .value = e.value,
-            .ty = e.ty,
-            .err = e.err,
-            .pending = e.pending,
-            .expandable = e.variables_ref > 0,
-            .expanded = e.expanded,
-            .children = children,
-            .selected = p.selected == hi,
-        };
-    }
-    // The scroll is an index into the visible list; map a selected
-    // history index onto it.
-    var scroll = p.scroll;
-    if (p.selected) |sel| {
-        for (vis, 0..) |hi, i| if (hi == sel) {
-            scroll = i;
-        };
-    }
-    if (app.active == id) app.pane_rows = @max(area.h, 1);
-    const caret = repl_view.draw(ui, id, area, .{
-        .entries = entries,
-        .total = p.history.items.len,
-        .input = p.input.items,
-        .caret = p.caret,
-        .filter = p.filter.items,
-        .filter_mode = p.filter_mode,
-        .scroll = scroll,
-        .focused = app.active == id and app.focus == .pane,
-    });
-    if (app.active == id and app.focus == .pane) if (caret) |c| {
-        app.cursor_pos = .{ .x = c.x, .y = c.y };
+    if (app.active == id and app.focus == .pane) if (caret) |cr| {
+        app.cursor_pos = .{ .x = cr.x, .y = cr.y };
     };
 }
 
@@ -1097,129 +1181,215 @@ fn leaveToEditor(app: *App) void {
     app.focus = .tree;
 }
 
-/// The debug pane's keys. False lets the chord chain see the key.
+/// The console's keys: the input row's editing, Enter submits, ↑↓ walk
+/// the history, Tab completes a variable name, PageUp / PageDown and
+/// Ctrl+U/D scroll the scrollback, Ctrl+L clears it, Esc leaves. False
+/// lets the chord chain see the key.
 pub fn debugKey(app: *App, id: PaneId, p: *DebugPane, k: Key) Allocator.Error!bool {
-    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
-    const s = app.dap.session;
-    const n_frames: usize = if (s) |ss| ss.frames.len else 0;
-    const arena = app.frame.allocator();
-    const n_vars: usize = app.dap.watches.items.len + (if (s) |ss| (try ss.variableRows(arena)).len else 0);
-    const cursor: *usize = if (p.section == .stack) &p.stack_cursor else &p.vars_cursor;
-    const n: usize = if (p.section == .stack) n_frames else n_vars;
+    _ = id;
+    _ = p;
+    const gpa = app.gpa;
+    const c = &app.dap.console;
     const page = @max(app.pane_rows / 2, 1);
-    switch (k.code) {
-        .tab => p.section = if (p.section == .stack) .variables else .stack,
-        .down => cursor.* = @min(cursor.* + 1, n -| 1),
-        .up => cursor.* -|= 1,
-        .home => cursor.* = 0,
-        .end => cursor.* = n -| 1,
-        .page_down => cursor.* = @min(cursor.* + page, n -| 1),
-        .page_up => cursor.* -|= page,
-        .enter => try debugActivate(app, p),
-        .esc => leaveToEditor(app),
-        .char => |c| switch (c) {
-            'j' => cursor.* = @min(cursor.* + 1, n -| 1),
-            'k' => cursor.* -|= 1,
-            'g' => cursor.* = 0,
-            'G' => cursor.* = n -| 1,
-            'w' => try watchSelected(app, p),
-            'y' => try yankSelected(app, p),
-            's' => setVariablePrompt(app) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {},
+    if (k.mods.ctrl or k.mods.alt or k.mods.super) {
+        if (!k.mods.ctrl or k.code != .char) return false;
+        switch (k.code.char) {
+            'u', 'w', 'a', 'e', 'k' => {
+                _ = try text_field.handleKey(&c.input, &c.caret, gpa, k);
+                c.clearCompletion(gpa);
             },
-            'd' => if (p.section == .variables and p.vars_cursor < app.dap.watches.items.len) {
-                const expr = try arena.dupe(u8, app.dap.watches.items[p.vars_cursor]);
-                removeWatch(app, expr);
-            },
-            'q' => try app.forceClosePane(id),
+            'l' => clearConsole(app) catch {},
+            'd' => c.scroll -|= page,
+            'b' => c.scroll += page,
             else => return false,
-        },
-        else => return false,
+        }
+        app.needs_render = true;
+        return true;
     }
     app.needs_render = true;
+    switch (k.code) {
+        .enter => try consoleSubmit(app),
+        .tab => try consoleComplete(app),
+        .up => historyWalk(c, gpa, -1),
+        .down => historyWalk(c, gpa, 1),
+        .page_up => c.scroll += page,
+        .page_down => c.scroll -|= page,
+        .esc => leaveToEditor(app),
+        else => {
+            _ = try text_field.handleKey(&c.input, &c.caret, gpa, k);
+            c.clearCompletion(gpa);
+        },
+    }
     return true;
 }
 
-/// Enter: a frame selects itself (scopes follow); a variable row
-/// expands or collapses; a watch row re-evaluates.
-fn debugActivate(app: *App, p: *DebugPane) Allocator.Error!void {
-    const s = app.dap.session orelse return;
-    switch (p.section) {
-        .stack => {
-            if (p.stack_cursor >= s.frames.len) return;
-            const f = s.frames[p.stack_cursor];
-            s.scopes = &.{};
-            s.variables.clearRetainingCapacity();
-            s.requestScopes(f.id) catch {};
-            if (f.source) |src| try jumpTo(app, src, f.line -| 1);
-        },
-        .variables => {
-            const nw = app.dap.watches.items.len;
-            if (p.vars_cursor < nw) {
-                _ = s.evaluate(app.dap.watches.items[p.vars_cursor], .watch) catch 0;
-                return;
-            }
-            const rows = try s.variableRows(app.frame.allocator());
-            const i = p.vars_cursor - nw;
-            if (i >= rows.len) return;
-            const row = rows[i];
-            if (!row.expandable) return;
-            if (row.expanded) {
-                _ = s.expanded.remove(row.var_ref);
-            } else {
-                try s.expanded.put(app.gpa, row.var_ref, {});
-                if (!s.variables.contains(row.var_ref)) s.requestVariables(row.var_ref) catch {};
-            }
-        },
+/// Submit the input: an entry in the scrollback, `evaluate` with
+/// `context: "repl"`, or "no DAP session" when there is none.
+fn consoleSubmit(app: *App) Allocator.Error!void {
+    const gpa = app.gpa;
+    const c = &app.dap.console;
+    c.clearCompletion(gpa);
+    const expr = std.mem.trim(u8, c.input.items, " \t");
+    if (expr.len == 0) return;
+    var entry: types.ReplEntry = .{ .expression = try gpa.dupe(u8, expr), .pending = true };
+    errdefer entry.deinit(gpa);
+    if (c.commands.getLastOrNull() == null or !std.mem.eql(u8, c.commands.getLastOrNull().?, expr)) {
+        try c.commands.append(gpa, try gpa.dupe(u8, expr));
     }
+    c.cmd_idx = null;
+    c.scroll = 0;
+    if (app.dap.session) |s| {
+        if (s.stopped == null) {
+            try entry.setResult(gpa, "", null, "dap: not stopped", 0);
+        } else _ = s.evaluate(expr, .repl) catch |err| {
+            try entry.setResult(gpa, "", null, @errorName(err), 0);
+        };
+    } else {
+        try entry.setResult(gpa, "", null, "no DAP session (run dap.run first)", 0);
+    }
+    try consoleAppend(app, .{ .eval = entry });
+    c.input.clearRetainingCapacity();
+    c.caret = 0;
 }
 
-/// The variable row under the cursor, or null (a scope, a watch, nothing).
-fn selectedVar(app: *App, p: *DebugPane) Allocator.Error!?types.VarRow {
-    const s = app.dap.session orelse return null;
-    if (p.section != .variables) return null;
-    const nw = app.dap.watches.items.len;
-    if (p.vars_cursor < nw) return null;
-    const rows = try s.variableRows(app.frame.allocator());
-    const i = p.vars_cursor - nw;
-    if (i >= rows.len) return null;
-    return rows[i];
-}
-
-fn watchSelected(app: *App, p: *DebugPane) Allocator.Error!void {
-    const row = (try selectedVar(app, p)) orelse return;
-    if (row.is_scope) {
-        app.toast("can't watch a scope row", .{});
+/// A reply for `expr` lands on the oldest pending entry with that text.
+fn consoleResult(app: *App, expr: []const u8, success: bool, message: ?[]const u8, body: ?jsonrpc.Value) Allocator.Error!void {
+    for (app.dap.console.entries.items) |*e| if (e.* == .eval and e.eval.pending and std.mem.eql(u8, e.eval.expression, expr)) {
+        if (success) {
+            const value = if (body) |b| jsonrpc.getStr(b, "result") orelse "" else "";
+            const ty = if (body) |b| jsonrpc.getStr(b, "type") else null;
+            const vref = if (body) |b| jsonrpc.getInt(b, "variablesReference") orelse 0 else 0;
+            try e.eval.setResult(app.gpa, value, ty, null, vref);
+        } else try e.eval.setResult(app.gpa, "", null, message orelse "failed", 0);
+        app.needs_render = true;
         return;
-    }
-    if (app.dap.hasWatch(row.name)) {
-        app.toast("watch: already tracking {s}", .{row.name});
-        return;
-    }
-    const name = try app.frame.allocator().dupe(u8, row.name);
-    try addWatch(app, name);
-}
-
-fn yankSelected(app: *App, p: *DebugPane) Allocator.Error!void {
-    const row = (try selectedVar(app, p)) orelse return;
-    try app.clipboard.setYank(row.value, false);
-    const short = row.value[0..@min(row.value.len, 40)];
-    app.toast("yanked: {s}{s}", .{ short, if (row.value.len > 40) "…" else "" });
-}
-
-/// `dap.set_variable`: a prompt seeded with the selected variable's
-/// value. Without a debug pane, a session, or a variable row there is
-/// nothing to set and the command is a quiet no-op.
-pub fn setVariablePrompt(app: *App) CommandError!void {
-    if (try debug_panel.selectedVariable(app)) |row| return setVariableFor(app, row);
-    const active = app.active orelse return;
-    const pane = app.panes.get(active) orelse return;
-    const p: *DebugPane = switch (pane.*) {
-        .debug => |*d| d,
-        else => return,
     };
-    const row = (try selectedVar(app, p)) orelse return;
+}
+
+/// ↑/↓ walk the submitted lines; past the newest the typed input is
+/// restored (vim's cmdline convention).
+fn historyWalk(c: *Console, gpa: Allocator, dir: i32) void {
+    const h = c.commands.items;
+    if (h.len == 0) return;
+    const next: ?usize = if (dir < 0)
+        (if (c.cmd_idx) |i| i -| 1 else h.len - 1)
+    else
+        (if (c.cmd_idx) |i| (if (i + 1 < h.len) i + 1 else null) else return);
+    if (c.cmd_idx == null) {
+        // The walk starts: keep what was typed.
+        if (c.typed) |t| gpa.free(t);
+        c.typed = gpa.dupe(u8, c.input.items) catch null;
+    }
+    c.input.clearRetainingCapacity();
+    if (next) |i| {
+        c.input.appendSlice(gpa, h[i]) catch {};
+    } else if (c.typed) |t| {
+        c.input.appendSlice(gpa, t) catch {};
+        gpa.free(t);
+        c.typed = null;
+    }
+    c.caret = c.input.items.len;
+    c.cmd_idx = next;
+}
+
+/// The names Tab completes: every variable the session has fetched
+/// (any scope, any expanded composite), the watches, sorted, unique.
+/// Frame arena.
+pub fn completionNames(app: *App, arena: Allocator) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (app.dap.session) |s| {
+        var it = s.variables.valueIterator();
+        while (it.next()) |vars| for (vars.*) |v| try out.append(arena, v.name);
+    }
+    for (app.dap.watches.items) |w| try out.append(arena, w);
+    std.mem.sort([]const u8, out.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    var uniq: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (out.items) |n| if (uniq.getLastOrNull() == null or !std.mem.eql(u8, uniq.getLastOrNull().?, n)) try uniq.append(arena, n);
+    return uniq.items;
+}
+
+/// Tab: the identifier fragment before the caret becomes the first
+/// name that starts with it; Tab again cycles; any other key ends it.
+fn consoleComplete(app: *App) Allocator.Error!void {
+    const gpa = app.gpa;
+    const c = &app.dap.console;
+    if (c.completion) |*comp| {
+        comp.idx = (comp.idx + 1) % comp.candidates.len;
+        try applyCompletion(c, gpa);
+        return;
+    }
+    // The fragment: identifier bytes before the caret.
+    var start = c.caret;
+    while (start > 0 and find_mod.isWord(c.input.items[start - 1])) start -= 1;
+    const frag = c.input.items[start..c.caret];
+    const names = try completionNames(app, app.frame.allocator());
+    var cands: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (cands.items) |x| gpa.free(x);
+        cands.deinit(gpa);
+    }
+    for (names) |n| if (std.mem.startsWith(u8, n, frag) and n.len > 0) try cands.append(gpa, try gpa.dupe(u8, n));
+    if (cands.items.len == 0) {
+        app.toast("no completion for \"{s}\"", .{frag});
+        return;
+    }
+    c.completion = .{ .start = start, .candidates = try cands.toOwnedSlice(gpa), .idx = 0 };
+    try applyCompletion(c, gpa);
+}
+
+fn applyCompletion(c: *Console, gpa: Allocator) Allocator.Error!void {
+    const comp = c.completion orelse return;
+    const name = comp.candidates[comp.idx];
+    // Replace [start, caret) with the candidate.
+    const tail = try gpa.dupe(u8, c.input.items[c.caret..]);
+    defer gpa.free(tail);
+    c.input.items.len = comp.start;
+    try c.input.appendSlice(gpa, name);
+    c.caret = c.input.items.len;
+    try c.input.appendSlice(gpa, tail);
+}
+
+/// A click on the pane (`.script_hit`): a toolbar button, or an
+/// evaluation's line (a composite folds / unfolds).
+pub fn click(app: *App, id: PaneId, hit_id: u32) Allocator.Error!void {
+    _ = id;
+    if (toolbar.actionOf(hit_id)) |a| {
+        toolbarAction(app, a) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                if (app.diag.msg) |m| app.toast("{s}", .{m});
+                app.diag.clear();
+            },
+        };
+        return;
+    }
+    if (hit_id == dap_view.input_hit) return;
+    const c = &app.dap.console;
+    if (hit_id >= c.entries.items.len) return;
+    const e = &c.entries.items[hit_id];
+    if (e.* != .eval or e.eval.variables_ref == 0) return;
+    e.eval.expanded = !e.eval.expanded;
+    if (e.eval.expanded) if (app.dap.session) |s| {
+        if (!s.variables.contains(e.eval.variables_ref)) s.requestVariables(e.eval.variables_ref) catch {};
+    };
+    app.needs_render = true;
+}
+
+/// The wheel on the pane scrolls the scrollback.
+pub fn scrollBy(app: *App, id: PaneId, delta: i32) Allocator.Error!void {
+    _ = id;
+    const c = &app.dap.console;
+    if (delta < 0) c.scroll += @intCast(-delta) else c.scroll -|= @intCast(delta);
+    app.needs_render = true;
+}
+
+/// `dap.set_variable`: the DEBUG section's selected variable row.
+pub fn setVariablePrompt(app: *App) CommandError!void {
+    const row = (try debug_panel.selectedVariable(app)) orelse return;
     return setVariableFor(app, row);
 }
 
@@ -1254,207 +1424,6 @@ pub fn acceptSetVariable(app: *App, parent_ref: i64, name: []const u8, value: []
     _ = s.requestCtx(.set_variable, "setVariable", .{ .variablesReference = parent_ref, .name = name, .value = value }, @bitCast(parent_ref)) catch |err| {
         app.toast("dap setVariable: {s}", .{@errorName(err)});
     };
-}
-
-// ─── the REPL ───
-
-/// The REPL's keys. Everything is the pane's while it has focus except
-/// modified chords, which reach the chord chain.
-pub fn replKey(app: *App, id: PaneId, p: *DapReplPane, k: Key) Allocator.Error!bool {
-    const gpa = app.gpa;
-    if (k.mods.ctrl or k.mods.alt or k.mods.super) {
-        // The line-editing chords are the field's; the rest are chords.
-        if (k.mods.ctrl and k.code == .char and (k.code.char == 'u' or k.code.char == 'w' or k.code.char == 'a' or k.code.char == 'e' or k.code.char == 'k')) {
-            _ = try text_field.handleKey(&p.input, &p.caret, gpa, k);
-            app.needs_render = true;
-            return true;
-        }
-        return false;
-    }
-    app.needs_render = true;
-    if (p.filter_mode) {
-        switch (k.code) {
-            .backspace => {
-                if (p.filter.items.len > 0) p.filter.items.len = text_field.prevCp(p.filter.items, p.filter.items.len);
-                p.selected = null;
-            },
-            .enter => p.filter_mode = false,
-            .esc => {
-                p.filter.clearRetainingCapacity();
-                p.filter_mode = false;
-                p.selected = null;
-            },
-            .char => if (k.typed()) |cp| {
-                var tmp: [4]u8 = undefined;
-                const n = std.unicode.utf8Encode(cp, &tmp) catch return true;
-                try p.filter.appendSlice(gpa, tmp[0..n]);
-                p.selected = null;
-            },
-            else => {},
-        }
-        return true;
-    }
-    switch (k.code) {
-        .enter => try replSubmit(app, p),
-        .up => if (k.mods.shift) try replSelectMove(app, p, -1) else replHistoryWalk(p, -1),
-        .down => if (k.mods.shift) try replSelectMove(app, p, 1) else replHistoryWalk(p, 1),
-        .page_up => try replSelectMove(app, p, -1),
-        .page_down => try replSelectMove(app, p, 1),
-        .esc => {
-            if (p.filter.items.len > 0) {
-                p.filter.clearRetainingCapacity();
-                p.selected = null;
-            } else if (p.selected != null) {
-                p.selected = null;
-            } else leaveToEditor(app);
-        },
-        .char => |c| {
-            if (c == 'o' and p.selected != null) {
-                try replToggleExpand(app, p);
-                return true;
-            }
-            if (c == '/' and (p.input.items.len == 0 or p.selected != null)) {
-                p.filter_mode = true;
-                return true;
-            }
-            if (c == 'q' and p.selected != null) {
-                try app.forceClosePane(id);
-                return true;
-            }
-            _ = try text_field.handleKey(&p.input, &p.caret, gpa, k);
-        },
-        else => _ = try text_field.handleKey(&p.input, &p.caret, gpa, k),
-    }
-    return true;
-}
-
-/// Submit the input: a history entry, `evaluate` with `context: "repl"`,
-/// or "no DAP session" when there is none.
-fn replSubmit(app: *App, p: *DapReplPane) Allocator.Error!void {
-    const gpa = app.gpa;
-    const expr = std.mem.trim(u8, p.input.items, " \t");
-    if (expr.len == 0) return;
-    var entry: types.ReplEntry = .{ .expression = try gpa.dupe(u8, expr), .pending = true };
-    errdefer entry.deinit(gpa);
-    if (p.commands.getLastOrNull() == null or !std.mem.eql(u8, p.commands.getLastOrNull().?, expr)) {
-        try p.commands.append(gpa, try gpa.dupe(u8, expr));
-    }
-    p.cmd_idx = null;
-    p.scroll = repl_view.scroll_tail;
-    p.selected = null;
-    if (app.dap.session) |s| {
-        _ = s.evaluate(expr, .repl) catch |err| {
-            try entry.setResult(gpa, "", null, @errorName(err), 0);
-        };
-    } else {
-        try entry.setResult(gpa, "", null, "no DAP session (run dap.run first)", 0);
-    }
-    try p.history.append(gpa, entry);
-    p.input.clearRetainingCapacity();
-    p.caret = 0;
-}
-
-/// A reply for `expr` lands on the oldest pending entry with that text.
-fn replResult(app: *App, expr: []const u8, success: bool, message: ?[]const u8, body: ?jsonrpc.Value) Allocator.Error!void {
-    const id = app.panes.findKind(.dap_repl) orelse return;
-    const pane = app.panes.get(id) orelse return;
-    const p = &pane.dap_repl;
-    for (p.history.items) |*e| if (e.pending and std.mem.eql(u8, e.expression, expr)) {
-        if (success) {
-            const value = if (body) |b| jsonrpc.getStr(b, "result") orelse "" else "";
-            const ty = if (body) |b| jsonrpc.getStr(b, "type") else null;
-            const vref = if (body) |b| jsonrpc.getInt(b, "variablesReference") orelse 0 else 0;
-            try e.setResult(app.gpa, value, ty, null, vref);
-        } else try e.setResult(app.gpa, "", null, message orelse "failed", 0);
-        return;
-    };
-}
-
-/// Shift+↑/↓ move the row selection through the visible entries;
-/// the first press lands on the last row.
-fn replSelectMove(app: *App, p: *DapReplPane, delta: i32) Allocator.Error!void {
-    const vis = try p.visible(app.frame.allocator());
-    if (vis.len == 0) return;
-    var cur: i64 = @intCast(vis.len);
-    if (p.selected) |sel| for (vis, 0..) |hi, i| if (hi == sel) {
-        cur = @intCast(i);
-    };
-    const next: usize = @intCast(std.math.clamp(cur + delta, 0, @as(i64, @intCast(vis.len)) - 1));
-    p.selected = vis[next];
-    p.scroll = next;
-}
-
-/// ↑/↓ walk the submitted lines; past the newest the typed input is
-/// restored (vim's cmdline convention).
-fn replHistoryWalk(p: *DapReplPane, dir: i32) void {
-    const h = p.commands.items;
-    if (h.len == 0) return;
-    const next: ?usize = if (dir < 0)
-        (if (p.cmd_idx) |i| i -| 1 else h.len - 1)
-    else
-        (if (p.cmd_idx) |i| (if (i + 1 < h.len) i + 1 else null) else return);
-    p.input.clearRetainingCapacity();
-    if (next) |i| {
-        p.input.appendSlice(p.gpa, h[i]) catch {};
-    }
-    p.caret = p.input.items.len;
-    p.cmd_idx = next;
-}
-
-fn replToggleExpand(app: *App, p: *DapReplPane) Allocator.Error!void {
-    const sel = p.selected orelse return;
-    if (sel >= p.history.items.len) return;
-    const e = &p.history.items[sel];
-    if (e.variables_ref == 0) return;
-    e.expanded = !e.expanded;
-    if (e.expanded) if (app.dap.session) |s| {
-        if (!s.variables.contains(e.variables_ref)) s.requestVariables(e.variables_ref) catch {};
-    };
-}
-
-/// A click on a pane row (`.script_hit`).
-pub fn click(app: *App, id: PaneId, hit_id: u32) Allocator.Error!void {
-    const pane = app.panes.get(id) orelse return;
-    switch (pane.*) {
-        .debug => |*p| {
-            if (hit_id >= dap_view.watch_base) {
-                p.section = .variables;
-                p.vars_cursor = hit_id - dap_view.watch_base;
-            } else if (hit_id >= dap_view.vars_base) {
-                p.section = .variables;
-                p.vars_cursor = app.dap.watches.items.len + (hit_id - dap_view.vars_base);
-                try debugActivate(app, p);
-            } else {
-                p.section = .stack;
-                p.stack_cursor = hit_id;
-                try debugActivate(app, p);
-            }
-        },
-        .dap_repl => |*p| {
-            if (hit_id == repl_view.input_hit) {
-                p.selected = null;
-            } else if (hit_id < p.history.items.len) {
-                p.selected = hit_id;
-            }
-        },
-        else => {},
-    }
-    app.needs_render = true;
-}
-
-/// The wheel on a pane: the debug pane moves the focused cursor, the
-/// REPL moves its selection.
-pub fn scrollBy(app: *App, id: PaneId, delta: i32) Allocator.Error!void {
-    const pane = app.panes.get(id) orelse return;
-    switch (pane.*) {
-        .debug => |*p| {
-            const key: Key = if (delta < 0) Key.named(.up) else Key.named(.down);
-            var n: u32 = @intCast(@abs(delta));
-            while (n > 0) : (n -= 1) _ = try debugKey(app, id, p, key);
-        },
-        .dap_repl => |*p| try replSelectMove(app, p, delta),
-        else => {},
-    }
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -1527,50 +1496,55 @@ test "conditional + hit-count prompts record on the line; empty input clears" {
     try testing.expectEqualStrings(">= 5", app.dap.bpsFor("/tmp/loop.py")[0].hit_condition.?);
 }
 
-test "REPL without a session: entries land as no-session, the filter narrows, selection leaves the input" {
+test "console without a session: entries land as no-session, ↑↓ walk the history, Ctrl+L clears, Esc leaves" {
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"dap.repl" });
-    try testing.expectEqualStrings("DAP REPL", app.panes.get(app.active.?).?.title());
+    try testing.expectEqualStrings("Debug", app.panes.get(app.active.?).?.title());
     for ("alpha") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     for ("bravo") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
-    const p = &app.panes.get(app.active.?).?.dap_repl;
-    try testing.expectEqual(@as(usize, 2), p.history.items.len);
-    try testing.expectEqualStrings("no DAP session (run dap.run first)", p.history.items[0].err.?);
+    const c = &app.dap.console;
+    try testing.expectEqual(@as(usize, 2), c.entries.items.len);
+    try testing.expectEqualStrings("no DAP session (run dap.run first)", c.entries.items[0].eval.err.?);
     const t1 = try screenText(&app);
     defer testing.allocator.free(t1);
-    try testing.expect(std.mem.indexOf(u8, t1, "alpha") != null and std.mem.indexOf(u8, t1, "bravo") != null);
-    // `/` on an empty input filters.
-    try app.handle(.{ .key = Key.char('/') });
-    for ("alp") |c| try app.handle(.{ .key = Key.char(c) });
-    const t2 = try screenText(&app);
-    defer testing.allocator.free(t2);
-    try testing.expect(std.mem.indexOf(u8, t2, "filter: alp") != null);
-    try testing.expect(std.mem.indexOf(u8, t2, "bravo") == null);
-    try app.handle(.{ .key = Key.named(.enter) });
-    try testing.expect(!p.filter_mode and p.filter.items.len == 3);
-    try app.handle(.{ .key = Key.named(.esc) });
-    try testing.expectEqual(@as(usize, 0), p.filter.items.len);
-    // Shift+Up selects the last row; Esc returns to the input.
-    try app.handle(.{ .key = Key.char('y') });
-    try app.handle(.{ .key = .{ .code = .up, .mods = .{ .shift = true } } });
-    try testing.expectEqual(@as(usize, 1), p.selected.?);
-    try app.handle(.{ .key = Key.named(.esc) });
-    try testing.expect(p.selected == null);
-    try app.handle(.{ .key = Key.char('z') });
-    try testing.expectEqualStrings("yz", p.input.items);
+    try testing.expect(std.mem.indexOf(u8, t1, "> alpha") != null and std.mem.indexOf(u8, t1, "> bravo") != null);
+    // The toolbar's first button is Start (the play glyph) without a session.
+    try testing.expect(std.mem.indexOf(u8, t1, "\u{F040A}") != null);
     // ↑ walks the command history, ↓ past the newest restores the input.
     try app.handle(.{ .key = Key.named(.up) });
-    try testing.expectEqualStrings("bravo", p.input.items);
+    try testing.expectEqualStrings("bravo", c.input.items);
     try app.handle(.{ .key = Key.named(.up) });
-    try testing.expectEqualStrings("alpha", p.input.items);
+    try testing.expectEqualStrings("alpha", c.input.items);
     try app.handle(.{ .key = Key.named(.down) });
     try app.handle(.{ .key = Key.named(.down) });
-    try testing.expectEqualStrings("", p.input.items);
+    try testing.expectEqualStrings("", c.input.items);
+    for ("ty") |ch| try app.handle(.{ .key = Key.char(ch) });
+    try app.handle(.{ .key = Key.named(.up) });
+    try testing.expectEqualStrings("bravo", c.input.items);
+    try app.handle(.{ .key = Key.named(.down) });
+    try testing.expectEqualStrings("ty", c.input.items);
+    try app.handle(.{ .key = Key.ctrl('u') });
+    // A watch name completes on Tab; a second Tab cycles; typing ends it.
+    try addWatch(&app, "alpha_len");
+    try addWatch(&app, "alpha_max");
+    for ("al") |ch| try app.handle(.{ .key = Key.char(ch) });
+    try app.handle(.{ .key = Key.named(.tab) });
+    try testing.expectEqualStrings("alpha_len", c.input.items);
+    try app.handle(.{ .key = Key.named(.tab) });
+    try testing.expectEqualStrings("alpha_max", c.input.items);
+    try app.handle(.{ .key = Key.char('!') });
+    try testing.expectEqualStrings("alpha_max!", c.input.items);
+    try testing.expect(c.completion == null);
+    // Ctrl+L empties the scrollback; Esc leaves the pane.
+    try app.handle(.{ .key = Key.ctrl('l') });
+    try testing.expectEqual(@as(usize, 0), c.entries.items.len);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.focus != .pane or app.active.? != app.panes.findKind(.debug).?);
 }
 
 test "watches: add via the prompt, the debug pane lists them, the picker removes one" {
@@ -1587,7 +1561,7 @@ test "watches: add via the prompt, the debug pane lists them, the picker removes
     try testing.expectEqualStrings("watch: + my_var.field", app.lastToast().?);
     const t = try screenText(&app);
     defer testing.allocator.free(t);
-    try testing.expect(std.mem.indexOf(u8, t, "my_var.field = (no value)") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "my_var.field = (no") != null);
     try command.run(&app, .{ .static = .@"dap.remove_watch" });
     try testing.expectEqualStrings("Remove watch", app.overlay.picker.state.title);
     try app.handle(.{ .key = Key.named(.enter) });
@@ -1722,10 +1696,10 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     app.tree.visible = false;
     const file = "/tmp/mnml-zig-fake-dap.py";
     _ = try app.openScratch();
-    const e = app.activeEditor().?;
-    try e.buf.setPath(file);
-    try e.buf.editor.setText("import x\n\nx = 1\ny = 2\nprint(x)\n");
-    e.buf.editor.placeCursor(2, 0);
+    const ed_pane = app.activeEditor().?;
+    try ed_pane.buf.setPath(file);
+    try ed_pane.buf.editor.setText("import x\n\nx = 1\ny = 2\nprint(x)\n");
+    ed_pane.buf.editor.placeCursor(2, 0);
     try command.run(&app, .{ .static = .@"dap.toggle_breakpoint" });
     try addWatch(&app, "a");
 
@@ -1749,9 +1723,8 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
             return ss.stopped != null and ss.variables.contains(10) and ss.watch_results.contains("a") and ss.threads.len > 0;
         }
         fn replied(a: *App) bool {
-            const id = a.panes.findKind(.dap_repl) orelse return false;
-            const p = &a.panes.get(id).?.dap_repl;
-            return p.history.items.len > 0 and !p.history.items[0].pending;
+            const e = a.dap.console.lastEval() orelse return false;
+            return !e.pending;
         }
         fn stepped(a: *App) bool {
             const ss = a.dap.session orelse return false;
@@ -1774,7 +1747,7 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     try testing.expectEqualStrings("MainThread", s.threads[0].name);
     try testing.expectEqual(@as(u32, 2), app.dap.arrow.?.line);
     try testing.expectEqualStrings(file, app.dap.arrow.?.path);
-    try testing.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
+    try testing.expectEqual(@as(usize, 2), ed_pane.buf.editor.currentLine());
     try testing.expectEqualStrings("a = 42", s.watch_results.get("a").?.value);
     try testing.expectEqualStrings("hello", s.output.items[0].text);
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -1790,9 +1763,8 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
     for ("a + 1") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try pumpUntil(&app, &app, Cond.replied, 5000);
-    const repl = &app.panes.get(app.panes.findKind(.dap_repl).?).?.dap_repl;
-    try testing.expectEqualStrings("a + 1 = 42", repl.history.items[0].value);
-    try testing.expectEqualStrings("int", repl.history.items[0].ty.?);
+    try testing.expectEqualStrings("a + 1 = 42", app.dap.console.lastEval().?.value);
+    try testing.expectEqualStrings("int", app.dap.console.lastEval().?.ty.?);
 
     // setVariable round-trips and re-fetches the parent.
     try acceptSetVariable(&app, 10, "a", "7");
@@ -1851,8 +1823,8 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openPath(file);
-    const e = app.activeEditor().?;
-    e.buf.editor.placeCursor(3, 0);
+    const ed_pane = app.activeEditor().?;
+    ed_pane.buf.editor.placeCursor(3, 0);
     try command.run(&app, .{ .static = .@"dap.toggle_breakpoint" });
     try addWatch(&app, "x + 100");
     try command.run(&app, .{ .static = .@"dap.show" });
@@ -1874,9 +1846,8 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
             return ss.stopped != null and std.mem.eql(u8, ss.stopped.?.reason, "step") and ss.frames.len > 0 and ss.frames[0].line == 9 and ss.variables.contains(1) and ss.watch_results.contains("x + 100");
         }
         fn replied(a: *App) bool {
-            const id = a.panes.findKind(.dap_repl) orelse return false;
-            const p = &a.panes.get(id).?.dap_repl;
-            return p.history.items.len > 0 and !p.history.items[0].pending;
+            const e = a.dap.console.lastEval() orelse return false;
+            return !e.pending;
         }
         fn setVar(a: *App) bool {
             const ss = a.dap.session orelse return false;
@@ -1898,7 +1869,7 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
     try testing.expectEqual(@as(u32, 4), s.frames[0].line);
     try testing.expectEqualStrings(file, s.frames[0].source.?);
     try testing.expectEqual(@as(u32, 3), app.dap.arrow.?.line);
-    try testing.expectEqual(@as(usize, 3), e.buf.editor.currentLine());
+    try testing.expectEqual(@as(usize, 3), ed_pane.buf.editor.currentLine());
     try testing.expectEqualStrings("main", s.threads[0].name);
     try testing.expectEqual(@as(usize, 2), s.scopes.len);
     try testing.expectEqualStrings("Locals", s.scopes[0].name);
@@ -1954,20 +1925,18 @@ test "mnml-fake-dap end to end: spawn, initialize → launch → stop at a break
     for ("x * 10") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try pumpUntil(&app, &app, Cond.replied, 10_000);
-    const repl = &app.panes.get(app.panes.findKind(.dap_repl).?).?.dap_repl;
-    try testing.expectEqualStrings("20", repl.history.items[0].value);
-    try testing.expectEqualStrings("int", repl.history.items[0].ty.?);
+    try testing.expectEqualStrings("20", app.dap.console.lastEval().?.value);
+    try testing.expectEqualStrings("int", app.dap.console.lastEval().?.ty.?);
     for ("nope") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     const Cond2 = struct {
         fn replied2(a: *App) bool {
-            const id = a.panes.findKind(.dap_repl) orelse return false;
-            const p = &a.panes.get(id).?.dap_repl;
-            return p.history.items.len > 1 and !p.history.items[1].pending;
+            const e = a.dap.console.lastEval() orelse return false;
+            return std.mem.eql(u8, e.expression, "nope") and !e.pending;
         }
     };
     try pumpUntil(&app, &app, Cond2.replied2, 10_000);
-    try testing.expectEqualStrings("no such variable", repl.history.items[1].err.?);
+    try testing.expectEqualStrings("no such variable", app.dap.console.lastEval().?.err.?);
 
     // setVariable: the Locals scope's `x` becomes 7; the parent is
     // re-fetched and the watch follows.

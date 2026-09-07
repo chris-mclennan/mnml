@@ -48,6 +48,7 @@ const todos = @import("../todos.zig");
 const notes = @import("../notes.zig");
 const findings = @import("../findings.zig");
 const debug_panel = @import("debug_panel.zig");
+const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const sessions = @import("../sessions.zig");
 const dock = @import("dock.zig");
 const snippets = @import("snippets.zig");
@@ -241,11 +242,6 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .debug => |*d| {
             if (try dap.debugKey(app, id, d, k)) return;
-            _ = try chordChain(app, k);
-            return;
-        },
-        .dap_repl => |*r| {
-            if (try dap.replKey(app, id, r, k)) return;
             _ = try chordChain(app, k);
             return;
         },
@@ -1524,7 +1520,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .claude_agents => |*a| try agents.click(app, sh.pane, a, sh.id, m),
                 .spend_report => |*s| try spend.click(app, sh.pane, s, sh.id, m),
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
-                .debug, .dap_repl => try dap.click(app, sh.pane, sh.id),
+                .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
                 .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
                 .websocket => {},
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
@@ -1533,7 +1529,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .marketplace => |*mk| try marketplace.click(app, mk, sh.id, m),
                 // A code lens segment sits above `lens_hit_base`; the
                 // `{{VAR}}` spans below it.
-                .editor => |*e| if (sh.id >= decor.lens_hit_base) {
+                // The debug toolbar strip's buttons sit above both.
+                .editor => |*e| if (debug_toolbar.actionOf(sh.id) != null) {
+                    if (m.button == .left) try dap.click(app, sh.pane, sh.id);
+                } else if (sh.id >= decor.lens_hit_base) {
                     if (m.button == .left) try decor.scriptHit(app, sh.pane, sh.id);
                 } else try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
                 .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
@@ -1912,7 +1911,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .claude_agents => |*a| agents.scrollBy(a, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .spend_report => |*s| spend.scrollBy(s, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .grep => |*g| grep.scrollBy(g, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
-        .debug, .dap_repl => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
+        .debug => try dap.scrollBy(app, id, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .request => |*rp| request_pane.scrollBy(rp, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .websocket => |*w| ws_pane.scrollBy(w, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),
         .browser => |*b| browser_pane.scrollBy(b, if (down) @as(i32, @intCast(n)) else -@as(i32, @intCast(n))),

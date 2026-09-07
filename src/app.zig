@@ -2215,7 +2215,7 @@ test {
     _ = @import("ui/peek_view.zig");
     _ = @import("ui/diagnostics_view.zig");
     _ = @import("ui/dap_view.zig");
-    _ = @import("ui/dap_repl_view.zig");
+    _ = @import("ui/debug_toolbar.zig");
     _ = @import("ui/hit.zig");
     _ = @import("ui/prompt.zig");
     _ = @import("ui/confirm.zig");
