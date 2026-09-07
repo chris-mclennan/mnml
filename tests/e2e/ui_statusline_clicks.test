@@ -2,15 +2,16 @@
 # go-to-line prompt, the mode chip toggles the keymap (the vim chip grows
 # its glyph), the language chip says what the file is. At 120x40 the
 # statusline is row 38; the right lane from the edge is the language chip
-# (6 plus its arrow), the workspace (the runner's 41-character temp name
-# plus the folder glyph, 44), the clock (7), the idle bell (4), the
-# position (14) and the size (6): the position chip spans columns 44–57,
-# the language chip 114–119, the mode chip 0–5.
+# (6 plus its arrow), the workspace (the runner's 15-character temp name
+# plus the folder glyph, 18 plus its arrow), the clock (7), the idle bell
+# (3), the position (14), the size (5 plus its arrow) and the idle
+# now-playing pair (5 plus its arrow): the position chip spans columns
+# 70–83, the language chip 114–119, the mode chip 0–5.
 write notes.txt hello world
 open notes.txt
 expect screen contains "EDIT"
 expect screen contains "Ln 1/1 Col 1"
-click 50 38
+click 76 38
 expect screen contains "Go to line"
 key esc
 click 2 38

@@ -452,10 +452,16 @@ fn rejectUnsafePath(gpa: Allocator, rel: []const u8, kw: []const u8) ?[]u8 {
 }
 
 /// `<tmp_root>/mnml-e2e-<random>`, created.
+/// `mnml-e2e-` and six hex digits: fifteen characters, near the ten of
+/// Rust's `tempfile::tempdir()` (`.tmpXXXXXX`) the corpus was written
+/// against. The name is the statusline's workspace chip; a 41-character
+/// one was 45 cells of every 120-column row, and with the now-playing
+/// cluster beside it the row overflowed and clipped the mode chip
+/// (`vim_gv_mode.test` read `V-LI…`) where Rust's runner never does.
 pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
-    var bytes: [8]u8 = undefined;
+    var bytes: [3]u8 = undefined;
     io.random(&bytes);
-    const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{x}", .{ std.mem.trimEnd(u8, tmp_root, "/"), std.fmt.bytesToHex(bytes, .lower) });
+    const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{s}", .{ std.mem.trimEnd(u8, tmp_root, "/"), &std.fmt.bytesToHex(bytes, .lower) });
     errdefer gpa.free(name);
     try Io.Dir.cwd().createDirPath(io, name);
     return name;

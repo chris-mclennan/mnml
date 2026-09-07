@@ -2697,6 +2697,14 @@ break-check.
   (`lsp.TestRig`, read-only use of `app/lsp.zig`). Before, the left
   click opened the symbols picker. `docs/commands.md` wants a `zig
   build docs` for the new id — the docs track's file.
+- `// changed (tests, 2026-09-07):` the `.test` runner's workspace is
+  `mnml-e2e-` and six hex digits (fifteen characters), near the ten of
+  Rust's `tempfile::tempdir()` name. The 41-character one was 45 cells
+  of every 120-column row: with the now-playing cluster beside it the
+  row overflowed and Rust's rule clipped the mode chip (`vim_gv_mode`
+  read `V-LI…`) where Rust's runner never reaches that width.
+  `ui_statusline_clicks.test` and `statusline_now_playing.test` carry
+  the recomputed columns (the position chip is 70–83 now).
 - Cut, per the spec: the Sonos cluster. Not in this build: the Claude
   chip's quota percent (`W 99% 18m …`) — Zig's meter is the local 24h
   spend until the usage endpoint is called; the LSP progress (`⟳ …`),
