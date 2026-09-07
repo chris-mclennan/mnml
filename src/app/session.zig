@@ -93,7 +93,7 @@ pub const Saved = struct {
     tree_show_hidden: bool = false,
     tree_expanded: []const []const u8 = &.{},
     /// The right column's width; `tree_width` is the left's.
-    right_panel_width: u16 = 40,
+    right_panel_width: u16 = 32,
     /// What each column shows (`tree_visible` stays the explorer's own
     /// flag, as in Rust). // changed (section-side): replaces `right_panel`.
     left: ?Section = null,

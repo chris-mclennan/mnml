@@ -305,9 +305,9 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
     // A section with a column surface can change sides (VS Code's
     // "Move to right side"); a pane section has no side.
     const move: ?MenuItem = if (side.surface(s) != null) (if (side.sideOf(app, s) == .left)
-        .{ .label = "Move to right side", .action = .{ .command = .@"view.move_section_right" } }
+        .{ .label = "Move to right side", .action = .{ .move_section = .{ .section = s, .side = .right } } }
     else
-        .{ .label = "Move to left side", .action = .{ .command = .@"view.move_section_left" } }) else null;
+        .{ .label = "Move to left side", .action = .{ .move_section = .{ .section = s, .side = .left } } }) else null;
     const extra: usize = if (move != null) 1 else 0;
     const rows = try app.gpa.alloc(MenuItem, 1 + extra + verbs.len);
     errdefer app.gpa.free(rows);

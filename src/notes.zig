@@ -733,6 +733,7 @@ test "headless: the panel lists notes, enter opens one, n seeds note-N.md and th
     try f.write(".mnml/notes/note-1.md", "# First note\n");
     f.app.tree.visible = false;
     f.app.side.of.set(.notes, .right); // the 40-cell chrome these rows read
+    f.app.side.right_width = 40;
     try command.run(&f.app, .{ .static = .@"view.activity_notes" });
     try f.app.render();
     try f.settle(2000);
@@ -787,6 +788,7 @@ test "mouse: a row's right-click menu names real ids; the sort chip cycles and p
     try f.write(".mnml/notes/b.md", "# B\n");
     f.app.tree.visible = false;
     f.app.side.of.set(.notes, .right); // the 40-cell chrome these rows read
+    f.app.side.right_width = 40;
     try command.run(&f.app, .{ .static = .@"view.activity_notes" });
     try f.app.render();
     try f.settle(2000);

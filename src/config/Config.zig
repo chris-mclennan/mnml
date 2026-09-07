@@ -171,9 +171,9 @@ pub const Ui = struct {
     /// The right column opens at start (on the last section it showed,
     /// else the first section whose side is right).
     right_panel_visible: bool = false,
-    /// The right column's width; `tree_width` is the left column's.
-    /// 40, not the Rust 32: the Zig panels' chrome is tuned to 40.
-    right_panel_width: u16 = 40,
+    /// The right column's width (Rust's right panel: 32); `tree_width`
+    /// is the left column's.
+    right_panel_width: u16 = 32,
     /// // changed (section-side): the side a section takes when
     /// `section_side` does not name it. The Rust right-panel panes
     /// (outline, diagnostics) take the other side.
@@ -586,7 +586,7 @@ test "defaults are the shipped values" {
     // ui
     try std.testing.expectEqualStrings("onedark", c.ui.theme);
     try std.testing.expectEqual(@as(u16, 30), c.ui.tree_width);
-    try std.testing.expectEqual(@as(u16, 40), c.ui.right_panel_width);
+    try std.testing.expectEqual(@as(u16, 32), c.ui.right_panel_width);
     try std.testing.expect(c.ui.line_numbers);
     try std.testing.expect(!c.ui.relative_line_numbers);
     try std.testing.expect(c.ui.clock);

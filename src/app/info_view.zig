@@ -174,11 +174,27 @@ fn isWord(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
+/// Rust's box title for a section: its label in title case (`Todos`).
+fn sectionTitle(p: app_mod.PanelId) []const u8 {
+    return switch (p) {
+        .todos => "Todos",
+        .notes => "Notes",
+        .findings => "Findings",
+        .sessions => "Sessions",
+        .git => "Source control",
+        .diagnostics => "Diagnostics",
+        .http => "HTTP",
+        .outline => "Outline",
+    };
+}
+
 /// The one-liner per focused surface.
 fn emptyCopy(app: *App) Copy {
     return switch (app.focus) {
         .tree => .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." },
-        .panel => |p| if (p == .git and app.git_palette.active) .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." } else .{ .title = "Right panel", .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
+        // The box is titled with the section (Rust's `Todos`), whichever
+        // column it is in.
+        .panel => |p| if (p == .git and app.git_palette.active) .{ .title = "Sidebar", .body = "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette." } else .{ .title = sectionTitle(p), .body = "Arrows walk rows. Enter jumps to the source. F6 cycles focus." },
         // In git mode the graph pane says nothing of its own and Rust's box
         // shows the sidebar's words.
         .pane => |id| if (app.git_palette.active and app.panes.get(id) != null and app.panes.get(id).?.* == .git_graph)

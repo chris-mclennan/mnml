@@ -89,9 +89,12 @@ pub const State = struct {
     open: std.EnumArray(Side, ?Section) = .initFill(null),
     /// The section a column showed last — what a toggle brings back.
     last: std.EnumArray(Side, ?Section) = .initFill(null),
+    /// The section a column showed before the current one — what the
+    /// column falls back to when the current one moves away.
+    prev: std.EnumArray(Side, ?Section) = .initFill(null),
     /// The right column's width (`ui.right_panel_width`); the left's
     /// is `tree.width` (`ui.tree_width`).
-    right_width: u16 = 40,
+    right_width: u16 = 32,
     /// vim: a `Ctrl-W` arrived with a panel focused; the next key names
     /// the window move (`ctrlW`).
     ctrl_w_pending: bool = false,
@@ -177,6 +180,7 @@ pub fn place(app: *App, s: Section, focus: bool) void {
     const side = sideOf(app, s);
     const prev = shown(app, side);
     if (prev != null and prev.? == .git and s != .git and app.git_palette.active) git_palette.leave(app);
+    if (prev != null and prev.? != s) app.side.prev.set(side, prev);
     app.side.open.set(side, s);
     app.side.last.set(side, s);
     if (sideOf(app, .explorer) == side) app.tree.visible = s == .explorer;
@@ -233,13 +237,23 @@ pub fn sectionsOn(app: *const App, side: Side, buf: *[Section.all.len]Section) [
     return buf[0..n];
 }
 
-/// Open `s` the way its rail command does (git enters its mode).
+/// Open `s` the way its rail command does (git enters its mode, the
+/// keys go to the section).
 pub fn show(app: *App, s: Section) CommandError!void {
     const activity_bar = @import("activity_bar.zig");
     // `outline.show` splits while the column is closed (Rust's rule);
     // the column's own walk always wants the column.
-    if (s == .outline) return @import("outline.zig").showInColumn(app);
+    if (s == .outline) return @import("outline.zig").showInColumn(app, true);
     return command.run(app, .{ .static = activity_bar.commandOf(s) });
+}
+
+/// Open `s` in its column without taking the keys unless `focus` —
+/// a toggle or a tab walk leaves the editor where it is, as Rust's
+/// right panel does. Git always enters its mode.
+pub fn open(app: *App, s: Section, focus: bool) CommandError!void {
+    if (s == .git) return show(app, s);
+    if (s == .outline) return @import("outline.zig").showInColumn(app, focus);
+    place(app, s, focus);
 }
 
 /// `view.toggle_right_panel` / `view.toggle_tree`: close the column, or
@@ -250,22 +264,24 @@ pub fn toggleColumn(app: *App, side: Side) CommandError!void {
     const here = sectionsOn(app, side, &buf);
     const s = app.side.last.get(side) orelse (if (here.len > 0) here[0] else null) orelse
         return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} side — right-click a rail icon: Move to {s} side", .{ @tagName(side), @tagName(side) });
-    try show(app, s);
+    try open(app, s, false);
 }
 
-/// The next / previous section along `side`'s list, opened.
+/// The next / previous section along `side`'s list, opened; the keys
+/// follow when they were in that column.
 pub fn step(app: *App, side: Side, by: isize) CommandError!void {
     var buf: [Section.all.len]Section = undefined;
     const here = sectionsOn(app, side, &buf);
     if (here.len == 0) return app.diag.fail(app.frame.allocator(), "nothing lives on the {s} side", .{@tagName(side)});
-    const cur = shown(app, side) orelse return show(app, here[0]);
+    const cur = shown(app, side) orelse return open(app, here[0], false);
+    const had_focus = if (focusOf(cur)) |f| std.meta.eql(app.focus, f) else false;
     var idx: usize = 0;
     for (here, 0..) |s, i| if (s == cur) {
         idx = i;
     };
     const n: isize = @intCast(here.len);
     const next: usize = @intCast(@mod(@as(isize, @intCast(idx)) + by, n));
-    try show(app, here[next]);
+    try open(app, here[next], had_focus);
 }
 
 /// Move `s` to `dest`: closed on one side, open on the other, the keys
@@ -283,8 +299,20 @@ pub fn move(app: *App, s: Section, dest: Side) CommandError!void {
     if (was_shown) remove(app, s);
     app.side.of.set(s, dest);
     if (was_shown) place(app, s, had_focus);
+    // The vacated column shows what it showed before (the explorer, as
+    // a rule) — TODOS on the right beside the tree, not beside a gap.
+    if (was_shown and shown(app, from) == null) if (fallbackFor(app, from, s)) |back| place(app, back, false);
     app.toast("{s} → {s} side", .{ label(s), @tagName(dest) });
     app.needs_render = true;
+}
+
+/// What a column shows once `gone` has left it: the section it showed
+/// before, else the explorer when it lives there. Git is not brought
+/// back (its palette is a mode, entered through its command).
+fn fallbackFor(app: *const App, side: Side, gone: Section) ?Section {
+    if (app.side.prev.get(side)) |p| if (p != gone and p != .git and surface(p) != null and sideOf(app, p) == side) return p;
+    if (sideOf(app, .explorer) == side and gone != .explorer) return .explorer;
+    return null;
 }
 
 /// Re-read every section's side from the config (a `ui.sidebar_side`
@@ -399,25 +427,32 @@ test "move: a shown section closes on one side and opens on the other with the k
     try t.expectEqual(Section.todos, shown(&app, .left).?);
     try t.expect(!app.tree.visible);
     try t.expect(app.focus == .panel and app.focus.panel == .todos);
-    // Left → right: the left column is now empty, the right shows TODOS.
+    // Left → right: TODOS shows on the right with the keys, and the
+    // explorer — what the left column showed before — is back beside it.
     try command.run(&app, .{ .static = .@"view.move_section_right" });
     try t.expectEqual(Side.right, sideOf(&app, .todos));
-    try t.expect(shown(&app, .left) == null);
+    try t.expectEqual(Section.explorer, shown(&app, .left).?);
+    try t.expect(app.tree.visible);
     try t.expectEqual(Section.todos, shown(&app, .right).?);
     try t.expect(app.focus == .panel and app.focus.panel == .todos);
     var fr = rects(&app);
+    try t.expect(fr.right.eql(Rect.init(88, 1, 32, 37)));
+    try t.expect(fr.right_divider.eql(Rect.init(87, 1, 1, 37)));
+    // Closing the left column leaves TODOS alone on the right.
+    try command.run(&app, .{ .static = .@"view.toggle_tree" });
+    try t.expect(shown(&app, .left) == null);
+    fr = rects(&app);
     try t.expect(fr.sidebar.isEmpty());
-    try t.expect(fr.right.eql(Rect.init(80, 1, 40, 37)));
-    try t.expect(fr.right_divider.eql(Rect.init(79, 1, 1, 37)));
-    // The explorer opens on the left beside it: both on screen.
+    try t.expect(fr.body.eql(Rect.init(0, 1, 87, 37)));
     try command.run(&app, .{ .static = .@"view.activity_explorer" });
     try t.expectEqual(Section.explorer, shown(&app, .left).?);
     try t.expectEqual(Section.todos, shown(&app, .right).?);
     fr = rects(&app);
     try t.expect(fr.sidebar.eql(Rect.init(4, 1, 26, 37)));
-    try t.expect(fr.right.eql(Rect.init(80, 1, 40, 37)));
-    try t.expect(fr.body.eql(Rect.init(31, 1, 48, 37)));
-    // Back left: TODOS takes the explorer's column, the right closes.
+    try t.expect(fr.right.eql(Rect.init(88, 1, 32, 37)));
+    try t.expect(fr.body.eql(Rect.init(31, 1, 56, 37)));
+    // Back left: TODOS takes the explorer's column; the right column
+    // has nothing to fall back to and closes.
     app.focus = .{ .panel = .todos };
     try command.run(&app, .{ .static = .@"view.move_section_left" });
     try t.expectEqual(Section.todos, shown(&app, .left).?);
@@ -445,13 +480,20 @@ test "the right column: toggle brings back the last section shown there, else th
     // outline lands on the open scratch).
     try command.run(&app, .{ .static = .@"view.toggle_right_panel" });
     try t.expectEqual(Section.diagnostics, shown(&app, .right).?);
+    // A toggle and a tab walk leave the keys in the editor (Rust's
+    // right panel); the keys follow only when they were in the column.
+    try t.expect(app.focus == .pane);
     try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
     try t.expectEqual(Section.outline, shown(&app, .right).?);
     try t.expect(app.outline_panel != null);
+    try t.expect(app.focus == .pane);
+    focusSection(&app, .outline);
     try command.run(&app, .{ .static = .@"view.right_panel_next_tab" });
     try t.expectEqual(Section.diagnostics, shown(&app, .right).?);
+    try t.expect(app.focus == .panel and app.focus.panel == .diagnostics);
     try command.run(&app, .{ .static = .@"view.right_panel_prev_tab" });
     try t.expectEqual(Section.outline, shown(&app, .right).?);
+    try t.expect(app.focus == .panel and app.focus.panel == .outline);
     try command.run(&app, .{ .static = .@"view.toggle_right_panel" });
     try t.expect(shown(&app, .right) == null);
     try t.expect(app.focus == .pane);

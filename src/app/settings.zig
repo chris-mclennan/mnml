@@ -694,7 +694,7 @@ test "rows: every path is a bool, an enum, a number or the theme; defaults index
         }
     }
     var num_cfg: Config = .{};
-    try t.expectEqual(@as(usize, 40), currentIndex(&num_cfg, "ui.right_panel_width"));
+    try t.expectEqual(@as(usize, 32), currentIndex(&num_cfg, "ui.right_panel_width"));
     setIndex(&num_cfg, "ui.right_panel_width", 44);
     try t.expectEqual(@as(u16, 44), num_cfg.ui.right_panel_width);
     var c: Config = .{};

@@ -1,0 +1,7 @@
+{"cmd":"key","key":"esc"}
+{"cmd":"key","key":"esc"}
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":800}
+{"cmd":"run-command","id":"view.toggle_right_panel"}
+{"cmd":"run-command","id":"outline.show"}
+{"cmd":"wait_ms","ms":800}

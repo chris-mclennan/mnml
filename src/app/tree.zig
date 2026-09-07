@@ -1219,19 +1219,14 @@ pub fn acceptDelete(app: *App, rel: []const u8) Allocator.Error!void {
     try trash.deletePaths(app, &.{abs}, false);
 }
 
+/// `view.toggle_tree` (Ctrl+B): the left column — whatever section it
+/// shows — closes, or comes back on what it showed last.
 fn toggle(app: *App) CommandError!void {
-    app.tree.visible = !app.tree.visible;
-    if (!app.tree.visible and app.focus == .tree) {
-        app.focus = if (app.active) |a| .{ .pane = a } else .tree;
-    }
-    app.needs_render = true;
+    return side.toggleColumn(app, .left);
 }
 
 fn focus(app: *App) CommandError!void {
-    app.tree.visible = true;
-    if (app.activeBuffer()) |b| b.input.onBlur();
-    app.focus = .tree;
-    app.needs_render = true;
+    side.place(app, .explorer, true);
 }
 
 fn toggleHidden(app: *App) CommandError!void {

@@ -154,6 +154,8 @@ pub const Button = enum(u32) {
     split_max = 16,
     /// The strip's ` +N hidden ` chip: the buffer picker.
     hidden_tabs = 17,
+    /// The right column's strip: its `×` closes the column.
+    right_close = 18,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -393,9 +395,19 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);
     }
     // ── right column ──
+    // Rust's right panel carries a strip row above its content — the
+    // pane's title and a `×` — so the section lands one row down.
     if (!fr.right.isEmpty()) {
         drawDivider(app, ui, fr.right_divider, right_divider_id);
-        if (side_mod.shown(app, .right)) |s| try drawColumn(app, ui, fr.right, s);
+        if (side_mod.shown(app, .right)) |s| {
+            var area = fr.right;
+            if (area.h >= 2) {
+                const parts = area.splitTop(1);
+                drawRightStrip(app, ui, parts.top, s);
+                area = parts.rest;
+            }
+            try drawColumn(app, ui, area, s);
+        }
     }
     // The dock's inline strips come off the body; its widgets paint
     // over whatever the panes drew.
@@ -553,6 +565,27 @@ fn drawDivider(app: *App, ui: Ui, r: Rect, id: u32) void {
 
 /// The panel in the right slot. Only TODOS draws today; the others
 /// name themselves until their module lands.
+/// The right column's strip: ` <title>` and a `×` at the far end (Rust
+/// `right_panel` strip, less the tab chord and the `+` that mean
+/// nothing here). The outline is titled with its file, the rest with
+/// the section's label.
+fn drawRightStrip(app: *App, ui: Ui, row: Rect, s: side_mod.Section) void {
+    const pal = app.theme.palette;
+    const bg = pal.bg_darker;
+    const base = Theme.onBg(app.theme.fg, bg);
+    ui.canvas.fill(row, base);
+    const title: []const u8 = blk: {
+        if (s == .outline) if (app.outline_panel) |id| if (app.panes.get(id)) |p| if (p.asOutline()) |o| break :blk o.title;
+        break :blk s.meta().label;
+    };
+    _ = ui.putStr(row.x + 1, row.y, row.w -| 3, title, base);
+    if (row.w >= 2) {
+        const close = Rect.init(row.right() - 1, row.y, 1, 1);
+        _ = ui.putStr(close.x, close.y, 1, if (ui.ascii) "x" else "\u{D7}", Theme.withFg(base, pal.comment));
+        ui.hit(close, .{ .button = @intFromEnum(Button.right_close) });
+    }
+}
+
 /// One column's section, in the column's rect. The painters take a
 /// rect and do not care which side they land on. Git mode: the palette
 /// takes the tree's place (Rust `ui/mod.rs` on `ActivitySection::Git`).

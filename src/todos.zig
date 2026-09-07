@@ -1255,6 +1255,7 @@ test "headless smoke: two TODOs in a file, refresh, the panel lists both and row
     try f.write("src/main.zig", "// TODO: wire the frobnicator\nconst x = 1;\n// FIXME: leaks on error\n");
     f.app.tree.visible = false;
     f.app.side.of.set(.todos, .right); // the 40-cell chrome these rows read
+    f.app.side.right_width = 40;
     try command.run(&f.app, .{ .static = .@"view.activity_todos" });
     try testing.expect(f.app.focus == .panel);
     try command.run(&f.app, .{ .static = .@"todos.refresh" });
@@ -1289,6 +1290,7 @@ test "mouse: a click selects, a second opens; the sort chip cycles and its right
     try f.write("b.zig", "// HACK: two\n");
     f.app.tree.visible = false;
     f.app.side.of.set(.todos, .right); // the 40-cell chrome these rows read
+    f.app.side.right_width = 40;
     try command.run(&f.app, .{ .static = .@"view.activity_todos" });
     // The first draw starts the scan; the second paints its result.
     try f.app.render();
@@ -1408,6 +1410,7 @@ test "mark done rewrites the file and the row disappears on the rescan; the row 
     try f.write("e2e/login.spec.ts", "test.fixme('login flakes', async () => {});\n");
     f.app.tree.visible = false;
     f.app.side.of.set(.todos, .right); // the 40-cell chrome these rows read
+    f.app.side.right_width = 40;
     try command.run(&f.app, .{ .static = .@"view.activity_todos" });
     try command.run(&f.app, .{ .static = .@"todos.refresh" });
     try f.settle(2000);

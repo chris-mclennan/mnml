@@ -26,6 +26,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
+const side = @import("side.zig");
 const App = app_mod.App;
 const Rect = @import("../ui/rect.zig");
 const Ui = @import("../ui/context.zig");
@@ -141,7 +142,8 @@ pub fn modeOf(app: *App) Mode {
     }
     return switch (focus) {
         .tree => .{ .label = "TREE", .kind = .tree, .vim = false },
-        .panel => .{ .label = "PANEL", .kind = .panel, .vim = false },
+        // A left-column section is Rust's sidebar: its chip reads TREE.
+        .panel => |p| if (side.sideOf(app, side.sectionOfPanel(p)) == .left) .{ .label = "TREE", .kind = .tree, .vim = false } else .{ .label = "PANEL", .kind = .panel, .vim = false },
         .pane, .overlay => if (editor) |e|
             (if (e.buf.doc.read_only) Mode{ .label = "VIEW", .kind = .view, .vim = false } else Mode{ .label = "EDIT", .kind = .edit, .vim = false })
         else

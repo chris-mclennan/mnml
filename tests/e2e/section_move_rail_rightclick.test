@@ -1,0 +1,29 @@
+# The rail's right-click menu carries "Move to right side" / "Move to
+# left side" (VS Code's words) under "Show <section>". TODOS is the
+# eleventh rail row: with no pinned launchers the rows sit on 2, 4, …
+# so its glyph is at (1, 22). The menu's second row is the move; a
+# section already on the right offers the way back.
+write treemarker.txt "a file the tree lists\n"
+write src/a.zig "// TODO: alpha marker\n"
+open src/a.zig
+rightclick 1 22
+expect screen contains "Show TODOs"
+expect screen contains "Move to right side"
+key down
+key enter
+# TODOS was closed: it moved without opening, and the tree stayed.
+expect screen lacks "TODOs  "
+expect screen contains "treemarker.txt"
+click 1 22
+command todos.refresh
+expect screen contains "TODOs  "
+expect screen contains "alpha marker"
+expect screen contains "treemarker.txt"
+rightclick 1 22
+expect screen contains "Move to left side"
+expect screen lacks "Move to right side"
+key down
+key enter
+expect screen lacks "TODOs  "
+expect screen contains "alpha marker"
+expect screen lacks "treemarker.txt"

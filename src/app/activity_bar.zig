@@ -92,13 +92,21 @@ pub fn active(app: *App) Section {
     if (app.git_palette.active) return .git;
     switch (app.focus) {
         .tree => return .explorer,
-        .panel => |p| return side.sectionOfPanel(p),
+        .panel => |p| if (onRail(side.sectionOfPanel(p))) |s| return s,
         .pane => |id| if (sectionOfPane(app, id)) |s| return s,
         .overlay => {},
     }
-    if (side.shown(app, .right)) |s| return s;
+    if (side.shown(app, .right)) |s| if (onRail(s)) |r| return r;
     if (app.active) |id| if (sectionOfPane(app, id)) |s| return s;
-    return side.shown(app, .left) orelse .explorer;
+    if (side.shown(app, .left)) |s| if (onRail(s)) |r| return r;
+    return .explorer;
+}
+
+/// The hidden sections (the outline, the diagnostics — Rust's
+/// right-panel panes) never take the mark.
+fn onRail(s: Section) ?Section {
+    for (Section.rail) |r| if (r == s) return s;
+    return null;
 }
 
 fn sectionOfPane(app: *App, id: PaneId) ?Section {
@@ -300,7 +308,8 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     try t.expectEqualStrings("Show Source control", app.overlay.menu.items[0].label);
     try t.expectEqual(command.CommandId.@"view.activity_git", app.overlay.menu.items[0].action.command);
     try t.expectEqualStrings("Move to right side", app.overlay.menu.items[1].label);
-    try t.expectEqual(command.CommandId.@"view.move_section_right", app.overlay.menu.items[1].action.command);
+    try t.expectEqual(Section.git, app.overlay.menu.items[1].action.move_section.section);
+    try t.expectEqual(Config.Side.right, app.overlay.menu.items[1].action.move_section.side);
     try t.expectEqualStrings("Open git graph", app.overlay.menu.items[2].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     try press(&app, 1, sectionRow(&app, .http), .right);

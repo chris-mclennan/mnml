@@ -559,6 +559,9 @@ pub const MenuAction = union(enum) {
     menu_bar: u8,
     /// A git palette row menu's action (`app/git_palette.zig`).
     git_palette: GitPaletteAct,
+    /// The rail menu's "Move to <side> side": the section the menu was
+    /// opened on, not the focused one (`app/side.zig`).
+    move_section: struct { section: @import("../ui/activity_bar.zig").Section, side: @import("../config/Config.zig").Side },
     none,
 };
 

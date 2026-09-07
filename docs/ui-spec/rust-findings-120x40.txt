@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                                       󰐕  ●━  󰅖
+   │ FINDINGS  (0)          │ 󰐕                                                                                   
+  │ 󰍉 type to filter…▏       │
+ 󰍉 │  + New finding           │
+ 󰊢 │                          │
+  │  No findings yet.        │
+ 󰐱 │  Stored under .mnml/find…│
+ 󰎒 │                          │
+ 󰚩 │                          │
+ 󰅣 │                          │
+  │                          │                                                            _
+  │                          │                            _ __ ___    _ __    _ __ ___   | |
+  │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+▌󱘣 │                          │                           | | | | | | | | | | | | | | | | | |
+   │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                          │
+   │                          │                                     workspace · ws
+   │                          │                                         on main
+   │                          │
+   │                          │                                        Shortcuts
+   │                          │                                     ──────────────
+   │                          │                                     ^P     find file
+   │                          │                                    ^R     recent files
+   │                          │                                   ^K     which-key menu
+   │                          │                                      ^N     new file
+   │                          │                                    ^B     toggle tree
+   │                          │                                        ^Q     quit
+   │──────────────────────────│
+   │ Findings               ⋮ │                                 mnml 0.2.21 · 9d5049b52
+   │                          │
+   │ `.mnml/findings/*.md`    │
+   │ viewer. Enter opens the  │
+   │ finding as a preview     │
+   │ pane.                    │
+   │                          │
+   │                          │
+  │                          │
+   │                          │
+ TREE   main  󰐙 2  [no file]                                         F 57% ▲1.0  󱼀 󰐎  WRAP    12:40  ws   —
+

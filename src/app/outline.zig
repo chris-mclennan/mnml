@@ -136,7 +136,7 @@ fn show(app: *App) CommandError!void {
     }
     // Rust's rule: the outline routes into its column while that is
     // open, and opens a split otherwise.
-    if (side.shown(app, side.sideOf(app, .outline)) != null) return showInColumn(app);
+    if (side.shown(app, side.sideOf(app, .outline)) != null) return showInColumn(app, false);
     const id = try create(app, source);
     const layout = app.layouts.current();
     if (try layout.split(source, .horizontal, id) == null) _ = try layout.showIn(null, id);
@@ -144,8 +144,9 @@ fn show(app: *App) CommandError!void {
 }
 
 /// The outline in its column, on the active editor — or the column's
-/// empty state when there is none.
-pub fn showInColumn(app: *App) CommandError!void {
+/// empty state when there is none. `outline.show` leaves the keys in
+/// the editor (Rust's routing); the column's walk takes them.
+pub fn showInColumn(app: *App, focus: bool) CommandError!void {
     const source: ?PaneId = sourceOf(app) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => null,
@@ -161,7 +162,7 @@ pub fn showInColumn(app: *App) CommandError!void {
             }
         } else app.outline_panel = try create(app, src);
     }
-    side.place(app, .outline, true);
+    side.place(app, .outline, focus);
 }
 
 /// The column's outline (`PanelId.outline`), or its empty state.

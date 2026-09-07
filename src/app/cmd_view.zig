@@ -174,8 +174,8 @@ fn toggleRightPanel(app: *App) CommandError!void {
 }
 
 fn focusRightPanel(app: *App) CommandError!void {
-    if (side.shown(app, .right)) |s| return side.focusSection(app, s);
-    return side.toggleColumn(app, .right);
+    if (side.shown(app, .right) == null) try side.toggleColumn(app, .right);
+    if (side.shown(app, .right)) |s| side.focusSection(app, s);
 }
 
 fn closeRightPanel(app: *App) CommandError!void {
