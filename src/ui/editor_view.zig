@@ -196,6 +196,92 @@ pub const fold_marker = " ⋯ folded · ";
 pub const fold_marker_ascii = " ... folded - ";
 pub const fold_tail = " lines hidden";
 
+// ─── the breadcrumb row ─────────────────────────────────────────────────
+//
+// Rust's `draw_breadcrumb`: the row between the tab strip and the text,
+// on the strip's ground, the file's workspace-relative path as
+// ` src › ui › editor_view.rs ` in the comment colour. Each segment is
+// a click target while the whole label fits; a label wider than the row
+// is cut in the middle with `…`, and a cut row registers nothing — a
+// column of it no longer maps to a segment.
+
+/// ` › ` between segments (` > ` under `--ascii`).
+pub fn breadcrumbSep(ui: Ui) []const u8 {
+    return if (ui.ascii) " > " else " \u{203A} ";
+}
+
+/// The row's height: one, when the pane has room for the strip, the
+/// crumb and a line of text.
+pub const breadcrumb_h: u16 = 1;
+
+/// `names` joined by the separator, on the frame arena.
+pub fn breadcrumbLabel(ui: Ui, names: []const []const u8) []const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (names, 0..) |n, i| {
+        if (i > 0) out.appendSlice(ui.arena, breadcrumbSep(ui)) catch return "";
+        out.appendSlice(ui.arena, n) catch return "";
+    }
+    return out.items;
+}
+
+/// Paints the crumb for `names` into `area` (one row) and registers a
+/// `.breadcrumb{pane, idx}` per segment when the label fits.
+pub fn drawBreadcrumb(ui: Ui, pane: PaneId, area: Rect, names: []const []const u8) void {
+    if (area.isEmpty() or names.len == 0) return;
+    const p = ui.theme.palette;
+    const ground: Style = .{ .bg = p.bg_darker };
+    ui.fill(area, ground);
+    const y = area.y;
+    const max = area.w -| 2;
+    const label = breadcrumbLabel(ui, names);
+    const style: Style = .{ .fg = p.comment, .bg = p.bg_darker };
+    if (ui.fitsIn(label, max)) {
+        var x = area.x + 1;
+        const sep = breadcrumbSep(ui);
+        for (names, 0..) |n, i| {
+            if (i > 0) x += ui.putStr(x, y, area.right() -| x, sep, style);
+            const w = ui.putStr(x, y, area.right() -| x, n, style);
+            ui.hit(Rect.init(x, y, w, 1), .{ .breadcrumb = .{ .pane = pane, .idx = @intCast(i) } });
+            x += w;
+        }
+        return;
+    }
+    // Cut in the middle: `head…tail`, no targets.
+    if (max <= 3) {
+        _ = ui.putStr(area.x + 1, y, max, label, style);
+        return;
+    }
+    const half = (max - 1) / 2;
+    const tail_w = max - 1 - half;
+    var head_end: usize = 0;
+    var it = vaxis.unicode.graphemeIterator(label);
+    var cells: u16 = 0;
+    while (it.next()) |g| {
+        const b = g.bytes(label);
+        const w = ui.canvas.cellWidth(b);
+        if (cells + w > half) break;
+        cells += w;
+        head_end = g.start + b.len;
+    }
+    // The tail: walk from the end until `tail_w` cells are gathered.
+    var tail_start: usize = label.len;
+    cells = 0;
+    var i: usize = label.len;
+    while (i > 0) {
+        var j = i - 1;
+        while (j > 0 and (label[j] & 0xC0) == 0x80) j -= 1;
+        const w = ui.canvas.cellWidth(label[j..i]);
+        if (cells + w > tail_w) break;
+        cells += w;
+        tail_start = j;
+        i = j;
+    }
+    var x = area.x + 1;
+    x += ui.putStr(x, y, area.right() -| x, label[0..head_end], style);
+    x += ui.putStr(x, y, area.right() -| x, if (ui.ascii) "~" else "\u{2026}", style);
+    _ = ui.putStr(x, y, area.right() -| x, label[tail_start..], style);
+}
+
 // ── the line index ──
 
 /// Byte ranges of every line, excluding the newline. Built on the frame
@@ -1744,4 +1830,30 @@ test "render_markdown conceals the marks off the cursor line and leaves the curs
     _ = draw(f.ui(), 0, f.full(), &view, d);
     try f.expectRow(0, "# Title");
     try f.expectRow(1, "some **bold** and `code`");
+}
+
+test "the breadcrumb row: ` src › main.rs ` in the comment colour, a hit per segment; a cut label registers none" {
+    var f = try Fixture.init(20, 1);
+    defer f.deinit();
+    const names = [_][]const u8{ "src", "main.rs" };
+    drawBreadcrumb(f.ui(), 3, f.full(), &names);
+    try f.expectRow(0, " src \u{203A} main.rs");
+    try testing.expect(f.fgEql(1, 0, .{ .fg = f.theme.palette.comment }));
+    try testing.expect(f.bgEql(0, 0, .{ .bg = f.theme.palette.bg_darker }));
+    try testing.expectEqual(@as(u16, 0), f.hits.at(2, 0).?.breadcrumb.idx);
+    try testing.expectEqual(@as(u16, 1), f.hits.at(10, 0).?.breadcrumb.idx);
+    try testing.expectEqual(@as(u32, 3), f.hits.at(10, 0).?.breadcrumb.pane);
+    try testing.expect(f.hits.at(5, 0) == null);
+    try testing.expect(f.hits.at(0, 0) == null);
+    // Too narrow: the middle goes, and with it every target.
+    var g = try Fixture.init(12, 1);
+    defer g.deinit();
+    drawBreadcrumb(g.ui(), 3, g.full(), &names);
+    try g.expectRow(0, " src \u{2026}in.rs");
+    try testing.expectEqual(@as(usize, 0), g.hits.items.items.len);
+    g.ascii = true;
+    drawBreadcrumb(g.ui(), 3, g.full(), &names);
+    try g.expectRow(0, " src ~in.rs");
+    try testing.expectEqualStrings("a > b", breadcrumbLabel(g.ui(), &.{ "a", "b" }));
+    drawBreadcrumb(g.ui(), 3, Rect.empty, &names);
 }

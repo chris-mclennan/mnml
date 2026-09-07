@@ -1352,6 +1352,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (app.overlay != .none) closeOverlay(app);
             try app.closePane(leaf.tabs.items[tb.idx], false);
         },
+        .breadcrumb => |bc| {
+            // A segment opens a Files pane at the directory it names.
+            if (wheel or m.kind != .press or m.button != .left) return;
+            const e = app.panes.editor(bc.pane) orelse return;
+            const path = e.buf.doc.path orelse return;
+            const dir = (try render.breadcrumbDir(app, app.frame.allocator(), path, bc.idx)) orelse return;
+            if (app.overlay != .none) closeOverlay(app);
+            _ = try files_pane.open(app, dir);
+        },
         .overlay_item => |i| {
             // The wheel over the Settings box scrolls its list.
             if (wheel and app.overlay == .settings) {
@@ -1622,9 +1631,24 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // it opens the picker so the click never dead-ends.
                 .theme_toggle => try runCmd(app, if (app.cfg.ui.theme_toggle != null) .@"theme.toggle" else .@"theme.pick"),
                 .window_close => try runCmd(app, .@"app.quit"),
-                .split_term => try runCmd(app, .@"term.shell"),
-                .split_right => try runCmd(app, .@"view.split_right"),
-                .split_down => try runCmd(app, .@"view.split_down"),
+                // The strip's cluster acts on the leaf it sits on.
+                .split_term => {
+                    focusLeafAt(app, m.x, m.y);
+                    try runCmd(app, .@"term.shell");
+                },
+                .split_right => {
+                    focusLeafAt(app, m.x, m.y);
+                    try runCmd(app, .@"view.split_right");
+                },
+                .split_down => {
+                    focusLeafAt(app, m.x, m.y);
+                    try runCmd(app, .@"view.split_down");
+                },
+                .split_max => {
+                    focusLeafAt(app, m.x, m.y);
+                    try runCmd(app, .@"view.zen");
+                },
+                .hidden_tabs => try runCmd(app, .@"picker.buffers"),
                 .ai_claude => try runCmd(app, .@"ai.claude_code"),
                 .ai_codex => try runCmd(app, .@"ai.codex"),
                 else => {},
@@ -1632,6 +1656,15 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         },
         .link => {},
     }
+}
+
+/// The pane whose rect holds `(x, y)` becomes active — a strip's
+/// buttons act on their own leaf, wherever the focus was.
+fn focusLeafAt(app: *App, x: u16, y: u16) void {
+    for (app.hits.items.items) |h| if (h.target == .pane and h.rect.contains(x, y)) {
+        app.setActive(h.target.pane);
+        return;
+    };
 }
 
 fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
@@ -1894,7 +1927,6 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         .right_divider => if (m.kind == .drag) {
             app.right_panel_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
         },
-        .git_divider => |id| if (m.kind == .drag) git_app.dragDivider(app, id, m.x),
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
         .select => |sel| {
             extendSelection(app, sel, m.x, m.y);
@@ -1950,18 +1982,21 @@ fn dropTab(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void {
             // The strip: the slot before the first tab whose centre is right of x.
             const src_leaf = layout.leafOf(pane) orelse return;
             const strip = pr.rect.row(0);
-            const tabs = try stripTabs(app, layout, pr.leaf);
-            var slot_buf: [64]bufferline.Slot = undefined;
             const ui = app.frameUi();
-            const slots = bufferline.slots(ui, strip, tabs, &slot_buf);
+            const tabs = try render.tabsOf(app, ui, layout, pr.leaf);
+            var slot_buf: [64]bufferline.Slot = undefined;
+            const slots = bufferline.slotsFrom(ui, strip, tabs, layout.leaf(pr.leaf).?.strip_first, &slot_buf);
+            // Rust `tab_strip_insert_idx`: the slot before the first chip
+            // whose three-quarter point is right of x, applied after the
+            // dragged tab is taken out (`reorderTab`) — so a drop past a
+            // neighbour's middle lands after it, and one on its own chip
+            // stays put.
             var insert: usize = tabs.len;
-            for (slots) |sl| if (x < sl.x + sl.w / 2 + sl.w % 2) {
+            for (slots) |sl| if (x < sl.x + sl.w * 3 / 4) {
                 insert = sl.idx;
                 break;
             };
             if (src_leaf == pr.leaf) {
-                const cur = std.mem.indexOfScalar(PaneId, layout.leaf(pr.leaf).?.tabs.items, pane) orelse return;
-                if (insert > cur) insert -= 1;
                 layout.reorderTab(pane, insert);
             } else {
                 if (layout.leaf(pr.leaf).?.tabs.items.len == 0) return;
@@ -2016,16 +2051,6 @@ fn dropIntoLeaf(app: *App, pane: PaneId, target: layout_mod.NodeId, zone: layout
         std.mem.swap(layout_mod.NodeId, &sp.first, &sp.second);
     }
     app.setActive(pane);
-}
-
-fn stripTabs(app: *App, layout: *app_mod.Layout, lid: layout_mod.NodeId) Allocator.Error![]bufferline.Tab {
-    var tabs: std.ArrayListUnmanaged(bufferline.Tab) = .empty;
-    const leaf = layout.leaf(lid) orelse return tabs.items;
-    for (leaf.tabs.items) |id| {
-        const p = app.panes.get(id) orelse continue;
-        try tabs.append(app.frame.allocator(), .{ .id = id, .title = p.title(), .dirty = p.dirty(), .active = leaf.active == id, .kind = if (p.* == .pty) .pty else .file });
-    }
-    return tabs.items;
 }
 
 /// A tree file released: on a folder row → confirm a move; on a pane →
@@ -2835,7 +2860,10 @@ test "gestures: a divider drag resizes with the minimum kept, a tab drag reorder
     try release(&app, 2, 10);
     try app.render();
     try std.testing.expect(app.hits.at(layout_mod.min_pane_w, 10).? == .divider);
-    // Two tabs in the left leaf: drag the first past the second.
+    // Two tabs in the left leaf: drag the first past the second. The
+    // leaves are equalized first — at `min_pane_w` a strip holds only
+    // its split cluster.
+    try command.run(&app, .{ .static = .@"view.equalize_splits" });
     app.setActive(a);
     const b = try app.openScratch();
     try app.activeEditor().?.buf.setPath("/tmp/bb.txt");
@@ -2845,13 +2873,11 @@ test "gestures: a divider drag resizes with the minimum kept, a tab drag reorder
     try std.testing.expectEqual(@as(u16, 0), app.hits.at(3, 1).?.tab.idx);
     try press(&app, 3, 1, .left);
     try dragTo(&app, 4, 1);
-    try dragTo(&app, 9, 1);
-    try release(&app, 9, 1);
+    try dragTo(&app, 20, 1);
+    try release(&app, 20, 1);
     const leaf = app.layouts.current().leaf(app.layouts.current().leafOf(a).?).?;
     try std.testing.expectEqualSlices(PaneId, &.{ b, a }, leaf.tabs.items);
-    // The `+` after the tabs opens a scratch in that leaf (once the
-    // leaf is wide enough to paint it).
-    try command.run(&app, .{ .static = .@"view.equalize_splits" });
+    // The `+` after the tabs opens a scratch in that leaf.
     try app.render();
     var plus: ?Rect = null;
     for (app.hits.items.items) |h| if (h.target == .button and h.target.button == render.Button.newTab(0)) {
