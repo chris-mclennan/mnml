@@ -40,6 +40,11 @@ pub const Config = struct {
     /// The loader's result when `cfg` came from files (the headless
     /// loop). Ownership passes to `Factory.create`, success or failure.
     loaded: ?config.Loaded = null,
+    /// Run the terminal loop's `startup` hook once the App is built —
+    /// the session restore, the startup tasks. The headless loop sets
+    /// it (its screen must be the terminal's); the `.test` runner leaves
+    /// it off, a test starts on a fresh workspace.
+    startup_hook: bool = false,
 };
 
 /// What a `.test` file runs on: the shipped defaults with the breadcrumb

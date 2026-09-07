@@ -422,7 +422,7 @@ fn headlessSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, arg
     const startup = try loadConfig(gpa, io, env, ws_abs, argv, false);
     defer gpa.free(startup.data_root);
     // `make` owns `loaded` from here, whatever it returns.
-    const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded };
+    const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded, .startup_hook = true };
     const driver = try factory.make(gpa, io, cfg);
     defer driver.deinit();
     const restart = try headless.run(gpa, io, driver, ws_abs, opts);

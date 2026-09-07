@@ -401,12 +401,21 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     app.tree.visible = saved.tree_visible;
     app.tree.width = std.math.clamp(saved.tree_width, Config.tree_width_min, Config.tree_width_max);
     app.tree.show_hidden = saved.tree_show_hidden;
+    // The saved set replaces what is open (Rust's `set_expanded_dirs`),
+    // and the top-level directories it leaves shut stay shut — a
+    // restored tree is not a first sight.
+    {
+        var it = app.tree.expanded.keyIterator();
+        while (it.next()) |k| gpa.free(k.*);
+        app.tree.expanded.clearRetainingCapacity();
+    }
     for (saved.tree_expanded) |rel| {
         if (app.tree.expanded.contains(rel)) continue;
         const key = try gpa.dupe(u8, rel);
         errdefer gpa.free(key);
         try app.tree.expanded.put(gpa, key, {});
     }
+    app.tree.restored = true;
     app.tree.loaded = false; // re-listed on the next frame with the expansions applied
     app.right_panel = saved.right_panel;
     app.right_panel_width = @max(saved.right_panel_width, 8);
