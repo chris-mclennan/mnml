@@ -1,0 +1,35 @@
+# DEBUG section — w adds a watch (the prompt), the row shows its value
+# at the stop and again after every step; d on the row removes it.
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+type 3j
+command dap.toggle_breakpoint
+command dap.run
+expect screen contains "dap: stopped (breakpoint)"
+expect screen contains "▶"
+command view.activity_debug
+key w
+expect screen contains "Watch expression"
+type "x * 100"
+key enter
+expect screen contains "watch: + x * 100"
+expect screen contains "⌖ x * 100 = 100 : int"
+command dap.next
+expect screen contains "dap: stopped (step)"
+expect screen contains "⌖ x * 100 = 200 : int"
+# The filter narrows the list to the watch (headers stay); d removes it.
+# The stop's jump took the keys to the editor; back to the section.
+# Enter leaves the filter in place; Esc would clear it.
+command view.activity_debug
+key /
+type "x * 100"
+key enter
+key j
+key j
+key j
+key d
+expect screen contains "watch: − x * 100"
+expect screen lacks "= 200 : int"
+command dap.terminate

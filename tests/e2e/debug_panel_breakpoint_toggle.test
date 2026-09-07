@@ -1,0 +1,39 @@
+# DEBUG section — breakpoints without a session: Space on a row
+# disables it (the gutter's ● becomes ○, the row's box empties), x
+# removes it. The rows carry the condition set from the editor.
+write prog.dbg "let x = 1\nlet p = struct{a=1,b=\"two\"}\nprint \"hello\"\nx = x + 1\nfn f\n  let y = 10\n  x = x * y\nend\ncall f\nprint x\n"
+write .mnml/config.zon .{ .dap = .{ .dbg = .{ .cmd = "$MNML_FAKE_DAP" } } }
+open prog.dbg
+command editor.use_vim
+key j
+command dap.toggle_breakpoint_conditional
+expect screen contains "Breakpoint condition (line 2)"
+type "x > 0"
+key enter
+expect screen contains "bp line 2: x > 0"
+type 2j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 4"
+command view.activity_debug
+expect screen contains "▾ BREAKPOINTS (2)"
+expect screen contains "[x] prog.dbg:2  when x"
+expect screen contains "[x] prog.dbg:4"
+# status · VARIABLES · hint · WATCH · hint · CALL STACK · hint · BREAKPOINTS · prog.dbg:2
+key j
+key j
+key j
+key j
+key j
+key j
+key j
+key j
+key space
+expect screen contains "breakpoint line 2: disabled"
+expect screen contains "[ ] prog.dbg:2"
+expect screen contains "○"
+key space
+expect screen contains "breakpoint line 2: enabled"
+key x
+expect screen contains "breakpoint cleared: line 2"
+expect screen contains "▾ BREAKPOINTS (1)"
+expect screen lacks "prog.dbg:2"
