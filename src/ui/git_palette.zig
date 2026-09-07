@@ -192,7 +192,9 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
         var shown = text;
         if (chars(text) > max_text) {
             var start: usize = 0;
-            while (start < text.len and chars(text[start..]) > max_text -| 1) start += std.unicode.utf8ByteSequenceLength(text[start]) catch 1;
+            // Rust keeps `max_text` code points behind the `…` (one more
+            // than fits — the row's last cell is clipped, as there).
+            while (start < text.len and chars(text[start..]) > max_text) start += std.unicode.utf8ByteSequenceLength(text[start]) catch 1;
             shown = ui.fmt("{s}{s}", .{ if (ui.ascii) "..." else "\u{2026}", text[start..] });
         }
         const text_style = Theme.withFg(chip, if (empty and !p.filter_focused) pal.comment else pal.fg);
