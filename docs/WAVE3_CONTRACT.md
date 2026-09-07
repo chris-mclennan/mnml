@@ -3171,3 +3171,71 @@ Rust's sidebar + tabbed right panel became one idea.
   rail_rightclick,vim_ctrl_w,ex_sidebar}.test`. The `todos_panel` /
   `notes_panel` / `findings_panel` corpus files drag the left column
   out to 60 (the 26-cell header keeps only the chips' icons).
+
+## debug-ui (2026-09-07) — the debugger, Zig-authored
+
+The one deliberate departure from same-look: the Rust debug pane was
+never driven by anyone, so `docs/ui-spec/zig-debug-*.txt` are the spec
+(`tools/zig-spec.sh`).
+
+- `// changed (section):` `PanelId.debug` / `Section.debug` own a column
+  surface (`side.surface`), so the section moves sides, takes the keys,
+  and reads TREE / PANEL like the rest. `view.activity_debug` places it;
+  `dap.show` places it and opens the console pane; `dap.toggle_panel`
+  (`<leader>du`) toggles it. `src/app/debug_panel.zig` + `src/ui/debug_panel.zig`:
+  one `ListPanel(Row)` list — a status row (`● prog.dbg:4 · main` at the
+  sidebar's width), VARIABLES / WATCH / CALL STACK / BREAKPOINTS as
+  foldable headers with counts, every row a hit with a right-click menu
+  of command ids, the `dap.*_selected` family (`toggle_section`,
+  `toggle_selected`, `edit_selected`, `remove_selected`, `open_selected`,
+  `watch_selected`, `copy_value`, `edit_watch`) so a key, a menu row and
+  the palette share one runner. A variable whose value changed since the
+  last resume paints in the warning colour (`State.prev`, snapshotted on
+  `continued`).
+- `// changed (breakpoints):` `types.Breakpoint` gains `enabled`,
+  `log_message`, `verified`; `Session.setBreakpoints` sends the enabled
+  ones with `logMessage` and the reply's `verified` lands per file through
+  `bp_paths` slots. New ids: `dap.toggle_breakpoint_enabled`,
+  `dap.remove_breakpoint`, `dap.set_breakpoint_log_message`,
+  `dap.enable_all_breakpoints`, `dap.disable_all_breakpoints`. The
+  `dap.*breakpoint*` prompts act on the section's selected row when it
+  has the keys, else the cursor line (`bpTarget`). Gutter glyphs: `●`
+  plain, `◐` conditional / hit-counted, `◆` logpoint, `○` disabled;
+  unverified paints muted (was `◆` / `◈`).
+- `// changed (pane):` `Pane.dap_repl` and `ui/dap_repl_view.zig` are
+  gone. `Pane.debug` is the step toolbar (`ui/debug_toolbar.zig`:
+  Start/Continue/Pause · Step over · Step into · Step out · Restart ·
+  Stop, nf-md glyphs, a drop rule) over the Debug Console
+  (`ui/dap_view.zig`): output, `> expr` echoes, results (a composite
+  folds on click), errors, `── started / exited ──` notes in one
+  scrollback (`dap.State.console`, kept across sessions), an input row
+  with ↑↓ history (the typed line comes back) and Tab completion of
+  variable / watch names. `dap.repl` focuses it; `dap.clear_console` /
+  Ctrl+L empties it. The same toolbar paints as a strip over the active
+  editor while a session is live (`ui.debug_toolbar` auto/always/hidden);
+  its buttons are `.script_hit` ids above `lsp_decor.lens_hit_base`.
+- `// changed (editor):` `HitTarget.gutter{pane,line}` over each row's
+  gutter: a left press on the sign cell toggles the breakpoint, a right
+  press opens the Breakpoint menu (`context_menus.openGutterMenu`);
+  `Doc.stopped_line` wears the band; `editor.inline_values` paints
+  `  name = value` after every line up to the stop naming a scope
+  variable (`dap.inlineValuesFor`, merged with the LSP's virtual text);
+  the hover tooltip on a cell shows the variable's value from the
+  fetched scopes (`dap.hoverValue`); `lsp.hover` (vim `K`) evaluates the
+  word through the adapter first while stopped (`dap.evaluate_hover`,
+  `Session.EvalContext.hover`, into the LSP hover box). A frame chosen
+  in CALL STACK sets `Session.frame_id`; evaluations and scopes follow.
+  `dap.continue` starts a session when there is none (nvim-dap);
+  `dap.restart` starts the last file again.
+- `// changed (keys):` the vim profile gets nvim-dap's chords as `.vim`
+  keys (`<leader>d b B l c o i O p R t r w u h`) plus a `+debug`
+  which-key group; the F-keys stay `.both`. Pinned in
+  `src/app/cmd_dap.zig`; the table is in `docs/KEYMAP_PROFILES.md`.
+- `// changed (config / settings):` `editor.inline_values` (Settings →
+  Editor "Inline debugger values"), `ui.debug_toolbar` (Settings → UI
+  "Debug toolbar strip"); `docs/CONFIG.md`.
+- `// changed (tests):` six REPL-era scripts re-aimed at the console
+  (`dap_session_repl`, `dap_repl_filter`, `dap_repl_pane`,
+  `dap_repl_selection`, `dap_session_output`, `dap_session_terminate`);
+  ten `debug_*.test` scripts; `render.zig`'s hit test reads the gutter
+  as `.gutter`; two settings tests run taller (the UI section grew).
