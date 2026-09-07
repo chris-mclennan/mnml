@@ -432,6 +432,20 @@ fn sectionLabel(id: command.CommandId) []const u8 {
     return command.title(id);
 }
 
+/// The right column's ` 󰐕 `: Rust's "Add panel" menu, the five kinds
+/// the right panel hosts.
+pub fn openAddPanelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try app.gpa.dupe(MenuItem, &.{
+        .{ .label = "Outline", .action = .{ .command = .@"outline.show" } },
+        .{ .label = "Problems", .action = .{ .command = .@"lsp.diagnostics" } },
+        .{ .label = "AI chat", .action = .{ .command = .@"ai.chat" } },
+        .{ .label = "Grep", .action = .{ .command = .@"find.grep" } },
+        .{ .label = "Tests", .action = .{ .command = .@"test.run_all" } },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Add panel", rows, x, y);
+}
+
 /// The strip's `+`: the pinned rows first, then the five sections.
 pub fn openNewTabMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
